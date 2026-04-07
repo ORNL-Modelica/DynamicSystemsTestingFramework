@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /mnt/d/Modelica/TRANSFORM-Library show 5f0343eb --stat)",
+      "Bash(git -C /mnt/d/Modelica/TRANSFORM-Library show 5f0343eb -- \"TRANSFORM/Resources/ReferenceResults/Dymola/TRANSFORM_Blocks_Examples_EasingRamp_Test.txt\")",
+      "Bash(sort -t= -k2 -n)",
+      "Bash(sort -t= -k2 -rn)",
+      "Bash(git:*)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(grep -E \"\\\\.txt$\")",
+      "Bash(grep -E \"\\\\.mos$\")",
+      "Bash(grep \"\\\\.txt$\")",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:simulationresearch.lbl.gov)",
+      "WebFetch(domain:buildingspy.readthedocs.io)",
+      "WebFetch(domain:pypi.org)",
+      "Bash(python -m testing discover)",
+      "Bash(python -m testing discover --filter \"TRANSFORM.Blocks.*\")",
+      "Bash(python -c \"from testing.config import Config; print\\('config OK'\\)\")",
+      "Bash(python -c \"from testing.discovery.mos_parser import parse_mos_file; print\\('mos_parser OK'\\)\")",
+      "Bash(python -c \"from testing.discovery.mo_parser import parse_mo_file; print\\('mo_parser OK'\\)\")",
+      "Bash(python -c \"from testing.discovery.test_registry import discover_tests; print\\('test_registry OK'\\)\")",
+      "Bash(python -c \"from testing.comparison.comparator import compare_all; print\\('comparator OK'\\)\")",
+      "Bash(python:*)",
+      "Bash(uv run:*)",
+      "Read(//mnt/d/Modelica/**)",
+      "Bash(wc -l /mnt/d/Modelica/TRANSFORM-UnitTests/ReferenceResults/Dymola/*.txt)",
+      "Bash(ls /mnt/d/Modelica/TRANSFORM-UnitTests/ReferenceResults/Dymola/*.txt)",
+      "Bash(ls /mnt/d/Modelica/TRANSFORM-Library/TRANSFORM/Resources/ReferenceResults/Dymola/linux/*.json)",
+      "Bash(ls /mnt/d/Modelica/TRANSFORM-UnitTests/ReferenceResults/Dymola/linux/*.json)",
+      "Bash(python3 -c ':*)",
+      "Bash(python3:*)",
+      "WebSearch"
+    ]
+  }
+}

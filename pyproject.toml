@@ -1,0 +1,15 @@
+[project]
+name = "modelica-testing"
+version = "0.1.0"
+description = "Regression testing system for Modelica libraries using Dymola"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.20",
+    "scipy>=1.7",
+]
+
+[project.optional-dependencies]
+plots = ["matplotlib>=3.5"]
+
+[project.scripts]
+modelica-testing = "testing.cli:main_entry"
