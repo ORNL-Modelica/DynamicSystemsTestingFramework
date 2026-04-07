@@ -316,6 +316,8 @@ def _build_config(args: argparse.Namespace) -> Config:
         kwargs["final_only"] = args.final_only
     if hasattr(args, "timeout") and args.timeout:
         kwargs["timeout"] = args.timeout
+    if hasattr(args, "test_spec") and args.test_spec:
+        kwargs["test_spec_file"] = Path(args.test_spec)
     return Config(**kwargs)
 
 
@@ -335,6 +337,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--reference-root", type=str, default=None,
         help="Path to reference results root (default: <library>/Resources/ReferenceResults)",
+    )
+    parser.add_argument(
+        "--test-spec", type=str, default=None,
+        help="Path to test_spec.json (external test definitions)",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")

@@ -1,6 +1,7 @@
 """Abstract simulator interface and common result types."""
 
 import json
+import logging
 import sys
 import time
 from abc import ABC, abstractmethod
@@ -15,6 +16,8 @@ import numpy as np
 from ..config import Config
 from ..discovery.test_registry import TestModel
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Common result types (shared across all simulator backends)
@@ -26,6 +29,7 @@ class VariableResult:
     index: int  # 1-based
     time: np.ndarray
     values: np.ndarray
+    name: str = ""  # Variable name (e.g., "pipe.T[1]" or "unitTests.x[1]")
 
 
 @dataclass
@@ -48,6 +52,75 @@ class TestRunResult:
     error_message: Optional[str] = None
     timed_out: bool = False
     statistics: Optional[dict] = None
+
+
+# Variables to exclude when resolving "*" or glob patterns (Dymola internals, etc.)
+_EXCLUDE_PREFIXES = ("der(", "$", "_")
+_EXCLUDE_NAMES = {"time"}
+
+
+def _pattern_to_regex(pattern: str):
+    """Convert a simple glob pattern to a compiled regex.
+
+    Only * (match any) and ? (match one) are wildcards.
+    All other characters (including Modelica's [] for array indices,
+    parentheses, dots) are treated as literals.
+    """
+    import re as _re
+    parts = []
+    for ch in pattern:
+        if ch == "*":
+            parts.append(".*")
+        elif ch == "?":
+            parts.append(".")
+        else:
+            parts.append(_re.escape(ch))
+    return _re.compile("".join(parts))
+
+
+def resolve_variable_patterns(
+    patterns: list[str],
+    available_vars: list[str],
+) -> list[str]:
+    """Resolve variable patterns against available variable names from simulation.
+
+    Pattern types:
+    - Explicit name: "pipe.T[1]" — must exist exactly
+    - Glob: "medium.T*" — fnmatch against available names
+    - Wildcard: "*" — all non-internal variables
+    - Empty list: [] — no variables (simulate-only mode)
+
+    Returns sorted list of resolved variable names.
+    """
+    if not patterns:
+        return []
+
+    resolved = set()
+    for pattern in patterns:
+        if pattern == "*":
+            # All non-internal variables
+            for var in available_vars:
+                if var in _EXCLUDE_NAMES:
+                    continue
+                if any(var.startswith(p) for p in _EXCLUDE_PREFIXES):
+                    continue
+                resolved.add(var)
+        elif "*" in pattern or "?" in pattern:
+            # Glob pattern — only * and ? are wildcards, everything else
+            # (including [] from Modelica array indices) is literal
+            regex = _pattern_to_regex(pattern)
+            matched = [v for v in available_vars if regex.fullmatch(v)]
+            if not matched:
+                logger.warning("Pattern '%s' matched no variables", pattern)
+            resolved.update(matched)
+        else:
+            # Explicit name
+            if pattern in available_vars:
+                resolved.add(pattern)
+            else:
+                logger.warning("Variable '%s' not found in results", pattern)
+
+    return sorted(resolved)
 
 
 @dataclass

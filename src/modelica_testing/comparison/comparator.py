@@ -145,7 +145,7 @@ def compare_test(
         else:
             ref_time = np.array(ref_var["time"])
         ref_values = np.array(ref_var["values"])
-        expression = ref_var.get("expression", "")
+        expression = ref_var.get("name", ref_var.get("expression", ""))
 
         if config.final_only:
             ref_final = ref_values[-1] if len(ref_values) > 0 else 0.0

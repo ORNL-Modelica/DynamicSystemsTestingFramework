@@ -170,13 +170,10 @@ class ReferenceStore:
         for var in result.variables:
             values_ds = var.values[ds_indices] if ds_indices is not None else var.values
             values_list = _to_json_list(values_ds)
-            expr = ""
-            if var.index - 1 < len(test.x_expressions):
-                expr = test.x_expressions[var.index - 1]
 
             variables.append({
                 "index": var.index,
-                "expression": expr,
+                "name": var.name,
                 "values": values_list,
             })
 

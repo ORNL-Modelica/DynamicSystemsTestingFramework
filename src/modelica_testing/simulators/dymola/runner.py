@@ -15,6 +15,7 @@ from ..base import (
     TestResult,
     VariableResult,
     _print_progress,
+    resolve_variable_patterns,
 )
 from .log_parser import parse_dslog
 from .mat_reader import read_dymola_mat
@@ -125,7 +126,7 @@ class DymolaRunner(SimulatorRunner):
                 statistics=stats,
             )
 
-        variables = _extract_unit_test_vars(mat_data, test.n_vars)
+        variables = _extract_variables(mat_data, test)
         return TestResult(
             model_id=test.model_id,
             success=True,
@@ -198,16 +199,46 @@ def _capture_dslog(work_dir: Path, test_key: str) -> Optional[dict]:
     return parse_dslog(saved_path)
 
 
-def _extract_unit_test_vars(
-    mat_data: dict, n_vars: int
+def _extract_variables(
+    mat_data: dict, test: TestModel
 ) -> list[VariableResult]:
-    """Extract unitTests.x[1..n] from parsed mat data."""
+    """Extract tracked variables from parsed mat data.
+
+    Handles three cases:
+    - UnitTests variables (unitTests.x[1..n]) from in-model component
+    - Pattern-based variables from external spec (globs, wildcards)
+    - Both merged together (deduplicated)
+    """
     results = []
-    for i in range(1, n_vars + 1):
-        var_name = f"unitTests.x[{i}]"
-        if var_name in mat_data:
-            time, values = mat_data[var_name]
-            results.append(VariableResult(index=i, time=time, values=values))
-        else:
-            logger.warning("Variable %s not found in results", var_name)
+    seen_names: set[str] = set()
+    idx = 1
+
+    # 1. UnitTests variables (source = "unit_tests" or "both")
+    if test.source in ("unit_tests", "both") and test.n_vars > 0:
+        for i in range(1, test.n_vars + 1):
+            var_name = f"unitTests.x[{i}]"
+            if var_name in mat_data:
+                time, values = mat_data[var_name]
+                # Use the expression name if available, otherwise the raw var name
+                expr = test.x_expressions[i - 1] if i - 1 < len(test.x_expressions) else var_name
+                results.append(VariableResult(index=idx, time=time, values=values, name=expr))
+                seen_names.add(var_name)
+                seen_names.add(expr)
+                idx += 1
+            else:
+                logger.warning("Variable %s not found in results", var_name)
+
+    # 2. Pattern-based variables (source = "spec" or "both")
+    if test.variable_patterns:
+        available = list(mat_data.keys())
+        resolved = resolve_variable_patterns(test.variable_patterns, available)
+        for var_name in resolved:
+            if var_name in seen_names:
+                continue
+            if var_name in mat_data:
+                time, values = mat_data[var_name]
+                results.append(VariableResult(index=idx, time=time, values=values, name=var_name))
+                seen_names.add(var_name)
+                idx += 1
+
     return results

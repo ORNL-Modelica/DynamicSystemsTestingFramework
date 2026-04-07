@@ -124,6 +124,9 @@ class Config:
     # .mos file name
     mos_filename: Optional[str] = None
 
+    # Test spec file (external test definitions)
+    test_spec_file: Optional[Path] = None
+
     # Config file path (optional — loaded explicitly or auto-discovered)
     config_file: Optional[Path] = None
 
@@ -178,6 +181,14 @@ class Config:
         # MOS filename
         if self.mos_filename is None:
             self.mos_filename = file_config.get("mos_file", "runAll_Dymola.mos")
+
+        # Test spec file
+        if self.test_spec_file is None:
+            spec_path = file_config.get("test_spec")
+            if spec_path:
+                self.test_spec_file = (self.library_root / spec_path).resolve()
+        else:
+            self.test_spec_file = Path(self.test_spec_file).resolve()
 
         # Work directory
         if self.work_dir is None:

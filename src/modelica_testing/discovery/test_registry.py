@@ -36,6 +36,13 @@ class TestModel:
     result_file: str = ""
     in_mos: bool = False  # Whether this test appears in runAll_Dymola.mos
 
+    # External spec: variable patterns (may include globs like "medium.T*" or "*")
+    # These are resolved against actual .mat variable names after simulation.
+    variable_patterns: list[str] = field(default_factory=list)
+
+    # Where this test was defined: "unit_tests", "spec", "both"
+    source: str = "unit_tests"
+
 
 def _merge_params(
     mo_result: MoParseResult, sim_params: Optional[SimParams]
@@ -98,23 +105,27 @@ def _merge_params(
 
 
 def discover_tests(config: Config) -> list[TestModel]:
-    """Discover all test models in the Modelica library.
+    """Discover all test models from UnitTests blocks and/or external spec.
 
-    1. Parse the .mos file for simulation parameters
-    2. Scan all .mo files for UnitTests blocks
-    3. Merge and return sorted list
+    Sources (merged by model_id):
+    1. UnitTests components in .mo files
+    2. External test_spec.json (if configured)
+    3. runAll_Dymola.mos for simulation parameter overrides
+
+    When a model appears in both UnitTests and spec, variable patterns
+    from the spec are added alongside UnitTests variables, and the source
+    is marked as "both". Spec simulation parameters override UnitTests defaults.
     """
-    # Step 1: Parse .mos file
+    # Step 1: Parse .mos file for simulation parameter overrides
     mos_params: dict[str, SimParams] = {}
     if config.mos_file.exists():
         mos_params = parse_mos_file(config.mos_file)
 
-    # Step 2: Find all .mo files with UnitTests
-    tests: list[TestModel] = []
+    # Step 2: Discover UnitTests from .mo files
+    ut_tests: dict[str, TestModel] = {}
     library_dir = config.library_dir
 
     for mo_file in sorted(library_dir.rglob("*.mo")):
-        # Quick pre-filter: only parse files that mention UnitTests
         try:
             content = mo_file.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -128,11 +139,62 @@ def discover_tests(config: Config) -> list[TestModel]:
 
         sim = mos_params.get(result.model_id)
         test = _merge_params(result, sim)
-        tests.append(test)
+        ut_tests[test.model_id] = test
+
+    # Step 3: Load external test spec (if configured)
+    spec_tests: dict[str, TestModel] = {}
+    if config.test_spec_file and config.test_spec_file.exists():
+        from .spec_parser import parse_test_spec
+        for test in parse_test_spec(config.test_spec_file):
+            # Apply .mos overrides to spec tests too
+            sim = mos_params.get(test.model_id)
+            if sim:
+                test.in_mos = True
+                if sim.stop_time is not None:
+                    test.stop_time = sim.stop_time
+                if sim.tolerance is not None:
+                    test.tolerance = sim.tolerance
+                if sim.method is not None:
+                    test.method = sim.method
+                if sim.number_of_intervals is not None:
+                    test.number_of_intervals = sim.number_of_intervals
+                if sim.output_interval is not None:
+                    test.output_interval = sim.output_interval
+                if sim.result_file is not None:
+                    test.result_file = sim.result_file
+            spec_tests[test.model_id] = test
+
+    # Step 4: Merge — union by model_id
+    merged: dict[str, TestModel] = {}
+
+    # Start with UnitTests
+    for model_id, test in ut_tests.items():
+        merged[model_id] = test
+
+    # Merge spec tests
+    for model_id, spec_test in spec_tests.items():
+        if model_id in merged:
+            # Both sources — merge variable patterns, spec params override
+            existing = merged[model_id]
+            existing.variable_patterns = spec_test.variable_patterns
+            existing.source = "both"
+            # Spec simulation params override UnitTests (if explicitly set in spec)
+            if spec_test.stop_time != DEFAULT_STOP_TIME:
+                existing.stop_time = spec_test.stop_time
+            if spec_test.tolerance != DEFAULT_TOLERANCE:
+                existing.tolerance = spec_test.tolerance
+            if spec_test.method != DEFAULT_METHOD:
+                existing.method = spec_test.method
+            if spec_test.number_of_intervals is not None:
+                existing.number_of_intervals = spec_test.number_of_intervals
+            if spec_test.output_interval is not None:
+                existing.output_interval = spec_test.output_interval
+        else:
+            # Spec-only test
+            merged[model_id] = spec_test
 
     # Sort by model_id for consistent ordering
-    tests.sort(key=lambda t: t.model_id)
-
+    tests = sorted(merged.values(), key=lambda t: t.model_id)
     return tests
 
 
