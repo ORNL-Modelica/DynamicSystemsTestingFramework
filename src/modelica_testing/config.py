@@ -121,9 +121,6 @@ class Config:
     # Output
     work_dir: Optional[Path] = None
 
-    # .mos file name
-    mos_filename: Optional[str] = None
-
     # Test spec file (external test definitions)
     test_spec_file: Optional[Path] = None
 
@@ -178,10 +175,6 @@ class Config:
         if not self.dependencies and "dependencies" in file_config:
             self.dependencies = file_config["dependencies"]
 
-        # MOS filename
-        if self.mos_filename is None:
-            self.mos_filename = file_config.get("mos_file", "runAll_Dymola.mos")
-
         # Test spec file
         if self.test_spec_file is None:
             spec_path = file_config.get("test_spec")
@@ -204,10 +197,6 @@ class Config:
     def library_dir(self) -> Path:
         """Path to the library's top-level package directory."""
         return self.library_root / self.library_name
-
-    @property
-    def mos_file(self) -> Path:
-        return self.library_root / self.mos_filename
 
     @property
     def reference_dir(self) -> Path:

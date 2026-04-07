@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import Config
-from .discovery.test_registry import TestModel, discover_tests, generate_mos_file
+from .discovery.test_registry import TestModel, discover_tests
 
 
 def _filter_tests(
@@ -35,30 +35,22 @@ def cmd_discover(args: argparse.Namespace) -> int:
         return 1
 
     # Print summary table
-    print(f"{'Model ID':<90} {'Vars':>4}  {'StopTime':>10}  {'Method':<10}  {'In MOS':>6}")
+    print(f"{'Model ID':<90} {'Vars':>4}  {'StopTime':>10}  {'Method':<10}  {'Source':<10}")
     print("-" * 130)
     for t in tests:
         stop = f"{t.stop_time:g}"
-        in_mos = "yes" if t.in_mos else "no"
-        print(f"{t.model_id:<90} {t.n_vars:>4}  {stop:>10}  {t.method:<10}  {in_mos:>6}")
+        print(f"{t.model_id:<90} {t.n_vars:>4}  {stop:>10}  {t.method:<10}  {t.source:<10}")
 
     print(f"\nTotal: {len(tests)} tests")
-
-    # Count stats
-    with_mos = sum(1 for t in tests if t.in_mos)
-    print(f"  In runAll_Dymola.mos: {with_mos}")
-    print(f"  Not in mos file: {len(tests) - with_mos}")
 
     total_vars = sum(t.n_vars for t in tests)
     print(f"  Total tracked variables: {total_vars}")
 
-    # Regenerate runAll_Dymola.mos if requested
-    if args.regenerate_mos:
-        mos_path = config.mos_file
-        # Only include tests that were in the original mos file or new tests
-        mos_tests = [t for t in tests if t.in_mos]
-        generate_mos_file(mos_tests, mos_path)
-        print(f"\nRegenerated {mos_path} with {len(mos_tests)} tests")
+    by_source = {}
+    for t in tests:
+        by_source[t.source] = by_source.get(t.source, 0) + 1
+    for source, count in sorted(by_source.items()):
+        print(f"  Source '{source}': {count}")
 
     return 0
 
@@ -351,10 +343,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     p_discover.add_argument("--filter", type=str, help="Glob pattern for model_id")
     p_discover.add_argument("--package", type=str, help="Filter by package prefix")
-    p_discover.add_argument(
-        "--regenerate-mos", action="store_true",
-        help="Regenerate runAll_Dymola.mos from discovered tests",
-    )
 
     # run
     p_run = subparsers.add_parser("run", help="Run tests in Dymola")
