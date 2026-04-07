@@ -63,8 +63,20 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
+def _get_runner(config):
+    """Get the appropriate simulator runner for the configured simulator."""
+    if config.simulator == "Dymola":
+        from .simulators.dymola import DymolaRunner
+        return DymolaRunner(config)
+    else:
+        raise ValueError(
+            f"Unsupported simulator: {config.simulator}. "
+            f"Supported: {', '.join(('Dymola',))}"
+        )
+
+
 def cmd_run(args: argparse.Namespace) -> int:
-    """Run tests in Dymola and compare/accept results."""
+    """Run tests and compare/accept results."""
     config = _build_config(args)
     tests = discover_tests(config)
     tests = _filter_tests(tests, args.filter, args.package)
@@ -75,27 +87,18 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     print(f"Running {len(tests)} tests...")
 
-    # Import here to avoid circular deps and optional dependency errors
-    from .simulation.dymola_runner import run_tests
-    from .simulation.result_reader import read_results
     from .storage.reference_store import ReferenceStore
 
-    config.work_dir.mkdir(parents=True, exist_ok=True)
-
-    # Run simulations
-    manifest = run_tests(tests, config)
-
-    # Read results
-    results = read_results(manifest, tests, config)
+    runner = _get_runner(config)
+    manifests = runner.run_tests(tests)
+    results = runner.read_results(manifests, tests)
 
     if args.accept:
-        # Store as new baselines
         store = ReferenceStore(config)
         stored = store.accept_results(tests, results)
         print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
         return 0
     else:
-        # Compare against existing references
         from .comparison.comparator import compare_all
 
         store = ReferenceStore(config)
@@ -110,11 +113,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
     tests = _filter_tests(tests, args.filter, args.package)
 
     from .comparison.comparator import compare_all
-    from .simulation.result_reader import read_last_results
     from .storage.reference_store import ReferenceStore
 
+    runner = _get_runner(config)
     store = ReferenceStore(config)
-    results = read_last_results(tests, config)
+    results = runner.read_last_results(tests)
     comparisons = compare_all(tests, results, store, config)
     return _output_report(comparisons, args)
 

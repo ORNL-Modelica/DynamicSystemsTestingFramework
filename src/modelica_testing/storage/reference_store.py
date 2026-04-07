@@ -11,7 +11,7 @@ import numpy as np
 
 from ..config import Config
 from ..discovery.test_registry import TestModel
-from ..simulation.result_reader import TestResult, VariableResult
+from ..simulators import TestResult, VariableResult
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ import numpy as np
 
 from ..config import Config
 from ..discovery.test_registry import TestModel
-from ..simulation.result_reader import TestResult
+from ..simulators import TestResult
 from ..storage.reference_store import ReferenceStore
 
 logger = logging.getLogger(__name__)

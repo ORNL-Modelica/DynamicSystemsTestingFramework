@@ -187,7 +187,7 @@ def migrate_buildingspy_references(
     Returns: number of files migrated
     """
     from .reference_store import ReferenceStore
-    from ..simulation.result_reader import VariableResult, TestResult
+    from ..simulators import VariableResult, TestResult
     import numpy as np
 
     if not source_dir.exists():
