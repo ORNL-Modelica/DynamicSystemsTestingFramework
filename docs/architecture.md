@@ -47,6 +47,7 @@ runner.run_tests(tests)
 runner.read_results(manifests, tests)
     → reads .mat files via mat_reader
     → resolves variable patterns against available names
+    → auto-captures diagnostic variables (CPUtime, EventCounter) if present
     → returns dict[model_id → TestResult]
 
 compare_all(tests, results, store, config)
@@ -63,7 +64,7 @@ reporters render TestComparison → console / JUnit / HTML / plots
 |------|----------|---------|
 | `Config` | `config.py` | All resolved paths, simulator settings, tolerances |
 | `TestModel` | `discovery/test_registry.py` | One test: model ID, sim params, tracked variables, source |
-| `TestResult` | `simulators/base.py` | Simulation output: success flag, list of VariableResult |
+| `TestResult` | `simulators/base.py` | Simulation output: success flag, variables, diagnostics, statistics |
 | `VariableResult` | `simulators/base.py` | One variable's time series (time + values arrays) |
 | `TestComparison` | `comparison/comparator.py` | Comparison result: pass/fail, per-variable NRMSE, warnings |
 | `ReferenceStore` | `storage/reference_store.py` | CRUD for reference JSON files via TestManifest |
@@ -82,7 +83,11 @@ reporters render TestComparison → console / JUnit / HTML / plots
 {
   "model_id": "...", "test_id": "0001", "last_updated": "...",
   "simulation": {"stop_time": 100, "tolerance": 1e-4, "method": "Dassl"},
-  "statistics": {"initialization": {...}, "simulation": {...}},
+  "statistics": {"initialization": {...}, "simulation": {...}, "CPUtime": 12.3, "EventCounter": 42},
+  "diagnostics": [
+    {"name": "CPUtime", "values": [...]},
+    {"name": "EventCounter", "values": [...]}
+  ],
   "n_vars": 3,
   "time": [0.0, 0.1, ...],
   "variables": [{"index": 1, "name": "pipe.T[1]", "values": [...]}]

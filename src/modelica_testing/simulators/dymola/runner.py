@@ -277,11 +277,21 @@ class DymolaRunner(SimulatorRunner):
                 statistics=stats,
             )
 
-        variables = _extract_variables(mat_data, test)
+        variables, diagnostics = _extract_variables(mat_data, test)
+
+        # Add diagnostic final values to statistics
+        if diagnostics:
+            if stats is None:
+                stats = {}
+            for diag in diagnostics:
+                if len(diag.values) > 0:
+                    stats[diag.name] = float(diag.values[-1])
+
         return TestResult(
             model_id=test.model_id,
             success=True,
             variables=variables,
+            diagnostics=diagnostics,
             statistics=stats,
         )
 
@@ -396,10 +406,17 @@ def _generate_batch_mos(
 # Result extraction
 # ---------------------------------------------------------------------------
 
+# Diagnostic variables auto-captured when present (e.g., OutputCPUtime := true)
+_DIAGNOSTIC_VARS = ["CPUtime", "EventCounter"]
+
+
 def _extract_variables(
     mat_data: dict, test: TestModel
-) -> list[VariableResult]:
-    """Extract tracked variables from parsed mat data."""
+) -> tuple[list[VariableResult], list[VariableResult]]:
+    """Extract tracked variables and diagnostic variables from parsed mat data.
+
+    Returns (variables, diagnostics).
+    """
     results = []
     seen_names: set[str] = set()
     idx = 1
@@ -434,4 +451,15 @@ def _extract_variables(
                 seen_names.add(var_name)
                 idx += 1
 
-    return results
+    # 3. Diagnostic variables (auto-captured, not compared)
+    diagnostics = []
+    diag_idx = 1
+    for var_name in _DIAGNOSTIC_VARS:
+        if var_name in mat_data:
+            time, values = mat_data[var_name]
+            diagnostics.append(VariableResult(
+                index=diag_idx, time=time, values=values, name=var_name,
+            ))
+            diag_idx += 1
+
+    return results, diagnostics

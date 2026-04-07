@@ -271,6 +271,7 @@ def _check_structural_changes(
         ("simulation.nonlinear", "Nonlinear systems (sim)"),
         ("simulation.linear", "Linear systems (sim)"),
         ("simulation.continuous_time_states", "Continuous states"),
+        ("EventCounter", "Event count"),
     ]
 
     for dotted_key, label in checks:

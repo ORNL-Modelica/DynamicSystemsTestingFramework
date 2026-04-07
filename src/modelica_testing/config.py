@@ -207,7 +207,9 @@ class Config:
 
         # Load config file
         file_config = {}
+        config_found_dir = None
         if self.config_file:
+            config_found_dir = Path(self.config_file).resolve().parent
             file_config = load_config_file(Path(self.config_file))
         else:
             # Look in reference root, repo root, package dir, then cwd
@@ -217,6 +219,7 @@ class Config:
             for search_dir in search_dirs:
                 file_config = load_config_file(search_dir)
                 if file_config:
+                    config_found_dir = search_dir.resolve()
                     break
 
         # Auto-create testing.json if none was found
@@ -272,11 +275,12 @@ class Config:
         if not self.dependencies and "dependencies" in file_config:
             self.dependencies = file_config["dependencies"]
 
-        # Test spec file
+        # Test spec file — resolve relative to where testing.json was found
         if self.test_spec_file is None:
             spec_path = file_config.get("test_spec")
             if spec_path:
-                self.test_spec_file = (repo_root / spec_path).resolve()
+                base_dir = config_found_dir or repo_root
+                self.test_spec_file = (base_dir / spec_path).resolve()
         else:
             self.test_spec_file = Path(self.test_spec_file).resolve()
 

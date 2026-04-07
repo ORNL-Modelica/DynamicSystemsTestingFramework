@@ -31,6 +31,13 @@
 - CLI args > `testing.json` file > defaults
 - `testing.json` search: reference_root → repo_root → package_dir → cwd
 - `package_path` is the anchor — everything else derives from it
+- Relative paths in `testing.json` (e.g., `test_spec`) resolve relative to where `testing.json` was found, not relative to the library — important when references live in a separate repo
+
+### Diagnostic variables are stored but never compared
+- `CPUtime` and `EventCounter` are auto-extracted from mat data when present
+- Full trajectories go in `diagnostics` section of reference JSON (for plotting)
+- Final values go in `statistics` (for structural change warnings)
+- `EventCounter` changes trigger a warning; `CPUtime` does not (too noisy)
 
 ## Anti-Patterns
 

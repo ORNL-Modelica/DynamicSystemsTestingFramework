@@ -53,3 +53,15 @@
 - **What**: Format changes (manifest, reference JSON, CLI flags) are clean breaks with no legacy fallback code.
 - **Why**: Early-stage repo with no external consumers. One-time migration utilities are provided instead of maintaining dual paths.
 - **Trade-offs**: Existing references must be migrated. The `convert` and `migrate` commands handle this.
+
+## D10: Diagnostic variables (CPUtime, EventCounter) auto-captured
+
+- **What**: `CPUtime` and `EventCounter` are automatically extracted from simulation results when present (requires `OutputCPUtime := true;` in Dymola). Full trajectories are stored in a `diagnostics` section of the reference JSON. Final values are added to `statistics` for simple change detection.
+- **Why**: CPU time and event counts are critical for diagnosing performance regressions and model changes, but shouldn't cause pass/fail. Storing trajectories enables plotting; storing finals in statistics enables structural warnings.
+- **Trade-offs**: Diagnostics are stored but never compared via NRMSE. EventCounter changes trigger a structural warning; CPUtime does not (too variable between runs).
+
+## D11: Config-relative `test_spec` resolution
+
+- **What**: The `test_spec` path in `testing.json` resolves relative to where `testing.json` was found, not relative to the library's repo root.
+- **Why**: When references live in a separate repo, `test_spec.json` sits next to `testing.json` in that repo. Resolving relative to the library root would require an absolute path or a fragile relative path back to the reference repo.
+- **Trade-offs**: None significant. CLI `--test-spec` still accepts absolute paths and overrides the config file value.

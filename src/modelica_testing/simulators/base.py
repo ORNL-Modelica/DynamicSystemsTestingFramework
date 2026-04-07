@@ -38,6 +38,7 @@ class TestResult:
     model_id: str
     success: bool
     variables: list[VariableResult] = field(default_factory=list)
+    diagnostics: list[VariableResult] = field(default_factory=list)
     error_message: Optional[str] = None
     statistics: Optional[dict] = None
 

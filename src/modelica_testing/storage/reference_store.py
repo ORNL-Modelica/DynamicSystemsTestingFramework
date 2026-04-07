@@ -193,6 +193,17 @@ class ReferenceStore:
         if result.statistics:
             ref_data["statistics"] = result.statistics
 
+        # Diagnostic variables (CPUtime, EventCounter) — stored but not compared
+        if result.diagnostics:
+            diag_list = []
+            for diag in result.diagnostics:
+                _, values_list = _downsample(shared_time, diag.values)
+                diag_list.append({
+                    "name": diag.name,
+                    "values": values_list,
+                })
+            ref_data["diagnostics"] = diag_list
+
         # Data fields last — keeps metadata readable at the top of the file
         ref_data["n_vars"] = len(variables)
         ref_data["time"] = shared_time_list
