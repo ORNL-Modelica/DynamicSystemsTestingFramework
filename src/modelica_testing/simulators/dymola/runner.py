@@ -40,7 +40,7 @@ class DymolaRunner(SimulatorRunner):
 
         start_time = time.monotonic()
         try:
-            cmd = [self.config.dymola_path]
+            cmd = [self.config.simulator_path]
             if not self.config.show_ide:
                 cmd.append("-nowindow")
             cmd.append(str(script_path))
@@ -95,7 +95,7 @@ class DymolaRunner(SimulatorRunner):
 
         except FileNotFoundError:
             elapsed = time.monotonic() - start_time
-            msg = f"Dymola not found: {self.config.dymola_path}"
+            msg = f"Dymola not found: {self.config.simulator_path}"
             _print_progress(index, total, short_name, "ERROR", elapsed, msg)
             return TestRunResult(
                 model_id=test.model_id,

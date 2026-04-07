@@ -37,10 +37,7 @@ def read_dymola_mat(mat_path: Path) -> Optional[dict]:
         return None
 
     name_matrix = mat['name']
-    var_names = []
-    for row in name_matrix:
-        name = ''.join(chr(c) for c in row).strip('\x00').strip()
-        var_names.append(name)
+    var_names = _parse_name_matrix(name_matrix)
 
     data_info = mat.get('dataInfo', None)
     data_1 = mat.get('data_1', None)
@@ -50,10 +47,17 @@ def read_dymola_mat(mat_path: Path) -> Optional[dict]:
         logger.error("Missing dataInfo or data_2 in %s", mat_path)
         return None
 
+    # dataInfo can be (4, n_vars) or (n_vars, 4) depending on Dymola version.
+    # Ensure it's (n_vars, 4) so we can index by variable.
+    if data_info.shape[0] < data_info.shape[1]:
+        data_info = data_info.T
+
     time = data_2[0, :]
 
     result = {}
     for i, name in enumerate(var_names):
+        if i >= len(data_info):
+            break
         info = data_info[i]
         data_matrix_idx = int(info[0])
         col_idx = int(info[1])
@@ -77,3 +81,34 @@ def read_dymola_mat(mat_path: Path) -> Optional[dict]:
         result[name] = (time, values)
 
     return result
+
+
+def _parse_name_matrix(name_matrix) -> list[str]:
+    """Parse Dymola's name matrix into a list of variable name strings.
+
+    Dymola stores variable names as a character matrix (n_vars x max_name_len).
+    Depending on scipy version and .mat format, this may come back as:
+    - 2D numpy array of uint8/int (character codes)
+    - 2D numpy array of single-char strings
+    - 1D array of strings (already decoded)
+    """
+    # If it's a 1D array of strings, we're done
+    if name_matrix.ndim == 1:
+        return [str(s).strip('\x00').strip() for s in name_matrix]
+
+    # 2D matrix: each row is one variable name
+    var_names = []
+    for row in name_matrix:
+        # Try as character codes first
+        try:
+            if row.dtype.kind in ('u', 'i', 'f'):
+                # Integer/float array — interpret as character codes
+                name = ''.join(chr(int(c)) for c in row).strip('\x00').strip()
+            else:
+                # String/bytes array — join directly
+                name = ''.join(str(c) for c in row).strip('\x00').strip()
+        except (TypeError, ValueError):
+            name = str(row).strip('\x00').strip()
+        var_names.append(name)
+
+    return var_names

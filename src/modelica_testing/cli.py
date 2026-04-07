@@ -57,13 +57,14 @@ def cmd_discover(args: argparse.Namespace) -> int:
 
 def _get_runner(config):
     """Get the appropriate simulator runner for the configured simulator."""
-    if config.simulator == "Dymola":
+    backend = config.simulator_backend
+    if backend == "Dymola":
         from .simulators.dymola import DymolaRunner
         return DymolaRunner(config)
     else:
         raise ValueError(
-            f"Unsupported simulator: {config.simulator}. "
-            f"Supported: {', '.join(('Dymola',))}"
+            f"Unsupported simulator backend: {backend} (from '{config.simulator}'). "
+            f"Supported: Dymola"
         )
 
 
@@ -290,14 +291,16 @@ def _output_report(comparisons: list, args: argparse.Namespace) -> int:
 def _build_config(args: argparse.Namespace) -> Config:
     """Build Config from parsed CLI arguments."""
     kwargs = {}
-    if args.library_path:
-        kwargs["library_root"] = Path(args.library_path)
+    if args.package_path:
+        kwargs["package_path"] = Path(args.package_path)
     if hasattr(args, "config") and args.config:
         kwargs["config_file"] = Path(args.config)
     if hasattr(args, "reference_root") and args.reference_root:
         kwargs["reference_root"] = Path(args.reference_root)
-    if hasattr(args, "dymola_path") and args.dymola_path:
-        kwargs["dymola_path"] = args.dymola_path
+    if hasattr(args, "simulator") and args.simulator:
+        kwargs["simulator"] = args.simulator
+    if hasattr(args, "simulator_path") and args.simulator_path:
+        kwargs["simulator_path"] = args.simulator_path
     if hasattr(args, "show_ide") and args.show_ide:
         kwargs["show_ide"] = True
     if hasattr(args, "work_dir") and args.work_dir:
@@ -321,12 +324,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         description="Modelica Library Regression Testing System",
     )
     parser.add_argument(
-        "--library-path", type=str, default=None,
-        help="Path to the Modelica library root (default: auto-detect from cwd)",
+        "--package-path", type=str, default=None,
+        help="Path to the Modelica package directory containing package.mo (default: auto-detect from cwd)",
     )
     parser.add_argument(
         "--config", type=str, default=None,
-        help="Path to testing.json config file (default: look in library root)",
+        help="Path to testing.json config file (default: look near package directory)",
     )
     parser.add_argument(
         "--reference-root", type=str, default=None,
@@ -354,7 +357,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--accept", action="store_true",
         help="Accept results as new baseline references",
     )
-    p_run.add_argument("--dymola-path", type=str, help="Path to dymola executable")
+    p_run.add_argument("--simulator", type=str, help="Simulator name (e.g., 'Dymola 2025')")
+    p_run.add_argument("--simulator-path", type=str, help="Absolute path to simulator executable (overrides config)")
     p_run.add_argument(
         "--show-ide", action="store_true",
         help="Show Dymola GUI instead of running headless",

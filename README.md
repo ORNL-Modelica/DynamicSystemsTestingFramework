@@ -14,17 +14,25 @@ Library-agnostic — works with any Modelica library. Tests can be defined in-mo
 
 ```bash
 # Discover tests in a library
-uv run python -m modelica_testing discover --library-path /path/to/MyLibrary
+uv run python -m modelica_testing --package-path /path/to/MyLibrary/MyLib discover
 
 # Run tests and compare against stored references
-uv run python -m modelica_testing run --library-path /path/to/MyLibrary
+uv run python -m modelica_testing --package-path /path/to/MyLibrary/MyLib run
+
+# Run with explicit reference location
+uv run python -m modelica_testing \
+  --package-path /path/to/MyLibrary/MyLib \
+  --reference-root /path/to/my-refs \
+  run
 
 # Accept results as new baselines
-uv run python -m modelica_testing run --accept
+uv run python -m modelica_testing --package-path /path/to/MyLibrary/MyLib run --accept
 
 # Run a subset
 uv run python -m modelica_testing run --filter "*_Test" --package MyLib.Blocks
 ```
+
+`--package-path` points at the directory containing `package.mo`. If omitted, the tool auto-detects from the current working directory.
 
 ## Defining Tests
 
@@ -99,45 +107,68 @@ Or reference it from `testing.json`:
 
 ### Option 3: Both
 
-When a model appears in both `UnitTests` and `test_spec.json`, variables from both sources are merged (deduplicated). Simulation parameters from the spec override UnitTests defaults. The `.mos` file has highest priority for simulation parameters.
+When a model appears in both `UnitTests` and `test_spec.json`, variables from both sources are merged (deduplicated). Simulation parameters from the spec override experiment annotation defaults.
 
 ## Configuration
 
 ### testing.json
 
-Place in the library root or pass via `--config`:
+Auto-created on first run if not found. Looked for in the parent of the package directory (repo root), the package directory itself, or the current working directory.
 
 ```json
 {
-  "library_path": ".",
-  "simulator": "Dymola",
-  "mos_file": "runAll_Dymola.mos",
+  "simulator": "Dymola 2025",
+  "simulators": {
+    "Dymola 2025": [
+      "C:/Program Files/Dymola 2025/bin64/dymola.exe",
+      "/opt/dymola-2025/bin/dymola.sh"
+    ],
+    "Dymola 2024x": [
+      "C:/Program Files/Dymola 2024x/bin64/dymola.exe"
+    ]
+  },
   "reference_root": "/path/to/references",
   "test_spec": "test_spec.json",
   "dependencies": [
     "/path/to/SomeDependency"
-  ]
+  ],
+  "show_ide": false
 }
 ```
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `library_path` | Path to library root | Auto-detect from cwd |
-| `simulator` | `Dymola` (OpenModelica planned) | `Dymola` |
-| `mos_file` | Name of the .mos simulation script | `runAll_Dymola.mos` |
-| `reference_root` | Where to store/find references | `<library>/Resources/ReferenceResults` |
+| `simulator` | Simulator name from `simulators` map | `Dymola` |
+| `simulators` | Named entries mapping to executable paths per OS | `{}` |
+| `reference_root` | Where to store/find references | `<repo>/Resources/ReferenceResults` |
 | `test_spec` | Path to external test spec file | None |
 | `dependencies` | Paths to dependency library roots | `[]` |
-| `work_dir` | Simulation output directory | `./testing_output` |
+| `show_ide` | Show simulator GUI instead of headless | `false` |
+| `work_dir` | Simulation output directory | `./testing_output/<lib>/<sim>/<os>` |
 | `os` | Override OS detection | Auto-detect |
+
+The `simulators` map supports multiple versions and platforms. The tool picks the first path that exists on the current machine:
+
+```json
+{
+  "simulators": {
+    "Dymola 2025": [
+      "C:/Program Files/Dymola 2025/bin64/dymola.exe",
+      "/opt/dymola-2025/bin/dymola.sh",
+      "dymola"
+    ]
+  }
+}
+```
 
 ### CLI flags override config
 
 ```bash
 uv run python -m modelica_testing run \
-  --library-path /path/to/MyLibrary \
+  --package-path /path/to/MyLib \
   --reference-root /path/to/my-refs \
-  --test-spec /path/to/test_spec.json
+  --simulator "Dymola 2024x" \
+  --simulator-path "C:/Program Files/Dymola 2024x/bin64/dymola.exe"
 ```
 
 ## Commands
@@ -148,7 +179,6 @@ uv run python -m modelica_testing run \
 uv run python -m modelica_testing discover
 uv run python -m modelica_testing discover --filter "MyLib.Fluid.*"
 uv run python -m modelica_testing discover --package MyLib.Fluid
-uv run python -m modelica_testing discover --regenerate-mos
 ```
 
 ### run — Simulate and compare
@@ -165,6 +195,9 @@ uv run python -m modelica_testing run --parallel 4 --timeout 300
 
 # Compare only final values
 uv run python -m modelica_testing run --final-only --tolerance 1e-3
+
+# Show Dymola GUI for debugging
+uv run python -m modelica_testing run --show-ide --filter "MyLib.SomeTest"
 ```
 
 ### compare — Compare without re-running
@@ -223,7 +256,7 @@ uv run python -m modelica_testing migrate /path/to/old/ReferenceResults
 
 ### Layout
 
-References are partitioned by simulator and OS:
+References are partitioned by simulator backend and OS:
 
 ```
 <reference_root>/
@@ -231,7 +264,6 @@ References are partitioned by simulator and OS:
 ├── Dymola/
 │   ├── linux/
 │   │   ├── ref_0001.json
-│   │   ├── ref_0002.json
 │   │   └── ...
 │   └── windows/
 │       ├── ref_0001.json
@@ -241,17 +273,33 @@ References are partitioned by simulator and OS:
         └── ...
 ```
 
+### Simulation output
+
+Simulation artifacts are partitioned to prevent conflicts when testing with multiple simulator versions or platforms:
+
+```
+testing_output/
+└── TRANSFORM/
+    ├── Dymola/
+    │   └── windows/
+    │       ├── test_0001.mos
+    │       ├── test_0001.mat
+    │       └── ...
+    └── Dymola_2024x/
+        └── windows/
+            └── ...
+```
+
 ### Typical setup
 
 ```
-my-library/                     # The Modelica library
-├── MyLibrary/
-│   └── package.mo
+TRANSFORM-Library/              # The Modelica library repo
+├── TRANSFORM/
+│   └── package.mo              # <-- point --package-path here
 ├── testing.json
-├── test_spec.json
-└── runAll_Dymola.mos
+└── test_spec.json
 
-my-library-references/          # Reference results (can be a separate repo)
+TRANSFORM-References/           # Reference results (separate repo)
 ├── test_manifest.json
 └── Dymola/
     └── windows/
@@ -263,7 +311,7 @@ my-library-references/          # Reference results (can be a separate repo)
 
 ### Test discovery
 
-Scans `.mo` files for `UnitTests` component instantiations and/or reads `test_spec.json`. Extracts tracked variables and simulation parameters. Merges with `.mos` file overrides (highest priority).
+Scans `.mo` files for `UnitTests` component instantiations and/or reads `test_spec.json`. Extracts tracked variables and simulation parameters from experiment annotations, with spec overrides applied on top.
 
 ### Simulation
 
@@ -276,7 +324,11 @@ Mirrors the `AbsRelRMS.mo` logic: absolute and relative errors with machine-epsi
 ## CI Integration
 
 ```yaml
-- run: uv run python -m modelica_testing run --report-format junit
+- run: |
+    uv run python -m modelica_testing \
+      --package-path ./MyLibrary \
+      --reference-root ./references \
+      run --report-format junit
 - uses: actions/upload-artifact@v4
   with:
     name: test-results
