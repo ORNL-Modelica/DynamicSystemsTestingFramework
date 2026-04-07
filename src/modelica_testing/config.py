@@ -200,20 +200,29 @@ class Config:
         # (e.g., TRANSFORM-Library/ is parent of TRANSFORM-Library/TRANSFORM/)
         repo_root = self.package_path.parent
 
+        # Resolve reference root early — needed for auto-create location
+        if self.reference_root is not None:
+            self.reference_root = Path(self.reference_root).resolve()
+
         # Load config file
         file_config = {}
         if self.config_file:
             file_config = load_config_file(Path(self.config_file))
         else:
-            # Look in repo root first, then package dir, then cwd
-            for search_dir in [repo_root, self.package_path, Path.cwd()]:
+            # Look in reference root, repo root, package dir, then cwd
+            search_dirs = [repo_root, self.package_path, Path.cwd()]
+            if self.reference_root is not None:
+                search_dirs.insert(0, self.reference_root)
+            for search_dir in search_dirs:
                 file_config = load_config_file(search_dir)
                 if file_config:
                     break
 
         # Auto-create testing.json if none was found
         if not file_config:
-            file_config = _create_default_config(repo_root, self.library_name)
+            # Put it in reference_root if specified, otherwise repo root
+            config_dir = self.reference_root if self.reference_root else repo_root
+            file_config = _create_default_config(config_dir, self.library_name)
 
         # OS detection
         if self.os_name is None:
@@ -244,7 +253,7 @@ class Config:
                 backend = self.simulator_backend.lower()
                 self.simulator_path = shutil.which(backend) or backend
 
-        # Reference root
+        # Reference root (may already be set from CLI arg above)
         if self.reference_root is None:
             ref_path = file_config.get("reference_root")
             if ref_path:
