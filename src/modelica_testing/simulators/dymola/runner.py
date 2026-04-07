@@ -41,6 +41,8 @@ class DymolaRunner(SimulatorRunner):
 
         _print_progress(index, total, short_name, "running")
 
+        timeout = test.timeout if test.timeout is not None else self.config.timeout
+
         start_time = time.monotonic()
         try:
             cmd = [self.config.simulator_path]
@@ -54,7 +56,7 @@ class DymolaRunner(SimulatorRunner):
                 stderr=subprocess.PIPE,
                 cwd=str(test_dir),
             )
-            stdout, stderr = proc.communicate(timeout=self.config.timeout)
+            stdout, stderr = proc.communicate(timeout=timeout)
             elapsed = time.monotonic() - start_time
 
             # dslog.txt is in the per-test directory — no rename needed
@@ -86,7 +88,7 @@ class DymolaRunner(SimulatorRunner):
             elapsed = time.monotonic() - start_time
             proc.kill()
             proc.communicate()
-            msg = f"Timed out after {self.config.timeout}s"
+            msg = f"Timed out after {timeout}s"
             _print_progress(index, total, short_name, "TIMEOUT", elapsed, msg)
             return TestRunResult(
                 model_id=test.model_id,

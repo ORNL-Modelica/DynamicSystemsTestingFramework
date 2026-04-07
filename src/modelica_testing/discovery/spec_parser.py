@@ -87,6 +87,8 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
             test.number_of_intervals = int(entry["number_of_intervals"])
         if "output_interval" in entry:
             test.output_interval = float(entry["output_interval"])
+        if "timeout" in entry:
+            test.timeout = int(entry["timeout"])
         if "error_expected" in entry:
             test.error_expected = float(entry["error_expected"])
 

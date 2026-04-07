@@ -35,6 +35,7 @@ def print_report(comparisons: list[TestComparison]) -> int:
     n_no_ref = 0
     n_sim_fail = 0
     failures: list[TestComparison] = []
+    warned: list[TestComparison] = []
 
     for comp in comparisons:
         status = _pass_fail(comp.passed)
@@ -50,9 +51,15 @@ def print_report(comparisons: list[TestComparison]) -> int:
         else:
             n_failed += 1
 
-        print(f"  {status}  {comp.model_id}")
+        # Show warning indicator if structural changes detected
+        warn_tag = ""
+        if comp.warnings:
+            warn_tag = _color(" [WARN]", _YELLOW)
+            warned.append(comp)
 
-        if not comp.passed:
+        print(f"  {status}  {comp.model_id}{warn_tag}")
+
+        if not comp.passed and comp.sim_success:
             failures.append(comp)
 
     # Summary
@@ -64,7 +71,9 @@ def print_report(comparisons: list[TestComparison]) -> int:
     if n_sim_fail:
         print(_color(f"  Simulation errors: {n_sim_fail}", _RED))
     if n_no_ref:
-        print(_color(f"  No reference: {n_no_ref}", _YELLOW))
+        print(_color(f"  No baseline: {n_no_ref}", _YELLOW))
+    if warned:
+        print(_color(f"  Structural warnings: {len(warned)}", _YELLOW))
 
     # Print failure details
     if failures:
@@ -79,15 +88,28 @@ def print_report(comparisons: list[TestComparison]) -> int:
                 if not var.passed:
                     _print_var_failure(var)
 
+    # Print structural warnings
+    if warned:
+        print()
+        print(_color("Structural Warnings:", _BOLD))
+        print("-" * 80)
+        for comp in warned:
+            print(f"\n  {comp.model_id}")
+            for w in comp.warnings:
+                print(f"    {w.field}: {w.reference_value} -> {w.current_value}")
+
     return 0 if n_failed == 0 and n_sim_fail == 0 else 1
 
 
 def _print_var_failure(var: VariableComparison):
     """Print details for a failed variable comparison."""
-    expr = var.expression or f"x[{var.index}]"
-    print(f"    unitTests.x[{var.index}] ({expr}):")
-    print(f"      RMS abs error: {var.abs_error_rms:.6e}")
-    print(f"      RMS rel error: {var.rel_error_rms:.6e}")
-    print(f"      Max abs error: {var.max_abs_error:.6e}")
-    print(f"      Reference final: {var.reference_final:.6e}")
-    print(f"      Actual final:    {var.actual_final:.6e}")
+    name = var.name or f"x[{var.index}]"
+    print(f"    {name}:")
+    if var.is_constant:
+        print(f"      RMSE:               {var.rmse:.6e} (constant signal)")
+    else:
+        print(f"      NRMSE:              {var.nrmse:.6e} (signal range: {var.signal_range:.4e})")
+        print(f"      RMSE:               {var.rmse:.6e}")
+    print(f"      Max abs error:      {var.max_abs_error:.6e} (at t={var.max_abs_error_time:g})")
+    print(f"      Reference final:    {var.reference_final:.6e}")
+    print(f"      Actual final:       {var.actual_final:.6e}")

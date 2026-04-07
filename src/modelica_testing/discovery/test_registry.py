@@ -31,6 +31,7 @@ class TestModel:
     number_of_intervals: Optional[int] = None
     output_interval: Optional[float] = None
     result_file: str = ""
+    timeout: Optional[int] = None  # Per-test timeout override (seconds)
 
     # External spec: variable patterns (may include globs like "medium.T*" or "*")
     # These are resolved against actual .mat variable names after simulation.

@@ -11,15 +11,10 @@ def generate_junit_report(
     comparisons: list[TestComparison],
     output_path: Path,
 ) -> None:
-    """Generate a JUnit XML report from test comparisons.
-
-    Groups tests into test suites by top-level package.
-    """
-    # Group by package (second level, e.g., "TRANSFORM.Fluid")
+    """Generate a JUnit XML report from test comparisons."""
     suites: dict[str, list[TestComparison]] = defaultdict(list)
     for comp in comparisons:
         parts = comp.model_id.split(".")
-        # Use first two segments as suite name
         suite_name = ".".join(parts[:2]) if len(parts) >= 2 else parts[0]
         suites[suite_name].append(comp)
 
@@ -37,7 +32,7 @@ def generate_junit_report(
         )
         n_errors = sum(
             1 for c in suite_comps
-            if not c.sim_success or not c.has_reference
+            if not c.sim_success
         )
 
         suite_elem = ET.SubElement(root, "testsuite", {
@@ -54,26 +49,26 @@ def generate_junit_report(
             })
 
             if not comp.sim_success:
-                err = ET.SubElement(tc, "error", {
+                ET.SubElement(tc, "error", {
                     "message": comp.error_message or "Simulation failed",
                     "type": "SimulationError",
                 })
             elif not comp.has_reference:
-                err = ET.SubElement(tc, "error", {
-                    "message": "No reference results stored",
-                    "type": "MissingReference",
+                # No baseline — not an error, just a skipped test
+                ET.SubElement(tc, "skipped", {
+                    "message": "No reference baseline stored",
                 })
             elif not comp.passed:
-                # Build failure message from variable details
                 msgs = []
                 for var in comp.variables:
                     if not var.passed:
-                        expr = var.expression or f"x[{var.index}]"
+                        name = var.name or f"x[{var.index}]"
                         msgs.append(
-                            f"unitTests.x[{var.index}] ({expr}): "
-                            f"RMS={var.abs_error_rms:.6e}, "
-                            f"ref={var.reference_final:.6e}, "
-                            f"act={var.actual_final:.6e}"
+                            f"{name}: "
+                            f"NRMSE={var.nrmse:.6e}, "
+                            f"max_abs={var.max_abs_error:.6e} at t={var.max_abs_error_time:g}, "
+                            f"ref_final={var.reference_final:.6e}, "
+                            f"act_final={var.actual_final:.6e}"
                         )
                 fail = ET.SubElement(tc, "failure", {
                     "message": f"{len(msgs)} variable(s) exceeded tolerance",
