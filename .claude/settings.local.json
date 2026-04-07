@@ -30,7 +30,8 @@
       "Bash(ls /mnt/d/Modelica/TRANSFORM-UnitTests/ReferenceResults/Dymola/linux/*.json)",
       "Bash(python3 -c ':*)",
       "Bash(python3:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(find testing:*)"
     ]
   }
 }

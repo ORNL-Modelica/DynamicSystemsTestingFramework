@@ -1,4 +1,4 @@
-"""Entry point for `python -m testing`."""
+"""Entry point for `python -m modelica_testing`."""
 
 import sys
 from .cli import main

@@ -1,54 +1,64 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
-TRANSFORM (TRANsient Simulation Framework Of Reconfigurable Models) is a Modelica library for modeling thermal hydraulic energy systems and multi-physics systems, primarily targeting nuclear reactor applications. It requires **Dymola** as the simulation tool and uses **Modelica Standard Library 4.0.0**.
+**ModelicaTesting** is a standalone Python tool for regression testing Modelica libraries. It is library-agnostic — it works with any Modelica library that uses the `UnitTests` pattern for tracking simulation variables.
 
-## Running Tests
+The tool discovers tests by scanning `.mo` files, runs simulations in Dymola (with OpenModelica support planned), compares results against stored references, and reports pass/fail.
 
-All unit tests are run via the Dymola script:
+## Project Structure
+
 ```
-runAll_Dymola.mos
+ModelicaTesting/
+├── src/
+│   └── modelica_testing/        # Python package (src layout)
+│       ├── cli.py               # CLI entry points: discover, run, compare, export, migrate
+│       ├── config.py            # Configuration and path resolution
+│       ├── discovery/           # Test discovery: scan .mo for UnitTests, parse .mos
+│       ├── simulation/          # Dymola runner, .mat reader, dslog parser
+│       ├── comparison/          # Reference comparison (AbsRelRMS logic)
+│       ├── storage/             # JSON reference storage, migration from buildingspy
+│       ├── reporting/           # Console, JUnit XML, HTML reporters
+│       └── tools/               # Verification utilities
+├── pyproject.toml               # uv project config
+└── CLAUDE.md
 ```
-This file contains `simulateModel(...)` calls for each test case. There is no command-line test runner — tests are executed within Dymola. Each call specifies the model path, solver method, tolerance, and result file name.
 
-To run a single test, execute the corresponding `simulateModel(...)` line in Dymola, e.g.:
-```modelica
-simulateModel("TRANSFORM.Fluid.Examples.NaturalCirculation", stopTime=1000, numberOfIntervals=1000, method="Esdirk45a", tolerance=1e-4, resultFile="NaturalCirculation");
+## Running the Tool
+
+```bash
+# Discover tests in a library
+uv run python -m modelica_testing discover --library-path /path/to/MyLibrary
+
+# Run tests and compare
+uv run python -m modelica_testing run --library-path /path/to/MyLibrary
+
+# Accept results as new baselines
+uv run python -m modelica_testing run --accept
 ```
 
-## Architecture
+## Configuration
 
-### Package Organization
+The tool looks for `testing.json` in the target library root. Key fields:
 
-All source code is under `TRANSFORM/`. Major packages:
+- `library_path` — path to Modelica library root
+- `reference_root` — where reference results live (default: `<library>/Resources/ReferenceResults`)
+- `simulator` — `Dymola` or `OpenModelica`
+- `dependencies` — paths to dependency libraries loaded before simulation
 
-- **Fluid** — Largest package. Pipes, volumes, valves, pumps, turbines, sensors, boundary conditions. Subpackage `ClosureRelations/` provides pluggable models for heat transfer, pressure loss, geometry, mass transfer, void fraction, and pump characteristics.
-- **HeatAndMassTransfer** — Discretized wall/volume heat conduction models.
-- **HeatExchangers** — Shell-and-tube, distributed, LMTD/NTU heat exchanger models.
-- **Nuclear** — Reactor kinetics (point kinetics), fuel models, core subchannels, dose calculations.
-- **Media** — Custom fluid properties (molten salts, liquid metals, organics) and solid properties (alloys, ceramics, insulation). Organized into `Fluids/` and `Solids/` subdirectories.
-- **Examples** — Complete plant models: PWR (Westinghouse), SMR (IRIS), MSR, SFR, sCO2 cycles, CIET facility.
-- **Controls, Blocks, Electrical, Mechanics** — Supporting component packages.
-- **Math, Units, Types, Utilities, Icons** — Library infrastructure.
+Reference results are partitioned by `<reference_root>/<Simulator>/<os>/`.
 
-### Key Design Patterns
+## Key Abstractions
 
-1. **Reconfigurable composition via `replaceable`**: The core extensibility mechanism. Geometry, closure relations (heat transfer correlations, pressure loss models), and media packages are all swappable via `redeclare`. Example: `GenericDistributed_HX` has `replaceable model Geometry`, `replaceable model FlowModel_shell`, `replaceable package Medium_tube`.
+- **`Config`** (`config.py`) — resolves all paths from CLI args + `testing.json` + defaults
+- **`TestModel`** (`discovery/test_registry.py`) — fully resolved test with model ID, simulation params, tracked variables
+- **`ReferenceStore`** (`storage/reference_store.py`) — CRUD for per-test JSON reference files + index
+- **`comparator`** (`comparison/comparator.py`) — AbsRelRMS error calculation matching Modelica's `AbsRelRMS.mo`
 
-2. **Discretized 1D volumes**: Pipes and heat exchangers are arrays of `nV` control volumes with `linspace_1D`-initialized start values for pressure, temperature, enthalpy, mass fractions, and trace substances.
+## Design Principles
 
-3. **`outer TRANSFORM.Fluid.SystemTF`**: Global system object (analogous to `Modelica.Fluid.System`) accessed via `inner`/`outer` for default system-level parameters.
-
-4. **`Summary` sub-records**: Models expose a `summary` record for post-processing convenience (effective temperatures, max temperatures, normalized positions).
-
-5. **Initialization convention**: Start values are organized into `tab="Initialization"` parameter dialog groups.
-
-### Modelica File Conventions
-
-- Each package has a `package.mo` (package definition) and `package.order` (ordering of sub-components).
-- The `within` clause at the top of each `.mo` file specifies its parent package path.
-- Global imports in the top-level `package.mo`: `SI` (from `Modelica.Units.SI`), `SIadd` (from `TRANSFORM.Units`), `pi`, `Math`.
-- Base/partial classes live in `BaseClasses/` subdirectories within each package.
+1. **Library-agnostic**: auto-detects library name from `package.mo`, all paths configurable
+2. **Simulator-agnostic** (in progress): Dymola-specific code is isolated in `simulation/`
+3. **Stable test IDs**: numeric IDs (`ref_0001.json`) with a manifest mapping IDs to model paths
+4. **Reference partitioning**: results split by simulator and OS since solvers produce platform-specific results
+5. **No hardcoded paths**: the tool does not assume where it lives relative to the library or references

@@ -164,12 +164,13 @@ class Config:
         if "simulator" in file_config:
             self.simulator = file_config["simulator"]
 
-        # Reference root: CLI arg > config file > error
+        # Reference root: CLI arg > config file > default
         if self.reference_root is None:
             ref_path = file_config.get("reference_root")
             if ref_path:
                 self.reference_root = Path(ref_path).resolve()
-            # else: left as None — commands that need it will raise an error
+            else:
+                self.reference_root = self.library_root / "Resources" / "ReferenceResults"
         else:
             self.reference_root = Path(self.reference_root).resolve()
 
@@ -204,15 +205,6 @@ class Config:
     def mos_file(self) -> Path:
         return self.library_root / self.mos_filename
 
-    def _require_reference_root(self) -> Path:
-        if self.reference_root is None:
-            raise ValueError(
-                "No reference_root configured. Set it via:\n"
-                "  --reference-root /path/to/references\n"
-                "  or in testing.json: {\"reference_root\": \"/path/to/references\"}"
-            )
-        return self.reference_root
-
     @property
     def reference_dir(self) -> Path:
         """Reference results directory, partitioned by simulator and OS.
@@ -220,8 +212,17 @@ class Config:
         Structure: <reference_root>/<Simulator>/<os>/
         e.g.:      references/Dymola/linux/
         """
-        return self._require_reference_root() / self.simulator / self.os_name
+        return self.reference_root / self.simulator / self.os_name
 
     @property
     def index_file(self) -> Path:
         return self.reference_dir / "index.json"
+
+    @property
+    def manifest_file(self) -> Path:
+        """Test manifest file — maps stable numeric IDs to model IDs.
+
+        Lives at the reference_root level (not per-simulator/OS) because
+        the ID-to-model mapping is universal.
+        """
+        return self.reference_root / "test_manifest.json"
