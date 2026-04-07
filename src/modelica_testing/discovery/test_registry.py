@@ -37,37 +37,6 @@ class TestModel:
     in_mos: bool = False  # Whether this test appears in runAll_Dymola.mos
 
 
-def generate_reference_filename(
-    model_id: str,
-    library_name: str = "",
-    path_abbreviations: Optional[dict[str, str]] = None,
-) -> str:
-    """Generate a short, unique filename for a model's reference results.
-
-    Strips the library prefix, abbreviates known long paths,
-    and replaces dots with underscores.
-    """
-    name = model_id
-    # Strip library prefix (e.g., "TRANSFORM." or "Buildings.")
-    if library_name and name.startswith(library_name + "."):
-        name = name[len(library_name) + 1:]
-
-    # Apply abbreviations for deeply nested paths
-    if path_abbreviations:
-        for long_path, short in path_abbreviations.items():
-            if long_path in name:
-                name = name.replace(long_path, short)
-                break  # Apply only one abbreviation
-
-    # Remove "Examples." segments (redundant for test files)
-    name = name.replace("Examples.", "")
-
-    # Replace dots with underscores
-    name = name.replace(".", "_")
-
-    return name + ".json"
-
-
 def _merge_params(
     mo_result: MoParseResult, sim_params: Optional[SimParams]
 ) -> TestModel:

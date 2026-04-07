@@ -121,9 +121,6 @@ class Config:
     # Output
     work_dir: Optional[Path] = None
 
-    # Filename shortening for references
-    path_abbreviations: dict[str, str] = field(default_factory=dict)
-
     # .mos file name
     mos_filename: Optional[str] = None
 
@@ -178,10 +175,6 @@ class Config:
         if not self.dependencies and "dependencies" in file_config:
             self.dependencies = file_config["dependencies"]
 
-        # Path abbreviations
-        if not self.path_abbreviations and "path_abbreviations" in file_config:
-            self.path_abbreviations = file_config["path_abbreviations"]
-
         # MOS filename
         if self.mos_filename is None:
             self.mos_filename = file_config.get("mos_file", "runAll_Dymola.mos")
@@ -213,10 +206,6 @@ class Config:
         e.g.:      references/Dymola/linux/
         """
         return self.reference_root / self.simulator / self.os_name
-
-    @property
-    def index_file(self) -> Path:
-        return self.reference_dir / "index.json"
 
     @property
     def manifest_file(self) -> Path:

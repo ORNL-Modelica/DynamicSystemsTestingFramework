@@ -10,7 +10,7 @@ from typing import Optional
 import numpy as np
 
 from ..config import Config
-from ..discovery.test_registry import TestModel, generate_reference_filename
+from ..discovery.test_registry import TestModel
 from ..simulation.result_reader import TestResult, VariableResult
 
 logger = logging.getLogger(__name__)
@@ -114,74 +114,31 @@ class TestManifest:
 
 
 class ReferenceStore:
-    """Manages per-test JSON reference files.
-
-    Uses TestManifest for stable numeric IDs when available.
-    Falls back to abbreviated filenames + index.json for backward compatibility
-    with existing reference directories that predate the manifest system.
-    """
+    """Manages per-test JSON reference files using the test manifest."""
 
     def __init__(self, config: Config):
         self.config = config
         self.ref_dir = config.reference_dir
         self._manifest = TestManifest(config.manifest_file)
-        self._index: Optional[dict] = None
+
+    @property
+    def manifest(self) -> TestManifest:
+        return self._manifest
 
     def _ensure_dir(self):
         self.ref_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Legacy index.json support (backward compat) ---
-
-    def _load_index(self) -> dict:
-        if self._index is not None:
-            return self._index
-        if self.config.index_file.exists():
-            self._index = json.loads(
-                self.config.index_file.read_text(encoding="utf-8")
-            )
-        else:
-            self._index = {}
-        return self._index
-
-    def _save_index(self):
-        self._ensure_dir()
-        self.config.index_file.write_text(
-            json.dumps(self._index, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-
-    # --- File resolution ---
-
-    def _ref_file_for_model(self, model_id: str) -> Path:
-        """Get the reference file path for a model.
-
-        Resolution order:
-        1. Manifest (numeric ID -> ref_NNNN.json)
-        2. Legacy index.json (model_id -> abbreviated filename)
-        3. Generate abbreviated filename from model_id (oldest fallback)
-        """
-        # Try manifest first
+    def _ref_file_for_model(self, model_id: str) -> Optional[Path]:
+        """Get the reference file path for a model. Returns None if not in manifest."""
         test_id = self._manifest.get_id(model_id)
-        if test_id is not None:
-            return self.ref_dir / TestManifest.ref_filename(test_id)
-
-        # Fall back to legacy index
-        index = self._load_index()
-        if model_id in index:
-            return self.ref_dir / index[model_id]["filename"]
-
-        # Final fallback: generate abbreviated filename
-        filename = generate_reference_filename(
-            model_id,
-            library_name=self.config.library_name,
-            path_abbreviations=self.config.path_abbreviations or None,
-        )
-        return self.ref_dir / filename
+        if test_id is None:
+            return None
+        return self.ref_dir / TestManifest.ref_filename(test_id)
 
     def get_reference(self, model_id: str) -> Optional[dict]:
         """Load reference data for a model. Returns None if not found."""
         ref_file = self._ref_file_for_model(model_id)
-        if not ref_file.exists():
+        if ref_file is None or not ref_file.exists():
             return None
         try:
             return json.loads(ref_file.read_text(encoding="utf-8"))
@@ -200,7 +157,6 @@ class ReferenceStore:
 
         self._ensure_dir()
 
-        # Register in manifest (assigns ID if new)
         test_id = self._manifest.register(test.model_id)
         filename = TestManifest.ref_filename(test_id)
         ref_file = self.ref_dir / filename
@@ -246,16 +202,6 @@ class ReferenceStore:
             _compact_json(ref_data) + "\n", encoding="utf-8"
         )
 
-        # Also update legacy index for backward compat
-        index = self._load_index()
-        index[test.model_id] = {
-            "filename": filename,
-            "n_vars": test.n_vars,
-            "last_updated": ref_data["last_updated"],
-        }
-        self._index = index
-        self._save_index()
-
         return True
 
     def accept_results(
@@ -273,11 +219,7 @@ class ReferenceStore:
 
     def list_models(self) -> list[str]:
         """List all model IDs with stored references."""
-        # Prefer manifest if it exists
-        if self._manifest.exists():
-            return sorted(self._manifest.active_tests().values())
-        index = self._load_index()
-        return sorted(index.keys())
+        return sorted(self._manifest.active_tests().values())
 
     def export_json(self, output_path: Path):
         """Export all references as a single JSON file."""
@@ -320,13 +262,7 @@ class ReferenceStore:
                     ])
 
     def cleanup_obsolete(self) -> int:
-        """Remove reference files for tests marked obsolete in the manifest.
-
-        Returns the number of files removed.
-        """
-        if not self._manifest.exists():
-            return 0
-
+        """Remove reference files for tests marked obsolete in the manifest."""
         data = self._manifest._load()
         removed = 0
         for test_id, entry in data["tests"].items():

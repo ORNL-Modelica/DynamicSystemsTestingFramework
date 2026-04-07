@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..config import Config
-from ..discovery.test_registry import TestModel, generate_reference_filename
+from ..discovery.test_registry import TestModel
 
 logger = logging.getLogger(__name__)
 

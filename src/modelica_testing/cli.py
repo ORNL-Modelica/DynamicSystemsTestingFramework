@@ -179,6 +179,31 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_convert(args: argparse.Namespace) -> int:
+    """Convert reference files between old (abbreviated) and new (manifest) formats."""
+    config = _build_config(args)
+
+    from .storage.convert import convert_to_manifest, convert_from_manifest
+
+    ref_dir = config.reference_dir
+    manifest_path = config.manifest_file
+
+    if args.direction == "to-manifest":
+        print(f"Converting references in {ref_dir} to manifest format...")
+        index_path = ref_dir / "index.json" if (ref_dir / "index.json").exists() else None
+        converted = convert_to_manifest(ref_dir, manifest_path, index_path)
+        print(f"\nConverted {converted} files. Manifest: {manifest_path}")
+        return 0 if converted > 0 else 1
+
+    elif args.direction == "from-manifest":
+        print(f"Converting references in {ref_dir} from manifest to readable names...")
+        converted = convert_from_manifest(ref_dir, manifest_path, config.library_name)
+        print(f"\nConverted {converted} files.")
+        return 0 if converted > 0 else 1
+
+    return 1
+
+
 def _output_report(comparisons: list, args: argparse.Namespace) -> int:
     """Route comparisons to the selected report format."""
     fmt = getattr(args, "report_format", "console")
@@ -337,6 +362,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     _add_ref_arg(p_migrate)
 
+    # convert
+    p_convert = subparsers.add_parser(
+        "convert", help="Convert reference files between old and new formats"
+    )
+    p_convert.add_argument(
+        "direction", choices=["to-manifest", "from-manifest"],
+        help="'to-manifest': old abbreviated names -> ref_NNNN.json + manifest. "
+             "'from-manifest': ref_NNNN.json -> human-readable names + index.json",
+    )
+    _add_ref_arg(p_convert)
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -349,6 +385,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "compare": cmd_compare,
         "export": cmd_export,
         "migrate": cmd_migrate,
+        "convert": cmd_convert,
     }
 
     return commands[args.command](args)
