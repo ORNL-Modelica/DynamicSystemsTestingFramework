@@ -131,8 +131,12 @@ class BatchManifest:
     manifest: dict[str, str]  # test_NNNN -> model_id
     results: list[TestRunResult] = field(default_factory=list)
 
+    def test_dir(self, test_key: str) -> Path:
+        """Per-test subdirectory for all simulation artifacts."""
+        return self.work_dir / test_key
+
     def mat_file(self, test_key: str) -> Path:
-        return self.work_dir / f"{test_key}.mat"
+        return self.test_dir(test_key) / f"{test_key}.mat"
 
     def save(self) -> Path:
         path = self.work_dir / f"batch_{self.batch_id:04d}_manifest.json"
