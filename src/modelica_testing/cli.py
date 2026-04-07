@@ -356,13 +356,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Regenerate runAll_Dymola.mos from discovered tests",
     )
 
-    # Shared arg for subcommands that need reference results
-    def _add_ref_arg(p):
-        p.add_argument(
-            "--reference-root", type=str, default=None,
-            help="Path to reference results root",
-        )
-
     # run
     p_run = subparsers.add_parser("run", help="Run tests in Dymola")
     p_run.add_argument("--filter", type=str, help="Glob pattern for model_id")
@@ -384,7 +377,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--report-format", choices=["console", "junit", "html"],
         default="console", help="Output format for test report",
     )
-    _add_ref_arg(p_run)
+    #_run)
 
     # compare
     p_compare = subparsers.add_parser(
@@ -398,7 +391,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--report-format", choices=["console", "junit", "html"],
         default="console",
     )
-    _add_ref_arg(p_compare)
+    #_compare)
 
     # export
     p_export = subparsers.add_parser("export", help="Export reference data")
@@ -409,7 +402,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_export.add_argument("--output", type=str, help="Output file path")
     p_export.add_argument("--filter", type=str, help="Glob pattern for model_id")
     p_export.add_argument("--package", type=str, help="Filter by package prefix")
-    _add_ref_arg(p_export)
+    #_export)
 
     # migrate
     p_migrate = subparsers.add_parser(
@@ -435,7 +428,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--verify-output", type=str, default=None,
         help="Output directory for verification results (default: <work_dir>/migration_verify)",
     )
-    _add_ref_arg(p_migrate)
+    #_migrate)
 
     # manifest
     p_manifest = subparsers.add_parser(
@@ -453,7 +446,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--show-obsolete", action="store_true",
         help="Also show obsolete entries (show only)",
     )
-    _add_ref_arg(p_manifest)
+    #_manifest)
 
     # convert
     p_convert = subparsers.add_parser(
@@ -464,7 +457,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="'to-manifest': old abbreviated names -> ref_NNNN.json + manifest. "
              "'from-manifest': ref_NNNN.json -> human-readable names + index.json",
     )
-    _add_ref_arg(p_convert)
+    #_convert)
 
     args = parser.parse_args(argv)
 
