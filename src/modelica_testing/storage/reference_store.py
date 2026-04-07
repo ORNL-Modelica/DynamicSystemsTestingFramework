@@ -162,15 +162,16 @@ class ReferenceStore:
         ref_file = self.ref_dir / filename
 
         # Build the reference JSON
+        # All variables share the same time vector (Modelica spec).
+        # Downsample time once, then apply the same sampling to all variables.
         shared_time = result.variables[0].time
         shared_time_list, _ = _downsample(shared_time, shared_time)
-        ds_indices = _downsample_indices(len(shared_time))
+        n_ds = len(shared_time_list)
 
         variables = []
         for var in result.variables:
-            values_ds = var.values[ds_indices] if ds_indices is not None else var.values
-            values_list = _to_json_list(values_ds)
-
+            _, values_list = _downsample(shared_time, var.values)
+            # Ensure same length as time (downsample is deterministic for same input time)
             variables.append({
                 "index": var.index,
                 "name": var.name,
@@ -274,24 +275,41 @@ class ReferenceStore:
         return removed
 
 
-def _downsample_indices(n: int, max_points: int = 2000) -> Optional[np.ndarray]:
-    """Compute downsample indices. Returns None if no downsampling needed."""
-    if n <= max_points:
-        return None
-    indices = np.linspace(0, n - 1, max_points, dtype=int)
-    indices[0] = 0
-    indices[-1] = n - 1
-    return indices
-
-
 def _downsample(
     time: np.ndarray, values: np.ndarray, max_points: int = 2000
 ) -> tuple[list[float], list[float]]:
-    """Downsample a time series to at most max_points, always keeping first/last."""
-    indices = _downsample_indices(len(time), max_points)
-    if indices is None:
+    """Downsample a time series to at most max_points.
+
+    Always preserves first, last, and event boundaries (duplicate time points).
+    Evenly samples remaining points to fill up to max_points.
+    """
+    n = len(time)
+    if n <= max_points:
         return _to_json_list(time), _to_json_list(values)
-    return _to_json_list(time[indices]), _to_json_list(values[indices])
+
+    # Find event boundary indices (duplicate time values — keep both)
+    event_indices = set()
+    event_indices.add(0)
+    event_indices.add(n - 1)
+    for i in range(1, n):
+        if time[i] == time[i - 1]:
+            event_indices.add(i - 1)  # pre-event
+            event_indices.add(i)      # post-event
+
+    # Fill remaining budget with evenly spaced indices
+    remaining = max_points - len(event_indices)
+    if remaining > 0:
+        candidates = np.linspace(0, n - 1, remaining + len(event_indices), dtype=int)
+        all_indices = sorted(event_indices | set(candidates.tolist()))
+    else:
+        all_indices = sorted(event_indices)
+
+    # Trim to max_points if we overshot
+    if len(all_indices) > max_points:
+        all_indices = all_indices[:max_points]
+
+    idx = np.array(all_indices)
+    return _to_json_list(time[idx]), _to_json_list(values[idx])
 
 
 def _to_json_list(arr: np.ndarray) -> list[float]:

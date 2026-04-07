@@ -193,12 +193,16 @@ def _print_progress(
 # ---------------------------------------------------------------------------
 
 class SimulatorRunner(ABC):
-    """Abstract interface for running Modelica simulations."""
+    """Abstract interface for running Modelica simulations.
+
+    Subclasses must implement read_result(). They should override
+    run_tests() for batch execution, or implement run_single_test()
+    to use the default per-process execution.
+    """
 
     def __init__(self, config: Config):
         self.config = config
 
-    @abstractmethod
     def run_single_test(
         self,
         test: TestModel,
@@ -206,8 +210,12 @@ class SimulatorRunner(ABC):
         index: int,
         total: int,
     ) -> TestRunResult:
-        """Run a single test and return the result."""
-        ...
+        """Run a single test and return the result.
+
+        Override this for per-process execution (default run_tests uses this).
+        Not needed if run_tests is overridden entirely (e.g., batch execution).
+        """
+        raise NotImplementedError("Override run_tests() or run_single_test()")
 
     @abstractmethod
     def read_result(

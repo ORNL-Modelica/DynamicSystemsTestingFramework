@@ -157,6 +157,7 @@ class Config:
     simulator: str = "Dymola"
     simulator_path: Optional[str] = None
     show_ide: bool = False
+    simulator_setup: list[str] = field(default_factory=list)  # Commands run after loading libraries
 
     # OS override (auto-detected if not set)
     os_name: Optional[str] = None
@@ -235,6 +236,10 @@ class Config:
         # Show IDE
         if not self.show_ide and "show_ide" in file_config:
             self.show_ide = file_config["show_ide"]
+
+        # Simulator setup commands
+        if not self.simulator_setup and "simulator_setup" in file_config:
+            self.simulator_setup = file_config["simulator_setup"]
 
         # Resolve simulator executable path
         if self.simulator_path is None:

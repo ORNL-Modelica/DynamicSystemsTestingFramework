@@ -53,6 +53,60 @@ class TestComparison:
     has_reference: bool = True
 
 
+def _find_event_boundaries(time: np.ndarray) -> list[int]:
+    """Find indices where duplicate time values indicate event boundaries.
+
+    Returns indices of the first occurrence at each duplicate time —
+    these are the pre-event values that end one segment.
+    """
+    boundaries = []
+    for i in range(1, len(time)):
+        if time[i] == time[i - 1]:
+            boundaries.append(i)
+    return boundaries
+
+
+def _split_segments(
+    time: np.ndarray,
+    values: np.ndarray,
+    boundaries: list[int],
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Split time/values at event boundaries into piecewise segments.
+
+    Each segment has strictly monotonic time. At a boundary (duplicate time),
+    the pre-event value belongs to the previous segment and the post-event
+    value starts the next segment.
+    """
+    if not boundaries:
+        return [(time, values)]
+
+    segments = []
+    prev = 0
+    for b in boundaries:
+        # Segment up to and including the pre-event value
+        segments.append((time[prev:b], values[prev:b]))
+        prev = b  # Next segment starts at the post-event value
+
+    # Final segment
+    if prev < len(time):
+        segments.append((time[prev:], values[prev:]))
+
+    return segments
+
+
+def _dedup_time_series(
+    time: np.ndarray, values: np.ndarray, keep: str = "last"
+) -> tuple[np.ndarray, np.ndarray]:
+    """Remove duplicate time entries, keeping either 'first' or 'last' value."""
+    if keep == "first":
+        # Keep first occurrence: mask where time differs from previous
+        mask = np.concatenate(([True], np.diff(time) != 0))
+    else:
+        # Keep last occurrence: mask where time differs from next
+        mask = np.concatenate((np.diff(time) != 0, [True]))
+    return time[mask], values[mask]
+
+
 def _compare_trajectories(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -60,27 +114,79 @@ def _compare_trajectories(
     act_values: np.ndarray,
     tolerance: float,
 ) -> VariableComparison:
-    """Compare two time series using NRMSE (range-normalized RMSE).
+    """Compare two time series using piecewise NRMSE.
+
+    If the reference has duplicate time values (events), the comparison
+    is done piecewise between event boundaries. This preserves event
+    discontinuities and avoids interpolation across jumps.
+
+    For each segment:
+    - Pre-event segment: interpolate actual using pre-event values (first at duplicate times)
+    - Post-event segment: interpolate actual using post-event values (last at duplicate times)
 
     Pass/fail metric:
     - NRMSE = RMSE / (max(ref) - min(ref)) for varying signals
     - RMSE directly for constant signals (range ~ 0)
     - Pass if NRMSE < tolerance
-
-    Also reports max absolute error location for diagnostics.
     """
-    # Interpolate actual to reference time grid
-    actual_interp = np.interp(ref_time, act_time, act_values)
+    # Detect event boundaries in reference time
+    boundaries = _find_event_boundaries(ref_time)
+    segments = _split_segments(ref_time, ref_values, boundaries)
 
-    abs_error = np.abs(actual_interp - ref_values)
+    # Deduplicate actual time series for clean interpolation.
+    # For pre-event segments (ending at an event), use first value at duplicate times.
+    # For post-event segments (starting at an event), use last value.
+    act_time_pre, act_values_pre = _dedup_time_series(act_time, act_values, keep="first")
+    act_time_post, act_values_post = _dedup_time_series(act_time, act_values, keep="last")
+
+    # Compare piecewise: interpolate actual onto each reference segment
+    all_abs_errors = []
+    all_ref_times = []
+    n_segments = len(segments)
+
+    for seg_idx, (seg_time, seg_values) in enumerate(segments):
+        if len(seg_time) == 0:
+            continue
+
+        is_last_segment = (seg_idx == n_segments - 1)
+
+        if is_last_segment or n_segments == 1:
+            # Last (or only) segment: no event at end, use post-event for start
+            seg_actual = np.interp(seg_time, act_time_post, act_values_post)
+        elif seg_idx == 0:
+            # First segment ending at an event: use pre-event values
+            seg_actual = np.interp(seg_time, act_time_pre, act_values_pre)
+        else:
+            # Interior segment: starts post-event, ends pre-event.
+            # Use pre-event for bulk (correct at end boundary), then fix
+            # the first point with the post-event value (correct at start).
+            seg_actual = np.interp(seg_time, act_time_pre, act_values_pre)
+            seg_actual[0] = np.interp(seg_time[0], act_time_post, act_values_post)
+
+        seg_error = np.abs(seg_actual - seg_values)
+        all_abs_errors.append(seg_error)
+        all_ref_times.append(seg_time)
+
+    if not all_abs_errors:
+        return VariableComparison(
+            index=0, name="", passed=True,
+            nrmse=0.0, rmse=0.0, signal_range=0.0,
+            max_abs_error=0.0, max_abs_error_time=0.0,
+            reference_final=0.0, actual_final=0.0,
+        )
+
+    # Concatenate all segment errors for aggregate metrics
+    abs_error = np.concatenate(all_abs_errors)
+    error_times = np.concatenate(all_ref_times)
+
     rmse = float(np.sqrt(np.mean(abs_error ** 2)))
 
     # Max absolute error and its location
     max_abs_idx = int(np.argmax(abs_error))
     max_abs_error = float(abs_error[max_abs_idx])
-    max_abs_error_time = float(ref_time[max_abs_idx])
+    max_abs_error_time = float(error_times[max_abs_idx])
 
-    # Signal range for normalization
+    # Signal range for normalization (across entire reference, including jumps)
     ref_min = float(np.min(ref_values))
     ref_max = float(np.max(ref_values))
     signal_range = ref_max - ref_min
@@ -95,7 +201,8 @@ def _compare_trajectories(
     passed = nrmse < tolerance
 
     ref_final = float(ref_values[-1]) if len(ref_values) > 0 else 0.0
-    act_final = float(actual_interp[-1]) if len(actual_interp) > 0 else 0.0
+    # Use actual value at final reference time
+    act_final = float(np.interp(ref_time[-1], act_time, act_values))
 
     return VariableComparison(
         index=0,  # Set by caller

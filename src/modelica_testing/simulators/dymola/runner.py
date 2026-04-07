@@ -1,7 +1,9 @@
-"""Dymola-specific simulator runner."""
+"""Dymola-specific simulator runner with batch execution."""
 
 import logging
+import math
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -13,7 +15,7 @@ from ..base import (
     TestRunResult,
     TestResult,
     VariableResult,
-    _print_progress,
+    BatchManifest,
     resolve_variable_patterns,
 )
 from .log_parser import parse_dslog
@@ -23,93 +25,230 @@ logger = logging.getLogger(__name__)
 
 
 class DymolaRunner(SimulatorRunner):
-    """Runs Modelica simulations using Dymola."""
+    """Runs Modelica simulations using Dymola with batch execution.
 
-    def run_single_test(
+    Instead of launching a separate Dymola process per test, tests are
+    grouped into batches. Each batch runs in a single Dymola session:
+    load libraries once, run N tests, exit. This dramatically reduces
+    startup overhead for large test suites.
+    """
+
+    def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
+        """Run tests in batches with parallelism."""
+        if not tests:
+            return []
+
+        self.config.work_dir.mkdir(parents=True, exist_ok=True)
+        total = len(tests)
+
+        # Build test keys and manifest
+        test_items = []
+        manifest_map = {}
+        for i, test in enumerate(tests):
+            test_key = f"test_{i + 1:04d}"
+            manifest_map[test_key] = test.model_id
+            test_items.append((test, test_key))
+
+        manifest = BatchManifest(
+            batch_id=0,
+            work_dir=self.config.work_dir,
+            manifest=manifest_map,
+        )
+        manifest.save()
+
+        # Create per-test directories and generate per-test .mos scripts
+        for test, test_key in test_items:
+            test_dir = self.config.work_dir / test_key
+            test_dir.mkdir(parents=True, exist_ok=True)
+            _generate_test_mos(test, test_key, test_dir)
+
+        # Generate shared startup and shutdown scripts
+        startup_path = _generate_startup_mos(self.config)
+        shutdown_path = _generate_shutdown_mos(self.config)
+
+        # Split tests into batches for parallel workers
+        n_workers = max(1, self.config.parallel)
+        batch_size = math.ceil(total / n_workers)
+        batches = []
+        for i in range(0, total, batch_size):
+            batches.append(test_items[i:i + batch_size])
+
+        print(
+            f"Running {total} tests in {len(batches)} batch(es)"
+            f" (parallel={n_workers}, timeout={self.config.timeout}s/test)",
+            file=sys.stderr,
+        )
+
+        # Generate and run batch scripts
+        all_results: list[TestRunResult] = []
+
+        if n_workers <= 1:
+            # Sequential: single batch
+            results = self._run_batch(
+                batches[0], startup_path, shutdown_path, 0, total
+            )
+            all_results.extend(results)
+        else:
+            # Parallel: one thread per batch
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            offset = 0
+            futures = {}
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                for batch_idx, batch in enumerate(batches):
+                    future = pool.submit(
+                        self._run_batch, batch, startup_path, shutdown_path,
+                        offset, total,
+                    )
+                    futures[future] = batch_idx
+                    offset += len(batch)
+
+                for future in as_completed(futures):
+                    all_results.extend(future.result())
+
+        # Summary
+        n_ok = sum(1 for r in all_results if r.success)
+        n_fail = sum(1 for r in all_results if not r.success and not r.timed_out)
+        n_timeout = sum(1 for r in all_results if r.timed_out)
+        total_time = sum(r.elapsed for r in all_results)
+
+        print(file=sys.stderr)
+        print(
+            f"Simulations complete: {n_ok} ok, {n_fail} failed, "
+            f"{n_timeout} timed out ({total_time:.0f}s total)",
+            file=sys.stderr,
+        )
+
+        manifest.results = all_results
+        return [manifest]
+
+    def _run_batch(
         self,
-        test: TestModel,
-        test_key: str,
-        index: int,
+        test_items: list[tuple[TestModel, str]],
+        startup_path: Path,
+        shutdown_path: Path,
+        index_offset: int,
         total: int,
-    ) -> TestRunResult:
-        # Each test gets its own subdirectory to avoid file conflicts
-        test_dir = self.config.work_dir / test_key
-        test_dir.mkdir(parents=True, exist_ok=True)
+    ) -> list[TestRunResult]:
+        """Run a batch of tests in a single Dymola session."""
+        work_dir = self.config.work_dir
+        batch_id = index_offset  # Use offset as unique batch ID
 
-        script_path = _generate_mos(test, test_key, test_dir, self.config)
-        short_name = test.model_id.rsplit(".", 1)[-1]
+        # Generate the batch script
+        batch_script = _generate_batch_mos(
+            test_items, startup_path, shutdown_path, work_dir, batch_id
+        )
 
-        _print_progress(index, total, short_name, "running")
+        # Calculate total timeout: per-test timeout * number of tests + startup overhead
+        startup_overhead = 120  # seconds for library loading
+        total_timeout = sum(
+            t.timeout if t.timeout is not None else self.config.timeout
+            for t, _ in test_items
+        ) + startup_overhead
 
-        timeout = test.timeout if test.timeout is not None else self.config.timeout
-
+        # Run the batch
         start_time = time.monotonic()
+
+        # Print progress for each test as "running"
+        for i, (test, test_key) in enumerate(test_items):
+            short_name = test.model_id.rsplit(".", 1)[-1]
+            from ..base import _print_progress
+            _print_progress(index_offset + i + 1, total, short_name, "running")
+
         try:
             cmd = [self.config.simulator_path]
             if not self.config.show_ide:
                 cmd.append("-nowindow")
-            cmd.append(str(script_path))
+            cmd.append(str(batch_script))
 
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                cwd=str(test_dir),
+                cwd=str(work_dir),
             )
-            stdout, stderr = proc.communicate(timeout=timeout)
-            elapsed = time.monotonic() - start_time
+            stdout, stderr = proc.communicate(timeout=total_timeout)
+            batch_elapsed = time.monotonic() - start_time
 
-            # dslog.txt is in the per-test directory — no rename needed
-            statistics = parse_dslog(test_dir / "dslog.txt")
-
-            mat_path = test_dir / f"{test_key}.mat"
-            if proc.returncode != 0 or not mat_path.exists():
-                msg = stderr.decode(errors="replace").strip() or "Dymola returned non-zero exit code"
-                _print_progress(index, total, short_name, "FAIL", elapsed, msg)
-                return TestRunResult(
+        except subprocess.TimeoutExpired:
+            batch_elapsed = time.monotonic() - start_time
+            proc.kill()
+            proc.communicate()
+            # Mark all tests as timed out
+            results = []
+            for test, test_key in test_items:
+                results.append(TestRunResult(
                     model_id=test.model_id,
                     test_key=test_key,
                     success=False,
-                    elapsed=elapsed,
-                    error_message=msg,
-                    statistics=statistics,
-                )
-
-            _print_progress(index, total, short_name, "ok", elapsed)
-            return TestRunResult(
-                model_id=test.model_id,
-                test_key=test_key,
-                success=True,
-                elapsed=elapsed,
-                statistics=statistics,
-            )
-
-        except subprocess.TimeoutExpired:
-            elapsed = time.monotonic() - start_time
-            proc.kill()
-            proc.communicate()
-            msg = f"Timed out after {timeout}s"
-            _print_progress(index, total, short_name, "TIMEOUT", elapsed, msg)
-            return TestRunResult(
-                model_id=test.model_id,
-                test_key=test_key,
-                success=False,
-                elapsed=elapsed,
-                error_message=msg,
-                timed_out=True,
-            )
+                    elapsed=batch_elapsed / len(test_items),
+                    error_message=f"Batch timed out after {total_timeout}s",
+                    timed_out=True,
+                ))
+            return results
 
         except FileNotFoundError:
-            elapsed = time.monotonic() - start_time
-            msg = f"Dymola not found: {self.config.simulator_path}"
-            _print_progress(index, total, short_name, "ERROR", elapsed, msg)
-            return TestRunResult(
-                model_id=test.model_id,
-                test_key=test_key,
-                success=False,
-                elapsed=elapsed,
-                error_message=msg,
-            )
+            results = []
+            for test, test_key in test_items:
+                results.append(TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    elapsed=0.0,
+                    error_message=f"Dymola not found: {self.config.simulator_path}",
+                ))
+            return results
+
+        # Evaluate results per test: check if .mat file was produced
+        results = []
+        from ..base import _print_progress
+        for i, (test, test_key) in enumerate(test_items):
+            test_dir = work_dir / test_key
+            mat_path = test_dir / f"{test_key}.mat"
+            short_name = test.model_id.rsplit(".", 1)[-1]
+
+            statistics = parse_dslog(test_dir / "dslog.txt")
+
+            if mat_path.exists():
+                _print_progress(
+                    index_offset + i + 1, total, short_name, "ok",
+                    elapsed=batch_elapsed / len(test_items),
+                )
+                results.append(TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=True,
+                    elapsed=batch_elapsed / len(test_items),
+                    statistics=statistics,
+                ))
+            else:
+                msg = "No result file produced"
+                # Try to get error from dslog
+                dslog_path = test_dir / "dslog.txt"
+                if dslog_path.exists():
+                    try:
+                        log_text = dslog_path.read_text(encoding="utf-8", errors="replace")
+                        if "ERROR" in log_text or "error" in log_text:
+                            # Extract last few lines for context
+                            lines = log_text.strip().split("\n")
+                            msg = " | ".join(lines[-3:])
+                    except OSError:
+                        pass
+
+                _print_progress(
+                    index_offset + i + 1, total, short_name, "FAIL",
+                    elapsed=batch_elapsed / len(test_items), detail=msg[:80],
+                )
+                results.append(TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    elapsed=batch_elapsed / len(test_items),
+                    error_message=msg,
+                    statistics=statistics,
+                ))
+
+        return results
 
     def read_result(
         self,
@@ -147,13 +286,59 @@ class DymolaRunner(SimulatorRunner):
         )
 
 
-def _generate_mos(
+# ---------------------------------------------------------------------------
+# .mos script generation
+# ---------------------------------------------------------------------------
+
+def _generate_startup_mos(config: Config) -> Path:
+    """Generate startup.mos: load dependencies, main library, and setup commands."""
+    work_dir = config.work_dir
+    lines = [
+        "// Startup: load libraries and configure environment",
+        f'cd("{work_dir.as_posix()}");',
+    ]
+
+    # Load dependencies first
+    for dep_path in config.dependencies:
+        dep_pkg = Path(dep_path).resolve() / "package.mo"
+        lines.append(f'openModel("{dep_pkg.as_posix()}");')
+
+    # Load main library
+    lines.append(f'openModel("{(config.library_dir / "package.mo").as_posix()}");')
+
+    # Simulator setup commands (e.g., OutputCPUtime = true)
+    if config.simulator_setup:
+        lines.append("")
+        lines.append("// Simulator setup")
+        for cmd in config.simulator_setup:
+            # Ensure command ends with semicolon
+            cmd = cmd.strip()
+            if not cmd.endswith(";"):
+                cmd += ";"
+            lines.append(cmd)
+
+    script_path = work_dir / "startup.mos"
+    script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return script_path
+
+
+def _generate_shutdown_mos(config: Config) -> Path:
+    """Generate shutdown.mos: exit Dymola."""
+    lines = [
+        "// Shutdown",
+        "Modelica.Utilities.System.exit();",
+    ]
+    script_path = config.work_dir / "shutdown.mos"
+    script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return script_path
+
+
+def _generate_test_mos(
     test: TestModel,
     test_key: str,
     test_dir: Path,
-    config: Config,
 ) -> Path:
-    """Generate a .mos script for a single test."""
+    """Generate a per-test .mos script: cd to test dir and simulate."""
     parts = [f'"{test.model_id}"']
 
     if test.stop_time != 1.0:
@@ -175,35 +360,46 @@ def _generate_mos(
     lines = [
         f'// {test.model_id}',
         f'cd("{test_dir.as_posix()}");',
+        f'simulateModel({",".join(parts)});',
     ]
 
-    for dep_path in config.dependencies:
-        dep_pkg = Path(dep_path).resolve() / "package.mo"
-        lines.append(f'openModel("{dep_pkg.as_posix()}");')
-
-    lines.extend([
-        f'openModel("{(config.library_dir / "package.mo").as_posix()}");',
-        # cd again after openModel — Dymola can change cwd when opening a library
-        f'cd("{test_dir.as_posix()}");',
-        f'simulateModel({",".join(parts)});',
-        'Modelica.Utilities.System.exit();',
-    ])
-
     script_path = test_dir / f"{test_key}.mos"
-    script_path.write_text("\n".join(lines), encoding="utf-8")
+    script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return script_path
 
+
+def _generate_batch_mos(
+    test_items: list[tuple[TestModel, str]],
+    startup_path: Path,
+    shutdown_path: Path,
+    work_dir: Path,
+    batch_id: int,
+) -> Path:
+    """Generate a batch .mos script that runs startup, all tests, then shutdown."""
+    lines = [
+        f"// Batch {batch_id}: {len(test_items)} tests",
+        f'RunScript("{startup_path.as_posix()}");',
+    ]
+
+    for test, test_key in test_items:
+        test_mos = work_dir / test_key / f"{test_key}.mos"
+        lines.append(f'RunScript("{test_mos.as_posix()}");')
+
+    lines.append(f'RunScript("{shutdown_path.as_posix()}");')
+
+    script_path = work_dir / f"batch_{batch_id:04d}.mos"
+    script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return script_path
+
+
+# ---------------------------------------------------------------------------
+# Result extraction
+# ---------------------------------------------------------------------------
 
 def _extract_variables(
     mat_data: dict, test: TestModel
 ) -> list[VariableResult]:
-    """Extract tracked variables from parsed mat data.
-
-    Handles three cases:
-    - UnitTests variables (unitTests.x[1..n]) from in-model component
-    - Pattern-based variables from external spec (globs, wildcards)
-    - Both merged together (deduplicated)
-    """
+    """Extract tracked variables from parsed mat data."""
     results = []
     seen_names: set[str] = set()
     idx = 1
