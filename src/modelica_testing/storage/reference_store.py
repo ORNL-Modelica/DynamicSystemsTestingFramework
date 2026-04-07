@@ -187,13 +187,15 @@ class ReferenceStore:
                 "method": test.method,
                 "number_of_intervals": test.number_of_intervals,
             },
-            "n_vars": test.n_vars,
-            "time": shared_time_list,
-            "variables": variables,
         }
 
         if result.statistics:
             ref_data["statistics"] = result.statistics
+
+        # Data fields last — keeps metadata readable at the top of the file
+        ref_data["n_vars"] = len(variables)
+        ref_data["time"] = shared_time_list
+        ref_data["variables"] = variables
 
         ref_file.write_text(
             _compact_json(ref_data) + "\n", encoding="utf-8"
