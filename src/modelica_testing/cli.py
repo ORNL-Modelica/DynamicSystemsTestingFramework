@@ -91,6 +91,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         stored = store.accept_results(tests, results)
         print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
         return 0
+    elif args.interactive:
+        from .comparison.comparator import compare_all
+
+        store = ReferenceStore(config)
+        comparisons = compare_all(tests, results, store, config)
+        return _interactive_review(tests, results, comparisons, store, config)
     else:
         from .comparison.comparator import compare_all
 
@@ -266,6 +272,270 @@ def cmd_convert(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_add(args: argparse.Namespace) -> int:
+    """Add a test to test_spec.json."""
+    config = _build_config(args)
+    model_id = args.model_id
+    variables = args.variables or []
+
+    from .discovery.spec_parser import add_to_test_spec
+
+    # Determine spec file location
+    spec_path = config.test_spec_file
+    if spec_path is None:
+        spec_path = config.reference_root / "test_spec.json"
+
+    added = add_to_test_spec(spec_path, model_id, variables)
+    if added:
+        var_desc = ", ".join(variables) if variables else "(simulate only)"
+        print(f"Added: {model_id}")
+        print(f"  Variables: {var_desc}")
+        print(f"  Spec file: {spec_path}")
+        return 0
+    else:
+        # Already exists — prompt to overwrite
+        try:
+            choice = input(f"  {model_id} already exists in spec. Overwrite? [y/n] > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
+            return 1
+        if choice == "y":
+            add_to_test_spec(spec_path, model_id, variables, overwrite=True)
+            print(f"Updated: {model_id}")
+            return 0
+        else:
+            print("Skipped.")
+            return 0
+
+
+def _get_spec_path(config) -> Path:
+    """Get the test_spec.json path, using config or default location."""
+    if config.test_spec_file is not None:
+        return config.test_spec_file
+    return config.reference_root / "test_spec.json"
+
+
+def _interactive_review(
+    tests: list[TestModel],
+    results: dict,
+    comparisons: list,
+    store,
+    config=None,
+) -> int:
+    """Interactively review each test and accept/reject results."""
+    from .discovery.spec_parser import update_test_variables
+    from .simulators import resolve_variable_patterns
+    from .simulators.dymola.mat_reader import read_dymola_mat
+
+    test_lookup = {t.model_id: t for t in tests}
+    n_accepted = 0
+    n_skipped = 0
+    n_total = len(comparisons)
+
+    spec_path = _get_spec_path(config) if config else None
+
+    # ANSI colors
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    print(f"\nInteractive review: {n_total} tests\n")
+
+    for idx, comp in enumerate(comparisons, 1):
+        model_id = comp.model_id
+
+        # Status line
+        if not comp.sim_success:
+            status = f"{RED}SIM_FAIL{RESET}"
+        elif not comp.has_reference:
+            status = f"{YELLOW}NO BASELINE{RESET}"
+        elif comp.passed:
+            status = f"{GREEN}PASS{RESET}"
+        else:
+            status = f"{RED}FAIL{RESET}"
+
+        warn = ""
+        if comp.warnings:
+            warn = f" {YELLOW}[{len(comp.warnings)} warning(s)]{RESET}"
+
+        print(f"[{idx}/{n_total}] {BOLD}{model_id}{RESET}")
+        print(f"  Status: {status}{warn}")
+
+        if comp.error_message and not comp.sim_success:
+            print(f"  Error: {comp.error_message}")
+
+        # Brief variable summary
+        if comp.variables:
+            n_vars_pass = sum(1 for v in comp.variables if v.passed)
+            n_vars_total = len(comp.variables)
+            if comp.passed:
+                print(f"  Variables: {n_vars_pass}/{n_vars_total} passed")
+            else:
+                print(f"  Variables: {n_vars_pass}/{n_vars_total} passed, {n_vars_total - n_vars_pass} failed")
+
+        # Can't accept if simulation failed
+        if not comp.sim_success:
+            print(f"  Skipping (simulation failed)\n")
+            n_skipped += 1
+            continue
+
+        # Prompt
+        result = results.get(model_id)
+        has_result = result is not None and result.success
+        test = test_lookup.get(model_id)
+        added_patterns = []  # Track patterns added via [v] this session
+
+        while True:
+            if has_result:
+                prompt = "  [a]ccept  [v]ariables  [s]kip  [d]etail  [p]lot  [q]uit > "
+            else:
+                prompt = "  [s]kip  [d]etail  [p]lot  [q]uit > "
+            try:
+                choice = input(prompt).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\nAborted.")
+                return 1
+
+            if choice == "a" and has_result:
+                # If variables were added, re-read the .mat to resolve them
+                if added_patterns and test and config:
+                    test.variable_patterns = list(set(
+                        test.variable_patterns + added_patterns
+                    ))
+                    test_key = _find_test_key(model_id, config)
+                    if test_key:
+                        runner = _get_runner(config)
+                        result = runner.read_result(test, test_key, None)
+
+                if test and result and store.store_reference(test, result):
+                    n_vars = len(result.variables) if result.variables else 0
+                    print(f"  {GREEN}Accepted ({n_vars} variables).{RESET}\n")
+                    n_accepted += 1
+                else:
+                    print(f"  {RED}Failed to store.{RESET}\n")
+                    n_skipped += 1
+                break
+
+            elif choice == "v" and has_result:
+                try:
+                    raw = input("  Variable patterns (comma-separated): ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nAborted.")
+                    return 1
+                if raw:
+                    new_patterns = [p.strip() for p in raw.split(",") if p.strip()]
+                    added_patterns.extend(new_patterns)
+                    # Save to test_spec.json
+                    if spec_path:
+                        update_test_variables(spec_path, model_id, new_patterns)
+                        print(f"  Added {len(new_patterns)} pattern(s) to {spec_path.name}")
+                    else:
+                        print(f"  Added {len(new_patterns)} pattern(s) (in-memory only, no spec file configured)")
+                    # Show what would match from the .mat
+                    if config:
+                        test_key = _find_test_key(model_id, config)
+                        if test_key:
+                            test_dir = config.work_dir / test_key
+                            mat_path = test_dir / f"{test_key}.mat"
+                            if mat_path.exists():
+                                mat_data = read_dymola_mat(mat_path)
+                                if mat_data:
+                                    available = list(mat_data.keys())
+                                    matched = resolve_variable_patterns(new_patterns, available)
+                                    print(f"  Matched {len(matched)} variables: {', '.join(matched[:10])}")
+                                    if len(matched) > 10:
+                                        print(f"    ... and {len(matched) - 10} more")
+
+            elif choice == "s":
+                print(f"  Skipped.\n")
+                n_skipped += 1
+                break
+
+            elif choice == "d":
+                _print_detail(comp)
+
+            elif choice == "p":
+                if config:
+                    _generate_and_open_plots(model_id, comp, result, store, config)
+                else:
+                    print("  No config available for plot generation.")
+
+            elif choice == "q":
+                print(f"\nStopped. Accepted {n_accepted}, skipped {n_skipped + (n_total - idx)}.")
+                return 0 if n_accepted > 0 else 1
+
+            else:
+                options = "a/v/s/d/p/q" if has_result else "s/d/p/q"
+                print(f"  Invalid choice. Enter {options}.")
+
+    print(f"\nDone. Accepted {n_accepted}, skipped {n_skipped}.")
+    return 0
+
+
+def _generate_and_open_plots(model_id, comp, result, store, config) -> None:
+    """Generate comparison plots and open in browser."""
+    from .reporting.plot_comparison import generate_comparison_plots, open_in_browser
+
+    test_key = _find_test_key(model_id, config)
+    if test_key:
+        plot_dir = config.work_dir / test_key / "plots"
+    else:
+        plot_dir = config.work_dir / "plots" / model_id.replace(".", "_")
+
+    ref_data = store.get_reference(model_id)
+
+    html_path = generate_comparison_plots(
+        model_id=model_id,
+        ref_data=ref_data,
+        result=result,
+        comparisons=comp.variables,
+        plot_dir=plot_dir,
+    )
+
+    if html_path:
+        print(f"  Plots saved to {plot_dir}")
+        open_in_browser(html_path)
+    else:
+        print("  Plot generation failed (matplotlib not installed?)")
+
+
+def _find_test_key(model_id: str, config) -> Optional[str]:
+    """Find the test_NNNN key for a model from the batch manifest."""
+    from .simulators import BatchManifest
+    manifest_paths = sorted(config.work_dir.glob("batch_*_manifest.json"))
+    for mp in manifest_paths:
+        bm = BatchManifest.load(mp)
+        for tk, mid in bm.manifest.items():
+            if mid == model_id:
+                return tk
+    return None
+
+
+def _print_detail(comp) -> None:
+    """Print detailed variable comparison for interactive review."""
+    if comp.error_message:
+        print(f"  Error: {comp.error_message}")
+
+    for var in comp.variables:
+        name = var.name or f"x[{var.index}]"
+        status = "\033[92mPASS\033[0m" if var.passed else "\033[91mFAIL\033[0m"
+        print(f"    {status}  {name}")
+        if var.is_constant:
+            print(f"           RMSE: {var.rmse:.6e} (constant signal)")
+        else:
+            print(f"           NRMSE: {var.nrmse:.6e} (range: {var.signal_range:.4e})")
+        print(f"           Max abs error: {var.max_abs_error:.6e} at t={var.max_abs_error_time:g}")
+        print(f"           Final: ref={var.reference_final:.6e}  act={var.actual_final:.6e}")
+
+    if comp.warnings:
+        print(f"    Structural warnings:")
+        for w in comp.warnings:
+            print(f"      {w.field}: {w.reference_value} -> {w.current_value}")
+    print()
+
+
 def _output_report(comparisons: list, args: argparse.Namespace) -> int:
     """Route comparisons to the selected report format."""
     fmt = getattr(args, "report_format", "console")
@@ -353,6 +623,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_run = subparsers.add_parser("run", help="Run tests in Dymola")
     p_run.add_argument("--filter", type=str, help="Glob pattern for model_id")
     p_run.add_argument("--package", type=str, help="Filter by package prefix")
+    p_run.add_argument(
+        "-i", "--interactive", action="store_true",
+        help="Interactively review and accept/reject each test result",
+    )
     p_run.add_argument(
         "--accept", action="store_true",
         help="Accept results as new baseline references",
@@ -455,7 +729,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="'to-manifest': old abbreviated names -> ref_NNNN.json + manifest. "
              "'from-manifest': ref_NNNN.json -> human-readable names + index.json",
     )
-    #_convert)
+
+    # add
+    p_add = subparsers.add_parser(
+        "add", help="Add a test to test_spec.json"
+    )
+    p_add.add_argument(
+        "model_id", type=str,
+        help="Fully qualified Modelica model path (e.g., 'MyLib.Examples.Test')",
+    )
+    p_add.add_argument(
+        "--variables", nargs="*", default=None,
+        help="Variable patterns to track (e.g., 'pipe.T*' 'pump.m_flow'). "
+             "Omit for simulate-only.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -471,6 +758,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "migrate": cmd_migrate,
         "manifest": cmd_manifest,
         "convert": cmd_convert,
+        "add": cmd_add,
     }
 
     return commands[args.command](args)

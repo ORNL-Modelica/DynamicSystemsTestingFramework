@@ -95,3 +95,80 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
         tests.append(test)
 
     return tests
+
+
+def add_to_test_spec(
+    spec_path: Path,
+    model_id: str,
+    variables: list[str],
+    overwrite: bool = False,
+) -> bool:
+    """Add or update a test entry in test_spec.json.
+
+    Returns True if the entry was added/updated, False if it already existed
+    and overwrite was not set.
+    """
+    # Load existing or create new
+    data = {"tests": []}
+    if spec_path.exists():
+        try:
+            data = json.loads(spec_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+        if "tests" not in data:
+            data["tests"] = []
+
+    # Check if model already exists
+    existing_idx = None
+    for i, entry in enumerate(data["tests"]):
+        if entry.get("model") == model_id:
+            existing_idx = i
+            break
+
+    new_entry = {"model": model_id, "variables": variables}
+
+    if existing_idx is not None:
+        if not overwrite:
+            return False
+        data["tests"][existing_idx] = new_entry
+    else:
+        data["tests"].append(new_entry)
+
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def update_test_variables(
+    spec_path: Path,
+    model_id: str,
+    additional_patterns: list[str],
+) -> None:
+    """Add variable patterns to an existing test entry, or create a new one."""
+    data = {"tests": []}
+    if spec_path.exists():
+        try:
+            data = json.loads(spec_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+        if "tests" not in data:
+            data["tests"] = []
+
+    # Find existing entry
+    found = False
+    for entry in data["tests"]:
+        if entry.get("model") == model_id:
+            existing = set(entry.get("variables", []))
+            existing.update(additional_patterns)
+            entry["variables"] = sorted(existing)
+            found = True
+            break
+
+    if not found:
+        data["tests"].append({
+            "model": model_id,
+            "variables": sorted(additional_patterns),
+        })
+
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
