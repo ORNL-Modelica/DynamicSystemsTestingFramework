@@ -182,6 +182,72 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_manifest(args: argparse.Namespace) -> int:
+    """Manage the test manifest."""
+    config = _build_config(args)
+    from .storage.reference_store import TestManifest, ReferenceStore
+
+    manifest = TestManifest(config.manifest_file)
+    action = args.action
+
+    if action == "show":
+        if not manifest.exists():
+            print(f"No manifest found at {config.manifest_file}")
+            return 1
+
+        active = manifest.active_tests()
+        data = manifest._load()
+        obsolete = {
+            tid: entry["model_id"]
+            for tid, entry in data["tests"].items()
+            if entry.get("status") == "obsolete"
+        }
+
+        print(f"Manifest: {config.manifest_file}")
+        print(f"Active: {len(active)}  Obsolete: {len(obsolete)}\n")
+
+        if active:
+            print(f"{'ID':>6}  {'Model ID'}")
+            print("-" * 80)
+            for tid in sorted(active):
+                print(f"{tid:>6}  {active[tid]}")
+
+        if obsolete and args.show_obsolete:
+            print(f"\nObsolete:")
+            for tid in sorted(obsolete):
+                print(f"{tid:>6}  {obsolete[tid]}")
+
+        return 0
+
+    elif action == "cleanup":
+        store = ReferenceStore(config)
+        removed = store.cleanup_obsolete()
+        if removed:
+            print(f"Removed {removed} obsolete reference files.")
+        else:
+            print("No obsolete references to clean up.")
+        return 0
+
+    elif action == "rebuild":
+        tests = discover_tests(config)
+        tests = _filter_tests(tests, getattr(args, "filter", None), getattr(args, "package", None))
+
+        if not tests:
+            print("No tests found.")
+            return 1
+
+        # Register all discovered tests in a fresh manifest
+        manifest = TestManifest(config.manifest_file)
+        for test in tests:
+            manifest.register(test.model_id)
+
+        active = manifest.active_tests()
+        print(f"Rebuilt manifest with {len(active)} tests at {config.manifest_file}")
+        return 0
+
+    return 1
+
+
 def cmd_convert(args: argparse.Namespace) -> int:
     """Convert reference files between old (abbreviated) and new (manifest) formats."""
     config = _build_config(args)
@@ -365,6 +431,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     _add_ref_arg(p_migrate)
 
+    # manifest
+    p_manifest = subparsers.add_parser(
+        "manifest", help="Manage the test manifest"
+    )
+    p_manifest.add_argument(
+        "action", choices=["show", "cleanup", "rebuild"],
+        help="'show': display manifest contents. "
+             "'cleanup': remove obsolete reference files. "
+             "'rebuild': regenerate manifest from discovered tests.",
+    )
+    p_manifest.add_argument("--filter", type=str, help="Glob pattern for model_id (rebuild only)")
+    p_manifest.add_argument("--package", type=str, help="Filter by package prefix (rebuild only)")
+    p_manifest.add_argument(
+        "--show-obsolete", action="store_true",
+        help="Also show obsolete entries (show only)",
+    )
+    _add_ref_arg(p_manifest)
+
     # convert
     p_convert = subparsers.add_parser(
         "convert", help="Convert reference files between old and new formats"
@@ -388,6 +472,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "compare": cmd_compare,
         "export": cmd_export,
         "migrate": cmd_migrate,
+        "manifest": cmd_manifest,
         "convert": cmd_convert,
     }
 
