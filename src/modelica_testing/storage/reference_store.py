@@ -199,7 +199,7 @@ class ReferenceStore:
         ref_data["variables"] = variables
 
         ref_file.write_text(
-            _compact_json(ref_data) + "\n", encoding="utf-8"
+            json.dumps(ref_data, indent=2) + "\n", encoding="utf-8"
         )
 
         return True
@@ -317,19 +317,3 @@ def _to_json_list(arr: np.ndarray) -> list[float]:
     return [float(v) for v in arr]
 
 
-def _compact_json(data: dict) -> str:
-    """Serialize reference JSON with number arrays on single lines."""
-    import re
-    text = json.dumps(data, indent=2)
-
-    def _collapse_array(m: re.Match) -> str:
-        content = m.group(0)
-        collapsed = re.sub(r'\s*\n\s*', ' ', content)
-        return collapsed
-
-    text = re.sub(
-        r'\[\s*\n\s*-?[\d.][\s\S]*?\n\s*\]',
-        _collapse_array,
-        text,
-    )
-    return text
