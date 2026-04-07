@@ -40,8 +40,13 @@ class DymolaRunner(SimulatorRunner):
 
         start_time = time.monotonic()
         try:
+            cmd = [self.config.dymola_path]
+            if not self.config.show_ide:
+                cmd.append("-nowindow")
+            cmd.append(str(script_path))
+
             proc = subprocess.Popen(
-                [self.config.dymola_path, "-nowindow", str(script_path)],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=str(self.config.work_dir),
@@ -172,6 +177,8 @@ def _generate_mos(
 
     lines.extend([
         f'openModel("{(config.library_dir / "package.mo").as_posix()}");',
+        # cd again after openModel — Dymola can change cwd when opening a library
+        f'cd("{work_dir.as_posix()}");',
         f'simulateModel({",".join(parts)});',
         'Modelica.Utilities.System.exit();',
     ])

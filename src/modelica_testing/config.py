@@ -105,6 +105,7 @@ class Config:
     # Simulator
     simulator: str = "Dymola"
     dymola_path: str = "dymola"
+    show_ide: bool = False  # Show Dymola GUI instead of running headless
 
     # OS override (auto-detected if not set)
     os_name: Optional[str] = None
@@ -161,6 +162,14 @@ class Config:
         if "simulator" in file_config:
             self.simulator = file_config["simulator"]
 
+        # Show IDE
+        if not self.show_ide and "show_ide" in file_config:
+            self.show_ide = file_config["show_ide"]
+
+        # Dymola path
+        if self.dymola_path == "dymola" and "dymola_path" in file_config:
+            self.dymola_path = file_config["dymola_path"]
+
         # Reference root: CLI arg > config file > default
         if self.reference_root is None:
             ref_path = file_config.get("reference_root")
@@ -183,13 +192,14 @@ class Config:
         else:
             self.test_spec_file = Path(self.test_spec_file).resolve()
 
-        # Work directory
+        # Work directory — default includes library name so multiple
+        # libraries can be tested from the same tool installation
         if self.work_dir is None:
             work = file_config.get("work_dir")
             if work:
                 self.work_dir = Path(work).resolve()
             else:
-                self.work_dir = Path.cwd() / "testing_output"
+                self.work_dir = Path.cwd() / "testing_output" / self.library_name
         else:
             self.work_dir = Path(self.work_dir).resolve()
 

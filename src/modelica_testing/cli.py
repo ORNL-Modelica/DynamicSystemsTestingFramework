@@ -298,6 +298,8 @@ def _build_config(args: argparse.Namespace) -> Config:
         kwargs["reference_root"] = Path(args.reference_root)
     if hasattr(args, "dymola_path") and args.dymola_path:
         kwargs["dymola_path"] = args.dymola_path
+    if hasattr(args, "show_ide") and args.show_ide:
+        kwargs["show_ide"] = True
     if hasattr(args, "work_dir") and args.work_dir:
         kwargs["work_dir"] = Path(args.work_dir)
     if hasattr(args, "parallel") and args.parallel:
@@ -353,6 +355,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Accept results as new baseline references",
     )
     p_run.add_argument("--dymola-path", type=str, help="Path to dymola executable")
+    p_run.add_argument(
+        "--show-ide", action="store_true",
+        help="Show Dymola GUI instead of running headless",
+    )
     p_run.add_argument("--work-dir", type=str, help="Working directory for output")
     p_run.add_argument("--parallel", type=int, help="Number of parallel Dymola instances")
     p_run.add_argument("--tolerance", type=float, help="Override comparison tolerance")
