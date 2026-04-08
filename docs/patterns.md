@@ -30,8 +30,9 @@
 ### Config resolution order
 - CLI args > `testing.json` file > defaults
 - `testing.json` search: reference_root → repo_root → package_dir → cwd
-- `package_path` is the anchor — everything else derives from it
-- Relative paths in `testing.json` (e.g., `test_spec`) resolve relative to where `testing.json` was found, not relative to the library — important when references live in a separate repo
+- All relative paths in `testing.json` (`package_path`, `test_spec`, `dependencies`, `reference_root`) resolve relative to where `testing.json` was found
+- `testing.json` can be the single entry point: include `package_path` and run with just `--config` or `--reference-root`
+- `test_spec.json` is permanent, not temporary — it defines what to test; references define what to expect
 
 ### Diagnostic variables are stored but never compared
 - `CPUtime` and `EventCounter` are auto-extracted from mat data when present

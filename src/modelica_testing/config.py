@@ -184,11 +184,40 @@ class Config:
     library_name: Optional[str] = None
 
     def __post_init__(self):
-        # Resolve package path first — everything else derives from it
+        # Resolve reference root early — needed for config file search
+        if self.reference_root is not None:
+            self.reference_root = Path(self.reference_root).resolve()
+
+        # Load config file first — it may provide package_path
+        file_config = {}
+        config_found_dir = None
+        if self.config_file:
+            config_found_dir = Path(self.config_file).resolve().parent
+            file_config = load_config_file(Path(self.config_file))
+        else:
+            # Build search dirs from what we know so far
+            search_dirs = [Path.cwd()]
+            if self.reference_root is not None:
+                search_dirs.insert(0, self.reference_root)
+            if self.package_path is not None:
+                pkg = Path(self.package_path).resolve()
+                search_dirs.insert(0, pkg)        # package dir
+                search_dirs.insert(0, pkg.parent)  # repo root
+            for search_dir in search_dirs:
+                file_config = load_config_file(search_dir)
+                if file_config:
+                    config_found_dir = search_dir.resolve()
+                    break
+
+        # Resolve package path — CLI arg > config file > auto-detect
         if self.package_path is not None:
             self.package_path = Path(self.package_path).resolve()
             if not (self.package_path / "package.mo").exists():
-                # Maybe they pointed at the parent (old --library-path style)
+                self.package_path = find_package_dir(self.package_path)
+        elif "package_path" in file_config:
+            base_dir = config_found_dir or Path.cwd()
+            self.package_path = (base_dir / file_config["package_path"]).resolve()
+            if not (self.package_path / "package.mo").exists():
                 self.package_path = find_package_dir(self.package_path)
         else:
             self.package_path = find_package_dir()
@@ -198,33 +227,17 @@ class Config:
             self.library_name = read_package_name(self.package_path)
 
         # The parent of the package dir is where testing.json typically lives
-        # (e.g., TRANSFORM-Library/ is parent of TRANSFORM-Library/TRANSFORM/)
         repo_root = self.package_path.parent
 
-        # Resolve reference root early — needed for auto-create location
-        if self.reference_root is not None:
-            self.reference_root = Path(self.reference_root).resolve()
-
-        # Load config file
-        file_config = {}
-        config_found_dir = None
-        if self.config_file:
-            config_found_dir = Path(self.config_file).resolve().parent
-            file_config = load_config_file(Path(self.config_file))
-        else:
-            # Look in reference root, repo root, package dir, then cwd
-            search_dirs = [repo_root, self.package_path, Path.cwd()]
-            if self.reference_root is not None:
-                search_dirs.insert(0, self.reference_root)
-            for search_dir in search_dirs:
-                file_config = load_config_file(search_dir)
-                if file_config:
-                    config_found_dir = search_dir.resolve()
-                    break
+        # If no config was found yet (package_path wasn't available for search),
+        # try repo_root now
+        if not file_config and config_found_dir is None:
+            file_config = load_config_file(repo_root)
+            if file_config:
+                config_found_dir = repo_root.resolve()
 
         # Auto-create testing.json if none was found
         if not file_config:
-            # Put it in reference_root if specified, otherwise repo root
             config_dir = self.reference_root if self.reference_root else repo_root
             file_config = _create_default_config(config_dir, self.library_name)
 
@@ -261,19 +274,30 @@ class Config:
                 backend = self.simulator_backend.lower()
                 self.simulator_path = shutil.which(backend) or backend
 
-        # Reference root (may already be set from CLI arg above)
+        # Reference root (may already be set from CLI arg)
         if self.reference_root is None:
             ref_path = file_config.get("reference_root")
             if ref_path:
-                self.reference_root = Path(ref_path).resolve()
+                base_dir = config_found_dir or repo_root
+                self.reference_root = (base_dir / ref_path).resolve()
             else:
-                self.reference_root = repo_root / "Resources" / "ReferenceResults"
-        else:
-            self.reference_root = Path(self.reference_root).resolve()
+                # Default: if testing.json lives in a ReferenceResults dir, use that;
+                # otherwise fall back to <repo>/Resources/ReferenceResults
+                if config_found_dir and config_found_dir.name == "ReferenceResults":
+                    self.reference_root = config_found_dir
+                else:
+                    self.reference_root = repo_root / "Resources" / "ReferenceResults"
 
-        # Dependencies
+        # Dependencies — resolve relative paths from config file location
         if not self.dependencies and "dependencies" in file_config:
-            self.dependencies = file_config["dependencies"]
+            base_dir = config_found_dir or repo_root
+            resolved_deps = []
+            for dep in file_config["dependencies"]:
+                dep_path = Path(dep)
+                if not dep_path.is_absolute():
+                    dep_path = (base_dir / dep_path).resolve()
+                resolved_deps.append(str(dep_path))
+            self.dependencies = resolved_deps
 
         # Test spec file — resolve relative to where testing.json was found
         if self.test_spec_file is None:

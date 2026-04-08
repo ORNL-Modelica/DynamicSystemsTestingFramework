@@ -60,8 +60,14 @@
 - **Why**: CPU time and event counts are critical for diagnosing performance regressions and model changes, but shouldn't cause pass/fail. Storing trajectories enables plotting; storing finals in statistics enables structural warnings.
 - **Trade-offs**: Diagnostics are stored but never compared via NRMSE. EventCounter changes trigger a structural warning; CPUtime does not (too variable between runs).
 
-## D11: Config-relative `test_spec` resolution
+## D11: Config-relative path resolution
 
-- **What**: The `test_spec` path in `testing.json` resolves relative to where `testing.json` was found, not relative to the library's repo root.
-- **Why**: When references live in a separate repo, `test_spec.json` sits next to `testing.json` in that repo. Resolving relative to the library root would require an absolute path or a fragile relative path back to the reference repo.
-- **Trade-offs**: None significant. CLI `--test-spec` still accepts absolute paths and overrides the config file value.
+- **What**: All relative paths in `testing.json` (`package_path`, `test_spec`, `dependencies`, `reference_root`) resolve relative to where `testing.json` was found, not relative to the library or cwd.
+- **Why**: When references live in a separate repo, config and test specs sit together in that repo. Resolving relative to the library root would require fragile cross-repo relative paths. This also enables a single `--config` or `--reference-root` flag to drive everything.
+- **Trade-offs**: None significant. CLI flags still accept absolute paths and override config file values.
+
+## D12: `testing.json` as single entry point
+
+- **What**: `testing.json` can contain `package_path` pointing to the library under test. With this, a single flag (`--config` or `--reference-root`) is sufficient to run — no `--package-path` needed.
+- **Why**: Reduces command-line boilerplate. The config file already knows everything about the test setup; requiring the user to also specify the library path is redundant.
+- **Trade-offs**: `package_path` in the config is relative, so moving the config file breaks the path. CLI `--package-path` still overrides.
