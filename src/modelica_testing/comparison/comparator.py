@@ -53,39 +53,49 @@ class TestComparison:
     has_reference: bool = True
 
 
-def _find_event_boundaries(time: np.ndarray) -> list[int]:
-    """Find indices where duplicate time values indicate event boundaries.
+def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
+    """Find event boundaries where duplicate time values occur.
 
-    Returns indices of the first occurrence at each duplicate time —
-    these are the pre-event values that end one segment.
+    Dymola may produce 2 or 3 duplicate time points per event. This function
+    groups consecutive duplicates and returns (first_dup, last_dup) pairs.
+    The segment before the event ends at first_dup (inclusive, pre-event value).
+    The segment after starts at last_dup (inclusive, post-event value).
     """
     boundaries = []
-    for i in range(1, len(time)):
+    i = 1
+    while i < len(time):
         if time[i] == time[i - 1]:
-            boundaries.append(i)
+            first_dup = i  # first duplicate index
+            while i < len(time) and time[i] == time[first_dup - 1]:
+                i += 1
+            last_dup = i - 1  # last duplicate index
+            boundaries.append((first_dup, last_dup))
+        else:
+            i += 1
     return boundaries
 
 
 def _split_segments(
     time: np.ndarray,
     values: np.ndarray,
-    boundaries: list[int],
+    boundaries: list[tuple[int, int]],
 ) -> list[tuple[np.ndarray, np.ndarray]]:
     """Split time/values at event boundaries into piecewise segments.
 
-    Each segment has strictly monotonic time. At a boundary (duplicate time),
-    the pre-event value belongs to the previous segment and the post-event
-    value starts the next segment.
+    Each segment has strictly monotonic time. At a boundary, the pre-event
+    value (first duplicate) ends the previous segment, and the post-event
+    value (last duplicate) starts the next segment. Any intermediate
+    duplicates are skipped.
     """
     if not boundaries:
         return [(time, values)]
 
     segments = []
     prev = 0
-    for b in boundaries:
+    for first_dup, last_dup in boundaries:
         # Segment up to and including the pre-event value
-        segments.append((time[prev:b], values[prev:b]))
-        prev = b  # Next segment starts at the post-event value
+        segments.append((time[prev:first_dup], values[prev:first_dup]))
+        prev = last_dup  # Next segment starts at the post-event value
 
     # Final segment
     if prev < len(time):

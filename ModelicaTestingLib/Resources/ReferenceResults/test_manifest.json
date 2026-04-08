@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "tests": {
+    "0001": {
+      "model_id": "ModelicaTestingLib.Examples.ConstantTest",
+      "added": "2026-04-08",
+      "status": "active"
+    },
+    "0002": {
+      "model_id": "ModelicaTestingLib.Examples.EventTest",
+      "added": "2026-04-08",
+      "status": "active"
+    },
+    "0003": {
+      "model_id": "ModelicaTestingLib.Examples.SimpleTest",
+      "added": "2026-04-08",
+      "status": "active"
+    }
+  }
+}

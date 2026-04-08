@@ -1,0 +1,8 @@
+{
+  "package_path": "../../ModelicaTestingLib",
+  "simulator": "Dymola",
+  "simulators": {},
+  "dependencies": [],
+  "simulator_setup": ["OutputCPUtime := true;"],
+  "test_spec": "test_spec.json"
+}

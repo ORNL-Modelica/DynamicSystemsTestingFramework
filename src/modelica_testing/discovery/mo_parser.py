@@ -237,6 +237,11 @@ def parse_mo_file(path: Path) -> Optional[MoParseResult]:
     if not model_name:
         return None
 
+    # Skip the UnitTests component definition itself — it contains example
+    # usage in documentation that the parser would pick up as a false positive
+    if model_name == "UnitTests":
+        return None
+
     model_id = f"{within}.{model_name}" if within else model_name
     experiment = _parse_experiment(text)
 

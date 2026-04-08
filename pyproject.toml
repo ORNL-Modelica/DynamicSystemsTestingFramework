@@ -9,6 +9,9 @@ dependencies = [
     "scipy>=1.7",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
 [project.scripts]
 modelica-testing = "modelica_testing.cli:main_entry"
 
@@ -18,3 +21,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/modelica_testing"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "dymola: requires Dymola installation",
+]

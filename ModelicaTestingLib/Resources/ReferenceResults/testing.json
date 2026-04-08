@@ -1,0 +1,14 @@
+{
+  "package_path": "../../",
+  "simulator": "Dymola",
+  "simulators": {
+    "Dymola": [
+      "C:\\Program Files\\Dymola 2026x\\bin64\\Dymola.exe",
+      "C:\\Program Files\\Dymola 2025x Refresh 1\\bin64\\Dymola.exe"
+    ]
+  },
+  "dependencies": [],
+  "simulator_setup": [
+    "OutputCPUtime := true;"
+  ]
+}
