@@ -82,6 +82,18 @@
 - Could support per-variable tolerances (e.g., temperature variables need tighter tolerance than pressure) stored in the reference JSON alongside each variable
 - Global tolerance remains the default; per-variable overrides in the reference take precedence
 
+## Model health analysis from reference data
+
+- Mine stored reference data (statistics + variable trajectories) to surface potential model quality issues across the library
+- **Structural complexity flags**: rank models by number of nonlinear systems (before/after manipulation), numerical Jacobians, mixed systems — highlights models that may benefit from simplification or reformulation
+- **Event-heavy models**: flag models with high EventCounter or high state_events — candidates for smoother formulations or noEvent() wrapping
+- **Simulation cost outliers**: rank by CPUtime, identify models where cost is disproportionate to complexity (e.g., simple model but high CPU)
+- **Trajectory anomalies**: detect variables with extreme dynamic range (values spanning many orders of magnitude), sudden jumps to +/- infinity and back, or values that collapse to zero mid-simulation — often indicates numerical issues or missing limiters
+- **Trend analysis**: compare statistics across reference updates (date_added vs last_updated) to detect regressions — did a model get slower, gain events, or grow more nonlinear systems over time?
+- Could be a CLI command like `modelica-testing analyze` or `modelica-testing health` that produces a summary table sorted by severity
+- Output as console table, CSV for spreadsheet analysis, or HTML dashboard
+- Useful for library maintainers to prioritize optimization work across hundreds of models
+
 ## Full reference data representation in HTML reports
 
 - Diagnostic final values (total CPUtime, total EventCounter) should appear in the statistics table, not just as plot trajectories

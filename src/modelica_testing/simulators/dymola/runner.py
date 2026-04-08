@@ -21,7 +21,7 @@ from ..base import (
     resolve_variable_patterns,
 )
 from .log_parser import parse_dslog
-from .mat_reader import read_dymola_mat
+from .mat_reader import list_dymola_mat_variables, read_dymola_mat
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +280,14 @@ class DymolaRunner(SimulatorRunner):
                 statistics=stats,
             )
 
-        mat_data = read_dymola_mat(mat_path)
+        # Phase 1: Get variable names (fast — reads only the name matrix)
+        # Then resolve patterns to determine which variables we actually need.
+        needed_vars = _compute_needed_variables(
+            mat_path, test, self.config.diagnostic_variables,
+        )
+
+        # Phase 2: Load only needed variables from the .mat file
+        mat_data = read_dymola_mat(mat_path, variable_names=needed_vars)
         if mat_data is None:
             return TestResult(
                 model_id=test.model_id,
@@ -428,6 +435,40 @@ def _generate_batch_mos(
 # ---------------------------------------------------------------------------
 # Result extraction
 # ---------------------------------------------------------------------------
+
+def _compute_needed_variables(
+    mat_path: Path,
+    test: TestModel,
+    diagnostic_vars: list[str] = None,
+) -> Optional[set[str]]:
+    """Determine which variables need to be extracted from a .mat file.
+
+    Returns a set of variable names, or None to load everything (fallback).
+    This avoids loading all data for large files with thousands of variables.
+    """
+    if diagnostic_vars is None:
+        diagnostic_vars = []
+
+    needed: set[str] = set()
+
+    # UnitTests variables
+    if test.source in ("unit_tests", "both") and test.n_vars > 0:
+        for i in range(1, test.n_vars + 1):
+            needed.add(f"unitTests.x[{i}]")
+
+    # Pattern-based variables — need the full name list to resolve globs
+    if test.variable_patterns:
+        all_names = list_dymola_mat_variables(mat_path)
+        if all_names is None:
+            return None  # fallback: load everything
+        resolved = resolve_variable_patterns(test.variable_patterns, all_names)
+        needed.update(resolved)
+
+    # Diagnostic variables
+    needed.update(diagnostic_vars)
+
+    return needed if needed else None
+
 
 def _extract_variables(
     mat_data: dict,

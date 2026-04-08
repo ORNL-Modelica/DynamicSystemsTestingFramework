@@ -1,0 +1,244 @@
+﻿ = true
+simulateModel("TRANSFORM.Fluid.Pipes.Examples.GenericPipe_Tests.nParallel_withWall_FlowBoundary",numberOfIntervals=100,method="Dassl",tolerance=0.0001,resultFile="test_0037");
+Translation of TRANSFORM.Fluid.Pipes.Examples.GenericPipe_Tests.nParallel_withWall_FlowBoundary
+Note: 
+Your model is using an outer "systemTF" component but
+an inner "systemTF" component is not defined.
+For simulation drag TRANSFORM.Fluid.SystemTF into your model
+to specify system properties.
+ 
+The DAE has 8715 scalar unknowns and 8715 scalar equations.
+Warning: We cannot differentiate equations for the following variables having stateSelect = StateSelect.prefer.
+They will be treated as if they had stateSelect = StateSelect.default:
+pipe_nParallel.wall.Cs[]
+pipe_nParallel.wall.materials[1, 1].T
+pipe_nParallel.wall.materials[1, 2].T
+pipe_nParallel.wall.materials[1, 3].T
+pipe_nParallel.wall.materials[1, 4].T
+pipe_nParallel.wall.materials[1, 5].T
+pipe_nParallel.wall.materials[1, 6].T
+pipe_nParallel.wall.materials[1, 7].T
+pipe_nParallel.wall.materials[1, 8].T
+pipe_nParallel.wall.materials[1, 9].T
+pipe_nParallel.wall.materials[1, 10].T
+pipe_single.wall.Cs[]
+pipe_single.wall.materials[1, 1].T
+pipe_single.wall.materials[1, 2].T
+pipe_single.wall.materials[1, 3].T
+pipe_single.wall.materials[1, 4].T
+pipe_single.wall.materials[1, 5].T
+pipe_single.wall.materials[1, 6].T
+pipe_single.wall.materials[1, 7].T
+pipe_single.wall.materials[1, 8].T
+pipe_single.wall.materials[1, 9].T
+pipe_single.wall.materials[1, 10].T
+ 
+Statistics
+ 
+Original Model
+  Number of components: 940
+  Variables: 5708
+  Constants: 202 (202 scalars)
+  Parameters: 1103 (1598 scalars)
+  Unknowns: 4403 (8723 scalars)
+  Differentiated variables: 200 scalars
+  Equations: 2532
+  Nontrivial: 1991
+Translated Model
+  Constants: 4063 scalars
+  Free parameters: 173 scalars
+  Parameter depending: 934 scalars
+  Outputs: 2 scalars
+  Continuous time states: 120 scalars
+  Time-varying variables: 1433 scalars
+  Alias variables: 3920 scalars
+  Number of mixed real/discrete systems of equations: 20
+  Sizes of linear systems of equations: {4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4,   2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2, 4, 2}
+  Sizes after manipulation of the linear systems: {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+  Sizes of nonlinear systems of equations: {9, 9, 9, 5, 9, 9, 5, 9, 5, 9, 5, 9, 5, 9, 5, 5, 5, 9, 5, 5, 9, 9, 9, 5, 9, 9, 5,   9, 5, 9, 5, 9, 5, 9, 5, 5, 5, 9, 5, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,   2, 2, 2, 2, 2, 2, 2, 2, 2}
+  Sizes after manipulation of the nonlinear systems: {4, 4, 4, 1, 4, 4, 1, 4, 1, 4, 1, 4, 1, 4, 1, 1, 1, 4, 1, 1, 4, 4, 4, 1, 4, 4, 1,   4, 1, 4, 1, 4, 1, 4, 1, 1, 1, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,   1, 1, 1, 1, 1, 1, 1, 1, 1}
+  Number of numerical Jacobians: 0
+  Initialization problem
+    Number of mixed real/discrete systems of equations: 2
+    Sizes of linear systems of equations: {100, 100}
+    Sizes after manipulation of the linear systems: {20, 20}
+    Sizes of nonlinear systems of equations: {193, 193}
+    Sizes after manipulation of the nonlinear systems: {41, 41}
+    Sizes of simplified homotopy nonlinear systems of equations: {153, 153}
+    Sizes after manipulation of the simplified homotopy nonlinear systems: {31, 31}
+    Number of numerical Jacobians: 2
+ 
+Settings
+OutputCPUtime = true
+Selected continuous time states
+Statically selected continuous time states
+pipe_nParallel.pipe.flowModel.firstOrder_dps_K[1].y
+pipe_nParallel.pipe.flowModel.firstOrder_dps_K[2].y
+pipe_nParallel.pipe.flowModel.firstOrder_dps_K[3].y
+pipe_nParallel.pipe.flowModel.firstOrder_dps_K[4].y
+pipe_nParallel.pipe.flowModel.firstOrder_dps_K[5].y
+pipe_nParallel.pipe.flowModel.firstOrder_dps_K[6].y
+pipe_nParallel.pipe.flowModel.firstOrder_dps_K[7].y
+pipe_nParallel.pipe.flowModel.firstOrder_dps_K[8].y
+pipe_nParallel.pipe.flowModel.firstOrder_dps_K[9].y
+pipe_nParallel.pipe.flowModel.firstOrder_dps_K[10].y
+pipe_nParallel.wall.nCs[1, 1, 1]
+pipe_nParallel.wall.nCs[1, 2, 1]
+pipe_nParallel.wall.nCs[1, 3, 1]
+pipe_nParallel.wall.nCs[1, 4, 1]
+pipe_nParallel.wall.nCs[1, 5, 1]
+pipe_nParallel.wall.nCs[1, 6, 1]
+pipe_nParallel.wall.nCs[1, 7, 1]
+pipe_nParallel.wall.nCs[1, 8, 1]
+pipe_nParallel.wall.nCs[1, 9, 1]
+pipe_nParallel.wall.nCs[1, 10, 1]
+pipe_nParallel.wall.Us[1, 1]
+pipe_nParallel.wall.Us[1, 2]
+pipe_nParallel.wall.Us[1, 3]
+pipe_nParallel.wall.Us[1, 4]
+pipe_nParallel.wall.Us[1, 5]
+pipe_nParallel.wall.Us[1, 6]
+pipe_nParallel.wall.Us[1, 7]
+pipe_nParallel.wall.Us[1, 8]
+pipe_nParallel.wall.Us[1, 9]
+pipe_nParallel.wall.Us[1, 10]
+pipe_single.pipe.flowModel.firstOrder_dps_K[1].y
+pipe_single.pipe.flowModel.firstOrder_dps_K[2].y
+pipe_single.pipe.flowModel.firstOrder_dps_K[3].y
+pipe_single.pipe.flowModel.firstOrder_dps_K[4].y
+pipe_single.pipe.flowModel.firstOrder_dps_K[5].y
+pipe_single.pipe.flowModel.firstOrder_dps_K[6].y
+pipe_single.pipe.flowModel.firstOrder_dps_K[7].y
+pipe_single.pipe.flowModel.firstOrder_dps_K[8].y
+pipe_single.pipe.flowModel.firstOrder_dps_K[9].y
+pipe_single.pipe.flowModel.firstOrder_dps_K[10].y
+pipe_single.wall.nCs[1, 1, 1]
+pipe_single.wall.nCs[1, 2, 1]
+pipe_single.wall.nCs[1, 3, 1]
+pipe_single.wall.nCs[1, 4, 1]
+pipe_single.wall.nCs[1, 5, 1]
+pipe_single.wall.nCs[1, 6, 1]
+pipe_single.wall.nCs[1, 7, 1]
+pipe_single.wall.nCs[1, 8, 1]
+pipe_single.wall.nCs[1, 9, 1]
+pipe_single.wall.nCs[1, 10, 1]
+pipe_single.wall.Us[1, 1]
+pipe_single.wall.Us[1, 2]
+pipe_single.wall.Us[1, 3]
+pipe_single.wall.Us[1, 4]
+pipe_single.wall.Us[1, 5]
+pipe_single.wall.Us[1, 6]
+pipe_single.wall.Us[1, 7]
+pipe_single.wall.Us[1, 8]
+pipe_single.wall.Us[1, 9]
+pipe_single.wall.Us[1, 10]
+Dynamically selected continuous time states
+There are 20 sets of dynamic state selection.
+From set 1 there are 3 states to be selected from:
+pipe_single.pipe.Cs[8, 1]
+pipe_single.pipe.mCs_scaled[8, 1]
+pipe_single.pipe.mediums[8].h
+pipe_single.pipe.mediums[8].p
+From set 2 there are 3 states to be selected from:
+pipe_single.pipe.Cs[6, 1]
+pipe_single.pipe.mCs_scaled[6, 1]
+pipe_single.pipe.mediums[6].h
+pipe_single.pipe.mediums[6].p
+From set 3 there are 3 states to be selected from:
+pipe_single.pipe.Cs[5, 1]
+pipe_single.pipe.mCs_scaled[5, 1]
+pipe_single.pipe.mediums[5].h
+pipe_single.pipe.mediums[5].p
+From set 4 there are 3 states to be selected from:
+pipe_single.pipe.Cs[4, 1]
+pipe_single.pipe.mCs_scaled[4, 1]
+pipe_single.pipe.mediums[4].h
+pipe_single.pipe.mediums[4].p
+From set 5 there are 3 states to be selected from:
+pipe_single.pipe.Cs[3, 1]
+pipe_single.pipe.mCs_scaled[3, 1]
+pipe_single.pipe.mediums[3].h
+pipe_single.pipe.mediums[3].p
+From set 6 there are 3 states to be selected from:
+pipe_single.pipe.Cs[2, 1]
+pipe_single.pipe.mCs_scaled[2, 1]
+pipe_single.pipe.mediums[2].h
+pipe_single.pipe.mediums[2].p
+From set 7 there are 3 states to be selected from:
+pipe_single.pipe.Cs[1, 1]
+pipe_single.pipe.mCs_scaled[1, 1]
+pipe_single.pipe.mediums[1].h
+pipe_single.pipe.mediums[1].p
+From set 8 there are 3 states to be selected from:
+pipe_single.pipe.Cs[7, 1]
+pipe_single.pipe.mCs_scaled[7, 1]
+pipe_single.pipe.mediums[7].h
+pipe_single.pipe.mediums[7].p
+From set 9 there are 3 states to be selected from:
+pipe_single.pipe.Cs[10, 1]
+pipe_single.pipe.mCs_scaled[10, 1]
+pipe_single.pipe.mediums[10].h
+pipe_single.pipe.mediums[10].p
+From set 10 there are 3 states to be selected from:
+pipe_single.pipe.Cs[9, 1]
+pipe_single.pipe.mCs_scaled[9, 1]
+pipe_single.pipe.mediums[9].h
+pipe_single.pipe.mediums[9].p
+From set 11 there are 3 states to be selected from:
+pipe_nParallel.pipe.Cs[8, 1]
+pipe_nParallel.pipe.mCs_scaled[8, 1]
+pipe_nParallel.pipe.mediums[8].h
+pipe_nParallel.pipe.mediums[8].p
+From set 12 there are 3 states to be selected from:
+pipe_nParallel.pipe.Cs[6, 1]
+pipe_nParallel.pipe.mCs_scaled[6, 1]
+pipe_nParallel.pipe.mediums[6].h
+pipe_nParallel.pipe.mediums[6].p
+From set 13 there are 3 states to be selected from:
+pipe_nParallel.pipe.Cs[5, 1]
+pipe_nParallel.pipe.mCs_scaled[5, 1]
+pipe_nParallel.pipe.mediums[5].h
+pipe_nParallel.pipe.mediums[5].p
+From set 14 there are 3 states to be selected from:
+pipe_nParallel.pipe.Cs[4, 1]
+pipe_nParallel.pipe.mCs_scaled[4, 1]
+pipe_nParallel.pipe.mediums[4].h
+pipe_nParallel.pipe.mediums[4].p
+From set 15 there are 3 states to be selected from:
+pipe_nParallel.pipe.Cs[3, 1]
+pipe_nParallel.pipe.mCs_scaled[3, 1]
+pipe_nParallel.pipe.mediums[3].h
+pipe_nParallel.pipe.mediums[3].p
+From set 16 there are 3 states to be selected from:
+pipe_nParallel.pipe.Cs[2, 1]
+pipe_nParallel.pipe.mCs_scaled[2, 1]
+pipe_nParallel.pipe.mediums[2].h
+pipe_nParallel.pipe.mediums[2].p
+From set 17 there are 3 states to be selected from:
+pipe_nParallel.pipe.Cs[1, 1]
+pipe_nParallel.pipe.mCs_scaled[1, 1]
+pipe_nParallel.pipe.mediums[1].h
+pipe_nParallel.pipe.mediums[1].p
+From set 18 there are 3 states to be selected from:
+pipe_nParallel.pipe.Cs[7, 1]
+pipe_nParallel.pipe.mCs_scaled[7, 1]
+pipe_nParallel.pipe.mediums[7].h
+pipe_nParallel.pipe.mediums[7].p
+From set 19 there are 3 states to be selected from:
+pipe_nParallel.pipe.Cs[10, 1]
+pipe_nParallel.pipe.mCs_scaled[10, 1]
+pipe_nParallel.pipe.mediums[10].h
+pipe_nParallel.pipe.mediums[10].p
+From set 20 there are 3 states to be selected from:
+pipe_nParallel.pipe.Cs[9, 1]
+pipe_nParallel.pipe.mCs_scaled[9, 1]
+pipe_nParallel.pipe.mediums[9].h
+pipe_nParallel.pipe.mediums[9].p
+Warning: Some variables are iteration variables of the initialization problem:
+but they are not given any explicit start values. Zero will be used.
+Iteration variables:
+der(pipe_nParallel.pipe.mediums[1].u)
+der(pipe_single.pipe.mediums[1].u)
+Warning: WARNINGS have been issued.
+ = true
+savelog("translation_log.txt");

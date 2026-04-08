@@ -3,6 +3,7 @@
 import html as html_mod
 import logging
 import platform
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -12,6 +13,24 @@ import numpy as np
 from ..comparison.comparator import VariableComparison
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_filename(name: str) -> str:
+    """Sanitize a variable name for use in a filename.
+
+    Collapses whitespace (including newlines), replaces Modelica
+    punctuation, and removes any remaining filesystem-unsafe characters.
+    """
+    # Collapse all whitespace (newlines, spaces, tabs) into single underscore
+    name = re.sub(r'\s+', '_', name)
+    # Replace common Modelica punctuation
+    name = name.replace("[", "_").replace("]", "").replace(".", "_")
+    name = name.replace(",", "_").replace("(", "").replace(")", "")
+    # Remove anything that's not alphanumeric, underscore, or hyphen
+    name = re.sub(r'[^\w\-]', '', name)
+    # Collapse multiple underscores
+    name = re.sub(r'_+', '_', name).strip('_')
+    return name
 
 
 def _compare_row(label: str, sim_val: str, ref_val: str, highlight: bool = False) -> str:
@@ -149,7 +168,7 @@ def generate_comparison_plots(
     diag_png_files = []
     if result and result.diagnostics:
         for diag in result.diagnostics:
-            safe_name = diag.name.replace("[", "_").replace("]", "").replace(".", "_")
+            safe_name = _sanitize_filename(diag.name)
             png_name = f"diag_{safe_name}.png"
             png_path = plot_dir / png_name
 
@@ -184,7 +203,7 @@ def generate_comparison_plots(
         ref_var = ref_vars.get(vc.index)
         has_ref = ref_var is not None and ref_time is not None
 
-        safe_name = (vc.name or f"x_{vc.index}").replace("[", "_").replace("]", "").replace(".", "_")
+        safe_name = _sanitize_filename(vc.name or f"x_{vc.index}")
         png_name = f"var_{vc.index:03d}_{safe_name}.png"
         png_path = plot_dir / png_name
 
