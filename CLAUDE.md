@@ -19,7 +19,14 @@ ModelicaTesting/
 │       ├── comparison/          # NRMSE comparison with piecewise event handling
 │       ├── storage/             # JSON reference storage with numeric ID manifest
 │       └── reporting/           # Console, JUnit XML, HTML reporters, plot generation
-├── docs/                        # Design decisions, patterns, architecture, constraints
+├── ModelicaTestingLib/          # Modelica library: UnitTests component + example models
+│   ├── Components/UnitTests.mo  # Reusable UnitTests component for tracking variables
+│   ├── Examples/                # SimpleTest, EventTest, ConstantTest, NoUnitTest
+│   └── Resources/ReferenceResults/  # testing.json + reference baselines for this library
+├── tests/                       # pytest test suite (109 tests)
+│   ├── fixtures/                # Test data: dslog.txt, .mat file, test_spec.json
+│   └── test_*.py                # Comparator, config, discovery, storage, simulators
+├── docs/                        # Design decisions, patterns, architecture, constraints, usage
 ├── pyproject.toml               # uv/hatchling project config
 └── CLAUDE.md
 ```
@@ -27,26 +34,34 @@ ModelicaTesting/
 ## Running the Tool
 
 ```bash
-# Discover tests in a library
-uv run python -m modelica_testing discover --package-path /path/to/MyLibrary
+# With testing.json containing package_path — single entry point
+uv run python -m modelica_testing --config path/to/testing.json run
 
-# Run tests and compare against references
-uv run python -m modelica_testing run --package-path /path/to/MyLibrary
+# Or with explicit flags
+uv run python -m modelica_testing --package-path /path/to/MyLib --reference-root /path/to/refs run
 
-# Run with interactive review (accept/skip/plot per test)
-uv run python -m modelica_testing run -i
+# Interactive review (accept/skip/plot per test)
+uv run python -m modelica_testing --config testing.json run -i
 
 # Accept all results as new baselines
-uv run python -m modelica_testing run --accept
+uv run python -m modelica_testing --config testing.json run --accept
 
 # Compare without re-running simulations (uses last results)
-uv run python -m modelica_testing compare
+uv run python -m modelica_testing --config testing.json compare
+```
+
+## Running Tests
+
+```bash
+uv pip install -e ".[dev]"    # One-time: install package + pytest
+uv run pytest                  # Run the test suite
 ```
 
 ## Configuration
 
 The tool looks for `testing.json` near the library root or reference root. Key fields:
 
+- `package_path` — path to library's package.mo directory (relative to testing.json)
 - `simulator` — named entry like `"Dymola"` or `"Dymola 2025"`
 - `simulators` — map of simulator names to candidate executable paths
 - `simulator_setup` — list of Modelica commands run after library loading (e.g., `"OutputCPUtime := true;"`)

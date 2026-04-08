@@ -51,8 +51,8 @@
 ## D9: No backward compatibility during development
 
 - **What**: Format changes (manifest, reference JSON, CLI flags) are clean breaks with no legacy fallback code.
-- **Why**: Early-stage repo with no external consumers. One-time migration utilities are provided instead of maintaining dual paths.
-- **Trade-offs**: Existing references must be migrated. The `convert` and `migrate` commands handle this.
+- **Why**: Early-stage repo with no external consumers.
+- **Trade-offs**: Existing references must be regenerated. Migration utilities were provided during the transition and have since been removed.
 
 ## D10: Diagnostic variables (CPUtime, EventCounter) auto-captured
 
@@ -71,3 +71,9 @@
 - **What**: `testing.json` can contain `package_path` pointing to the library under test. With this, a single flag (`--config` or `--reference-root`) is sufficient to run — no `--package-path` needed.
 - **Why**: Reduces command-line boilerplate. The config file already knows everything about the test setup; requiring the user to also specify the library path is redundant.
 - **Trade-offs**: `package_path` in the config is relative, so moving the config file breaks the path. CLI `--package-path` still overrides.
+
+## D13: ModelicaTestingLib as top-level Modelica library
+
+- **What**: A small Modelica library (`ModelicaTestingLib/`) lives at the project root. It contains a reusable `UnitTests` component, example models (SimpleTest, EventTest, ConstantTest, NoUnitTest), and its own reference results under `Resources/ReferenceResults/`.
+- **Why**: Serves dual purpose — test fixture for the pytest suite (real `.mo` files for discovery/parsing tests) and reference implementation showing how to set up `UnitTests` in a library. Top-level placement makes it easy for users to find and reuse (e.g., the `UnitTests` component).
+- **Trade-offs**: Top-level directory in the repo that isn't Python code. Could confuse contributors expecting only `src/` and `tests/`. The library is tested by the framework itself (dog-fooding).

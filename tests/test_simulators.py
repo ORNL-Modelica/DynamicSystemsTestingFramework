@@ -7,7 +7,9 @@ import pytest
 
 from modelica_testing.simulators.dymola.log_parser import parse_dslog
 from modelica_testing.simulators.dymola.mat_reader import read_dymola_mat
+from modelica_testing.simulators.dymola.runner import _extract_variables
 from modelica_testing.simulators.base import resolve_variable_patterns, _pattern_to_regex
+from modelica_testing.discovery.test_registry import TestModel
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -136,6 +138,72 @@ class TestMatReader:
         """Nonexistent file returns None."""
         result = read_dymola_mat(Path("/nonexistent/file.mat"))
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic variable extraction
+# ---------------------------------------------------------------------------
+
+class TestDiagnosticExtraction:
+    def _make_test(self):
+        return TestModel(
+            model_id="ModelicaTestingLib.Examples.ConstantTest",
+            mo_file=Path(""),
+            package_path="ModelicaTestingLib.Examples",
+            short_name="ConstantTest",
+            n_vars=2,
+            variable_patterns=[],
+            source="unit_tests",
+        )
+
+    def test_extract_default_diagnostics(self):
+        """CPUtime and EventCounter extracted as diagnostics."""
+        mat_data = read_dymola_mat(SAMPLE_MAT)
+        test = self._make_test()
+        variables, diagnostics = _extract_variables(
+            mat_data, test, ["CPUtime", "EventCounter"],
+        )
+        diag_names = [d.name for d in diagnostics]
+        assert "CPUtime" in diag_names
+        assert "EventCounter" in diag_names
+
+    def test_diagnostics_not_in_variables(self):
+        """Diagnostic variables don't appear in the regular variables list."""
+        mat_data = read_dymola_mat(SAMPLE_MAT)
+        test = self._make_test()
+        variables, diagnostics = _extract_variables(
+            mat_data, test, ["CPUtime", "EventCounter"],
+        )
+        var_names = [v.name for v in variables]
+        assert "CPUtime" not in var_names
+        assert "EventCounter" not in var_names
+
+    def test_custom_diagnostic_variable(self):
+        """Custom diagnostic variable name is extracted if present in mat data."""
+        mat_data = read_dymola_mat(SAMPLE_MAT)
+        test = self._make_test()
+        # "x" exists in the mat data — treating it as diagnostic
+        variables, diagnostics = _extract_variables(
+            mat_data, test, ["x"],
+        )
+        diag_names = [d.name for d in diagnostics]
+        assert "x" in diag_names
+
+    def test_missing_diagnostic_skipped(self):
+        """Diagnostic variable not in mat data is silently skipped."""
+        mat_data = read_dymola_mat(SAMPLE_MAT)
+        test = self._make_test()
+        variables, diagnostics = _extract_variables(
+            mat_data, test, ["NonExistentVar"],
+        )
+        assert len(diagnostics) == 0
+
+    def test_empty_diagnostic_list(self):
+        """Empty diagnostic list produces no diagnostics."""
+        mat_data = read_dymola_mat(SAMPLE_MAT)
+        test = self._make_test()
+        variables, diagnostics = _extract_variables(mat_data, test, [])
+        assert len(diagnostics) == 0
 
 
 # ---------------------------------------------------------------------------

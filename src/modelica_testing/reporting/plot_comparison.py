@@ -26,6 +26,91 @@ def _compare_row(label: str, sim_val: str, ref_val: str, highlight: bool = False
     )
 
 
+def _plot_variable(
+    plt,
+    act_time, act_values, name, index,
+    ref_time=None, ref_values=None,
+    is_diagnostic=False,
+    tolerance=1e-4,
+) -> tuple:
+    """Generate a comparison plot for one variable.
+
+    For diagnostic variables: single panel (trajectory only, no error panels).
+    For compared variables: 3 panels (trajectory, abs error, normalized error).
+
+    Returns (fig, status_text, status_color).
+    """
+    has_ref = ref_time is not None and ref_values is not None
+
+    if is_diagnostic:
+        fig, ax = plt.subplots(1, 1, figsize=(12, 4))
+        ax.plot(act_time, act_values, label="Actual", color="#2196F3", linewidth=1)
+        if has_ref:
+            ax.plot(ref_time, ref_values, label="Reference", color="#FF9800",
+                    linewidth=1, linestyle="--")
+        ax.set_ylabel("Value")
+        ax.set_xlabel("Time")
+        ax.set_title(f"{name} (diagnostic)")
+        ax.legend(loc="best", fontsize=9)
+        ax.grid(True, alpha=0.3)
+        return fig, "INFO", "#607D8B"
+
+    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True,
+                             gridspec_kw={"height_ratios": [3, 1, 1]})
+
+    ax_traj = axes[0]
+    ax_traj.plot(act_time, act_values, label="Actual", color="#2196F3", linewidth=1)
+    if has_ref:
+        ax_traj.plot(ref_time, ref_values, label="Reference", color="#FF9800",
+                    linewidth=1, linestyle="--")
+    ax_traj.set_ylabel("Value")
+    ax_traj.set_title(f"{name}")
+    ax_traj.legend(loc="best", fontsize=9)
+    ax_traj.grid(True, alpha=0.3)
+
+    if has_ref:
+        actual_interp = np.interp(ref_time, act_time, act_values)
+        abs_error = np.abs(actual_interp - ref_values)
+
+        signal_range = float(np.max(ref_values) - np.min(ref_values))
+        if signal_range > 100 * np.finfo(np.float64).eps:
+            rel_error = abs_error / signal_range
+        else:
+            rel_error = abs_error
+
+        ax_abs = axes[1]
+        ax_abs.plot(ref_time, abs_error, color="#f44336", linewidth=0.8)
+        max_idx = int(np.argmax(abs_error))
+        ax_abs.axvline(ref_time[max_idx], color="#f44336", alpha=0.3, linestyle=":")
+        ax_abs.set_ylabel("Abs Error")
+        ax_abs.grid(True, alpha=0.3)
+        ax_abs.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
+
+        ax_rel = axes[2]
+        ax_rel.plot(ref_time, rel_error, color="#9C27B0", linewidth=0.8)
+        ax_rel.axhline(y=tolerance, color="gray", linestyle="--", alpha=0.5,
+                       label=f"tolerance ({tolerance:.0e})")
+        ax_rel.axvline(ref_time[max_idx], color="#9C27B0", alpha=0.3, linestyle=":")
+        ax_rel.set_ylabel("NRMSE Error")
+        ax_rel.set_xlabel("Time")
+        ax_rel.legend(loc="best", fontsize=8)
+        ax_rel.grid(True, alpha=0.3)
+        ax_rel.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
+
+        passed = True  # Will be overridden by caller if vc available
+    else:
+        axes[1].text(0.5, 0.5, "No reference data", transform=axes[1].transAxes,
+                    ha="center", va="center", color="gray")
+        axes[1].set_ylabel("Abs Error")
+        axes[2].text(0.5, 0.5, "No reference data", transform=axes[2].transAxes,
+                    ha="center", va="center", color="gray")
+        axes[2].set_ylabel("Rel Error")
+        axes[2].set_xlabel("Time")
+        passed = True
+
+    return fig, None, None  # Status set by caller
+
+
 def generate_comparison_plots(
     model_id: str,
     ref_data: Optional[dict],
@@ -50,17 +135,42 @@ def generate_comparison_plots(
     # Get reference time and variables
     ref_time = None
     ref_vars = {}
+    ref_diags = {}
     if ref_data:
         shared_time = ref_data.get("time")
         if shared_time is not None:
             ref_time = np.array(shared_time)
         for rv in ref_data.get("variables", []):
             ref_vars[rv["index"]] = rv
+        for rd in ref_data.get("diagnostics", []):
+            ref_diags[rd["name"]] = rd
 
+    # --- Diagnostic variable plots (shown first) ---
+    diag_png_files = []
+    if result and result.diagnostics:
+        for diag in result.diagnostics:
+            safe_name = diag.name.replace("[", "_").replace("]", "").replace(".", "_")
+            png_name = f"diag_{safe_name}.png"
+            png_path = plot_dir / png_name
+
+            ref_diag = ref_diags.get(diag.name)
+            ref_d_values = np.array(ref_diag["values"]) if ref_diag else None
+
+            fig, _, _ = _plot_variable(
+                plt,
+                diag.time, diag.values, diag.name, 0,
+                ref_time=ref_time, ref_values=ref_d_values,
+                is_diagnostic=True,
+            )
+
+            plt.tight_layout()
+            fig.savefig(str(png_path), dpi=100, bbox_inches="tight")
+            plt.close(fig)
+            diag_png_files.append((png_name, diag.name))
+
+    # --- Compared variable plots ---
     png_files = []
-
     for vc in comparisons:
-        # Find the actual result variable
         act_var = None
         if result and result.variables:
             for v in result.variables:
@@ -71,75 +181,27 @@ def generate_comparison_plots(
         if act_var is None:
             continue
 
-        # Reference data for this variable
         ref_var = ref_vars.get(vc.index)
         has_ref = ref_var is not None and ref_time is not None
 
-        # Sanitize name for filename
         safe_name = (vc.name or f"x_{vc.index}").replace("[", "_").replace("]", "").replace(".", "_")
         png_name = f"var_{vc.index:03d}_{safe_name}.png"
         png_path = plot_dir / png_name
 
-        fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True,
-                                 gridspec_kw={"height_ratios": [3, 1, 1]})
+        ref_v = np.array(ref_var["values"]) if has_ref else None
 
-        # --- Top: Trajectory comparison ---
-        ax_traj = axes[0]
-        ax_traj.plot(act_var.time, act_var.values, label="Actual", color="#2196F3", linewidth=1)
-        if has_ref:
-            ref_values = np.array(ref_var["values"])
-            ax_traj.plot(ref_time, ref_values, label="Reference", color="#FF9800",
-                        linewidth=1, linestyle="--")
-        ax_traj.set_ylabel("Value")
-        ax_traj.set_title(f"{vc.name or f'x[{vc.index}]'}")
-        ax_traj.legend(loc="best", fontsize=9)
-        ax_traj.grid(True, alpha=0.3)
+        fig, _, _ = _plot_variable(
+            plt,
+            act_var.time, act_var.values, vc.name or f"x[{vc.index}]", vc.index,
+            ref_time=ref_time if has_ref else None,
+            ref_values=ref_v,
+        )
 
-        if has_ref:
-            # Interpolate actual to reference grid for error computation
-            actual_interp = np.interp(ref_time, act_var.time, act_var.values)
-            abs_error = np.abs(actual_interp - ref_values)
-
-            # Relative error (range-normalized)
-            signal_range = float(np.max(ref_values) - np.min(ref_values))
-            if signal_range > 100 * np.finfo(np.float64).eps:
-                rel_error = abs_error / signal_range
-            else:
-                rel_error = abs_error
-
-            # --- Middle: Absolute error ---
-            ax_abs = axes[1]
-            ax_abs.plot(ref_time, abs_error, color="#f44336", linewidth=0.8)
-            max_idx = int(np.argmax(abs_error))
-            ax_abs.axvline(ref_time[max_idx], color="#f44336", alpha=0.3, linestyle=":")
-            ax_abs.set_ylabel("Abs Error")
-            ax_abs.grid(True, alpha=0.3)
-            ax_abs.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
-
-            # --- Bottom: Normalized error ---
-            ax_rel = axes[2]
-            ax_rel.plot(ref_time, rel_error, color="#9C27B0", linewidth=0.8)
-            ax_rel.axhline(y=1e-4, color="gray", linestyle="--", alpha=0.5, label="tolerance (1e-4)")
-            ax_rel.axvline(ref_time[max_idx], color="#9C27B0", alpha=0.3, linestyle=":")
-            ax_rel.set_ylabel("NRMSE Error")
-            ax_rel.set_xlabel("Time")
-            ax_rel.legend(loc="best", fontsize=8)
-            ax_rel.grid(True, alpha=0.3)
-            ax_rel.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
-        else:
-            # No reference — just show empty error panels
-            axes[1].text(0.5, 0.5, "No reference data", transform=axes[1].transAxes,
-                        ha="center", va="center", color="gray")
-            axes[1].set_ylabel("Abs Error")
-            axes[2].text(0.5, 0.5, "No reference data", transform=axes[2].transAxes,
-                        ha="center", va="center", color="gray")
-            axes[2].set_ylabel("Rel Error")
-            axes[2].set_xlabel("Time")
-
-        # Status annotation
+        # Add pass/fail annotation
         status_text = "PASS" if vc.passed else "FAIL"
         status_color = "#4CAF50" if vc.passed else "#f44336"
-        ax_traj.annotate(
+        ax_top = fig.axes[0]
+        ax_top.annotate(
             status_text, xy=(0.98, 0.95), xycoords="axes fraction",
             fontsize=14, fontweight="bold", color=status_color,
             ha="right", va="top",
@@ -154,7 +216,10 @@ def generate_comparison_plots(
     # Generate HTML viewer
     html_path = plot_dir / "comparison.html"
     cur_stats = result.statistics if result else None
-    _generate_html_viewer(html_path, model_id, png_files, comparisons, ref_data, cur_stats)
+    _generate_html_viewer(
+        html_path, model_id, png_files, comparisons, ref_data, cur_stats,
+        diag_png_files=diag_png_files,
+    )
 
     return html_path
 
@@ -166,6 +231,7 @@ def _generate_html_viewer(
     comparisons: list[VariableComparison],
     ref_data: Optional[dict] = None,
     cur_stats: Optional[dict] = None,
+    diag_png_files: Optional[list[tuple[str, str]]] = None,
 ) -> None:
     """Generate an HTML page showing all plots, stats, and metadata tables."""
 
@@ -273,7 +339,19 @@ def _generate_html_viewer(
             f"</tr>"
         )
 
-    # Plot sections
+    # Diagnostic plot sections (shown first)
+    diag_sections = []
+    if diag_png_files:
+        for png_name, diag_name in diag_png_files:
+            name = html_mod.escape(diag_name)
+            diag_sections.append(
+                f'<div class="plot-section">'
+                f'<h3><span style="color:#607D8B">INFO</span> {name}</h3>'
+                f'<img src="{png_name}" alt="{name}" style="max-width:100%">'
+                f'</div>'
+            )
+
+    # Compared variable plot sections
     plot_sections = []
     for png_name, vc in png_files:
         name = html_mod.escape(vc.name or f"x[{vc.index}]")
@@ -288,6 +366,10 @@ def _generate_html_viewer(
 
     n_passed = sum(1 for vc in comparisons if vc.passed)
     n_total = len(comparisons)
+
+    diag_html = ""
+    if diag_sections:
+        diag_html = "<h2>Diagnostics</h2>\n" + "\n".join(diag_sections)
 
     page = f"""<!DOCTYPE html>
 <html>
@@ -318,6 +400,8 @@ tr:hover {{ background: #f9f9f9; }}
 
 {metadata_html}
 {stats_html}
+
+{diag_html}
 
 <h2>Variable Comparison</h2>
 <table>

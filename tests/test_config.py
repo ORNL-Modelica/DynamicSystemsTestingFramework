@@ -173,3 +173,26 @@ class TestConfig:
         assert "Dymola" in parts
         os_name = detect_os()
         assert os_name in parts
+
+    def test_default_diagnostic_variables(self, sample_models_dir):
+        """Default diagnostic variables include CPUtime and EventCounter."""
+        config = Config(package_path=sample_models_dir)
+        assert "CPUtime" in config.diagnostic_variables
+        assert "EventCounter" in config.diagnostic_variables
+
+    def test_custom_diagnostic_variables(self, tmp_path, sample_models_dir):
+        """diagnostic_variables can be overridden via testing.json."""
+        config_dir = tmp_path / "refs"
+        config_dir.mkdir()
+        models_dest = config_dir / "ModelicaTestingLib"
+        shutil.copytree(sample_models_dir, models_dest)
+
+        cfg = {
+            "package_path": "ModelicaTestingLib",
+            "simulator": "Dymola",
+            "diagnostic_variables": ["CPUtime", "EventCounter", "MyCustomVar"],
+        }
+        (config_dir / "testing.json").write_text(json.dumps(cfg))
+
+        config = Config(config_file=str(config_dir / "testing.json"))
+        assert config.diagnostic_variables == ["CPUtime", "EventCounter", "MyCustomVar"]

@@ -1,5 +1,18 @@
 # Architecture
 
+## Project Layout
+
+```
+ModelicaTesting/
+├── ModelicaTestingLib/               # Modelica library (test fixture + reference implementation)
+│   ├── Components/UnitTests.mo      # Reusable UnitTests component
+│   ├── Examples/                    # SimpleTest, EventTest, ConstantTest, NoUnitTest
+│   └── Resources/ReferenceResults/  # testing.json + baselines for this library
+├── tests/                           # pytest suite
+│   ├── fixtures/results/Dymola/     # Real Dymola artifacts (.mat, dslog.txt, etc.)
+│   └── test_*.py                    # Unit tests for all modules
+```
+
 ## Package Layout
 
 ```

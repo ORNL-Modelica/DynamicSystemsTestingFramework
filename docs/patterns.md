@@ -16,6 +16,7 @@
 
 ### Event boundary handling in time series
 - Duplicate time values = Modelica events (pre-event and post-event values at same instant)
+- Dymola may produce 2 or 3 duplicate time points per event — `_find_event_boundaries` groups consecutive duplicates into `(first_dup, last_dup)` tuples
 - `_dedup_time_series(keep="first")` gives pre-event values; `keep="last"` gives post-event
 - First segment: interpolate with pre-event dedup (correct at end boundary)
 - Last segment: interpolate with post-event dedup (correct at start boundary)

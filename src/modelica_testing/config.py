@@ -177,6 +177,9 @@ class Config:
     # Test spec file (external test definitions)
     test_spec_file: Optional[Path] = None
 
+    # Diagnostic variables: auto-captured from simulation, shown in reports but not compared
+    diagnostic_variables: list[str] = field(default_factory=lambda: ["CPUtime", "EventCounter"])
+
     # Config file path
     config_file: Optional[Path] = None
 
@@ -256,6 +259,10 @@ class Config:
         # Simulator setup commands
         if not self.simulator_setup and "simulator_setup" in file_config:
             self.simulator_setup = file_config["simulator_setup"]
+
+        # Diagnostic variables
+        if "diagnostic_variables" in file_config:
+            self.diagnostic_variables = file_config["diagnostic_variables"]
 
         # Resolve simulator executable path
         if self.simulator_path is None:

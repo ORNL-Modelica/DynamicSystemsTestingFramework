@@ -15,6 +15,11 @@
       "model_id": "ModelicaTestingLib.Examples.SimpleTest",
       "added": "2026-04-08",
       "status": "active"
+    },
+    "0004": {
+      "model_id": "ModelicaTestingLib.Examples.NoUnitTest",
+      "added": "2026-04-08",
+      "status": "active"
     }
   }
 }

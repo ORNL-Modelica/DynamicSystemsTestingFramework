@@ -41,3 +41,11 @@
 - Default pins could include diagnostic variables (`CPUtime`, `EventCounter`) at the top
 - Could be simulator-specific (Dymola diagnostics differ from OpenModelica) or user-specific
 - Keeps the most important signals visible without scrolling through dozens of variables
+
+## Filtered interactive review
+
+- Run all tests but only prompt for specific categories: `--interactive=failed`, `--interactive=no-baseline`, `--interactive=warnings`
+- Passing tests are silently accepted/skipped without user interaction
+- Avoids pressing `s` dozens of times to get to the few tests that need attention
+- Could combine filters: `--interactive=failed,no-baseline` to review both failures and new tests
+- Default `-i` behavior stays the same (prompt for everything)
