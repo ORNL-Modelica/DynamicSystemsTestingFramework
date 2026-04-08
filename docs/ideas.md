@@ -61,6 +61,7 @@
   - **Panel/Dash**: full web app with server — overkill for this use case
   - Plotly is likely the best fit: interactive plots in self-contained HTML, matplotlib stays as the lightweight fallback
 - Could also explore a single-page app approach: one HTML file with a sidebar listing all tests, clicking loads that test's plots inline (avoids many separate files)
+- Include a mapping table showing test_NNNN (working directory) ↔ ref_NNNN (reference file) ↔ model ID, so the user can navigate between simulation artifacts and references easily
 
 ## Full reference data representation in HTML reports
 

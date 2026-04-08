@@ -75,6 +75,8 @@ def _build_test_model(mo_result: MoParseResult) -> TestModel:
             model.method = exp.method
         if exp.number_of_intervals is not None:
             model.number_of_intervals = exp.number_of_intervals
+        if exp.output_interval is not None:
+            model.output_interval = exp.output_interval
 
     return model
 

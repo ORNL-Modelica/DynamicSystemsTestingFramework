@@ -261,6 +261,7 @@ def _generate_html_viewer(
         ("tolerance", "Tolerance"),
         ("method", "Method"),
         ("number_of_intervals", "Number of Intervals"),
+        ("output_interval", "Output Interval"),
     ]
     for key, label in sim_fields:
         ref_val = ref_sim.get(key, "")
@@ -276,48 +277,83 @@ def _generate_html_viewer(
             '</table>'
         )
 
-    # --- Statistics: reference vs current ---
+    # --- Statistics tables: Translation then Simulation ---
     ref_stats = ref_data.get("statistics", {}) if ref_data else {}
 
-    # Collect all stat keys from both sources
-    all_stat_keys = set()
-    for phase in ("initialization", "simulation"):
-        ref_phase = ref_stats.get(phase, {})
-        cur_phase = cur_stats.get(phase, {})
-        if isinstance(ref_phase, dict):
-            for k in ref_phase:
-                all_stat_keys.add((phase, k))
-        if isinstance(cur_phase, dict):
-            for k in cur_phase:
-                all_stat_keys.add((phase, k))
-    # Top-level keys
-    for k in ("translation_time",):
-        if k in ref_stats or k in cur_stats:
-            all_stat_keys.add(("", k))
-
-    stats_html = ""
-    if all_stat_keys:
-        stats_rows = []
-        for phase, key in sorted(all_stat_keys):
-            if phase:
-                label = f"{phase.capitalize()} / {key.replace('_', ' ').title()}"
-                ref_val = ref_stats.get(phase, {}).get(key, "") if isinstance(ref_stats.get(phase), dict) else ""
-                cur_val = cur_stats.get(phase, {}).get(key, "") if isinstance(cur_stats.get(phase), dict) else ""
-            else:
-                label = key.replace("_", " ").title()
-                ref_val = ref_stats.get(key, "")
-                cur_val = cur_stats.get(key, "")
-
+    def _build_stats_table(title: str, category: str) -> str:
+        """Build an HTML stats table for a single category."""
+        ref_cat = ref_stats.get(category, {}) if isinstance(ref_stats.get(category), dict) else {}
+        cur_cat = cur_stats.get(category, {}) if isinstance(cur_stats.get(category), dict) else {}
+        all_keys = sorted(set(ref_cat.keys()) | set(cur_cat.keys()))
+        if not all_keys:
+            return ""
+        rows = []
+        for key in all_keys:
+            label = key.replace("_", " ").title()
+            ref_val = ref_cat.get(key, "")
+            cur_val = cur_cat.get(key, "")
+            if isinstance(ref_val, list):
+                ref_val = ", ".join(str(v) for v in ref_val)
+            if isinstance(cur_val, list):
+                cur_val = ", ".join(str(v) for v in cur_val)
             changed = str(ref_val) != str(cur_val) and str(ref_val) and str(cur_val)
-            stats_rows.append(_compare_row(label, str(cur_val) if cur_val != "" else "", str(ref_val) if ref_val != "" else "", highlight=changed))
-
-        stats_html = (
-            '<h2>Simulation Statistics</h2>'
+            rows.append(_compare_row(label, str(cur_val) if cur_val != "" else "",
+                                     str(ref_val) if ref_val != "" else "", highlight=changed))
+        return (
+            f'<h2>{title}</h2>'
             '<table class="meta-table">'
-            '<tr><th>Metric</th><th>Simulation</th><th>Reference</th></tr>'
-            + "".join(stats_rows) +
+            '<tr><th>Metric</th><th>Current</th><th>Reference</th></tr>'
+            + "".join(rows) +
             '</table>'
         )
+
+    # Top-level scalar stats (CPUtime, EventCounter) go in simulation table
+    # Merge them into simulation category for display
+    sim_display = {}
+    for k, v in ref_stats.items():
+        if not isinstance(v, dict):
+            sim_display[k] = v
+    for k, v in cur_stats.items():
+        if not isinstance(v, dict):
+            sim_display.setdefault(k, v)
+    # Temporarily inject into cur/ref for the table builder
+    ref_sim_merged = {**ref_stats.get("simulation", {})}
+    cur_sim_merged = {**cur_stats.get("simulation", {})}
+    for k, v in ref_stats.items():
+        if not isinstance(v, dict):
+            ref_sim_merged[k] = v
+    for k, v in cur_stats.items():
+        if not isinstance(v, dict):
+            cur_sim_merged[k] = v
+
+    # Build tables
+    translation_html = _build_stats_table("Translation Statistics", "translation")
+
+    # For simulation, use the merged dicts directly
+    sim_keys = sorted(set(ref_sim_merged.keys()) | set(cur_sim_merged.keys()))
+    sim_rows = []
+    for key in sim_keys:
+        label = key.replace("_", " ").title()
+        ref_val = ref_sim_merged.get(key, "")
+        cur_val = cur_sim_merged.get(key, "")
+        if isinstance(ref_val, list):
+            ref_val = ", ".join(str(v) for v in ref_val)
+        if isinstance(cur_val, list):
+            cur_val = ", ".join(str(v) for v in cur_val)
+        changed = str(ref_val) != str(cur_val) and str(ref_val) and str(cur_val)
+        sim_rows.append(_compare_row(label, str(cur_val) if cur_val != "" else "",
+                                     str(ref_val) if ref_val != "" else "", highlight=changed))
+    simulation_html = ""
+    if sim_rows:
+        simulation_html = (
+            '<h2>Simulation Statistics</h2>'
+            '<table class="meta-table">'
+            '<tr><th>Metric</th><th>Current</th><th>Reference</th></tr>'
+            + "".join(sim_rows) +
+            '</table>'
+        )
+
+    stats_html = translation_html + simulation_html
 
     # --- Variable comparison table ---
     table_rows = []

@@ -277,7 +277,13 @@ def _interactive_review(
         if comp.warnings:
             warn = f" {YELLOW}[{len(comp.warnings)} warning(s)]{RESET}"
 
-        print(f"[{idx}/{n_total}] {BOLD}{model_id}{RESET}")
+        if comp.test_id:
+            id_tag = f"[{comp.test_id}] "
+        elif not comp.has_reference:
+            id_tag = "[new] "
+        else:
+            id_tag = ""
+        print(f"[{idx}/{n_total}] {BOLD}{id_tag}{model_id}{RESET}")
         print(f"  Status: {status}{warn}")
 
         if comp.error_message and not comp.sim_success:

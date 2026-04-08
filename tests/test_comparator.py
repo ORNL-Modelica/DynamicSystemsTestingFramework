@@ -282,25 +282,35 @@ class TestCompareFinalValues:
 class TestStructuralChanges:
     def test_no_changes(self):
         ref = {"statistics": {
-            "simulation": {"nonlinear": "3", "linear": "1"},
+            "translation": {"continuous_time_states": 4, "nonlinear": "3, 1"},
             "EventCounter": 42,
         }}
         result = TestResult(
             model_id="Test",
             success=True,
             statistics={
-                "simulation": {"nonlinear": "3", "linear": "1"},
+                "translation": {"continuous_time_states": 4, "nonlinear": "3, 1"},
                 "EventCounter": 42,
             },
         )
         warnings = _check_structural_changes(ref, result)
         assert len(warnings) == 0
 
-    def test_nonlinear_change(self):
-        ref = {"statistics": {"simulation": {"nonlinear": "3"}}}
+    def test_continuous_states_change(self):
+        ref = {"statistics": {"translation": {"continuous_time_states": 4}}}
         result = TestResult(
             model_id="Test", success=True,
-            statistics={"simulation": {"nonlinear": "5"}},
+            statistics={"translation": {"continuous_time_states": 6}},
+        )
+        warnings = _check_structural_changes(ref, result)
+        assert len(warnings) == 1
+        assert "Continuous" in warnings[0].field
+
+    def test_nonlinear_change(self):
+        ref = {"statistics": {"translation": {"nonlinear": "3"}}}
+        result = TestResult(
+            model_id="Test", success=True,
+            statistics={"translation": {"nonlinear": "5"}},
         )
         warnings = _check_structural_changes(ref, result)
         assert len(warnings) == 1

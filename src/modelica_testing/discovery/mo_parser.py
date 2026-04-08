@@ -23,6 +23,7 @@ class ExperimentInfo:
     tolerance: Optional[float] = None
     method: Optional[str] = None
     number_of_intervals: Optional[int] = None
+    output_interval: Optional[float] = None
 
 
 @dataclass
@@ -214,6 +215,11 @@ def _parse_experiment(text: str) -> Optional[ExperimentInfo]:
     )
     if m2:
         info.number_of_intervals = int(m2.group(1))
+
+    # Interval (output interval length) — standard Modelica
+    m2 = re.search(r'(?<!\w)[Ii]nterval\s*=\s*([0-9eE.+-]+)', param_text)
+    if m2:
+        info.output_interval = float(m2.group(1))
 
     return info
 

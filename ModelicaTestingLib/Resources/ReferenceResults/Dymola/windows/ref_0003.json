@@ -3,18 +3,47 @@
   "test_id": "0003",
   "status": "active",
   "date_added": "2026-04-08T17:02:39.230091+00:00",
-  "last_updated": "2026-04-08T17:16:03.626731+00:00",
+  "last_updated": "2026-04-08T18:29:20.631648+00:00",
   "simulation": {
     "stop_time": 10.0,
     "tolerance": 1e-06,
     "method": "Dassl",
-    "number_of_intervals": null
+    "number_of_intervals": 500,
+    "output_interval": null
   },
   "statistics": {
     "simulation": {
-      "cpu_time": 0.0
+      "cpu_time": 0.0,
+      "result_points": 502,
+      "accepted_steps": 85,
+      "f_evaluations": 156,
+      "state_events": 0,
+      "step_events": 0,
+      "model_time_events": 0,
+      "input_time_events": 0
     },
-    "CPUtime": 0.002,
+    "translation": {
+      "scalar_unknowns": 4,
+      "scalar_equations": 4,
+      "original_components": 2,
+      "original_variables": 4,
+      "original_unknowns_scalars": 4,
+      "differentiated_variables": 2,
+      "original_equations": 3,
+      "nontrivial_equations": 3,
+      "constants": 1,
+      "outputs": 2,
+      "time_varying_variables": 2,
+      "alias_variables": 2,
+      "mixed_systems": 0,
+      "continuous_time_states": 2,
+      "numerical_jacobians": 0,
+      "state_names": [
+        "x",
+        "y"
+      ]
+    },
+    "CPUtime": 0.005,
     "EventCounter": 3.0
   },
   "diagnostics": [
@@ -522,7 +551,7 @@
         0.001,
         0.001,
         0.001,
-        0.002
+        0.005
       ]
     },
     {

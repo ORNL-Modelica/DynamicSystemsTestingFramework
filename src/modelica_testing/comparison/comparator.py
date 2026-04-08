@@ -46,6 +46,7 @@ class TestComparison:
     """Comparison result for a full test model."""
     model_id: str
     passed: bool
+    test_id: Optional[str] = None  # ref file ID (e.g., "0001")
     variables: list[VariableComparison] = field(default_factory=list)
     warnings: list[StructuralWarning] = field(default_factory=list)
     error_message: Optional[str] = None
@@ -276,11 +277,14 @@ def _check_structural_changes(
     cur_stats = result.statistics or {}
 
     checks = [
-        ("initialization.nonlinear", "Nonlinear systems (init)"),
-        ("initialization.linear", "Linear systems (init)"),
-        ("simulation.nonlinear", "Nonlinear systems (sim)"),
-        ("simulation.linear", "Linear systems (sim)"),
-        ("simulation.continuous_time_states", "Continuous states"),
+        ("translation.continuous_time_states", "Continuous states"),
+        ("translation.nonlinear", "Nonlinear systems"),
+        ("translation.nonlinear_after_manipulation", "Nonlinear systems (after manipulation)"),
+        ("translation.linear", "Linear systems"),
+        ("translation.linear_after_manipulation", "Linear systems (after manipulation)"),
+        ("translation.scalar_unknowns", "Scalar unknowns"),
+        ("translation.scalar_equations", "Scalar equations"),
+        ("translation.numerical_jacobians", "Numerical Jacobians"),
         ("EventCounter", "Event count"),
     ]
 
@@ -311,10 +315,13 @@ def compare_test(
     config: Config,
 ) -> TestComparison:
     """Compare a test's simulation results against its reference."""
+    ref_test_id = reference.get("test_id")
+
     if not result.success:
         return TestComparison(
             model_id=test.model_id,
             passed=False,
+            test_id=ref_test_id,
             sim_success=False,
             error_message=result.error_message or "Simulation failed",
         )
@@ -374,6 +381,7 @@ def compare_test(
     return TestComparison(
         model_id=test.model_id,
         passed=all_passed,
+        test_id=ref_test_id,
         variables=comparisons,
         warnings=structural_warnings,
     )

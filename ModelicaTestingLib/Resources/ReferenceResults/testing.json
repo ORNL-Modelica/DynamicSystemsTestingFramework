@@ -8,8 +8,5 @@
     ]
   },
   "dependencies": [],
-  "simulator_setup": [
-    "OutputCPUtime := true;"
-  ],
   "test_spec": "test_spec.json"
 }

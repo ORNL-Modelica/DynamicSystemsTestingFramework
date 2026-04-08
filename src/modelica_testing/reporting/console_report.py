@@ -57,7 +57,13 @@ def print_report(comparisons: list[TestComparison]) -> int:
             warn_tag = _color(" [WARN]", _YELLOW)
             warned.append(comp)
 
-        print(f"  {status}  {comp.model_id}{warn_tag}")
+        if comp.test_id:
+            id_tag = f"[{comp.test_id}] "
+        elif not comp.has_reference:
+            id_tag = "[new] "
+        else:
+            id_tag = ""
+        print(f"  {status}  {id_tag}{comp.model_id}{warn_tag}")
 
         if not comp.passed and comp.sim_success:
             failures.append(comp)
@@ -81,7 +87,8 @@ def print_report(comparisons: list[TestComparison]) -> int:
         print(_color("Failure Details:", _BOLD))
         print("-" * 80)
         for comp in failures:
-            print(f"\n  {comp.model_id}")
+            id_tag = f"[{comp.test_id}] " if comp.test_id else ""
+            print(f"\n  {id_tag}{comp.model_id}")
             if comp.error_message:
                 print(f"    Error: {comp.error_message}")
             for var in comp.variables:

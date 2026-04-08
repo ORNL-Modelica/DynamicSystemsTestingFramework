@@ -50,6 +50,13 @@ class TestMoParser:
         assert result.experiment.tolerance == 1e-6
         assert result.experiment.method == "Dassl"
 
+    def test_parse_output_interval(self):
+        """Extract Interval from experiment annotation."""
+        result = parse_mo_file(PROJECT_ROOT / "ModelicaTestingLib" / "Examples" / "IntervalTest.mo")
+        assert result is not None
+        assert result.experiment.output_interval == 0.5
+        assert result.experiment.number_of_intervals is None
+
     def test_extract_within(self):
         assert _extract_within("within MyLib.Examples;\nmodel Foo") == "MyLib.Examples"
         assert _extract_within("model Foo") == ""

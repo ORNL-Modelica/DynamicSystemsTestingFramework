@@ -154,8 +154,9 @@ class DymolaRunner(SimulatorRunner):
         # Print progress for each test as "running"
         for i, (test, test_key) in enumerate(test_items):
             short_name = test.model_id.rsplit(".", 1)[-1]
+            label = f"{test_key} {short_name}"
             from ..base import _print_progress
-            _print_progress(index_offset + i + 1, total, short_name, "running")
+            _print_progress(index_offset + i + 1, total, label, "running")
 
         try:
             cmd = [self.config.simulator_path]
@@ -208,12 +209,28 @@ class DymolaRunner(SimulatorRunner):
             test_dir = work_dir / test_key
             mat_path = test_dir / f"{test_key}.mat"
             short_name = test.model_id.rsplit(".", 1)[-1]
+            label = f"{test_key} {short_name}"
 
+            # Parse both dslog.txt (simulation runtime) and translation_log.txt (structural)
             statistics = parse_dslog(test_dir / "dslog.txt")
+            translation_stats = parse_dslog(test_dir / "translation_log.txt")
+            if translation_stats:
+                if statistics is None:
+                    statistics = translation_stats
+                else:
+                    # Merge: each log produces different top-level keys
+                    # (dslog → "simulation", translation → "translation")
+                    for key, value in translation_stats.items():
+                        if key not in statistics:
+                            statistics[key] = value
+                        elif isinstance(value, dict) and isinstance(statistics[key], dict):
+                            statistics[key].update(value)
+                        else:
+                            statistics[key] = value
 
             if mat_path.exists():
                 _print_progress(
-                    index_offset + i + 1, total, short_name, "ok",
+                    index_offset + i + 1, total, label, "ok",
                     elapsed=batch_elapsed / len(test_items),
                 )
                 results.append(TestRunResult(
@@ -238,7 +255,7 @@ class DymolaRunner(SimulatorRunner):
                         pass
 
                 _print_progress(
-                    index_offset + i + 1, total, short_name, "FAIL",
+                    index_offset + i + 1, total, label, "FAIL",
                     elapsed=batch_elapsed / len(test_items), detail=msg[:80],
                 )
                 results.append(TestRunResult(
@@ -321,6 +338,12 @@ def _generate_startup_mos(config: Config) -> Path:
     # Load main library
     lines.append(f'openModel("{(config.library_dir / "package.mo").as_posix()}");')
 
+    # Dymola-specific framework settings (always enabled)
+    lines.append("")
+    lines.append("// Framework settings")
+    lines.append("OutputCPUtime := true;")
+    lines.append("Advanced.UI.TranslationInCommandLog := true;")
+
     # Simulator setup commands (e.g., OutputCPUtime = true)
     if config.simulator_setup:
         lines.append("")
@@ -362,10 +385,10 @@ def _generate_test_mos(
         else:
             parts.append(f"stopTime={test.stop_time}")
 
+    # numberOfIntervals takes precedence over outputInterval if both are set
     if test.number_of_intervals is not None:
         parts.append(f"numberOfIntervals={test.number_of_intervals}")
-
-    if test.output_interval is not None:
+    elif test.output_interval is not None:
         parts.append(f"outputInterval={test.output_interval}")
 
     parts.append(f'method="{test.method}"')
@@ -375,7 +398,9 @@ def _generate_test_mos(
     lines = [
         f'// {test.model_id}',
         f'cd("{test_dir.as_posix()}");',
+        f'clearlog();',
         f'simulateModel({",".join(parts)});',
+        f'savelog("translation_log.txt");',
     ]
 
     script_path = test_dir / f"{test_key}.mos"

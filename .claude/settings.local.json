@@ -34,7 +34,8 @@
       "Bash(find testing:*)",
       "Bash(ls /mnt/d/Modelica/TRANSFORM-UnitTests/ReferenceResults/Dymola/windows/*.json)",
       "Bash(pip show:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "WebFetch(domain:www.claytex.com)"
     ]
   }
 }

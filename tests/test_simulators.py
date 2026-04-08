@@ -45,37 +45,40 @@ class TestLogParser:
         assert result is None
 
     def test_rich_dslog(self, tmp_path):
-        """Parse a dslog with full statistics (nonlinear, linear, states)."""
+        """Parse a dslog with simulation runtime stats."""
         dslog = tmp_path / "dslog.txt"
-        dslog.write_text("""\
-Initialization problem is consistent.
-
-Sizes after manipulation of the dummies
- Sizes of nonlinear systems of equations: {1, 3}
- Sizes of linear systems of equations: {2}
-Number of numerical Jacobians: 0
-
-Integration started at 0 using Dassl
-
-Sizes after manipulation of the dummies
- Sizes of nonlinear systems of equations: {2, 5}
- Sizes of linear systems of equations: {1, 3}
-4 continuous time states
-Number of numerical Jacobians: 0
-
-Integration terminated successfully at 10
- CPU-time for integration      : 0.234 seconds
- Number of Jacobian-evaluations: 10
-""")
+        content = (
+            "Integration started at 0 using Dassl\n"
+            "\n"
+            "Integration terminated successfully at 10\n"
+            "  CPU-time for integration      : 0.234 seconds\n"
+            "  Number of result points       : 501\n"
+            "  Number of accepted steps      : 500\n"
+            "  Number of f-evaluations (dynamics): 1002\n"
+            "  Number of Jacobian-evaluations: 10\n"
+            "  Number of state events        : 3\n"
+            "  Number of step events         : 0\n"
+        )
+        dslog.write_text(content)
         stats = parse_dslog(dslog)
         assert stats is not None
-        assert stats["initialization"]["nonlinear"] == "1, 3"
-        assert stats["initialization"]["linear"] == "2"
-        assert stats["simulation"]["nonlinear"] == "2, 5"
-        assert stats["simulation"]["linear"] == "1, 3"
-        assert stats["simulation"]["continuous_time_states"] == 4
         assert stats["simulation"]["cpu_time"] == pytest.approx(0.234)
         assert stats["simulation"]["jacobian_evaluations"] == 10
+        assert stats["simulation"]["state_events"] == 3
+        assert stats["simulation"]["accepted_steps"] == 500
+
+    def test_translation_log(self):
+        """Parse the real translation_log.txt fixture."""
+        stats = parse_dslog(FIXTURES_DIR / "results" / "Dymola" / "translation_log.txt")
+        assert stats is not None
+        assert "translation" in stats
+        t = stats["translation"]
+        assert t["continuous_time_states"] == 2
+        assert t["scalar_unknowns"] == 4
+        assert t["scalar_equations"] == 4
+        assert t["original_components"] == 2
+        assert t["numerical_jacobians"] == 0
+        assert t["state_names"] == ["x", "y"]
 
 
 # ---------------------------------------------------------------------------

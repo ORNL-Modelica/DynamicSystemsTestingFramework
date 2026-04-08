@@ -202,6 +202,14 @@ class ReferenceStore:
         if existing and "date_added" in existing:
             date_added = existing["date_added"]
 
+        # Derive numberOfIntervals from actual result if not explicitly set
+        n_intervals = test.number_of_intervals
+        out_interval = test.output_interval
+        if n_intervals is None and out_interval is None:
+            # Count unique time points (exclude event duplicates)
+            unique_times = len(np.unique(shared_time))
+            n_intervals = max(unique_times - 1, 1)
+
         ref_data = {
             "model_id": test.model_id,
             "test_id": test_id,
@@ -212,7 +220,8 @@ class ReferenceStore:
                 "stop_time": test.stop_time,
                 "tolerance": test.tolerance,
                 "method": test.method,
-                "number_of_intervals": test.number_of_intervals,
+                "number_of_intervals": n_intervals,
+                "output_interval": out_interval,
             },
         }
 

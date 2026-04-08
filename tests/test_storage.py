@@ -336,6 +336,43 @@ class TestReferenceStore:
         ref_files = list(config.reference_dir.glob("ref_*.json"))
         assert len(ref_files) == 0
 
+    def test_number_of_intervals_auto_derived(self, sample_models_dir, tmp_path):
+        """numberOfIntervals is derived from result when not explicitly set."""
+        config = Config(
+            package_path=sample_models_dir,
+            reference_root=tmp_path / "refs",
+        )
+        store = ReferenceStore(config)
+        test = self._make_test_model()
+        # test has number_of_intervals=None and output_interval=None
+        assert test.number_of_intervals is None
+        assert test.output_interval is None
+
+        result = self._make_test_result()  # 101 time points
+        store.store_reference(test, result)
+        ref = store.get_reference(test.model_id)
+
+        # Should derive: 101 unique times - 1 = 100 intervals
+        assert ref["simulation"]["number_of_intervals"] == 100
+        assert ref["simulation"]["output_interval"] is None
+
+    def test_output_interval_preserved(self, sample_models_dir, tmp_path):
+        """output_interval is stored when explicitly set."""
+        config = Config(
+            package_path=sample_models_dir,
+            reference_root=tmp_path / "refs",
+        )
+        store = ReferenceStore(config)
+        test = self._make_test_model()
+        test.output_interval = 0.5
+        result = self._make_test_result()
+
+        store.store_reference(test, result)
+        ref = store.get_reference(test.model_id)
+
+        assert ref["simulation"]["output_interval"] == 0.5
+        assert ref["simulation"]["number_of_intervals"] is None
+
     def test_json_field_order(self, sample_models_dir, tmp_path):
         """Metadata fields come before data fields in reference JSON."""
         config = Config(

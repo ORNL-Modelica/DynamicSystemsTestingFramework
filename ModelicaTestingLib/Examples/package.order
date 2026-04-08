@@ -1,4 +1,5 @@
 SimpleTest
 EventTest
 ConstantTest
+IntervalTest
 NoUnitTest
