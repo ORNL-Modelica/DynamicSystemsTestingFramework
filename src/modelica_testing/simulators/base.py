@@ -262,6 +262,7 @@ class SimulatorRunner(ABC):
         )
 
         run_results: list[TestRunResult] = []
+        wall_start = time.monotonic()
 
         if self.config.parallel <= 1:
             for test, test_key, idx in test_items:
@@ -280,15 +281,16 @@ class SimulatorRunner(ABC):
                     run_results.append(future.result())
 
         # Summary
+        wall_elapsed = time.monotonic() - wall_start
         n_ok = sum(1 for r in run_results if r.success)
         n_fail = sum(1 for r in run_results if not r.success and not r.timed_out)
         n_timeout = sum(1 for r in run_results if r.timed_out)
-        total_time = sum(r.elapsed for r in run_results)
+        sum_time = sum(r.elapsed for r in run_results)
 
         print(file=sys.stderr)
         print(
             f"Simulations complete: {n_ok} ok, {n_fail} failed, "
-            f"{n_timeout} timed out ({total_time:.0f}s total)",
+            f"{n_timeout} timed out ({wall_elapsed:.0f}s elapsed, {sum_time:.0f}s total)",
             file=sys.stderr,
         )
 
@@ -344,17 +346,17 @@ class SimulatorRunner(ABC):
 
         def _read_one(item):
             test_key, model_id, test_model, rr = item
-            return model_id, self.read_result(test_model, test_key, rr)
+            return test_key, model_id, self.read_result(test_model, test_key, rr)
 
         # Parallelize reads with thread pool
         with ThreadPoolExecutor() as executor:
             futures = {executor.submit(_read_one, item): item for item in work_items}
             for future in as_completed(futures):
-                model_id, result = future.result()
+                test_key, model_id, result = future.result()
                 results[model_id] = result
                 completed += 1
                 short = model_id.rsplit(".", 1)[-1]
-                _print_progress(completed, total, short, "read")
+                _print_progress(completed, total, f"{test_key} {short}", "read")
 
         return results
 

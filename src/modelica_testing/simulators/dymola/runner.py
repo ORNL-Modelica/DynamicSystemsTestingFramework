@@ -151,13 +151,6 @@ class DymolaRunner(SimulatorRunner):
         # Run the batch
         start_time = time.monotonic()
 
-        # Print progress for each test as "running"
-        for i, (test, test_key) in enumerate(test_items):
-            short_name = test.model_id.rsplit(".", 1)[-1]
-            label = f"{test_key} {short_name}"
-            from ..base import _print_progress
-            _print_progress(index_offset + i + 1, total, label, "running")
-
         try:
             cmd = [self.config.simulator_path]
             if not self.config.show_ide:
