@@ -272,3 +272,53 @@ ReferenceResults/
 References are partitioned by simulator backend and OS because different solvers and platforms produce numerically different results.
 
 Each reference file contains metadata (model ID, simulation params, statistics, diagnostics) followed by the time vector and variable data. `CPUtime` and `EventCounter` are auto-captured in diagnostics when `OutputCPUtime := true;` is set.
+
+---
+
+## Development
+
+### Setup
+
+```bash
+# Install the package in editable mode (links to source, changes take effect immediately)
+uv pip install -e .
+
+# Install with dev dependencies (includes pytest)
+uv pip install -e ".[dev]"
+```
+
+### Running the test suite
+
+```bash
+# Run all tests
+uv run pytest
+
+# Verbose output
+uv run pytest -v
+
+# Run a specific test file
+uv run pytest tests/test_comparator.py
+
+# Run a specific test class or method
+uv run pytest tests/test_comparator.py::TestCompareTrajectories::test_identical_with_single_event
+```
+
+Tests cover: NRMSE comparison with event handling, config path resolution, `.mo` parsing, test spec parsing, manifest management, reference store round-trips, dslog parsing, `.mat` file reading, and variable pattern matching.
+
+Tests that require Dymola are marked with `@pytest.mark.dymola` and can be skipped with:
+
+```bash
+uv run pytest -m "not dymola"
+```
+
+### Testing ModelicaTestingLib itself
+
+The project includes `ModelicaTestingLib/`, a small Modelica library used both as a test fixture and as a reference implementation. To regression test it (requires Dymola):
+
+```bash
+# Run and compare against stored references
+uv run python -m modelica_testing --reference-root ModelicaTestingLib/Resources/ReferenceResults run
+
+# Accept new baselines after intentional changes
+uv run python -m modelica_testing --reference-root ModelicaTestingLib/Resources/ReferenceResults run --accept
+```

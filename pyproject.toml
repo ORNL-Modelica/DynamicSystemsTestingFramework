@@ -27,3 +27,6 @@ testpaths = ["tests"]
 markers = [
     "dymola: requires Dymola installation",
 ]
+filterwarnings = [
+    "ignore::pytest.PytestCollectionWarning",
+]
