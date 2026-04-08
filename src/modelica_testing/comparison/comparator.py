@@ -278,13 +278,15 @@ def _check_structural_changes(
 
     checks = [
         ("translation.continuous_time_states", "Continuous states"),
-        ("translation.nonlinear", "Nonlinear systems"),
-        ("translation.nonlinear_after_manipulation", "Nonlinear systems (after manipulation)"),
-        ("translation.linear", "Linear systems"),
-        ("translation.linear_after_manipulation", "Linear systems (after manipulation)"),
+        ("translation.nonlinear_count", "Nonlinear system count"),
+        ("translation.nonlinear_after_manipulation_max", "Nonlinear max size (after manipulation)"),
+        ("translation.linear_count", "Linear system count"),
+        ("translation.linear_after_manipulation_max", "Linear max size (after manipulation)"),
         ("translation.scalar_unknowns", "Scalar unknowns"),
         ("translation.scalar_equations", "Scalar equations"),
         ("translation.numerical_jacobians", "Numerical Jacobians"),
+        ("translation.init_nonlinear_count", "Init nonlinear system count"),
+        ("translation.init_numerical_jacobians", "Init numerical Jacobians"),
         ("EventCounter", "Event count"),
     ]
 

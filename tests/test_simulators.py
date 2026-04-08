@@ -79,6 +79,68 @@ class TestLogParser:
         assert t["original_components"] == 2
         assert t["numerical_jacobians"] == 0
         assert t["state_names"] == ["x", "y"]
+        # Empty system lists for simple model
+        assert t["nonlinear"] == []
+        assert t["linear"] == []
+
+    def test_translation_log_complex(self):
+        """Parse a complex translation log with init section and system sizes."""
+        stats = parse_dslog(FIXTURES_DIR / "results_additional" / "translation_log.txt")
+        assert stats is not None
+        t = stats["translation"]
+
+        # DAE size
+        assert t["scalar_unknowns"] == 8715
+
+        # Original model
+        assert t["original_components"] == 940
+        assert t["differentiated_variables"] == 200
+
+        # Translated model fields
+        assert t["free_parameters"] == 173
+        assert t["parameter_depending"] == 934
+        assert t["continuous_time_states"] == 120
+        assert t["mixed_systems"] == 20
+
+        # Simulation nonlinear systems
+        assert isinstance(t["nonlinear"], list)
+        assert t["nonlinear_count"] == 62
+        assert t["nonlinear_max"] == 9
+        assert t["nonlinear_total"] == sum(t["nonlinear"])
+        assert t["nonlinear_after_manipulation_max"] == 4
+
+        # Simulation linear systems
+        assert t["linear_count"] == 40
+        assert t["linear_max"] == 4
+        assert t["linear_after_manipulation_total"] == 0
+
+        # Initialization section
+        assert t["init_mixed_systems"] == 2
+        assert t["init_numerical_jacobians"] == 2
+        assert t["init_nonlinear"] == [193, 193]
+        assert t["init_nonlinear_count"] == 2
+        assert t["init_nonlinear_total"] == 386
+        assert t["init_nonlinear_after_manipulation"] == [41, 41]
+        assert t["init_linear"] == [100, 100]
+        assert t["init_linear_after_manipulation"] == [20, 20]
+
+        # Homotopy nonlinear (initialization only)
+        assert t["init_homotopy_nonlinear"] == [153, 153]
+        assert t["init_homotopy_nonlinear_after_manipulation"] == [31, 31]
+
+        # State names: 60 static states, no garbage
+        assert len(t["state_names"]) == 60
+        assert t["state_names"][0] == "pipe_nParallel.pipe.flowModel.firstOrder_dps_K[1].y"
+        assert t["state_names"][-1] == "pipe_single.wall.Us[1, 10]"
+        # Should NOT contain dynamic state selection text
+        assert all("From set" not in s for s in t["state_names"])
+        assert all("Dynamically" not in s for s in t["state_names"])
+
+    def test_dslog_jacobian_with_whitespace(self):
+        """Jacobian-evaluations with whitespace padding before colon."""
+        stats = parse_dslog(FIXTURES_DIR / "results_additional" / "dslog.txt")
+        assert stats is not None
+        assert stats["simulation"]["jacobian_evaluations"] == 14
 
 
 # ---------------------------------------------------------------------------

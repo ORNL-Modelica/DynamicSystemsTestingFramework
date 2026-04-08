@@ -51,74 +51,163 @@ def _parse_translation_stats(text: str, stats: dict) -> None:
         _extract_int(orig_text, r'Equations:\s*(\d+)', stats, "translation", "original_equations")
         _extract_int(orig_text, r'Nontrivial:\s*(\d+)', stats, "translation", "nontrivial_equations")
 
-    # Translated Model section
-    trans = re.search(r'Translated Model\s*\n((?:\s+.+\n)+)', text)
-    if trans:
-        trans_text = trans.group(1)
-        _extract_int(trans_text, r'Constants:\s*(\d+)', stats, "translation", "constants")
-        _extract_int(trans_text, r'Outputs:\s*(\d+)', stats, "translation", "outputs")
-        _extract_int(trans_text, r'Time-varying variables:\s*(\d+)', stats, "translation", "time_varying_variables")
-        _extract_int(trans_text, r'Alias variables:\s*(\d+)', stats, "translation", "alias_variables")
-        _extract_int(trans_text, r'Number of mixed real/discrete systems of equations:\s*(\d+)',
-                     stats, "translation", "mixed_systems")
+    # Translated Model section — need to separate simulation vs initialization
+    # The section structure is:
+    #   Translated Model
+    #     <simulation-level stats>
+    #     Initialization problem
+    #       <initialization-level stats>
+    trans_match = re.search(r'Translated Model\s*\n((?:\s+.+\n)+)', text)
+    if trans_match:
+        full_trans_text = trans_match.group(1)
 
-    # Continuous time states (from translated model or standalone)
-    m = re.search(r'Continuous time states:\s*(\d+)', text)
-    if m:
-        stats.setdefault("translation", {})
-        stats["translation"]["continuous_time_states"] = int(m.group(1))
-    # Alternate format
+        # Split at "Initialization problem" if present
+        init_split = re.split(r'^\s+Initialization problem\s*$', full_trans_text, flags=re.MULTILINE)
+        sim_text = init_split[0]
+        init_text = init_split[1] if len(init_split) > 1 else ""
+
+        # --- Simulation-level translated model stats ---
+        _extract_int(sim_text, r'Constants:\s*(\d+)', stats, "translation", "constants")
+        _extract_int(sim_text, r'Free parameters:\s*(\d+)', stats, "translation", "free_parameters")
+        _extract_int(sim_text, r'Parameter depending:\s*(\d+)', stats, "translation", "parameter_depending")
+        _extract_int(sim_text, r'Outputs:\s*(\d+)', stats, "translation", "outputs")
+        _extract_int(sim_text, r'Continuous time states:\s*(\d+)', stats, "translation", "continuous_time_states")
+        _extract_int(sim_text, r'Time-varying variables:\s*(\d+)', stats, "translation", "time_varying_variables")
+        _extract_int(sim_text, r'Alias variables:\s*(\d+)', stats, "translation", "alias_variables")
+        _extract_int(sim_text, r'Number of mixed real/discrete systems of equations:\s*(\d+)',
+                     stats, "translation", "mixed_systems")
+        _extract_int(sim_text, r'Number of numerical Jacobians:\s*(\d+)',
+                     stats, "translation", "numerical_jacobians")
+
+        # Simulation-level equation system sizes
+        _extract_system_sizes(sim_text, stats, "translation", prefix="")
+
+        # --- Initialization problem stats ---
+        if init_text:
+            _extract_int(init_text, r'Number of mixed real/discrete systems of equations:\s*(\d+)',
+                         stats, "translation", "init_mixed_systems")
+            _extract_int(init_text, r'Number of numerical Jacobians:\s*(\d+)',
+                         stats, "translation", "init_numerical_jacobians")
+
+            _extract_system_sizes(init_text, stats, "translation", prefix="init_")
+
+            # Homotopy nonlinear systems (initialization only)
+            _extract_system_pair(
+                init_text,
+                r'Sizes of simplified homotopy nonlinear systems of equations',
+                r'Sizes after manipulation of the simplified homotopy nonlinear systems',
+                stats, "translation", "init_homotopy_nonlinear",
+            )
+
+    # Continuous time states — fallback if not found in Translated Model section
     if "translation" not in stats or "continuous_time_states" not in stats.get("translation", {}):
-        m = re.search(r'(\d+)\s+continuous time states', text)
+        m = re.search(r'Continuous time states:\s*(\d+)', text)
+        if not m:
+            m = re.search(r'(\d+)\s+continuous time states', text)
         if m:
             stats.setdefault("translation", {})
             stats["translation"]["continuous_time_states"] = int(m.group(1))
 
-    # Nonlinear/linear system sizes (from translated model section)
-    # These appear as "Sizes of nonlinear systems of equations: {N, N}"
-    # and "Sizes after manipulation of the nonlinear systems: {N, N}"
-    for sys_type in ("nonlinear", "linear"):
-        # After manipulation (preferred, more accurate)
-        m = re.search(
-            rf'Sizes after manipulation of the {sys_type} systems.*?:\s*\{{([^}}]*)\}}',
-            text
-        )
-        if m:
-            val = _parse_int_list(m.group(1))
-            if val:  # Only store if non-empty
-                stats.setdefault("translation", {})
-                stats["translation"][f"{sys_type}_after_manipulation"] = val
-
-        # Original sizes
-        m = re.search(
-            rf'Sizes of {sys_type} systems of equations.*?:\s*\{{([^}}]*)\}}',
-            text
-        )
-        if m:
-            val = _parse_int_list(m.group(1))
-            if val:
-                stats.setdefault("translation", {})
-                stats["translation"][f"{sys_type}"] = val
-
-    # Number of numerical Jacobians
-    m = re.search(r'Number of numerical Jacobians:\s*(\d+)', text)
-    if m:
-        stats.setdefault("translation", {})
-        stats["translation"]["numerical_jacobians"] = int(m.group(1))
-
     # Selected continuous time states (list of state variable names)
-    states_section = re.search(
-        r'(?:Statically|Dynamically) selected continuous time states\s*\n((?:\w[^\n]*\n)+)',
+    # Capture lines after "Statically selected continuous time states" that look
+    # like Modelica variable names (start with a letter, contain dots/brackets).
+    # Stop at "Dynamically selected", "Warning:", blank lines, or non-variable lines.
+    states_match = re.search(
+        r'Statically selected continuous time states\s*\n((?:(?!Dynamically|Warning|There are|From set|=)[a-zA-Z][\w.\[\], ]*\n)+)',
         text
     )
-    if states_section:
+    if states_match:
         state_names = [
-            line.strip() for line in states_section.group(1).strip().split("\n")
-            if line.strip() and not line.strip().startswith("=")
+            line.strip() for line in states_match.group(1).strip().split("\n")
+            if line.strip()
         ]
         if state_names:
             stats.setdefault("translation", {})
             stats["translation"]["state_names"] = state_names
+
+
+def _extract_system_sizes(
+    text: str, stats: dict, category: str, prefix: str,
+) -> None:
+    """Extract nonlinear and linear system sizes from a log section.
+
+    Parses both original sizes and after-manipulation sizes, stores as
+    integer lists with summary fields (count, total, max).
+    """
+    for sys_type in ("nonlinear", "linear"):
+        # Original sizes
+        _extract_system_pair_simple(
+            text, sys_type, stats, category, f"{prefix}{sys_type}",
+        )
+
+
+def _extract_system_pair_simple(
+    text: str,
+    sys_type: str,
+    stats: dict,
+    category: str,
+    key_base: str,
+) -> None:
+    """Extract original + after-manipulation sizes for a system type."""
+    # Original sizes: "Sizes of <type> systems of equations: {N, N, ...}"
+    m = re.search(
+        rf'Sizes of {sys_type} systems of equations\s*:\s*\{{([^}}]*)\}}',
+        text
+    )
+    if m:
+        values = _parse_int_list(m.group(1))
+        stats.setdefault(category, {})
+        stats[category][key_base] = values
+        if values:
+            stats[category][f"{key_base}_count"] = len(values)
+            stats[category][f"{key_base}_total"] = sum(values)
+            stats[category][f"{key_base}_max"] = max(values)
+
+    # After manipulation: "Sizes after manipulation of the <type> systems: {N, N, ...}"
+    m = re.search(
+        rf'Sizes after manipulation of the {sys_type} systems\s*:\s*\{{([^}}]*)\}}',
+        text
+    )
+    if m:
+        values = _parse_int_list(m.group(1))
+        key = f"{key_base}_after_manipulation"
+        stats.setdefault(category, {})
+        stats[category][key] = values
+        if values:
+            stats[category][f"{key}_count"] = len(values)
+            stats[category][f"{key}_total"] = sum(values)
+            stats[category][f"{key}_max"] = max(values)
+
+
+def _extract_system_pair(
+    text: str,
+    original_pattern: str,
+    manipulation_pattern: str,
+    stats: dict,
+    category: str,
+    key_base: str,
+) -> None:
+    """Extract a pair of system size lists (original + after manipulation)."""
+    m = re.search(rf'{original_pattern}\s*:\s*\{{([^}}]*)\}}', text)
+    if m:
+        values = _parse_int_list(m.group(1))
+        stats.setdefault(category, {})
+        stats[category][key_base] = values
+        if values:
+            stats[category][f"{key_base}_count"] = len(values)
+            stats[category][f"{key_base}_total"] = sum(values)
+            stats[category][f"{key_base}_max"] = max(values)
+
+    m = re.search(rf'{manipulation_pattern}\s*:\s*\{{([^}}]*)\}}', text)
+    if m:
+        values = _parse_int_list(m.group(1))
+        key = f"{key_base}_after_manipulation"
+        stats.setdefault(category, {})
+        stats[category][key] = values
+        if values:
+            stats[category][f"{key}_count"] = len(values)
+            stats[category][f"{key}_total"] = sum(values)
+            stats[category][f"{key}_max"] = max(values)
 
 
 def _parse_simulation_stats(text: str, stats: dict) -> None:
@@ -133,53 +222,24 @@ def _parse_simulation_stats(text: str, stats: dict) -> None:
         stats.setdefault("simulation", {})
         stats["simulation"]["cpu_time"] = float(m.group(1))
 
-    # Result points
-    m = re.search(r'Number of result points\s*:\s*(\d+)', text)
-    if m:
-        stats.setdefault("simulation", {})
-        stats["simulation"]["result_points"] = int(m.group(1))
+    # All other simulation stats use the same pattern: label with possible
+    # whitespace padding before the colon
+    _SIM_PATTERNS = [
+        (r'Number of result points\s*:\s*(\d+)', "result_points"),
+        (r'Number of accepted steps\s*:\s*(\d+)', "accepted_steps"),
+        (r'Number of f-evaluations.*?:\s*(\d+)', "f_evaluations"),
+        (r'Number of Jacobian-evaluations\s*:\s*(\d+)', "jacobian_evaluations"),
+        (r'Number of state\s+events\s*:\s*(\d+)', "state_events"),
+        (r'Number of step\s+events\s*:\s*(\d+)', "step_events"),
+        (r'Number of model time events\s*:\s*(\d+)', "model_time_events"),
+        (r'Number of input time events\s*:\s*(\d+)', "input_time_events"),
+    ]
 
-    # Accepted steps
-    m = re.search(r'Number of accepted steps\s*:\s*(\d+)', text)
-    if m:
-        stats.setdefault("simulation", {})
-        stats["simulation"]["accepted_steps"] = int(m.group(1))
-
-    # F-evaluations
-    m = re.search(r'Number of f-evaluations.*?:\s*(\d+)', text)
-    if m:
-        stats.setdefault("simulation", {})
-        stats["simulation"]["f_evaluations"] = int(m.group(1))
-
-    # Jacobian evaluations
-    m = re.search(r'Number of Jacobian-evaluations:\s*(\d+)', text)
-    if m:
-        stats.setdefault("simulation", {})
-        stats["simulation"]["jacobian_evaluations"] = int(m.group(1))
-
-    # State events
-    m = re.search(r'Number of state\s+events\s*:\s*(\d+)', text)
-    if m:
-        stats.setdefault("simulation", {})
-        stats["simulation"]["state_events"] = int(m.group(1))
-
-    # Step events
-    m = re.search(r'Number of step\s+events\s*:\s*(\d+)', text)
-    if m:
-        stats.setdefault("simulation", {})
-        stats["simulation"]["step_events"] = int(m.group(1))
-
-    # Model time events
-    m = re.search(r'Number of model time events\s*:\s*(\d+)', text)
-    if m:
-        stats.setdefault("simulation", {})
-        stats["simulation"]["model_time_events"] = int(m.group(1))
-
-    # Input time events
-    m = re.search(r'Number of input time events\s*:\s*(\d+)', text)
-    if m:
-        stats.setdefault("simulation", {})
-        stats["simulation"]["input_time_events"] = int(m.group(1))
+    for pattern, key in _SIM_PATTERNS:
+        m = re.search(pattern, text)
+        if m:
+            stats.setdefault("simulation", {})
+            stats["simulation"][key] = int(m.group(1))
 
 
 def _extract_int(text: str, pattern: str, stats: dict, category: str, key: str) -> None:
@@ -190,11 +250,17 @@ def _extract_int(text: str, pattern: str, stats: dict, category: str, key: str) 
         stats[category][key] = int(m.group(1))
 
 
-def _parse_int_list(text: str) -> str:
-    """Parse a comma-separated list from Dymola log, preserving as string.
+def _parse_int_list(text: str) -> list[int]:
+    """Parse a comma-separated integer list from Dymola log.
 
-    Dymola formats these as e.g. '7, 3, 1' — we store as-is for readability.
-    Returns empty string for empty lists (e.g., '{ }').
+    Dymola formats these as e.g. '{7, 3, 1}' — we parse to a list of ints.
+    Returns empty list for empty/whitespace-only content (e.g., '{ }').
     """
     parts = [p.strip() for p in text.split(",") if p.strip()]
-    return ", ".join(parts)
+    result = []
+    for p in parts:
+        try:
+            result.append(int(p))
+        except ValueError:
+            pass
+    return result

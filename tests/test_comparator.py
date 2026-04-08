@@ -307,10 +307,10 @@ class TestStructuralChanges:
         assert "Continuous" in warnings[0].field
 
     def test_nonlinear_change(self):
-        ref = {"statistics": {"translation": {"nonlinear": "3"}}}
+        ref = {"statistics": {"translation": {"nonlinear_count": 3}}}
         result = TestResult(
             model_id="Test", success=True,
-            statistics={"translation": {"nonlinear": "5"}},
+            statistics={"translation": {"nonlinear_count": 5}},
         )
         warnings = _check_structural_changes(ref, result)
         assert len(warnings) == 1
