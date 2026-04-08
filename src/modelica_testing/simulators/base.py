@@ -300,7 +300,7 @@ class SimulatorRunner(ABC):
         manifests: list[BatchManifest],
         tests: list[TestModel],
     ) -> dict[str, TestResult]:
-        """Read all simulation results from completed batch runs."""
+        """Read all simulation results from completed batch runs (parallel)."""
         test_lookup = {t.model_id: t for t in tests}
         results: dict[str, TestResult] = {}
 
@@ -309,6 +309,8 @@ class SimulatorRunner(ABC):
             for rr in manifest.results:
                 run_results[rr.model_id] = rr
 
+        # Build work items: (test_key, model_id, test_model, run_result)
+        work_items = []
         for manifest in manifests:
             for test_key, model_id in manifest.manifest.items():
                 rr = run_results.get(model_id)
@@ -331,8 +333,28 @@ class SimulatorRunner(ABC):
                     )
                     continue
 
-                result = self.read_result(test_model, test_key, rr)
+                work_items.append((test_key, model_id, test_model, rr))
+
+        if not work_items:
+            return results
+
+        total = len(work_items)
+        completed = 0
+        print(f"\nReading {total} result files...")
+
+        def _read_one(item):
+            test_key, model_id, test_model, rr = item
+            return model_id, self.read_result(test_model, test_key, rr)
+
+        # Parallelize reads with thread pool
+        with ThreadPoolExecutor() as executor:
+            futures = {executor.submit(_read_one, item): item for item in work_items}
+            for future in as_completed(futures):
+                model_id, result = future.result()
                 results[model_id] = result
+                completed += 1
+                short = model_id.rsplit(".", 1)[-1]
+                _print_progress(completed, total, short, "read")
 
         return results
 
