@@ -27,7 +27,7 @@ src/modelica_testing/
 │   ├── base.py               # SimulatorRunner ABC, VariableResult, TestResult, BatchManifest
 │   └── dymola/
 │       ├── runner.py          # DymolaRunner: batch .mos generation and execution
-│       ├── mat_reader.py      # Parses Dymola .mat (MAT4) result files via scipy
+│       ├── mat_reader.py      # Custom MAT4 binary parser with numpy.memmap for selective reads
 │       └── log_parser.py      # Parses dslog.txt + translation_log.txt for statistics
 ├── comparison/
 │   └── comparator.py         # NRMSE comparison with piecewise event handling
@@ -57,8 +57,9 @@ runner.run_tests(tests)
     → returns list[BatchManifest] with TestRunResult per test
 
 runner.read_results(manifests, tests)
-    → reads .mat files via mat_reader
+    → lists variable names from .mat (fast header scan, no data loaded)
     → resolves variable patterns against available names
+    → reads only needed variables from .mat via numpy.memmap (selective row access)
     → auto-captures diagnostic variables (configurable, default: CPUtime, EventCounter)
     → returns dict[model_id → TestResult]
 
@@ -92,7 +93,15 @@ reporters render TestComparison → console / JUnit / HTML / plots
   "status": "active",
   "date_added": "2026-01-15T...", "last_updated": "2026-04-08T...",
   "simulation": {"stop_time": 100, "tolerance": 1e-4, "method": "Dassl", "number_of_intervals": 500, "output_interval": null},
-  "statistics": {"translation": {"continuous_time_states": 4, "nonlinear": "3, 1", ...}, "simulation": {"cpu_time": 0.5, ...}, "CPUtime": 12.3, "EventCounter": 42},
+  "statistics": {
+    "translation": {
+      "continuous_time_states": 4,
+      "nonlinear": [3, 1], "nonlinear_count": 2, "nonlinear_total": 4, "nonlinear_max": 3,
+      "init_nonlinear": [5], "init_nonlinear_count": 1, ...
+    },
+    "simulation": {"cpu_time": 0.5, ...},
+    "CPUtime": 12.3, "EventCounter": 42
+  },
   "diagnostics": [
     {"name": "CPUtime", "values": [...]},
     {"name": "EventCounter", "values": [...]}

@@ -10,13 +10,19 @@
 
 ## Dymola MAT4 Format
 
-- **scipy returns column-major name matrix**: The `name` matrix in `.mat` files can come back as 1D array of unicode strings (each string is one column of the original char matrix), 2D uint8 array, or 2D char array. `mat_reader.py` handles all three cases via `_parse_name_matrix()`.
+- **Custom binary parser, not scipy**: `mat_reader.py` reads MAT4 files directly using `struct.unpack` for headers and `numpy.memmap` for selective data access. scipy's `loadmat` loads the entire `data_2` matrix into memory, which takes 400+ seconds for large models (76K+ variables). The custom reader extracts only needed rows in under a second.
+
+- **Column-major storage**: MAT4 stores data in Fortran (column-major) order. The name matrix is stored as `(max_name_len, n_vars)` — must be transposed so each row is one variable name. `_read_mat4_block()` uses `order='F'` for correct reshaping.
 
 - **dataInfo matrix orientation**: Sometimes `(n_vars, 4)`, sometimes `(4, n_vars)`. Transposed when `shape[0] < shape[1]`.
 
-- **Data matrix column indexing**: `dataInfo[i, 0]` indicates which data matrix (1 = `data_1` for parameters, 2 = `data_2` for time series). `abs(dataInfo[i, 1]) - 1` is the column index. Sign of `dataInfo[i, 1]` indicates interpolation order. Bounds checking is required — malformed files exist in the wild.
+- **Data matrix column indexing**: `dataInfo[i, 0]` indicates which data matrix (1 = `data_1` for parameters, 2 = `data_2` for time series). `abs(dataInfo[i, 1]) - 1` is the column index. Sign of `dataInfo[i, 1]` indicates negation. Bounds checking is required — malformed files exist in the wild.
 
-- **Float32/64 precision**: Older Dymola versions store `.mat` values as float32; newer versions (2024+) may use float64. When scipy reads float32 into Python float64, trailing noise appears (e.g., `0.001` becomes `0.0010000000474974513`). `_to_json_list()` detects the array dtype and rounds to matching precision — 7 significant digits for float32, 15 for float64.
+- **data_1 constants**: Dymola stores constants/parameters in `data_1` with 2 columns (start value, end value). The reader uses the first column value and expands to match time length via `np.full_like`.
+
+- **Float32/64 precision**: Older Dymola versions store `.mat` values as float32; newer versions (2024+) may use float64. When float32 is promoted to float64, trailing noise appears (e.g., `0.001` becomes `0.0010000000474974513`). `_to_json_list()` detects the array dtype and rounds to matching precision — 7 significant digits for float32, 15 for float64.
+
+- **Variable name characters in filenames**: Modelica variable names can contain newlines and whitespace (from multi-line expressions like `heatTransfer.alphas[\n        1, 1]`). Plot filenames must sanitize these — `_sanitize_filename()` collapses whitespace, removes filesystem-unsafe characters.
 
 ## Simulator Behavior
 

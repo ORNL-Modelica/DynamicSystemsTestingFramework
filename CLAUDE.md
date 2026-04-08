@@ -23,7 +23,7 @@ ModelicaTesting/
 │   ├── Components/UnitTests.mo  # Reusable UnitTests component for tracking variables
 │   ├── Examples/                # SimpleTest, EventTest, ConstantTest, IntervalTest, NoUnitTest
 │   └── Resources/ReferenceResults/  # testing.json + reference baselines for this library
-├── tests/                       # pytest test suite (129 tests)
+├── tests/                       # pytest test suite (131 tests)
 │   ├── fixtures/                # Test data: dslog.txt, .mat file, test_spec.json
 │   └── test_*.py                # Comparator, config, discovery, storage, simulators
 ├── docs/                        # Design decisions, patterns, architecture, constraints, usage

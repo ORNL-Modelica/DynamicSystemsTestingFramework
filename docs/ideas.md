@@ -66,6 +66,31 @@
 - Could also explore a single-page app approach: one HTML file with a sidebar listing all tests, clicking loads that test's plots inline (avoids many separate files)
 - Include a mapping table showing test_NNNN (working directory) ↔ ref_NNNN (reference file) ↔ model ID, so the user can navigate between simulation artifacts and references easily
 
+## Condensed HTML report with progressive disclosure
+
+- Current HTML reports show every field (translation stats, simulation stats, all variables) in a flat layout — gets overwhelming for complex models with dozens of stats and variables
+- Redesign to show a concise summary by default with the most important metrics:
+  - **Top-level**: pass/fail, NRMSE worst-case, continuous states, nonlinear system count/max, CPUtime, event count
+  - **Variable table**: just name, pass/fail, NRMSE — not full trajectory details
+- Everything else available via expand/collapse (`<details>`/`<summary>` HTML elements):
+  - Full translation statistics (original model, translated model, initialization)
+  - Full simulation statistics
+  - Per-variable detail panels (error plots, difference plots, segment breakdown)
+  - Raw system size lists (nonlinear/linear sizes)
+  - State names list
+- Could also use a tabbed layout: "Summary" | "Translation" | "Simulation" | "Variables" tabs in a single page
+- For the auto-generated report suite (see above), the index page should be the condensed view — click through to per-test detail pages
+- Goal: a library maintainer scanning 300 test results should be able to spot problems in seconds, then drill into specifics only where needed
+
+## Link to simulation artifacts from HTML reports
+
+- For tests that fail to simulate (no .mat produced), the user needs to inspect `dslog.txt`, `translation_log.txt`, or `dsin.txt` to diagnose the issue
+- HTML reports should include `file://` links to these artifacts in the per-test working directory (`testing_output/.../test_NNNN/`)
+- Links to show: `dslog.txt`, `translation_log.txt`, `dsin.txt`, `dsfinal.txt`, the `.mos` script, and the `.mat` file (if it exists)
+- For failed tests, the dslog link should be prominent — that's the first thing a user looks at
+- For passing tests, links are still useful for inspecting simulation details but can be less prominent (e.g., in a collapsible section)
+- Also useful in the auto-generated report suite index page: a "Files" column with quick links per test
+
 ## One-click "open in Dymola" from interactive mode
 
 - In interactive mode (or HTML reports), provide a clickable link or command that opens Dymola, loads all dependencies + the library, and navigates to the failed model

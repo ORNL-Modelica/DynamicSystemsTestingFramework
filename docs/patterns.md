@@ -49,6 +49,20 @@
 - float64 (newer Dymola): 15 significant digits — preserves full double precision
 - Python's `%g` format auto-switches to scientific notation for very large/small values
 
+### Two-phase .mat reading: names first, then selective data
+- Phase 1: `list_dymola_mat_variables()` reads only the `name` matrix from the MAT4 headers — fast even for 36MB files
+- Phase 2: `_compute_needed_variables()` resolves patterns against the name list to determine exactly which variables are needed
+- Phase 3: `read_dymola_mat(variable_names=needed)` memory-maps `data_2` and reads only the needed rows
+- For 76,992 variables where only 10 are needed, this reads ~0.01% of the trajectory data
+- Critical for WSL2 where 9P filesystem I/O is slow for large files
+
+### Translation log parsing separates simulation and initialization
+- The "Translated Model" section has two levels: simulation-level stats and a nested "Initialization problem" subsection
+- Parser splits at "Initialization problem" line, parses each half independently
+- Initialization fields use `init_` prefix: `init_nonlinear`, `init_linear`, `init_mixed_systems`, `init_numerical_jacobians`, `init_homotopy_nonlinear`
+- System sizes stored as `list[int]` with summary fields: `_count`, `_total`, `_max`
+- Structural change warnings use summary fields (not raw lists) for clean display
+
 ### Diagnostic variables are stored but never compared
 - `CPUtime` and `EventCounter` are auto-extracted from mat data when present
 - Full trajectories go in `diagnostics` section of reference JSON (for plotting)
