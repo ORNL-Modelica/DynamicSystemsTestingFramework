@@ -16,6 +16,8 @@
 
 - **Data matrix column indexing**: `dataInfo[i, 0]` indicates which data matrix (1 = `data_1` for parameters, 2 = `data_2` for time series). `abs(dataInfo[i, 1]) - 1` is the column index. Sign of `dataInfo[i, 1]` indicates interpolation order. Bounds checking is required — malformed files exist in the wild.
 
+- **Float32/64 precision**: Older Dymola versions store `.mat` values as float32; newer versions (2024+) may use float64. When scipy reads float32 into Python float64, trailing noise appears (e.g., `0.001` becomes `0.0010000000474974513`). `_to_json_list()` detects the array dtype and rounds to matching precision — 7 significant digits for float32, 15 for float64.
+
 ## Simulator Behavior
 
 - **Event handling varies by solver settings**: Dymola's `Evaluate=true` and `storeVariablesAtEvents` flags affect whether duplicate time points appear in results. The comparator handles both cases (with and without events), but reference results should be generated with consistent settings via `simulator_setup` in `testing.json`.

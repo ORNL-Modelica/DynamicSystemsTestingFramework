@@ -261,17 +261,21 @@ uv run python -m modelica_testing --config testing.json run --report-format html
 ReferenceResults/
 ├── testing.json              # Configuration
 ├── test_spec.json            # External test definitions (optional)
-├── test_manifest.json        # ID-to-model mapping (auto-generated)
 └── Dymola/
     └── windows/
-        ├── ref_0001.json     # One file per test
+        ├── ref_0001.json     # One file per test (self-contained)
         ├── ref_0002.json
         └── ...
 ```
 
-References are partitioned by simulator backend and OS because different solvers and platforms produce numerically different results.
+References are partitioned by simulator backend and OS because different solvers and platforms produce numerically different results. No manifest file is needed — each ref file contains its own `model_id`, `test_id`, `status`, `date_added`, and `last_updated`. The index is rebuilt in memory by scanning ref files at startup.
 
-Each reference file contains metadata (model ID, simulation params, statistics, diagnostics) followed by the time vector and variable data. `CPUtime` and `EventCounter` are auto-captured in diagnostics when `OutputCPUtime := true;` is set.
+Each ref file also contains simulation params, statistics, diagnostic trajectories (`CPUtime`, `EventCounter` when `OutputCPUtime := true;`), and the time/variable data.
+
+**Status field:** Each ref file has a `status` field:
+- `active` — normal, included in test runs
+- `skip` — temporarily excluded from comparison
+- `obsolete` — pending deletion (remove with `manifest cleanup`)
 
 ---
 

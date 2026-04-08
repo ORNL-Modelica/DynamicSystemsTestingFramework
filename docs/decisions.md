@@ -72,7 +72,13 @@
 - **Why**: Reduces command-line boilerplate. The config file already knows everything about the test setup; requiring the user to also specify the library path is redundant.
 - **Trade-offs**: `package_path` in the config is relative, so moving the config file breaks the path. CLI `--package-path` still overrides.
 
-## D13: ModelicaTestingLib as top-level Modelica library
+## D13: In-memory index replaces persistent manifest
+
+- **What**: `test_manifest.json` is removed. The mapping from model IDs to ref file IDs is built in memory by scanning `ref_NNNN.json` files at the start of each run. Each ref file contains `model_id`, `test_id`, `status`, `date_added`, and `last_updated` as metadata fields.
+- **Why**: The manifest was a persistent index that easily got out of sync with the ref files (e.g., after manual migration of 300+ files). Since the ref files already contain all the information, the manifest was redundant. Scanning 300 small JSON files takes under a second.
+- **Trade-offs**: Slight startup cost to scan files. No way to track metadata (like date_added) outside the ref files themselves — but that's actually better since the ref files are the source of truth.
+
+## D14: ModelicaTestingLib as top-level Modelica library
 
 - **What**: A small Modelica library (`ModelicaTestingLib/`) lives at the project root. It contains a reusable `UnitTests` component, example models (SimpleTest, EventTest, ConstantTest, NoUnitTest), and its own reference results under `Resources/ReferenceResults/`.
 - **Why**: Serves dual purpose — test fixture for the pytest suite (real `.mo` files for discovery/parsing tests) and reference implementation showing how to set up `UnitTests` in a library. Top-level placement makes it easy for users to find and reuse (e.g., the `UnitTests` component).

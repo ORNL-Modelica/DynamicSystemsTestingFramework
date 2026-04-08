@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..base import (
@@ -287,7 +289,8 @@ class DymolaRunner(SimulatorRunner):
                 stats = {}
             for diag in diagnostics:
                 if len(diag.values) > 0:
-                    stats[diag.name] = float(diag.values[-1])
+                    sig = 7 if diag.values.dtype == np.float32 else 15
+                    stats[diag.name] = float(f"%.{sig}g" % diag.values[-1])
 
         return TestResult(
             model_id=test.model_id,

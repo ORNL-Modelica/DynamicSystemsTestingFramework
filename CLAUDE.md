@@ -76,14 +76,14 @@ Reference results are partitioned by `<reference_root>/<SimulatorBackend>/<os>/`
 - **`Config`** (`config.py`) — resolves all paths from CLI args + `testing.json` + defaults
 - **`TestModel`** (`discovery/test_registry.py`) — fully resolved test with model ID, simulation params, tracked variables, source
 - **`SimulatorRunner`** (`simulators/base.py`) — abstract interface; `DymolaRunner` implements batch execution
-- **`ReferenceStore`** (`storage/reference_store.py`) — CRUD for per-test JSON reference files via `TestManifest`
+- **`ReferenceStore`** (`storage/reference_store.py`) — CRUD for per-test JSON reference files; `RefIndex` built in-memory from scanning ref files
 - **`comparator`** (`comparison/comparator.py`) — NRMSE comparison with piecewise event boundary handling
 
 ## Design Principles
 
 1. **Library-agnostic**: auto-detects library name from `package.mo`, all paths configurable
 2. **Simulator-agnostic**: Dymola-specific code isolated in `simulators/dymola/`; abstract `SimulatorRunner` interface
-3. **Stable test IDs**: numeric IDs (`ref_0001.json`) with a manifest mapping IDs to model paths; IDs never reused
+3. **Stable test IDs**: numeric IDs (`ref_0001.json`) with model ID inside each file; IDs never reused; in-memory index built by scanning ref files (no persistent manifest)
 4. **Reference partitioning**: results split by simulator backend and OS since solvers produce platform-specific results
 5. **Batch execution**: load libraries once per worker, run N tests, exit — avoids per-test startup overhead
 6. **No backward compatibility**: clean breaks during development; migration utilities provided for format changes

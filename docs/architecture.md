@@ -76,21 +76,18 @@ reporters render TestComparison → console / JUnit / HTML / plots
 | `TestResult` | `simulators/base.py` | Simulation output: success flag, variables, diagnostics, statistics |
 | `VariableResult` | `simulators/base.py` | One variable's time series (time + values arrays) |
 | `TestComparison` | `comparison/comparator.py` | Comparison result: pass/fail, per-variable NRMSE, warnings |
-| `ReferenceStore` | `storage/reference_store.py` | CRUD for reference JSON files via TestManifest |
-| `TestManifest` | `storage/reference_store.py` | Maps stable numeric IDs ↔ model IDs |
+| `ReferenceStore` | `storage/reference_store.py` | CRUD for reference JSON files via RefIndex |
+| `RefIndex` | `storage/reference_store.py` | In-memory index mapping model IDs ↔ numeric IDs (built by scanning ref files) |
 | `BatchManifest` | `simulators/base.py` | Maps test keys to model IDs within a batch run |
 
 ## Reference File Structure
 
-`<reference_root>/test_manifest.json` — shared across all simulators/OS:
-```json
-{"version": 1, "tests": {"0001": {"model_id": "Lib.Examples.Test1", "status": "active"}}}
-```
-
-`<reference_root>/<Simulator>/<os>/ref_0001.json` — per simulator+OS:
+`<reference_root>/<Simulator>/<os>/ref_0001.json` — per simulator+OS, self-contained:
 ```json
 {
-  "model_id": "...", "test_id": "0001", "last_updated": "...",
+  "model_id": "...", "test_id": "0001",
+  "status": "active",
+  "date_added": "2026-01-15T...", "last_updated": "2026-04-08T...",
   "simulation": {"stop_time": 100, "tolerance": 1e-4, "method": "Dassl"},
   "statistics": {"initialization": {...}, "simulation": {...}, "CPUtime": 12.3, "EventCounter": 42},
   "diagnostics": [
@@ -102,6 +99,9 @@ reporters render TestComparison → console / JUnit / HTML / plots
   "variables": [{"index": 1, "name": "pipe.T[1]", "values": [...]}]
 }
 ```
+
+No persistent manifest file. The in-memory `RefIndex` is built by scanning ref files at startup.
+Valid statuses: `active` (normal), `skip` (temporarily excluded), `obsolete` (pending deletion).
 
 ## Simulator Abstraction
 

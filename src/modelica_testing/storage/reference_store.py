@@ -376,5 +376,13 @@ def _downsample(
 
 
 def _to_json_list(arr: np.ndarray) -> list[float]:
-    """Convert numpy array to JSON-serializable list of Python floats."""
-    return [float(v) for v in arr]
+    """Convert numpy array to JSON-serializable list of Python floats.
+
+    Rounds to significant digits matching the source precision:
+    - float32 (older Dymola): 7 significant digits
+    - float64 (newer Dymola): 15 significant digits
+    This avoids noise from float32→float64 promotion while preserving
+    full precision for native float64 data.
+    """
+    sig = 7 if arr.dtype == np.float32 else 15
+    return [float(f"%.{sig}g" % v) for v in arr]

@@ -35,6 +35,19 @@
 - `testing.json` can be the single entry point: include `package_path` and run with just `--config` or `--reference-root`
 - `test_spec.json` is permanent, not temporary — it defines what to test; references define what to expect
 
+### Ref files are the source of truth, not a manifest
+- Each `ref_NNNN.json` contains `model_id`, `test_id`, `status`, `date_added`, `last_updated`
+- The in-memory `RefIndex` is rebuilt by scanning ref files at startup — no persistent manifest to maintain or sync
+- `date_added` is set once on first store, preserved on updates; `last_updated` changes every store
+- `status` field: `active` (normal), `skip` (temporarily excluded from runs), `obsolete` (pending deletion via `manifest cleanup`)
+- Diagnostic variable list is configurable via `diagnostic_variables` in `testing.json` (default: `["CPUtime", "EventCounter"]`)
+
+### Reference JSON values use precision-aware rounding
+- `_to_json_list()` checks the numpy array dtype and rounds accordingly
+- float32 (older Dymola): 7 significant digits — removes float32→float64 promotion noise
+- float64 (newer Dymola): 15 significant digits — preserves full double precision
+- Python's `%g` format auto-switches to scientific notation for very large/small values
+
 ### Diagnostic variables are stored but never compared
 - `CPUtime` and `EventCounter` are auto-extracted from mat data when present
 - Full trajectories go in `diagnostics` section of reference JSON (for plotting)
