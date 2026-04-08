@@ -4,7 +4,7 @@
 
 ```
 src/modelica_testing/
-├── cli.py                    # argparse CLI: discover, run, compare, export, migrate, manifest, convert, add
+├── cli.py                    # argparse CLI: discover, run, compare, export, manifest, add
 ├── config.py                 # Config dataclass, path resolution, testing.json loading
 ├── discovery/
 │   ├── mo_parser.py          # Scans .mo files for UnitTests components
@@ -19,16 +19,12 @@ src/modelica_testing/
 ├── comparison/
 │   └── comparator.py         # NRMSE comparison with piecewise event handling
 ├── storage/
-│   ├── reference_store.py    # TestManifest + ReferenceStore (per-test JSON files)
-│   ├── convert.py            # Bidirectional format conversion
-│   └── migrate.py            # Migration from buildingspy format
-├── reporting/
-│   ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
-│   ├── junit_report.py       # JUnit XML for CI
-│   ├── html_report.py        # HTML summary report
-│   └── plot_comparison.py    # Per-variable PNG plots + HTML viewer with stats tables
-└── tools/
-    └── verify_migration.py   # Post-migration verification
+│   └── reference_store.py    # TestManifest + ReferenceStore (per-test JSON files)
+└── reporting/
+    ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
+    ├── junit_report.py       # JUnit XML for CI
+    ├── html_report.py        # HTML summary report
+    └── plot_comparison.py    # Per-variable PNG plots + HTML viewer with stats tables
 ```
 
 ## Data Flow

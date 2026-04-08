@@ -140,46 +140,6 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_migrate(args: argparse.Namespace) -> int:
-    """Migrate old buildingspy .txt references to JSON format."""
-    config = _build_config(args)
-    source = Path(args.source)
-
-    if not source.exists():
-        print(f"Source directory not found: {source}")
-        return 1
-
-    # Optionally enrich with test model info from discovery
-    test_lookup = None
-    if not args.skip_discovery:
-        tests = discover_tests(config)
-        test_lookup = {t.model_id: t for t in tests}
-
-    from .storage.migrate import migrate_buildingspy_references
-
-    print(f"Migrating from: {source}")
-    print(f"Writing to:     {config.reference_dir}")
-    migrated = migrate_buildingspy_references(source, config, test_lookup)
-    print(f"\nMigrated {migrated} reference files")
-
-    if migrated == 0:
-        return 1
-
-    # Verify migration unless --no-verify
-    if not args.no_verify:
-        print()
-        from .tools.verify_migration import verify_migration
-
-        output_dir = Path(args.verify_output) if args.verify_output else (config.work_dir / "migration_verify")
-        verify_migration(
-            source_dir=source,
-            json_dir=config.reference_dir,
-            output_dir=output_dir,
-            plot=not args.no_plots,
-        )
-
-    return 0
-
 
 def cmd_manifest(args: argparse.Namespace) -> int:
     """Manage the test manifest."""
@@ -246,30 +206,6 @@ def cmd_manifest(args: argparse.Namespace) -> int:
 
     return 1
 
-
-def cmd_convert(args: argparse.Namespace) -> int:
-    """Convert reference files between old (abbreviated) and new (manifest) formats."""
-    config = _build_config(args)
-
-    from .storage.convert import convert_to_manifest, convert_from_manifest
-
-    ref_dir = config.reference_dir
-    manifest_path = config.manifest_file
-
-    if args.direction == "to-manifest":
-        print(f"Converting references in {ref_dir} to manifest format...")
-        index_path = ref_dir / "index.json" if (ref_dir / "index.json").exists() else None
-        converted = convert_to_manifest(ref_dir, manifest_path, index_path)
-        print(f"\nConverted {converted} files. Manifest: {manifest_path}")
-        return 0 if converted > 0 else 1
-
-    elif args.direction == "from-manifest":
-        print(f"Converting references in {ref_dir} from manifest to readable names...")
-        converted = convert_from_manifest(ref_dir, manifest_path, config.library_name)
-        print(f"\nConverted {converted} files.")
-        return 0 if converted > 0 else 1
-
-    return 1
 
 
 def cmd_add(args: argparse.Namespace) -> int:
@@ -649,7 +585,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--report-format", choices=["console", "junit", "html"],
         default="console", help="Output format for test report",
     )
-    #_run)
 
     # compare
     p_compare = subparsers.add_parser(
@@ -663,7 +598,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--report-format", choices=["console", "junit", "html"],
         default="console",
     )
-    #_compare)
 
     # export
     p_export = subparsers.add_parser("export", help="Export reference data")
@@ -674,33 +608,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_export.add_argument("--output", type=str, help="Output file path")
     p_export.add_argument("--filter", type=str, help="Glob pattern for model_id")
     p_export.add_argument("--package", type=str, help="Filter by package prefix")
-    #_export)
-
-    # migrate
-    p_migrate = subparsers.add_parser(
-        "migrate", help="Migrate old buildingspy .txt references to JSON format"
-    )
-    p_migrate.add_argument(
-        "source", type=str,
-        help="Path to directory containing buildingspy .txt reference files",
-    )
-    p_migrate.add_argument(
-        "--skip-discovery", action="store_true",
-        help="Skip test discovery (faster, but less metadata in output)",
-    )
-    p_migrate.add_argument(
-        "--no-verify", action="store_true",
-        help="Skip post-migration verification",
-    )
-    p_migrate.add_argument(
-        "--no-plots", action="store_true",
-        help="Skip plot generation during verification",
-    )
-    p_migrate.add_argument(
-        "--verify-output", type=str, default=None,
-        help="Output directory for verification results (default: <work_dir>/migration_verify)",
-    )
-    #_migrate)
 
     # manifest
     p_manifest = subparsers.add_parser(
@@ -717,17 +624,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_manifest.add_argument(
         "--show-obsolete", action="store_true",
         help="Also show obsolete entries (show only)",
-    )
-    #_manifest)
-
-    # convert
-    p_convert = subparsers.add_parser(
-        "convert", help="Convert reference files between old and new formats"
-    )
-    p_convert.add_argument(
-        "direction", choices=["to-manifest", "from-manifest"],
-        help="'to-manifest': old abbreviated names -> ref_NNNN.json + manifest. "
-             "'from-manifest': ref_NNNN.json -> human-readable names + index.json",
     )
 
     # add
@@ -755,9 +651,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "run": cmd_run,
         "compare": cmd_compare,
         "export": cmd_export,
-        "migrate": cmd_migrate,
         "manifest": cmd_manifest,
-        "convert": cmd_convert,
         "add": cmd_add,
     }
 

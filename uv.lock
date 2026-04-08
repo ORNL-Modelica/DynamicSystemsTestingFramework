@@ -438,19 +438,12 @@ dependencies = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
-[package.optional-dependencies]
-plots = [
-    { name = "matplotlib" },
-]
-
 [package.metadata]
 requires-dist = [
-    { name = "matplotlib", specifier = ">=3.10.8" },
-    { name = "matplotlib", marker = "extra == 'plots'", specifier = ">=3.5" },
+    { name = "matplotlib", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.20" },
     { name = "scipy", specifier = ">=1.7" },
 ]
-provides-extras = ["plots"]
 
 [[package]]
 name = "numpy"

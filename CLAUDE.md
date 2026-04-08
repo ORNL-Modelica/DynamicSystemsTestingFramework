@@ -12,14 +12,13 @@ The tool discovers tests by scanning `.mo` files and/or reading `test_spec.json`
 ModelicaTesting/
 ├── src/
 │   └── modelica_testing/        # Python package (src layout)
-│       ├── cli.py               # CLI: discover, run, compare, export, migrate, manifest, convert, add
+│       ├── cli.py               # CLI: discover, run, compare, export, manifest, add
 │       ├── config.py            # Config dataclass, path resolution, testing.json loading
 │       ├── discovery/           # Test discovery: scan .mo for UnitTests, parse test_spec.json
 │       ├── simulators/          # Abstract runner + Dymola backend (batch .mos, .mat reader, dslog parser)
 │       ├── comparison/          # NRMSE comparison with piecewise event handling
-│       ├── storage/             # JSON reference storage with numeric ID manifest, migration
-│       ├── reporting/           # Console, JUnit XML, HTML reporters, plot generation
-│       └── tools/               # Verification utilities
+│       ├── storage/             # JSON reference storage with numeric ID manifest
+│       └── reporting/           # Console, JUnit XML, HTML reporters, plot generation
 ├── docs/                        # Design decisions, patterns, architecture, constraints
 ├── pyproject.toml               # uv/hatchling project config
 └── CLAUDE.md
