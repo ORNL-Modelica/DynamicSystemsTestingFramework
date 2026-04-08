@@ -566,7 +566,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_run.add_argument("--final-only", action="store_true", help="Compare only final values")
     p_run.add_argument(
         "--timeout", type=int, default=None,
-        help="Per-test timeout in seconds (default: 600)",
+        help="Per-test timeout in seconds (default: 60)",
     )
     p_run.add_argument(
         "--report-format", choices=["console", "junit", "html"],

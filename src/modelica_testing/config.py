@@ -169,7 +169,7 @@ class Config:
     parallel: int = 1
     tolerance: float = DEFAULT_COMPARISON_TOLERANCE
     final_only: bool = False
-    timeout: int = 600
+    timeout: int = 60
 
     # Output
     work_dir: Optional[Path] = None

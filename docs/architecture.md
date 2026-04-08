@@ -6,7 +6,7 @@
 ModelicaTesting/
 ├── ModelicaTestingLib/               # Modelica library (test fixture + reference implementation)
 │   ├── Components/UnitTests.mo      # Reusable UnitTests component
-│   ├── Examples/                    # SimpleTest, EventTest, ConstantTest, NoUnitTest
+│   ├── Examples/                    # SimpleTest, EventTest, ConstantTest, IntervalTest, NoUnitTest
 │   └── Resources/ReferenceResults/  # testing.json + baselines for this library
 ├── tests/                           # pytest suite
 │   ├── fixtures/results/Dymola/     # Real Dymola artifacts (.mat, dslog.txt, etc.)
@@ -28,11 +28,11 @@ src/modelica_testing/
 │   └── dymola/
 │       ├── runner.py          # DymolaRunner: batch .mos generation and execution
 │       ├── mat_reader.py      # Parses Dymola .mat (MAT4) result files via scipy
-│       └── log_parser.py      # Parses dslog.txt for statistics (nonlinear systems, states, etc.)
+│       └── log_parser.py      # Parses dslog.txt + translation_log.txt for statistics
 ├── comparison/
 │   └── comparator.py         # NRMSE comparison with piecewise event handling
 ├── storage/
-│   └── reference_store.py    # TestManifest + ReferenceStore (per-test JSON files)
+│   └── reference_store.py    # RefIndex + ReferenceStore (per-test JSON files)
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
     ├── junit_report.py       # JUnit XML for CI
@@ -49,14 +49,17 @@ discover_tests(config)
     → test_registry merges both into list[TestModel]
 
 runner.run_tests(tests)
-    → generates startup.mos, per-test .mos, shutdown.mos, batch .mos
+    → generates startup.mos (loads libs, enables OutputCPUtime + TranslationInCommandLog)
+    → generates per-test .mos (clearlog, simulateModel, savelog)
+    → generates shutdown.mos, batch .mos
     → launches Dymola subprocess(es)
+    → parses dslog.txt (runtime stats) + translation_log.txt (structural stats) per test
     → returns list[BatchManifest] with TestRunResult per test
 
 runner.read_results(manifests, tests)
     → reads .mat files via mat_reader
     → resolves variable patterns against available names
-    → auto-captures diagnostic variables (CPUtime, EventCounter) if present
+    → auto-captures diagnostic variables (configurable, default: CPUtime, EventCounter)
     → returns dict[model_id → TestResult]
 
 compare_all(tests, results, store, config)
@@ -88,8 +91,8 @@ reporters render TestComparison → console / JUnit / HTML / plots
   "model_id": "...", "test_id": "0001",
   "status": "active",
   "date_added": "2026-01-15T...", "last_updated": "2026-04-08T...",
-  "simulation": {"stop_time": 100, "tolerance": 1e-4, "method": "Dassl"},
-  "statistics": {"initialization": {...}, "simulation": {...}, "CPUtime": 12.3, "EventCounter": 42},
+  "simulation": {"stop_time": 100, "tolerance": 1e-4, "method": "Dassl", "number_of_intervals": 500, "output_interval": null},
+  "statistics": {"translation": {"continuous_time_states": 4, "nonlinear": "3, 1", ...}, "simulation": {"cpu_time": 0.5, ...}, "CPUtime": 12.3, "EventCounter": 42},
   "diagnostics": [
     {"name": "CPUtime", "values": [...]},
     {"name": "EventCounter", "values": [...]}

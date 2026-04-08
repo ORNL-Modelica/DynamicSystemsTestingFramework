@@ -26,6 +26,10 @@
 
 - **Numeric results are platform-dependent**: The same model with the same solver settings produces different floating-point results on Windows vs Linux, and between Dymola vs OpenModelica. References must be partitioned by simulator backend + OS.
 
+- **Translation log capture requires Dymola 2025x+**: `Advanced.UI.TranslationInCommandLog := true;` is the correct flag for Dymola 2025x and newer. Older versions may use `Advanced.TranslationInCommandLog` (without `UI`). The framework hardcodes the 2025x+ syntax.
+
+- **Dymola default output intervals**: When neither `numberOfIntervals` nor `Interval` is specified in the experiment annotation, Dymola defaults to 500 intervals. The framework auto-derives and stores `numberOfIntervals` from the first run to ensure consistent output grids on subsequent runs.
+
 ## Tooling
 
 - **argparse subcommand defaults override parent**: If both parent parser and subcommand define the same argument (e.g., `--reference-root`), the subcommand's default (`None`) silently overwrites the parent's parsed value. Global flags must only be on the parent parser.

@@ -7,12 +7,15 @@
 - If `testing.json` already exists, offer to edit fields interactively
 - Reduces onboarding friction for new libraries — no need to hand-write JSON
 
-## Test discovery by `extends` or folder
+## Test discovery by `extends` or folder with interactive selection
 
-- Find testable models by scanning for classes that extend a specific base (e.g., `extends Modelica.Icons.Example` or a custom test icon)
+- Find candidate test models by scanning for classes that extend a specific base (e.g., `extends Modelica.Icons.Example` or a custom test icon)
 - Alternatively, discover all models within a specific package/folder (e.g., everything under `MyLib.Examples.*`)
 - Complements UnitTests and test_spec: UnitTests requires in-model instrumentation, test_spec requires manual enumeration, extends-based discovery is automatic
-- Could generate a test_spec.json from discovered models as a starting point
+- Could be a CLI command like `modelica-testing find-tests --extends Modelica.Icons.Example --package MyLib.Fluid`
+- **Interactive selection mode**: present discovered candidates in a checklist, user selects which to add to `test_spec.json` — avoids manually writing JSON for dozens of models
+- Could show which candidates already have UnitTests or test_spec entries (skip those)
+- Variable selection: offer `["*"]` (track all), `[]` (simulate only), or prompt for specific patterns per model
 
 ## Dependency-aware test ordering
 
@@ -62,6 +65,22 @@
   - Plotly is likely the best fit: interactive plots in self-contained HTML, matplotlib stays as the lightweight fallback
 - Could also explore a single-page app approach: one HTML file with a sidebar listing all tests, clicking loads that test's plots inline (avoids many separate files)
 - Include a mapping table showing test_NNNN (working directory) ↔ ref_NNNN (reference file) ↔ model ID, so the user can navigate between simulation artifacts and references easily
+
+## One-click "open in Dymola" from interactive mode
+
+- In interactive mode (or HTML reports), provide a clickable link or command that opens Dymola, loads all dependencies + the library, and navigates to the failed model
+- Could generate a temporary `.mos` script that does the loading and opens the model, then launch Dymola with it
+- Terminal hyperlinks (OSC 8 escape sequences) are supported by modern terminals (Windows Terminal, iTerm2, etc.) — could link to the `.mos` script or a `file://` URL
+- In HTML reports, this is straightforward — a link that triggers a `.mos` download or `dymola://` protocol handler
+- Useful for debugging failures: see the model, inspect equations, re-simulate with different settings
+
+## Interactive tolerance editing and tolerance tubes
+
+- In interactive plots (Plotly or similar), allow the user to adjust the NRMSE tolerance via a slider or input field and see pass/fail update live
+- Push the modified tolerance back to the reference file as a per-test or per-variable override
+- **Tolerance tubes**: display upper/lower bounds around the reference trajectory, defined by the tolerance. Visually shows where the actual signal is within/outside acceptable range
+- Could support per-variable tolerances (e.g., temperature variables need tighter tolerance than pressure) stored in the reference JSON alongside each variable
+- Global tolerance remains the default; per-variable overrides in the reference take precedence
 
 ## Full reference data representation in HTML reports
 

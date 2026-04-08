@@ -17,13 +17,13 @@ ModelicaTesting/
 │       ├── discovery/           # Test discovery: scan .mo for UnitTests, parse test_spec.json
 │       ├── simulators/          # Abstract runner + Dymola backend (batch .mos, .mat reader, dslog parser)
 │       ├── comparison/          # NRMSE comparison with piecewise event handling
-│       ├── storage/             # JSON reference storage with numeric ID manifest
+│       ├── storage/             # JSON reference storage with in-memory index
 │       └── reporting/           # Console, JUnit XML, HTML reporters, plot generation
 ├── ModelicaTestingLib/          # Modelica library: UnitTests component + example models
 │   ├── Components/UnitTests.mo  # Reusable UnitTests component for tracking variables
-│   ├── Examples/                # SimpleTest, EventTest, ConstantTest, NoUnitTest
+│   ├── Examples/                # SimpleTest, EventTest, ConstantTest, IntervalTest, NoUnitTest
 │   └── Resources/ReferenceResults/  # testing.json + reference baselines for this library
-├── tests/                       # pytest test suite (109 tests)
+├── tests/                       # pytest test suite (129 tests)
 │   ├── fixtures/                # Test data: dslog.txt, .mat file, test_spec.json
 │   └── test_*.py                # Comparator, config, discovery, storage, simulators
 ├── docs/                        # Design decisions, patterns, architecture, constraints, usage
@@ -64,12 +64,16 @@ The tool looks for `testing.json` near the library root or reference root. Key f
 - `package_path` — path to library's package.mo directory (relative to testing.json)
 - `simulator` — named entry like `"Dymola"` or `"Dymola 2025"`
 - `simulators` — map of simulator names to candidate executable paths
-- `simulator_setup` — list of Modelica commands run after library loading (e.g., `"OutputCPUtime := true;"`)
+- `simulator_setup` — list of Modelica commands run after library loading (user-specific settings)
 - `dependencies` — paths to dependency library roots loaded before simulation
 - `reference_root` — where reference results live (default: `<repo>/Resources/ReferenceResults`)
 - `test_spec` — path to external test definitions file
+- `diagnostic_variables` — variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`)
+
+Note: `OutputCPUtime := true;` and `Advanced.UI.TranslationInCommandLog := true;` are hardcoded in the Dymola runner — no need to add them to `simulator_setup`.
 
 Reference results are partitioned by `<reference_root>/<SimulatorBackend>/<os>/`.
+
 
 ## Key Abstractions
 

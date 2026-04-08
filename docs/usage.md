@@ -23,9 +23,6 @@ Create a `testing.json` in your reference results directory. This is the single 
     ]
   },
   "dependencies": [],
-  "simulator_setup": [
-    "OutputCPUtime := true;"
-  ],
   "test_spec": "test_spec.json"
 }
 ```
@@ -38,8 +35,9 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `simulator` | No | Simulator name (default: `"Dymola"`). Use named entries like `"Dymola 2025"` to target specific versions. |
 | `simulators` | No | Map of simulator names to candidate executable paths (first existing path wins). Falls back to system PATH. |
 | `dependencies` | No | Paths to dependency library roots loaded before simulation. Relative to `testing.json` location. |
-| `simulator_setup` | No | Modelica commands run after library loading (e.g., `"OutputCPUtime := true;"`). |
+| `simulator_setup` | No | Modelica commands run after library loading. For user-specific settings only — `OutputCPUtime` and translation log capture are handled automatically by the Dymola runner. |
 | `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. |
+| `diagnostic_variables` | No | Variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`). |
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
 
 All relative paths resolve from where `testing.json` is located.

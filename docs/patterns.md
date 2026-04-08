@@ -3,11 +3,12 @@
 ## Proven Patterns
 
 ### Dymola `.mos` script structure: startup → per-test → shutdown
-- `startup.mos`: `cd()`, load dependencies, load main library, setup commands
-- `test_NNNN.mos`: `cd()` to test subdir, `simulateModel(...)` with `resultFile="test_NNNN"`
+- `startup.mos`: `cd()`, load dependencies, load main library, framework settings (`OutputCPUtime`, `Advanced.UI.TranslationInCommandLog`), user setup commands
+- `test_NNNN.mos`: `cd()` to test subdir, `clearlog()`, `simulateModel(...)`, `savelog("translation_log.txt")`
 - `shutdown.mos`: `Modelica.Utilities.System.exit()`
 - `batch_NNNN.mos`: `RunScript()` calls chaining startup + all tests + shutdown
-- Each test gets its own subdirectory to prevent file conflicts (`dsin.txt`, `dslog.txt`, `dsfinal.txt` are per-simulation)
+- Each test gets its own subdirectory to prevent file conflicts (`dsin.txt`, `dslog.txt`, `dsfinal.txt`, `translation_log.txt` are per-simulation)
+- Two log files per test: `dslog.txt` (simulation runtime) and `translation_log.txt` (translation/structural stats) — merged into one `statistics` dict
 
 ### Variable pattern matching treats `[]` as literal
 - Modelica uses `[]` for array indices (e.g., `pipe.T[1]`), not as glob character classes
