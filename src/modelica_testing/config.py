@@ -344,7 +344,3 @@ class Config:
         """Reference results directory, partitioned by simulator backend and OS."""
         return self.reference_root / self.simulator_backend / self.os_name
 
-    @property
-    def manifest_file(self) -> Path:
-        """Test manifest file — maps stable numeric IDs to model IDs."""
-        return self.reference_root / "test_manifest.json"

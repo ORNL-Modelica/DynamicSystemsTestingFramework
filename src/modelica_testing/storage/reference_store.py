@@ -1,8 +1,14 @@
-"""JSON file-based storage for reference results with stable numeric test IDs."""
+"""JSON file-based storage for reference results with stable numeric test IDs.
+
+Reference files (ref_NNNN.json) are the source of truth. Each file contains
+model_id, test_id, status, date_added, and last_updated metadata. An in-memory
+index is built by scanning ref files — no persistent manifest file needed.
+"""
 
 import csv
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -15,97 +21,105 @@ from ..simulators import TestResult, VariableResult
 
 logger = logging.getLogger(__name__)
 
+# Pattern matching ref_NNNN.json filenames
+_REF_FILE_PATTERN = re.compile(r"^ref_(\d{4,})\.json$")
 
-class TestManifest:
-    """Manages the test_manifest.json file that maps stable numeric IDs to model IDs.
 
-    The manifest lives at <reference_root>/test_manifest.json and is shared
-    across all simulator/OS combinations. IDs are never reused — obsolete
-    tests are marked with status "obsolete" rather than deleted.
+class RefIndex:
+    """In-memory index mapping model IDs to ref files.
+
+    Built by scanning ref_NNNN.json files in the reference directory.
+    No persistent manifest file — the ref files are the source of truth.
     """
 
-    def __init__(self, manifest_path: Path):
-        self.path = manifest_path
-        self._data: Optional[dict] = None
+    def __init__(self, ref_dir: Path):
+        self.ref_dir = ref_dir
+        self._by_model: dict[str, str] = {}      # model_id -> test_id
+        self._by_id: dict[str, dict] = {}         # test_id -> {model_id, status}
+        self._loaded = False
 
-    def _load(self) -> dict:
-        if self._data is not None:
-            return self._data
-        if self.path.exists():
+    def _scan(self):
+        """Scan ref files and build the in-memory index."""
+        self._by_model.clear()
+        self._by_id.clear()
+
+        if not self.ref_dir.exists():
+            self._loaded = True
+            return
+
+        for ref_file in sorted(self.ref_dir.glob("ref_*.json")):
+            m = _REF_FILE_PATTERN.match(ref_file.name)
+            if not m:
+                continue
+            test_id = m.group(1)
             try:
-                self._data = json.loads(
-                    self.path.read_text(encoding="utf-8")
-                )
+                # Read only the first few KB — metadata is at the top
+                text = ref_file.read_text(encoding="utf-8")
+                data = json.loads(text)
             except (json.JSONDecodeError, OSError) as e:
-                logger.error("Failed to read manifest %s: %s", self.path, e)
-                self._data = {"version": 1, "tests": {}}
-        else:
-            self._data = {"version": 1, "tests": {}}
-        return self._data
+                logger.warning("Skipping unreadable ref file %s: %s", ref_file.name, e)
+                continue
 
-    def _save(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(self._data, indent=2) + "\n", encoding="utf-8"
-        )
+            model_id = data.get("model_id")
+            if not model_id:
+                logger.warning("Ref file %s has no model_id — skipping", ref_file.name)
+                continue
+
+            status = data.get("status", "active")
+            self._by_id[test_id] = {"model_id": model_id, "status": status}
+            if status != "obsolete":
+                self._by_model[model_id] = test_id
+
+        self._loaded = True
+
+    def _ensure_loaded(self):
+        if not self._loaded:
+            self._scan()
 
     def get_id(self, model_id: str) -> Optional[str]:
-        """Look up the numeric ID for a model. Returns None if not registered."""
-        data = self._load()
-        for test_id, entry in data["tests"].items():
-            if entry["model_id"] == model_id and entry.get("status", "active") == "active":
-                return test_id
-        return None
+        """Look up the numeric ID for a model. Returns None if not found."""
+        self._ensure_loaded()
+        return self._by_model.get(model_id)
 
     def get_model_id(self, test_id: str) -> Optional[str]:
         """Look up the model ID for a numeric test ID."""
-        data = self._load()
-        entry = data["tests"].get(test_id)
-        if entry and entry.get("status", "active") == "active":
+        self._ensure_loaded()
+        entry = self._by_id.get(test_id)
+        if entry and entry["status"] != "obsolete":
             return entry["model_id"]
         return None
 
+    def next_id(self) -> str:
+        """Return the next available numeric ID."""
+        self._ensure_loaded()
+        if not self._by_id:
+            return "0001"
+        max_id = max(int(k) for k in self._by_id)
+        return f"{max_id + 1:04d}"
+
     def register(self, model_id: str) -> str:
-        """Register a model and return its numeric ID. Reuses existing ID if already registered."""
+        """Register a model and return its ID. Reuses existing ID if already registered."""
         existing = self.get_id(model_id)
         if existing is not None:
             return existing
-
-        data = self._load()
-        next_id = self._next_id(data)
-        data["tests"][next_id] = {
-            "model_id": model_id,
-            "added": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            "status": "active",
-        }
-        self._save()
-        return next_id
-
-    def mark_obsolete(self, test_id: str):
-        """Mark a test as obsolete (ID is never reused)."""
-        data = self._load()
-        if test_id in data["tests"]:
-            data["tests"][test_id]["status"] = "obsolete"
-            self._save()
+        test_id = self.next_id()
+        self._by_id[test_id] = {"model_id": model_id, "status": "active"}
+        self._by_model[model_id] = test_id
+        return test_id
 
     def active_tests(self) -> dict[str, str]:
-        """Return dict of test_id -> model_id for all active tests."""
-        data = self._load()
+        """Return dict of test_id -> model_id for all active (non-obsolete, non-skip) tests."""
+        self._ensure_loaded()
         return {
             tid: entry["model_id"]
-            for tid, entry in data["tests"].items()
-            if entry.get("status", "active") == "active"
+            for tid, entry in self._by_id.items()
+            if entry["status"] not in ("obsolete",)
         }
 
-    def exists(self) -> bool:
-        """Whether the manifest file exists on disk."""
-        return self.path.exists()
-
-    def _next_id(self, data: dict) -> str:
-        if not data["tests"]:
-            return "0001"
-        max_id = max(int(k) for k in data["tests"])
-        return f"{max_id + 1:04d}"
+    def all_tests(self) -> dict[str, dict]:
+        """Return dict of test_id -> {model_id, status} for all tests."""
+        self._ensure_loaded()
+        return dict(self._by_id)
 
     @staticmethod
     def ref_filename(test_id: str) -> str:
@@ -114,26 +128,26 @@ class TestManifest:
 
 
 class ReferenceStore:
-    """Manages per-test JSON reference files using the test manifest."""
+    """Manages per-test JSON reference files."""
 
     def __init__(self, config: Config):
         self.config = config
         self.ref_dir = config.reference_dir
-        self._manifest = TestManifest(config.manifest_file)
+        self._index = RefIndex(self.ref_dir)
 
     @property
-    def manifest(self) -> TestManifest:
-        return self._manifest
+    def index(self) -> RefIndex:
+        return self._index
 
     def _ensure_dir(self):
         self.ref_dir.mkdir(parents=True, exist_ok=True)
 
     def _ref_file_for_model(self, model_id: str) -> Optional[Path]:
-        """Get the reference file path for a model. Returns None if not in manifest."""
-        test_id = self._manifest.get_id(model_id)
+        """Get the reference file path for a model. Returns None if not indexed."""
+        test_id = self._index.get_id(model_id)
         if test_id is None:
             return None
-        return self.ref_dir / TestManifest.ref_filename(test_id)
+        return self.ref_dir / RefIndex.ref_filename(test_id)
 
     def get_reference(self, model_id: str) -> Optional[dict]:
         """Load reference data for a model. Returns None if not found."""
@@ -157,31 +171,43 @@ class ReferenceStore:
 
         self._ensure_dir()
 
-        test_id = self._manifest.register(test.model_id)
-        filename = TestManifest.ref_filename(test_id)
+        test_id = self._index.register(test.model_id)
+        filename = RefIndex.ref_filename(test_id)
         ref_file = self.ref_dir / filename
+
+        # Check if this is a new file or an update
+        existing = None
+        if ref_file.exists():
+            try:
+                existing = json.loads(ref_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
 
         # Build the reference JSON
         # All variables share the same time vector (Modelica spec).
-        # Downsample time once, then apply the same sampling to all variables.
         shared_time = result.variables[0].time
         shared_time_list, _ = _downsample(shared_time, shared_time)
-        n_ds = len(shared_time_list)
 
         variables = []
         for var in result.variables:
             _, values_list = _downsample(shared_time, var.values)
-            # Ensure same length as time (downsample is deterministic for same input time)
             variables.append({
                 "index": var.index,
                 "name": var.name,
                 "values": values_list,
             })
 
+        now = datetime.now(timezone.utc).isoformat()
+        date_added = now
+        if existing and "date_added" in existing:
+            date_added = existing["date_added"]
+
         ref_data = {
             "model_id": test.model_id,
             "test_id": test_id,
-            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "status": "active",
+            "date_added": date_added,
+            "last_updated": now,
             "simulation": {
                 "stop_time": test.stop_time,
                 "tolerance": test.tolerance,
@@ -228,9 +254,34 @@ class ReferenceStore:
                 stored += 1
         return stored
 
+    def set_status(self, model_id: str, status: str) -> bool:
+        """Update the status field of a reference file.
+
+        Valid statuses: 'active', 'skip', 'obsolete'.
+        """
+        ref_file = self._ref_file_for_model(model_id)
+        if ref_file is None or not ref_file.exists():
+            return False
+        try:
+            data = json.loads(ref_file.read_text(encoding="utf-8"))
+            data["status"] = status
+            ref_file.write_text(
+                json.dumps(data, indent=2) + "\n", encoding="utf-8"
+            )
+            # Update in-memory index
+            test_id = self._index.get_id(model_id)
+            if test_id and test_id in self._index._by_id:
+                self._index._by_id[test_id]["status"] = status
+                if status == "obsolete":
+                    self._index._by_model.pop(model_id, None)
+            return True
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error("Failed to update status for %s: %s", ref_file, e)
+            return False
+
     def list_models(self) -> list[str]:
-        """List all model IDs with stored references."""
-        return sorted(self._manifest.active_tests().values())
+        """List all model IDs with stored references (excluding obsolete)."""
+        return sorted(self._index.active_tests().values())
 
     def export_json(self, output_path: Path):
         """Export all references as a single JSON file."""
@@ -254,31 +305,32 @@ class ReferenceStore:
         with open(output_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow([
-                "test_id", "model_id", "n_vars", "stop_time", "tolerance",
-                "method", "last_updated",
+                "test_id", "model_id", "status", "n_vars", "stop_time",
+                "tolerance", "method", "date_added", "last_updated",
             ])
             for model_id in models:
                 ref = self.get_reference(model_id)
                 if ref:
                     sim = ref.get("simulation", {})
-                    test_id = ref.get("test_id", "")
                     writer.writerow([
-                        test_id,
+                        ref.get("test_id", ""),
                         model_id,
+                        ref.get("status", "active"),
                         ref.get("n_vars", ""),
                         sim.get("stop_time", ""),
                         sim.get("tolerance", ""),
                         sim.get("method", ""),
+                        ref.get("date_added", ""),
                         ref.get("last_updated", ""),
                     ])
 
     def cleanup_obsolete(self) -> int:
-        """Remove reference files for tests marked obsolete in the manifest."""
-        data = self._manifest._load()
+        """Remove reference files with status 'obsolete'."""
+        all_tests = self._index.all_tests()
         removed = 0
-        for test_id, entry in data["tests"].items():
+        for test_id, entry in all_tests.items():
             if entry.get("status") == "obsolete":
-                ref_file = self.ref_dir / TestManifest.ref_filename(test_id)
+                ref_file = self.ref_dir / RefIndex.ref_filename(test_id)
                 if ref_file.exists():
                     ref_file.unlink()
                     removed += 1
@@ -326,5 +378,3 @@ def _downsample(
 def _to_json_list(arr: np.ndarray) -> list[float]:
     """Convert numpy array to JSON-serializable list of Python floats."""
     return [float(v) for v in arr]
-
-

@@ -49,3 +49,22 @@
 - Avoids pressing `s` dozens of times to get to the few tests that need attention
 - Could combine filters: `--interactive=failed,no-baseline` to review both failures and new tests
 - Default `-i` behavior stays the same (prompt for everything)
+
+## Auto-generate HTML report suite with navigation
+
+- A `--html` or `--report-dir` flag on `run`/`compare` that generates comparison HTMLs for all tests in one go, plus an index page linking to each
+- Index page shows pass/fail summary table with links to per-test comparison pages
+- Eliminates the need to use `-i` and press `p` per test just to get plots
+- Consider alternatives to static HTML:
+  - **Plotly**: interactive plots (zoom, pan, hover for values) embedded in HTML — no server needed, just larger files
+  - **Bokeh**: similar to Plotly, slightly heavier
+  - **Panel/Dash**: full web app with server — overkill for this use case
+  - Plotly is likely the best fit: interactive plots in self-contained HTML, matplotlib stays as the lightweight fallback
+- Could also explore a single-page app approach: one HTML file with a sidebar listing all tests, clicking loads that test's plots inline (avoids many separate files)
+
+## Full reference data representation in HTML reports
+
+- Diagnostic final values (total CPUtime, total EventCounter) should appear in the statistics table, not just as plot trajectories
+- More broadly: every field in the reference JSON should be represented somewhere in the HTML — metadata, simulation params, statistics (including diagnostic finals), variable comparisons, and diagnostic trajectories
+- Currently the statistics table shows dslog-parsed stats but not the diagnostic finals stored at the top level of `statistics` (e.g., `"CPUtime": 12.3`, `"EventCounter": 42`)
+- These top-level stats should be added to the statistics table with ref vs current comparison and change highlighting

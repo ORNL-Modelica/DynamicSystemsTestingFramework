@@ -142,66 +142,47 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 
 def cmd_manifest(args: argparse.Namespace) -> int:
-    """Manage the test manifest."""
+    """Show and manage test references."""
     config = _build_config(args)
-    from .storage.reference_store import TestManifest, ReferenceStore
+    from .storage.reference_store import ReferenceStore
 
-    manifest = TestManifest(config.manifest_file)
+    store = ReferenceStore(config)
     action = args.action
 
     if action == "show":
-        if not manifest.exists():
-            print(f"No manifest found at {config.manifest_file}")
-            return 1
+        all_tests = store.index.all_tests()
+        active = {tid: e for tid, e in all_tests.items() if e["status"] != "obsolete"}
+        obsolete = {tid: e for tid, e in all_tests.items() if e["status"] == "obsolete"}
+        skipped = {tid: e for tid, e in all_tests.items() if e["status"] == "skip"}
 
-        active = manifest.active_tests()
-        data = manifest._load()
-        obsolete = {
-            tid: entry["model_id"]
-            for tid, entry in data["tests"].items()
-            if entry.get("status") == "obsolete"
-        }
-
-        print(f"Manifest: {config.manifest_file}")
-        print(f"Active: {len(active)}  Obsolete: {len(obsolete)}\n")
+        print(f"References: {config.reference_dir}")
+        print(f"Active: {len(active)}  Skip: {len(skipped)}  Obsolete: {len(obsolete)}\n")
 
         if active:
-            print(f"{'ID':>6}  {'Model ID'}")
-            print("-" * 80)
+            print(f"{'ID':>6}  {'Status':<10}  {'Model ID'}")
+            print("-" * 90)
             for tid in sorted(active):
-                print(f"{tid:>6}  {active[tid]}")
+                entry = active[tid]
+                print(f"{tid:>6}  {entry['status']:<10}  {entry['model_id']}")
+
+        if skipped:
+            print(f"\nSkipped:")
+            for tid in sorted(skipped):
+                print(f"{tid:>6}  {skipped[tid]['model_id']}")
 
         if obsolete and args.show_obsolete:
             print(f"\nObsolete:")
             for tid in sorted(obsolete):
-                print(f"{tid:>6}  {obsolete[tid]}")
+                print(f"{tid:>6}  {obsolete[tid]['model_id']}")
 
         return 0
 
     elif action == "cleanup":
-        store = ReferenceStore(config)
         removed = store.cleanup_obsolete()
         if removed:
             print(f"Removed {removed} obsolete reference files.")
         else:
             print("No obsolete references to clean up.")
-        return 0
-
-    elif action == "rebuild":
-        tests = discover_tests(config)
-        tests = _filter_tests(tests, getattr(args, "filter", None), getattr(args, "package", None))
-
-        if not tests:
-            print("No tests found.")
-            return 1
-
-        # Register all discovered tests in a fresh manifest
-        manifest = TestManifest(config.manifest_file)
-        for test in tests:
-            manifest.register(test.model_id)
-
-        active = manifest.active_tests()
-        print(f"Rebuilt manifest with {len(active)} tests at {config.manifest_file}")
         return 0
 
     return 1
@@ -614,13 +595,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         "manifest", help="Manage the test manifest"
     )
     p_manifest.add_argument(
-        "action", choices=["show", "cleanup", "rebuild"],
-        help="'show': display manifest contents. "
-             "'cleanup': remove obsolete reference files. "
-             "'rebuild': regenerate manifest from discovered tests.",
+        "action", choices=["show", "cleanup"],
+        help="'show': display all references and their status. "
+             "'cleanup': remove reference files with status 'obsolete'.",
     )
-    p_manifest.add_argument("--filter", type=str, help="Glob pattern for model_id (rebuild only)")
-    p_manifest.add_argument("--package", type=str, help="Filter by package prefix (rebuild only)")
     p_manifest.add_argument(
         "--show-obsolete", action="store_true",
         help="Also show obsolete entries (show only)",
