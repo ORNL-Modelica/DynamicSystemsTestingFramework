@@ -260,6 +260,38 @@ def cmd_add(args: argparse.Namespace) -> int:
             return 0
 
 
+def cmd_spec_update(args: argparse.Namespace) -> int:
+    """Update comparison tolerances in test_spec.json from a JSON file."""
+    import json as json_mod
+    from .discovery.spec_parser import update_test_comparison
+
+    config = _build_config(args)
+    spec_path = config.test_spec_file
+    if spec_path is None:
+        spec_path = config.reference_root / "test_spec.json"
+
+    json_file = Path(args.json_file)
+    if not json_file.exists():
+        print(f"File not found: {json_file}")
+        return 1
+
+    try:
+        update_data = json_mod.loads(json_file.read_text(encoding="utf-8"))
+    except (json_mod.JSONDecodeError, OSError) as e:
+        print(f"Failed to read {json_file}: {e}")
+        return 1
+
+    model_id = update_data.get("model")
+    if not model_id:
+        print("JSON must contain a 'model' field")
+        return 1
+
+    update_test_comparison(spec_path, update_data)
+    print(f"Updated comparison settings for {model_id}")
+    print(f"  Spec file: {spec_path}")
+    return 0
+
+
 def _get_spec_path(config) -> Path:
     """Get the test_spec.json path, using config or default location."""
     if config.test_spec_file is not None:
@@ -490,6 +522,8 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
 
     test_dir = config.work_dir / test_key if test_key else None
 
+    spec_path = _get_spec_path(config) if config else None
+
     html_path = generate_comparison_plots(
         model_id=model_id,
         ref_data=ref_data,
@@ -498,6 +532,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         plot_dir=plot_dir,
         test_dir=test_dir,
         test_model=test,
+        spec_path=spec_path,
     )
 
     if html_path:
@@ -730,6 +765,15 @@ def main(argv: Optional[list[str]] = None) -> int:
              "Omit for simulate-only.",
     )
 
+    # spec-update
+    p_spec_update = subparsers.add_parser(
+        "spec-update", help="Update comparison tolerances in test_spec.json from a JSON file"
+    )
+    p_spec_update.add_argument(
+        "json_file", type=str,
+        help="Path to JSON file with tolerance settings (e.g., from interactive report export)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -743,6 +787,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "export": cmd_export,
         "manifest": cmd_manifest,
         "add": cmd_add,
+        "spec-update": cmd_spec_update,
     }
 
     return commands[args.command](args)

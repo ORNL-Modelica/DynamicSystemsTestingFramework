@@ -191,3 +191,47 @@ def update_test_variables(
 
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def update_test_comparison(
+    spec_path: Path,
+    update_data: dict,
+) -> None:
+    """Update or add a test entry's comparison settings in test_spec.json.
+
+    Preserves existing simulation settings and variables. Only merges
+    the comparison section from update_data.
+
+    update_data format: {"model": "...", "comparison": {"tolerance": 0.05, ...}}
+    """
+    data = {"tests": []}
+    if spec_path.exists():
+        try:
+            data = json.loads(spec_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+        if "tests" not in data:
+            data["tests"] = []
+
+    model_id = update_data.get("model")
+    if not model_id:
+        return
+
+    comparison = update_data.get("comparison", {})
+
+    # Find existing entry and merge comparison, preserve everything else
+    found = False
+    for entry in data["tests"]:
+        if entry.get("model") == model_id:
+            entry["comparison"] = comparison
+            found = True
+            break
+
+    if not found:
+        data["tests"].append({
+            "model": model_id,
+            "comparison": comparison,
+        })
+
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

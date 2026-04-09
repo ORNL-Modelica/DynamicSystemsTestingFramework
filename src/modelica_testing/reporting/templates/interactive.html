@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{ model_id }} — Interactive</title>
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></script>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; margin: 0; padding: 1.5em; background: #fafafa; color: #333; }
+h1 { margin-bottom: 0.2em; }
+h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
+
+.summary { font-size: 1.1em; margin-bottom: 0.5em; }
+.pass { color: #4CAF50; } .fail { color: #f44336; } .new { color: #FF9800; } .info { color: #607D8B; }
+
+/* Key stats */
+.key-stats { display: flex; flex-wrap: wrap; gap: 0.8em; margin-bottom: 1.5em; }
+.key-stat { background: white; border: 1px solid #ddd; border-radius: 4px; padding: 0.5em 1em; min-width: 120px; }
+.key-stat.changed { border-color: #ffc107; background: #fff9e6; }
+.key-stat .label { font-size: 0.75em; color: #888; text-transform: uppercase; }
+.key-stat .value { font-size: 1.1em; font-weight: 600; }
+.key-stat .ref { font-size: 0.75em; color: #999; }
+
+/* Tolerance controls + export */
+.tolerance-panel { margin-bottom: 1.5em; padding: 1em; background: white; border: 1px solid #ddd; border-radius: 4px; }
+.tolerance-row { display: flex; align-items: center; gap: 1em; flex-wrap: wrap; margin-bottom: 0.5em; }
+.tolerance-row label { font-weight: 600; font-size: 0.9em; }
+.tolerance-row input[type="number"] { width: 10em; padding: 0.3em 0.5em; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.9em; }
+.tolerance-row .hint { font-size: 0.8em; color: #888; }
+.export-row { margin-top: 0.8em; border-top: 1px solid #eee; padding-top: 0.8em; }
+.export-row summary { cursor: pointer; font-weight: 500; color: #555; font-size: 0.9em; }
+.export-row textarea { width: 100%; min-height: 80px; font-family: monospace; font-size: 0.82em; padding: 0.5em; border: 1px solid #ccc; border-radius: 3px; resize: vertical; margin-top: 0.5em; }
+.export-buttons { display: flex; gap: 0.5em; margin-top: 0.5em; }
+.btn { padding: 0.4em 1em; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; font-size: 0.85em; background: white; }
+.btn:hover { background: #f0f0f0; }
+.overlay-select { font-size: 0.7em; padding: 0.2em 0.4em; vertical-align: middle; margin-left: 0.5em; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; }
+.btn-primary { background: #1976D2; color: white; border-color: #1976D2; }
+.btn-primary:hover { background: #1565C0; }
+.btn-success { background: #4CAF50; color: white; border-color: #4CAF50; }
+.btn-success:hover { background: #43A047; }
+.save-status { font-size: 0.85em; color: #4CAF50; margin-left: 0.5em; display: none; }
+
+/* Tables */
+table { border-collapse: collapse; width: 100%; background: white; margin-bottom: 1.5em; }
+th, td { border: 1px solid #ddd; padding: 5px 8px; text-align: left; font-size: 0.85em; }
+th { background: #f5f5f5; font-weight: 600; }
+tr:hover { background: #f9f9f9; }
+.var-tol-input { width: 7em; padding: 2px 4px; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.85em; }
+.var-tol-input.modified { border-color: #FF9800; background: #fff9e6; }
+
+/* Plots */
+.plot-section { margin-bottom: 1.5em; background: white; padding: 1em; border: 1px solid #eee; border-radius: 4px; }
+.plot-section h3 { margin-top: 0; }
+.plotly-chart { width: 100%; height: 350px; }
+
+/* Collapsible */
+details { margin-bottom: 1.5em; }
+details summary { cursor: pointer; color: #555; font-weight: 500; padding: 0.3em 0; }
+details summary:hover { color: #333; }
+
+/* Artifacts */
+.artifacts { margin-bottom: 1.5em; }
+.artifacts summary { cursor: pointer; color: #555; font-weight: 500; }
+.artifacts p { margin: 0.5em 0 0 1em; }
+.artifacts a { margin-right: 0.3em; }
+.artifacts-prominent { margin-bottom: 1.5em; padding: 1em; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; }
+.artifacts-prominent h2 { margin-top: 0; border: none; padding: 0; }
+.meta-table { width: auto; min-width: 400px; }
+.meta-table td:first-child { font-weight: 500; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<h1>{{ model_id }}</h1>
+
+{# === SUMMARY === #}
+<div class="summary" id="summary">
+{% if nobaseline_trajectories %}
+  <strong>{{ nobaseline_trajectories | length }}</strong> variables (no baseline)
+{% elif sim_failed %}
+  <span class="fail"><strong>Simulation failed</strong></span>
+{% else %}
+  <span id="summary-text"></span>
+{% endif %}
+</div>
+
+{# === KEY STATS === #}
+{% if key_stats %}
+<div class="key-stats">
+{% for s in key_stats %}
+  <div class="key-stat{{ ' changed' if s.changed | default(false) else '' }}" {% if s.label == 'Worst NRMSE' %}id="key-stat-nrmse"{% endif %}>
+    <div class="label">{{ s.label }}</div>
+    <div class="value">{{ s.current or "\u2014" }}</div>
+    {% if s.reference %}<div class="ref">ref: {{ s.reference }}</div>{% endif %}
+  </div>
+{% endfor %}
+</div>
+{% endif %}
+
+{# === REFERENCE INFO (moved up, after summary) === #}
+{% if ref_info %}
+<details class="artifacts">
+  <summary>Reference Info</summary>
+  <table class="meta-table">
+  <tr><th>Field</th><th>Value</th></tr>
+  {% for row in ref_info %}<tr><td>{{ row.label }}</td><td>{{ row.value }}</td></tr>{% endfor %}
+  </table>
+</details>
+{% endif %}
+
+{# === ARTIFACT LINKS === #}
+{% if artifacts %}
+  {% if sim_failed %}
+  <div class="artifacts-prominent">
+    <h2>Simulation Artifacts</h2>
+    <p>{% for a in artifacts %}<a href="{{ a.uri }}">{{ a.label }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}</p>
+  </div>
+  {% else %}
+  <details class="artifacts">
+    <summary>Simulation Artifacts</summary>
+    <p>{% for a in artifacts %}<a href="{{ a.uri }}">{{ a.label }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}</p>
+  </details>
+  {% endif %}
+{% endif %}
+
+{# === TOLERANCE CONTROL + EXPORT === #}
+{% if variables %}
+<div class="tolerance-panel">
+  <div class="tolerance-row">
+    <label for="global-tolerance">Test Tolerance:</label>
+    <input type="number" id="global-tolerance" step="any" min="0">
+    <span class="hint">Change to recompute all pass/fail. Per-variable overrides in the table below take precedence.</span>
+  </div>
+  <div class="export-row">
+    <details open>
+      <summary>Export Tolerance Config</summary>
+      <textarea id="export-json" readonly></textarea>
+      <div class="export-buttons">
+        <button class="btn btn-primary" onclick="copyExport()">Copy to Clipboard</button>
+        <button class="btn" onclick="downloadExport()">Download JSON</button>
+        <span class="save-status" id="save-status"></span>
+      </div>
+      <p style="font-size:0.8em; color:#888; margin-top:0.5em;">
+        To apply, download the JSON and run: <code>uv run python -m modelica_testing spec-update tolerance_update.json</code>
+      </p>
+    </details>
+  </div>
+</div>
+{% endif %}
+
+{# === VARIABLE TABLE === #}
+{% if variables %}
+<h2>Variables</h2>
+<table id="var-table">
+<tr><th>Status</th><th>Variable</th><th>Mode</th><th>NRMSE</th><th>Tolerance</th></tr>
+{% for v in variables %}
+<tr data-idx="{{ loop.index0 }}">
+  <td class="var-status"><span class="{{ 'pass' if v.passed else 'fail' }}">{{ "PASS" if v.passed else "FAIL" }}</span></td>
+  <td>{{ v.name }}{% if v.is_constant %} (const){% endif %}</td>
+  <td>{{ v.mode | default("nrmse") }}{% if v.tube_points_inside is not none %} ({{ "%.0f" | format(v.tube_points_inside * 100) }}% in){% endif %}</td>
+  <td class="var-nrmse">{{ "%.4e" | format(v.nrmse) }}</td>
+  <td><input type="number" class="var-tol-input" data-idx="{{ loop.index0 }}" step="any" min="0" value="{{ v.tolerance_used }}"></td>
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+
+{# === TRAJECTORY PLOTS === #}
+{% if trajectories %}
+<h2>Trajectory Comparisons</h2>
+{% for traj in trajectories %}
+<div class="plot-section" id="plot-section-{{ loop.index0 }}">
+  <h3>
+    <span class="var-plot-status" data-idx="{{ loop.index0 }}"></span> {{ traj.name }}
+    <select class="btn overlay-select" data-idx="{{ loop.index0 }}" onchange="setErrorOverlay({{ loop.index0 }}, this.value)">
+      <option value="none">No Overlay</option>
+      <option value="error">Error (signed)</option>
+      <option value="abs_error">Abs Error</option>
+      <option value="nrmse">NRMSE</option>
+    </select>
+  </h3>
+  <div class="plotly-chart" id="plot-{{ loop.index0 }}" style="height:300px"></div>
+  <div class="plotly-chart" id="plot-abserr-{{ loop.index0 }}" style="height:150px"></div>
+  <div class="plotly-chart" id="plot-nrmse-{{ loop.index0 }}" style="height:150px"></div>
+</div>
+{% endfor %}
+{% endif %}
+
+{# === DIAGNOSTIC PLOTS === #}
+{% if diag_trajectories %}
+<details>
+  <summary>Diagnostics ({{ diag_trajectories | length }} variables)</summary>
+  {% for traj in diag_trajectories %}
+  <div class="plot-section">
+    <h3><span class="info">INFO</span> {{ traj.name }}</h3>
+    <div class="plotly-chart" id="diag-plot-{{ loop.index0 }}"></div>
+  </div>
+  {% endfor %}
+</details>
+{% endif %}
+
+{# === NO-BASELINE PLOTS === #}
+{% if nobaseline_trajectories %}
+<h2>Simulated Variables (No Baseline)</h2>
+{% for traj in nobaseline_trajectories %}
+<div class="plot-section">
+  <h3><span class="new">NEW</span> {{ traj.name }}</h3>
+  <div class="plotly-chart" id="nb-plot-{{ loop.index0 }}"></div>
+</div>
+{% endfor %}
+{% endif %}
+
+{# === STATISTICS (collapsible) === #}
+{% if statistics_sections %}
+<details>
+  <summary>Statistics ({{ statistics_sections | length }} sections)</summary>
+  {% for section in statistics_sections %}
+  <h3>{{ section.title }}</h3>
+  <table>
+  <tr><th>Metric</th><th>Current</th><th>Reference</th></tr>
+  {% for row in section.rows %}
+  <tr{% if row.changed %} style="background:#fff3cd"{% endif %}><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
+  {% endfor %}
+  </table>
+  {% endfor %}
+</details>
+{% endif %}
+
+{# === SIM PARAMS (collapsible) === #}
+{% if sim_params %}
+<details>
+  <summary>Simulation Parameters</summary>
+  <table class="meta-table"><tr><th>Parameter</th><th>Current</th><th>Reference</th></tr>
+  {% for row in sim_params %}
+  <tr{% if row.changed %} style="background:#fff3cd"{% endif %}><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
+  {% endfor %}
+  </table>
+</details>
+{% endif %}
+
+<script>
+// ---- Embedded data ----
+const MODEL_ID = {{ model_id | tojson }};
+const VARIABLES = {{ variables | tojson }};
+const TRAJECTORIES = {{ trajectories | tojson }};
+const DIAG_TRAJECTORIES = {{ diag_trajectories | tojson }};
+const NB_TRAJECTORIES = {{ nobaseline_trajectories | tojson }};
+const SPEC_PATH = {{ spec_path | tojson }};
+
+// ---- State ----
+let globalTolerance = VARIABLES.length > 0 ? VARIABLES[0].tolerance_used : 1e-4;
+let perVarTolerances = VARIABLES.map(v => v.tolerance_used);
+
+// ---- Init ----
+document.addEventListener('DOMContentLoaded', () => {
+  const globalInput = document.getElementById('global-tolerance');
+  if (globalInput) {
+    globalInput.value = globalTolerance;
+    globalInput.addEventListener('input', onGlobalChange);
+  }
+  document.querySelectorAll('.var-tol-input').forEach(input => {
+    input.addEventListener('input', onVarTolChange);
+  });
+  renderPlots();
+  renderDiagPlots();
+  renderNBPlots();
+  updateAllStatus();
+});
+
+// ---- Tolerance changes ----
+function onGlobalChange(e) {
+  const val = parseFloat(e.target.value);
+  if (isNaN(val) || val <= 0) return;
+  globalTolerance = val;
+  document.querySelectorAll('.var-tol-input').forEach(input => {
+    const idx = parseInt(input.dataset.idx);
+    if (!input.classList.contains('modified')) {
+      perVarTolerances[idx] = val;
+      input.value = val;
+    }
+  });
+  updateAllStatus();
+}
+
+function onVarTolChange(e) {
+  const idx = parseInt(e.target.dataset.idx);
+  const val = parseFloat(e.target.value);
+  if (isNaN(val) || val <= 0) return;
+  perVarTolerances[idx] = val;
+  if (Math.abs(val - globalTolerance) > 1e-15) {
+    e.target.classList.add('modified');
+  } else {
+    e.target.classList.remove('modified');
+  }
+  updateVarStatus(idx);
+  updateSummary();
+  updateExport();
+}
+
+// ---- Status updates ----
+function computePass(idx) {
+  const v = VARIABLES[idx];
+  if (v.mode === 'tube') return v.passed;
+  return v.nrmse < perVarTolerances[idx];
+}
+
+function updateVarStatus(idx) {
+  const passed = computePass(idx);
+  const row = document.querySelector(`tr[data-idx="${idx}"]`);
+  if (row) {
+    row.querySelector('.var-status').innerHTML = passed
+      ? '<span class="pass">PASS</span>' : '<span class="fail">FAIL</span>';
+  }
+  const plotLabel = document.querySelector(`.var-plot-status[data-idx="${idx}"]`);
+  if (plotLabel) {
+    plotLabel.className = `var-plot-status ${passed ? 'pass' : 'fail'}`;
+    plotLabel.textContent = passed ? 'PASS' : 'FAIL';
+  }
+  // Update tolerance line on NRMSE error plot
+  const nrmseEl = document.getElementById(`plot-nrmse-${idx}`);
+  if (nrmseEl && nrmseEl.data) {
+    const tol = perVarTolerances[idx];
+    const xRange = nrmseEl.layout.xaxis.range || [0, 1];
+    Plotly.relayout(nrmseEl, {
+      'shapes[0].y0': tol,
+      'shapes[0].y1': tol,
+    });
+  }
+}
+
+function updateAllStatus() {
+  VARIABLES.forEach((_, idx) => updateVarStatus(idx));
+  updateSummary();
+  updateExport();
+}
+
+function updateSummary() {
+  const nPassed = VARIABLES.reduce((sum, _, idx) => sum + (computePass(idx) ? 1 : 0), 0);
+  const total = VARIABLES.length;
+  const el = document.getElementById('summary-text');
+  if (el) {
+    const cls = nPassed === total ? 'pass' : 'fail';
+    el.className = cls;
+    el.innerHTML = `<strong>${nPassed}</strong> / <strong>${total}</strong> variables passed`;
+  }
+  const nrmseCard = document.getElementById('key-stat-nrmse');
+  if (nrmseCard) {
+    const worst = Math.max(...VARIABLES.map(v => v.nrmse));
+    nrmseCard.querySelector('.value').textContent = worst.toExponential(4);
+  }
+}
+
+// ---- Plotly ----
+const PLOT_LAYOUT = {
+  xaxis: { title: 'Time' },
+  yaxis: {
+    title: { text: 'Value', standoff: 10 },
+    tickformat: '.4g',
+    automargin: true,
+    nticks: 6,
+  },
+  margin: { t: 35, b: 45, l: 10, r: 20 },
+  legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)' },
+  hovermode: 'x unified',
+};
+const PLOT_CFG = { responsive: true, displaylogo: false };
+
+function renderPlots() {
+  TRAJECTORIES.forEach((traj, idx) => {
+    const el = document.getElementById(`plot-${idx}`);
+    if (!el) return;
+
+    // --- Trajectory panel ---
+    const traces = [{
+      x: traj.act_time, y: traj.act_values,
+      name: 'Actual', type: 'scatter', mode: 'lines',
+      line: { color: '#2196F3', width: 1.5 },
+    }];
+    if (traj.ref_time.length > 0) {
+      traces.push({
+        x: traj.ref_time, y: traj.ref_values,
+        name: 'Reference', type: 'scatter', mode: 'lines',
+        line: { color: '#FF9800', width: 1.5, dash: 'dash' },
+      });
+    }
+    const layout = { ...PLOT_LAYOUT, title: { text: traj.name, font: { size: 13 } } };
+    Plotly.newPlot(el, traces, layout, PLOT_CFG);
+
+    // --- Error panels (only if reference exists) ---
+    const absEl = document.getElementById(`plot-abserr-${idx}`);
+    const nrmseEl = document.getElementById(`plot-nrmse-${idx}`);
+
+    if (traj.ref_time.length > 0 && absEl && nrmseEl) {
+      // Interpolate actual onto reference time grid and compute errors
+      const signedError = [];
+      const absError = [];
+      const refTime = traj.ref_time;
+      const refValues = traj.ref_values;
+      for (let i = 0; i < refTime.length; i++) {
+        const t = refTime[i];
+        const actInterp = interpLinear(traj.act_time, traj.act_values, t);
+        const diff = actInterp - refValues[i];
+        signedError.push(diff);
+        absError.push(Math.abs(diff));
+      }
+
+      // Signal range for normalization
+      const refMin = Math.min(...refValues);
+      const refMax = Math.max(...refValues);
+      const range = refMax - refMin;
+      const nrmseError = range > 1e-15
+        ? absError.map(e => e / range)
+        : absError;
+
+      // Find worst error time
+      let worstIdx = 0;
+      for (let i = 1; i < absError.length; i++) {
+        if (absError[i] > absError[worstIdx]) worstIdx = i;
+      }
+
+      const errYAxis = { tickformat: '.4g', automargin: true, nticks: 4 };
+
+      // Abs error panel
+      Plotly.newPlot(absEl, [{
+        x: refTime, y: absError, name: 'Abs Error', type: 'scatter', mode: 'lines',
+        line: { color: '#2196F3', width: 1 },
+      }, {
+        x: [refTime[worstIdx], refTime[worstIdx]],
+        y: [0, absError[worstIdx]],
+        name: 'Max Error', type: 'scatter', mode: 'lines',
+        line: { color: '#2196F3', width: 1, dash: 'dot' },
+      }], {
+        yaxis: { ...errYAxis, title: { text: 'Abs Error', standoff: 10 } },
+        xaxis: { title: '' },
+        margin: { t: 5, b: 25, l: 10, r: 20 },
+        legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)', font: { size: 10 } },
+        hovermode: 'x unified',
+      }, PLOT_CFG);
+
+      // NRMSE panel with tolerance line
+      const tol = perVarTolerances[idx];
+      Plotly.newPlot(nrmseEl, [{
+        x: refTime, y: nrmseError, name: 'NRMSE', type: 'scatter', mode: 'lines',
+        line: { color: '#2196F3', width: 1 },
+      }], {
+        yaxis: { ...errYAxis, title: { text: 'NRMSE', standoff: 10 } },
+        xaxis: { title: 'Time' },
+        margin: { t: 5, b: 35, l: 10, r: 20 },
+        legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)', font: { size: 10 } },
+        hovermode: 'x unified',
+        shapes: [{
+          type: 'line', x0: refTime[0], x1: refTime[refTime.length - 1],
+          y0: tol, y1: tol,
+          line: { color: 'gray', width: 1, dash: 'dash' },
+        }],
+        annotations: [{
+          x: refTime[refTime.length - 1], y: tol,
+          text: 'tolerance', showarrow: false,
+          font: { size: 9, color: 'gray' },
+          xanchor: 'right', yanchor: 'bottom',
+        }],
+      }, PLOT_CFG);
+
+      // Store data for tolerance line updates and error overlay
+      el._refTime = refTime;
+      el._signedError = signedError;
+      el._absError = absError;
+      el._nrmseError = nrmseError;
+    } else {
+      if (absEl) absEl.style.display = 'none';
+      if (nrmseEl) nrmseEl.style.display = 'none';
+    }
+
+    // Status label
+    const passed = computePass(idx);
+    const plotLabel = document.querySelector(`.var-plot-status[data-idx="${idx}"]`);
+    if (plotLabel) {
+      plotLabel.className = `var-plot-status ${passed ? 'pass' : 'fail'}`;
+      plotLabel.textContent = passed ? 'PASS' : 'FAIL';
+    }
+  });
+}
+
+// ---- Error overlay dropdown ----
+const overlayState = {};  // idx -> current mode ('none', 'error', 'abs_error', 'nrmse')
+
+function setErrorOverlay(idx, mode) {
+  const el = document.getElementById(`plot-${idx}`);
+  if (!el || !el._absError) return;
+
+  const prev = overlayState[idx] || 'none';
+  overlayState[idx] = mode;
+
+  // Remove existing overlay trace if present
+  if (prev !== 'none' && el.data.length > 2) {
+    Plotly.deleteTraces(el, el.data.length - 1);
+    Plotly.relayout(el, { 'yaxis2': null });
+  }
+
+  if (mode === 'none') return;
+
+  // Select error data and label
+  let yData, label;
+  if (mode === 'error') {
+    yData = el._signedError;
+    label = 'Error';
+  } else if (mode === 'abs_error') {
+    yData = el._absError;
+    label = 'Abs Error';
+  } else if (mode === 'nrmse') {
+    yData = el._nrmseError;
+    label = 'NRMSE';
+  }
+
+  // Add overlay trace on right y-axis
+  Plotly.addTraces(el, {
+    x: el._refTime, y: yData,
+    name: label, type: 'scatter', mode: 'lines',
+    line: { color: '#f44336', width: 1 },
+    opacity: 0.5,
+    yaxis: 'y2',
+  });
+  Plotly.relayout(el, {
+    'yaxis2': {
+      title: { text: label, font: { color: '#f44336', size: 11 } },
+      tickformat: '.4g',
+      automargin: true,
+      nticks: 4,
+      overlaying: 'y',
+      side: 'right',
+      showgrid: false,
+      tickfont: { color: '#f44336', size: 10 },
+    },
+  });
+}
+
+// Linear interpolation helper
+function interpLinear(xArr, yArr, x) {
+  if (x <= xArr[0]) return yArr[0];
+  if (x >= xArr[xArr.length - 1]) return yArr[yArr.length - 1];
+  // Binary search
+  let lo = 0, hi = xArr.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (xArr[mid] <= x) lo = mid; else hi = mid;
+  }
+  const t = (x - xArr[lo]) / (xArr[hi] - xArr[lo]);
+  return yArr[lo] + t * (yArr[hi] - yArr[lo]);
+}
+
+function renderDiagPlots() {
+  DIAG_TRAJECTORIES.forEach((traj, idx) => {
+    const el = document.getElementById(`diag-plot-${idx}`);
+    if (!el) return;
+    const traces = [{
+      x: traj.act_time, y: traj.act_values,
+      name: 'Actual', type: 'scatter', mode: 'lines',
+      line: { color: '#2196F3', width: 1.5 },
+    }];
+    if (traj.ref_time.length > 0 && traj.ref_values.length > 0) {
+      traces.push({
+        x: traj.ref_time, y: traj.ref_values,
+        name: 'Reference', type: 'scatter', mode: 'lines',
+        line: { color: '#FF9800', width: 1.5, dash: 'dash' },
+      });
+    }
+    const layout = { ...PLOT_LAYOUT, title: { text: `${traj.name} (diagnostic)`, font: { size: 13 } } };
+    Plotly.newPlot(el, traces, layout, PLOT_CFG);
+  });
+}
+
+function renderNBPlots() {
+  NB_TRAJECTORIES.forEach((traj, idx) => {
+    const el = document.getElementById(`nb-plot-${idx}`);
+    if (!el) return;
+    const layout = { ...PLOT_LAYOUT, title: { text: `${traj.name} (new)`, font: { size: 13 } } };
+    Plotly.newPlot(el, [{
+      x: traj.time, y: traj.values,
+      name: 'Actual', type: 'scatter', mode: 'lines',
+      line: { color: '#2196F3', width: 1.5 },
+    }], layout, PLOT_CFG);
+  });
+}
+
+// ---- Export / Save ----
+function buildExportData() {
+  const overrides = {};
+  VARIABLES.forEach((v, idx) => {
+    const tol = perVarTolerances[idx];
+    if (Math.abs(tol - globalTolerance) > 1e-15) {
+      overrides[v.name] = { tolerance: tol };
+    }
+  });
+  const entry = { model: MODEL_ID, comparison: { tolerance: globalTolerance } };
+  if (Object.keys(overrides).length > 0) {
+    entry.comparison.variable_overrides = overrides;
+  }
+  return entry;
+}
+
+function updateExport() {
+  const el = document.getElementById('export-json');
+  if (el) el.value = JSON.stringify(buildExportData(), null, 2);
+}
+
+function copyExport() {
+  const el = document.getElementById('export-json');
+  if (!el) return;
+  navigator.clipboard.writeText(el.value).then(() => showSaveStatus('Copied!'));
+}
+
+function downloadExport() {
+  const data = JSON.stringify(buildExportData(), null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'tolerance_update.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  showSaveStatus('Downloaded!');
+}
+
+function showSaveStatus(msg) {
+  const el = document.getElementById('save-status');
+  if (el) {
+    el.textContent = msg;
+    el.style.display = 'inline';
+    setTimeout(() => el.style.display = 'none', 2000);
+  }
+}
+</script>
+
+</body>
+</html>

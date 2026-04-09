@@ -74,6 +74,7 @@ def _build_template_context(
     nobaseline_png_files: Optional[list[tuple[str, str]]],
     test_dir: Optional[Path],
     test_model=None,
+    result=None,
 ) -> dict:
     """Build the full template context dict from comparison data."""
     if cur_stats is None:
@@ -160,21 +161,77 @@ def _build_template_context(
     for vc in comparisons:
         variables.append({
             "name": vc.name or f"x[{vc.index}]",
-            "passed": vc.passed,
-            "nrmse": vc.nrmse,
-            "rmse": vc.rmse,
-            "signal_range": vc.signal_range,
-            "max_abs_error": vc.max_abs_error,
-            "max_abs_error_time": vc.max_abs_error_time,
-            "reference_final": vc.reference_final,
-            "actual_final": vc.actual_final,
-            "is_constant": vc.is_constant,
-            "tolerance_used": vc.tolerance_used,
+            "passed": bool(vc.passed),
+            "nrmse": float(vc.nrmse),
+            "rmse": float(vc.rmse),
+            "signal_range": float(vc.signal_range),
+            "max_abs_error": float(vc.max_abs_error),
+            "max_abs_error_time": float(vc.max_abs_error_time),
+            "reference_final": float(vc.reference_final),
+            "actual_final": float(vc.actual_final),
+            "is_constant": bool(vc.is_constant),
+            "tolerance_used": float(vc.tolerance_used),
             "mode": vc.mode,
-            "tube_points_inside": vc.tube_points_inside,
-            "tube_worst_violation": vc.tube_worst_violation,
-            "tube_worst_violation_time": vc.tube_worst_violation_time,
+            "tube_points_inside": float(vc.tube_points_inside) if vc.tube_points_inside is not None else None,
+            "tube_worst_violation": float(vc.tube_worst_violation) if vc.tube_worst_violation is not None else None,
+            "tube_worst_violation_time": float(vc.tube_worst_violation_time) if vc.tube_worst_violation_time is not None else None,
         })
+
+    # --- Trajectory data for interactive plots ---
+    trajectories = []
+    ref_time_list = ref_data.get("time", []) if ref_data else []
+    ref_vars_by_idx = {}
+    if ref_data:
+        for rv in ref_data.get("variables", []):
+            ref_vars_by_idx[rv["index"]] = rv
+
+    if result and result.variables:
+        for vc in comparisons:
+            act_var = None
+            for v in result.variables:
+                if v.index == vc.index:
+                    act_var = v
+                    break
+
+            ref_var = ref_vars_by_idx.get(vc.index)
+            traj = {
+                "index": vc.index,
+                "name": vc.name or f"x[{vc.index}]",
+                "act_time": act_var.time.tolist() if act_var else [],
+                "act_values": act_var.values.tolist() if act_var else [],
+                "ref_time": ref_time_list,
+                "ref_values": ref_var["values"] if ref_var else [],
+            }
+            trajectories.append(traj)
+
+    # Diagnostic trajectories
+    diag_trajectories = []
+    if result and result.diagnostics:
+        ref_diags_by_name = {}
+        if ref_data:
+            for rd in ref_data.get("diagnostics", []):
+                ref_diags_by_name[rd["name"]] = rd
+
+        for diag in result.diagnostics:
+            ref_diag = ref_diags_by_name.get(diag.name)
+            diag_trajectories.append({
+                "name": diag.name,
+                "act_time": diag.time.tolist(),
+                "act_values": diag.values.tolist(),
+                "ref_time": ref_time_list,
+                "ref_values": ref_diag["values"] if ref_diag else [],
+            })
+
+    # No-baseline trajectories
+    nobaseline_trajectories = []
+    if not comparisons and result and result.variables:
+        for var in result.variables:
+            nobaseline_trajectories.append({
+                "index": var.index,
+                "name": var.name or f"x[{var.index}]",
+                "time": var.time.tolist(),
+                "values": var.values.tolist(),
+            })
 
     # --- Plot references ---
     diagnostic_plots = [
@@ -273,6 +330,9 @@ def _build_template_context(
         "compared_plots": compared_plots,
         "nobaseline_plots": nobaseline_plots,
         "artifacts": artifacts,
+        "trajectories": trajectories,
+        "diag_trajectories": diag_trajectories,
+        "nobaseline_trajectories": nobaseline_trajectories,
     }
 
 
@@ -366,6 +426,7 @@ def generate_comparison_plots(
     plot_dir: Path,
     test_dir: Optional[Path] = None,
     test_model=None,
+    spec_path: Optional[Path] = None,
 ) -> Optional[Path]:
     """Generate per-variable comparison PNGs and an HTML viewer.
 
@@ -494,18 +555,25 @@ def generate_comparison_plots(
     cur_stats = result.statistics if result else None
     context = _build_template_context(
         model_id, png_files, comparisons, ref_data, cur_stats,
-        diag_png_files, nobaseline_png_files, test_dir, test_model,
+        diag_png_files, nobaseline_png_files, test_dir, test_model, result,
     )
+
+    # Add spec path for "Save to Spec" functionality
+    context["spec_path"] = str(spec_path.resolve()) if spec_path else ""
 
     # Write comparison_data.json alongside the HTML
     data_path = plot_dir / "comparison_data.json"
     data_path.write_text(json.dumps(context, indent=2, default=str), encoding="utf-8")
 
-    # Render HTML from Jinja2 template
+    # Render static HTML (matplotlib PNGs)
     html_path = plot_dir / "comparison.html"
     _render_template("comparison.html", context, html_path)
 
-    return html_path
+    # Render interactive HTML (Plotly, inline data)
+    interactive_path = plot_dir / "interactive.html"
+    _render_template("interactive.html", context, interactive_path)
+
+    return interactive_path
 
 
 def _render_template(template_name: str, context: dict, output_path: Path) -> None:
@@ -597,7 +665,7 @@ def generate_report_suite(
         )
 
         if html_path:
-            report_path = f"{safe_id}/comparison.html"
+            report_path = f"{safe_id}/interactive.html"
 
         ref_id = f"ref_{comp.test_id}" if comp.test_id else None
 
