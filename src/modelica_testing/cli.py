@@ -480,12 +480,15 @@ def _generate_and_open_plots(model_id, comp, result, store, config) -> None:
 
     ref_data = store.get_reference(model_id)
 
+    test_dir = config.work_dir / test_key if test_key else None
+
     html_path = generate_comparison_plots(
         model_id=model_id,
         ref_data=ref_data,
         result=result,
         comparisons=comp.variables,
         plot_dir=plot_dir,
+        test_dir=test_dir,
     )
 
     if html_path:

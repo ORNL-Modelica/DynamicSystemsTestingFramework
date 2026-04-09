@@ -136,6 +136,7 @@ def generate_comparison_plots(
     result,
     comparisons: list[VariableComparison],
     plot_dir: Path,
+    test_dir: Optional[Path] = None,
 ) -> Optional[Path]:
     """Generate per-variable comparison PNGs and an HTML viewer.
 
@@ -267,6 +268,7 @@ def generate_comparison_plots(
         html_path, model_id, png_files, comparisons, ref_data, cur_stats,
         diag_png_files=diag_png_files,
         nobaseline_png_files=nobaseline_png_files,
+        test_dir=test_dir,
     )
 
     return html_path
@@ -281,6 +283,7 @@ def _generate_html_viewer(
     cur_stats: Optional[dict] = None,
     diag_png_files: Optional[list[tuple[str, str]]] = None,
     nobaseline_png_files: Optional[list[tuple[str, str]]] = None,
+    test_dir: Optional[Path] = None,
 ) -> None:
     """Generate an HTML page showing all plots, stats, and metadata tables."""
 
@@ -293,16 +296,16 @@ def _generate_html_viewer(
     meta_rows = []
     param_fields = [
         ("test_id", "Test ID"),
-        ("last_updated", "Reference Last Updated"),
+        ("status", "Status"),
+        ("date_added", "Date Added"),
+        ("last_updated", "Last Updated"),
         ("n_vars", "Tracked Variables"),
     ]
     for key, label in param_fields:
         ref_val = ref_data.get(key, "") if ref_data else ""
         cur_val = len(comparisons) if key == "n_vars" else ""
-        if key == "test_id":
-            cur_val = ""  # No current equivalent
-        if key == "last_updated":
-            cur_val = ""  # Only reference has this
+        if key in ("test_id", "status", "date_added", "last_updated"):
+            cur_val = ""  # Reference-only fields
         meta_rows.append(_compare_row(label, str(ref_val) if ref_val != "" else "", str(cur_val) if cur_val != "" else ""))
 
     sim_fields = [
@@ -314,14 +317,14 @@ def _generate_html_viewer(
     ]
     for key, label in sim_fields:
         ref_val = ref_sim.get(key, "")
-        cur_val = ""  # Current sim params aren't stored on TestResult, but we could get from test
+        cur_val = ""
         meta_rows.append(_compare_row(label, str(ref_val) if ref_val is not None else "", str(cur_val) if cur_val else ""))
 
     if any(r for r in meta_rows):
         metadata_html = (
             '<h2>Simulation Parameters</h2>'
             '<table class="meta-table">'
-            '<tr><th>Field</th><th>Simulation</th><th>Reference</th></tr>'
+            '<tr><th>Field</th><th>Current</th><th>Reference</th></tr>'
             + "".join(meta_rows) +
             '</table>'
         )
@@ -469,6 +472,44 @@ def _generate_html_viewer(
     if diag_sections:
         diag_html = "<h2>Diagnostics</h2>\n" + "\n".join(diag_sections)
 
+    # --- Simulation artifact links ---
+    artifacts_html = ""
+    if test_dir and test_dir.exists():
+        artifact_files = [
+            ("dslog.txt", "Simulation log"),
+            ("translation_log.txt", "Translation log"),
+            ("dsin.txt", "Simulation input"),
+            ("dsfinal.txt", "Final values"),
+            ("simulate.mos", "Simulation script"),
+            ("dsres.mat", "Result file"),
+        ]
+        links = []
+        for fname, label in artifact_files:
+            fpath = test_dir / fname
+            if fpath.exists():
+                uri = fpath.resolve().as_uri()
+                links.append(f'<a href="{uri}">{html_mod.escape(label)}</a>')
+
+        if links:
+            sim_failed = n_total == 0 and n_nobaseline == 0
+            link_list = " &middot; ".join(links)
+            if sim_failed:
+                # Prominent for failed simulations
+                artifacts_html = (
+                    f'<div class="artifacts-prominent">'
+                    f'<h2>Simulation Artifacts</h2>'
+                    f'<p>{link_list}</p>'
+                    f'</div>'
+                )
+            else:
+                # Collapsible for passing/normal tests
+                artifacts_html = (
+                    f'<details class="artifacts">'
+                    f'<summary>Simulation Artifacts</summary>'
+                    f'<p>{link_list}</p>'
+                    f'</details>'
+                )
+
     page = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -488,6 +529,12 @@ tr:hover {{ background: #f9f9f9; }}
 .plot-section img {{ display: block; margin: 0 auto; }}
 .meta-table {{ width: auto; min-width: 400px; }}
 .meta-table td:first-child {{ font-weight: 500; white-space: nowrap; }}
+.artifacts {{ margin-bottom: 1.5em; }}
+.artifacts summary {{ cursor: pointer; color: #555; font-weight: 500; }}
+.artifacts p {{ margin: 0.5em 0 0 1em; }}
+.artifacts a, .artifacts-prominent a {{ margin-right: 0.3em; }}
+.artifacts-prominent {{ margin-bottom: 1.5em; padding: 1em; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; }}
+.artifacts-prominent h2 {{ margin-top: 0; border: none; padding: 0; }}
 </style>
 </head>
 <body>
@@ -495,6 +542,8 @@ tr:hover {{ background: #f9f9f9; }}
 <div class="summary">
 {"<strong>" + str(n_nobaseline) + "</strong> variables (no baseline)" if n_nobaseline else "<strong>" + str(n_passed) + "</strong> / <strong>" + str(n_total) + "</strong> variables passed"}
 </div>
+
+{artifacts_html}
 
 {metadata_html}
 {stats_html}

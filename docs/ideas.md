@@ -7,8 +7,8 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | # | Idea | Ease | Impact | Notes |
 |---|------|------|--------|-------|
 | 1 | ~~Filtered interactive review~~ | L | High | **DONE** — `-i [FILTER]` with categories: `failed`, `no-baseline`, `warnings`, `sim-failed`, `passed`, `all` |
-| 2 | Link to simulation artifacts from HTML | L | High | Just adding `file://` links to existing reports |
-| 3 | Full reference data in HTML reports | L | Medium | Display fields already stored, just not rendered |
+| 2 | ~~Link to simulation artifacts from HTML~~ | L | High | **DONE** — `file://` links to dslog, translation_log, dsin, dsfinal, simulate.mos, dsres.mat; prominent for failed tests, collapsible for passing |
+| 3 | ~~Full reference data in HTML reports~~ | L | Medium | **DONE** — added `status`, `date_added` to metadata table; diagnostic finals (CPUtime, EventCounter) were already in simulation stats table; fixed column header |
 | 4 | Manifest compaction / ID reset | L | Low | Niche — only needed after major restructuring |
 | 5 | Condensed HTML with progressive disclosure | M | High | `<details>`/`<summary>` restructure of existing HTML |
 | 6 | Auto-generate HTML report suite | M | High | Plotly integration + index page; eliminates `-i` + `p` workflow |
@@ -20,7 +20,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 12 | Model health analysis from reference data | H | High | Mining + ranking logic across all refs; powerful but complex |
 | 13 | Dependency-aware test ordering | H | Medium | Requires dependency graph extraction from Modelica sources |
 
-**Recommended order**: Start with 2-3 (quick wins, 1 is done), then 5-6 (report overhaul as a batch), then 11-12 (high-effort, high-value).
+**Recommended order**: 1-3 are done. Next: 5-6 (report overhaul as a batch), then 11-12 (high-effort, high-value).
 
 ---
 
@@ -105,14 +105,12 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - For the auto-generated report suite (see above), the index page should be the condensed view — click through to per-test detail pages
 - Goal: a library maintainer scanning 300 test results should be able to spot problems in seconds, then drill into specifics only where needed
 
-## Link to simulation artifacts from HTML reports
+## ~~Link to simulation artifacts from HTML reports~~ (DONE)
 
-- For tests that fail to simulate (no .mat produced), the user needs to inspect `dslog.txt`, `translation_log.txt`, or `dsin.txt` to diagnose the issue
-- HTML reports should include `file://` links to these artifacts in the per-test working directory (`testing_output/.../test_NNNN/`)
-- Links to show: `dslog.txt`, `translation_log.txt`, `dsin.txt`, `dsfinal.txt`, the `.mos` script, and the `.mat` file (if it exists)
-- For failed tests, the dslog link should be prominent — that's the first thing a user looks at
-- For passing tests, links are still useful for inspecting simulation details but can be less prominent (e.g., in a collapsible section)
-- Also useful in the auto-generated report suite index page: a "Files" column with quick links per test
+- **Implemented**: `file://` links to `dslog.txt`, `translation_log.txt`, `dsin.txt`, `dsfinal.txt`, `simulate.mos`, `dsres.mat`
+- Failed tests: prominent yellow box with artifact links
+- Passing tests: collapsible `<details>` section
+- Only shows links for files that exist in the test directory
 
 ## One-click "open in Dymola" from interactive mode
 
@@ -142,9 +140,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Output as console table, CSV for spreadsheet analysis, or HTML dashboard
 - Useful for library maintainers to prioritize optimization work across hundreds of models
 
-## Full reference data representation in HTML reports
+## ~~Full reference data representation in HTML reports~~ (DONE)
 
-- Diagnostic final values (total CPUtime, total EventCounter) should appear in the statistics table, not just as plot trajectories
-- More broadly: every field in the reference JSON should be represented somewhere in the HTML — metadata, simulation params, statistics (including diagnostic finals), variable comparisons, and diagnostic trajectories
-- Currently the statistics table shows dslog-parsed stats but not the diagnostic finals stored at the top level of `statistics` (e.g., `"CPUtime": 12.3`, `"EventCounter": 42`)
-- These top-level stats should be added to the statistics table with ref vs current comparison and change highlighting
+- **Implemented**: All reference JSON fields now represented in HTML
+- Added `status` and `date_added` to metadata table
+- Diagnostic finals (CPUtime, EventCounter) were already merged into simulation stats table with change highlighting
+- Fixed metadata table column header from "Simulation" to "Current"
