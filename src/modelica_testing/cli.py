@@ -450,7 +450,7 @@ def _interactive_review(
 
             elif choice == "p":
                 if config:
-                    _generate_and_open_plots(model_id, comp, result, store, config)
+                    _generate_and_open_plots(model_id, comp, result, store, config, test)
                 else:
                     print("  No config available for plot generation.")
 
@@ -468,7 +468,7 @@ def _interactive_review(
     return 0
 
 
-def _generate_and_open_plots(model_id, comp, result, store, config) -> None:
+def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -> None:
     """Generate comparison plots and open in browser."""
     from .reporting.plot_comparison import generate_comparison_plots, open_in_browser
 
@@ -489,6 +489,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config) -> None:
         comparisons=comp.variables,
         plot_dir=plot_dir,
         test_dir=test_dir,
+        test_model=test,
     )
 
     if html_path:

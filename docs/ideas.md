@@ -10,7 +10,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 2 | ~~Link to simulation artifacts from HTML~~ | L | High | **DONE** — `file://` links to dslog, translation_log, dsin, dsfinal, simulate.mos, dsres.mat; prominent for failed tests, collapsible for passing |
 | 3 | ~~Full reference data in HTML reports~~ | L | Medium | **DONE** — added `status`, `date_added` to metadata table; diagnostic finals (CPUtime, EventCounter) were already in simulation stats table; fixed column header |
 | 4 | Manifest compaction / ID reset | L | Low | Niche — only needed after major restructuring |
-| 5 | Condensed HTML with progressive disclosure | M | High | `<details>`/`<summary>` restructure of existing HTML |
+| 5 | ~~Condensed HTML with progressive disclosure~~ | M | High | **DONE** — key stats cards at top, condensed variable table, full details/stats/params/diagnostics in collapsible sections. Jinja2 templates + `comparison_data.json` sidecar |
 | 6 | Auto-generate HTML report suite | M | High | Plotly integration + index page; eliminates `-i` + `p` workflow |
 | 7 | Configurable variable ordering | M | Medium | Config plumbing + sort logic in reports and references |
 | 8 | Interactive tolerance editing | M | Medium | Requires Plotly; slider + writeback to reference JSON |
@@ -20,7 +20,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 12 | Model health analysis from reference data | H | High | Mining + ranking logic across all refs; powerful but complex |
 | 13 | Dependency-aware test ordering | H | Medium | Requires dependency graph extraction from Modelica sources |
 
-**Recommended order**: 1-3 are done. Next: 5-6 (report overhaul as a batch), then 11-12 (high-effort, high-value).
+**Recommended order**: 1-3, 5 are done. Next: 6 (auto-generate report suite), then 11-12 (high-effort, high-value).
 
 ---
 
@@ -89,21 +89,15 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Could also explore a single-page app approach: one HTML file with a sidebar listing all tests, clicking loads that test's plots inline (avoids many separate files)
 - Include a mapping table showing test_NNNN (working directory) ↔ ref_NNNN (reference file) ↔ model ID, so the user can navigate between simulation artifacts and references easily
 
-## Condensed HTML report with progressive disclosure
+## ~~Condensed HTML report with progressive disclosure~~ (DONE)
 
-- Current HTML reports show every field (translation stats, simulation stats, all variables) in a flat layout — gets overwhelming for complex models with dozens of stats and variables
-- Redesign to show a concise summary by default with the most important metrics:
-  - **Top-level**: pass/fail, NRMSE worst-case, continuous states, nonlinear system count/max, CPUtime, event count
-  - **Variable table**: just name, pass/fail, NRMSE — not full trajectory details
-- Everything else available via expand/collapse (`<details>`/`<summary>` HTML elements):
-  - Full translation statistics (original model, translated model, initialization)
-  - Full simulation statistics
-  - Per-variable detail panels (error plots, difference plots, segment breakdown)
-  - Raw system size lists (nonlinear/linear sizes)
-  - State names list
-- Could also use a tabbed layout: "Summary" | "Translation" | "Simulation" | "Variables" tabs in a single page
-- For the auto-generated report suite (see above), the index page should be the condensed view — click through to per-test detail pages
-- Goal: a library maintainer scanning 300 test results should be able to spot problems in seconds, then drill into specifics only where needed
+- **Implemented**: Jinja2 template with progressive disclosure layout
+- Key stats cards at top: worst NRMSE, continuous states, nonlinear count/max, CPUtime, events (with change highlighting)
+- Condensed variable table: status + name + NRMSE only
+- Full variable details (RMSE, range, max error, finals) in collapsible section
+- Statistics, simulation parameters, and diagnostics all in collapsible `<details>` sections
+- Trajectory plots open by default; everything else collapsed
+- Also outputs `comparison_data.json` sidecar for downstream tooling
 
 ## ~~Link to simulation artifacts from HTML reports~~ (DONE)
 

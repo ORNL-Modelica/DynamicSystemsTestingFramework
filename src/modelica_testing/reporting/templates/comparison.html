@@ -5,19 +5,28 @@
 <title>Comparison: {{ model_id }}</title>
 <style>
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; margin: 2em; background: #fafafa; }
-h1 { color: #333; }
+h1 { color: #333; margin-bottom: 0.3em; }
 h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
 h3 { color: #444; }
-table { border-collapse: collapse; width: 100%; margin-bottom: 2em; background: white; }
+table { border-collapse: collapse; width: 100%; margin-bottom: 1em; background: white; }
 th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; font-size: 0.9em; }
 th { background: #f5f5f5; font-weight: 600; }
 tr:hover { background: #f9f9f9; }
-.summary { margin-bottom: 1.5em; font-size: 1.1em; }
+.summary { margin-bottom: 1em; font-size: 1.1em; }
+.key-stats { display: flex; flex-wrap: wrap; gap: 0.8em; margin-bottom: 1.5em; }
+.key-stat { background: white; border: 1px solid #ddd; border-radius: 4px; padding: 0.5em 1em; min-width: 120px; }
+.key-stat.changed { border-color: #ffc107; background: #fff9e6; }
+.key-stat .label { font-size: 0.75em; color: #888; text-transform: uppercase; }
+.key-stat .value { font-size: 1.1em; font-weight: 600; }
+.key-stat .ref { font-size: 0.75em; color: #999; }
 .plot-section { margin-bottom: 2em; background: white; padding: 1em; border: 1px solid #eee; border-radius: 4px; }
 .plot-section img { display: block; margin: 0 auto; }
 .meta-table { width: auto; min-width: 400px; }
 .meta-table td:first-child { font-weight: 500; white-space: nowrap; }
 .changed { background: #fff3cd; }
+details { margin-bottom: 1.5em; }
+details summary { cursor: pointer; color: #555; font-weight: 500; padding: 0.3em 0; }
+details summary:hover { color: #333; }
 .artifacts { margin-bottom: 1.5em; }
 .artifacts summary { cursor: pointer; color: #555; font-weight: 500; }
 .artifacts p { margin: 0.5em 0 0 1em; }
@@ -28,21 +37,40 @@ tr:hover { background: #f9f9f9; }
 .fail { color: #f44336; }
 .new { color: #FF9800; }
 .info { color: #607D8B; }
+.var-table { width: 100%; }
+.var-table td:first-child { width: 3em; }
 </style>
 </head>
 <body>
 <h1>{{ model_id }}</h1>
 
-{# --- Summary --- #}
+{# === TOP-LEVEL SUMMARY === #}
 <div class="summary">
 {% if nobaseline_plots %}
   <strong>{{ nobaseline_plots | length }}</strong> variables (no baseline)
+{% elif sim_failed %}
+  <span class="fail"><strong>Simulation failed</strong></span>
 {% else %}
-  <strong>{{ n_passed }}</strong> / <strong>{{ variables | length }}</strong> variables passed
+  <span class="{{ 'pass' if n_passed == variables | length else 'fail' }}">
+    <strong>{{ n_passed }}</strong> / <strong>{{ variables | length }}</strong> variables passed
+  </span>
 {% endif %}
 </div>
 
-{# --- Artifact links --- #}
+{# === KEY STATS CARDS === #}
+{% if key_stats %}
+<div class="key-stats">
+{% for s in key_stats %}
+  <div class="key-stat{{ ' changed' if s.changed | default(false) else '' }}">
+    <div class="label">{{ s.label }}</div>
+    <div class="value">{{ s.current or "—" }}</div>
+    {% if s.reference %}<div class="ref">ref: {{ s.reference }}</div>{% endif %}
+  </div>
+{% endfor %}
+</div>
+{% endif %}
+
+{# === ARTIFACT LINKS === #}
 {% if artifacts %}
   {% if sim_failed %}
   <div class="artifacts-prominent">
@@ -57,84 +85,124 @@ tr:hover { background: #f9f9f9; }
   {% endif %}
 {% endif %}
 
-{# --- Metadata table --- #}
-{% if metadata %}
-<h2>Simulation Parameters</h2>
-<table class="meta-table">
-<tr><th>Field</th><th>Current</th><th>Reference</th></tr>
-{% for row in metadata %}
-<tr><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
-{% endfor %}
-</table>
-{% endif %}
-
-{# --- Statistics tables (auto-detected from data) --- #}
-{% for section in statistics_sections %}
-<h2>{{ section.title }}</h2>
-<table class="meta-table">
-<tr><th>Metric</th><th>Current</th><th>Reference</th></tr>
-{% for row in section.rows %}
-<tr{% if row.changed %} class="changed"{% endif %}><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
-{% endfor %}
-</table>
-{% endfor %}
-
-{# --- Diagnostics plots --- #}
-{% if diagnostic_plots %}
-<h2>Diagnostics</h2>
-{% for plot in diagnostic_plots %}
-<div class="plot-section">
-  <h3><span class="info">INFO</span> {{ plot.name }}</h3>
-  <img src="{{ plot.png }}" alt="{{ plot.name }}" style="max-width:100%">
-</div>
-{% endfor %}
-{% endif %}
-
-{# --- Variable comparison table --- #}
+{# === VARIABLE TABLE (condensed: name + status + NRMSE) === #}
 {% if variables %}
-<h2>Variable Comparison</h2>
-<table>
-<tr>
-<th>Status</th><th>Variable</th><th>NRMSE</th><th>RMSE</th>
-<th>Range</th><th>Max Abs Err</th><th>At Time</th>
-<th>Ref Final</th><th>Act Final</th>
-</tr>
+<h2>Variables</h2>
+<table class="var-table">
+<tr><th>Status</th><th>Variable</th><th>NRMSE</th></tr>
 {% for v in variables %}
 <tr>
   <td><span class="{{ 'pass' if v.passed else 'fail' }}">{{ "PASS" if v.passed else "FAIL" }}</span></td>
   <td>{{ v.name }}{% if v.is_constant %} (const){% endif %}</td>
   <td>{{ "%.4e" | format(v.nrmse) }}</td>
-  <td>{{ "%.4e" | format(v.rmse) }}</td>
-  <td>{{ "%.4e" | format(v.signal_range) }}</td>
-  <td>{{ "%.4e" | format(v.max_abs_error) }}</td>
-  <td>{{ "%g" | format(v.max_abs_error_time) }}</td>
-  <td>{{ "%.6e" | format(v.reference_final) }}</td>
-  <td>{{ "%.6e" | format(v.actual_final) }}</td>
 </tr>
 {% endfor %}
 </table>
+
+<details>
+  <summary>Full variable details (RMSE, range, max error, finals)</summary>
+  <table>
+  <tr>
+  <th>Status</th><th>Variable</th><th>NRMSE</th><th>RMSE</th>
+  <th>Range</th><th>Max Abs Err</th><th>At Time</th>
+  <th>Ref Final</th><th>Act Final</th>
+  </tr>
+  {% for v in variables %}
+  <tr>
+    <td><span class="{{ 'pass' if v.passed else 'fail' }}">{{ "PASS" if v.passed else "FAIL" }}</span></td>
+    <td>{{ v.name }}{% if v.is_constant %} (const){% endif %}</td>
+    <td>{{ "%.4e" | format(v.nrmse) }}</td>
+    <td>{{ "%.4e" | format(v.rmse) }}</td>
+    <td>{{ "%.4e" | format(v.signal_range) }}</td>
+    <td>{{ "%.4e" | format(v.max_abs_error) }}</td>
+    <td>{{ "%g" | format(v.max_abs_error_time) }}</td>
+    <td>{{ "%.6e" | format(v.reference_final) }}</td>
+    <td>{{ "%.6e" | format(v.actual_final) }}</td>
+  </tr>
+  {% endfor %}
+  </table>
+</details>
 {% endif %}
 
-{# --- Trajectory comparison plots --- #}
+{# === STATISTICS (collapsible) === #}
+{% if statistics_sections %}
+<details>
+  <summary>Statistics ({{ statistics_sections | length }} sections)</summary>
+  {% for section in statistics_sections %}
+  <h3>{{ section.title }}</h3>
+  <table class="meta-table">
+  <tr><th>Metric</th><th>Current</th><th>Reference</th></tr>
+  {% for row in section.rows %}
+  <tr{% if row.changed %} class="changed"{% endif %}><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
+  {% endfor %}
+  </table>
+  {% endfor %}
+</details>
+{% endif %}
+
+{# === SIMULATION PARAMETERS (collapsible) === #}
+{% if sim_params %}
+<details>
+  <summary>Simulation Parameters</summary>
+  <table class="meta-table">
+  <tr><th>Parameter</th><th>Current</th><th>Reference</th></tr>
+  {% for row in sim_params %}
+  <tr{% if row.changed %} class="changed"{% endif %}><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
+  {% endfor %}
+  </table>
+</details>
+{% endif %}
+
+{# === REFERENCE INFO (collapsible) === #}
+{% if ref_info %}
+<details>
+  <summary>Reference Info</summary>
+  <table class="meta-table">
+  <tr><th>Field</th><th>Value</th></tr>
+  {% for row in ref_info %}
+  <tr><td>{{ row.label }}</td><td>{{ row.value }}</td></tr>
+  {% endfor %}
+  </table>
+</details>
+{% endif %}
+
+{# === DIAGNOSTICS (collapsible) === #}
+{% if diagnostic_plots %}
+<details>
+  <summary>Diagnostics ({{ diagnostic_plots | length }} variables)</summary>
+  {% for plot in diagnostic_plots %}
+  <div class="plot-section">
+    <h3><span class="info">INFO</span> {{ plot.name }}</h3>
+    <img src="{{ plot.png }}" alt="{{ plot.name }}" style="max-width:100%">
+  </div>
+  {% endfor %}
+</details>
+{% endif %}
+
+{# === TRAJECTORY PLOTS === #}
 {% if compared_plots %}
-<h2>Trajectory Comparisons</h2>
-{% for plot in compared_plots %}
-<div class="plot-section">
-  <h3><span class="{{ 'pass' if plot.passed else 'fail' }}">{{ "PASS" if plot.passed else "FAIL" }}</span> {{ plot.name }}</h3>
-  <img src="{{ plot.png }}" alt="{{ plot.name }}" style="max-width:100%">
-</div>
-{% endfor %}
+<details open>
+  <summary>Trajectory Comparisons ({{ compared_plots | length }} plots)</summary>
+  {% for plot in compared_plots %}
+  <div class="plot-section">
+    <h3><span class="{{ 'pass' if plot.passed else 'fail' }}">{{ "PASS" if plot.passed else "FAIL" }}</span> {{ plot.name }}</h3>
+    <img src="{{ plot.png }}" alt="{{ plot.name }}" style="max-width:100%">
+  </div>
+  {% endfor %}
+</details>
 {% endif %}
 
-{# --- No-baseline variable plots --- #}
+{# === NO-BASELINE PLOTS === #}
 {% if nobaseline_plots %}
-<h2>Simulated Variables (No Baseline)</h2>
-{% for plot in nobaseline_plots %}
-<div class="plot-section">
-  <h3><span class="new">NEW</span> {{ plot.name }}</h3>
-  <img src="{{ plot.png }}" alt="{{ plot.name }}" style="max-width:100%">
-</div>
-{% endfor %}
+<details open>
+  <summary>Simulated Variables — No Baseline ({{ nobaseline_plots | length }} plots)</summary>
+  {% for plot in nobaseline_plots %}
+  <div class="plot-section">
+    <h3><span class="new">NEW</span> {{ plot.name }}</h3>
+    <img src="{{ plot.png }}" alt="{{ plot.name }}" style="max-width:100%">
+  </div>
+  {% endfor %}
+</details>
 {% endif %}
 
 </body>

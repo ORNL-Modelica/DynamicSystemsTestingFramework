@@ -73,6 +73,7 @@ def _build_template_context(
     diag_png_files: Optional[list[tuple[str, str]]],
     nobaseline_png_files: Optional[list[tuple[str, str]]],
     test_dir: Optional[Path],
+    test_model=None,
 ) -> dict:
     """Build the full template context dict from comparison data."""
     if cur_stats is None:
@@ -80,8 +81,8 @@ def _build_template_context(
     ref_stats = ref_data.get("statistics", {}) if ref_data else {}
     ref_sim = ref_data.get("simulation", {}) if ref_data else {}
 
-    # --- Metadata rows ---
-    metadata = []
+    # --- Reference info rows ---
+    ref_info = []
     meta_fields = [
         ("test_id", "Test ID"),
         ("status", "Status"),
@@ -90,14 +91,18 @@ def _build_template_context(
     ]
     for key, label in meta_fields:
         ref_val = ref_data.get(key, "") if ref_data else ""
-        metadata.append({"label": label, "current": "", "reference": _format_value(ref_val)})
+        if ref_val:
+            ref_info.append({"label": label, "value": _format_value(ref_val)})
 
-    metadata.append({
+    ref_info.append({
         "label": "Tracked Variables",
-        "current": str(len(comparisons)) if comparisons else "",
-        "reference": _format_value(ref_data.get("n_vars", "")) if ref_data else "",
+        "value": f"{len(comparisons)} current" + (
+            f" / {ref_data.get('n_vars', '?')} reference" if ref_data else ""
+        ) if comparisons else "",
     })
 
+    # --- Simulation parameters (current vs reference) ---
+    sim_params = []
     sim_fields = [
         ("stop_time", "Stop Time"),
         ("tolerance", "Tolerance"),
@@ -107,11 +112,16 @@ def _build_template_context(
     ]
     for key, label in sim_fields:
         ref_val = ref_sim.get(key)
-        metadata.append({
-            "label": label,
-            "current": "",
-            "reference": _format_value(ref_val) if ref_val is not None else "",
-        })
+        cur_val = getattr(test_model, key, None) if test_model else None
+        ref_str = _format_value(ref_val) if ref_val is not None else ""
+        cur_str = _format_value(cur_val) if cur_val is not None else ""
+        if ref_str or cur_str:
+            sim_params.append({
+                "label": label,
+                "current": cur_str,
+                "reference": ref_str,
+                "changed": cur_str != "" and ref_str != "" and cur_str != ref_str,
+            })
 
     # --- Statistics sections (auto-detected) ---
     statistics_sections = []
@@ -193,11 +203,61 @@ def _build_template_context(
     n_nobaseline = len(nobaseline_plots)
     sim_failed = len(comparisons) == 0 and n_nobaseline == 0
 
+    # --- Key stats for top-level summary ---
+    # Pull out the most important metrics from both current and reference
+    def _get_stat(source: dict, category: str, key: str):
+        cat = source.get(category, {})
+        if isinstance(cat, dict):
+            return cat.get(key)
+        return None
+
+    def _get_scalar(source: dict, key: str):
+        val = source.get(key)
+        return val if not isinstance(val, dict) else None
+
+    key_stats = []
+    worst_nrmse = max((vc.nrmse for vc in comparisons), default=None)
+    if worst_nrmse is not None:
+        key_stats.append({"label": "Worst NRMSE", "current": f"{worst_nrmse:.4e}", "reference": ""})
+
+    stat_picks = [
+        ("translation", "continuous_time_states", "Continuous States"),
+        ("translation", "nonlinear_count", "Nonlinear Systems"),
+        ("translation", "nonlinear_max", "Largest Nonlinear"),
+    ]
+    for category, key, label in stat_picks:
+        cur_val = _get_stat(cur_stats, category, key)
+        ref_val = _get_stat(ref_stats, category, key)
+        if cur_val is not None or ref_val is not None:
+            key_stats.append({
+                "label": label,
+                "current": _format_value(cur_val),
+                "reference": _format_value(ref_val),
+                "changed": cur_val is not None and ref_val is not None and str(cur_val) != str(ref_val),
+            })
+
+    scalar_picks = [
+        ("CPUtime", "CPU Time"),
+        ("EventCounter", "Events"),
+    ]
+    for key, label in scalar_picks:
+        cur_val = _get_scalar(cur_stats, key)
+        ref_val = _get_scalar(ref_stats, key)
+        if cur_val is not None or ref_val is not None:
+            key_stats.append({
+                "label": label,
+                "current": _format_value(cur_val),
+                "reference": _format_value(ref_val),
+                "changed": cur_val is not None and ref_val is not None and str(cur_val) != str(ref_val),
+            })
+
     return {
         "model_id": model_id,
         "n_passed": n_passed,
         "sim_failed": sim_failed,
-        "metadata": metadata,
+        "key_stats": key_stats,
+        "ref_info": ref_info,
+        "sim_params": sim_params,
         "statistics_sections": statistics_sections,
         "variables": variables,
         "diagnostic_plots": diagnostic_plots,
@@ -296,6 +356,7 @@ def generate_comparison_plots(
     comparisons: list[VariableComparison],
     plot_dir: Path,
     test_dir: Optional[Path] = None,
+    test_model=None,
 ) -> Optional[Path]:
     """Generate per-variable comparison PNGs and an HTML viewer.
 
@@ -424,7 +485,7 @@ def generate_comparison_plots(
     cur_stats = result.statistics if result else None
     context = _build_template_context(
         model_id, png_files, comparisons, ref_data, cur_stats,
-        diag_png_files, nobaseline_png_files, test_dir,
+        diag_png_files, nobaseline_png_files, test_dir, test_model,
     )
 
     # Write comparison_data.json alongside the HTML
