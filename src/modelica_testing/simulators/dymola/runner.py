@@ -58,9 +58,12 @@ class DymolaRunner(SimulatorRunner):
         )
         manifest.save()
 
-        # Create per-test directories and generate per-test .mos scripts
+        # Clean and create per-test directories, generate per-test .mos scripts
+        import shutil
         for test, test_key in test_items:
             test_dir = self.config.work_dir / test_key
+            if test_dir.exists():
+                shutil.rmtree(test_dir)
             test_dir.mkdir(parents=True, exist_ok=True)
             _generate_test_mos(test, test_key, test_dir)
 
@@ -221,7 +224,18 @@ class DymolaRunner(SimulatorRunner):
                         else:
                             statistics[key] = value
 
-            if mat_path.exists():
+            # Check for translation failure (defense in depth)
+            translation_failed = False
+            translation_log = test_dir / "translation_log.txt"
+            if translation_log.exists():
+                try:
+                    tlog = translation_log.read_text(encoding="utf-8", errors="replace")
+                    if "Translation aborted" in tlog or tlog.strip().endswith("= false"):
+                        translation_failed = True
+                except OSError:
+                    pass
+
+            if mat_path.exists() and not translation_failed:
                 _print_progress(
                     index_offset + i + 1, total, label, "ok",
                     elapsed=batch_elapsed / len(test_items),
@@ -234,7 +248,7 @@ class DymolaRunner(SimulatorRunner):
                     statistics=statistics,
                 ))
             else:
-                msg = "No result file produced"
+                msg = "Translation failed" if translation_failed else "No result file produced"
                 # Try to get error from dslog
                 dslog_path = test_dir / "dslog.txt"
                 if dslog_path.exists():

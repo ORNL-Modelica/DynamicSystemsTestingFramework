@@ -1,0 +1,57 @@
+﻿ = true
+simulateModel("TRANSFORM.HeatExchangers.Examples.WaterWater_STHX_withMass",stopTime=1000,numberOfIntervals=1000,method="Esdirk45a",tolerance=0.0001,resultFile="dsres");
+Translation of TRANSFORM.HeatExchangers.Examples.WaterWater_STHX_withMass
+Note: 
+Your model is using an outer "systemTF" component but
+an inner "systemTF" component is not defined.
+For simulation drag TRANSFORM.Fluid.SystemTF into your model
+to specify system properties.
+ 
+In value attribute for STHX.showColors.
+Modifier applied in class TRANSFORM.HeatExchangers.GenericDistributed_HX_withMass.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/GenericDistributed_HX_withMass.mo, line 2
+Modifier applied for component STHX.showColors.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/Utilities/Visualizers/IconColorMap.mo, line 3
+Variable found in class TRANSFORM.HeatExchangers.Examples.WaterWater_STHX_withMass.
+  Near file: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/Examples/WaterWater_STHX_withMass.mo, line 2
+Variable found in base-class STHX.IconColorMap.
+  Near file: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/GenericDistributed_HX_withMass.mo, line 657
+Error: Use of undeclared variable: systemTF.showColors
+In class TRANSFORM.HeatExchangers.GenericDistributed_HX_withMass.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/GenericDistributed_HX_withMass.mo, line 2
+Used in component STHX.showColors.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/Utilities/Visualizers/IconColorMap.mo, line 3
+In value attribute for STHX.val_min.
+Modifier applied in class TRANSFORM.HeatExchangers.GenericDistributed_HX_withMass.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/GenericDistributed_HX_withMass.mo, line 2
+Modifier applied for component STHX.val_min.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/Utilities/Visualizers/IconColorMap.mo, line 5
+Variable found in class TRANSFORM.HeatExchangers.Examples.WaterWater_STHX_withMass.
+  Near file: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/Examples/WaterWater_STHX_withMass.mo, line 2
+Variable found in base-class STHX.IconColorMap.
+  Near file: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/GenericDistributed_HX_withMass.mo, line 657
+Error: Use of undeclared variable: systemTF.val_min
+In class TRANSFORM.HeatExchangers.GenericDistributed_HX_withMass.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/GenericDistributed_HX_withMass.mo, line 2
+Used in component STHX.val_min.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/Utilities/Visualizers/IconColorMap.mo, line 5
+In value attribute for STHX.val_max.
+Modifier applied in class TRANSFORM.HeatExchangers.GenericDistributed_HX_withMass.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/GenericDistributed_HX_withMass.mo, line 2
+Modifier applied for component STHX.val_max.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/Utilities/Visualizers/IconColorMap.mo, line 6
+Variable found in class TRANSFORM.HeatExchangers.Examples.WaterWater_STHX_withMass.
+  Near file: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/Examples/WaterWater_STHX_withMass.mo, line 2
+Variable found in base-class STHX.IconColorMap.
+  Near file: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/GenericDistributed_HX_withMass.mo, line 657
+Error: Use of undeclared variable: systemTF.val_max
+In class TRANSFORM.HeatExchangers.GenericDistributed_HX_withMass.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/HeatExchangers/GenericDistributed_HX_withMass.mo, line 2
+Used in component STHX.val_max.
+  File: D:/Modelica/TRANSFORM-Library/TRANSFORM/Utilities/Visualizers/IconColorMap.mo, line 6
+The model contained invalid expressions.
+Translation aborted.
+Error: ERRORS have been issued.
+ = false
+savelog("translation_log.txt");
+Instantiation of 
