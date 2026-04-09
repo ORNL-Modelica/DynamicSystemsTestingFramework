@@ -94,6 +94,10 @@ def _build_template_context(
         if ref_val:
             ref_info.append({"label": label, "value": _format_value(ref_val)})
 
+    # Add test directory key (e.g., test_0051)
+    if test_dir and test_dir.exists():
+        ref_info.append({"label": "Test Directory", "value": test_dir.name})
+
     ref_info.append({
         "label": "Tracked Variables",
         "value": f"{len(comparisons)} current" + (
@@ -510,6 +514,118 @@ def _render_template(template_name: str, context: dict, output_path: Path) -> No
     template = env.get_template(template_name)
     html = template.render(**context)
     output_path.write_text(html, encoding="utf-8")
+
+
+def generate_report_suite(
+    comparisons: list,
+    results: dict,
+    tests: list,
+    store,
+    config,
+) -> Path:
+    """Generate per-test comparison reports and an index page.
+
+    Returns the path to the index HTML file.
+    """
+    report_dir = config.work_dir / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    test_lookup = {t.model_id: t for t in tests}
+    index_tests = []
+
+    for comp in comparisons:
+        model_id = comp.model_id
+        result = results.get(model_id)
+        test = test_lookup.get(model_id)
+        ref_data = store.get_reference(model_id)
+
+        # Determine status
+        if not comp.sim_success:
+            status_text = "SIM_FAIL"
+            status_class = "sim-fail"
+        elif not comp.has_reference:
+            status_text = "NO_REF"
+            status_class = "no-ref"
+        elif comp.passed:
+            status_text = "PASS"
+            status_class = "pass"
+        else:
+            status_text = "FAIL"
+            status_class = "fail"
+
+        # Compute summary metrics
+        worst_nrmse = None
+        n_vars = len(comp.variables) if comp.variables else 0
+        n_vars_passed = sum(1 for v in comp.variables if v.passed) if comp.variables else 0
+        if comp.variables:
+            worst_nrmse = max(v.nrmse for v in comp.variables)
+
+        # Find test directory
+        test_key = None
+        manifest_paths = sorted(config.work_dir.glob("batch_manifest.json"))
+        if manifest_paths:
+            from ..simulators import BatchManifest
+            for mp in manifest_paths:
+                bm = BatchManifest.load(mp)
+                for tk, entry in bm.manifest.items():
+                    if entry["model_id"] == model_id:
+                        test_key = tk
+                        break
+                if test_key:
+                    break
+
+        test_dir = config.work_dir / test_key if test_key else None
+
+        # Generate per-test report
+        report_path = None
+        safe_id = _sanitize_filename(model_id)
+        plot_dir = report_dir / safe_id
+
+        html_path = generate_comparison_plots(
+            model_id=model_id,
+            ref_data=ref_data,
+            result=result,
+            comparisons=comp.variables,
+            plot_dir=plot_dir,
+            test_dir=test_dir,
+            test_model=test,
+        )
+
+        if html_path:
+            report_path = f"{safe_id}/comparison.html"
+
+        ref_id = f"ref_{comp.test_id}" if comp.test_id else None
+
+        index_tests.append({
+            "model_id": model_id,
+            "status_text": status_text,
+            "status_class": status_class,
+            "ref_id": ref_id,
+            "test_key": test_key,
+            "worst_nrmse": worst_nrmse,
+            "n_vars": n_vars,
+            "n_vars_passed": n_vars_passed,
+            "n_warnings": len(comp.warnings) if comp.warnings else 0,
+            "report_path": report_path,
+        })
+
+    # Build index context
+    n_total = len(comparisons)
+    index_context = {
+        "title": "Test Report",
+        "n_passed": sum(1 for t in index_tests if t["status_class"] == "pass"),
+        "n_failed": sum(1 for t in index_tests if t["status_class"] == "fail"),
+        "n_sim_failed": sum(1 for t in index_tests if t["status_class"] == "sim-fail"),
+        "n_no_ref": sum(1 for t in index_tests if t["status_class"] == "no-ref"),
+        "n_warnings": sum(1 for t in index_tests if t["n_warnings"] > 0),
+        "n_total": n_total,
+        "tests": index_tests,
+    }
+
+    index_path = report_dir / "index.html"
+    _render_template("index.html", index_context, index_path)
+
+    return index_path
 
 
 def open_in_browser(path: Path) -> None:

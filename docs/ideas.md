@@ -11,7 +11,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 3 | ~~Full reference data in HTML reports~~ | L | Medium | **DONE** — added `status`, `date_added` to metadata table; diagnostic finals (CPUtime, EventCounter) were already in simulation stats table; fixed column header |
 | 4 | Manifest compaction / ID reset | L | Low | Niche — only needed after major restructuring |
 | 5 | ~~Condensed HTML with progressive disclosure~~ | M | High | **DONE** — key stats cards at top, condensed variable table, full details/stats/params/diagnostics in collapsible sections. Jinja2 templates + `comparison_data.json` sidecar |
-| 6 | Auto-generate HTML report suite | M | High | Plotly integration + index page; eliminates `-i` + `p` workflow |
+| 6 | ~~Auto-generate HTML report suite~~ | M | High | **DONE** — `--report` generates index page + per-test reports with plots; JS filter buttons; opens in browser |
 | 7 | Configurable variable ordering | M | Medium | Config plumbing + sort logic in reports and references |
 | 8 | Interactive tolerance editing | M | Medium | Requires Plotly; slider + writeback to reference JSON |
 | 9 | One-click "open in Dymola" | M | Medium | .mos generation straightforward; protocol handler is platform-specific |
@@ -20,7 +20,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 12 | Model health analysis from reference data | H | High | Mining + ranking logic across all refs; powerful but complex |
 | 13 | Dependency-aware test ordering | H | Medium | Requires dependency graph extraction from Modelica sources |
 
-**Recommended order**: 1-3, 5 are done. Next: 6 (auto-generate report suite), then 11-12 (high-effort, high-value).
+**Recommended order**: 1-3, 5-6 are done. Next: 11-12 (high-effort, high-value), or 7-9 (medium effort).
 
 ---
 
@@ -76,18 +76,14 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Non-matching tests are silently skipped without user interaction
 - Default `-i` (no filter) prompts for everything, same as before
 
-## Auto-generate HTML report suite with navigation
+## ~~Auto-generate HTML report suite with navigation~~ (DONE)
 
-- A `--html` or `--report-dir` flag on `run`/`compare` that generates comparison HTMLs for all tests in one go, plus an index page linking to each
-- Index page shows pass/fail summary table with links to per-test comparison pages
-- Eliminates the need to use `-i` and press `p` per test just to get plots
-- Consider alternatives to static HTML:
-  - **Plotly**: interactive plots (zoom, pan, hover for values) embedded in HTML — no server needed, just larger files
-  - **Bokeh**: similar to Plotly, slightly heavier
-  - **Panel/Dash**: full web app with server — overkill for this use case
-  - Plotly is likely the best fit: interactive plots in self-contained HTML, matplotlib stays as the lightweight fallback
-- Could also explore a single-page app approach: one HTML file with a sidebar listing all tests, clicking loads that test's plots inline (avoids many separate files)
-- Include a mapping table showing test_NNNN (working directory) ↔ ref_NNNN (reference file) ↔ model ID, so the user can navigate between simulation artifacts and references easily
+- **Implemented**: `--report` flag on `run` and `compare`
+- Generates per-test comparison HTML with plots in `reports/<model_name>/`
+- Index page (`reports/index.html`) with pass/fail summary, worst NRMSE, variable counts, warning counts
+- JS filter buttons (All, Failed, Sim Failed, No Baseline, Warnings, Passed)
+- Auto-opens index in browser
+- Future: swap matplotlib PNGs for Plotly inline charts for interactive plots
 
 ## ~~Condensed HTML report with progressive disclosure~~ (DONE)
 

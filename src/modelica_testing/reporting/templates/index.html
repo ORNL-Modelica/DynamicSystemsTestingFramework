@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; margin: 2em; background: #fafafa; }
+h1 { color: #333; margin-bottom: 0.3em; }
+.summary { margin-bottom: 1.5em; font-size: 1.1em; }
+.summary-stats { display: flex; gap: 1.5em; margin-top: 0.5em; }
+.summary-stat { font-weight: 600; }
+.summary-stat.pass { color: #4CAF50; }
+.summary-stat.fail { color: #f44336; }
+.summary-stat.no-ref { color: #FF9800; }
+.summary-stat.warn { color: #ff9800; }
+.summary-stat.neutral { color: #555; }
+table { border-collapse: collapse; width: 100%; background: white; margin-bottom: 2em; }
+th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; font-size: 0.9em; }
+th { background: #f5f5f5; font-weight: 600; cursor: pointer; user-select: none; }
+th:hover { background: #e8e8e8; }
+tr:hover { background: #f9f9f9; }
+.pass { color: #4CAF50; }
+.fail { color: #f44336; }
+.no-ref { color: #FF9800; }
+.sim-fail { color: #f44336; }
+a { color: #1976D2; text-decoration: none; }
+a:hover { text-decoration: underline; }
+.filter-bar { margin-bottom: 1em; }
+.filter-bar button { margin-right: 0.5em; padding: 0.3em 0.8em; border: 1px solid #ccc; border-radius: 3px; background: white; cursor: pointer; font-size: 0.85em; }
+.filter-bar button:hover { background: #f0f0f0; }
+.filter-bar button.active { background: #1976D2; color: white; border-color: #1976D2; }
+</style>
+</head>
+<body>
+<h1>{{ title }}</h1>
+
+<div class="summary">
+  <div class="summary-stats">
+    <span class="summary-stat pass">{{ n_passed }} passed</span>
+    <span class="summary-stat fail">{{ n_failed }} failed</span>
+    {% if n_sim_failed %}<span class="summary-stat sim-fail">{{ n_sim_failed }} sim failed</span>{% endif %}
+    {% if n_no_ref %}<span class="summary-stat no-ref">{{ n_no_ref }} no baseline</span>{% endif %}
+    {% if n_warnings %}<span class="summary-stat warn">{{ n_warnings }} warnings</span>{% endif %}
+    <span class="summary-stat neutral">{{ n_total }} total</span>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <button class="active" onclick="filterRows('all', this)">All</button>
+  <button onclick="filterRows('fail', this)">Failed</button>
+  <button onclick="filterRows('sim-fail', this)">Sim Failed</button>
+  <button onclick="filterRows('no-ref', this)">No Baseline</button>
+  <button onclick="filterRows('warn', this)">Warnings</button>
+  <button onclick="filterRows('pass', this)">Passed</button>
+</div>
+
+<table id="results-table">
+<thead>
+<tr>
+  <th>Status</th>
+  <th>Ref</th>
+  <th>Test</th>
+  <th>Model</th>
+  <th>Worst NRMSE</th>
+  <th>Variables</th>
+  <th>Warnings</th>
+</tr>
+</thead>
+<tbody>
+{% for t in tests %}
+<tr data-status="{{ t.status_class }}">
+  <td><span class="{{ t.status_class }}">{{ t.status_text }}</span></td>
+  <td>{{ t.ref_id or "—" }}</td>
+  <td>{{ t.test_key or "—" }}</td>
+  <td>{% if t.report_path %}<a href="{{ t.report_path }}">{{ t.model_id }}</a>{% else %}{{ t.model_id }}{% endif %}</td>
+  <td>{% if t.worst_nrmse is not none %}{{ "%.4e" | format(t.worst_nrmse) }}{% else %}—{% endif %}</td>
+  <td>{% if t.n_vars %}{{ t.n_vars_passed }}/{{ t.n_vars }}{% else %}—{% endif %}</td>
+  <td>{% if t.n_warnings %}<span class="warn">{{ t.n_warnings }}</span>{% else %}—{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+
+<script>
+function filterRows(status, btn) {
+  document.querySelectorAll('.filter-bar button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('#results-table tbody tr').forEach(row => {
+    if (status === 'all') { row.style.display = ''; return; }
+    const s = row.dataset.status;
+    if (status === 'warn') {
+      row.style.display = row.querySelector('td:last-child span') ? '' : 'none';
+    } else {
+      row.style.display = s === status ? '' : 'none';
+    }
+  });
+}
+</script>
+
+</body>
+</html>

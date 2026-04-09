@@ -122,6 +122,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         from .comparison.comparator import compare_all
 
         comparisons = compare_all(tests, results, store, config)
+
+        if args.report:
+            return _generate_report_suite(comparisons, results, tests, store, config)
+
         return _output_report(comparisons, args)
 
 
@@ -139,6 +143,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
     _write_id_mapping(store, config)
     results = runner.read_last_results(tests)
     comparisons = compare_all(tests, results, store, config)
+
+    if getattr(args, "report", False):
+        return _generate_report_suite(comparisons, results, tests, store, config)
+
     return _output_report(comparisons, args)
 
 
@@ -534,6 +542,18 @@ def _print_detail(comp) -> None:
     print()
 
 
+def _generate_report_suite(comparisons, results, tests, store, config) -> int:
+    """Generate per-test HTML reports and an index page."""
+    from .reporting.plot_comparison import generate_report_suite, open_in_browser
+
+    index_path = generate_report_suite(comparisons, results, tests, store, config)
+    print(f"Report suite written to {index_path.parent}")
+    open_in_browser(index_path)
+
+    n_failed = sum(1 for c in comparisons if not c.passed)
+    return 1 if n_failed else 0
+
+
 def _output_report(comparisons: list, args: argparse.Namespace) -> int:
     """Route comparisons to the selected report format."""
     fmt = getattr(args, "report_format", "console")
@@ -649,6 +669,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--report-format", choices=["console", "junit", "html"],
         default="console", help="Output format for test report",
     )
+    p_run.add_argument(
+        "--report", action="store_true",
+        help="Generate HTML report suite with index page and per-test reports",
+    )
 
     # compare
     p_compare = subparsers.add_parser(
@@ -661,6 +685,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_compare.add_argument(
         "--report-format", choices=["console", "junit", "html"],
         default="console",
+    )
+    p_compare.add_argument(
+        "--report", action="store_true",
+        help="Generate HTML report suite with index page and per-test reports",
     )
 
     # export

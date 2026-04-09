@@ -19,6 +19,7 @@ ModelicaTesting/
 │       ├── comparison/          # NRMSE comparison with piecewise event handling
 │       ├── storage/             # JSON reference storage with in-memory index
 │       └── reporting/           # Console, JUnit XML, HTML reporters, plot generation
+│           └── templates/       # Jinja2 templates (comparison.html) + comparison_data.json sidecar
 ├── ModelicaTestingLib/          # Modelica library: UnitTests component + example models
 │   ├── Components/UnitTests.mo  # Reusable UnitTests component for tracking variables
 │   ├── Examples/                # SimpleTest, EventTest, ConstantTest, IntervalTest, NoUnitTest

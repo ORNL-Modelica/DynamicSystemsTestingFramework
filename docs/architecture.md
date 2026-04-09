@@ -36,7 +36,9 @@ src/modelica_testing/
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
     ├── junit_report.py       # JUnit XML for CI
-    ├── html_report.py        # HTML summary report
+    ├── html_report.py        # Builds context dict, renders Jinja2 template, writes comparison_data.json sidecar
+    ├── templates/
+    │   └── comparison.html   # Jinja2 template: progressive disclosure layout with collapsible sections
     └── plot_comparison.py    # Per-variable PNG plots + HTML viewer with stats tables
 ```
 
@@ -69,6 +71,8 @@ compare_all(tests, results, store, config)
     → returns list[TestComparison]
 
 reporters render TestComparison → console / JUnit / HTML / plots
+    → HTML reporter builds a context dict and renders via Jinja2 template
+    → writes comparison_data.json sidecar alongside HTML for downstream tooling
 ```
 
 ## Key Types

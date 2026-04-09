@@ -71,6 +71,14 @@
 - Final values go in `statistics` (for structural change warnings)
 - `EventCounter` changes trigger a warning; `CPUtime` does not (too noisy)
 
+### Data-driven HTML reports via Jinja2 templates
+- `html_report.py` builds a context dict from `TestComparison` and renders through a Jinja2 template (`templates/comparison.html`)
+- A `comparison_data.json` sidecar is written alongside the HTML, containing the same data for downstream tooling
+- The template uses progressive disclosure: key stats cards at top, condensed variable table, then collapsible `<details>` sections for full variable details, statistics, simulation parameters, diagnostics, and reference info
+- Simulation parameters show current vs reference values with change highlighting when they differ
+- Statistics sections iterate over whatever keys exist in the dicts rather than hardcoding field names — new stats from future Dymola versions appear automatically
+- Trajectory plots open by default; metadata sections are collapsed
+
 ## Anti-Patterns
 
 ### Don't use `fnmatch` for Modelica variable matching
