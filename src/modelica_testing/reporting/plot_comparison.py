@@ -1,6 +1,7 @@
 """Generate comparison plots and HTML viewer for interactive review."""
 
 import html as html_mod
+import json
 import logging
 import platform
 import re
@@ -13,6 +14,8 @@ import numpy as np
 from ..comparison.comparator import VariableComparison
 
 logger = logging.getLogger(__name__)
+
+_TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 
 def _sanitize_filename(name: str) -> str:
@@ -33,16 +36,175 @@ def _sanitize_filename(name: str) -> str:
     return name
 
 
-def _compare_row(label: str, sim_val: str, ref_val: str, highlight: bool = False) -> str:
-    """Generate a table row comparing simulation vs reference values."""
-    style = ' style="background:#fff3cd"' if highlight else ""
-    return (
-        f"<tr{style}>"
-        f"<td>{html_mod.escape(label)}</td>"
-        f"<td>{html_mod.escape(sim_val)}</td>"
-        f"<td>{html_mod.escape(ref_val)}</td>"
-        f"</tr>"
-    )
+def _format_value(val) -> str:
+    """Format a value for display in HTML tables."""
+    if isinstance(val, list):
+        return ", ".join(str(v) for v in val)
+    if val is None or val == "":
+        return ""
+    return str(val)
+
+
+def _build_stats_section(title: str, ref_cat: dict, cur_cat: dict) -> Optional[dict]:
+    """Build a statistics section dict for the template."""
+    all_keys = sorted(set(ref_cat.keys()) | set(cur_cat.keys()))
+    if not all_keys:
+        return None
+    rows = []
+    for key in all_keys:
+        ref_val = _format_value(ref_cat.get(key, ""))
+        cur_val = _format_value(cur_cat.get(key, ""))
+        changed = ref_val != cur_val and ref_val and cur_val
+        rows.append({
+            "label": key.replace("_", " ").title(),
+            "current": cur_val,
+            "reference": ref_val,
+            "changed": changed,
+        })
+    return {"title": title, "rows": rows}
+
+
+def _build_template_context(
+    model_id: str,
+    png_files: list[tuple[str, VariableComparison]],
+    comparisons: list[VariableComparison],
+    ref_data: Optional[dict],
+    cur_stats: Optional[dict],
+    diag_png_files: Optional[list[tuple[str, str]]],
+    nobaseline_png_files: Optional[list[tuple[str, str]]],
+    test_dir: Optional[Path],
+) -> dict:
+    """Build the full template context dict from comparison data."""
+    if cur_stats is None:
+        cur_stats = {}
+    ref_stats = ref_data.get("statistics", {}) if ref_data else {}
+    ref_sim = ref_data.get("simulation", {}) if ref_data else {}
+
+    # --- Metadata rows ---
+    metadata = []
+    meta_fields = [
+        ("test_id", "Test ID"),
+        ("status", "Status"),
+        ("date_added", "Date Added"),
+        ("last_updated", "Last Updated"),
+    ]
+    for key, label in meta_fields:
+        ref_val = ref_data.get(key, "") if ref_data else ""
+        metadata.append({"label": label, "current": "", "reference": _format_value(ref_val)})
+
+    metadata.append({
+        "label": "Tracked Variables",
+        "current": str(len(comparisons)) if comparisons else "",
+        "reference": _format_value(ref_data.get("n_vars", "")) if ref_data else "",
+    })
+
+    sim_fields = [
+        ("stop_time", "Stop Time"),
+        ("tolerance", "Tolerance"),
+        ("method", "Method"),
+        ("number_of_intervals", "Number of Intervals"),
+        ("output_interval", "Output Interval"),
+    ]
+    for key, label in sim_fields:
+        ref_val = ref_sim.get(key)
+        metadata.append({
+            "label": label,
+            "current": "",
+            "reference": _format_value(ref_val) if ref_val is not None else "",
+        })
+
+    # --- Statistics sections (auto-detected) ---
+    statistics_sections = []
+
+    # Translation
+    ref_translation = ref_stats.get("translation", {})
+    cur_translation = cur_stats.get("translation", {})
+    if isinstance(ref_translation, dict) or isinstance(cur_translation, dict):
+        section = _build_stats_section(
+            "Translation Statistics",
+            ref_translation if isinstance(ref_translation, dict) else {},
+            cur_translation if isinstance(cur_translation, dict) else {},
+        )
+        if section:
+            statistics_sections.append(section)
+
+    # Simulation + top-level scalar stats (CPUtime, EventCounter)
+    ref_sim_stats = {**(ref_stats.get("simulation", {}) if isinstance(ref_stats.get("simulation"), dict) else {})}
+    cur_sim_stats = {**(cur_stats.get("simulation", {}) if isinstance(cur_stats.get("simulation"), dict) else {})}
+    for k, v in ref_stats.items():
+        if not isinstance(v, dict):
+            ref_sim_stats[k] = v
+    for k, v in cur_stats.items():
+        if not isinstance(v, dict):
+            cur_sim_stats[k] = v
+    section = _build_stats_section("Simulation Statistics", ref_sim_stats, cur_sim_stats)
+    if section:
+        statistics_sections.append(section)
+
+    # --- Variable comparison data ---
+    variables = []
+    for vc in comparisons:
+        variables.append({
+            "name": vc.name or f"x[{vc.index}]",
+            "passed": vc.passed,
+            "nrmse": vc.nrmse,
+            "rmse": vc.rmse,
+            "signal_range": vc.signal_range,
+            "max_abs_error": vc.max_abs_error,
+            "max_abs_error_time": vc.max_abs_error_time,
+            "reference_final": vc.reference_final,
+            "actual_final": vc.actual_final,
+            "is_constant": vc.is_constant,
+        })
+
+    # --- Plot references ---
+    diagnostic_plots = [
+        {"png": png_name, "name": name}
+        for png_name, name in (diag_png_files or [])
+    ]
+
+    compared_plots = [
+        {"png": png_name, "name": vc.name or f"x[{vc.index}]", "passed": vc.passed}
+        for png_name, vc in png_files
+    ]
+
+    nobaseline_plots = [
+        {"png": png_name, "name": name}
+        for png_name, name in (nobaseline_png_files or [])
+    ]
+
+    # --- Artifact links ---
+    artifacts = []
+    if test_dir and test_dir.exists():
+        artifact_files = [
+            ("dslog.txt", "Simulation log"),
+            ("translation_log.txt", "Translation log"),
+            ("dsin.txt", "Simulation input"),
+            ("dsfinal.txt", "Final values"),
+            ("simulate.mos", "Simulation script"),
+            ("dsres.mat", "Result file"),
+        ]
+        for fname, label in artifact_files:
+            fpath = test_dir / fname
+            if fpath.exists():
+                artifacts.append({"uri": fpath.resolve().as_uri(), "label": label})
+
+    n_passed = sum(1 for vc in comparisons if vc.passed)
+    n_nobaseline = len(nobaseline_plots)
+    sim_failed = len(comparisons) == 0 and n_nobaseline == 0
+
+    return {
+        "model_id": model_id,
+        "n_passed": n_passed,
+        "sim_failed": sim_failed,
+        "metadata": metadata,
+        "statistics_sections": statistics_sections,
+        "variables": variables,
+        "diagnostic_plots": diagnostic_plots,
+        "compared_plots": compared_plots,
+        "nobaseline_plots": nobaseline_plots,
+        "artifacts": artifacts,
+    }
 
 
 def _plot_variable(
@@ -115,8 +277,6 @@ def _plot_variable(
         ax_rel.legend(loc="best", fontsize=8)
         ax_rel.grid(True, alpha=0.3)
         ax_rel.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
-
-        passed = True  # Will be overridden by caller if vc available
     else:
         axes[1].text(0.5, 0.5, "No reference data", transform=axes[1].transAxes,
                     ha="center", va="center", color="gray")
@@ -125,7 +285,6 @@ def _plot_variable(
                     ha="center", va="center", color="gray")
         axes[2].set_ylabel("Rel Error")
         axes[2].set_xlabel("Time")
-        passed = True
 
     return fig, None, None  # Status set by caller
 
@@ -261,305 +420,35 @@ def generate_comparison_plots(
             plt.close(fig)
             nobaseline_png_files.append((png_name, var.name or f"x[{var.index}]"))
 
-    # Generate HTML viewer
-    html_path = plot_dir / "comparison.html"
+    # Build template context and render
     cur_stats = result.statistics if result else None
-    _generate_html_viewer(
-        html_path, model_id, png_files, comparisons, ref_data, cur_stats,
-        diag_png_files=diag_png_files,
-        nobaseline_png_files=nobaseline_png_files,
-        test_dir=test_dir,
+    context = _build_template_context(
+        model_id, png_files, comparisons, ref_data, cur_stats,
+        diag_png_files, nobaseline_png_files, test_dir,
     )
+
+    # Write comparison_data.json alongside the HTML
+    data_path = plot_dir / "comparison_data.json"
+    data_path.write_text(json.dumps(context, indent=2, default=str), encoding="utf-8")
+
+    # Render HTML from Jinja2 template
+    html_path = plot_dir / "comparison.html"
+    _render_template("comparison.html", context, html_path)
 
     return html_path
 
 
-def _generate_html_viewer(
-    html_path: Path,
-    model_id: str,
-    png_files: list[tuple[str, VariableComparison]],
-    comparisons: list[VariableComparison],
-    ref_data: Optional[dict] = None,
-    cur_stats: Optional[dict] = None,
-    diag_png_files: Optional[list[tuple[str, str]]] = None,
-    nobaseline_png_files: Optional[list[tuple[str, str]]] = None,
-    test_dir: Optional[Path] = None,
-) -> None:
-    """Generate an HTML page showing all plots, stats, and metadata tables."""
+def _render_template(template_name: str, context: dict, output_path: Path) -> None:
+    """Render a Jinja2 template with the given context."""
+    from jinja2 import Environment, FileSystemLoader
 
-    # --- Simulation parameters: reference vs current ---
-    ref_sim = ref_data.get("simulation", {}) if ref_data else {}
-    if cur_stats is None:
-        cur_stats = {}
-
-    metadata_html = ""
-    meta_rows = []
-    param_fields = [
-        ("test_id", "Test ID"),
-        ("status", "Status"),
-        ("date_added", "Date Added"),
-        ("last_updated", "Last Updated"),
-        ("n_vars", "Tracked Variables"),
-    ]
-    for key, label in param_fields:
-        ref_val = ref_data.get(key, "") if ref_data else ""
-        cur_val = len(comparisons) if key == "n_vars" else ""
-        if key in ("test_id", "status", "date_added", "last_updated"):
-            cur_val = ""  # Reference-only fields
-        meta_rows.append(_compare_row(label, str(ref_val) if ref_val != "" else "", str(cur_val) if cur_val != "" else ""))
-
-    sim_fields = [
-        ("stop_time", "Stop Time"),
-        ("tolerance", "Tolerance"),
-        ("method", "Method"),
-        ("number_of_intervals", "Number of Intervals"),
-        ("output_interval", "Output Interval"),
-    ]
-    for key, label in sim_fields:
-        ref_val = ref_sim.get(key, "")
-        cur_val = ""
-        meta_rows.append(_compare_row(label, str(ref_val) if ref_val is not None else "", str(cur_val) if cur_val else ""))
-
-    if any(r for r in meta_rows):
-        metadata_html = (
-            '<h2>Simulation Parameters</h2>'
-            '<table class="meta-table">'
-            '<tr><th>Field</th><th>Current</th><th>Reference</th></tr>'
-            + "".join(meta_rows) +
-            '</table>'
-        )
-
-    # --- Statistics tables: Translation then Simulation ---
-    ref_stats = ref_data.get("statistics", {}) if ref_data else {}
-
-    def _build_stats_table(title: str, category: str) -> str:
-        """Build an HTML stats table for a single category."""
-        ref_cat = ref_stats.get(category, {}) if isinstance(ref_stats.get(category), dict) else {}
-        cur_cat = cur_stats.get(category, {}) if isinstance(cur_stats.get(category), dict) else {}
-        all_keys = sorted(set(ref_cat.keys()) | set(cur_cat.keys()))
-        if not all_keys:
-            return ""
-        rows = []
-        for key in all_keys:
-            label = key.replace("_", " ").title()
-            ref_val = ref_cat.get(key, "")
-            cur_val = cur_cat.get(key, "")
-            if isinstance(ref_val, list):
-                ref_val = ", ".join(str(v) for v in ref_val)
-            if isinstance(cur_val, list):
-                cur_val = ", ".join(str(v) for v in cur_val)
-            changed = str(ref_val) != str(cur_val) and str(ref_val) and str(cur_val)
-            rows.append(_compare_row(label, str(cur_val) if cur_val != "" else "",
-                                     str(ref_val) if ref_val != "" else "", highlight=changed))
-        return (
-            f'<h2>{title}</h2>'
-            '<table class="meta-table">'
-            '<tr><th>Metric</th><th>Current</th><th>Reference</th></tr>'
-            + "".join(rows) +
-            '</table>'
-        )
-
-    # Top-level scalar stats (CPUtime, EventCounter) go in simulation table
-    # Merge them into simulation category for display
-    sim_display = {}
-    for k, v in ref_stats.items():
-        if not isinstance(v, dict):
-            sim_display[k] = v
-    for k, v in cur_stats.items():
-        if not isinstance(v, dict):
-            sim_display.setdefault(k, v)
-    # Temporarily inject into cur/ref for the table builder
-    ref_sim_merged = {**ref_stats.get("simulation", {})}
-    cur_sim_merged = {**cur_stats.get("simulation", {})}
-    for k, v in ref_stats.items():
-        if not isinstance(v, dict):
-            ref_sim_merged[k] = v
-    for k, v in cur_stats.items():
-        if not isinstance(v, dict):
-            cur_sim_merged[k] = v
-
-    # Build tables
-    translation_html = _build_stats_table("Translation Statistics", "translation")
-
-    # For simulation, use the merged dicts directly
-    sim_keys = sorted(set(ref_sim_merged.keys()) | set(cur_sim_merged.keys()))
-    sim_rows = []
-    for key in sim_keys:
-        label = key.replace("_", " ").title()
-        ref_val = ref_sim_merged.get(key, "")
-        cur_val = cur_sim_merged.get(key, "")
-        if isinstance(ref_val, list):
-            ref_val = ", ".join(str(v) for v in ref_val)
-        if isinstance(cur_val, list):
-            cur_val = ", ".join(str(v) for v in cur_val)
-        changed = str(ref_val) != str(cur_val) and str(ref_val) and str(cur_val)
-        sim_rows.append(_compare_row(label, str(cur_val) if cur_val != "" else "",
-                                     str(ref_val) if ref_val != "" else "", highlight=changed))
-    simulation_html = ""
-    if sim_rows:
-        simulation_html = (
-            '<h2>Simulation Statistics</h2>'
-            '<table class="meta-table">'
-            '<tr><th>Metric</th><th>Current</th><th>Reference</th></tr>'
-            + "".join(sim_rows) +
-            '</table>'
-        )
-
-    stats_html = translation_html + simulation_html
-
-    # --- Variable comparison table ---
-    table_rows = []
-    for vc in comparisons:
-        status = '<span style="color:#4CAF50">PASS</span>' if vc.passed else '<span style="color:#f44336">FAIL</span>'
-        name = html_mod.escape(vc.name or f"x[{vc.index}]")
-        const_tag = " (const)" if vc.is_constant else ""
-        table_rows.append(
-            f"<tr>"
-            f"<td>{status}</td>"
-            f"<td>{name}</td>"
-            f"<td>{vc.nrmse:.4e}</td>"
-            f"<td>{vc.rmse:.4e}</td>"
-            f"<td>{vc.signal_range:.4e}{const_tag}</td>"
-            f"<td>{vc.max_abs_error:.4e}</td>"
-            f"<td>{vc.max_abs_error_time:g}</td>"
-            f"<td>{vc.reference_final:.6e}</td>"
-            f"<td>{vc.actual_final:.6e}</td>"
-            f"</tr>"
-        )
-
-    # Diagnostic plot sections (shown first)
-    diag_sections = []
-    if diag_png_files:
-        for png_name, diag_name in diag_png_files:
-            name = html_mod.escape(diag_name)
-            diag_sections.append(
-                f'<div class="plot-section">'
-                f'<h3><span style="color:#607D8B">INFO</span> {name}</h3>'
-                f'<img src="{png_name}" alt="{name}" style="max-width:100%">'
-                f'</div>'
-            )
-
-    # Compared variable plot sections
-    plot_sections = []
-    for png_name, vc in png_files:
-        name = html_mod.escape(vc.name or f"x[{vc.index}]")
-        status = "PASS" if vc.passed else "FAIL"
-        color = "#4CAF50" if vc.passed else "#f44336"
-        plot_sections.append(
-            f'<div class="plot-section">'
-            f'<h3><span style="color:{color}">{status}</span> {name}</h3>'
-            f'<img src="{png_name}" alt="{name}" style="max-width:100%">'
-            f'</div>'
-        )
-
-    # No-baseline variable plot sections
-    nobaseline_sections = []
-    if nobaseline_png_files:
-        for png_name, var_name in nobaseline_png_files:
-            name = html_mod.escape(var_name)
-            nobaseline_sections.append(
-                f'<div class="plot-section">'
-                f'<h3><span style="color:#FF9800">NEW</span> {name}</h3>'
-                f'<img src="{png_name}" alt="{name}" style="max-width:100%">'
-                f'</div>'
-            )
-
-    n_passed = sum(1 for vc in comparisons if vc.passed)
-    n_total = len(comparisons)
-    n_nobaseline = len(nobaseline_png_files) if nobaseline_png_files else 0
-
-    diag_html = ""
-    if diag_sections:
-        diag_html = "<h2>Diagnostics</h2>\n" + "\n".join(diag_sections)
-
-    # --- Simulation artifact links ---
-    artifacts_html = ""
-    if test_dir and test_dir.exists():
-        artifact_files = [
-            ("dslog.txt", "Simulation log"),
-            ("translation_log.txt", "Translation log"),
-            ("dsin.txt", "Simulation input"),
-            ("dsfinal.txt", "Final values"),
-            ("simulate.mos", "Simulation script"),
-            ("dsres.mat", "Result file"),
-        ]
-        links = []
-        for fname, label in artifact_files:
-            fpath = test_dir / fname
-            if fpath.exists():
-                uri = fpath.resolve().as_uri()
-                links.append(f'<a href="{uri}">{html_mod.escape(label)}</a>')
-
-        if links:
-            sim_failed = n_total == 0 and n_nobaseline == 0
-            link_list = " &middot; ".join(links)
-            if sim_failed:
-                # Prominent for failed simulations
-                artifacts_html = (
-                    f'<div class="artifacts-prominent">'
-                    f'<h2>Simulation Artifacts</h2>'
-                    f'<p>{link_list}</p>'
-                    f'</div>'
-                )
-            else:
-                # Collapsible for passing/normal tests
-                artifacts_html = (
-                    f'<details class="artifacts">'
-                    f'<summary>Simulation Artifacts</summary>'
-                    f'<p>{link_list}</p>'
-                    f'</details>'
-                )
-
-    page = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Comparison: {html_mod.escape(model_id)}</title>
-<style>
-body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; margin: 2em; background: #fafafa; }}
-h1 {{ color: #333; }}
-h2 {{ color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }}
-h3 {{ color: #444; }}
-table {{ border-collapse: collapse; width: 100%; margin-bottom: 2em; background: white; }}
-th, td {{ border: 1px solid #ddd; padding: 6px 10px; text-align: left; font-size: 0.9em; }}
-th {{ background: #f5f5f5; font-weight: 600; }}
-tr:hover {{ background: #f9f9f9; }}
-.summary {{ margin-bottom: 1.5em; font-size: 1.1em; }}
-.plot-section {{ margin-bottom: 2em; background: white; padding: 1em; border: 1px solid #eee; border-radius: 4px; }}
-.plot-section img {{ display: block; margin: 0 auto; }}
-.meta-table {{ width: auto; min-width: 400px; }}
-.meta-table td:first-child {{ font-weight: 500; white-space: nowrap; }}
-.artifacts {{ margin-bottom: 1.5em; }}
-.artifacts summary {{ cursor: pointer; color: #555; font-weight: 500; }}
-.artifacts p {{ margin: 0.5em 0 0 1em; }}
-.artifacts a, .artifacts-prominent a {{ margin-right: 0.3em; }}
-.artifacts-prominent {{ margin-bottom: 1.5em; padding: 1em; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; }}
-.artifacts-prominent h2 {{ margin-top: 0; border: none; padding: 0; }}
-</style>
-</head>
-<body>
-<h1>{html_mod.escape(model_id)}</h1>
-<div class="summary">
-{"<strong>" + str(n_nobaseline) + "</strong> variables (no baseline)" if n_nobaseline else "<strong>" + str(n_passed) + "</strong> / <strong>" + str(n_total) + "</strong> variables passed"}
-</div>
-
-{artifacts_html}
-
-{metadata_html}
-{stats_html}
-
-{diag_html}
-
-{"<h2>Variable Comparison</h2>" + chr(10) + '<table>' + chr(10) + '<tr>' + chr(10) + '<th>Status</th><th>Variable</th><th>NRMSE</th><th>RMSE</th>' + chr(10) + '<th>Range</th><th>Max Abs Err</th><th>At Time</th>' + chr(10) + '<th>Ref Final</th><th>Act Final</th>' + chr(10) + '</tr>' + chr(10) + "".join(table_rows) + chr(10) + '</table>' if comparisons else ""}
-
-{"<h2>Trajectory Comparisons</h2>" + chr(10) + chr(10).join(plot_sections) if plot_sections else ""}
-
-{"<h2>Simulated Variables (No Baseline)</h2>" + chr(10) + chr(10).join(nobaseline_sections) if nobaseline_sections else ""}
-
-</body>
-</html>"""
-
-    html_path.write_text(page, encoding="utf-8")
+    env = Environment(
+        loader=FileSystemLoader(str(_TEMPLATE_DIR)),
+        autoescape=True,
+    )
+    template = env.get_template(template_name)
+    html = template.render(**context)
+    output_path.write_text(html, encoding="utf-8")
 
 
 def open_in_browser(path: Path) -> None:

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Comparison: {{ model_id }}</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; margin: 2em; background: #fafafa; }
+h1 { color: #333; }
+h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
+h3 { color: #444; }
+table { border-collapse: collapse; width: 100%; margin-bottom: 2em; background: white; }
+th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; font-size: 0.9em; }
+th { background: #f5f5f5; font-weight: 600; }
+tr:hover { background: #f9f9f9; }
+.summary { margin-bottom: 1.5em; font-size: 1.1em; }
+.plot-section { margin-bottom: 2em; background: white; padding: 1em; border: 1px solid #eee; border-radius: 4px; }
+.plot-section img { display: block; margin: 0 auto; }
+.meta-table { width: auto; min-width: 400px; }
+.meta-table td:first-child { font-weight: 500; white-space: nowrap; }
+.changed { background: #fff3cd; }
+.artifacts { margin-bottom: 1.5em; }
+.artifacts summary { cursor: pointer; color: #555; font-weight: 500; }
+.artifacts p { margin: 0.5em 0 0 1em; }
+.artifacts a, .artifacts-prominent a { margin-right: 0.3em; }
+.artifacts-prominent { margin-bottom: 1.5em; padding: 1em; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; }
+.artifacts-prominent h2 { margin-top: 0; border: none; padding: 0; }
+.pass { color: #4CAF50; }
+.fail { color: #f44336; }
+.new { color: #FF9800; }
+.info { color: #607D8B; }
+</style>
+</head>
+<body>
+<h1>{{ model_id }}</h1>
+
+{# --- Summary --- #}
+<div class="summary">
+{% if nobaseline_plots %}
+  <strong>{{ nobaseline_plots | length }}</strong> variables (no baseline)
+{% else %}
+  <strong>{{ n_passed }}</strong> / <strong>{{ variables | length }}</strong> variables passed
+{% endif %}
+</div>
+
+{# --- Artifact links --- #}
+{% if artifacts %}
+  {% if sim_failed %}
+  <div class="artifacts-prominent">
+    <h2>Simulation Artifacts</h2>
+    <p>{% for a in artifacts %}<a href="{{ a.uri }}">{{ a.label }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}</p>
+  </div>
+  {% else %}
+  <details class="artifacts">
+    <summary>Simulation Artifacts</summary>
+    <p>{% for a in artifacts %}<a href="{{ a.uri }}">{{ a.label }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}</p>
+  </details>
+  {% endif %}
+{% endif %}
+
+{# --- Metadata table --- #}
+{% if metadata %}
+<h2>Simulation Parameters</h2>
+<table class="meta-table">
+<tr><th>Field</th><th>Current</th><th>Reference</th></tr>
+{% for row in metadata %}
+<tr><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+
+{# --- Statistics tables (auto-detected from data) --- #}
+{% for section in statistics_sections %}
+<h2>{{ section.title }}</h2>
+<table class="meta-table">
+<tr><th>Metric</th><th>Current</th><th>Reference</th></tr>
+{% for row in section.rows %}
+<tr{% if row.changed %} class="changed"{% endif %}><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
+{% endfor %}
+</table>
+{% endfor %}
+
+{# --- Diagnostics plots --- #}
+{% if diagnostic_plots %}
+<h2>Diagnostics</h2>
+{% for plot in diagnostic_plots %}
+<div class="plot-section">
+  <h3><span class="info">INFO</span> {{ plot.name }}</h3>
+  <img src="{{ plot.png }}" alt="{{ plot.name }}" style="max-width:100%">
+</div>
+{% endfor %}
+{% endif %}
+
+{# --- Variable comparison table --- #}
+{% if variables %}
+<h2>Variable Comparison</h2>
+<table>
+<tr>
+<th>Status</th><th>Variable</th><th>NRMSE</th><th>RMSE</th>
+<th>Range</th><th>Max Abs Err</th><th>At Time</th>
+<th>Ref Final</th><th>Act Final</th>
+</tr>
+{% for v in variables %}
+<tr>
+  <td><span class="{{ 'pass' if v.passed else 'fail' }}">{{ "PASS" if v.passed else "FAIL" }}</span></td>
+  <td>{{ v.name }}{% if v.is_constant %} (const){% endif %}</td>
+  <td>{{ "%.4e" | format(v.nrmse) }}</td>
+  <td>{{ "%.4e" | format(v.rmse) }}</td>
+  <td>{{ "%.4e" | format(v.signal_range) }}</td>
+  <td>{{ "%.4e" | format(v.max_abs_error) }}</td>
+  <td>{{ "%g" | format(v.max_abs_error_time) }}</td>
+  <td>{{ "%.6e" | format(v.reference_final) }}</td>
+  <td>{{ "%.6e" | format(v.actual_final) }}</td>
+</tr>
+{% endfor %}
+</table>
+{% endif %}
+
+{# --- Trajectory comparison plots --- #}
+{% if compared_plots %}
+<h2>Trajectory Comparisons</h2>
+{% for plot in compared_plots %}
+<div class="plot-section">
+  <h3><span class="{{ 'pass' if plot.passed else 'fail' }}">{{ "PASS" if plot.passed else "FAIL" }}</span> {{ plot.name }}</h3>
+  <img src="{{ plot.png }}" alt="{{ plot.name }}" style="max-width:100%">
+</div>
+{% endfor %}
+{% endif %}
+
+{# --- No-baseline variable plots --- #}
+{% if nobaseline_plots %}
+<h2>Simulated Variables (No Baseline)</h2>
+{% for plot in nobaseline_plots %}
+<div class="plot-section">
+  <h3><span class="new">NEW</span> {{ plot.name }}</h3>
+  <img src="{{ plot.png }}" alt="{{ plot.name }}" style="max-width:100%">
+</div>
+{% endfor %}
+{% endif %}
+
+</body>
+</html>
