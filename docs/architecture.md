@@ -30,7 +30,8 @@ src/modelica_testing/
 │       ├── mat_reader.py      # Custom MAT4 binary parser with numpy.memmap for selective reads
 │       └── log_parser.py      # Parses dslog.txt + translation_log.txt for statistics
 ├── comparison/
-│   └── comparator.py         # NRMSE comparison with piecewise event handling
+│   ├── comparator.py         # NRMSE comparison with piecewise event handling
+│   └── tube.py               # Tube-based comparison: envelope around reference trajectory
 ├── storage/
 │   └── reference_store.py    # RefIndex + ReferenceStore (per-test JSON files)
 └── reporting/
@@ -67,7 +68,9 @@ runner.read_results(manifests, tests)
 
 compare_all(tests, results, store, config)
     → loads reference JSON per test from ReferenceStore
-    → piecewise NRMSE comparison per variable
+    → per-variable comparison mode: NRMSE (default) or tube (via variable_overrides)
+    → NRMSE: piecewise comparison with event boundary handling
+    → tube: envelope check — actual signal must stay inside at every point
     → returns list[TestComparison]
 
 reporters render TestComparison → console / JUnit / HTML / plots
@@ -117,7 +120,7 @@ reporters render TestComparison → console / JUnit / HTML / plots
 }
 ```
 
-The `comparison` section is optional. When present, it stores the comparison tolerances that were active when the baseline was accepted, so tolerances travel with the reference data. `variable_overrides` maps variable names to per-variable settings (currently `tolerance`).
+The `comparison` section is optional. When present, it stores the comparison tolerances that were active when the baseline was accepted, so tolerances travel with the reference data. `variable_overrides` maps variable names to per-variable settings including `tolerance` and optional tube comparison parameters (`mode`, `tube_abs`, `tube_rel`, `tube_points`, `tube_interpolation`).
 
 No persistent manifest file for the index. The in-memory `RefIndex` is built by scanning ref files at startup.
 Valid statuses: `active` (normal), `skip` (temporarily excluded), `obsolete` (pending deletion).

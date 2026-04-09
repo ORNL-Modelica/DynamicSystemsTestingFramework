@@ -4,7 +4,7 @@
 
 **ModelicaTesting** is a standalone Python tool for regression testing Modelica libraries. It is library-agnostic — it works with any Modelica library that uses the `UnitTests` pattern for tracking simulation variables, or with external test specifications (`test_spec.json`).
 
-The tool discovers tests by scanning `.mo` files and/or reading `test_spec.json`, runs simulations via Dymola (batch mode), compares results against stored references using NRMSE, and reports pass/fail.
+The tool discovers tests by scanning `.mo` files and/or reading `test_spec.json`, runs simulations via Dymola (batch mode), compares results against stored references using NRMSE or tube-based envelope comparison, and reports pass/fail.
 
 ## Project Structure
 
@@ -16,7 +16,7 @@ ModelicaTesting/
 │       ├── config.py            # Config dataclass, path resolution, testing.json loading
 │       ├── discovery/           # Test discovery: scan .mo for UnitTests, parse test_spec.json
 │       ├── simulators/          # Abstract runner + Dymola backend (batch .mos, .mat reader, dslog parser)
-│       ├── comparison/          # NRMSE comparison with piecewise event handling
+│       ├── comparison/          # NRMSE and tube comparison with piecewise event handling
 │       ├── storage/             # JSON reference storage with in-memory index
 │       └── reporting/           # Console, JUnit XML, HTML reporters, plot generation
 │           └── templates/       # Jinja2 templates (comparison.html) + comparison_data.json sidecar
@@ -24,7 +24,7 @@ ModelicaTesting/
 │   ├── Components/UnitTests.mo  # Reusable UnitTests component for tracking variables
 │   ├── Examples/                # SimpleTest, EventTest, ConstantTest, IntervalTest, NoUnitTest
 │   └── Resources/ReferenceResults/  # testing.json + reference baselines for this library
-├── tests/                       # pytest test suite (154 tests)
+├── tests/                       # pytest test suite (174 tests)
 │   ├── fixtures/                # Test data: dslog.txt, .mat file, test_spec.json
 │   └── test_*.py                # Comparator, config, discovery, storage, simulators
 ├── docs/                        # Design decisions, patterns, architecture, constraints, usage
@@ -100,12 +100,21 @@ Simulation parameters live under a `simulation` key, comparison settings under a
       "simulation": {"stop_time": 100, "tolerance": 1e-6},
       "comparison": {
         "tolerance": 0.01,
-        "variable_overrides": {"pipe.T[1]": {"tolerance": 0.1}}
+        "variable_overrides": {
+          "pipe.T[1]": {"tolerance": 0.1},
+          "pipe.p[1]": {"mode": "tube", "tube_abs": 500, "tube_rel": 0.02}
+        }
       }
     }
   ]
 }
 ```
+
+### Comparison modes
+
+**NRMSE** (default): `NRMSE = RMSE / signal_range`. Pass if below tolerance.
+
+**Tube**: envelope around the reference trajectory. Configured per-variable via `variable_overrides` with `"mode": "tube"`. Width at each point = `max(tube_abs, tube_rel * |reference|)`. Pass if every point stays inside the tube. Supports time-varying tubes via `tube_points` with linear or stepwise interpolation.
 
 ### Tolerance resolution order
 
@@ -118,7 +127,7 @@ Per-variable override (spec) > per-variable override (reference JSON) > per-test
 - **`TestModel`** (`discovery/test_registry.py`) — fully resolved test with model ID, simulation params, tracked variables, source
 - **`SimulatorRunner`** (`simulators/base.py`) — abstract interface; `DymolaRunner` implements batch execution
 - **`ReferenceStore`** (`storage/reference_store.py`) — CRUD for per-test JSON reference files; `RefIndex` built in-memory from scanning ref files
-- **`comparator`** (`comparison/comparator.py`) — NRMSE comparison with piecewise event boundary handling
+- **`comparator`** (`comparison/comparator.py`) — NRMSE comparison with piecewise event boundary handling; tube comparison mode for envelope-based pass/fail (configured per-variable via `variable_overrides` with `"mode": "tube"`)
 
 ## Design Principles
 

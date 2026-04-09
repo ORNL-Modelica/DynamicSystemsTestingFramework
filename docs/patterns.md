@@ -31,6 +31,18 @@
 - Data fields last (`n_vars`, `time`, `variables`)
 - Makes files human-readable when opened — you see context before scrolling through numbers
 
+### Tube-based comparison mode
+- Alternative to NRMSE: the tube defines an upper/lower envelope around the reference trajectory
+- Configured per-variable via `variable_overrides` with `"mode": "tube"`
+- Width formula: `tube_width = max(tube_abs, tube_rel * |reference|)` — the `max` prevents the tube from collapsing to zero when the reference crosses zero
+- Pass/fail is strict: the actual signal must stay inside the tube at every interpolated point
+- Constant tube: `{"mode": "tube", "tube_abs": 500, "tube_rel": 0.02}` — uniform width over all time
+- Time-varying tube: `tube_points` with `{"time", "abs", "rel"}` control points, interpolated via `tube_interpolation` (`"constant"` for stepwise, `"linear"` for linear — default is `"linear"`)
+- Before the first control point: hold first point values. After the last: hold last point values
+- Metrics reported: `tube_points_inside` (fraction 0-1), `tube_worst_violation` (largest distance outside tube), `tube_worst_violation_time`
+- NRMSE is still computed for reference even in tube mode
+- HTML reports show "tube (95% in)" style labels for tube-mode variables in the variable table
+
 ### Tolerance resolution order
 - Per-variable override from test spec (`comparison.variable_overrides`) takes highest priority
 - Per-variable override from reference JSON (`comparison.variable_overrides`) is next

@@ -132,8 +132,15 @@
 - **Why**: Some variables (e.g., temperatures near zero) need looser tolerances than the test-level default. Per-variable overrides avoid raising the tolerance for the entire test. Storing comparison settings in the reference JSON means tolerances travel with the baseline — someone cloning the repo gets the same pass/fail behavior without needing the original test_spec.json.
 - **Trade-offs**: More complex resolution logic. The `tolerance_used` field in reports makes it transparent which tolerance was applied.
 
-## D23: Stale artifact protection
+## D23: Tube comparison — strict envelope with max(abs, rel) width
+
+- **What**: A tube comparison mode alongside NRMSE. Configured per-variable via `variable_overrides` with `"mode": "tube"`. The tube defines upper/lower bounds around the reference: `width = max(tube_abs, tube_rel * |reference|)`. Pass/fail is strict — the actual signal must stay inside at every point. Supports constant tubes (`tube_abs` + `tube_rel`) and time-varying tubes (`tube_points` with linear or stepwise interpolation). Before the first control point and after the last, values are held constant.
+- **Why**: NRMSE is a single aggregate metric that can mask localized violations — a signal might have excellent NRMSE but briefly spike outside acceptable bounds. Tubes provide pointwise guarantees. The `max(abs, rel)` formula prevents the tube from collapsing to zero width when the reference crosses zero, which would make any nonzero actual value a failure. Time-varying tubes allow tighter tolerances during steady-state and looser ones during transients.
+- **Trade-offs**: Strict checking means a single point outside the tube fails the variable. This is intentional — tubes are meant for hard bounds. NRMSE is still computed alongside tube results for reference. Future work: interactive Plotly visualization for drawing/adjusting tubes, cubic interpolation mode.
+
+## D24: Stale artifact protection
 
 - **What**: Test directories are cleaned (`rmtree` + recreate) before each simulation run. The translation log is also checked for "Translation aborted" as defense in depth.
 - **Why**: Stale `dsres.mat` or `dslog.txt` from a previous run could be misread as current results, causing silent false passes. This is especially dangerous when a simulation fails silently (no crash, just no output) and old artifacts remain.
 - **Trade-offs**: Slightly slower startup (directory recreation). Acceptable for correctness.
+
