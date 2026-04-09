@@ -126,10 +126,10 @@ def resolve_variable_patterns(
 
 @dataclass
 class BatchManifest:
-    """Maps numeric test IDs to model IDs and tracks run results."""
+    """Maps test keys to model IDs (and optionally ref IDs) and tracks run results."""
     batch_id: int
     work_dir: Path
-    manifest: dict[str, str]  # test_NNNN -> model_id
+    manifest: dict[str, dict]  # test_NNNN -> {"model_id": ..., "ref_id": ...}
     results: list[TestRunResult] = field(default_factory=list)
 
     def test_dir(self, test_key: str) -> Path:
@@ -137,18 +137,35 @@ class BatchManifest:
         return self.work_dir / test_key
 
     def mat_file(self, test_key: str) -> Path:
-        return self.test_dir(test_key) / f"{test_key}.mat"
+        return self.test_dir(test_key) / "dsres.mat"
+
+    def model_id(self, test_key: str) -> str:
+        """Get the model ID for a test key."""
+        return self.manifest[test_key]["model_id"]
 
     def save(self) -> Path:
-        path = self.work_dir / f"batch_{self.batch_id:04d}_manifest.json"
+        path = self.work_dir / "batch_manifest.json"
         path.write_text(json.dumps(self.manifest, indent=2), encoding="utf-8")
         return path
+
+    def enrich_ref_ids(self, ref_index) -> None:
+        """Add ref_id to each entry using the reference index."""
+        for test_key, entry in self.manifest.items():
+            ref_id = ref_index.get_id(entry["model_id"])
+            entry["ref_id"] = f"ref_{ref_id}" if ref_id else None
+        self.save()
 
     @classmethod
     def load(cls, path: Path) -> "BatchManifest":
         data = json.loads(path.read_text(encoding="utf-8"))
-        batch_id = int(path.stem.split("_")[1])
-        return cls(batch_id=batch_id, work_dir=path.parent, manifest=data)
+        # Handle legacy format: test_key -> model_id string
+        normalized = {}
+        for key, val in data.items():
+            if isinstance(val, str):
+                normalized[key] = {"model_id": val, "ref_id": None}
+            else:
+                normalized[key] = val
+        return cls(batch_id=0, work_dir=path.parent, manifest=normalized)
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +331,8 @@ class SimulatorRunner(ABC):
         # Build work items: (test_key, model_id, test_model, run_result)
         work_items = []
         for manifest in manifests:
-            for test_key, model_id in manifest.manifest.items():
+            for test_key, entry in manifest.manifest.items():
+                model_id = entry["model_id"]
                 rr = run_results.get(model_id)
                 test_model = test_lookup.get(model_id)
 
@@ -369,7 +387,7 @@ class SimulatorRunner(ABC):
         if not work_dir.exists():
             return {}
 
-        manifest_paths = sorted(work_dir.glob("batch_*_manifest.json"))
+        manifest_paths = sorted(work_dir.glob("batch_manifest.json"))
         if not manifest_paths:
             return {}
 

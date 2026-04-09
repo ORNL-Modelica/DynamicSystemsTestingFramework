@@ -37,7 +37,8 @@
       "Bash(pip install:*)",
       "WebFetch(domain:www.claytex.com)",
       "Bash(ls -lhS /mnt/d/Modelica/ModelicaTesting/testing_output/TRANSFORM/Dymola/windows/test_*/test_*.mat)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(ls:*)"
     ]
   }
 }

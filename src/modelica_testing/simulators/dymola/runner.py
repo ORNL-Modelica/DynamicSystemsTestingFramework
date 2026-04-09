@@ -48,7 +48,7 @@ class DymolaRunner(SimulatorRunner):
         manifest_map = {}
         for i, test in enumerate(tests):
             test_key = f"test_{i + 1:04d}"
-            manifest_map[test_key] = test.model_id
+            manifest_map[test_key] = {"model_id": test.model_id, "ref_id": None}
             test_items.append((test, test_key))
 
         manifest = BatchManifest(
@@ -200,7 +200,7 @@ class DymolaRunner(SimulatorRunner):
         from ..base import _print_progress
         for i, (test, test_key) in enumerate(test_items):
             test_dir = work_dir / test_key
-            mat_path = test_dir / f"{test_key}.mat"
+            mat_path = test_dir / "dsres.mat"
             short_name = test.model_id.rsplit(".", 1)[-1]
             label = f"{test_key} {short_name}"
 
@@ -270,7 +270,7 @@ class DymolaRunner(SimulatorRunner):
     ) -> TestResult:
         stats = run_result.statistics if run_result else None
         test_dir = self.config.work_dir / test_key
-        mat_path = test_dir / f"{test_key}.mat"
+        mat_path = test_dir / "dsres.mat"
 
         if not mat_path.exists():
             return TestResult(
@@ -393,7 +393,7 @@ def _generate_test_mos(
 
     parts.append(f'method="{test.method}"')
     parts.append(f"tolerance={test.tolerance}")
-    parts.append(f'resultFile="{test_key}"')
+    parts.append('resultFile="dsres"')
 
     lines = [
         f'// {test.model_id}',
@@ -403,7 +403,7 @@ def _generate_test_mos(
         f'savelog("translation_log.txt");',
     ]
 
-    script_path = test_dir / f"{test_key}.mos"
+    script_path = test_dir / "simulate.mos"
     script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return script_path
 
@@ -422,7 +422,7 @@ def _generate_batch_mos(
     ]
 
     for test, test_key in test_items:
-        test_mos = work_dir / test_key / f"{test_key}.mos"
+        test_mos = work_dir / test_key / "simulate.mos"
         lines.append(f'RunScript("{test_mos.as_posix()}");')
 
     lines.append(f'RunScript("{shutdown_path.as_posix()}");')

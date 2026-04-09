@@ -1,5 +1,29 @@
 # Future Ideas
 
+## Priority Matrix
+
+Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H (weeks+). Impact: how much it improves the daily workflow.
+
+| # | Idea | Ease | Impact | Notes |
+|---|------|------|--------|-------|
+| 1 | Filtered interactive review | L | High | Small CLI change, immediately saves time on large suites |
+| 2 | Link to simulation artifacts from HTML | L | High | Just adding `file://` links to existing reports |
+| 3 | Full reference data in HTML reports | L | Medium | Display fields already stored, just not rendered |
+| 4 | Manifest compaction / ID reset | L | Low | Niche — only needed after major restructuring |
+| 5 | Condensed HTML with progressive disclosure | M | High | `<details>`/`<summary>` restructure of existing HTML |
+| 6 | Auto-generate HTML report suite | M | High | Plotly integration + index page; eliminates `-i` + `p` workflow |
+| 7 | Configurable variable ordering | M | Medium | Config plumbing + sort logic in reports and references |
+| 8 | Interactive tolerance editing | M | Medium | Requires Plotly; slider + writeback to reference JSON |
+| 9 | One-click "open in Dymola" | M | Medium | .mos generation straightforward; protocol handler is platform-specific |
+| 10 | Interactive setup wizard | M | Low | Nice onboarding but power users skip it quickly |
+| 11 | Test discovery by extends/folder | H | High | Requires Modelica AST parsing or robust regex scanning |
+| 12 | Model health analysis from reference data | H | High | Mining + ranking logic across all refs; powerful but complex |
+| 13 | Dependency-aware test ordering | H | Medium | Requires dependency graph extraction from Modelica sources |
+
+**Recommended order**: Start with 1-3 (quick wins), then 5-6 (report overhaul as a batch), then 11-12 (high-effort, high-value).
+
+---
+
 ## Interactive setup wizard
 
 - Guided terminal flow for creating or editing `testing.json`

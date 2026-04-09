@@ -232,12 +232,41 @@ def generate_comparison_plots(
         plt.close(fig)
         png_files.append((png_name, vc))
 
+    # --- No-baseline variable plots (actual only, no comparison) ---
+    nobaseline_png_files = []
+    if not comparisons and result and result.variables:
+        for var in result.variables:
+            safe_name = _sanitize_filename(var.name or f"x_{var.index}")
+            png_name = f"var_{var.index:03d}_{safe_name}.png"
+            png_path = plot_dir / png_name
+
+            fig, ax = plt.subplots(1, 1, figsize=(12, 4))
+            ax.plot(var.time, var.values, label="Actual", color="#2196F3", linewidth=1)
+            ax.set_ylabel("Value")
+            ax.set_xlabel("Time")
+            ax.set_title(var.name or f"x[{var.index}]")
+            ax.legend(loc="best", fontsize=9)
+            ax.grid(True, alpha=0.3)
+            ax.annotate(
+                "NEW", xy=(0.98, 0.95), xycoords="axes fraction",
+                fontsize=14, fontweight="bold", color="#FF9800",
+                ha="right", va="top",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
+                          edgecolor="#FF9800", alpha=0.8),
+            )
+
+            plt.tight_layout()
+            fig.savefig(str(png_path), dpi=100, bbox_inches="tight")
+            plt.close(fig)
+            nobaseline_png_files.append((png_name, var.name or f"x[{var.index}]"))
+
     # Generate HTML viewer
     html_path = plot_dir / "comparison.html"
     cur_stats = result.statistics if result else None
     _generate_html_viewer(
         html_path, model_id, png_files, comparisons, ref_data, cur_stats,
         diag_png_files=diag_png_files,
+        nobaseline_png_files=nobaseline_png_files,
     )
 
     return html_path
@@ -251,6 +280,7 @@ def _generate_html_viewer(
     ref_data: Optional[dict] = None,
     cur_stats: Optional[dict] = None,
     diag_png_files: Optional[list[tuple[str, str]]] = None,
+    nobaseline_png_files: Optional[list[tuple[str, str]]] = None,
 ) -> None:
     """Generate an HTML page showing all plots, stats, and metadata tables."""
 
@@ -419,8 +449,21 @@ def _generate_html_viewer(
             f'</div>'
         )
 
+    # No-baseline variable plot sections
+    nobaseline_sections = []
+    if nobaseline_png_files:
+        for png_name, var_name in nobaseline_png_files:
+            name = html_mod.escape(var_name)
+            nobaseline_sections.append(
+                f'<div class="plot-section">'
+                f'<h3><span style="color:#FF9800">NEW</span> {name}</h3>'
+                f'<img src="{png_name}" alt="{name}" style="max-width:100%">'
+                f'</div>'
+            )
+
     n_passed = sum(1 for vc in comparisons if vc.passed)
     n_total = len(comparisons)
+    n_nobaseline = len(nobaseline_png_files) if nobaseline_png_files else 0
 
     diag_html = ""
     if diag_sections:
@@ -450,7 +493,7 @@ tr:hover {{ background: #f9f9f9; }}
 <body>
 <h1>{html_mod.escape(model_id)}</h1>
 <div class="summary">
-<strong>{n_passed}</strong> / <strong>{n_total}</strong> variables passed
+{"<strong>" + str(n_nobaseline) + "</strong> variables (no baseline)" if n_nobaseline else "<strong>" + str(n_passed) + "</strong> / <strong>" + str(n_total) + "</strong> variables passed"}
 </div>
 
 {metadata_html}
@@ -458,18 +501,11 @@ tr:hover {{ background: #f9f9f9; }}
 
 {diag_html}
 
-<h2>Variable Comparison</h2>
-<table>
-<tr>
-<th>Status</th><th>Variable</th><th>NRMSE</th><th>RMSE</th>
-<th>Range</th><th>Max Abs Err</th><th>At Time</th>
-<th>Ref Final</th><th>Act Final</th>
-</tr>
-{"".join(table_rows)}
-</table>
+{"<h2>Variable Comparison</h2>" + chr(10) + '<table>' + chr(10) + '<tr>' + chr(10) + '<th>Status</th><th>Variable</th><th>NRMSE</th><th>RMSE</th>' + chr(10) + '<th>Range</th><th>Max Abs Err</th><th>At Time</th>' + chr(10) + '<th>Ref Final</th><th>Act Final</th>' + chr(10) + '</tr>' + chr(10) + "".join(table_rows) + chr(10) + '</table>' if comparisons else ""}
 
-<h2>Trajectory Comparisons</h2>
-{"".join(plot_sections)}
+{"<h2>Trajectory Comparisons</h2>" + chr(10) + chr(10).join(plot_sections) if plot_sections else ""}
+
+{"<h2>Simulated Variables (No Baseline)</h2>" + chr(10) + chr(10).join(nobaseline_sections) if nobaseline_sections else ""}
 
 </body>
 </html>"""

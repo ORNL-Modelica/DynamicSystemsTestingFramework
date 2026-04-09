@@ -24,6 +24,18 @@ def _filter_tests(
     return filtered
 
 
+def _write_id_mapping(store, config) -> None:
+    """Write a ref ID → model ID mapping file to the work directory."""
+    active = store.index.active_tests()
+    if not active:
+        return
+    import json
+    mapping_path = config.work_dir / "reference_manifest.json"
+    config.work_dir.mkdir(parents=True, exist_ok=True)
+    mapping = {f"ref_{tid}": active[tid] for tid in sorted(active)}
+    mapping_path.write_text(json.dumps(mapping, indent=2) + "\n", encoding="utf-8")
+
+
 def cmd_discover(args: argparse.Namespace) -> int:
     """Discover and list all test models."""
     config = _build_config(args)
@@ -82,25 +94,33 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     from .storage.reference_store import ReferenceStore
 
+    store = ReferenceStore(config)
+    _write_id_mapping(store, config)
+
     runner = _get_runner(config)
     manifests = runner.run_tests(tests)
+
+    # Enrich batch manifest with ref IDs now that store is available
+    for m in manifests:
+        m.enrich_ref_ids(store.index)
+
     results = runner.read_results(manifests, tests)
 
     if args.accept:
-        store = ReferenceStore(config)
         stored = store.accept_results(tests, results)
         print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
         return 0
-    elif args.interactive:
+    elif args.interactive is not None:
         from .comparison.comparator import compare_all
 
-        store = ReferenceStore(config)
         comparisons = compare_all(tests, results, store, config)
-        return _interactive_review(tests, results, comparisons, store, config)
+        return _interactive_review(
+            tests, results, comparisons, store, config,
+            review_filter=args.interactive,
+        )
     else:
         from .comparison.comparator import compare_all
 
-        store = ReferenceStore(config)
         comparisons = compare_all(tests, results, store, config)
         return _output_report(comparisons, args)
 
@@ -116,6 +136,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     runner = _get_runner(config)
     store = ReferenceStore(config)
+    _write_id_mapping(store, config)
     results = runner.read_last_results(tests)
     comparisons = compare_all(tests, results, store, config)
     return _output_report(comparisons, args)
@@ -177,6 +198,12 @@ def cmd_manifest(args: argparse.Namespace) -> int:
 
         return 0
 
+    elif action == "dump":
+        _write_id_mapping(store, config)
+        mapping_path = config.work_dir / "reference_manifest.json"
+        print(f"Written to {mapping_path}")
+        return 0
+
     elif action == "cleanup":
         removed = store.cleanup_obsolete()
         if removed:
@@ -232,21 +259,59 @@ def _get_spec_path(config) -> Path:
     return config.reference_root / "test_spec.json"
 
 
+_VALID_REVIEW_FILTERS = {"all", "failed", "no-baseline", "warnings", "sim-failed", "passed"}
+
+
+def _parse_review_filter(filter_str: str) -> set[str]:
+    """Parse and validate the review filter string."""
+    filters = {f.strip() for f in filter_str.split(",") if f.strip()}
+    invalid = filters - _VALID_REVIEW_FILTERS
+    if invalid:
+        raise argparse.ArgumentTypeError(
+            f"Invalid review filter(s): {', '.join(sorted(invalid))}. "
+            f"Valid: {', '.join(sorted(_VALID_REVIEW_FILTERS - {'all'}))}"
+        )
+    if "all" in filters:
+        return {"all"}
+    return filters
+
+
+def _should_review(comp, filters: set[str]) -> bool:
+    """Check if a comparison matches the active review filters."""
+    if "all" in filters:
+        return True
+    if "sim-failed" in filters and not comp.sim_success:
+        return True
+    if "no-baseline" in filters and not comp.has_reference:
+        return True
+    if "failed" in filters and comp.sim_success and not comp.passed and comp.has_reference:
+        return True
+    if "warnings" in filters and comp.warnings:
+        return True
+    if "passed" in filters and comp.sim_success and comp.passed and not comp.warnings:
+        return True
+    return False
+
+
 def _interactive_review(
     tests: list[TestModel],
     results: dict,
     comparisons: list,
     store,
     config=None,
+    review_filter: str = "all",
 ) -> int:
     """Interactively review each test and accept/reject results."""
     from .discovery.spec_parser import update_test_variables
     from .simulators import resolve_variable_patterns
     from .simulators.dymola.mat_reader import read_dymola_mat
 
+    filters = _parse_review_filter(review_filter)
+
     test_lookup = {t.model_id: t for t in tests}
     n_accepted = 0
     n_skipped = 0
+    n_auto_skipped = 0
     n_total = len(comparisons)
 
     spec_path = _get_spec_path(config) if config else None
@@ -258,9 +323,13 @@ def _interactive_review(
     BOLD = "\033[1m"
     RESET = "\033[0m"
 
-    print(f"\nInteractive review: {n_total} tests\n")
+    filter_desc = f" (filter: {review_filter})" if "all" not in filters else ""
+    print(f"\nInteractive review: {n_total} tests{filter_desc}\n")
 
     for idx, comp in enumerate(comparisons, 1):
+        if not _should_review(comp, filters):
+            n_auto_skipped += 1
+            continue
         model_id = comp.model_id
 
         # Status line
@@ -361,7 +430,7 @@ def _interactive_review(
                         test_key = _find_test_key(model_id, config)
                         if test_key:
                             test_dir = config.work_dir / test_key
-                            mat_path = test_dir / f"{test_key}.mat"
+                            mat_path = test_dir / "dsres.mat"
                             if mat_path.exists():
                                 mat_data = read_dymola_mat(mat_path)
                                 if mat_data:
@@ -386,14 +455,16 @@ def _interactive_review(
                     print("  No config available for plot generation.")
 
             elif choice == "q":
-                print(f"\nStopped. Accepted {n_accepted}, skipped {n_skipped + (n_total - idx)}.")
+                auto = f", {n_auto_skipped} auto-skipped" if n_auto_skipped else ""
+                print(f"\nStopped. Accepted {n_accepted}, skipped {n_skipped}{auto}.")
                 return 0 if n_accepted > 0 else 1
 
             else:
                 options = "a/v/s/d/p/q" if has_result else "s/d/p/q"
                 print(f"  Invalid choice. Enter {options}.")
 
-    print(f"\nDone. Accepted {n_accepted}, skipped {n_skipped}.")
+    auto = f", {n_auto_skipped} auto-skipped" if n_auto_skipped else ""
+    print(f"\nDone. Accepted {n_accepted}, skipped {n_skipped}{auto}.")
     return 0
 
 
@@ -427,11 +498,11 @@ def _generate_and_open_plots(model_id, comp, result, store, config) -> None:
 def _find_test_key(model_id: str, config) -> Optional[str]:
     """Find the test_NNNN key for a model from the batch manifest."""
     from .simulators import BatchManifest
-    manifest_paths = sorted(config.work_dir.glob("batch_*_manifest.json"))
+    manifest_paths = sorted(config.work_dir.glob("batch_manifest.json"))
     for mp in manifest_paths:
         bm = BatchManifest.load(mp)
-        for tk, mid in bm.manifest.items():
-            if mid == model_id:
+        for tk, entry in bm.manifest.items():
+            if entry["model_id"] == model_id:
                 return tk
     return None
 
@@ -547,8 +618,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_run.add_argument("--filter", type=str, help="Glob pattern for model_id")
     p_run.add_argument("--package", type=str, help="Filter by package prefix")
     p_run.add_argument(
-        "-i", "--interactive", action="store_true",
-        help="Interactively review and accept/reject each test result",
+        "-i", "--interactive", nargs="?", const="all", default=None,
+        metavar="FILTER",
+        help="Interactive review. Optional filter: failed, no-baseline, "
+             "warnings, sim-failed, passed (comma-separated). Default: all.",
     )
     p_run.add_argument(
         "--accept", action="store_true",
@@ -601,8 +674,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         "manifest", help="Manage the test manifest"
     )
     p_manifest.add_argument(
-        "action", choices=["show", "cleanup"],
+        "action", choices=["show", "dump", "cleanup"],
         help="'show': display all references and their status. "
+             "'dump': write ref ID to model ID mapping to work directory. "
              "'cleanup': remove reference files with status 'obsolete'.",
     )
     p_manifest.add_argument(
