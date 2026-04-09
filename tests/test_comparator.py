@@ -340,3 +340,324 @@ class TestStructuralChanges:
         result = TestResult(model_id="Test", success=True, statistics={})
         warnings = _check_structural_changes(ref, result)
         assert len(warnings) == 0
+
+
+# ---------------------------------------------------------------------------
+# Tolerance resolution
+# ---------------------------------------------------------------------------
+
+from modelica_testing.comparison.comparator import (
+    compare_test,
+    _compare_tube,
+    _interpolate_tube_width,
+)
+from modelica_testing.discovery.test_registry import TestModel
+from modelica_testing.config import Config
+from modelica_testing.simulators.base import VariableResult
+from pathlib import Path
+
+
+def _make_test(comparison_tolerance=None, variable_overrides=None):
+    """Create a minimal TestModel for tolerance tests."""
+    return TestModel(
+        model_id="Test.Model",
+        mo_file=Path(""),
+        package_path="Test",
+        short_name="Model",
+        n_vars=1,
+        comparison_tolerance=comparison_tolerance,
+        variable_overrides=variable_overrides or {},
+    )
+
+
+def _make_result_and_ref(offset=0.005):
+    """Create a result and reference with a known difference."""
+    time = np.array([0.0, 0.5, 1.0])
+    values = np.array([1.0, 2.0, 3.0])
+    shifted = values + offset
+
+    result = TestResult(
+        model_id="Test.Model",
+        success=True,
+        variables=[VariableResult(index=1, name="x", time=time, values=shifted)],
+    )
+    reference = {
+        "test_id": "0001",
+        "time": time.tolist(),
+        "variables": [{"index": 1, "name": "x", "values": values.tolist()}],
+    }
+    return result, reference
+
+
+class TestToleranceResolution:
+    def test_global_tolerance_default(self):
+        """Config tolerance used when no overrides."""
+        test = _make_test()
+        result, ref = _make_result_and_ref(offset=0.001)
+        config = Config.__new__(Config)
+        config.tolerance = 1e-4
+        config.final_only = False
+
+        comp = compare_test(test, result, ref, config)
+        # offset=0.001 on range=2.0 → NRMSE=5e-4, exceeds 1e-4
+        assert not comp.passed
+        assert comp.variables[0].tolerance_used == 1e-4
+
+    def test_per_test_tolerance_overrides_config(self):
+        """Per-test comparison_tolerance overrides config.tolerance."""
+        test = _make_test(comparison_tolerance=0.01)
+        result, ref = _make_result_and_ref(offset=0.001)
+        config = Config.__new__(Config)
+        config.tolerance = 1e-4
+        config.final_only = False
+
+        comp = compare_test(test, result, ref, config)
+        # NRMSE=5e-4, tolerance=0.01 → passes
+        assert comp.passed
+        assert comp.variables[0].tolerance_used == 0.01
+
+    def test_per_variable_tolerance_overrides_test(self):
+        """Per-variable override takes precedence over per-test."""
+        test = _make_test(
+            comparison_tolerance=1e-6,  # Very tight
+            variable_overrides={"x": {"tolerance": 0.01}},  # But x is loose
+        )
+        result, ref = _make_result_and_ref(offset=0.001)
+        config = Config.__new__(Config)
+        config.tolerance = 1e-4
+        config.final_only = False
+
+        comp = compare_test(test, result, ref, config)
+        # Per-variable 0.01 used for x → passes despite tight per-test
+        assert comp.passed
+        assert comp.variables[0].tolerance_used == 0.01
+
+    def test_reference_tolerance_used_as_fallback(self):
+        """Comparison tolerance stored in reference JSON is used as fallback."""
+        test = _make_test()  # No comparison_tolerance set
+        result, ref = _make_result_and_ref(offset=0.001)
+        ref["comparison"] = {"tolerance": 0.01}
+        config = Config.__new__(Config)
+        config.tolerance = 1e-4
+        config.final_only = False
+
+        comp = compare_test(test, result, ref, config)
+        # ref comparison tolerance 0.01 used → passes
+        assert comp.passed
+        assert comp.variables[0].tolerance_used == 0.01
+
+    def test_reference_variable_overrides(self):
+        """Per-variable overrides from reference JSON are used."""
+        test = _make_test()
+        result, ref = _make_result_and_ref(offset=0.001)
+        ref["comparison"] = {
+            "variable_overrides": {"x": {"tolerance": 0.01}},
+        }
+        config = Config.__new__(Config)
+        config.tolerance = 1e-4
+        config.final_only = False
+
+        comp = compare_test(test, result, ref, config)
+        assert comp.passed
+        assert comp.variables[0].tolerance_used == 0.01
+
+    def test_spec_overrides_reference(self):
+        """Spec variable overrides take precedence over reference overrides."""
+        test = _make_test(variable_overrides={"x": {"tolerance": 1e-6}})
+        result, ref = _make_result_and_ref(offset=0.001)
+        ref["comparison"] = {
+            "variable_overrides": {"x": {"tolerance": 0.1}},  # Loose in ref
+        }
+        config = Config.__new__(Config)
+        config.tolerance = 1e-4
+        config.final_only = False
+
+        comp = compare_test(test, result, ref, config)
+        # Spec override (1e-6) takes precedence over reference (0.1)
+        assert not comp.passed
+        assert comp.variables[0].tolerance_used == 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Tube interpolation
+# ---------------------------------------------------------------------------
+
+class TestTubeInterpolation:
+    def test_single_point_constant(self):
+        """Single control point applies everywhere."""
+        times = np.array([0.0, 50.0, 100.0])
+        points = [{"time": 0.0, "abs": 10.0, "rel": 0.05}]
+        abs_w, rel_w = _interpolate_tube_width(times, points)
+        np.testing.assert_array_equal(abs_w, [10.0, 10.0, 10.0])
+        np.testing.assert_array_equal(rel_w, [0.05, 0.05, 0.05])
+
+    def test_linear_interpolation(self):
+        """Linear interpolation between two points."""
+        times = np.array([0.0, 50.0, 100.0])
+        points = [
+            {"time": 0.0, "abs": 10.0, "rel": 0.0},
+            {"time": 100.0, "abs": 20.0, "rel": 0.1},
+        ]
+        abs_w, rel_w = _interpolate_tube_width(times, points, "linear")
+        np.testing.assert_allclose(abs_w, [10.0, 15.0, 20.0])
+        np.testing.assert_allclose(rel_w, [0.0, 0.05, 0.1])
+
+    def test_hold_at_boundaries(self):
+        """Values before first and after last point are held."""
+        times = np.array([0.0, 50.0, 100.0, 200.0])
+        points = [
+            {"time": 50.0, "abs": 10.0, "rel": 0.01},
+            {"time": 100.0, "abs": 20.0, "rel": 0.02},
+        ]
+        abs_w, rel_w = _interpolate_tube_width(times, points, "linear")
+        assert abs_w[0] == 10.0  # Before first point: hold
+        assert abs_w[3] == 20.0  # After last point: hold
+
+    def test_constant_interpolation_stepwise(self):
+        """Constant mode uses stepwise (hold previous)."""
+        times = np.array([0.0, 25.0, 75.0, 100.0])
+        points = [
+            {"time": 0.0, "abs": 10.0, "rel": 0.0},
+            {"time": 50.0, "abs": 20.0, "rel": 0.0},
+        ]
+        abs_w, _ = _interpolate_tube_width(times, points, "constant")
+        assert abs_w[0] == 10.0  # t=0: first point
+        assert abs_w[1] == 10.0  # t=25: still first point
+        assert abs_w[2] == 20.0  # t=75: second point
+        assert abs_w[3] == 20.0  # t=100: hold last
+
+
+# ---------------------------------------------------------------------------
+# Tube comparison
+# ---------------------------------------------------------------------------
+
+class TestTubeComparison:
+    def test_constant_tube_passes(self):
+        """Signal inside constant tube passes."""
+        ref_time = np.array([0.0, 0.5, 1.0])
+        ref_values = np.array([100.0, 200.0, 300.0])
+        act_values = np.array([101.0, 199.0, 302.0])  # Within ±5
+
+        vc = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {"tube_abs": 5.0, "tube_rel": 0.0},
+        )
+        assert vc.passed
+        assert vc.mode == "tube"
+        assert vc.tube_points_inside == 1.0
+
+    def test_constant_tube_fails(self):
+        """Signal outside constant tube fails."""
+        ref_time = np.array([0.0, 0.5, 1.0])
+        ref_values = np.array([100.0, 200.0, 300.0])
+        act_values = np.array([100.0, 200.0, 310.0])  # Last point outside ±5
+
+        vc = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {"tube_abs": 5.0, "tube_rel": 0.0},
+        )
+        assert not vc.passed
+        assert vc.tube_points_inside < 1.0
+        assert vc.tube_worst_violation == pytest.approx(5.0, abs=0.01)
+        assert vc.tube_worst_violation_time == 1.0
+
+    def test_relative_tube(self):
+        """Relative tube scales with reference magnitude."""
+        ref_time = np.array([0.0, 1.0])
+        ref_values = np.array([100.0, 1000.0])
+        # At t=0: |ref|=100, rel=0.05 → width=5. Offset=4 → inside
+        # At t=1: |ref|=1000, rel=0.05 → width=50. Offset=40 → inside
+        act_values = np.array([104.0, 1040.0])
+
+        vc = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {"tube_abs": 0.0, "tube_rel": 0.05},
+        )
+        assert vc.passed
+
+    def test_max_of_abs_and_rel(self):
+        """Tube width is max(abs, rel * |ref|) — prevents zero-width at zero crossing."""
+        ref_time = np.array([0.0, 1.0])
+        ref_values = np.array([0.0, 100.0])  # Crosses zero
+        # At t=0: |ref|=0, rel=0.05 → rel_width=0, abs=5 → width=5
+        act_values = np.array([3.0, 104.0])  # Within abs tube at zero
+
+        vc = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {"tube_abs": 5.0, "tube_rel": 0.05},
+        )
+        assert vc.passed
+
+    def test_time_varying_tube(self):
+        """Time-varying tube with control points."""
+        ref_time = np.array([0.0, 50.0, 100.0])
+        ref_values = np.array([10.0, 10.0, 10.0])
+        # Tight at start (abs=1), loose at end (abs=10)
+        act_values = np.array([10.5, 10.5, 18.0])
+
+        vc = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {
+                "tube_points": [
+                    {"time": 0.0, "abs": 1.0, "rel": 0.0},
+                    {"time": 100.0, "abs": 10.0, "rel": 0.0},
+                ],
+                "tube_interpolation": "linear",
+            },
+        )
+        # t=0: width=1, error=0.5 → inside
+        # t=50: width=5.5, error=0.5 → inside
+        # t=100: width=10, error=8 → inside
+        assert vc.passed
+
+    def test_time_varying_tube_fails_at_tight_end(self):
+        """Fails when signal exceeds narrow part of tube."""
+        ref_time = np.array([0.0, 50.0, 100.0])
+        ref_values = np.array([10.0, 10.0, 10.0])
+        act_values = np.array([12.0, 10.0, 10.0])  # 2.0 offset at tight end
+
+        vc = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {
+                "tube_points": [
+                    {"time": 0.0, "abs": 1.0, "rel": 0.0},
+                    {"time": 100.0, "abs": 10.0, "rel": 0.0},
+                ],
+            },
+        )
+        # t=0: width=1, error=2 → outside (violation=1.0)
+        assert not vc.passed
+        assert vc.tube_worst_violation == pytest.approx(1.0)
+        assert vc.tube_worst_violation_time == 0.0
+
+    def test_nrmse_still_computed_in_tube_mode(self):
+        """NRMSE is computed even in tube mode for reporting."""
+        ref_time = np.array([0.0, 1.0])
+        ref_values = np.array([0.0, 10.0])
+        act_values = np.array([1.0, 11.0])
+
+        vc = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {"tube_abs": 5.0, "tube_rel": 0.0},
+        )
+        assert vc.nrmse > 0
+        assert vc.rmse > 0
+
+    def test_tube_via_compare_test(self):
+        """Tube mode dispatched correctly via compare_test."""
+        test = _make_test(variable_overrides={
+            "x": {
+                "mode": "tube",
+                "tube_abs": 0.01,
+                "tube_rel": 0.0,
+            },
+        })
+        result, ref = _make_result_and_ref(offset=0.005)
+        config = Config.__new__(Config)
+        config.tolerance = 1e-4
+        config.final_only = False
+
+        comp = compare_test(test, result, ref, config)
+        assert comp.passed
+        assert comp.variables[0].mode == "tube"
+        assert comp.variables[0].tube_points_inside == 1.0

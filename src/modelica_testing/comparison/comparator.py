@@ -31,6 +31,12 @@ class VariableComparison:
     reference_final: float
     actual_final: float
     is_constant: bool = False  # True if reference signal has zero range
+    tolerance_used: float = 0.0  # The tolerance threshold applied for this variable
+    mode: str = "nrmse"  # Comparison mode: "nrmse" or "tube"
+    # Tube-specific metrics (populated when mode="tube")
+    tube_points_inside: Optional[float] = None  # Fraction of points inside tube (0-1)
+    tube_worst_violation: Optional[float] = None  # Largest violation (absolute)
+    tube_worst_violation_time: Optional[float] = None  # Time of worst violation
 
 
 @dataclass
@@ -266,6 +272,118 @@ def _compare_final_values(
     )
 
 
+def _interpolate_tube_width(
+    eval_time: np.ndarray,
+    tube_points: list[dict],
+    interpolation: str = "linear",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Interpolate tube abs/rel widths at evaluation times.
+
+    tube_points: [{"time": t, "abs": a, "rel": r}, ...]
+    Returns (abs_widths, rel_widths) arrays matching eval_time.
+    Before first point: hold first values. After last: hold last values.
+    """
+    if not tube_points:
+        return np.zeros_like(eval_time), np.zeros_like(eval_time)
+
+    pts = sorted(tube_points, key=lambda p: p["time"])
+    ctrl_times = np.array([p["time"] for p in pts])
+    ctrl_abs = np.array([p.get("abs", 0.0) for p in pts])
+    ctrl_rel = np.array([p.get("rel", 0.0) for p in pts])
+
+    if len(pts) == 1 or interpolation == "constant":
+        # Stepwise: find which control point applies at each time
+        indices = np.searchsorted(ctrl_times, eval_time, side="right") - 1
+        indices = np.clip(indices, 0, len(pts) - 1)
+        return ctrl_abs[indices], ctrl_rel[indices]
+
+    # Linear interpolation with hold at boundaries (np.interp does this)
+    abs_widths = np.interp(eval_time, ctrl_times, ctrl_abs)
+    rel_widths = np.interp(eval_time, ctrl_times, ctrl_rel)
+    return abs_widths, rel_widths
+
+
+def _compare_tube(
+    ref_time: np.ndarray,
+    ref_values: np.ndarray,
+    act_time: np.ndarray,
+    act_values: np.ndarray,
+    tube_config: dict,
+) -> VariableComparison:
+    """Compare using a tolerance tube around the reference trajectory.
+
+    The tube width at each point is max(abs_width, rel_width * |ref|).
+    A point passes if |actual - reference| <= tube_width.
+    The test passes if ALL points are inside the tube (strict).
+
+    Supports constant tube (tube_abs/tube_rel) or time-varying tube
+    (tube_points with interpolation).
+    """
+    # Interpolate actual onto reference time grid
+    act_interp = np.interp(ref_time, act_time, act_values)
+
+    # Determine tube widths at each reference time point
+    tube_points = tube_config.get("tube_points")
+    if tube_points:
+        interpolation = tube_config.get("tube_interpolation", "linear")
+        abs_widths, rel_widths = _interpolate_tube_width(
+            ref_time, tube_points, interpolation,
+        )
+    else:
+        # Constant tube
+        abs_widths = np.full_like(ref_time, tube_config.get("tube_abs", 0.0))
+        rel_widths = np.full_like(ref_time, tube_config.get("tube_rel", 0.0))
+
+    # Tube width = max(absolute, relative * |reference|)
+    tube_width = np.maximum(abs_widths, rel_widths * np.abs(ref_values))
+
+    # Compute deviations
+    abs_error = np.abs(act_interp - ref_values)
+    violations = abs_error - tube_width  # Positive = outside tube
+
+    n_total = len(ref_time)
+    n_inside = int(np.sum(violations <= 0))
+    fraction_inside = n_inside / n_total if n_total > 0 else 1.0
+
+    # Worst violation
+    worst_idx = int(np.argmax(violations))
+    worst_violation = float(max(violations[worst_idx], 0.0))
+    worst_violation_time = float(ref_time[worst_idx])
+
+    passed = n_inside == n_total  # Strict: every point must be inside
+
+    # Also compute NRMSE for reporting (useful even in tube mode)
+    rmse = float(np.sqrt(np.mean(abs_error ** 2)))
+    signal_range = float(np.max(ref_values) - np.min(ref_values))
+    is_constant = signal_range < _EPS
+    nrmse = rmse if is_constant else rmse / signal_range
+
+    max_abs_idx = int(np.argmax(abs_error))
+    max_abs_error = float(abs_error[max_abs_idx])
+    max_abs_error_time = float(ref_time[max_abs_idx])
+
+    ref_final = float(ref_values[-1]) if len(ref_values) > 0 else 0.0
+    act_final = float(act_interp[-1]) if len(act_interp) > 0 else 0.0
+
+    return VariableComparison(
+        index=0,
+        name="",
+        passed=passed,
+        nrmse=nrmse,
+        rmse=rmse,
+        signal_range=signal_range,
+        max_abs_error=max_abs_error,
+        max_abs_error_time=max_abs_error_time,
+        reference_final=ref_final,
+        actual_final=act_final,
+        is_constant=is_constant,
+        mode="tube",
+        tube_points_inside=fraction_inside,
+        tube_worst_violation=worst_violation,
+        tube_worst_violation_time=worst_violation_time,
+    )
+
+
 def _check_structural_changes(
     reference: dict,
     result: TestResult,
@@ -337,6 +455,18 @@ def compare_test(
     comparisons = []
     all_passed = True
 
+    # Resolve base comparison tolerance: per-test > reference > config > default
+    ref_comparison = reference.get("comparison", {})
+    base_tolerance = (
+        test.comparison_tolerance
+        or ref_comparison.get("tolerance")
+        or config.tolerance
+    )
+
+    # Merge variable overrides: spec overrides take precedence over reference
+    ref_var_overrides = ref_comparison.get("variable_overrides", {})
+    merged_overrides = {**ref_var_overrides, **test.variable_overrides}
+
     for var_result in result.variables:
         ref_var = ref_vars.get(var_result.index)
         if ref_var is None:
@@ -362,19 +492,31 @@ def compare_test(
         ref_values = np.array(ref_var["values"])
         name = ref_var.get("name", ref_var.get("expression", ""))
 
-        if config.final_only:
+        # Resolve per-variable settings
+        var_override = merged_overrides.get(name, {})
+        tolerance = var_override.get("tolerance", base_tolerance)
+        mode = var_override.get("mode", "nrmse")
+
+        if mode == "tube":
+            vc = _compare_tube(
+                ref_time, ref_values,
+                var_result.time, var_result.values,
+                var_override,
+            )
+        elif config.final_only:
             ref_final = ref_values[-1] if len(ref_values) > 0 else 0.0
             act_final = float(var_result.values[-1]) if len(var_result.values) > 0 else 0.0
-            vc = _compare_final_values(ref_final, act_final, config.tolerance)
+            vc = _compare_final_values(ref_final, act_final, tolerance)
         else:
             vc = _compare_trajectories(
                 ref_time, ref_values,
                 var_result.time, var_result.values,
-                config.tolerance,
+                tolerance,
             )
 
         vc.index = var_result.index
         vc.name = name
+        vc.tolerance_used = tolerance
         comparisons.append(vc)
 
         if not vc.passed:

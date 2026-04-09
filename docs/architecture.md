@@ -97,6 +97,7 @@ reporters render TestComparison → console / JUnit / HTML / plots
   "status": "active",
   "date_added": "2026-01-15T...", "last_updated": "2026-04-08T...",
   "simulation": {"stop_time": 100, "tolerance": 1e-4, "method": "Dassl", "number_of_intervals": 500, "output_interval": null},
+  "comparison": {"tolerance": 0.01, "variable_overrides": {"pipe.T[1]": {"tolerance": 0.1}}},
   "statistics": {
     "translation": {
       "continuous_time_states": 4,
@@ -115,6 +116,8 @@ reporters render TestComparison → console / JUnit / HTML / plots
   "variables": [{"index": 1, "name": "pipe.T[1]", "values": [...]}]
 }
 ```
+
+The `comparison` section is optional. When present, it stores the comparison tolerances that were active when the baseline was accepted, so tolerances travel with the reference data. `variable_overrides` maps variable names to per-variable settings (currently `tolerance`).
 
 No persistent manifest file for the index. The in-memory `RefIndex` is built by scanning ref files at startup.
 Valid statuses: `active` (normal), `skip` (temporarily excluded), `obsolete` (pending deletion).

@@ -52,6 +52,9 @@ uv run python -m modelica_testing --config testing.json run -i no-baseline
 # Accept all results as new baselines
 uv run python -m modelica_testing --config testing.json run --accept
 
+# Generate HTML report with per-test plots
+uv run python -m modelica_testing --config testing.json run --report ./reports
+
 # Compare without re-running simulations (uses last results)
 uv run python -m modelica_testing --config testing.json compare
 
@@ -77,11 +80,36 @@ The tool looks for `testing.json` near the library root or reference root. Key f
 - `dependencies` — paths to dependency library roots loaded before simulation
 - `reference_root` — where reference results live (default: `<repo>/Resources/ReferenceResults`)
 - `test_spec` — path to external test definitions file
+- `tolerance` — global NRMSE comparison tolerance (default: `1e-4`)
 - `diagnostic_variables` — variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`)
 
 Note: `OutputCPUtime := true;` and `Advanced.UI.TranslationInCommandLog := true;` are hardcoded in the Dymola runner — no need to add them to `simulator_setup`.
 
 Reference results are partitioned by `<reference_root>/<SimulatorBackend>/<os>/`.
+
+### test_spec.json format
+
+Simulation parameters live under a `simulation` key, comparison settings under a `comparison` key. Both are optional — minimal entries need only `model` and `variables`:
+
+```json
+{
+  "tests": [
+    {
+      "model": "MyLib.Examples.SimpleTest",
+      "variables": ["pipe.T[1]", "pipe.m_flow"],
+      "simulation": {"stop_time": 100, "tolerance": 1e-6},
+      "comparison": {
+        "tolerance": 0.01,
+        "variable_overrides": {"pipe.T[1]": {"tolerance": 0.1}}
+      }
+    }
+  ]
+}
+```
+
+### Tolerance resolution order
+
+Per-variable override (spec) > per-variable override (reference JSON) > per-test comparison tolerance > reference JSON comparison tolerance > config.tolerance > default (1e-4). When accepting results, comparison settings are saved in the reference JSON's `comparison` section so tolerances travel with the baseline.
 
 
 ## Key Abstractions

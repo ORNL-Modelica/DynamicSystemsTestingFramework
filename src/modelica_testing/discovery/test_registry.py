@@ -37,6 +37,11 @@ class TestModel:
     # These are resolved against actual .mat variable names after simulation.
     variable_patterns: list[str] = field(default_factory=list)
 
+    # Comparison settings (per-test and per-variable overrides)
+    comparison_tolerance: Optional[float] = None  # Overrides config.tolerance
+    variable_overrides: dict[str, dict] = field(default_factory=dict)
+    # variable_overrides format: {"var_name": {"tolerance": 0.1}, ...}
+
     # Where this test was defined: "unit_tests", "spec", "both"
     source: str = "unit_tests"
 
@@ -143,6 +148,10 @@ def discover_tests(config: Config) -> list[TestModel]:
                 existing.number_of_intervals = spec_test.number_of_intervals
             if spec_test.output_interval is not None:
                 existing.output_interval = spec_test.output_interval
+            if spec_test.comparison_tolerance is not None:
+                existing.comparison_tolerance = spec_test.comparison_tolerance
+            if spec_test.variable_overrides:
+                existing.variable_overrides.update(spec_test.variable_overrides)
         else:
             # Spec-only test
             merged[model_id] = spec_test

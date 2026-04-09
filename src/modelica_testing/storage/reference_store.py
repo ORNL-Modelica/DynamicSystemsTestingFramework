@@ -225,6 +225,22 @@ class ReferenceStore:
             },
         }
 
+        # Comparison settings (per-test and per-variable tolerances)
+        comparison = {}
+        if test.comparison_tolerance is not None:
+            comparison["tolerance"] = test.comparison_tolerance
+        if test.variable_overrides:
+            comparison["variable_overrides"] = test.variable_overrides
+        # Preserve existing comparison settings if not overridden
+        if existing and "comparison" in existing:
+            existing_comp = existing["comparison"]
+            if "tolerance" not in comparison and "tolerance" in existing_comp:
+                comparison["tolerance"] = existing_comp["tolerance"]
+            if "variable_overrides" not in comparison and "variable_overrides" in existing_comp:
+                comparison["variable_overrides"] = existing_comp["variable_overrides"]
+        if comparison:
+            ref_data["comparison"] = comparison
+
         if result.statistics:
             ref_data["statistics"] = result.statistics
 

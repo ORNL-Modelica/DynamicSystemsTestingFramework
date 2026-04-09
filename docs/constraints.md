@@ -36,6 +36,10 @@
 
 - **Dymola default output intervals**: When neither `numberOfIntervals` nor `Interval` is specified in the experiment annotation, Dymola defaults to 500 intervals. The framework auto-derives and stores `numberOfIntervals` from the first run to ensure consistent output grids on subsequent runs.
 
+## Stale Artifacts
+
+- **Test directory cleanup is mandatory**: Test directories must be cleaned (`rmtree` + recreate) before each run. Stale `dsres.mat`, `dslog.txt`, or `translation_log.txt` from a previous run can cause false passes if the current simulation fails silently. Translation log is additionally checked for "Translation aborted" as defense in depth.
+
 ## Tooling
 
 - **argparse subcommand defaults override parent**: If both parent parser and subcommand define the same argument (e.g., `--reference-root`), the subcommand's default (`None`) silently overwrites the parent's parsed value. Global flags must only be on the parent parser.

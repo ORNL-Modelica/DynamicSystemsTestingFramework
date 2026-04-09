@@ -31,6 +31,16 @@
 - Data fields last (`n_vars`, `time`, `variables`)
 - Makes files human-readable when opened — you see context before scrolling through numbers
 
+### Tolerance resolution order
+- Per-variable override from test spec (`comparison.variable_overrides`) takes highest priority
+- Per-variable override from reference JSON (`comparison.variable_overrides`) is next
+- Per-test comparison tolerance from test spec (`comparison.tolerance`)
+- Comparison tolerance from reference JSON (`comparison.tolerance`)
+- Global config tolerance (`config.tolerance`)
+- Default: `1e-4`
+- Each `VariableComparison` records `tolerance_used` — the tolerance that was actually applied, shown in HTML reports
+- When accepting results, the active comparison settings (tolerance + variable overrides) are saved in the reference JSON's `comparison` section so tolerances travel with the baseline
+
 ### Config resolution order
 - CLI args > `testing.json` file > defaults
 - `testing.json` search: reference_root → repo_root → package_dir → cwd
@@ -57,6 +67,10 @@
 - Phase 3: `read_dymola_mat(variable_names=needed)` memory-maps `data_2` and reads only the needed rows
 - For 76,992 variables where only 10 are needed, this reads ~0.01% of the trajectory data
 - Critical for WSL2 where 9P filesystem I/O is slow for large files
+
+### Stale artifact protection
+- Test directories are cleaned (`rmtree` + recreate) before each simulation run, preventing stale `dsres.mat`, `dslog.txt`, or `translation_log.txt` from a previous run from being misread as current results
+- Translation log is checked for "Translation aborted" as defense in depth — even if stale artifacts survive, an aborted translation is caught
 
 ### Translation log parsing separates simulation and initialization
 - The "Translated Model" section has two levels: simulation-level stats and a nested "Initialization problem" subsection

@@ -131,6 +131,54 @@ class TestSpecParser:
         data = json.loads(spec_path.read_text())
         assert set(data["tests"][0]["variables"]) == {"var1", "var2", "var3"}
 
+    def test_structured_simulation_and_comparison(self, tmp_path):
+        """Parse the structured format with simulation and comparison sections."""
+        spec_path = tmp_path / "test_spec.json"
+        spec_path.write_text(json.dumps({
+            "tests": [{
+                "model": "MyLib.Examples.HeatExchanger",
+                "variables": ["pipe.T[1]", "pump.m_flow"],
+                "simulation": {
+                    "stop_time": 1000,
+                    "tolerance": 1e-4,
+                    "method": "Esdirk45a",
+                    "number_of_intervals": 500,
+                    "timeout": 120,
+                },
+                "comparison": {
+                    "tolerance": 0.05,
+                    "variable_overrides": {
+                        "pipe.T[1]": {"tolerance": 0.1},
+                    },
+                },
+            }],
+        }))
+
+        tests = parse_test_spec(spec_path)
+        assert len(tests) == 1
+        t = tests[0]
+        assert t.model_id == "MyLib.Examples.HeatExchanger"
+        assert t.stop_time == 1000
+        assert t.tolerance == 1e-4
+        assert t.method == "Esdirk45a"
+        assert t.number_of_intervals == 500
+        assert t.timeout == 120
+        assert t.comparison_tolerance == 0.05
+        assert t.variable_overrides == {"pipe.T[1]": {"tolerance": 0.1}}
+
+    def test_minimal_spec_entry(self, tmp_path):
+        """Minimal entry with just model and variables uses all defaults."""
+        spec_path = tmp_path / "test_spec.json"
+        spec_path.write_text(json.dumps({
+            "tests": [{"model": "MyLib.Simple", "variables": ["x"]}],
+        }))
+
+        tests = parse_test_spec(spec_path)
+        assert len(tests) == 1
+        t = tests[0]
+        assert t.comparison_tolerance is None
+        assert t.variable_overrides == {}
+
     def test_nonexistent_spec(self):
         """Nonexistent spec file returns empty list."""
         tests = parse_test_spec(Path("/nonexistent/test_spec.json"))

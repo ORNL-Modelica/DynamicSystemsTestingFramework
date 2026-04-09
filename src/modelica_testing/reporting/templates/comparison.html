@@ -89,12 +89,14 @@ details summary:hover { color: #333; }
 {% if variables %}
 <h2>Variables</h2>
 <table class="var-table">
-<tr><th>Status</th><th>Variable</th><th>NRMSE</th></tr>
+<tr><th>Status</th><th>Variable</th><th>Mode</th><th>NRMSE</th><th>Tolerance</th></tr>
 {% for v in variables %}
 <tr>
   <td><span class="{{ 'pass' if v.passed else 'fail' }}">{{ "PASS" if v.passed else "FAIL" }}</span></td>
   <td>{{ v.name }}{% if v.is_constant %} (const){% endif %}</td>
+  <td>{{ v.mode | default("nrmse") }}{% if v.tube_points_inside is not none %} ({{ "%.0f" | format(v.tube_points_inside * 100) }}% in){% endif %}</td>
   <td>{{ "%.4e" | format(v.nrmse) }}</td>
+  <td>{{ "%.4e" | format(v.tolerance_used) }}</td>
 </tr>
 {% endfor %}
 </table>
@@ -103,7 +105,7 @@ details summary:hover { color: #333; }
   <summary>Full variable details (RMSE, range, max error, finals)</summary>
   <table>
   <tr>
-  <th>Status</th><th>Variable</th><th>NRMSE</th><th>RMSE</th>
+  <th>Status</th><th>Variable</th><th>NRMSE</th><th>Tolerance</th><th>RMSE</th>
   <th>Range</th><th>Max Abs Err</th><th>At Time</th>
   <th>Ref Final</th><th>Act Final</th>
   </tr>
@@ -112,6 +114,7 @@ details summary:hover { color: #333; }
     <td><span class="{{ 'pass' if v.passed else 'fail' }}">{{ "PASS" if v.passed else "FAIL" }}</span></td>
     <td>{{ v.name }}{% if v.is_constant %} (const){% endif %}</td>
     <td>{{ "%.4e" | format(v.nrmse) }}</td>
+    <td>{{ "%.4e" | format(v.tolerance_used) }}</td>
     <td>{{ "%.4e" | format(v.rmse) }}</td>
     <td>{{ "%.4e" | format(v.signal_range) }}</td>
     <td>{{ "%.4e" | format(v.max_abs_error) }}</td>

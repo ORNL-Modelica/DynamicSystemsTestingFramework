@@ -169,6 +169,11 @@ def _build_template_context(
             "reference_final": vc.reference_final,
             "actual_final": vc.actual_final,
             "is_constant": vc.is_constant,
+            "tolerance_used": vc.tolerance_used,
+            "mode": vc.mode,
+            "tube_points_inside": vc.tube_points_inside,
+            "tube_worst_violation": vc.tube_worst_violation,
+            "tube_worst_violation_time": vc.tube_worst_violation_time,
         })
 
     # --- Plot references ---

@@ -25,13 +25,26 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
         {
           "model": "MyLib.Examples.PipeTest",
           "variables": ["pipe.T[1]", "medium.T*"],
-          "stop_time": 100,
-          "tolerance": 1e-4,
-          "method": "Dassl",
-          "number_of_intervals": 500
+          "simulation": {
+            "stop_time": 100,
+            "tolerance": 1e-4,
+            "method": "Dassl",
+            "number_of_intervals": 500,
+            "output_interval": null,
+            "timeout": 120
+          },
+          "comparison": {
+            "tolerance": 0.05,
+            "variable_overrides": {
+              "pipe.T[1]": {"tolerance": 0.1}
+            }
+          }
         }
       ]
     }
+
+    Minimal entry (all defaults):
+    {"model": "MyLib.Examples.Simple", "variables": ["x"]}
 
     Variable patterns:
     - Explicit: "pipe.T[1]" — exact variable name
@@ -76,21 +89,27 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
             source="spec",
         )
 
-        # Optional simulation parameter overrides
-        if "stop_time" in entry:
-            test.stop_time = float(entry["stop_time"])
-        if "tolerance" in entry:
-            test.tolerance = float(entry["tolerance"])
-        if "method" in entry:
-            test.method = str(entry["method"])
-        if "number_of_intervals" in entry:
-            test.number_of_intervals = int(entry["number_of_intervals"])
-        if "output_interval" in entry:
-            test.output_interval = float(entry["output_interval"])
-        if "timeout" in entry:
-            test.timeout = int(entry["timeout"])
-        if "error_expected" in entry:
-            test.error_expected = float(entry["error_expected"])
+        # Simulation settings
+        sim = entry.get("simulation", {})
+        if "stop_time" in sim:
+            test.stop_time = float(sim["stop_time"])
+        if "tolerance" in sim:
+            test.tolerance = float(sim["tolerance"])
+        if "method" in sim:
+            test.method = str(sim["method"])
+        if "number_of_intervals" in sim:
+            test.number_of_intervals = int(sim["number_of_intervals"])
+        if "output_interval" in sim:
+            test.output_interval = float(sim["output_interval"])
+        if "timeout" in sim:
+            test.timeout = int(sim["timeout"])
+
+        # Comparison settings
+        comp = entry.get("comparison", {})
+        if "tolerance" in comp:
+            test.comparison_tolerance = float(comp["tolerance"])
+        if "variable_overrides" in comp:
+            test.variable_overrides = comp["variable_overrides"]
 
         tests.append(test)
 

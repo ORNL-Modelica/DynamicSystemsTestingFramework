@@ -3,8 +3,10 @@
     {
       "model": "ModelicaTestingLib.Examples.NoUnitTest",
       "variables": ["x"],
-      "stop_time": 5,
-      "tolerance": 1e-4
+      "simulation": {
+        "stop_time": 5,
+        "tolerance": 1e-4
+      }
     }
   ]
 }
