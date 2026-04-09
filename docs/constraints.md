@@ -6,7 +6,7 @@
 
 - **Dymola working directory behavior**: `openModel()` changes Dymola's cwd to the model's directory. Every `.mos` script that writes output must explicitly `cd()` to the desired output directory after any `openModel()` call.
 
-- **Dymola per-simulation artifacts**: `dsin.txt`, `dslog.txt`, `dsfinal.txt`, and the `.mat` result file are all written to cwd. Parallel simulations in the same directory corrupt each other. Per-test subdirectories are mandatory.
+- **Dymola per-simulation artifacts**: `dsin.txt`, `dslog.txt`, `dsfinal.txt`, and `dsres.mat` are all written to cwd. Parallel simulations in the same directory corrupt each other. Per-test subdirectories are mandatory. Artifact names use Dymola defaults (`dsres.mat`, not custom names) to avoid redundancy with the folder name.
 
 ## Dymola MAT4 Format
 

@@ -17,7 +17,7 @@ ModelicaTesting/
 
 ```
 src/modelica_testing/
-├── cli.py                    # argparse CLI: discover, run, compare, export, manifest, add
+├── cli.py                    # argparse CLI: discover, run, compare, export, manifest (cleanup/dump), add
 ├── config.py                 # Config dataclass, path resolution, testing.json loading
 ├── discovery/
 │   ├── mo_parser.py          # Scans .mo files for UnitTests components
@@ -82,7 +82,7 @@ reporters render TestComparison → console / JUnit / HTML / plots
 | `TestComparison` | `comparison/comparator.py` | Comparison result: pass/fail, per-variable NRMSE, warnings |
 | `ReferenceStore` | `storage/reference_store.py` | CRUD for reference JSON files via RefIndex |
 | `RefIndex` | `storage/reference_store.py` | In-memory index mapping model IDs ↔ numeric IDs (built by scanning ref files) |
-| `BatchManifest` | `simulators/base.py` | Maps test keys to model IDs within a batch run |
+| `BatchManifest` | `simulators/base.py` | Maps test keys to `{"model_id", "ref_id"}` within a batch run |
 
 ## Reference File Structure
 
@@ -112,8 +112,12 @@ reporters render TestComparison → console / JUnit / HTML / plots
 }
 ```
 
-No persistent manifest file. The in-memory `RefIndex` is built by scanning ref files at startup.
+No persistent manifest file for the index. The in-memory `RefIndex` is built by scanning ref files at startup.
 Valid statuses: `active` (normal), `skip` (temporarily excluded), `obsolete` (pending deletion).
+
+Two manifest files are written to the work directory before simulation starts:
+- `batch_manifest.json` — maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN"}` for all tests in the batch
+- `reference_manifest.json` — maps ref IDs to model names; also available via `manifest dump` CLI command
 
 ## Simulator Abstraction
 

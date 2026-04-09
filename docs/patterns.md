@@ -4,10 +4,12 @@
 
 ### Dymola `.mos` script structure: startup → per-test → shutdown
 - `startup.mos`: `cd()`, load dependencies, load main library, framework settings (`OutputCPUtime`, `Advanced.UI.TranslationInCommandLog`), user setup commands
-- `test_NNNN.mos`: `cd()` to test subdir, `clearlog()`, `simulateModel(...)`, `savelog("translation_log.txt")`
+- `simulate.mos`: `cd()` to test subdir, `clearlog()`, `simulateModel(...)`, `savelog("translation_log.txt")` — result saved as `dsres.mat` (Dymola default)
 - `shutdown.mos`: `Modelica.Utilities.System.exit()`
-- `batch_NNNN.mos`: `RunScript()` calls chaining startup + all tests + shutdown
-- Each test gets its own subdirectory to prevent file conflicts (`dsin.txt`, `dslog.txt`, `dsfinal.txt`, `translation_log.txt` are per-simulation)
+- `batch_manifest.json`: written before simulation, maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN"}`
+- `reference_manifest.json`: written before simulation, maps ref IDs to model names
+- `batch.mos`: `RunScript()` calls chaining startup + all tests + shutdown
+- Each test gets its own subdirectory to prevent file conflicts (`dsin.txt`, `dslog.txt`, `dsfinal.txt`, `dsres.mat`, `translation_log.txt` are per-simulation)
 - Two log files per test: `dslog.txt` (simulation runtime) and `translation_log.txt` (translation/structural stats) — merged into one `statistics` dict
 
 ### Variable pattern matching treats `[]` as literal
@@ -78,8 +80,13 @@
 ### Don't run Dymola per-test in separate processes
 - Library loading overhead (30-60s) dominates. Batch execution loads once per worker.
 
+### No-baseline plot generation
+- When a test has no reference baseline, variable plots are still generated showing the simulated trajectory
+- Plots display a "NEW" badge and use a single panel (no error panels since there is no reference to compare against)
+- Enables visual review of new tests before accepting them as baselines
+
 ### Don't store simulation artifacts in shared directories during parallel runs
-- `dsin.txt`, `dslog.txt`, `dsfinal.txt` are overwritten by each simulation
+- `dsin.txt`, `dslog.txt`, `dsfinal.txt`, `dsres.mat` are overwritten by each simulation
 - Per-test subdirectories (`test_NNNN/`) are required for parallel execution
 
 ### Don't use `np.interp` directly on time series with duplicate times

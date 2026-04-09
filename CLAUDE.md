@@ -23,7 +23,7 @@ ModelicaTesting/
 │   ├── Components/UnitTests.mo  # Reusable UnitTests component for tracking variables
 │   ├── Examples/                # SimpleTest, EventTest, ConstantTest, IntervalTest, NoUnitTest
 │   └── Resources/ReferenceResults/  # testing.json + reference baselines for this library
-├── tests/                       # pytest test suite (131 tests)
+├── tests/                       # pytest test suite (154 tests)
 │   ├── fixtures/                # Test data: dslog.txt, .mat file, test_spec.json
 │   └── test_*.py                # Comparator, config, discovery, storage, simulators
 ├── docs/                        # Design decisions, patterns, architecture, constraints, usage
@@ -43,11 +43,19 @@ uv run python -m modelica_testing --package-path /path/to/MyLib --reference-root
 # Interactive review (accept/skip/plot per test)
 uv run python -m modelica_testing --config testing.json run -i
 
+# Interactive review filtered to specific categories
+uv run python -m modelica_testing --config testing.json run -i failed
+uv run python -m modelica_testing --config testing.json run -i no-baseline
+# Categories: failed, no-baseline, warnings, sim-failed, passed, all
+
 # Accept all results as new baselines
 uv run python -m modelica_testing --config testing.json run --accept
 
 # Compare without re-running simulations (uses last results)
 uv run python -m modelica_testing --config testing.json compare
+
+# Dump reference manifest (ref ID to model name mapping) without running tests
+uv run python -m modelica_testing --config testing.json manifest dump
 ```
 
 ## Running Tests

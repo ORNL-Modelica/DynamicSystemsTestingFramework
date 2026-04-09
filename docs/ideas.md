@@ -6,7 +6,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 
 | # | Idea | Ease | Impact | Notes |
 |---|------|------|--------|-------|
-| 1 | Filtered interactive review | L | High | Small CLI change, immediately saves time on large suites |
+| 1 | ~~Filtered interactive review~~ | L | High | **DONE** — `-i [FILTER]` with categories: `failed`, `no-baseline`, `warnings`, `sim-failed`, `passed`, `all` |
 | 2 | Link to simulation artifacts from HTML | L | High | Just adding `file://` links to existing reports |
 | 3 | Full reference data in HTML reports | L | Medium | Display fields already stored, just not rendered |
 | 4 | Manifest compaction / ID reset | L | Low | Niche — only needed after major restructuring |
@@ -20,7 +20,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 12 | Model health analysis from reference data | H | High | Mining + ranking logic across all refs; powerful but complex |
 | 13 | Dependency-aware test ordering | H | Medium | Requires dependency graph extraction from Modelica sources |
 
-**Recommended order**: Start with 1-3 (quick wins), then 5-6 (report overhaul as a batch), then 11-12 (high-effort, high-value).
+**Recommended order**: Start with 2-3 (quick wins, 1 is done), then 5-6 (report overhaul as a batch), then 11-12 (high-effort, high-value).
 
 ---
 
@@ -69,13 +69,12 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Could be simulator-specific (Dymola diagnostics differ from OpenModelica) or user-specific
 - Keeps the most important signals visible without scrolling through dozens of variables
 
-## Filtered interactive review
+## ~~Filtered interactive review~~ (DONE)
 
-- Run all tests but only prompt for specific categories: `--interactive=failed`, `--interactive=no-baseline`, `--interactive=warnings`
-- Passing tests are silently accepted/skipped without user interaction
-- Avoids pressing `s` dozens of times to get to the few tests that need attention
-- Could combine filters: `--interactive=failed,no-baseline` to review both failures and new tests
-- Default `-i` behavior stays the same (prompt for everything)
+- **Implemented**: `-i [FILTER]` accepts an optional filter value
+- Categories: `failed`, `no-baseline`, `warnings`, `sim-failed`, `passed`, `all`
+- Non-matching tests are silently skipped without user interaction
+- Default `-i` (no filter) prompts for everything, same as before
 
 ## Auto-generate HTML report suite with navigation
 
