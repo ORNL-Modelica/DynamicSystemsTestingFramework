@@ -186,10 +186,12 @@ details summary:hover { color: #333; }
       <option value="abs_error">Abs Error</option>
       <option value="nrmse">NRMSE</option>
     </select>
+    {% if not variables[loop.index0].is_constant %}
     <select class="btn mode-select" data-idx="{{ loop.index0 }}" onchange="setVarMode({{ loop.index0 }}, this.value)">
       <option value="nrmse"{% if variables[loop.index0].mode == 'nrmse' %} selected{% endif %}>NRMSE</option>
       <option value="tube"{% if variables[loop.index0].mode == 'tube' %} selected{% endif %}>Tube</option>
     </select>
+    {% endif %}
   </h3>
   <div class="plotly-chart" id="plot-{{ loop.index0 }}" style="height:300px"></div>
   <div class="tube-editor" id="tube-editor-{{ loop.index0 }}" style="display:none">

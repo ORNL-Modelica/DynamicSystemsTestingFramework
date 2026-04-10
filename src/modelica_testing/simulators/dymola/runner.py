@@ -505,7 +505,13 @@ def _extract_variables(
             var_name = f"unitTests.x[{i}]"
             if var_name in mat_data:
                 time, values = mat_data[var_name]
-                expr = test.x_expressions[i - 1] if i - 1 < len(test.x_expressions) else var_name
+                # Use parsed expressions only when they map 1:1 to variables.
+                # Complex expressions like cat() produce fewer names than variables,
+                # so fall back to x[i] for all to avoid misleading labels.
+                if len(test.x_expressions) == test.n_vars:
+                    expr = test.x_expressions[i - 1]
+                else:
+                    expr = f"x[{i}]"
                 results.append(VariableResult(index=idx, time=time, values=values, name=expr))
                 seen_names.add(var_name)
                 seen_names.add(expr)

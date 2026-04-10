@@ -553,7 +553,12 @@ def compare_test(
         else:
             ref_time = np.array(ref_var["time"])
         ref_values = np.array(ref_var["values"])
-        name = ref_var.get("name", ref_var.get("expression", ""))
+        ref_name = ref_var.get("name", ref_var.get("expression", ""))
+        # Prefer current run's name; fall back to reference name if it's clean
+        # (not a raw Modelica expression like "cat(1, ...)")
+        name = var_result.name or ref_name
+        if not name or "\n" in name or name.startswith("cat("):
+            name = f"x[{var_result.index}]"
 
         # Resolve per-variable settings
         var_override = merged_overrides.get(name, {})
