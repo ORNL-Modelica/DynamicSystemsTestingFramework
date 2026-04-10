@@ -524,6 +524,13 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
 
     spec_path = _get_spec_path(config) if config else None
 
+    # Resolve reference file path for clickable link in report
+    ref_file = None
+    test_id = store.index.get_id(model_id)
+    if test_id:
+        from .storage.reference_store import RefIndex
+        ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
+
     html_path = generate_comparison_plots(
         model_id=model_id,
         ref_data=ref_data,
@@ -533,6 +540,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         test_dir=test_dir,
         test_model=test,
         spec_path=spec_path,
+        ref_file=ref_file,
     )
 
     if html_path:

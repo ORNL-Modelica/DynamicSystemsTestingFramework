@@ -75,6 +75,7 @@ def _build_template_context(
     test_dir: Optional[Path],
     test_model=None,
     result=None,
+    ref_file: Optional[Path] = None,
 ) -> dict:
     """Build the full template context dict from comparison data."""
     if cur_stats is None:
@@ -99,14 +100,18 @@ def _build_template_context(
     if ref_data and ref_data.get("test_id"):
         from ..storage.reference_store import RefIndex
         ref_filename = RefIndex.ref_filename(ref_data["test_id"])
-        ref_info.append({
-            "label": "Reference File",
-            "value": ref_filename,
-        })
+        row = {"label": "Reference File", "value": ref_filename}
+        if ref_file and ref_file.exists():
+            row["link"] = ref_file.resolve().as_uri()
+        ref_info.append(row)
 
     # Add test directory key (e.g., test_0051)
     if test_dir and test_dir.exists():
-        ref_info.append({"label": "Test Directory", "value": test_dir.name})
+        ref_info.append({
+            "label": "Test Directory",
+            "value": test_dir.name,
+            "link": test_dir.resolve().as_uri(),
+        })
 
     ref_info.append({
         "label": "Tracked Variables",
@@ -436,6 +441,7 @@ def generate_comparison_plots(
     test_dir: Optional[Path] = None,
     test_model=None,
     spec_path: Optional[Path] = None,
+    ref_file: Optional[Path] = None,
 ) -> Optional[Path]:
     """Generate per-variable comparison PNGs and an HTML viewer.
 
@@ -565,6 +571,7 @@ def generate_comparison_plots(
     context = _build_template_context(
         model_id, png_files, comparisons, ref_data, cur_stats,
         diag_png_files, nobaseline_png_files, test_dir, test_model, result,
+        ref_file=ref_file,
     )
 
     # Add spec path for "Save to Spec" functionality
@@ -658,6 +665,13 @@ def generate_report_suite(
 
         test_dir = config.work_dir / test_key if test_key else None
 
+        # Resolve reference file path for clickable link in report
+        ref_file = None
+        test_id = store.index.get_id(model_id)
+        if test_id:
+            from ..storage.reference_store import RefIndex
+            ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
+
         # Generate per-test report
         report_path = None
         safe_id = _sanitize_filename(model_id)
@@ -671,6 +685,7 @@ def generate_report_suite(
             plot_dir=plot_dir,
             test_dir=test_dir,
             test_model=test,
+            ref_file=ref_file,
         )
 
         if html_path:
