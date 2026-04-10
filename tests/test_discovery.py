@@ -9,6 +9,7 @@ from modelica_testing.discovery.mo_parser import (
     parse_mo_file,
     _extract_within,
     _extract_model_name,
+    _parse_unit_tests,
 )
 from modelica_testing.discovery.spec_parser import (
     parse_test_spec,
@@ -68,6 +69,48 @@ class TestMoParser:
     def test_nonexistent_file(self):
         result = parse_mo_file(Path("/nonexistent/file.mo"))
         assert result is None
+
+    def test_bare_variable(self):
+        """x=y where y is an array — bare variable without braces."""
+        text = 'Utilities.ErrorAnalysis.UnitTests unitTests(n=2, x=y)'
+        info = _parse_unit_tests(text)
+        assert info.x_expressions == ["y"]
+        assert info.x_raw == "y"
+
+    def test_bare_qualified_variable(self):
+        """x=some.qualified.name — dotted path without braces."""
+        text = 'UnitTests ut(n=2, x=heatTransfer.alphas)'
+        info = _parse_unit_tests(text)
+        assert info.x_expressions == ["heatTransfer.alphas"]
+        assert info.x_raw == "heatTransfer.alphas"
+
+    def test_bare_deep_qualified_variable(self):
+        """x=a.b.c.d — deeply nested dotted path."""
+        text = 'UnitTests ut(x=ductOut.port_b.C_outflow)'
+        info = _parse_unit_tests(text)
+        assert info.x_expressions == ["ductOut.port_b.C_outflow"]
+
+    def test_bare_variable_with_x_reference(self):
+        """Bare x=y doesn't interfere with x_reference parsing."""
+        text = 'UnitTests ut(n=2, x=y, x_reference={1.0, 2.0})'
+        info = _parse_unit_tests(text)
+        assert info.x_expressions == ["y"]
+        assert info.x_reference == [1.0, 2.0]
+
+    def test_no_x_param(self):
+        """UnitTests with only x_reference but no x= gives empty expressions."""
+        text = 'UnitTests ut(n=2, x_reference={1.0, 2.0})'
+        info = _parse_unit_tests(text)
+        assert info.x_expressions == []
+        assert info.x_reference == [1.0, 2.0]
+
+    def test_array_functions(self):
+        """x=fill(...), x=zeros(...), etc. are captured like cat(...)."""
+        for func in ("fill", "zeros", "ones", "linspace"):
+            text = f'UnitTests ut(n=3, x={func}(0, 3))'
+            info = _parse_unit_tests(text)
+            assert len(info.x_expressions) == 1
+            assert info.x_expressions[0].startswith(f"{func}(")
 
 
 # ---------------------------------------------------------------------------

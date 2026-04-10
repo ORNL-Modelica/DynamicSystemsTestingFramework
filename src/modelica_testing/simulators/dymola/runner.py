@@ -508,8 +508,12 @@ def _extract_variables(
                 # Use parsed expressions only when they map 1:1 to variables.
                 # Complex expressions like cat() produce fewer names than variables,
                 # so fall back to x[i] for all to avoid misleading labels.
+                # When a single bare variable maps to multiple vars (e.g. x=y
+                # where y is an array), use varname[i] labels.
                 if len(test.x_expressions) == test.n_vars:
                     expr = test.x_expressions[i - 1]
+                elif len(test.x_expressions) == 1 and test.n_vars > 1:
+                    expr = f"{test.x_expressions[0]}[{i}]"
                 else:
                     expr = f"x[{i}]"
                 results.append(VariableResult(index=idx, time=time, values=values, name=expr))

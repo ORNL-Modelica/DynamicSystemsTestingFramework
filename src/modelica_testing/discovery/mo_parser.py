@@ -148,9 +148,9 @@ def _parse_unit_tests(text: str) -> Optional[UnitTestInfo]:
         raw = _extract_balanced_braces(param_text, brace_start)
         info.x_raw = raw
         info.x_expressions = _parse_x_expressions(raw)
-    elif re.search(r'\bx\s*=\s*cat\s*\(', param_text):
-        # x=cat(1, ...) without outer braces
-        m2 = re.search(r'\bx\s*=\s*(cat\s*\()', param_text)
+    elif re.search(r'\bx\s*=\s*(?:cat|fill|zeros|ones|linspace)\s*\(', param_text):
+        # x=cat(1, ...) or x=fill(...) etc. without outer braces
+        m2 = re.search(r'\bx\s*=\s*((?:cat|fill|zeros|ones|linspace)\s*\()', param_text)
         if m2:
             paren_start = param_text.index('(', m2.start())
             depth2 = 0
@@ -163,9 +163,16 @@ def _parse_unit_tests(text: str) -> Optional[UnitTestInfo]:
                     if depth2 == 0:
                         end2 = i
                         break
-            raw = param_text[m2.start() + 2:end2 + 1]  # include "cat(...)"
+            raw = param_text[m2.start() + 2:end2 + 1]  # include "func(...)"
             info.x_raw = raw.strip()
             info.x_expressions = [raw.strip()]
+    else:
+        # x=varName or x=some.qualified.name — bare variable reference
+        m2 = re.search(r'\bx\s*=\s*([\w.]+(?:\[[\w.,\s]+\])?)', param_text)
+        if m2:
+            raw = m2.group(1).strip()
+            info.x_raw = raw
+            info.x_expressions = [raw]
 
     # Extract x_reference={...}
     m = re.search(r'\bx_reference\s*=\s*\{', param_text)

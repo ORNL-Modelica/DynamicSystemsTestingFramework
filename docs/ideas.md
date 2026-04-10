@@ -19,8 +19,25 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 11 | Test discovery by extends/folder | H | High | Requires Modelica AST parsing or robust regex scanning |
 | 12 | Model health analysis from reference data | H | High | Mining + ranking logic across all refs; powerful but complex |
 | 13 | Dependency-aware test ordering | H | Medium | Requires dependency graph extraction from Modelica sources |
+| 14 | Link to reference JSON file from HTML | L | Medium | Artifacts link to sim files but not the ref JSON; filename shown as text in ref_info but not clickable |
+| 15 | WebGL for large traces (scattergl) | L | High | Switch to `scattergl` when trace >5k points; SVG unusable beyond ~10k |
+| 16 | LTTB data decimation | M | High | Browser-side downsampling for 10k+ point traces; ~50 lines JS |
+| 17 | Linked panel zoom | L | Medium | Sync x-axis across trajectory/abs-error/NRMSE panels via `plotly_relayout` |
+| 18 | Worst-violation annotation | L | Medium | Arrow + callout at worst error point on trajectory plot; data already in context |
+| 19 | Zoom-dependent statistics | L | Medium | Recompute NRMSE/max-error for visible window on zoom; ~40 lines JS |
+| 20 | Sparkline error profiles | L | Low | Inline SVG polylines in variable sidebar; ~20 lines JS |
+| 21 | Summary heatmap on index page | M | High | Variables × tests grid colored by NRMSE; click-to-navigate |
+| 22 | Color-coded trajectories | M | Low | Line colored by local error magnitude via 5-8 band traces |
+| 23 | Frechet distance & area between curves | L | Medium | `similaritymeasures` package; supplementary diagnostic metrics |
+| 24 | Spectral coherence comparison | M | Medium | `scipy.signal.coherence`; frequency-domain agreement per variable |
+| 25 | X-direction time tolerance | M | High | Handle solver-dependent event timing shifts; concept from pyfunnel |
+| 26 | ISO 18571 failure diagnostics | M | Medium | Phase/magnitude/slope decomposition via `objective-rating-metrics` |
+| 27 | Phase-space plots | M | Low | Variable vs variable plots; data already embedded |
+| 28 | JSON size management for large suites | M | Medium | Sidecar files + lazy fetch when embedded JSON exceeds ~20 MB |
+| 29 | Progressive enhancement: optional server | H | Medium | Thin FastAPI layer for accept-from-browser, re-compare, lazy loading |
+| 30 | Notebook integration helper | L | Low | Data-loading utility for `comparison_data.json` in Jupyter |
 
-**Recommended order**: 1-3, 5-6, 8 are done. Next: 11-12 (high-effort, high-value), or 7, 9 (medium effort).
+**Recommended order**: 1-3, 5-6, 8 are done. Next priorities: 14-16 (performance + ref link), 17-19 (quick HTML improvements), 11-12 (high-effort, high-value), or 7, 9 (medium effort).
 
 ---
 
@@ -135,6 +152,149 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Could be a CLI command like `modelica-testing analyze` or `modelica-testing health` that produces a summary table sorted by severity
 - Output as console table, CSV for spreadsheet analysis, or HTML dashboard
 - Useful for library maintainers to prioritize optimization work across hundreds of models
+
+## Link to reference JSON file from HTML report
+
+- Artifacts section links to simulation files (dslog.txt, dsin.txt, dsres.mat, etc.) but not to the reference JSON file (e.g., `ref_0042.json`)
+- The reference filename is already shown as text in the "Reference Information" table via `ref_info` (see `plot_comparison.py:98-104`) but it's not a clickable link
+- Need to resolve the full path to the reference file and add a `file://` URI link, either as an artifact entry or as a clickable link in the ref_info table
+- Requires passing the resolved reference file path through to `_build_template_context()`
+
+## Performance: WebGL rendering for large traces (scattergl)
+
+- Switch Plotly traces from `scatter` (SVG) to `scattergl` (WebGL) when point count exceeds ~5k per trace
+- SVG creates one DOM element per point — sluggish on zoom/pan beyond 5k, unusable beyond ~10k
+- `scattergl` renders all points in a single WebGL draw call
+- Decision can be made at report generation time: set `type: 'scattergl'` in the JSON context per-trace based on array length
+- Caveats: `scattergl` supports `fill:'toself'` for tube envelopes but `hoveron:'fills'` doesn't work (hover only on data points); line `dash` styles are limited; `shape: 'spline'` not supported
+- Threshold guidelines: <5k SVG fine, 5k-100k use scattergl, >100k also needs LTTB
+
+## Performance: LTTB data decimation for large traces
+
+- Implement browser-side Largest-Triangle-Three-Buckets (LTTB) downsampling (~50 lines of JS)
+- LTTB preserves visual peaks and valleys far better than uniform sampling or min/max binning
+- Downsample to ~2k display points on initial load; re-run on zoom via `plotly_relayout` with visible window data
+- LTTB on 100k→2k runs in ~5-15ms in modern browsers — fast enough for interactive zoom
+- Only activate above a threshold (e.g., 10k points)
+- Alternative: min-max binning (keeps min and max per bucket, faster, preserves extremes perfectly but creates "fuzzy band" look)
+
+## Performance: JSON embedding size management
+
+- Currently all trajectory data is embedded as JSON in the HTML
+- Parse time benchmarks: <10 MB imperceptible, 10-50 MB noticeable (50-800ms), >50 MB problematic (1-10s)
+- Memory: a 50 MB JSON string becomes ~100-200 MB of live JS objects
+- Solution: `--report-mode standalone|directory` CLI flag
+  - Under 20 MB: embed everything (current behavior)
+  - Over 20 MB: HTML index + per-test sidecar JSON files loaded via `fetch()`
+  - HTML detects `file://` vs `http:` protocol and adapts
+- Alternative: base64-encoded Float64Array is 10-50x faster to parse than JSON number arrays (8 bytes per number vs ~15-20 bytes in JSON text)
+
+## Linked panel zoom synchronization
+
+- Three panels per variable (trajectory, abs error, NRMSE) are currently independent Plotly charts — separate divs, not subplots, no shared axes
+- Zooming on the trajectory panel should sync x-axis range to the error panels
+- Implementation: hook `plotly_relayout` on `plot-{idx}`, propagate `xaxis.range` to `plot-abserr-{idx}` and `plot-nrmse-{idx}` via `Plotly.relayout()`
+- Guard against infinite event loops (zoom on panel A triggers relayout on B which triggers relayout on A)
+
+## Worst-violation annotation overlay
+
+- Mark the worst error point on the trajectory plot with an arrow annotation and callout
+- Data already in template context: `max_abs_error`, `max_abs_error_time` (line 175-176 of `plot_comparison.py`); for tube mode: `tube_worst_violation`, `tube_worst_violation_time`
+- The abs-error panel already draws a vertical dotted line at worst error time, but the main trajectory plot has no marker
+- Show only for failed variables to avoid clutter; could add a "Show annotations" toggle
+- ~15 lines of JS: add `Plotly.relayout(el, {annotations: [...]})` after `renderPlots()`
+
+## Zoom-dependent statistics
+
+- Small stats bar between trajectory and error panels showing NRMSE, max error, and point count for the visible x-range
+- Hook `plotly_relayout` → get `xaxis.range[0/1]` → slice cached arrays (`el._commonTime`, `el._actOnCommon`, `el._refOnCommon`) → recompute
+- Performance: <1ms for typical sizes, ~5ms for 100k points; `plotly_relayout` fires once per zoom (not continuously during drag)
+- Display in a `<div id="zoom-stats-{idx}">` between panels; empty when full range is shown
+
+## Sparkline error profiles in variable sidebar
+
+- Tiny inline SVG polylines (~200 bytes each) next to each variable name showing error distribution at a glance
+- Downsample abs-error to ~50 points via uniform stepping
+- Much lighter than Plotly micro-charts (which add ~50ms init overhead each)
+- Add an "Error Profile" column to the existing variable table
+- ~20 lines of JS + one `sparklineSVG()` helper function
+
+## Summary heatmap on index page
+
+- Variables × tests grid colored by NRMSE on the index page for spotting patterns across a test suite
+- Plotly heatmap handles 500 tests × 20 variables (10k cells) fine (uses WebGL automatically)
+- Normalize values as `nrmse / tolerance` so 1.0 is the pass/fail boundary; diverging colorscale (green below, red above, gray for no-baseline, black for sim-failed)
+- Click-to-navigate via `plotly_click` event
+- Requires extending `generate_report_suite()` to pass per-variable NRMSE arrays (currently only `worst_nrmse`)
+- Ragged matrix (tests have different variable counts): use union of variable names with null for missing entries
+- Add as a toggle "Table / Heatmap" view on the index page; add Plotly CDN link to `index.html`
+
+## Color-coded trajectories by local error
+
+- Color the actual simulation line by local error magnitude (green→red gradient)
+- Plotly can't do per-point line color on `type: 'scatter'` with `mode: 'lines'`
+- Approach: quantize errors into 5-8 color bands, render as separate traces with null-gap segments between each point pair
+- Wire as an option in the existing overlay dropdown ("Color by Error")
+- Performance: 5 traces with ~5k points each (including nulls) is fine for Plotly
+
+## New comparison metrics: Frechet distance & area between curves
+
+- `pip install similaritymeasures` (v1.4.0, actively maintained, numpy/scipy only)
+- **Frechet distance**: worst-case shape deviation when traversing both curves simultaneously — captures shape similarity better than NRMSE for signals with slight time shifts; similar to `max_abs_error` but geometrically aware
+- **Area Between Curves**: intuitive "total deviation" metric complementing NRMSE (average) and max_abs_error (single point)
+- Functions take `(n, 2)` arrays (time-value pairs) — straightforward to integrate
+- Add as optional supplementary diagnostic metrics alongside existing NRMSE/tube
+
+## Spectral coherence comparison
+
+- `scipy.signal.coherence` — already a transitive dependency (no new install)
+- Per-frequency agreement score (0-1): 1.0 = perfect match at that frequency, 0.0 = unrelated
+- Flags cases where low-frequency behavior matches but high-frequency dynamics diverge (which NRMSE averages away)
+- Particularly useful for oscillatory models (HVAC, power systems, mechanical vibration)
+- Precompute in Python via `scipy.signal.welch` (error PSD) and `coherence`, embed as additional fields in template context
+- Render as collapsible "Frequency Analysis" panel per variable with two subplots: error PSD (log scale) and coherence (0-1)
+- Make scipy an optional dependency for this feature
+
+## X-direction (time) tolerance
+
+- Current comparator assumes exact time alignment by interpolating actual onto reference time grid
+- Small time shifts from solver differences (event timing, step size selection) cause false failures
+- Concept from **pyfunnel** (LBNL, `pip install pyfunnel`, v2.0.1): builds L1-norm tolerance rectangles around each reference point with both x and y tolerance, constructs upper/lower envelope polygons from rectangle corners
+- Could either use pyfunnel directly as an alternative comparison backend, or adapt its x-tolerance concept into the existing comparator
+- Even a small x-tolerance (1-2 solver steps) would significantly reduce false failures from solver-dependent event timing
+
+## ISO 18571 failure diagnostics
+
+- `pip install objective-rating-metrics` (v1.3, actively maintained, from VSI TU Graz / OpenVT)
+- Implements ISO/TS 18571:2024 — decomposes comparison into four independent sub-metrics: **corridor**, **phase**, **magnitude**, **slope** (each scored 0-1)
+- When a test fails, sub-ratings tell you *why*: magnitude offset? phase shift? wrong slope? Much richer than a single NRMSE
+- Originally from automotive crash simulation validation (CORA method)
+- Add as optional diagnostic mode alongside primary pass/fail; integrate ratings into `VariableComparison` and reporting
+
+## Phase-space plots
+
+- Plot variable A vs variable B (not vs time) — useful for thermodynamic cycles, control loops, mechanical oscillations
+- All trajectory data already embedded as `TRAJECTORIES` — purely a JS addition with two dropdown selectors
+- Compare reference vs actual paths in phase space
+- Caveat: time is invisible in phase plots — a point at the correct (x,y) but wrong time looks fine; add time-colored segments or interval markers to show direction/timing
+- Quantitative phase-space comparison (Frechet distance on the path) is a natural extension
+
+## Progressive enhancement: optional server mode
+
+- Keep self-contained HTML as the base; if served through a thin FastAPI server, enable additional features
+- "Accept as baseline" button → server writes to reference store
+- "Re-compare with different tolerance" → server triggers comparison code
+- Lazy data loading for large suites → `fetch('/api/tests/{id}/data')` instead of embedded JSON
+- HTML detects `window.location.protocol === 'http:'` and enables/disables server features
+- The server would be minimal (~100-200 lines of FastAPI)
+- Defer until standalone workflow limitations are felt
+
+## Notebook integration helper
+
+- Provide a data-loading utility that reads `comparison_data.json` (already written as sidecar) into a convenient format
+- For ad-hoc Jupyter deep dives into specific test failures: custom analysis, multi-baseline overlays, frequency-domain inspection
+- Not a parallel reporting pipeline — just a clean API for engineers who want to do custom analysis
+- Use static Plotly plots in notebooks (survive `nbconvert` to HTML); ipywidgets for live sessions but accept they won't export
 
 ## ~~Full reference data representation in HTML reports~~ (DONE)
 
