@@ -47,6 +47,7 @@ h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
 .btn-success { background: #4CAF50; color: white; border-color: #4CAF50; }
 .btn-success:hover { background: #43A047; }
 .save-status { font-size: 0.85em; color: #4CAF50; margin-left: 0.5em; display: none; }
+.tube-plot-edit-btn.active { background: #1976D2; color: white; border-color: #1976D2; }
 
 /* Tables */
 table { border-collapse: collapse; width: 100%; background: white; margin-bottom: 1.5em; }
@@ -197,6 +198,7 @@ details summary:hover { color: #333; }
   <div class="tube-editor" id="tube-editor-{{ loop.index0 }}" style="display:none">
     <div class="tube-controls">
       <button class="btn" onclick="addTubePoint({{ loop.index0 }})" title="Add a time control point to shape the tube">Add Point</button>
+      <button class="btn tube-plot-edit-btn" data-idx="{{ loop.index0 }}" onclick="toggleTubePlotEdit({{ loop.index0 }})" title="Click on plot to add points, drag to move them">Edit on Plot</button>
       <label style="margin-left:1em; font-size:0.85em;" title="Synced: same width above and below reference. Unsynced: set upper and lower bounds independently, each with its own abs/rel mode">
         Symmetry:
         <select class="tube-sync" data-idx="{{ loop.index0 }}" onchange="tubeSyncChanged({{ loop.index0 }}, this.value === 'true')">
@@ -496,6 +498,23 @@ function renderPlots() {
       hoverinfo: 'skip',
       showlegend: true,
       visible: false,
+    });
+    // Control point markers (for interactive editing)
+    traces.push({
+      x: [], y: [],
+      name: 'CP Upper', type: 'scatter', mode: 'markers',
+      marker: { color: '#4CAF50', size: 10, symbol: 'triangle-up',
+                line: { color: 'white', width: 1 } },
+      hoverinfo: 'text', text: [],
+      showlegend: false, visible: false,
+    });
+    traces.push({
+      x: [], y: [],
+      name: 'CP Lower', type: 'scatter', mode: 'markers',
+      marker: { color: '#FF5722', size: 10, symbol: 'triangle-down',
+                line: { color: 'white', width: 1 } },
+      hoverinfo: 'text', text: [],
+      showlegend: false, visible: false,
     });
 
     Plotly.newPlot(el, traces, makePlotLayout(traj.name), PLOT_CFG);
@@ -940,6 +959,66 @@ function tubeSideModeChanged(idx, ptIdx, side, mode) {
   updateTube(idx);
 }
 
+// Resolve a single control point to absolute y-bounds {upper, lower}.
+function resolvePoint(idx, pt) {
+  const td = tubeData[idx];
+  const globalMode = td.widthMode;
+  const rv = refValueAt(idx, pt.time);
+  const rvAbs = Math.abs(rv);
+  const uMode = td.synced ? globalMode : (pt.upperMode || globalMode);
+  const lMode = td.synced ? globalMode : (pt.lowerMode || globalMode);
+
+  let uBound, lBound;
+  if (uMode === 'absolute') {
+    uBound = pt.upper;
+  } else if (uMode === 'rel') {
+    let w = pt.upper * rvAbs;
+    if (td.minWidth > 0) w = Math.max(w, td.minWidth);
+    uBound = rv + w;
+  } else {
+    let w = pt.upper;
+    if (td.minWidth > 0) w = Math.max(w, td.minWidth);
+    uBound = rv + w;
+  }
+
+  if (lMode === 'absolute') {
+    lBound = pt.lower;
+  } else if (lMode === 'rel') {
+    let w = pt.lower * rvAbs;
+    if (td.minWidth > 0) w = Math.max(w, td.minWidth);
+    lBound = rv - w;
+  } else {
+    let w = pt.lower;
+    if (td.minWidth > 0) w = Math.max(w, td.minWidth);
+    lBound = rv - w;
+  }
+
+  return { upper: uBound, lower: lBound };
+}
+
+// Reverse-convert an absolute y-value back into the point's mode representation.
+function setPointFromAbsoluteY(idx, pt, bound, yAbs) {
+  const td = tubeData[idx];
+  const globalMode = td.widthMode;
+  const rv = refValueAt(idx, pt.time);
+  const rvAbs = Math.abs(rv);
+  const isUpper = bound === 'upper';
+  const modeField = isUpper ? 'upperMode' : 'lowerMode';
+  const mode = td.synced ? globalMode : (pt[modeField] || globalMode);
+
+  if (mode === 'absolute') {
+    pt[bound] = roundSig(yAbs, 4);
+  } else if (mode === 'rel') {
+    const offset = isUpper ? yAbs - rv : rv - yAbs;
+    pt[bound] = rvAbs > 1e-15 ? roundSig(Math.max(offset / rvAbs, 0), 3) : 0.05;
+  } else {
+    const offset = isUpper ? yAbs - rv : rv - yAbs;
+    pt[bound] = roundSig(Math.max(offset, 0), 3);
+  }
+  if (td.synced && bound === 'upper') pt.lower = pt.upper;
+  if (td.synced && bound === 'lower') pt.upper = pt.lower;
+}
+
 function updateTube(idx) {
   const td = tubeData[idx];
   const interpSel = document.querySelector(`.tube-interp[data-idx="${idx}"]`);
@@ -951,51 +1030,17 @@ function updateTube(idx) {
   if (!traj.ref_time.length) return;
 
   const refTime = traj.ref_time;
-  const refValues = traj.ref_values;
   const pts = [...td.points].sort((a, b) => a.time - b.time);
-  const globalMode = td.widthMode;
 
-  // Step 1: Resolve each control point to absolute y-bounds.
-  // This converts band/rel/absolute values into final y-values at each
-  // control point time, so interpolation happens in y-space (no mode jumps).
+  // Resolve each control point to absolute y-bounds
   const resolvedUpper = [];
   const resolvedLower = [];
   const ctrlTimes = [];
-  for (let p = 0; p < pts.length; p++) {
-    const pt = pts[p];
-    const rv = refValueAt(idx, pt.time);
-    const rvAbs = Math.abs(rv);
-    const uMode = td.synced ? globalMode : (pt.upperMode || globalMode);
-    const lMode = td.synced ? globalMode : (pt.lowerMode || globalMode);
-
-    let uBound, lBound;
-    if (uMode === 'absolute') {
-      uBound = pt.upper;
-    } else if (uMode === 'rel') {
-      let w = pt.upper * rvAbs;
-      if (td.minWidth > 0) w = Math.max(w, td.minWidth);
-      uBound = rv + w;
-    } else {
-      let w = pt.upper;
-      if (td.minWidth > 0) w = Math.max(w, td.minWidth);
-      uBound = rv + w;
-    }
-
-    if (lMode === 'absolute') {
-      lBound = pt.lower;
-    } else if (lMode === 'rel') {
-      let w = pt.lower * rvAbs;
-      if (td.minWidth > 0) w = Math.max(w, td.minWidth);
-      lBound = rv - w;
-    } else {
-      let w = pt.lower;
-      if (td.minWidth > 0) w = Math.max(w, td.minWidth);
-      lBound = rv - w;
-    }
-
+  for (const pt of pts) {
+    const resolved = resolvePoint(idx, pt);
     ctrlTimes.push(pt.time);
-    resolvedUpper.push(uBound);
-    resolvedLower.push(lBound);
+    resolvedUpper.push(resolved.upper);
+    resolvedLower.push(resolved.lower);
   }
 
   // Step 2: Interpolate resolved y-bounds onto the reference time grid.
@@ -1036,6 +1081,7 @@ function updateTube(idx) {
 
   // Use the already-computed refTime arrays for rendering (correct for hover)
   renderTubeOnPlot(idx, Array.from(refTime), tubeUpper, tubeLower);
+  renderCPMarkers(idx);
 
   const row = document.querySelector(`tr[data-idx="${idx}"]`);
   if (row) {
@@ -1084,10 +1130,8 @@ function renderTubeOnPlot(idx, timeArr, tubeUpper, tubeLower) {
 function removeTubeTraces(idx) {
   const el = document.getElementById(`plot-${idx}`);
   if (!el || !el.data) return;
-  const upperIdx = findTraceIndex(el, 'Tube Upper');
-  const lowerIdx = findTraceIndex(el, 'Tube Lower');
-  const fillIdx = findTraceIndex(el, 'Tube Fill');
-  const indices = [upperIdx, lowerIdx, fillIdx].filter(i => i >= 0);
+  const names = ['Tube Upper', 'Tube Lower', 'Tube Fill', 'CP Upper', 'CP Lower'];
+  const indices = names.map(n => findTraceIndex(el, n)).filter(i => i >= 0);
   if (indices.length > 0) {
     Plotly.restyle(el, {
       x: indices.map(() => []),
@@ -1095,6 +1139,204 @@ function removeTubeTraces(idx) {
       visible: indices.map(() => false),
     }, indices);
   }
+  deactivateTubePlotEdit(idx);
+}
+
+function renderCPMarkers(idx) {
+  const el = document.getElementById(`plot-${idx}`);
+  if (!el || !el.data) return;
+  const td = tubeData[idx];
+  if (!td) return;
+  const cpUpperIdx = findTraceIndex(el, 'CP Upper');
+  const cpLowerIdx = findTraceIndex(el, 'CP Lower');
+  if (cpUpperIdx < 0 || cpLowerIdx < 0) return;
+
+  const pts = td.points;
+  const times = pts.map(p => p.time);
+  const upperY = [], lowerY = [], upperText = [], lowerText = [];
+  for (const pt of pts) {
+    const r = resolvePoint(idx, pt);
+    upperY.push(r.upper);
+    lowerY.push(r.lower);
+    upperText.push(`t=${pt.time}, upper=${r.upper.toPrecision(4)}`);
+    lowerText.push(`t=${pt.time}, lower=${r.lower.toPrecision(4)}`);
+  }
+  Plotly.restyle(el, {
+    x: [times, times],
+    y: [upperY, lowerY],
+    text: [upperText, lowerText],
+    visible: [true, true],
+  }, [cpUpperIdx, cpLowerIdx]);
+}
+
+// ---- Interactive tube editing on plot ----
+const tubePlotEditState = {};
+let rafPending = {};
+
+function toggleTubePlotEdit(idx) {
+  const state = tubePlotEditState[idx];
+  if (state && state.active) {
+    deactivateTubePlotEdit(idx);
+  } else {
+    activateTubePlotEdit(idx);
+  }
+}
+
+function activateTubePlotEdit(idx) {
+  const el = document.getElementById(`plot-${idx}`);
+  if (!el) return;
+  const btn = document.querySelector(`.tube-plot-edit-btn[data-idx="${idx}"]`);
+  if (btn) btn.classList.add('active');
+
+  Plotly.relayout(el, { dragmode: false });
+
+  const state = { active: true, dragging: null, handlers: null };
+
+  function pxToData(evt) {
+    const xa = el._fullLayout.xaxis;
+    const ya = el._fullLayout.yaxis;
+    const plotArea = el.querySelector('.nsewdrag');
+    const rect = plotArea.getBoundingClientRect();
+    return {
+      x: xa.p2d(evt.clientX - rect.left),
+      y: ya.p2d(evt.clientY - rect.top),
+    };
+  }
+
+  function findNearestCP(dataX, dataY) {
+    const xa = el._fullLayout.xaxis;
+    const ya = el._fullLayout.yaxis;
+    const td = tubeData[idx];
+    let best = null;
+    td.points.forEach((pt, i) => {
+      const r = resolvePoint(idx, pt);
+      for (const bound of ['upper', 'lower']) {
+        const yVal = r[bound];
+        const dxPx = xa.d2p(pt.time) - xa.d2p(dataX);
+        const dyPx = ya.d2p(yVal) - ya.d2p(dataY);
+        const dist = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
+        if (!best || dist < best.dist) {
+          best = { bound, ptIdx: i, pt, dist };
+        }
+      }
+    });
+    return best;
+  }
+
+  function onMouseDown(evt) {
+    if (evt.button !== 0) return;
+    const d = pxToData(evt);
+    const nearest = findNearestCP(d.x, d.y);
+    if (nearest && nearest.dist < 15) {
+      state.dragging = { bound: nearest.bound, pt: nearest.pt };
+      evt.preventDefault();
+      evt.stopPropagation();
+    }
+  }
+
+  function onMouseMove(evt) {
+    if (!state.dragging) return;
+    evt.preventDefault();
+    const d = pxToData(evt);
+    const { bound, pt } = state.dragging;
+    const traj = TRAJECTORIES[idx];
+    const tMin = traj.ref_time[0];
+    const tMax = traj.ref_time[traj.ref_time.length - 1];
+    pt.time = Math.max(tMin, Math.min(tMax, d.x));
+    setPointFromAbsoluteY(idx, pt, bound, d.y);
+    tubeData[idx].points.sort((a, b) => a.time - b.time);
+    if (!rafPending[idx]) {
+      rafPending[idx] = requestAnimationFrame(() => {
+        updateTube(idx);
+        renderTubeTable(idx);
+        delete rafPending[idx];
+      });
+    }
+  }
+
+  function onMouseUp() {
+    if (state.dragging) {
+      state.dragging = null;
+      updateTube(idx);
+      renderTubeTable(idx);
+    }
+  }
+
+  function onPlotClick(eventData) {
+    if (state.dragging) return;
+    if (!eventData.points || !eventData.points.length) return;
+    const pt0 = eventData.points[0];
+    const clickX = pt0.x, clickY = pt0.y;
+
+    const nearest = findNearestCP(clickX, clickY);
+    if (nearest && nearest.dist < 15) return; // near existing point
+
+    // Determine which bound is closer at this time
+    const td = tubeData[idx];
+    const pts = [...td.points].sort((a, b) => a.time - b.time);
+    const ctrlTimes = pts.map(p => p.time);
+    const rU = pts.map(p => resolvePoint(idx, p).upper);
+    const rL = pts.map(p => resolvePoint(idx, p).lower);
+    const upperAtT = interpLinear(ctrlTimes, rU, clickX);
+    const lowerAtT = interpLinear(ctrlTimes, rL, clickX);
+    const targetBound = Math.abs(clickY - upperAtT) <= Math.abs(clickY - lowerAtT) ? 'upper' : 'lower';
+
+    // Create new point with defaults, then override targeted bound from click
+    const v = VARIABLES[idx];
+    const sigRange = v.signal_range || 1.0;
+    const fallbackBand = roundSig(sigRange * 0.05, 3);
+    const rv = refValueAt(idx, clickX);
+    const rvAbs = Math.abs(rv);
+    const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
+    let upper, lower;
+    if (td.widthMode === 'rel') { upper = 0.05; lower = 0.05; }
+    else if (td.widthMode === 'absolute') { upper = roundSig(rv + band, 4); lower = roundSig(rv - band, 4); }
+    else { upper = band; lower = band; }
+
+    const newPt = {
+      time: clickX, upper, lower,
+      upperMode: td.widthMode, lowerMode: td.widthMode,
+    };
+    setPointFromAbsoluteY(idx, newPt, targetBound, clickY);
+    td.points.push(newPt);
+    td.points.sort((a, b) => a.time - b.time);
+    renderTubeTable(idx);
+    updateTube(idx);
+  }
+
+  const dragLayer = el.querySelector('.nsewdrag');
+  if (dragLayer) {
+    dragLayer.addEventListener('mousedown', onMouseDown);
+    dragLayer.style.cursor = 'crosshair';
+  }
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+  el.on('plotly_click', onPlotClick);
+
+  state.handlers = { onMouseDown, onMouseMove, onMouseUp, onPlotClick, dragLayer };
+  tubePlotEditState[idx] = state;
+}
+
+function deactivateTubePlotEdit(idx) {
+  const state = tubePlotEditState[idx];
+  if (!state || !state.active) return;
+  const el = document.getElementById(`plot-${idx}`);
+  const btn = document.querySelector(`.tube-plot-edit-btn[data-idx="${idx}"]`);
+  if (btn) btn.classList.remove('active');
+
+  if (el) Plotly.relayout(el, { dragmode: 'zoom' });
+
+  if (state.handlers) {
+    const h = state.handlers;
+    if (h.dragLayer) {
+      h.dragLayer.removeEventListener('mousedown', h.onMouseDown);
+      h.dragLayer.style.cursor = '';
+    }
+    document.removeEventListener('mousemove', h.onMouseMove);
+    document.removeEventListener('mouseup', h.onMouseUp);
+    if (el) el.removeListener('plotly_click', h.onPlotClick);
+  }
+  tubePlotEditState[idx] = { active: false };
 }
 
 // Linear interpolation helper
