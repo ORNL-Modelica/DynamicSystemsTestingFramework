@@ -34,14 +34,19 @@
 ### Tube-based comparison mode
 - Alternative to NRMSE: the tube defines an upper/lower envelope around the reference trajectory
 - Configured per-variable via `variable_overrides` with `"mode": "tube"`
-- Width formula: `tube_width = max(tube_abs, tube_rel * |reference|)` — the `max` prevents the tube from collapsing to zero when the reference crosses zero
+- Three width modes via `tube_width_mode`:
+  - `"rel"` (default in interactive UI): width = fraction of |reference| (e.g., `"tube_rel": 0.02` = 2%)
+  - `"band"` (or legacy `"abs"`): width = offset in signal units (e.g., `"tube_abs": 500`)
+  - `"absolute"`: upper/lower are literal y-axis bounds, not offsets from reference
+- Legacy format (no `tube_width_mode`): width = `max(tube_abs, tube_rel * |reference|)`
 - Pass/fail is strict: the actual signal must stay inside the tube at every interpolated point
-- Constant tube: `{"mode": "tube", "tube_abs": 500, "tube_rel": 0.02}` — uniform width over all time
-- Time-varying tube: `tube_points` with `{"time", "abs", "rel"}` control points, interpolated via `tube_interpolation` (`"constant"` for stepwise, `"linear"` for linear — default is `"linear"`)
+- Constant tube: `{"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.02}` — uniform width over all time
+- Time-varying tube: `tube_points` with `{"time", "upper", "lower"}` control points, interpolated via `tube_interpolation` (`"constant"` for stepwise, `"linear"` for linear — default is `"linear"`)
 - Before the first control point: hold first point values. After the last: hold last point values
 - Metrics reported: `tube_points_inside` (fraction 0-1), `tube_worst_violation` (largest distance outside tube), `tube_worst_violation_time`
 - NRMSE is still computed for reference even in tube mode
 - HTML reports show "tube (95% in)" style labels for tube-mode variables in the variable table
+- Interactive Plotly reports allow switching modes, editing tube points, and exporting tolerance configs
 
 ### Tolerance resolution order
 - Per-variable override from test spec (`comparison.variable_overrides`) takes highest priority
@@ -98,12 +103,21 @@
 - `EventCounter` changes trigger a warning; `CPUtime` does not (too noisy)
 
 ### Data-driven HTML reports via Jinja2 templates
-- `html_report.py` builds a context dict from `TestComparison` and renders through a Jinja2 template (`templates/comparison.html`)
-- A `comparison_data.json` sidecar is written alongside the HTML, containing the same data for downstream tooling
-- The template uses progressive disclosure: key stats cards at top, condensed variable table, then collapsible `<details>` sections for full variable details, statistics, simulation parameters, diagnostics, and reference info
+- `html_report.py` builds a context dict from `TestComparison` and renders through Jinja2 templates
+- Two report variants generated per test: `comparison.html` (static matplotlib plots) and `interactive.html` (Plotly.js interactive charts)
+- Per-test reports open `interactive.html` by default
+- A `comparison_data.json` sidecar is written alongside the HTML, containing the same data plus full trajectory time series (`act_time`, `act_values`, `ref_time`, `ref_values` per variable) for downstream tooling
+- The static template uses progressive disclosure: key stats cards at top, condensed variable table, then collapsible `<details>` sections for full variable details, statistics, simulation parameters, diagnostics, and reference info
 - Simulation parameters show current vs reference values with change highlighting when they differ
 - Statistics sections iterate over whatever keys exist in the dicts rather than hardcoding field names — new stats from future Dymola versions appear automatically
 - Trajectory plots open by default; metadata sections are collapsed
+
+### Interactive Plotly report UX
+- `interactive.html` uses Plotly.js via CDN for interactive charts — zoom, pan, hover tooltips on all data points
+- Three-panel layout per variable: trajectory (actual vs reference), absolute error, and NRMSE — the NRMSE panel shows a tolerance line that updates live
+- Error overlay dropdown on each variable plot: overlay signed error, absolute error, or NRMSE on the trajectory chart (right y-axis)
+- Live tolerance editing: global test tolerance input at the top recomputes all pass/fail; per-variable tolerance inputs in the variable table override the global value when modified (highlighted orange); summary stats and key cards update live
+- Export tolerance config panel (expanded by default): shows a JSON snippet that updates live as tolerances are edited; "Copy to Clipboard" and "Download JSON" buttons for saving the config; the downloaded JSON can be applied via `modelica-testing spec-update`
 
 ## Anti-Patterns
 

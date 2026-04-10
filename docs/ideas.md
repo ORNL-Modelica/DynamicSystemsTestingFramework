@@ -13,14 +13,14 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 5 | ~~Condensed HTML with progressive disclosure~~ | M | High | **DONE** — key stats cards at top, condensed variable table, full details/stats/params/diagnostics in collapsible sections. Jinja2 templates + `comparison_data.json` sidecar |
 | 6 | ~~Auto-generate HTML report suite~~ | M | High | **DONE** — `--report` generates index page + per-test reports with plots; JS filter buttons; opens in browser |
 | 7 | Configurable variable ordering | M | Medium | Config plumbing + sort logic in reports and references |
-| 8 | Interactive tolerance editing | M | Medium | Phase 1 DONE (per-test/per-variable NRMSE tolerance), Phase 2 DONE (tube comparison logic); remaining: interactive Plotly tube editing |
+| 8 | Interactive tolerance editing | M | Medium | Phase 1-3 DONE (NRMSE tolerance, tube comparison with 3 width modes, interactive Plotly reports with tube editing/export); remaining: cubic interpolation |
 | 9 | One-click "open in Dymola" | M | Medium | .mos generation straightforward; protocol handler is platform-specific |
 | 10 | Interactive setup wizard | M | Low | Nice onboarding but power users skip it quickly |
 | 11 | Test discovery by extends/folder | H | High | Requires Modelica AST parsing or robust regex scanning |
 | 12 | Model health analysis from reference data | H | High | Mining + ranking logic across all refs; powerful but complex |
 | 13 | Dependency-aware test ordering | H | Medium | Requires dependency graph extraction from Modelica sources |
 
-**Recommended order**: 1-3, 5-6 are done. 8 is partially done (tolerance + tube logic complete; interactive Plotly editing remains). Next: 11-12 (high-effort, high-value), or 7, 9 (medium effort).
+**Recommended order**: 1-3, 5-6, 8 are done. Next: 11-12 (high-effort, high-value), or 7, 9 (medium effort).
 
 ---
 
@@ -114,11 +114,11 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 
 **Phase 1 — DONE**: Per-test and per-variable NRMSE tolerance overrides via `comparison.variable_overrides` in test_spec.json and reference JSON. Multi-level tolerance resolution. `tolerance_used` recorded per variable.
 
-**Phase 2 — DONE**: Tube-based comparison mode. Configured per-variable with `"mode": "tube"`. Tube width = `max(tube_abs, tube_rel * |reference|)`. Supports constant tubes and time-varying tubes via `tube_points` with linear or stepwise interpolation. Strict pass/fail (every point must be inside). Metrics: `tube_points_inside`, `tube_worst_violation`, `tube_worst_violation_time`. NRMSE still computed alongside. HTML reports show tube mode labels.
+**Phase 2 — DONE**: Tube-based comparison mode. Configured per-variable with `"mode": "tube"`. Three width modes via `tube_width_mode`: `"rel"` (fraction of |reference|, default in UI), `"band"` (offset in signal units), `"absolute"` (literal y-axis bounds). Legacy format: `max(tube_abs, tube_rel * |ref|)`. Supports constant and time-varying tubes via `tube_points`. Strict pass/fail. Metrics: `tube_points_inside`, `tube_worst_violation`, `tube_worst_violation_time`. NRMSE still computed alongside.
+
+**Phase 3 — DONE**: Interactive Plotly reports (`interactive.html`). All traces on shared x-grid for unified hover. Live tolerance editing with per-variable overrides. Error overlay dropdown (signed, abs, NRMSE on right y-axis). Tube mode: inline editor with point table, synced/unsynced upper-lower, three width modes, time-varying interpolation. Tube visualization uses `fill: 'toself'` polygon for reliable rendering. Export panel with live JSON, copy/download. CLI `spec-update` applies tolerance JSON to `test_spec.json`.
 
 **Remaining**:
-- Interactive Plotly visualization for drawing/adjusting tubes graphically
-- Slider + writeback to reference JSON for NRMSE tolerance editing
 - Cubic interpolation mode for time-varying tubes
 
 ## Model health analysis from reference data

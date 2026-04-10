@@ -33,7 +33,15 @@ h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
 .export-buttons { display: flex; gap: 0.5em; margin-top: 0.5em; }
 .btn { padding: 0.4em 1em; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; font-size: 0.85em; background: white; }
 .btn:hover { background: #f0f0f0; }
-.overlay-select { font-size: 0.7em; padding: 0.2em 0.4em; vertical-align: middle; margin-left: 0.5em; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; }
+.overlay-select, .mode-select { font-size: 0.7em; padding: 0.2em 0.4em; vertical-align: middle; margin-left: 0.5em; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; }
+.tube-editor { margin: 0.5em 0 1em 0; padding: 0.8em; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 4px; }
+.tube-controls { margin-bottom: 0.5em; }
+.tube-table { width: auto; min-width: 300px; margin-bottom: 0; }
+.tube-table input { width: 8em; padding: 2px 4px; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.85em; }
+.tube-table .btn-remove { font-size: 0.75em; padding: 0.1em 0.5em; color: #f44336; border-color: #f44336; }
+.tube-status .pass { font-weight: 600; }
+.tube-status .fail { font-weight: 600; }
+.tube-hint { font-size: 0.8em; color: #888; margin: 0.3em 0 0 0; }
 .btn-primary { background: #1976D2; color: white; border-color: #1976D2; }
 .btn-primary:hover { background: #1565C0; }
 .btn-success { background: #4CAF50; color: white; border-color: #4CAF50; }
@@ -127,9 +135,9 @@ details summary:hover { color: #333; }
 {% if variables %}
 <div class="tolerance-panel">
   <div class="tolerance-row">
-    <label for="global-tolerance">Test Tolerance:</label>
-    <input type="number" id="global-tolerance" step="any" min="0">
-    <span class="hint">Change to recompute all pass/fail. Per-variable overrides in the table below take precedence.</span>
+    <label for="global-tolerance" title="NRMSE threshold — variables with NRMSE below this value pass">Test Tolerance (NRMSE):</label>
+    <input type="number" id="global-tolerance" step="0.001" min="0">
+    <span class="hint">NRMSE threshold for all variables. Per-variable overrides in the table take precedence.</span>
   </div>
   <div class="export-row">
     <details open>
@@ -159,7 +167,7 @@ details summary:hover { color: #333; }
   <td>{{ v.name }}{% if v.is_constant %} (const){% endif %}</td>
   <td>{{ v.mode | default("nrmse") }}{% if v.tube_points_inside is not none %} ({{ "%.0f" | format(v.tube_points_inside * 100) }}% in){% endif %}</td>
   <td class="var-nrmse">{{ "%.4e" | format(v.nrmse) }}</td>
-  <td><input type="number" class="var-tol-input" data-idx="{{ loop.index0 }}" step="any" min="0" value="{{ v.tolerance_used }}"></td>
+  <td><input type="number" class="var-tol-input" data-idx="{{ loop.index0 }}" step="0.001" min="0" value="{{ v.tolerance_used }}" title="NRMSE tolerance for this variable"></td>
 </tr>
 {% endfor %}
 </table>
@@ -178,8 +186,49 @@ details summary:hover { color: #333; }
       <option value="abs_error">Abs Error</option>
       <option value="nrmse">NRMSE</option>
     </select>
+    <select class="btn mode-select" data-idx="{{ loop.index0 }}" onchange="setVarMode({{ loop.index0 }}, this.value)">
+      <option value="nrmse"{% if variables[loop.index0].mode == 'nrmse' %} selected{% endif %}>NRMSE</option>
+      <option value="tube"{% if variables[loop.index0].mode == 'tube' %} selected{% endif %}>Tube</option>
+    </select>
   </h3>
   <div class="plotly-chart" id="plot-{{ loop.index0 }}" style="height:300px"></div>
+  <div class="tube-editor" id="tube-editor-{{ loop.index0 }}" style="display:none">
+    <div class="tube-controls">
+      <button class="btn" onclick="addTubePoint({{ loop.index0 }})" title="Add a time control point to shape the tube">Add Point</button>
+      <label style="margin-left:1em; font-size:0.85em;" title="Synced: same width above and below reference. Unsynced: set upper and lower bounds independently, each with its own abs/rel mode">
+        Symmetry:
+        <select class="tube-sync" data-idx="{{ loop.index0 }}" onchange="tubeSyncChanged({{ loop.index0 }}, this.value === 'true')">
+          <option value="true">Synced (same above/below)</option>
+          <option value="false">Unsynced (independent upper/lower)</option>
+        </select>
+      </label>
+      <label style="margin-left:1em; font-size:0.85em;" title="Band: offset ± from reference in signal units. Relative: offset as fraction of |ref|. Absolute: literal y-axis bounds.">
+        Width mode:
+        <select class="tube-width-mode" data-idx="{{ loop.index0 }}" onchange="tubeWidthModeChanged({{ loop.index0 }}, this.value)">
+          <option value="band">Band (± offset)</option>
+          <option value="rel">Relative (fraction of |ref|)</option>
+          <option value="absolute">Absolute (y-value)</option>
+        </select>
+      </label>
+      <label style="margin-left:1em; font-size:0.85em;" title="Linear: smooth interpolation between points. Step: hold previous value until next point">
+        Interp:
+        <select class="tube-interp" data-idx="{{ loop.index0 }}" onchange="updateTube({{ loop.index0 }})">
+          <option value="linear">Linear</option>
+          <option value="constant">Step</option>
+        </select>
+      </label>
+    </div>
+    <div class="tube-controls" style="margin-top:0.3em;">
+      <label style="font-size:0.85em;" title="Minimum tube width in signal units. Prevents tube from collapsing when reference crosses zero (useful in relative mode)">
+        Min width floor:
+        <input type="number" class="tube-min-width" data-idx="{{ loop.index0 }}" step="any" min="0" value="0" style="width:8em" onchange="updateTube({{ loop.index0 }})">
+      </label>
+      <span class="tube-status" id="tube-status-{{ loop.index0 }}" style="margin-left:1em; font-size:0.85em;"></span>
+    </div>
+    <table class="tube-table" id="tube-table-{{ loop.index0 }}">
+    </table>
+    <p class="tube-hint">Signal must stay inside the tube at every time point to pass. Add points to create a time-varying envelope.</p>
+  </div>
   <div class="plotly-chart" id="plot-abserr-{{ loop.index0 }}" style="height:150px"></div>
   <div class="plotly-chart" id="plot-nrmse-{{ loop.index0 }}" style="height:150px"></div>
 </div>
@@ -300,7 +349,11 @@ function onVarTolChange(e) {
 // ---- Status updates ----
 function computePass(idx) {
   const v = VARIABLES[idx];
-  if (v.mode === 'tube') return v.passed;
+  if (varModes[idx] === 'tube') {
+    // If tube data exists, recompute; otherwise use original
+    if (tubeData[idx]) return null;  // Computed by updateTube
+    return v.passed;
+  }
   return v.nrmse < perVarTolerances[idx];
 }
 
@@ -351,68 +404,113 @@ function updateSummary() {
 }
 
 // ---- Plotly ----
-const PLOT_LAYOUT = {
-  xaxis: { title: 'Time' },
-  yaxis: {
-    title: { text: 'Value', standoff: 10 },
-    tickformat: '.4g',
-    automargin: true,
-    nticks: 6,
-  },
-  margin: { t: 35, b: 45, l: 10, r: 20 },
-  legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)' },
-  hovermode: 'x unified',
-};
 const PLOT_CFG = { responsive: true, displaylogo: false };
+
+function makePlotLayout(title) {
+  // Deep-clone layout per plot — Plotly mutates the layout object internally,
+  // so sharing nested objects across plots causes cross-contamination.
+  return {
+    xaxis: { title: 'Time' },
+    yaxis: {
+      title: { text: 'Value', standoff: 10 },
+      tickformat: '.4g',
+      automargin: true,
+      nticks: 6,
+    },
+    margin: { t: 35, b: 45, l: 10, r: 20 },
+    legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)' },
+    hovermode: 'x unified',
+    title: title ? { text: title, font: { size: 13 } } : undefined,
+  };
+}
 
 function renderPlots() {
   TRAJECTORIES.forEach((traj, idx) => {
     const el = document.getElementById(`plot-${idx}`);
     if (!el) return;
 
-    // --- Trajectory panel ---
-    const traces = [{
-      x: traj.act_time, y: traj.act_values,
-      name: 'Actual', type: 'scatter', mode: 'lines',
-      line: { color: '#2196F3', width: 1.5 },
-    }];
-    if (traj.ref_time.length > 0) {
+    const hasRef = traj.ref_time.length > 0;
+
+    // Build a shared x-grid so all traces align for unified hover.
+    // Use the reference grid as the common basis (matches comparator).
+    // Interpolate actual onto it. Keep original actual data on the element
+    // for tube pass/fail checks that need the raw signal.
+    let commonTime, actOnCommon, refOnCommon;
+    if (hasRef) {
+      commonTime = traj.ref_time;
+      refOnCommon = traj.ref_values;
+      actOnCommon = commonTime.map(t => interpLinear(traj.act_time, traj.act_values, t));
+    } else {
+      commonTime = traj.act_time;
+      actOnCommon = traj.act_values;
+      refOnCommon = [];
+    }
+
+    // Store on element for reuse by error panels, overlays, and tube
+    el._commonTime = commonTime;
+    el._actOnCommon = actOnCommon;
+    el._refOnCommon = refOnCommon;
+
+    // Traces: Actual, Reference, Tube Upper (line), Tube Lower (line), Tube Fill (polygon)
+    const traces = [
+      {
+        x: commonTime, y: actOnCommon,
+        name: 'Actual', type: 'scatter', mode: 'lines',
+        line: { color: '#2196F3', width: 1.5 },
+      },
+    ];
+    if (hasRef) {
       traces.push({
-        x: traj.ref_time, y: traj.ref_values,
+        x: commonTime, y: refOnCommon,
         name: 'Reference', type: 'scatter', mode: 'lines',
         line: { color: '#FF9800', width: 1.5, dash: 'dash' },
       });
     }
-    const layout = { ...PLOT_LAYOUT, title: { text: traj.name, font: { size: 13 } } };
-    Plotly.newPlot(el, traces, layout, PLOT_CFG);
+    // Tube upper bound line (for hover readout)
+    traces.push({
+      x: [], y: [],
+      name: 'Tube Upper', type: 'scatter', mode: 'lines',
+      line: { color: 'rgba(76,175,80,0.6)', width: 1 },
+      showlegend: false,
+      visible: false,
+    });
+    // Tube lower bound line (for hover readout)
+    traces.push({
+      x: [], y: [],
+      name: 'Tube Lower', type: 'scatter', mode: 'lines',
+      line: { color: 'rgba(76,175,80,0.6)', width: 1 },
+      showlegend: false,
+      visible: false,
+    });
+    // Tube fill polygon — single trace, fill:'toself', skipped from hover
+    traces.push({
+      x: [], y: [],
+      name: 'Tube Fill', type: 'scatter',
+      fill: 'toself',
+      fillcolor: 'rgba(76,175,80,0.15)',
+      line: { color: 'transparent' },
+      hoverinfo: 'skip',
+      showlegend: true,
+      visible: false,
+    });
+
+    Plotly.newPlot(el, traces, makePlotLayout(traj.name), PLOT_CFG);
 
     // --- Error panels (only if reference exists) ---
     const absEl = document.getElementById(`plot-abserr-${idx}`);
     const nrmseEl = document.getElementById(`plot-nrmse-${idx}`);
 
-    if (traj.ref_time.length > 0 && absEl && nrmseEl) {
-      // Interpolate actual onto reference time grid and compute errors
-      const signedError = [];
-      const absError = [];
-      const refTime = traj.ref_time;
-      const refValues = traj.ref_values;
-      for (let i = 0; i < refTime.length; i++) {
-        const t = refTime[i];
-        const actInterp = interpLinear(traj.act_time, traj.act_values, t);
-        const diff = actInterp - refValues[i];
-        signedError.push(diff);
-        absError.push(Math.abs(diff));
-      }
+    if (hasRef && absEl && nrmseEl) {
+      const signedError = actOnCommon.map((a, i) => a - refOnCommon[i]);
+      const absError = signedError.map(e => Math.abs(e));
 
-      // Signal range for normalization
-      const refMin = Math.min(...refValues);
-      const refMax = Math.max(...refValues);
+      const refMin = Math.min(...refOnCommon);
+      const refMax = Math.max(...refOnCommon);
       const range = refMax - refMin;
       const nrmseError = range > 1e-15
         ? absError.map(e => e / range)
         : absError;
 
-      // Find worst error time
       let worstIdx = 0;
       for (let i = 1; i < absError.length; i++) {
         if (absError[i] > absError[worstIdx]) worstIdx = i;
@@ -420,12 +518,11 @@ function renderPlots() {
 
       const errYAxis = { tickformat: '.4g', automargin: true, nticks: 4 };
 
-      // Abs error panel
       Plotly.newPlot(absEl, [{
-        x: refTime, y: absError, name: 'Abs Error', type: 'scatter', mode: 'lines',
+        x: commonTime, y: absError, name: 'Abs Error', type: 'scatter', mode: 'lines',
         line: { color: '#2196F3', width: 1 },
       }, {
-        x: [refTime[worstIdx], refTime[worstIdx]],
+        x: [commonTime[worstIdx], commonTime[worstIdx]],
         y: [0, absError[worstIdx]],
         name: 'Max Error', type: 'scatter', mode: 'lines',
         line: { color: '#2196F3', width: 1, dash: 'dot' },
@@ -437,10 +534,9 @@ function renderPlots() {
         hovermode: 'x unified',
       }, PLOT_CFG);
 
-      // NRMSE panel with tolerance line
       const tol = perVarTolerances[idx];
       Plotly.newPlot(nrmseEl, [{
-        x: refTime, y: nrmseError, name: 'NRMSE', type: 'scatter', mode: 'lines',
+        x: commonTime, y: nrmseError, name: 'NRMSE', type: 'scatter', mode: 'lines',
         line: { color: '#2196F3', width: 1 },
       }], {
         yaxis: { ...errYAxis, title: { text: 'NRMSE', standoff: 10 } },
@@ -449,20 +545,19 @@ function renderPlots() {
         legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)', font: { size: 10 } },
         hovermode: 'x unified',
         shapes: [{
-          type: 'line', x0: refTime[0], x1: refTime[refTime.length - 1],
+          type: 'line', x0: commonTime[0], x1: commonTime[commonTime.length - 1],
           y0: tol, y1: tol,
           line: { color: 'gray', width: 1, dash: 'dash' },
         }],
         annotations: [{
-          x: refTime[refTime.length - 1], y: tol,
+          x: commonTime[commonTime.length - 1], y: tol,
           text: 'tolerance', showarrow: false,
           font: { size: 9, color: 'gray' },
           xanchor: 'right', yanchor: 'bottom',
         }],
       }, PLOT_CFG);
 
-      // Store data for tolerance line updates and error overlay
-      el._refTime = refTime;
+      // Store for error overlay
       el._signedError = signedError;
       el._absError = absError;
       el._nrmseError = nrmseError;
@@ -488,50 +583,505 @@ function setErrorOverlay(idx, mode) {
   const el = document.getElementById(`plot-${idx}`);
   if (!el || !el._absError) return;
 
-  const prev = overlayState[idx] || 'none';
   overlayState[idx] = mode;
 
-  // Remove existing overlay trace if present
-  if (prev !== 'none' && el.data.length > 2) {
-    Plotly.deleteTraces(el, el.data.length - 1);
-    Plotly.relayout(el, { 'yaxis2': null });
+  // Remove any existing overlay trace by name
+  const overlayNames = ['Error', 'Abs Error', 'NRMSE'];
+  for (let i = el.data.length - 1; i >= 0; i--) {
+    if (overlayNames.includes(el.data[i].name)) {
+      Plotly.deleteTraces(el, i);
+    }
   }
 
-  if (mode === 'none') return;
+  if (mode === 'none') {
+    Plotly.relayout(el, { yaxis2: null });
+    return;
+  }
 
-  // Select error data and label
   let yData, label;
-  if (mode === 'error') {
-    yData = el._signedError;
-    label = 'Error';
-  } else if (mode === 'abs_error') {
-    yData = el._absError;
-    label = 'Abs Error';
-  } else if (mode === 'nrmse') {
-    yData = el._nrmseError;
-    label = 'NRMSE';
-  }
+  if (mode === 'error') { yData = el._signedError; label = 'Error'; }
+  else if (mode === 'abs_error') { yData = el._absError; label = 'Abs Error'; }
+  else if (mode === 'nrmse') { yData = el._nrmseError; label = 'NRMSE'; }
 
-  // Add overlay trace on right y-axis
   Plotly.addTraces(el, {
-    x: el._refTime, y: yData,
+    x: el._commonTime, y: yData,
     name: label, type: 'scatter', mode: 'lines',
     line: { color: '#f44336', width: 1 },
     opacity: 0.5,
     yaxis: 'y2',
   });
   Plotly.relayout(el, {
-    'yaxis2': {
+    yaxis2: {
       title: { text: label, font: { color: '#f44336', size: 11 } },
-      tickformat: '.4g',
-      automargin: true,
-      nticks: 4,
-      overlaying: 'y',
-      side: 'right',
-      showgrid: false,
+      tickformat: '.4g', automargin: true, nticks: 4,
+      overlaying: 'y', side: 'right', showgrid: false,
       tickfont: { color: '#f44336', size: 10 },
     },
   });
+}
+
+// ---- Tube editing ----
+// tubeData[idx] = { points: [{time, upper, lower, upperMode, lowerMode}],
+//                   interpolation, widthMode, synced, minWidth }
+// upperMode/lowerMode only used in unsynced mode — allows per-side abs/rel
+const tubeData = {};
+const varModes = VARIABLES.map(v => v.mode || 'nrmse');
+
+function setVarMode(idx, mode) {
+  varModes[idx] = mode;
+  const editor = document.getElementById(`tube-editor-${idx}`);
+  if (!editor) return;
+
+  if (mode === 'tube') {
+    editor.style.display = '';
+    if (!tubeData[idx]) {
+      const traj = TRAJECTORIES[idx];
+      const tStart = traj.ref_time.length > 0 ? traj.ref_time[0] : 0;
+      const tEnd = traj.ref_time.length > 0 ? traj.ref_time[traj.ref_time.length - 1] : 1;
+      tubeData[idx] = {
+        points: [
+          { time: tStart, upper: 0, lower: 0, upperMode: 'rel', lowerMode: 'rel' },
+          { time: tEnd, upper: 0, lower: 0, upperMode: 'rel', lowerMode: 'rel' },
+        ],
+        interpolation: 'linear',
+        widthMode: 'rel',
+        synced: true,
+        minWidth: 0,
+      };
+      seedTubeDefaults(idx);
+    }
+    renderTubeTable(idx);
+    updateTube(idx);
+  } else {
+    editor.style.display = 'none';
+    removeTubeTraces(idx);
+    updateVarStatus(idx);
+    updateSummary();
+    updateExport();
+  }
+
+  const row = document.querySelector(`tr[data-idx="${idx}"]`);
+  if (row) {
+    const cells = row.querySelectorAll('td');
+    if (cells[2]) cells[2].textContent = mode;
+  }
+}
+
+function refValueAt(idx, t) {
+  const traj = TRAJECTORIES[idx];
+  if (!traj || !traj.ref_time.length) return 0;
+  return interpLinear(traj.ref_time, traj.ref_values, t);
+}
+
+function roundSig(val, digits) {
+  if (val === 0) return 0;
+  const d = Math.ceil(Math.log10(Math.abs(val)));
+  const pow = Math.pow(10, digits - d);
+  return Math.round(val * pow) / pow;
+}
+
+function seedTubeDefaults(idx) {
+  const td = tubeData[idx];
+  const v = VARIABLES[idx];
+  const sigRange = v.signal_range || 1.0;
+  const fallbackBand = roundSig(sigRange * 0.05, 3);
+  td.points.forEach(pt => {
+    const rv = refValueAt(idx, pt.time);
+    const rvAbs = Math.abs(rv);
+    if (td.widthMode === 'rel') {
+      pt.upper = 0.05;
+      pt.lower = 0.05;
+    } else if (td.widthMode === 'absolute') {
+      // Literal y-values: ref ± 5%
+      const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
+      pt.upper = roundSig(rv + band, 4);
+      pt.lower = roundSig(rv - band, 4);
+    } else {
+      // band mode: offset in signal units
+      const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
+      pt.upper = band;
+      pt.lower = band;
+    }
+    pt.upperMode = td.widthMode;
+    pt.lowerMode = td.widthMode;
+  });
+}
+
+function tubeWidthModeChanged(idx, mode) {
+  const td = tubeData[idx];
+  const oldMode = td.widthMode;
+  td.widthMode = mode;
+
+  if (oldMode !== mode) {
+    seedTubeDefaults(idx);
+  }
+  renderTubeTable(idx);
+  updateTube(idx);
+}
+
+function tubeSyncChanged(idx, synced) {
+  const td = tubeData[idx];
+  td.synced = synced;
+
+  // Disable/enable global width mode selector
+  const widthSel = document.querySelector(`.tube-width-mode[data-idx="${idx}"]`);
+  if (widthSel) widthSel.disabled = !synced;
+
+  if (synced) {
+    // Sync lower to upper, reset per-side modes to global
+    td.points.forEach(pt => {
+      pt.lower = pt.upper;
+      pt.upperMode = td.widthMode;
+      pt.lowerMode = td.widthMode;
+    });
+  } else {
+    // Initialize per-side modes from global
+    td.points.forEach(pt => {
+      if (!pt.upperMode) pt.upperMode = td.widthMode;
+      if (!pt.lowerMode) pt.lowerMode = td.widthMode;
+    });
+  }
+  renderTubeTable(idx);
+  updateTube(idx);
+}
+
+function renderTubeTable(idx) {
+  const table = document.getElementById(`tube-table-${idx}`);
+  if (!table) return;
+  const td = tubeData[idx];
+  const unitLabel = td.widthMode === 'rel' ? 'fraction'
+    : td.widthMode === 'absolute' ? 'y-value' : 'signal units';
+  const step = td.widthMode === 'rel' ? '0.001' : 'any';
+
+  table.innerHTML = '';
+  const header = table.insertRow();
+  if (td.synced && td.widthMode !== 'absolute') {
+    header.innerHTML = `<th>Time</th><th>Width (${unitLabel})</th><th></th>`;
+  } else if (td.synced && td.widthMode === 'absolute') {
+    header.innerHTML = `<th>Time</th><th>Upper (${unitLabel})</th><th>Lower (${unitLabel})</th><th></th>`;
+  } else {
+    header.innerHTML = `<th>Time</th><th>Upper</th><th style="font-size:0.8em"></th><th>Lower</th><th style="font-size:0.8em"></th><th></th>`;
+  }
+
+  td.points.forEach((pt, ptIdx) => {
+    const row = table.insertRow();
+    if (td.synced && td.widthMode !== 'absolute') {
+      row.innerHTML = `
+        <td><input type="number" step="any" value="${pt.time}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'time', this.value)"></td>
+        <td><input type="number" step="${step}" min="0" value="${pt.upper}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'width', this.value)"></td>
+        <td><button class="btn btn-remove" onclick="removeTubePoint(${idx}, ${ptIdx})">x</button></td>
+      `;
+    } else if (td.synced && td.widthMode === 'absolute') {
+      row.innerHTML = `
+        <td><input type="number" step="any" value="${pt.time}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'time', this.value)"></td>
+        <td><input type="number" step="any" value="${pt.upper}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'upper', this.value)"></td>
+        <td><input type="number" step="any" value="${pt.lower}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'lower', this.value)"></td>
+        <td><button class="btn btn-remove" onclick="removeTubePoint(${idx}, ${ptIdx})">x</button></td>
+      `;
+    } else {
+      const uMode = pt.upperMode || td.widthMode;
+      const lMode = pt.lowerMode || td.widthMode;
+      const uStep = uMode === 'rel' ? '0.001' : 'any';
+      const lStep = lMode === 'rel' ? '0.001' : 'any';
+      row.innerHTML = `
+        <td><input type="number" step="any" value="${pt.time}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'time', this.value)"></td>
+        <td><input type="number" step="${uStep}" value="${pt.upper}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'upper', this.value)"></td>
+        <td><select class="tube-side-mode" style="font-size:0.8em; width:5.5em" onchange="tubeSideModeChanged(${idx}, ${ptIdx}, 'upper', this.value)">
+          <option value="band"${uMode === 'band' ? ' selected' : ''}>band</option>
+          <option value="rel"${uMode === 'rel' ? ' selected' : ''}>rel</option>
+          <option value="absolute"${uMode === 'absolute' ? ' selected' : ''}>abs</option>
+        </select></td>
+        <td><input type="number" step="${lStep}" value="${pt.lower}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'lower', this.value)"></td>
+        <td><select class="tube-side-mode" style="font-size:0.8em; width:5.5em" onchange="tubeSideModeChanged(${idx}, ${ptIdx}, 'lower', this.value)">
+          <option value="band"${lMode === 'band' ? ' selected' : ''}>band</option>
+          <option value="rel"${lMode === 'rel' ? ' selected' : ''}>rel</option>
+          <option value="absolute"${lMode === 'absolute' ? ' selected' : ''}>abs</option>
+        </select></td>
+        <td><button class="btn btn-remove" onclick="removeTubePoint(${idx}, ${ptIdx})">x</button></td>
+      `;
+    }
+  });
+
+  // Sync UI controls
+  const widthSel = document.querySelector(`.tube-width-mode[data-idx="${idx}"]`);
+  if (widthSel) widthSel.value = td.widthMode;
+  const syncSel = document.querySelector(`.tube-sync[data-idx="${idx}"]`);
+  if (syncSel) syncSel.value = td.synced.toString();
+  const interpSel = document.querySelector(`.tube-interp[data-idx="${idx}"]`);
+  if (interpSel) interpSel.value = td.interpolation;
+  const minWInput = document.querySelector(`.tube-min-width[data-idx="${idx}"]`);
+  if (minWInput) minWInput.value = td.minWidth;
+}
+
+function addTubePoint(idx) {
+  const td = tubeData[idx];
+  const traj = TRAJECTORIES[idx];
+  let newTime;
+  if (td.points.length >= 2) {
+    const last = td.points[td.points.length - 1];
+    const prev = td.points[td.points.length - 2];
+    newTime = (prev.time + last.time) / 2;
+  } else {
+    newTime = traj.ref_time.length > 0 ? traj.ref_time[traj.ref_time.length - 1] : 1;
+  }
+  // Seed new point with sensible defaults based on current mode
+  const v = VARIABLES[idx];
+  const sigRange = v.signal_range || 1.0;
+  const fallbackBand = roundSig(sigRange * 0.05, 3);
+  const rv = refValueAt(idx, newTime);
+  const rvAbs = Math.abs(rv);
+  const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
+  let upper, lower;
+  if (td.widthMode === 'rel') {
+    upper = 0.05;
+    lower = 0.05;
+  } else if (td.widthMode === 'absolute') {
+    upper = roundSig(rv + band, 4);
+    lower = roundSig(rv - band, 4);
+  } else {
+    upper = band;
+    lower = band;
+  }
+  td.points.push({
+    time: newTime, upper, lower,
+    upperMode: td.widthMode, lowerMode: td.widthMode,
+  });
+  td.points.sort((a, b) => a.time - b.time);
+  renderTubeTable(idx);
+  updateTube(idx);
+}
+
+function removeTubePoint(idx, ptIdx) {
+  if (tubeData[idx].points.length <= 1) return;
+  tubeData[idx].points.splice(ptIdx, 1);
+  renderTubeTable(idx);
+  updateTube(idx);
+}
+
+function tubePointChanged(idx, ptIdx, field, value) {
+  const val = parseFloat(value);
+  if (isNaN(val)) return;
+  if (field !== 'time' && val < 0) return;
+  const td = tubeData[idx];
+  const pt = td.points[ptIdx];
+  if (!pt) return;
+  if (field === 'time') {
+    pt.time = val;
+  } else if (field === 'width') {
+    pt.upper = val;
+    pt.lower = val;
+  } else if (field === 'upper') {
+    pt.upper = val;
+  } else if (field === 'lower') {
+    pt.lower = val;
+  }
+  // Only re-sort and rebuild table on time changes (which shift indices)
+  if (field === 'time') {
+    td.points.sort((a, b) => a.time - b.time);
+    renderTubeTable(idx);
+  }
+  updateTube(idx);
+}
+
+function tubeSideModeChanged(idx, ptIdx, side, mode) {
+  const td = tubeData[idx];
+  const pt = td.points[ptIdx];
+  const field = side === 'upper' ? 'upper' : 'lower';
+  const modeField = side === 'upper' ? 'upperMode' : 'lowerMode';
+  const oldMode = pt[modeField] || td.widthMode;
+  const isUpper = side === 'upper';
+
+  if (oldMode !== mode) {
+    const rv = refValueAt(idx, pt.time);
+    const rvAbs = Math.abs(rv);
+    const v = VARIABLES[idx];
+    const scale = rvAbs > 1e-15 ? rvAbs : (v.signal_range || 1.0);
+
+    // Convert: old value → absolute y-value → new mode value
+    // Step 1: get the absolute y-bound from the old representation
+    let yBound;
+    if (oldMode === 'absolute') {
+      yBound = pt[field];
+    } else if (oldMode === 'rel') {
+      const offset = pt[field] * rvAbs;
+      yBound = isUpper ? rv + offset : rv - offset;
+    } else {
+      // band
+      yBound = isUpper ? rv + pt[field] : rv - pt[field];
+    }
+
+    // Step 2: convert absolute y-bound to new representation
+    if (mode === 'absolute') {
+      pt[field] = roundSig(yBound, 4);
+    } else if (mode === 'rel') {
+      const offset = isUpper ? yBound - rv : rv - yBound;
+      pt[field] = roundSig(scale > 1e-15 ? offset / scale : 0.05, 3);
+    } else {
+      // band
+      pt[field] = roundSig(isUpper ? yBound - rv : rv - yBound, 3);
+    }
+  }
+  pt[modeField] = mode;
+  renderTubeTable(idx);
+  updateTube(idx);
+}
+
+function updateTube(idx) {
+  const td = tubeData[idx];
+  const interpSel = document.querySelector(`.tube-interp[data-idx="${idx}"]`);
+  if (interpSel) td.interpolation = interpSel.value;
+  const minWInput = document.querySelector(`.tube-min-width[data-idx="${idx}"]`);
+  if (minWInput) td.minWidth = parseFloat(minWInput.value) || 0;
+
+  const traj = TRAJECTORIES[idx];
+  if (!traj.ref_time.length) return;
+
+  const refTime = traj.ref_time;
+  const refValues = traj.ref_values;
+  const pts = [...td.points].sort((a, b) => a.time - b.time);
+  const globalMode = td.widthMode;
+  const tubeUpper = [];
+  const tubeLower = [];
+
+  for (let i = 0; i < refTime.length; i++) {
+    const t = refTime[i];
+    const rawUpper = interpTubeField(pts, t, 'upper', td.interpolation);
+    const rawLower = interpTubeField(pts, t, 'lower', td.interpolation);
+
+    // Determine mode for each side at this time point
+    const uMode = td.synced ? globalMode : interpTubeMode(pts, t, 'upperMode', globalMode);
+    const lMode = td.synced ? globalMode : interpTubeMode(pts, t, 'lowerMode', globalMode);
+
+    if (uMode === 'absolute') {
+      // Literal y-values — use directly as tube bounds
+      tubeUpper.push(rawUpper);
+    } else {
+      let upperW = uMode === 'rel' ? rawUpper * Math.abs(refValues[i]) : rawUpper;
+      if (td.minWidth > 0) upperW = Math.max(upperW, td.minWidth);
+      tubeUpper.push(refValues[i] + upperW);
+    }
+
+    if (lMode === 'absolute') {
+      tubeLower.push(rawLower);
+    } else {
+      let lowerW = lMode === 'rel' ? rawLower * Math.abs(refValues[i]) : rawLower;
+      if (td.minWidth > 0) lowerW = Math.max(lowerW, td.minWidth);
+      tubeLower.push(refValues[i] - lowerW);
+    }
+  }
+
+  // Check pass/fail
+  let nInside = 0, worstViolation = 0, worstTime = 0;
+  for (let i = 0; i < refTime.length; i++) {
+    const actVal = interpLinear(traj.act_time, traj.act_values, refTime[i]);
+    if (actVal >= tubeLower[i] && actVal <= tubeUpper[i]) {
+      nInside++;
+    } else {
+      const violation = Math.max(actVal - tubeUpper[i], tubeLower[i] - actVal);
+      if (violation > worstViolation) { worstViolation = violation; worstTime = refTime[i]; }
+    }
+  }
+  const pctInside = (nInside / refTime.length * 100).toFixed(1);
+  const passed = nInside === refTime.length;
+
+  const statusEl = document.getElementById(`tube-status-${idx}`);
+  if (statusEl) {
+    statusEl.innerHTML = passed
+      ? `<span class="pass">PASS</span> (${pctInside}% inside)`
+      : `<span class="fail">FAIL</span> (${pctInside}% inside, worst: ${worstViolation.toExponential(2)} at t=${worstTime.toFixed(1)})`;
+  }
+
+  // Use the already-computed refTime arrays for rendering (correct for hover)
+  renderTubeOnPlot(idx, Array.from(refTime), tubeUpper, tubeLower);
+
+  const row = document.querySelector(`tr[data-idx="${idx}"]`);
+  if (row) {
+    row.querySelector('.var-status').innerHTML = passed
+      ? '<span class="pass">PASS</span>' : '<span class="fail">FAIL</span>';
+    const cells = row.querySelectorAll('td');
+    if (cells[2]) cells[2].textContent = `tube (${pctInside}% in)`;
+  }
+  const plotLabel = document.querySelector(`.var-plot-status[data-idx="${idx}"]`);
+  if (plotLabel) {
+    plotLabel.className = `var-plot-status ${passed ? 'pass' : 'fail'}`;
+    plotLabel.textContent = passed ? 'PASS' : 'FAIL';
+  }
+
+  updateSummary();
+  updateExport();
+}
+
+function interpTubeField(pts, t, field, interp) {
+  if (pts.length === 0) return 0;
+  if (pts.length === 1 || interp === 'constant') {
+    let val = pts[0][field];
+    for (let i = 0; i < pts.length; i++) {
+      if (pts[i].time <= t) val = pts[i][field]; else break;
+    }
+    return val;
+  }
+  if (t <= pts[0].time) return pts[0][field];
+  if (t >= pts[pts.length - 1].time) return pts[pts.length - 1][field];
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (t >= pts[i].time && t <= pts[i + 1].time) {
+      const frac = (t - pts[i].time) / (pts[i + 1].time - pts[i].time);
+      return pts[i][field] + frac * (pts[i + 1][field] - pts[i][field]);
+    }
+  }
+  return pts[pts.length - 1][field];
+}
+
+function interpTubeMode(pts, t, field, defaultMode) {
+  // Stepwise: use nearest prior point's mode
+  let mode = pts[0][field] || defaultMode;
+  for (let i = 0; i < pts.length; i++) {
+    if (pts[i].time <= t) mode = pts[i][field] || defaultMode;
+    else break;
+  }
+  return mode;
+}
+
+function findTraceIndex(el, name) {
+  for (let i = 0; i < el.data.length; i++) {
+    if (el.data[i].name === name) return i;
+  }
+  return -1;
+}
+
+function renderTubeOnPlot(idx, timeArr, tubeUpper, tubeLower) {
+  const el = document.getElementById(`plot-${idx}`);
+  if (!el || !el.data) return;
+  const upperIdx = findTraceIndex(el, 'Tube Upper');
+  const lowerIdx = findTraceIndex(el, 'Tube Lower');
+  const fillIdx = findTraceIndex(el, 'Tube Fill');
+  if (upperIdx < 0 || lowerIdx < 0 || fillIdx < 0) return;
+
+  // Build closed polygon for the fill: upper forward, then lower reversed
+  const polyX = [...timeArr, ...timeArr.slice().reverse()];
+  const polyY = [...tubeUpper, ...tubeLower.slice().reverse()];
+
+  // Update all three tube traces in one call
+  Plotly.restyle(el, {
+    x: [timeArr, timeArr, polyX],
+    y: [tubeUpper, tubeLower, polyY],
+    visible: [true, true, true],
+  }, [upperIdx, lowerIdx, fillIdx]);
+}
+
+function removeTubeTraces(idx) {
+  const el = document.getElementById(`plot-${idx}`);
+  if (!el || !el.data) return;
+  const upperIdx = findTraceIndex(el, 'Tube Upper');
+  const lowerIdx = findTraceIndex(el, 'Tube Lower');
+  const fillIdx = findTraceIndex(el, 'Tube Fill');
+  const indices = [upperIdx, lowerIdx, fillIdx].filter(i => i >= 0);
+  if (indices.length > 0) {
+    Plotly.restyle(el, {
+      x: indices.map(() => []),
+      y: indices.map(() => []),
+      visible: indices.map(() => false),
+    }, indices);
+  }
 }
 
 // Linear interpolation helper
@@ -564,8 +1114,7 @@ function renderDiagPlots() {
         line: { color: '#FF9800', width: 1.5, dash: 'dash' },
       });
     }
-    const layout = { ...PLOT_LAYOUT, title: { text: `${traj.name} (diagnostic)`, font: { size: 13 } } };
-    Plotly.newPlot(el, traces, layout, PLOT_CFG);
+    Plotly.newPlot(el, traces, makePlotLayout(`${traj.name} (diagnostic)`), PLOT_CFG);
   });
 }
 
@@ -573,12 +1122,11 @@ function renderNBPlots() {
   NB_TRAJECTORIES.forEach((traj, idx) => {
     const el = document.getElementById(`nb-plot-${idx}`);
     if (!el) return;
-    const layout = { ...PLOT_LAYOUT, title: { text: `${traj.name} (new)`, font: { size: 13 } } };
     Plotly.newPlot(el, [{
       x: traj.time, y: traj.values,
       name: 'Actual', type: 'scatter', mode: 'lines',
       line: { color: '#2196F3', width: 1.5 },
-    }], layout, PLOT_CFG);
+    }], makePlotLayout(`${traj.name} (new)`), PLOT_CFG);
   });
 }
 
@@ -587,7 +1135,30 @@ function buildExportData() {
   const overrides = {};
   VARIABLES.forEach((v, idx) => {
     const tol = perVarTolerances[idx];
-    if (Math.abs(tol - globalTolerance) > 1e-15) {
+    const mode = varModes[idx];
+
+    if (mode === 'tube' && tubeData[idx]) {
+      const td = tubeData[idx];
+      const override = { mode: 'tube', tube_width_mode: td.widthMode };
+      if (td.minWidth > 0) override.tube_min_width = td.minWidth;
+
+      // Check if constant (all points same value)
+      const allSame = td.points.every(p =>
+        p.upper === td.points[0].upper && p.lower === td.points[0].lower
+      );
+      if (allSame && td.synced && td.widthMode !== 'absolute') {
+        // Constant symmetric band/rel — use shorthand
+        const key = td.widthMode === 'rel' ? 'tube_rel' : 'tube_abs';
+        override[key] = td.points[0].upper;
+      } else {
+        // For absolute mode or varying points, always emit tube_points with upper+lower
+        override.tube_points = td.points.map(p => ({
+          time: p.time, upper: p.upper, lower: p.lower,
+        }));
+        override.tube_interpolation = td.interpolation;
+      }
+      overrides[v.name] = override;
+    } else if (Math.abs(tol - globalTolerance) > 1e-15) {
       overrides[v.name] = { tolerance: tol };
     }
   });

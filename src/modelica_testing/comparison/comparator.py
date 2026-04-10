@@ -272,35 +272,46 @@ def _compare_final_values(
     )
 
 
-def _interpolate_tube_width(
+def _interpolate_tube_widths(
     eval_time: np.ndarray,
     tube_points: list[dict],
     interpolation: str = "linear",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Interpolate tube abs/rel widths at evaluation times.
+    """Interpolate tube upper/lower widths at evaluation times.
 
-    tube_points: [{"time": t, "abs": a, "rel": r}, ...]
-    Returns (abs_widths, rel_widths) arrays matching eval_time.
-    Before first point: hold first values. After last: hold last values.
+    Supports two point formats:
+    - Symmetric (legacy): {"time": t, "abs": a, "rel": r}
+      → upper = lower = value
+    - Asymmetric: {"time": t, "upper": u, "lower": l}
+      → independent upper/lower widths
+
+    Returns (upper_widths, lower_widths) arrays matching eval_time.
+    Before first point: hold. After last: hold.
     """
     if not tube_points:
         return np.zeros_like(eval_time), np.zeros_like(eval_time)
 
     pts = sorted(tube_points, key=lambda p: p["time"])
     ctrl_times = np.array([p["time"] for p in pts])
-    ctrl_abs = np.array([p.get("abs", 0.0) for p in pts])
-    ctrl_rel = np.array([p.get("rel", 0.0) for p in pts])
+
+    # Determine field names — check first point for format
+    if "upper" in pts[0] or "lower" in pts[0]:
+        # Asymmetric format
+        ctrl_upper = np.array([p.get("upper", p.get("abs", 0.0)) for p in pts])
+        ctrl_lower = np.array([p.get("lower", p.get("abs", 0.0)) for p in pts])
+    else:
+        # Legacy symmetric format (abs/rel fields)
+        ctrl_upper = np.array([p.get("abs", p.get("rel", 0.0)) for p in pts])
+        ctrl_lower = ctrl_upper.copy()
 
     if len(pts) == 1 or interpolation == "constant":
-        # Stepwise: find which control point applies at each time
         indices = np.searchsorted(ctrl_times, eval_time, side="right") - 1
         indices = np.clip(indices, 0, len(pts) - 1)
-        return ctrl_abs[indices], ctrl_rel[indices]
+        return ctrl_upper[indices], ctrl_lower[indices]
 
-    # Linear interpolation with hold at boundaries (np.interp does this)
-    abs_widths = np.interp(eval_time, ctrl_times, ctrl_abs)
-    rel_widths = np.interp(eval_time, ctrl_times, ctrl_rel)
-    return abs_widths, rel_widths
+    upper_widths = np.interp(eval_time, ctrl_times, ctrl_upper)
+    lower_widths = np.interp(eval_time, ctrl_times, ctrl_lower)
+    return upper_widths, lower_widths
 
 
 def _compare_tube(
@@ -312,47 +323,99 @@ def _compare_tube(
 ) -> VariableComparison:
     """Compare using a tolerance tube around the reference trajectory.
 
-    The tube width at each point is max(abs_width, rel_width * |ref|).
-    A point passes if |actual - reference| <= tube_width.
-    The test passes if ALL points are inside the tube (strict).
+    Tube width modes:
+    - "band" (or legacy "abs"): widths are offsets in signal units (ref ± width)
+    - "rel": widths are fractions of |reference| (ref ± frac * |ref|)
+    - "absolute": upper/lower are literal y-axis bounds (not offsets)
+    - Legacy (both abs and rel): width = max(abs, rel * |ref|)
 
-    Supports constant tube (tube_abs/tube_rel) or time-varying tube
+    Supports symmetric (upper == lower) and asymmetric tubes.
+    Supports constant tube (tube_abs/tube_rel) or time-varying
     (tube_points with interpolation).
+
+    A point passes if: tube_lower <= actual <= tube_upper.
+    The test passes if ALL points are inside the tube (strict).
     """
-    # Interpolate actual onto reference time grid
     act_interp = np.interp(ref_time, act_time, act_values)
 
-    # Determine tube widths at each reference time point
+    # tube_width_mode: "band" (offset in signal units), "rel" (fraction of |ref|),
+    # "absolute" (literal y-values), "abs" (legacy alias for "band"), or None (legacy)
+    tube_width_mode = tube_config.get("tube_width_mode")
+    # Normalize legacy "abs" to "band"
+    if tube_width_mode == "abs":
+        tube_width_mode = "band"
+    min_width = tube_config.get("tube_min_width", 0.0)
+
     tube_points = tube_config.get("tube_points")
     if tube_points:
         interpolation = tube_config.get("tube_interpolation", "linear")
-        abs_widths, rel_widths = _interpolate_tube_width(
+        raw_upper, raw_lower = _interpolate_tube_widths(
             ref_time, tube_points, interpolation,
         )
     else:
-        # Constant tube
-        abs_widths = np.full_like(ref_time, tube_config.get("tube_abs", 0.0))
-        rel_widths = np.full_like(ref_time, tube_config.get("tube_rel", 0.0))
+        # Constant tube (shorthand)
+        const_abs = tube_config.get("tube_abs", 0.0)
+        const_rel = tube_config.get("tube_rel", 0.0)
+        if tube_width_mode == "band":
+            raw_upper = np.full_like(ref_time, const_abs)
+            raw_lower = raw_upper.copy()
+        elif tube_width_mode == "rel":
+            raw_upper = np.full_like(ref_time, const_rel)
+            raw_lower = raw_upper.copy()
+        else:
+            # Legacy: both abs and rel
+            raw_upper = np.maximum(
+                np.full_like(ref_time, const_abs),
+                np.full_like(ref_time, const_rel) * np.abs(ref_values),
+            )
+            raw_lower = raw_upper.copy()
 
-    # Tube width = max(absolute, relative * |reference|)
-    tube_width = np.maximum(abs_widths, rel_widths * np.abs(ref_values))
+    if tube_width_mode == "absolute":
+        # Absolute mode: raw values are literal y-axis bounds
+        tube_upper = raw_upper
+        tube_lower = raw_lower
+    else:
+        # Band/rel modes: raw values are offsets from reference
+        if tube_width_mode == "rel":
+            upper_width = raw_upper * np.abs(ref_values)
+            lower_width = raw_lower * np.abs(ref_values)
+        elif tube_width_mode == "band":
+            upper_width = raw_upper
+            lower_width = raw_lower
+        elif tube_points and ("upper" in tube_points[0] or "lower" in tube_points[0]):
+            upper_width = raw_upper
+            lower_width = raw_lower
+        else:
+            # Legacy format: already computed as max(abs, rel * |ref|)
+            upper_width = raw_upper
+            lower_width = raw_lower
 
-    # Compute deviations
-    abs_error = np.abs(act_interp - ref_values)
-    violations = abs_error - tube_width  # Positive = outside tube
+        # Apply minimum width floor
+        if min_width > 0:
+            upper_width = np.maximum(upper_width, min_width)
+            lower_width = np.maximum(lower_width, min_width)
+
+        tube_upper = ref_values + upper_width
+        tube_lower = ref_values - lower_width
+
+    # Check: tube_lower <= actual <= tube_upper
+    above_upper = act_interp - tube_upper  # Positive = above tube
+    below_lower = tube_lower - act_interp  # Positive = below tube
+    violations = np.maximum(above_upper, below_lower)
 
     n_total = len(ref_time)
     n_inside = int(np.sum(violations <= 0))
     fraction_inside = n_inside / n_total if n_total > 0 else 1.0
 
-    # Worst violation
     worst_idx = int(np.argmax(violations))
     worst_violation = float(max(violations[worst_idx], 0.0))
     worst_violation_time = float(ref_time[worst_idx])
 
-    passed = n_inside == n_total  # Strict: every point must be inside
+    passed = n_inside == n_total
 
-    # Also compute NRMSE for reporting (useful even in tube mode)
+    # NRMSE for reporting (always based on actual vs reference difference)
+    diff = act_interp - ref_values
+    abs_error = np.abs(diff)
     rmse = float(np.sqrt(np.mean(abs_error ** 2)))
     signal_range = float(np.max(ref_values) - np.min(ref_values))
     is_constant = signal_range < _EPS

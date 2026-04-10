@@ -12,14 +12,14 @@ The tool discovers tests by scanning `.mo` files and/or reading `test_spec.json`
 ModelicaTesting/
 ├── src/
 │   └── modelica_testing/        # Python package (src layout)
-│       ├── cli.py               # CLI: discover, run, compare, export, manifest, add
+│       ├── cli.py               # CLI: discover, run, compare, export, manifest, add, spec-update
 │       ├── config.py            # Config dataclass, path resolution, testing.json loading
 │       ├── discovery/           # Test discovery: scan .mo for UnitTests, parse test_spec.json
 │       ├── simulators/          # Abstract runner + Dymola backend (batch .mos, .mat reader, dslog parser)
 │       ├── comparison/          # NRMSE and tube comparison with piecewise event handling
 │       ├── storage/             # JSON reference storage with in-memory index
 │       └── reporting/           # Console, JUnit XML, HTML reporters, plot generation
-│           └── templates/       # Jinja2 templates (comparison.html) + comparison_data.json sidecar
+│           └── templates/       # Jinja2 templates (comparison.html, interactive.html) + comparison_data.json sidecar
 ├── ModelicaTestingLib/          # Modelica library: UnitTests component + example models
 │   ├── Components/UnitTests.mo  # Reusable UnitTests component for tracking variables
 │   ├── Examples/                # SimpleTest, EventTest, ConstantTest, IntervalTest, NoUnitTest
@@ -52,11 +52,14 @@ uv run python -m modelica_testing --config testing.json run -i no-baseline
 # Accept all results as new baselines
 uv run python -m modelica_testing --config testing.json run --accept
 
-# Generate HTML report with per-test plots
+# Generate HTML report with per-test plots (static + interactive Plotly)
 uv run python -m modelica_testing --config testing.json run --report ./reports
 
 # Compare without re-running simulations (uses last results)
 uv run python -m modelica_testing --config testing.json compare
+
+# Apply tolerance config exported from interactive report to test_spec.json
+uv run python -m modelica_testing --config testing.json spec-update tolerance_config.json
 
 # Dump reference manifest (ref ID to model name mapping) without running tests
 uv run python -m modelica_testing --config testing.json manifest dump
@@ -102,7 +105,7 @@ Simulation parameters live under a `simulation` key, comparison settings under a
         "tolerance": 0.01,
         "variable_overrides": {
           "pipe.T[1]": {"tolerance": 0.1},
-          "pipe.p[1]": {"mode": "tube", "tube_abs": 500, "tube_rel": 0.02}
+          "pipe.p[1]": {"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.02}
         }
       }
     }
@@ -114,7 +117,12 @@ Simulation parameters live under a `simulation` key, comparison settings under a
 
 **NRMSE** (default): `NRMSE = RMSE / signal_range`. Pass if below tolerance.
 
-**Tube**: envelope around the reference trajectory. Configured per-variable via `variable_overrides` with `"mode": "tube"`. Width at each point = `max(tube_abs, tube_rel * |reference|)`. Pass if every point stays inside the tube. Supports time-varying tubes via `tube_points` with linear or stepwise interpolation.
+**Tube**: envelope around the reference trajectory. Configured per-variable via `variable_overrides` with `"mode": "tube"`. Three width modes controlled by `tube_width_mode`:
+- `"rel"` (default in interactive UI): width = fraction of |reference| (e.g., `"tube_rel": 0.02` = 2%)
+- `"band"` (or legacy `"abs"`): width = offset in signal units (e.g., `"tube_abs": 500`)
+- `"absolute"`: upper/lower are literal y-axis values (not offsets from reference)
+
+Legacy format (no `tube_width_mode`): width = `max(tube_abs, tube_rel * |reference|)`. Pass if every point stays inside the tube. Supports time-varying tubes via `tube_points` with linear or stepwise interpolation.
 
 ### Tolerance resolution order
 
@@ -127,7 +135,7 @@ Per-variable override (spec) > per-variable override (reference JSON) > per-test
 - **`TestModel`** (`discovery/test_registry.py`) — fully resolved test with model ID, simulation params, tracked variables, source
 - **`SimulatorRunner`** (`simulators/base.py`) — abstract interface; `DymolaRunner` implements batch execution
 - **`ReferenceStore`** (`storage/reference_store.py`) — CRUD for per-test JSON reference files; `RefIndex` built in-memory from scanning ref files
-- **`comparator`** (`comparison/comparator.py`) — NRMSE comparison with piecewise event boundary handling; tube comparison mode for envelope-based pass/fail (configured per-variable via `variable_overrides` with `"mode": "tube"`)
+- **`comparator`** (`comparison/comparator.py`) — NRMSE comparison with piecewise event boundary handling; tube comparison mode with three width modes (`rel`, `band`, `absolute`) for envelope-based pass/fail
 
 ## Design Principles
 

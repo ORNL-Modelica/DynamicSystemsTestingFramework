@@ -39,7 +39,8 @@ src/modelica_testing/
     ├── junit_report.py       # JUnit XML for CI
     ├── html_report.py        # Builds context dict, renders Jinja2 template, writes comparison_data.json sidecar
     ├── templates/
-    │   └── comparison.html   # Jinja2 template: progressive disclosure layout with collapsible sections
+    │   ├── comparison.html   # Jinja2 template: static matplotlib-based report with progressive disclosure
+    │   └── interactive.html  # Jinja2 template: interactive Plotly.js report (zoom, pan, hover, live tolerance editing)
     └── plot_comparison.py    # Per-variable PNG plots + HTML viewer with stats tables
 ```
 
@@ -70,12 +71,14 @@ compare_all(tests, results, store, config)
     → loads reference JSON per test from ReferenceStore
     → per-variable comparison mode: NRMSE (default) or tube (via variable_overrides)
     → NRMSE: piecewise comparison with event boundary handling
-    → tube: envelope check — actual signal must stay inside at every point
+    → tube: envelope check with three width modes (rel, band, absolute)
     → returns list[TestComparison]
 
 reporters render TestComparison → console / JUnit / HTML / plots
-    → HTML reporter builds a context dict and renders via Jinja2 template
-    → writes comparison_data.json sidecar alongside HTML for downstream tooling
+    → HTML reporter builds a context dict and renders via Jinja2 templates
+    → generates comparison.html (static matplotlib) and interactive.html (Plotly.js)
+    → per-test reports open interactive.html by default
+    → writes comparison_data.json sidecar (includes full trajectory data) for downstream tooling
 ```
 
 ## Key Types
@@ -120,7 +123,7 @@ reporters render TestComparison → console / JUnit / HTML / plots
 }
 ```
 
-The `comparison` section is optional. When present, it stores the comparison tolerances that were active when the baseline was accepted, so tolerances travel with the reference data. `variable_overrides` maps variable names to per-variable settings including `tolerance` and optional tube comparison parameters (`mode`, `tube_abs`, `tube_rel`, `tube_points`, `tube_interpolation`).
+The `comparison` section is optional. When present, it stores the comparison tolerances that were active when the baseline was accepted, so tolerances travel with the reference data. `variable_overrides` maps variable names to per-variable settings including `tolerance` and optional tube comparison parameters (`mode`, `tube_width_mode`, `tube_abs`/`tube_rel`, `tube_points`, `tube_interpolation`).
 
 No persistent manifest file for the index. The in-memory `RefIndex` is built by scanning ref files at startup.
 Valid statuses: `active` (normal), `skip` (temporarily excluded), `obsolete` (pending deletion).

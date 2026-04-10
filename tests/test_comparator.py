@@ -349,7 +349,7 @@ class TestStructuralChanges:
 from modelica_testing.comparison.comparator import (
     compare_test,
     _compare_tube,
-    _interpolate_tube_width,
+    _interpolate_tube_widths,
 )
 from modelica_testing.discovery.test_registry import TestModel
 from modelica_testing.config import Config
@@ -484,47 +484,59 @@ class TestToleranceResolution:
 
 class TestTubeInterpolation:
     def test_single_point_constant(self):
-        """Single control point applies everywhere."""
+        """Single control point applies everywhere (legacy abs format)."""
         times = np.array([0.0, 50.0, 100.0])
         points = [{"time": 0.0, "abs": 10.0, "rel": 0.05}]
-        abs_w, rel_w = _interpolate_tube_width(times, points)
-        np.testing.assert_array_equal(abs_w, [10.0, 10.0, 10.0])
-        np.testing.assert_array_equal(rel_w, [0.05, 0.05, 0.05])
+        upper, lower = _interpolate_tube_widths(times, points)
+        # Legacy format: abs field used as symmetric width
+        np.testing.assert_array_equal(upper, [10.0, 10.0, 10.0])
+        np.testing.assert_array_equal(lower, [10.0, 10.0, 10.0])
 
     def test_linear_interpolation(self):
-        """Linear interpolation between two points."""
+        """Linear interpolation between two points (legacy format)."""
         times = np.array([0.0, 50.0, 100.0])
         points = [
-            {"time": 0.0, "abs": 10.0, "rel": 0.0},
-            {"time": 100.0, "abs": 20.0, "rel": 0.1},
+            {"time": 0.0, "abs": 10.0},
+            {"time": 100.0, "abs": 20.0},
         ]
-        abs_w, rel_w = _interpolate_tube_width(times, points, "linear")
-        np.testing.assert_allclose(abs_w, [10.0, 15.0, 20.0])
-        np.testing.assert_allclose(rel_w, [0.0, 0.05, 0.1])
+        upper, lower = _interpolate_tube_widths(times, points, "linear")
+        np.testing.assert_allclose(upper, [10.0, 15.0, 20.0])
+        np.testing.assert_allclose(lower, [10.0, 15.0, 20.0])
 
     def test_hold_at_boundaries(self):
         """Values before first and after last point are held."""
         times = np.array([0.0, 50.0, 100.0, 200.0])
         points = [
-            {"time": 50.0, "abs": 10.0, "rel": 0.01},
-            {"time": 100.0, "abs": 20.0, "rel": 0.02},
+            {"time": 50.0, "abs": 10.0},
+            {"time": 100.0, "abs": 20.0},
         ]
-        abs_w, rel_w = _interpolate_tube_width(times, points, "linear")
-        assert abs_w[0] == 10.0  # Before first point: hold
-        assert abs_w[3] == 20.0  # After last point: hold
+        upper, _ = _interpolate_tube_widths(times, points, "linear")
+        assert upper[0] == 10.0  # Before first point: hold
+        assert upper[3] == 20.0  # After last point: hold
 
     def test_constant_interpolation_stepwise(self):
         """Constant mode uses stepwise (hold previous)."""
         times = np.array([0.0, 25.0, 75.0, 100.0])
         points = [
-            {"time": 0.0, "abs": 10.0, "rel": 0.0},
-            {"time": 50.0, "abs": 20.0, "rel": 0.0},
+            {"time": 0.0, "abs": 10.0},
+            {"time": 50.0, "abs": 20.0},
         ]
-        abs_w, _ = _interpolate_tube_width(times, points, "constant")
-        assert abs_w[0] == 10.0  # t=0: first point
-        assert abs_w[1] == 10.0  # t=25: still first point
-        assert abs_w[2] == 20.0  # t=75: second point
-        assert abs_w[3] == 20.0  # t=100: hold last
+        upper, _ = _interpolate_tube_widths(times, points, "constant")
+        assert upper[0] == 10.0
+        assert upper[1] == 10.0
+        assert upper[2] == 20.0
+        assert upper[3] == 20.0
+
+    def test_asymmetric_upper_lower(self):
+        """Asymmetric format with independent upper/lower."""
+        times = np.array([0.0, 50.0, 100.0])
+        points = [
+            {"time": 0.0, "upper": 10.0, "lower": 5.0},
+            {"time": 100.0, "upper": 20.0, "lower": 10.0},
+        ]
+        upper, lower = _interpolate_tube_widths(times, points, "linear")
+        np.testing.assert_allclose(upper, [10.0, 15.0, 20.0])
+        np.testing.assert_allclose(lower, [5.0, 7.5, 10.0])
 
 
 # ---------------------------------------------------------------------------
@@ -661,3 +673,80 @@ class TestTubeComparison:
         assert comp.passed
         assert comp.variables[0].mode == "tube"
         assert comp.variables[0].tube_points_inside == 1.0
+
+    def test_asymmetric_tube_passes(self):
+        """Asymmetric tube with different upper/lower widths."""
+        ref_time = np.array([0.0, 1.0])
+        ref_values = np.array([100.0, 100.0])
+        # Signal is 3 above reference
+        act_values = np.array([103.0, 103.0])
+
+        # Upper allows 5, lower allows 1 → passes (signal is above)
+        vc = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {
+                "tube_width_mode": "abs",
+                "tube_points": [
+                    {"time": 0.0, "upper": 5.0, "lower": 1.0},
+                ],
+            },
+        )
+        assert vc.passed
+
+    def test_asymmetric_tube_fails_below(self):
+        """Asymmetric tube catches signal below narrow lower bound."""
+        ref_time = np.array([0.0, 1.0])
+        ref_values = np.array([100.0, 100.0])
+        # Signal is 3 below reference
+        act_values = np.array([97.0, 97.0])
+
+        # Upper allows 5, lower allows 1 → fails (3 > 1 below)
+        vc = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {
+                "tube_width_mode": "abs",
+                "tube_points": [
+                    {"time": 0.0, "upper": 5.0, "lower": 1.0},
+                ],
+            },
+        )
+        assert not vc.passed
+
+    def test_rel_mode_tube(self):
+        """Tube with tube_width_mode='rel' scales by |reference|."""
+        ref_time = np.array([0.0, 1.0])
+        ref_values = np.array([100.0, 1000.0])
+        # 2% relative tube
+        # t=0: width = 0.02 * 100 = 2. offset=1 → inside
+        # t=1: width = 0.02 * 1000 = 20. offset=10 → inside
+        act_values = np.array([101.0, 1010.0])
+
+        vc = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {
+                "tube_width_mode": "rel",
+                "tube_rel": 0.02,
+            },
+        )
+        assert vc.passed
+
+    def test_min_width_floor(self):
+        """tube_min_width prevents tube from collapsing at zero crossing."""
+        ref_time = np.array([0.0, 1.0])
+        ref_values = np.array([0.0, 100.0])  # Crosses zero
+        act_values = np.array([0.5, 101.0])
+
+        # Rel mode: at t=0, ref=0 → rel width = 0. Without floor, fails
+        vc_no_floor = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {"tube_width_mode": "rel", "tube_rel": 0.02},
+        )
+        assert not vc_no_floor.passed
+
+        # With min_width floor of 1.0
+        vc_floor = _compare_tube(
+            ref_time, ref_values, ref_time, act_values,
+            {"tube_width_mode": "rel", "tube_rel": 0.02, "tube_min_width": 1.0},
+        )
+        assert vc_floor.passed
+        assert vc_floor.tube_points_inside == 1.0

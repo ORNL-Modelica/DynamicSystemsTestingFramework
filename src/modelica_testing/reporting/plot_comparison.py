@@ -95,6 +95,15 @@ def _build_template_context(
         if ref_val:
             ref_info.append({"label": label, "value": _format_value(ref_val)})
 
+    # Add link to reference file
+    if ref_data and ref_data.get("test_id"):
+        from ..storage.reference_store import RefIndex
+        ref_filename = RefIndex.ref_filename(ref_data["test_id"])
+        ref_info.append({
+            "label": "Reference File",
+            "value": ref_filename,
+        })
+
     # Add test directory key (e.g., test_0051)
     if test_dir and test_dir.exists():
         ref_info.append({"label": "Test Directory", "value": test_dir.name})
