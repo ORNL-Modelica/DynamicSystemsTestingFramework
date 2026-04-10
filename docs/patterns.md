@@ -42,11 +42,15 @@
 - Pass/fail is strict: the actual signal must stay inside the tube at every interpolated point
 - Constant tube: `{"mode": "tube", "tube_width_mode": "rel", "tube_rel": 0.02}` — uniform width over all time
 - Time-varying tube: `tube_points` with `{"time", "upper", "lower"}` control points, interpolated via `tube_interpolation` (`"constant"` for stepwise, `"linear"` for linear — default is `"linear"`)
+- Mixed-mode control points: each point can use a different width mode. Bounds are resolved to absolute y-values at each control point first, then interpolated — no discontinuities at mode boundaries
 - Before the first control point: hold first point values. After the last: hold last point values
 - Metrics reported: `tube_points_inside` (fraction 0-1), `tube_worst_violation` (largest distance outside tube), `tube_worst_violation_time`
 - NRMSE is still computed for reference even in tube mode
-- HTML reports show "tube (95% in)" style labels for tube-mode variables in the variable table
+- Constant variables (2-point signals) hide the tube mode selector — NRMSE tolerance is the right tool for these
+- HTML reports show "tube (95% in)" style labels; tolerance input disabled in tube mode (tube has its own pass/fail)
 - Interactive Plotly reports allow switching modes, editing tube points, and exporting tolerance configs
+- Tube visualization: `fill:'toself'` polygon for the shaded band + separate upper/lower line traces for hover readout
+- All plot traces share the reference time grid for unified hover alignment
 
 ### Tolerance resolution order
 - Per-variable override from test spec (`comparison.variable_overrides`) takes highest priority
@@ -57,6 +61,13 @@
 - Default: `1e-4`
 - Each `VariableComparison` records `tolerance_used` — the tolerance that was actually applied, shown in HTML reports
 - When accepting results, the active comparison settings (tolerance + variable overrides) are saved in the reference JSON's `comparison` section so tolerances travel with the baseline
+
+### Variable naming from UnitTests expressions
+- Simple case (`x={a, b, c}`): parsed into individual expression names `["a", "b", "c"]`
+- Complex case (`x=cat(1, eta, lambda)`): can't decompose without knowing array sizes at parse time
+- When `len(x_expressions) != n_vars`, all variables fall back to `x[1]`...`x[n]` — avoids misleading names where first var gets the raw expression and the rest get generic names
+- Comparator sanitizes names from reference JSON: any name containing newlines or starting with `cat(` is replaced with `x[index]`
+- The raw expression is preserved in `TestModel.x_raw` for reference
 
 ### Config resolution order
 - CLI args > `testing.json` file > defaults
