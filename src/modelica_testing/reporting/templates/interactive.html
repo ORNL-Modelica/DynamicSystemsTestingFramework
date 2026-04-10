@@ -231,7 +231,7 @@ details summary:hover { color: #333; }
     </div>
     <table class="tube-table" id="tube-table-{{ loop.index0 }}">
     </table>
-    <p class="tube-hint">Signal must stay inside the tube at every time point to pass. Add points to create a time-varying envelope.</p>
+    <p class="tube-hint">Signal must stay inside the tube at every time point to pass. Use the table or <b>Edit on Plot</b>: click to add points, drag to move, right-click to delete.</p>
   </div>
   <div class="plotly-chart" id="plot-abserr-{{ loop.index0 }}" style="height:150px"></div>
   <div class="plotly-chart" id="plot-nrmse-{{ loop.index0 }}" style="height:150px"></div>
@@ -1304,16 +1304,30 @@ function activateTubePlotEdit(idx) {
     updateTube(idx);
   }
 
+  function onContextMenu(evt) {
+    const d = pxToData(evt);
+    const nearest = findNearestCP(d.x, d.y);
+    if (nearest && nearest.dist < 15) {
+      evt.preventDefault();
+      const td = tubeData[idx];
+      if (td.points.length <= 1) return; // keep at least 1 point
+      td.points.splice(nearest.ptIdx, 1);
+      renderTubeTable(idx);
+      updateTube(idx);
+    }
+  }
+
   const dragLayer = el.querySelector('.nsewdrag');
   if (dragLayer) {
     dragLayer.addEventListener('mousedown', onMouseDown);
+    dragLayer.addEventListener('contextmenu', onContextMenu);
     dragLayer.style.cursor = 'crosshair';
   }
   document.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseup', onMouseUp);
   el.on('plotly_click', onPlotClick);
 
-  state.handlers = { onMouseDown, onMouseMove, onMouseUp, onPlotClick, dragLayer };
+  state.handlers = { onMouseDown, onMouseMove, onMouseUp, onPlotClick, onContextMenu, dragLayer };
   tubePlotEditState[idx] = state;
 }
 
@@ -1330,6 +1344,7 @@ function deactivateTubePlotEdit(idx) {
     const h = state.handlers;
     if (h.dragLayer) {
       h.dragLayer.removeEventListener('mousedown', h.onMouseDown);
+      h.dragLayer.removeEventListener('contextmenu', h.onContextMenu);
       h.dragLayer.style.cursor = '';
     }
     document.removeEventListener('mousemove', h.onMouseMove);
