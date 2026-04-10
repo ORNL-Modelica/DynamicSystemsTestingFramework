@@ -51,6 +51,9 @@
 - Interactive Plotly reports allow switching modes, editing tube points, and exporting tolerance configs
 - Tube visualization: `fill:'toself'` polygon for the shaded band + separate upper/lower line traces for hover readout
 - All plot traces share the reference time grid for unified hover alignment
+- Interactive tube editing: Shift+click to add, Shift+drag to move, Shift+right-click to delete — no mode toggle, coexists with normal Plotly zoom/pan/scroll
+- Tube rendering grid = ref grid ∪ control point times — ensures tube lines pass through CP markers when zoomed in. Pass/fail check uses ref grid only (matches backend comparator)
+- Control point times are rounded to 6 significant figures on placement/drag to avoid floating point noise
 
 ### Tolerance resolution order
 - Per-variable override from test spec (`comparison.variable_overrides`) takes highest priority

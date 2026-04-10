@@ -13,7 +13,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 5 | ~~Condensed HTML with progressive disclosure~~ | M | High | **DONE** — key stats cards at top, condensed variable table, full details/stats/params/diagnostics in collapsible sections. Jinja2 templates + `comparison_data.json` sidecar |
 | 6 | ~~Auto-generate HTML report suite~~ | M | High | **DONE** — `--report` generates index page + per-test reports with plots; JS filter buttons; opens in browser |
 | 7 | Configurable variable ordering | M | Medium | Config plumbing + sort logic in reports and references |
-| 8 | Interactive tolerance editing | M | Medium | Phase 1-3 DONE (NRMSE tolerance, tube comparison with 3 width modes, interactive Plotly reports with tube editing/export); remaining: cubic interpolation |
+| 8 | Interactive tolerance editing | M | Medium | Phase 1-4 DONE (NRMSE tolerance, tube with 3 width modes, interactive Plotly reports, Shift+click/drag tube editing on plot); remaining: cubic interpolation, independent upper/lower point arrays |
 | 9 | One-click "open in Dymola" | M | Medium | .mos generation straightforward; protocol handler is platform-specific |
 | 10 | Interactive setup wizard | M | Low | Nice onboarding but power users skip it quickly |
 | 11 | Test discovery by extends/folder | H | High | Requires Modelica AST parsing or robust regex scanning |
@@ -118,8 +118,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 
 **Phase 3 — DONE**: Interactive Plotly reports (`interactive.html`). All traces on shared x-grid for unified hover. Live tolerance editing with per-variable overrides. Error overlay dropdown (signed, abs, NRMSE on right y-axis). Tube mode: inline editor with point table, synced/unsynced upper-lower, three width modes, time-varying interpolation. Tube visualization uses `fill: 'toself'` polygon for reliable rendering. Export panel with live JSON, copy/download. CLI `spec-update` applies tolerance JSON to `test_spec.json`.
 
+**Phase 4 — DONE**: Interactive tube editing on plot. Shift+click to add control points, Shift+drag to move, Shift+right-click to delete. Control points decoupled from reference grid (placed at arbitrary times). Rendering grid merges ref grid + control point times so tube lines pass through markers. Scroll-wheel zoom works alongside editing. CP markers shown as triangle-up/down on upper/lower bounds.
+
 **Remaining**:
-- Decouple tube control points from reference time grid — allow control points at arbitrary times (not locked to ref grid), interpolating reference values as needed. Currently tube points are evaluated on the ref grid which limits granularity (especially for constant/2-point signals).
 - Independent upper/lower point arrays — allow different numbers of control points per side (e.g., 3 upper, 5 lower). Requires splitting the `{time, upper, lower}` tuple model into two separate spline definitions, with corresponding changes to table UI, export format, and backend comparator. Per-point sync/unsync (some points symmetric, others not) is a lighter variant of the same idea.
 - Cubic interpolation mode for time-varying tubes
 
