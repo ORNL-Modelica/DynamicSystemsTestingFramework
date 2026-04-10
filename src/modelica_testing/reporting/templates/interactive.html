@@ -347,11 +347,13 @@ function onVarTolChange(e) {
 }
 
 // ---- Status updates ----
+// Tracks tube pass/fail per variable (set by updateTube)
+const tubePassState = {};
+
 function computePass(idx) {
   const v = VARIABLES[idx];
   if (varModes[idx] === 'tube') {
-    // If tube data exists, recompute; otherwise use original
-    if (tubeData[idx]) return null;  // Computed by updateTube
+    if (idx in tubePassState) return tubePassState[idx];
     return v.passed;
   }
   return v.nrmse < perVarTolerances[idx];
@@ -654,10 +656,20 @@ function setVarMode(idx, mode) {
     updateTube(idx);
   } else {
     editor.style.display = 'none';
+    delete tubePassState[idx];
     removeTubeTraces(idx);
     updateVarStatus(idx);
     updateSummary();
     updateExport();
+  }
+
+  // Disable tolerance input when in tube mode (tube has its own pass/fail)
+  const tolInput = document.querySelector(`.var-tol-input[data-idx="${idx}"]`);
+  if (tolInput) {
+    tolInput.disabled = (mode === 'tube');
+    tolInput.title = mode === 'tube'
+      ? 'Tolerance not used in tube mode — pass/fail is determined by tube bounds'
+      : 'NRMSE tolerance for this variable';
   }
 
   const row = document.querySelector(`tr[data-idx="${idx}"]`);
@@ -940,33 +952,61 @@ function updateTube(idx) {
   const refValues = traj.ref_values;
   const pts = [...td.points].sort((a, b) => a.time - b.time);
   const globalMode = td.widthMode;
-  const tubeUpper = [];
-  const tubeLower = [];
 
-  for (let i = 0; i < refTime.length; i++) {
-    const t = refTime[i];
-    const rawUpper = interpTubeField(pts, t, 'upper', td.interpolation);
-    const rawLower = interpTubeField(pts, t, 'lower', td.interpolation);
+  // Step 1: Resolve each control point to absolute y-bounds.
+  // This converts band/rel/absolute values into final y-values at each
+  // control point time, so interpolation happens in y-space (no mode jumps).
+  const resolvedUpper = [];
+  const resolvedLower = [];
+  const ctrlTimes = [];
+  for (let p = 0; p < pts.length; p++) {
+    const pt = pts[p];
+    const rv = refValueAt(idx, pt.time);
+    const rvAbs = Math.abs(rv);
+    const uMode = td.synced ? globalMode : (pt.upperMode || globalMode);
+    const lMode = td.synced ? globalMode : (pt.lowerMode || globalMode);
 
-    // Determine mode for each side at this time point
-    const uMode = td.synced ? globalMode : interpTubeMode(pts, t, 'upperMode', globalMode);
-    const lMode = td.synced ? globalMode : interpTubeMode(pts, t, 'lowerMode', globalMode);
-
+    let uBound, lBound;
     if (uMode === 'absolute') {
-      // Literal y-values — use directly as tube bounds
-      tubeUpper.push(rawUpper);
+      uBound = pt.upper;
+    } else if (uMode === 'rel') {
+      let w = pt.upper * rvAbs;
+      if (td.minWidth > 0) w = Math.max(w, td.minWidth);
+      uBound = rv + w;
     } else {
-      let upperW = uMode === 'rel' ? rawUpper * Math.abs(refValues[i]) : rawUpper;
-      if (td.minWidth > 0) upperW = Math.max(upperW, td.minWidth);
-      tubeUpper.push(refValues[i] + upperW);
+      let w = pt.upper;
+      if (td.minWidth > 0) w = Math.max(w, td.minWidth);
+      uBound = rv + w;
     }
 
     if (lMode === 'absolute') {
-      tubeLower.push(rawLower);
+      lBound = pt.lower;
+    } else if (lMode === 'rel') {
+      let w = pt.lower * rvAbs;
+      if (td.minWidth > 0) w = Math.max(w, td.minWidth);
+      lBound = rv - w;
     } else {
-      let lowerW = lMode === 'rel' ? rawLower * Math.abs(refValues[i]) : rawLower;
-      if (td.minWidth > 0) lowerW = Math.max(lowerW, td.minWidth);
-      tubeLower.push(refValues[i] - lowerW);
+      let w = pt.lower;
+      if (td.minWidth > 0) w = Math.max(w, td.minWidth);
+      lBound = rv - w;
+    }
+
+    ctrlTimes.push(pt.time);
+    resolvedUpper.push(uBound);
+    resolvedLower.push(lBound);
+  }
+
+  // Step 2: Interpolate resolved y-bounds onto the reference time grid.
+  const tubeUpper = [];
+  const tubeLower = [];
+  for (let i = 0; i < refTime.length; i++) {
+    const t = refTime[i];
+    if (td.interpolation === 'constant') {
+      tubeUpper.push(interpStep(ctrlTimes, resolvedUpper, t));
+      tubeLower.push(interpStep(ctrlTimes, resolvedLower, t));
+    } else {
+      tubeUpper.push(interpLinear(ctrlTimes, resolvedUpper, t));
+      tubeLower.push(interpLinear(ctrlTimes, resolvedLower, t));
     }
   }
 
@@ -983,6 +1023,7 @@ function updateTube(idx) {
   }
   const pctInside = (nInside / refTime.length * 100).toFixed(1);
   const passed = nInside === refTime.length;
+  tubePassState[idx] = passed;
 
   const statusEl = document.getElementById(`tube-status-${idx}`);
   if (statusEl) {
@@ -1009,36 +1050,6 @@ function updateTube(idx) {
 
   updateSummary();
   updateExport();
-}
-
-function interpTubeField(pts, t, field, interp) {
-  if (pts.length === 0) return 0;
-  if (pts.length === 1 || interp === 'constant') {
-    let val = pts[0][field];
-    for (let i = 0; i < pts.length; i++) {
-      if (pts[i].time <= t) val = pts[i][field]; else break;
-    }
-    return val;
-  }
-  if (t <= pts[0].time) return pts[0][field];
-  if (t >= pts[pts.length - 1].time) return pts[pts.length - 1][field];
-  for (let i = 0; i < pts.length - 1; i++) {
-    if (t >= pts[i].time && t <= pts[i + 1].time) {
-      const frac = (t - pts[i].time) / (pts[i + 1].time - pts[i].time);
-      return pts[i][field] + frac * (pts[i + 1][field] - pts[i][field]);
-    }
-  }
-  return pts[pts.length - 1][field];
-}
-
-function interpTubeMode(pts, t, field, defaultMode) {
-  // Stepwise: use nearest prior point's mode
-  let mode = pts[0][field] || defaultMode;
-  for (let i = 0; i < pts.length; i++) {
-    if (pts[i].time <= t) mode = pts[i][field] || defaultMode;
-    else break;
-  }
-  return mode;
 }
 
 function findTraceIndex(el, name) {
@@ -1096,6 +1107,17 @@ function interpLinear(xArr, yArr, x) {
   }
   const t = (x - xArr[lo]) / (xArr[hi] - xArr[lo]);
   return yArr[lo] + t * (yArr[hi] - yArr[lo]);
+}
+
+// Stepwise (hold-previous) interpolation helper
+function interpStep(xArr, yArr, x) {
+  if (xArr.length === 0) return 0;
+  if (x <= xArr[0]) return yArr[0];
+  let val = yArr[0];
+  for (let i = 0; i < xArr.length; i++) {
+    if (xArr[i] <= x) val = yArr[i]; else break;
+  }
+  return val;
 }
 
 function renderDiagPlots() {
