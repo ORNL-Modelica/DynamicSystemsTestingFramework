@@ -47,7 +47,6 @@ h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
 .btn-success { background: #4CAF50; color: white; border-color: #4CAF50; }
 .btn-success:hover { background: #43A047; }
 .save-status { font-size: 0.85em; color: #4CAF50; margin-left: 0.5em; display: none; }
-.tube-plot-edit-btn.active { background: #1976D2; color: white; border-color: #1976D2; }
 
 /* Tables */
 table { border-collapse: collapse; width: 100%; background: white; margin-bottom: 1.5em; }
@@ -198,7 +197,6 @@ details summary:hover { color: #333; }
   <div class="tube-editor" id="tube-editor-{{ loop.index0 }}" style="display:none">
     <div class="tube-controls">
       <button class="btn" onclick="addTubePoint({{ loop.index0 }})" title="Add a time control point to shape the tube">Add Point</button>
-      <button class="btn tube-plot-edit-btn" data-idx="{{ loop.index0 }}" onclick="toggleTubePlotEdit({{ loop.index0 }})" title="Click on plot to add points, drag to move them">Edit on Plot</button>
       <label style="margin-left:1em; font-size:0.85em;" title="Synced: same width above and below reference. Unsynced: set upper and lower bounds independently, each with its own abs/rel mode">
         Symmetry:
         <select class="tube-sync" data-idx="{{ loop.index0 }}" onchange="tubeSyncChanged({{ loop.index0 }}, this.value === 'true')">
@@ -231,7 +229,7 @@ details summary:hover { color: #333; }
     </div>
     <table class="tube-table" id="tube-table-{{ loop.index0 }}">
     </table>
-    <p class="tube-hint">Signal must stay inside the tube at every time point to pass. Use the table or <b>Edit on Plot</b>: click to add points, drag to move, right-click to delete.</p>
+    <p class="tube-hint">Signal must stay inside the tube at every time point to pass. On the plot: <b>Shift+click</b> to add a point, <b>Shift+drag</b> to move, <b>Shift+right-click</b> to delete. Scroll to zoom.</p>
   </div>
   <div class="plotly-chart" id="plot-abserr-{{ loop.index0 }}" style="height:150px"></div>
   <div class="plotly-chart" id="plot-nrmse-{{ loop.index0 }}" style="height:150px"></div>
@@ -410,13 +408,13 @@ function updateSummary() {
 }
 
 // ---- Plotly ----
-const PLOT_CFG = { responsive: true, displaylogo: false };
+const PLOT_CFG = { responsive: true, displaylogo: false, scrollZoom: true };
 
 function makePlotLayout(title) {
   // Deep-clone layout per plot — Plotly mutates the layout object internally,
   // so sharing nested objects across plots causes cross-contamination.
   return {
-    xaxis: { title: 'Time' },
+    xaxis: { title: 'Time', hoverformat: '.6~g' },
     yaxis: {
       title: { text: 'Value', standoff: 10 },
       tickformat: '.4g',
@@ -563,7 +561,7 @@ function renderPlots() {
         line: { color: '#2196F3', width: 1 },
       }], {
         yaxis: { ...errYAxis, title: { text: 'NRMSE', standoff: 10 } },
-        xaxis: { title: 'Time' },
+        xaxis: { title: 'Time', hoverformat: '.6~g' },
         margin: { t: 5, b: 35, l: 10, r: 20 },
         legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)', font: { size: 10 } },
         hovermode: 'x unified',
@@ -675,6 +673,7 @@ function setVarMode(idx, mode) {
     }
     renderTubeTable(idx);
     updateTube(idx);
+    attachTubePlotEdit(idx);
   } else {
     editor.style.display = 'none';
     delete tubePassState[idx];
@@ -1043,31 +1042,41 @@ function updateTube(idx) {
     resolvedLower.push(resolved.lower);
   }
 
-  // Step 2: Interpolate resolved y-bounds onto the reference time grid.
-  const tubeUpper = [];
-  const tubeLower = [];
-  for (let i = 0; i < refTime.length; i++) {
-    const t = refTime[i];
-    if (td.interpolation === 'constant') {
-      tubeUpper.push(interpStep(ctrlTimes, resolvedUpper, t));
-      tubeLower.push(interpStep(ctrlTimes, resolvedLower, t));
-    } else {
-      tubeUpper.push(interpLinear(ctrlTimes, resolvedUpper, t));
-      tubeLower.push(interpLinear(ctrlTimes, resolvedLower, t));
+  // Helper: interpolate bounds onto a time grid
+  function interpBounds(grid) {
+    const upper = [], lower = [];
+    for (const t of grid) {
+      if (td.interpolation === 'constant') {
+        upper.push(interpStep(ctrlTimes, resolvedUpper, t));
+        lower.push(interpStep(ctrlTimes, resolvedLower, t));
+      } else {
+        upper.push(interpLinear(ctrlTimes, resolvedUpper, t));
+        lower.push(interpLinear(ctrlTimes, resolvedLower, t));
+      }
     }
+    return { upper, lower };
   }
 
-  // Check pass/fail
+  // Pass/fail: check on the reference grid only (matches backend comparator)
+  const refBounds = interpBounds(refTime);
   let nInside = 0, worstViolation = 0, worstTime = 0;
   for (let i = 0; i < refTime.length; i++) {
     const actVal = interpLinear(traj.act_time, traj.act_values, refTime[i]);
-    if (actVal >= tubeLower[i] && actVal <= tubeUpper[i]) {
+    if (actVal >= refBounds.lower[i] && actVal <= refBounds.upper[i]) {
       nInside++;
     } else {
-      const violation = Math.max(actVal - tubeUpper[i], tubeLower[i] - actVal);
+      const violation = Math.max(actVal - refBounds.upper[i], refBounds.lower[i] - actVal);
       if (violation > worstViolation) { worstViolation = violation; worstTime = refTime[i]; }
     }
   }
+
+  // Rendering: merge ref grid + control point times so tube lines pass through markers
+  const renderTimeSet = new Set(refTime);
+  for (const t of ctrlTimes) renderTimeSet.add(t);
+  const renderTime = Array.from(renderTimeSet).sort((a, b) => a - b);
+  const renderBounds = interpBounds(renderTime);
+  const tubeUpper = renderBounds.upper;
+  const tubeLower = renderBounds.lower;
   const pctInside = (nInside / refTime.length * 100).toFixed(1);
   const passed = nInside === refTime.length;
   tubePassState[idx] = passed;
@@ -1080,7 +1089,7 @@ function updateTube(idx) {
   }
 
   // Use the already-computed refTime arrays for rendering (correct for hover)
-  renderTubeOnPlot(idx, Array.from(refTime), tubeUpper, tubeLower);
+  renderTubeOnPlot(idx, renderTime, tubeUpper, tubeLower);
   renderCPMarkers(idx);
 
   const row = document.querySelector(`tr[data-idx="${idx}"]`);
@@ -1139,7 +1148,7 @@ function removeTubeTraces(idx) {
       visible: indices.map(() => false),
     }, indices);
   }
-  deactivateTubePlotEdit(idx);
+  detachTubePlotEdit(idx);
 }
 
 function renderCPMarkers(idx) {
@@ -1158,8 +1167,9 @@ function renderCPMarkers(idx) {
     const r = resolvePoint(idx, pt);
     upperY.push(r.upper);
     lowerY.push(r.lower);
-    upperText.push(`t=${pt.time}, upper=${r.upper.toPrecision(4)}`);
-    lowerText.push(`t=${pt.time}, lower=${r.lower.toPrecision(4)}`);
+    const tFmt = Number(pt.time.toPrecision(6));
+    upperText.push(`t=${tFmt}, upper=${r.upper.toPrecision(4)}`);
+    lowerText.push(`t=${tFmt}, lower=${r.lower.toPrecision(4)}`);
   }
   Plotly.restyle(el, {
     x: [times, times],
@@ -1169,28 +1179,15 @@ function renderCPMarkers(idx) {
   }, [cpUpperIdx, cpLowerIdx]);
 }
 
-// ---- Interactive tube editing on plot ----
+// ---- Interactive tube editing on plot (Shift+click/drag/right-click) ----
 const tubePlotEditState = {};
 let rafPending = {};
 
-function toggleTubePlotEdit(idx) {
-  const state = tubePlotEditState[idx];
-  if (state && state.active) {
-    deactivateTubePlotEdit(idx);
-  } else {
-    activateTubePlotEdit(idx);
-  }
-}
-
-function activateTubePlotEdit(idx) {
+function attachTubePlotEdit(idx) {
   const el = document.getElementById(`plot-${idx}`);
-  if (!el) return;
-  const btn = document.querySelector(`.tube-plot-edit-btn[data-idx="${idx}"]`);
-  if (btn) btn.classList.add('active');
+  if (!el || tubePlotEditState[idx]) return;
 
-  Plotly.relayout(el, { dragmode: false });
-
-  const state = { active: true, dragging: null, handlers: null };
+  const state = { dragging: null, handlers: null };
 
   function pxToData(evt) {
     const xa = el._fullLayout.xaxis;
@@ -1224,25 +1221,39 @@ function activateTubePlotEdit(idx) {
   }
 
   function onMouseDown(evt) {
-    if (evt.button !== 0) return;
+    if (!evt.shiftKey || evt.button !== 0) return;
+    // Block Plotly's drag/zoom for all Shift+left-mousedown
+    evt.stopPropagation();
+    evt.stopImmediatePropagation();
+    evt.preventDefault();
     const d = pxToData(evt);
     const nearest = findNearestCP(d.x, d.y);
     if (nearest && nearest.dist < 15) {
       state.dragging = { bound: nearest.bound, pt: nearest.pt };
-      evt.preventDefault();
-      evt.stopPropagation();
+    } else {
+      // Remember click position for add-on-mouseup
+      state.clickStart = d;
     }
   }
 
   function onMouseMove(evt) {
-    if (!state.dragging) return;
+    if (!state.dragging) {
+      // If mouse moves significantly, cancel the click-to-add
+      if (state.clickStart) {
+        const d = pxToData(evt);
+        const dx = Math.abs(d.x - state.clickStart.x);
+        const dy = Math.abs(d.y - state.clickStart.y);
+        if (dx > 1e-10 || dy > 1e-10) state.clickStart = null;
+      }
+      return;
+    }
     evt.preventDefault();
     const d = pxToData(evt);
     const { bound, pt } = state.dragging;
     const traj = TRAJECTORIES[idx];
     const tMin = traj.ref_time[0];
     const tMax = traj.ref_time[traj.ref_time.length - 1];
-    pt.time = Math.max(tMin, Math.min(tMax, d.x));
+    pt.time = roundSig(Math.max(tMin, Math.min(tMax, d.x)), 6);
     setPointFromAbsoluteY(idx, pt, bound, d.y);
     tubeData[idx].points.sort((a, b) => a.time - b.time);
     if (!rafPending[idx]) {
@@ -1254,38 +1265,36 @@ function activateTubePlotEdit(idx) {
     }
   }
 
-  function onMouseUp() {
+  function onMouseUp(evt) {
     if (state.dragging) {
       state.dragging = null;
       updateTube(idx);
       renderTubeTable(idx);
+      return;
+    }
+    // Shift+click with no drag = add new point
+    if (state.clickStart) {
+      const clickX = state.clickStart.x, clickY = state.clickStart.y;
+      state.clickStart = null;
+      addTubePointFromClick(idx, clickX, clickY);
     }
   }
 
-  function onPlotClick(eventData) {
-    if (state.dragging) return;
-    if (!eventData.points || !eventData.points.length) return;
-    const pt0 = eventData.points[0];
-    const clickX = pt0.x, clickY = pt0.y;
-
-    const nearest = findNearestCP(clickX, clickY);
-    if (nearest && nearest.dist < 15) return; // near existing point
-
-    // Determine which bound is closer at this time
-    const td = tubeData[idx];
+  function addTubePointFromClick(varIdx, clickX, clickY) {
+    clickX = roundSig(clickX, 6);
+    const td = tubeData[varIdx];
     const pts = [...td.points].sort((a, b) => a.time - b.time);
     const ctrlTimes = pts.map(p => p.time);
-    const rU = pts.map(p => resolvePoint(idx, p).upper);
-    const rL = pts.map(p => resolvePoint(idx, p).lower);
+    const rU = pts.map(p => resolvePoint(varIdx, p).upper);
+    const rL = pts.map(p => resolvePoint(varIdx, p).lower);
     const upperAtT = interpLinear(ctrlTimes, rU, clickX);
     const lowerAtT = interpLinear(ctrlTimes, rL, clickX);
     const targetBound = Math.abs(clickY - upperAtT) <= Math.abs(clickY - lowerAtT) ? 'upper' : 'lower';
 
-    // Create new point with defaults, then override targeted bound from click
-    const v = VARIABLES[idx];
+    const v = VARIABLES[varIdx];
     const sigRange = v.signal_range || 1.0;
     const fallbackBand = roundSig(sigRange * 0.05, 3);
-    const rv = refValueAt(idx, clickX);
+    const rv = refValueAt(varIdx, clickX);
     const rvAbs = Math.abs(rv);
     const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
     let upper, lower;
@@ -1297,61 +1306,53 @@ function activateTubePlotEdit(idx) {
       time: clickX, upper, lower,
       upperMode: td.widthMode, lowerMode: td.widthMode,
     };
-    setPointFromAbsoluteY(idx, newPt, targetBound, clickY);
+    setPointFromAbsoluteY(varIdx, newPt, targetBound, clickY);
     td.points.push(newPt);
     td.points.sort((a, b) => a.time - b.time);
-    renderTubeTable(idx);
-    updateTube(idx);
+    renderTubeTable(varIdx);
+    updateTube(varIdx);
   }
 
   function onContextMenu(evt) {
+    if (!evt.shiftKey) return;
     const d = pxToData(evt);
     const nearest = findNearestCP(d.x, d.y);
     if (nearest && nearest.dist < 15) {
       evt.preventDefault();
       const td = tubeData[idx];
-      if (td.points.length <= 1) return; // keep at least 1 point
+      if (td.points.length <= 1) return;
       td.points.splice(nearest.ptIdx, 1);
       renderTubeTable(idx);
       updateTube(idx);
     }
   }
 
-  const dragLayer = el.querySelector('.nsewdrag');
-  if (dragLayer) {
-    dragLayer.addEventListener('mousedown', onMouseDown);
-    dragLayer.addEventListener('contextmenu', onContextMenu);
-    dragLayer.style.cursor = 'crosshair';
-  }
+  // Use capture phase on the plot element itself — fires before Plotly's
+  // handlers, so stopPropagation prevents Plotly from seeing Shift+mouse events.
+  el.addEventListener('mousedown', onMouseDown, true);
+  el.addEventListener('contextmenu', onContextMenu, true);
   document.addEventListener('mousemove', onMouseMove);
   document.addEventListener('mouseup', onMouseUp);
-  el.on('plotly_click', onPlotClick);
 
-  state.handlers = { onMouseDown, onMouseMove, onMouseUp, onPlotClick, onContextMenu, dragLayer };
+  state.handlers = { onMouseDown, onMouseMove, onMouseUp, onContextMenu };
   tubePlotEditState[idx] = state;
 }
 
-function deactivateTubePlotEdit(idx) {
+function detachTubePlotEdit(idx) {
   const state = tubePlotEditState[idx];
-  if (!state || !state.active) return;
+  if (!state) return;
   const el = document.getElementById(`plot-${idx}`);
-  const btn = document.querySelector(`.tube-plot-edit-btn[data-idx="${idx}"]`);
-  if (btn) btn.classList.remove('active');
-
-  if (el) Plotly.relayout(el, { dragmode: 'zoom' });
 
   if (state.handlers) {
     const h = state.handlers;
-    if (h.dragLayer) {
-      h.dragLayer.removeEventListener('mousedown', h.onMouseDown);
-      h.dragLayer.removeEventListener('contextmenu', h.onContextMenu);
-      h.dragLayer.style.cursor = '';
+    if (el) {
+      el.removeEventListener('mousedown', h.onMouseDown, true);
+      el.removeEventListener('contextmenu', h.onContextMenu, true);
     }
     document.removeEventListener('mousemove', h.onMouseMove);
     document.removeEventListener('mouseup', h.onMouseUp);
-    if (el) el.removeListener('plotly_click', h.onPlotClick);
   }
-  tubePlotEditState[idx] = { active: false };
+  delete tubePlotEditState[idx];
 }
 
 // Linear interpolation helper

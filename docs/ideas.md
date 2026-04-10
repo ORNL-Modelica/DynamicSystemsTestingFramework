@@ -119,7 +119,8 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 **Phase 3 — DONE**: Interactive Plotly reports (`interactive.html`). All traces on shared x-grid for unified hover. Live tolerance editing with per-variable overrides. Error overlay dropdown (signed, abs, NRMSE on right y-axis). Tube mode: inline editor with point table, synced/unsynced upper-lower, three width modes, time-varying interpolation. Tube visualization uses `fill: 'toself'` polygon for reliable rendering. Export panel with live JSON, copy/download. CLI `spec-update` applies tolerance JSON to `test_spec.json`.
 
 **Remaining**:
-- Decouple tube control points from reference time grid — allow control points at arbitrary times (not locked to ref grid), interpolating reference values as needed. Currently tube points are evaluated on the ref grid which limits granularity (especially for constant/2-point signals). Would also enable click-to-add-point on the Plotly chart.
+- Decouple tube control points from reference time grid — allow control points at arbitrary times (not locked to ref grid), interpolating reference values as needed. Currently tube points are evaluated on the ref grid which limits granularity (especially for constant/2-point signals).
+- Independent upper/lower point arrays — allow different numbers of control points per side (e.g., 3 upper, 5 lower). Requires splitting the `{time, upper, lower}` tuple model into two separate spline definitions, with corresponding changes to table UI, export format, and backend comparator. Per-point sync/unsync (some points symmetric, others not) is a lighter variant of the same idea.
 - Cubic interpolation mode for time-varying tubes
 
 ## Model health analysis from reference data
