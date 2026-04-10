@@ -326,3 +326,97 @@ class TestVariablePatterns:
         available = ["pipe.T[1]", "pipe.T[2]"]
         resolved = resolve_variable_patterns(["pipe.*", "pipe.T*"], available)
         assert len(resolved) == 2  # No duplicates
+
+
+# ---------------------------------------------------------------------------
+# Simulator registry
+# ---------------------------------------------------------------------------
+
+from modelica_testing.simulators import (
+    _REGISTRY,
+    register,
+    get_runner,
+    _import_builtin_backend,
+    SimulatorRunner,
+)
+
+
+class TestSimulatorRegistry:
+    def test_dymola_registered_after_import(self):
+        """Importing the dymola module registers 'Dymola'."""
+        _import_builtin_backend("Dymola")
+        assert "Dymola" in _REGISTRY
+
+    def test_register_decorator(self):
+        """@register adds a class to the registry."""
+        @register("TestBackend")
+        class _TestRunner(SimulatorRunner):
+            def read_result(self, test, test_key, run_result):
+                pass
+
+        assert "TestBackend" in _REGISTRY
+        assert _REGISTRY["TestBackend"] is _TestRunner
+        # Clean up
+        del _REGISTRY["TestBackend"]
+
+    def test_unknown_backend_raises(self):
+        """get_runner raises ValueError for unknown backends."""
+        from unittest.mock import MagicMock
+
+        config = MagicMock()
+        config.simulator_backend = "NoSuchSimulator"
+        config.simulator = "NoSuchSimulator"
+
+        with pytest.raises(ValueError, match="Unsupported simulator backend"):
+            get_runner(config)
+
+
+# ---------------------------------------------------------------------------
+# DymolaConfig
+# ---------------------------------------------------------------------------
+
+from modelica_testing.simulators.dymola.runner import DymolaConfig
+
+
+class TestDymolaConfig:
+    def test_from_config_defaults(self):
+        """DymolaConfig.from_config extracts Dymola-specific fields."""
+        from unittest.mock import MagicMock
+
+        config = MagicMock()
+        config.show_ide = True
+        config.simulator_setup = ["Foo := true;"]
+        config.diagnostic_variables = ["CPUtime", "CustomVar"]
+
+        dc = DymolaConfig.from_config(config)
+        assert dc.show_ide is True
+        assert dc.simulator_setup == ["Foo := true;"]
+        assert dc.diagnostic_variables == ["CPUtime", "CustomVar"]
+
+    def test_from_config_copies_lists(self):
+        """Lists are copied, not shared references."""
+        from unittest.mock import MagicMock
+
+        config = MagicMock()
+        config.show_ide = False
+        original_setup = ["Cmd1;"]
+        config.simulator_setup = original_setup
+        config.diagnostic_variables = ["CPUtime"]
+
+        dc = DymolaConfig.from_config(config)
+        assert dc.simulator_setup == ["Cmd1;"]
+        assert dc.simulator_setup is not original_setup
+
+    def test_frozen(self):
+        """DymolaConfig is immutable."""
+        dc = DymolaConfig()
+        with pytest.raises(AttributeError):
+            dc.show_ide = True
+
+    def test_defaults(self):
+        """Default values match expected Dymola defaults."""
+        dc = DymolaConfig()
+        assert dc.show_ide is False
+        assert dc.simulator_setup == []
+        assert "CPUtime" in dc.diagnostic_variables
+        assert "EventCounter" in dc.diagnostic_variables

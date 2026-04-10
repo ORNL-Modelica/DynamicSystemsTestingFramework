@@ -65,6 +65,25 @@
 - Each `VariableComparison` records `tolerance_used` — the tolerance that was actually applied, shown in HTML reports
 - When accepting results, the active comparison settings (tolerance + variable overrides) are saved in the reference JSON's `comparison` section so tolerances travel with the baseline
 
+### Comparison mode resolution via strategy pattern
+- Per-variable comparison mode is resolved via `resolve_mode(var_override, tolerance, default_final_only)` in `comparison/modes.py`
+- Three modes: `NrmseMode` (default, piecewise NRMSE), `TubeMode` (envelope), `FinalOnlyMode` (final value only)
+- Each mode has a typed frozen config dataclass: `NrmseConfig`, `TubeConfig`, `FinalOnlyConfig`
+- Resolution: explicit `mode` key in override → that mode; no explicit mode + `default_final_only=True` → FinalOnlyMode; otherwise → NrmseMode
+- Explicit `mode: "tube"` is never overridden by the `final_only` flag — per-variable mode always wins
+
+### Constant signal NRMSE: normalize by magnitude
+- When signal range < epsilon (constant signals), NRMSE normalizes by `max(|ref_values|)` instead of signal range
+- Avoids false failures from float32 quantization on large-magnitude constants (e.g., 512-unit error on 37e9 gives nrmse ≈ 1.4e-8, not 512)
+- Falls back to raw RMSE only when magnitude is also near-zero (true zero constant)
+- Consistent with how `_compare_final_values` normalizes by `|ref_final|`
+
+### Simulator registry and lazy backend imports
+- Backends self-register via `@register(name)` class decorator in `simulators/__init__.py`
+- `get_runner(config)` factory looks up the backend by `config.simulator_backend` and instantiates it
+- Built-in backends are lazy-imported on first use via `_import_builtin_backend()` — avoids loading all backends at startup
+- `DymolaRunner` extracts Dymola-specific settings into an immutable `DymolaConfig` dataclass at init
+
 ### Variable naming from UnitTests expressions
 - Simple case (`x={a, b, c}`): parsed into individual expression names `["a", "b", "c"]`
 - Complex case (`x=cat(1, eta, lambda)`): can't decompose without knowing array sizes at parse time

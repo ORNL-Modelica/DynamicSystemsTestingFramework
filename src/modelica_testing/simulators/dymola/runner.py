@@ -5,6 +5,7 @@ import math
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +13,7 @@ import numpy as np
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
+from .. import register
 from ..base import (
     SimulatorRunner,
     TestRunResult,
@@ -26,6 +28,26 @@ from .mat_reader import list_dymola_mat_variables, read_dymola_mat
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class DymolaConfig:
+    """Dymola-specific settings extracted from the universal Config."""
+    show_ide: bool = False
+    simulator_setup: list[str] = field(default_factory=list)
+    diagnostic_variables: list[str] = field(
+        default_factory=lambda: ["CPUtime", "EventCounter"],
+    )
+
+    @classmethod
+    def from_config(cls, config: Config) -> "DymolaConfig":
+        """Extract Dymola-specific fields from the universal Config."""
+        return cls(
+            show_ide=config.show_ide,
+            simulator_setup=list(config.simulator_setup),
+            diagnostic_variables=list(config.diagnostic_variables),
+        )
+
+
+@register("Dymola")
 class DymolaRunner(SimulatorRunner):
     """Runs Modelica simulations using Dymola with batch execution.
 
@@ -34,6 +56,10 @@ class DymolaRunner(SimulatorRunner):
     load libraries once, run N tests, exit. This dramatically reduces
     startup overhead for large test suites.
     """
+
+    def __init__(self, config: Config):
+        super().__init__(config)
+        self.dymola_config = DymolaConfig.from_config(config)
 
     def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
         """Run tests in batches with parallelism."""
@@ -68,7 +94,7 @@ class DymolaRunner(SimulatorRunner):
             _generate_test_mos(test, test_key, test_dir)
 
         # Generate shared startup and shutdown scripts
-        startup_path = _generate_startup_mos(self.config)
+        startup_path = _generate_startup_mos(self.config, self.dymola_config)
         shutdown_path = _generate_shutdown_mos(self.config)
 
         # Split tests into batches for parallel workers
@@ -156,7 +182,7 @@ class DymolaRunner(SimulatorRunner):
 
         try:
             cmd = [self.config.simulator_path]
-            if not self.config.show_ide:
+            if not self.dymola_config.show_ide:
                 cmd.append("-nowindow")
             cmd.append(str(batch_script))
 
@@ -297,7 +323,7 @@ class DymolaRunner(SimulatorRunner):
         # Phase 1: Get variable names (fast — reads only the name matrix)
         # Then resolve patterns to determine which variables we actually need.
         needed_vars = _compute_needed_variables(
-            mat_path, test, self.config.diagnostic_variables,
+            mat_path, test, self.dymola_config.diagnostic_variables,
         )
 
         # Phase 2: Load only needed variables from the .mat file
@@ -311,7 +337,7 @@ class DymolaRunner(SimulatorRunner):
             )
 
         variables, diagnostics = _extract_variables(
-            mat_data, test, self.config.diagnostic_variables,
+            mat_data, test, self.dymola_config.diagnostic_variables,
         )
 
         # Add diagnostic final values to statistics
@@ -336,7 +362,7 @@ class DymolaRunner(SimulatorRunner):
 # .mos script generation
 # ---------------------------------------------------------------------------
 
-def _generate_startup_mos(config: Config) -> Path:
+def _generate_startup_mos(config: Config, dymola_config: DymolaConfig) -> Path:
     """Generate startup.mos: load dependencies, main library, and setup commands."""
     work_dir = config.work_dir
     lines = [
@@ -359,10 +385,10 @@ def _generate_startup_mos(config: Config) -> Path:
     lines.append("Advanced.UI.TranslationInCommandLog := true;")
 
     # Simulator setup commands (e.g., OutputCPUtime = true)
-    if config.simulator_setup:
+    if dymola_config.simulator_setup:
         lines.append("")
         lines.append("// Simulator setup")
-        for cmd in config.simulator_setup:
+        for cmd in dymola_config.simulator_setup:
             # Ensure command ends with semicolon
             cmd = cmd.strip()
             if not cmd.endswith(";"):

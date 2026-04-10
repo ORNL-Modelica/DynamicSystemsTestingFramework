@@ -16,7 +16,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 8 | Interactive tolerance editing | M | Medium | Phase 1-4 DONE (NRMSE tolerance, tube with 3 width modes, interactive Plotly reports, Shift+click/drag tube editing on plot); remaining: cubic interpolation, independent upper/lower point arrays |
 | 9 | One-click "open in Dymola" | M | Medium | .mos generation straightforward; protocol handler is platform-specific |
 | 10 | Interactive setup wizard | M | Low | Nice onboarding but power users skip it quickly |
-| 11 | Test discovery by extends/folder | H | High | Requires Modelica AST parsing or robust regex scanning |
+| 11 | Test discovery + potential test helper | H | High | Extends/folder scanning, user-configurable criteria, suggest tests needing spec/UnitTests |
 | 12 | Model health analysis from reference data | H | High | Mining + ranking logic across all refs; powerful but complex |
 | 13 | Dependency-aware test ordering | H | Medium | Requires dependency graph extraction from Modelica sources |
 | 14 | Link to reference JSON file from HTML | L | Medium | Artifacts link to sim files but not the ref JSON; filename shown as text in ref_info but not clickable |
@@ -36,6 +36,14 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 28 | JSON size management for large suites | M | Medium | Sidecar files + lazy fetch when embedded JSON exceeds ~20 MB |
 | 29 | Progressive enhancement: optional server | H | Medium | Thin FastAPI layer for accept-from-browser, re-compare, lazy loading |
 | 30 | Notebook integration helper | L | Low | Data-loading utility for `comparison_data.json` in Jupyter |
+| 31 | Parallel process progress reporting | M | High | Live status from parallel simulation workers; tqdm, rich, or custom callback |
+| 32 | Parallelize report generation | M | Medium | `--report` is sequential matplotlib/Jinja2 per test; embarrassingly parallel |
+| 33 | Batch actions from HTML report | M | High | Checkboxes to select tests, generate CLI commands for rerun/accept/disable |
+| 34 | NRMSE panel annotations + metric clarity | L | Medium | Max/avg markers on error plot; clarify which metric drives pass/fail |
+| 35 | Filter by test list file | L | Medium | `--filter @tests.txt` or `--filter model1,model2` for explicit test lists |
+| 36 | Cross-platform reference comparison | H | High | Compare results across OS/simulator versions; use alternate ref as baseline |
+| 37 | Per-test report section reordering | L | Low | Move simulator/statistics/diagnostics above variables table |
+| 38 | Incremental run + report workflow | M | High | Rerun subset of tests, merge with previous results, regenerate report without full rerun |
 
 **Recommended order**: 1-3, 5-6, 8 are done. Next priorities: 14-16 (performance + ref link), 17-19 (quick HTML improvements), 11-12 (high-effort, high-value), or 7, 9 (medium effort).
 
@@ -48,7 +56,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - If `testing.json` already exists, offer to edit fields interactively
 - Reduces onboarding friction for new libraries — no need to hand-write JSON
 
-## Test discovery by `extends` or folder with interactive selection
+## Test discovery + potential test helper
 
 - Find candidate test models by scanning for classes that extend a specific base (e.g., `extends Modelica.Icons.Example` or a custom test icon)
 - Alternatively, discover all models within a specific package/folder (e.g., everything under `MyLib.Examples.*`)
@@ -57,6 +65,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **Interactive selection mode**: present discovered candidates in a checklist, user selects which to add to `test_spec.json` — avoids manually writing JSON for dozens of models
 - Could show which candidates already have UnitTests or test_spec entries (skip those)
 - Variable selection: offer `["*"]` (track all), `[]` (simulate only), or prompt for specific patterns per model
+- **Potential test helper**: identify models that *could* be tested but aren't — no UnitTests component and no test_spec entry. User-configurable criteria (extends a certain class, lives in a certain package, etc.) defined in `testing.json`. Output: list of candidates with recommendation to add spec or UnitTests. Useful for tracking coverage gaps as a library grows.
 
 ## Dependency-aware test ordering
 
@@ -295,6 +304,86 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - For ad-hoc Jupyter deep dives into specific test failures: custom analysis, multi-baseline overlays, frequency-domain inspection
 - Not a parallel reporting pipeline — just a clean API for engineers who want to do custom analysis
 - Use static Plotly plots in notebooks (survive `nbconvert` to HTML); ipywidgets for live sessions but accept they won't export
+
+## Parallel process progress reporting
+
+- Currently, parallel simulation (`--parallel N`) shows no output until all workers finish — looks frozen on large suites
+- Standard approaches:
+  - **tqdm**: lightweight progress bar with ETA; supports parallel via `tqdm.contrib.concurrent` or manual `update()` calls from worker callbacks
+  - **rich**: fancier — live table with per-worker status, spinners, ETA. Heavier dependency but excellent terminal UX
+  - **Custom callback**: workers post status updates (model name, pass/fail, timing) to a queue; main thread renders a rolling summary. No external dependency
+- Key constraint: Dymola batch execution groups multiple tests per worker, so progress granularity is per-batch, not per-test. Could report "Batch 3/10: translating ModelName..." by parsing partial dslog output
+- Consider also a `--quiet` / `--verbose` flag to control output level
+
+## Parallelize report generation
+
+- `--report` generates matplotlib PNGs + Jinja2 HTML sequentially per test — dominates wall time on large suites (matplotlib is slow for many plots)
+- matplotlib releases the GIL during rendering, so `ThreadPoolExecutor` or `ProcessPoolExecutor` should work
+- Each test's report generation is independent (separate output directory, no shared state)
+- Could also defer PNG generation entirely: the interactive report uses Plotly (no PNGs needed), so PNGs could be optional (`--report --no-png` or only generate on demand)
+- Alternative: switch to Plotly-only static export via `kaleido` — faster than matplotlib for bulk generation
+
+## Batch actions from HTML report
+
+- Add checkboxes next to each test in the index page for multi-select
+- Action buttons: "Rerun selected", "Accept selected", "Mark obsolete", "Disable"
+- Output: generate a ready-to-paste CLI command (e.g., `modelica-testing run --filter Model1,Model2,Model3`) or a JSON payload
+- Lighter than the full server approach (#29) — purely client-side JS that builds command strings
+- Could also generate a filter file compatible with `--filter @tests.txt` (#35)
+- "Mark obsolete/disable" would need a status field in test_spec or reference JSON — design this carefully to avoid scope creep
+
+## NRMSE panel annotations + metric clarity
+
+- On the per-variable NRMSE error plot:
+  - Vertical dashed line at the time of max absolute error (data already in `max_abs_error_time`)
+  - Horizontal line for average NRMSE across the trajectory
+  - Horizontal line at the tolerance threshold (data already in `tolerance_used`)
+  - Shaded region above tolerance to visually show "fail zone"
+- **Metric clarity**: clearly label which metric drives pass/fail — currently NRMSE for trajectory mode, fraction-inside for tube mode, relative error for final-only
+  - Add a "Pass/Fail Criterion" label in the variable detail: e.g., "NRMSE 2.3e-4 < tolerance 1e-3 → PASS"
+  - For tube mode: "98/100 points inside tube → FAIL (requires 100%)"
+  - Consider whether users should be able to select alternative pass/fail metrics (e.g., max error instead of NRMSE) — this would tie into the strategy pattern refactoring
+- Related: #18 (worst-violation annotation on trajectory plot), #19 (zoom-dependent statistics)
+
+## Filter by test list file
+
+- Allow `--filter` to accept a file path: `--filter @tests.txt` where each line is a model ID or glob pattern
+- Also support comma-separated inline lists: `--filter "Model1,Model2,Model3"`
+- Complements the existing `--filter` pattern matching with explicit lists
+- Natural pairing with #33 (batch actions from HTML report) — report exports a filter file, CLI consumes it
+- Implementation: detect `@` prefix → read file, split lines, filter whitespace/comments
+
+## Cross-platform reference comparison
+
+- Reference results are partitioned by `<simulator>/<os>/` — each platform has its own baselines
+- Use case 1: **Cross-platform summary** — after running on Windows and Linux, show a table of which tests differ across platforms (identifies platform-sensitive models)
+- Use case 2: **Use alternate platform as baseline** — run on Linux but compare against Windows references (useful when Linux references don't exist yet, or to verify platform equivalence)
+  - CLI: `--reference-os windows` to override the auto-detected OS when looking up references
+  - Or: `--cross-compare windows` to compare against both native and alternate references
+- Use case 3: **Simulator version comparison** — same OS but different Dymola versions (e.g., "Dymola 2024" vs "Dymola 2025" in the simulator name). Currently these map to the same backend ("Dymola") and same reference partition. Would need version-aware partitioning or a comparison mode
+- Output: summary table or heatmap of per-test differences across platforms/versions
+
+## Per-test report section reordering
+
+- Currently the per-test comparison report (comparison.html / interactive.html) shows variables first, with simulator info, statistics, and diagnostics in collapsible sections below
+- Preferred order: **Simulator → Statistics → Diagnostics → Variables** (all still collapsible)
+- Rationale: when investigating a failure, you want structural context (did nonlinear system count change? did events increase?) before diving into per-variable error plots
+- Implementation: reorder sections in the Jinja2 templates (`comparison.html`, `interactive.html`)
+
+## Incremental run + report workflow
+
+- **Problem**: running 200 tests takes 30 minutes. If 3 fail and you fix the models, you want to rerun just those 3 and see an updated full report — not wait another 30 minutes
+- **Current state**: `run --filter Model1,Model2` reruns those tests, but creates a new batch manifest that only covers 2 tests. `compare --report` reads the latest manifest and only sees those 2. The other 198 tests' results are still on disk in their `test_NNNN` directories but aren't picked up
+- **Proposed workflows**:
+  - **`run --rerun-failed --report`**: automatically filter to previously-failed tests, rerun them, merge results with previous passing tests, generate combined report
+  - **`run --filter X --merge --report`**: rerun filtered subset, merge fresh results into the existing work directory (update manifest entries for rerun tests, keep the rest), then generate a full report
+  - **`compare --report`** (already exists): regenerate report from whatever results are on disk — no simulation. Currently works but only reads the latest batch manifest. Could be enhanced to read *all* manifests or scan test directories directly
+  - **`report` command** (new): purely regenerate reports from existing work directory + references, no simulation or comparison logic. Useful after accepting new baselines to get an updated report
+- **Key design question**: should `run --filter` overwrite test directories in-place (allowing natural merging) or always create fresh directories? Currently it creates `test_0001` etc. per batch — a selective rerun of 3 tests creates `test_0001`, `test_0002`, `test_0003` which collides with the full run's directories
+  - Option A: namespace by batch (e.g., `batch_001/test_0001`) — no collisions but complicates merging
+  - Option B: use stable test keys derived from model ID (e.g., `test_<hash>`) — reruns naturally overwrite the same directory
+  - Option C: keep current scheme, add a merge step that copies fresh results into the canonical work directory
+- Related: #33 (batch actions from report), #35 (filter by test list)
 
 ## ~~Full reference data representation in HTML reports~~ (DONE)
 

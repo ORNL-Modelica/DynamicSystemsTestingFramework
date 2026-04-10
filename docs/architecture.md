@@ -24,14 +24,15 @@ src/modelica_testing/
 │   ├── spec_parser.py        # Parses test_spec.json (external test definitions)
 │   └── test_registry.py      # TestModel dataclass, discover_tests() merges both sources
 ├── simulators/
+│   ├── __init__.py           # Simulator registry: @register decorator, get_runner() factory
 │   ├── base.py               # SimulatorRunner ABC, VariableResult, TestResult, BatchManifest
 │   └── dymola/
-│       ├── runner.py          # DymolaRunner: batch .mos generation and execution
+│       ├── runner.py          # DymolaRunner (@register("Dymola")), DymolaConfig, batch .mos generation
 │       ├── mat_reader.py      # Custom MAT4 binary parser with numpy.memmap for selective reads
 │       └── log_parser.py      # Parses dslog.txt + translation_log.txt for statistics
 ├── comparison/
-│   ├── comparator.py         # NRMSE comparison with piecewise event handling
-│   └── tube.py               # Tube-based comparison: envelope around reference trajectory
+│   ├── comparator.py         # compare_test/compare_all orchestration, piecewise NRMSE, tube, final-value
+│   └── modes.py              # ComparisonMode ABC, NrmseMode/TubeMode/FinalOnlyMode, typed configs, resolve_mode()
 ├── storage/
 │   └── reference_store.py    # RefIndex + ReferenceStore (per-test JSON files)
 └── reporting/
@@ -67,17 +68,19 @@ runner.read_results(manifests, tests)
     → auto-captures diagnostic variables (configurable, default: CPUtime, EventCounter)
     → returns dict[model_id → TestResult]
 
-compare_all(tests, results, store, config)
+compare_all(tests, results, store, default_tolerance, final_only)
     → loads reference JSON per test from ReferenceStore
-    → per-variable comparison mode: NRMSE (default) or tube (via variable_overrides)
-    → NRMSE: piecewise comparison with event boundary handling
-    → tube: envelope check with three width modes (rel, band, absolute)
+    → per-variable: resolve_mode(override, tolerance, final_only) → ComparisonMode
+    → mode.compare(ref_time, ref_values, act_time, act_values) → VariableComparison
+    → NrmseMode: piecewise NRMSE with event boundary handling
+    → TubeMode: envelope check with three width modes (rel, band, absolute)
+    → FinalOnlyMode: compare only final values
     → returns list[TestComparison]
 
 reporters render TestComparison → console / JUnit / HTML / plots
     → HTML reporter builds a context dict and renders via Jinja2 templates
     → generates comparison.html (static matplotlib) and interactive.html (Plotly.js)
-    → per-test reports open interactive.html by default
+    → per-test report directories named ref_NNNN (has reference) or test_NNNN (no baseline)
     → writes comparison_data.json sidecar (includes full trajectory data) for downstream tooling
 ```
 

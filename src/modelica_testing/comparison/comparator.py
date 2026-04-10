@@ -6,12 +6,13 @@ from typing import Optional
 
 import numpy as np
 
-from ..config import Config
 from ..discovery.test_registry import TestModel
 from ..simulators import TestResult
 from ..storage.reference_store import ReferenceStore
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_TOLERANCE = 1e-4
 
 # Machine epsilon guard — signals with range below this are treated as constant
 _EPS = 100 * np.finfo(np.float64).eps
@@ -208,10 +209,14 @@ def _compare_trajectories(
     ref_max = float(np.max(ref_values))
     signal_range = ref_max - ref_min
 
-    # NRMSE: normalize by range, or use raw RMSE for constant signals
+    # NRMSE: normalize by range, or by magnitude for constant signals.
+    # For constants with large magnitude (e.g., 37e9), raw RMSE is misleading
+    # because float32 quantization alone can produce errors of hundreds.
+    # Normalizing by magnitude gives a meaningful relative metric.
     is_constant = signal_range < _EPS
     if is_constant:
-        nrmse = rmse
+        ref_magnitude = float(np.max(np.abs(ref_values)))
+        nrmse = rmse / ref_magnitude if ref_magnitude > _EPS else rmse
     else:
         nrmse = rmse / signal_range
 
@@ -419,7 +424,11 @@ def _compare_tube(
     rmse = float(np.sqrt(np.mean(abs_error ** 2)))
     signal_range = float(np.max(ref_values) - np.min(ref_values))
     is_constant = signal_range < _EPS
-    nrmse = rmse if is_constant else rmse / signal_range
+    if is_constant:
+        ref_magnitude = float(np.max(np.abs(ref_values)))
+        nrmse = rmse / ref_magnitude if ref_magnitude > _EPS else rmse
+    else:
+        nrmse = rmse / signal_range
 
     max_abs_idx = int(np.argmax(abs_error))
     max_abs_error = float(abs_error[max_abs_idx])
@@ -495,9 +504,23 @@ def compare_test(
     test: TestModel,
     result: TestResult,
     reference: dict,
-    config: Config,
+    default_tolerance: float = DEFAULT_TOLERANCE,
+    final_only: bool = False,
 ) -> TestComparison:
-    """Compare a test's simulation results against its reference."""
+    """Compare a test's simulation results against its reference.
+
+    Args:
+        test: Test specification with model ID, variable overrides, etc.
+        result: Simulation output (variables with time series).
+        reference: Stored reference data dict.
+        default_tolerance: Fallback tolerance when no per-test or per-ref
+            tolerance is set.
+        final_only: When True, variables without an explicit ``mode``
+            override use final-value comparison instead of full NRMSE.
+            Variables with ``mode: "tube"`` are *not* affected.
+    """
+    from .modes import resolve_mode
+
     ref_test_id = reference.get("test_id")
 
     if not result.success:
@@ -523,7 +546,7 @@ def compare_test(
     base_tolerance = (
         test.comparison_tolerance
         or ref_comparison.get("tolerance")
-        or config.tolerance
+        or default_tolerance
     )
 
     # Merge variable overrides: spec overrides take precedence over reference
@@ -560,28 +583,12 @@ def compare_test(
         if not name or "\n" in name or name.startswith("cat("):
             name = f"x[{var_result.index}]"
 
-        # Resolve per-variable settings
+        # Resolve per-variable settings and build the comparison strategy
         var_override = merged_overrides.get(name, {})
         tolerance = var_override.get("tolerance", base_tolerance)
-        mode = var_override.get("mode", "nrmse")
+        mode = resolve_mode(var_override, tolerance, default_final_only=final_only)
 
-        if mode == "tube":
-            vc = _compare_tube(
-                ref_time, ref_values,
-                var_result.time, var_result.values,
-                var_override,
-            )
-        elif config.final_only:
-            ref_final = ref_values[-1] if len(ref_values) > 0 else 0.0
-            act_final = float(var_result.values[-1]) if len(var_result.values) > 0 else 0.0
-            vc = _compare_final_values(ref_final, act_final, tolerance)
-        else:
-            vc = _compare_trajectories(
-                ref_time, ref_values,
-                var_result.time, var_result.values,
-                tolerance,
-            )
-
+        vc = mode.compare(ref_time, ref_values, var_result.time, var_result.values)
         vc.index = var_result.index
         vc.name = name
         vc.tolerance_used = tolerance
@@ -603,7 +610,8 @@ def compare_all(
     tests: list[TestModel],
     results: dict[str, TestResult],
     store: ReferenceStore,
-    config: Config,
+    default_tolerance: float = DEFAULT_TOLERANCE,
+    final_only: bool = False,
 ) -> list[TestComparison]:
     """Compare all test results against stored references."""
     comparisons = []
@@ -629,7 +637,11 @@ def compare_all(
             ))
             continue
 
-        comp = compare_test(test, result, reference, config)
+        comp = compare_test(
+            test, result, reference,
+            default_tolerance=default_tolerance,
+            final_only=final_only,
+        )
         comparisons.append(comp)
 
     return comparisons

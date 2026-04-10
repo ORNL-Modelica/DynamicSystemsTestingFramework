@@ -673,9 +673,16 @@ def generate_report_suite(
             ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
 
         # Generate per-test report
+        # Use ref_NNNN for tests with a reference, test_NNNN for no-baseline.
+        # Both are short, avoiding Windows 260-char path limits.
         report_path = None
-        safe_id = _sanitize_filename(model_id)
-        plot_dir = report_dir / safe_id
+        if comp.test_id:
+            report_id = f"ref_{comp.test_id}"
+        elif test_key:
+            report_id = test_key
+        else:
+            report_id = _sanitize_filename(model_id)
+        plot_dir = report_dir / report_id
 
         html_path = generate_comparison_plots(
             model_id=model_id,
@@ -689,7 +696,7 @@ def generate_report_suite(
         )
 
         if html_path:
-            report_path = f"{safe_id}/interactive.html"
+            report_path = f"{report_id}/interactive.html"
 
         ref_id = f"ref_{comp.test_id}" if comp.test_id else None
 

@@ -205,14 +205,43 @@ class TestCompareTrajectories:
         assert vc.nrmse == 0.0
 
     def test_constant_with_small_difference(self):
-        """Near-constant signal with tiny deviation => uses raw RMSE."""
+        """Near-constant signal with tiny deviation => normalized by magnitude."""
         t = np.array([0.0, 1.0, 2.0])
         ref_v = np.array([5.0, 5.0, 5.0])
         act_v = np.array([5.0, 5.0, 5.001])
         vc = _compare_trajectories(t, ref_v, t, act_v, 1e-4)
         assert vc.is_constant == True
-        # RMSE of [0, 0, 0.001] = sqrt(0.001^2 / 3) ≈ 5.77e-4
+        # RMSE ≈ 5.77e-4, magnitude = 5.0, NRMSE ≈ 1.15e-4
         assert vc.nrmse > 1e-4  # Should fail
+        assert vc.nrmse == pytest.approx(vc.rmse / 5.0)
+
+    def test_constant_large_magnitude_float32_quantization(self):
+        """Large-magnitude constant must not fail from float32 quantization.
+
+        Dymola .mat files use float32. At 37e9, the nearest float32
+        representable value differs by 512 — which is a relative error
+        of ~1.4e-8, well within tolerance.
+        """
+        t = np.array([0.0, 1.0])
+        ref_v = np.array([37e9, 37e9])               # float64
+        act_v = np.array([np.float32(37e9)] * 2).astype(np.float64)  # 36999999488.0
+        vc = _compare_trajectories(t, ref_v, t, act_v, 1e-4)
+        assert vc.is_constant == True
+        assert vc.rmse == pytest.approx(512.0, abs=1.0)
+        # Normalized by magnitude: 512 / 37e9 ≈ 1.4e-8
+        assert vc.nrmse < 1e-4
+        assert vc.passed
+
+    def test_constant_zero_reference(self):
+        """Constant zero reference with nonzero actual uses raw RMSE."""
+        t = np.array([0.0, 1.0])
+        ref_v = np.array([0.0, 0.0])
+        act_v = np.array([0.001, 0.001])
+        vc = _compare_trajectories(t, ref_v, t, act_v, 1e-4)
+        assert vc.is_constant == True
+        # Magnitude is 0, so falls back to raw RMSE = 0.001
+        assert vc.nrmse == pytest.approx(0.001)
+        assert not vc.passed
 
     def test_different_time_grids(self):
         """Actual has finer time grid, same trajectory."""
@@ -352,7 +381,6 @@ from modelica_testing.comparison.comparator import (
     _interpolate_tube_widths,
 )
 from modelica_testing.discovery.test_registry import TestModel
-from modelica_testing.config import Config
 from modelica_testing.simulators.base import VariableResult
 from pathlib import Path
 
@@ -394,11 +422,7 @@ class TestToleranceResolution:
         """Config tolerance used when no overrides."""
         test = _make_test()
         result, ref = _make_result_and_ref(offset=0.001)
-        config = Config.__new__(Config)
-        config.tolerance = 1e-4
-        config.final_only = False
-
-        comp = compare_test(test, result, ref, config)
+        comp = compare_test(test, result, ref, default_tolerance=1e-4)
         # offset=0.001 on range=2.0 → NRMSE=5e-4, exceeds 1e-4
         assert not comp.passed
         assert comp.variables[0].tolerance_used == 1e-4
@@ -407,11 +431,7 @@ class TestToleranceResolution:
         """Per-test comparison_tolerance overrides config.tolerance."""
         test = _make_test(comparison_tolerance=0.01)
         result, ref = _make_result_and_ref(offset=0.001)
-        config = Config.__new__(Config)
-        config.tolerance = 1e-4
-        config.final_only = False
-
-        comp = compare_test(test, result, ref, config)
+        comp = compare_test(test, result, ref, default_tolerance=1e-4)
         # NRMSE=5e-4, tolerance=0.01 → passes
         assert comp.passed
         assert comp.variables[0].tolerance_used == 0.01
@@ -423,11 +443,7 @@ class TestToleranceResolution:
             variable_overrides={"x": {"tolerance": 0.01}},  # But x is loose
         )
         result, ref = _make_result_and_ref(offset=0.001)
-        config = Config.__new__(Config)
-        config.tolerance = 1e-4
-        config.final_only = False
-
-        comp = compare_test(test, result, ref, config)
+        comp = compare_test(test, result, ref, default_tolerance=1e-4)
         # Per-variable 0.01 used for x → passes despite tight per-test
         assert comp.passed
         assert comp.variables[0].tolerance_used == 0.01
@@ -437,11 +453,7 @@ class TestToleranceResolution:
         test = _make_test()  # No comparison_tolerance set
         result, ref = _make_result_and_ref(offset=0.001)
         ref["comparison"] = {"tolerance": 0.01}
-        config = Config.__new__(Config)
-        config.tolerance = 1e-4
-        config.final_only = False
-
-        comp = compare_test(test, result, ref, config)
+        comp = compare_test(test, result, ref, default_tolerance=1e-4)
         # ref comparison tolerance 0.01 used → passes
         assert comp.passed
         assert comp.variables[0].tolerance_used == 0.01
@@ -453,11 +465,7 @@ class TestToleranceResolution:
         ref["comparison"] = {
             "variable_overrides": {"x": {"tolerance": 0.01}},
         }
-        config = Config.__new__(Config)
-        config.tolerance = 1e-4
-        config.final_only = False
-
-        comp = compare_test(test, result, ref, config)
+        comp = compare_test(test, result, ref, default_tolerance=1e-4)
         assert comp.passed
         assert comp.variables[0].tolerance_used == 0.01
 
@@ -468,11 +476,7 @@ class TestToleranceResolution:
         ref["comparison"] = {
             "variable_overrides": {"x": {"tolerance": 0.1}},  # Loose in ref
         }
-        config = Config.__new__(Config)
-        config.tolerance = 1e-4
-        config.final_only = False
-
-        comp = compare_test(test, result, ref, config)
+        comp = compare_test(test, result, ref, default_tolerance=1e-4)
         # Spec override (1e-6) takes precedence over reference (0.1)
         assert not comp.passed
         assert comp.variables[0].tolerance_used == 1e-6
@@ -665,11 +669,7 @@ class TestTubeComparison:
             },
         })
         result, ref = _make_result_and_ref(offset=0.005)
-        config = Config.__new__(Config)
-        config.tolerance = 1e-4
-        config.final_only = False
-
-        comp = compare_test(test, result, ref, config)
+        comp = compare_test(test, result, ref, default_tolerance=1e-4)
         assert comp.passed
         assert comp.variables[0].mode == "tube"
         assert comp.variables[0].tube_points_inside == 1.0
@@ -750,3 +750,206 @@ class TestTubeComparison:
         )
         assert vc_floor.passed
         assert vc_floor.tube_points_inside == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Comparison mode strategies (modes.py)
+# ---------------------------------------------------------------------------
+
+from modelica_testing.comparison.modes import (
+    resolve_mode,
+    NrmseMode,
+    TubeMode,
+    FinalOnlyMode,
+    NrmseConfig,
+    TubeConfig,
+    FinalOnlyConfig,
+    ComparisonMode,
+)
+
+
+class TestResolveMode:
+    """Tests for resolve_mode() factory — mode selection logic."""
+
+    def test_default_is_nrmse(self):
+        """Empty override dict → NrmseMode."""
+        mode = resolve_mode({}, tolerance=1e-4)
+        assert isinstance(mode, NrmseMode)
+        assert mode.name == "nrmse"
+        assert mode.config.tolerance == 1e-4
+
+    def test_explicit_nrmse(self):
+        """mode='nrmse' → NrmseMode."""
+        mode = resolve_mode({"mode": "nrmse"}, tolerance=0.01)
+        assert isinstance(mode, NrmseMode)
+        assert mode.config.tolerance == 0.01
+
+    def test_explicit_tube(self):
+        """mode='tube' → TubeMode with tube params extracted."""
+        override = {
+            "mode": "tube",
+            "tube_abs": 5.0,
+            "tube_rel": 0.02,
+            "tube_width_mode": "band",
+        }
+        mode = resolve_mode(override, tolerance=1e-4)
+        assert isinstance(mode, TubeMode)
+        assert mode.name == "tube"
+        assert mode.config.tube_abs == 5.0
+        assert mode.config.tube_rel == 0.02
+        assert mode.config.tube_width_mode == "band"
+
+    def test_explicit_final_only(self):
+        """mode='final_only' → FinalOnlyMode."""
+        mode = resolve_mode({"mode": "final_only"}, tolerance=0.05)
+        assert isinstance(mode, FinalOnlyMode)
+        assert mode.name == "final_only"
+        assert mode.config.tolerance == 0.05
+
+    def test_default_final_only_flag(self):
+        """default_final_only=True with no explicit mode → FinalOnlyMode."""
+        mode = resolve_mode({}, tolerance=1e-4, default_final_only=True)
+        assert isinstance(mode, FinalOnlyMode)
+
+    def test_tube_not_overridden_by_final_only(self):
+        """Bug fix: explicit tube mode must NOT be overridden by final_only flag."""
+        mode = resolve_mode(
+            {"mode": "tube", "tube_abs": 1.0},
+            tolerance=1e-4,
+            default_final_only=True,
+        )
+        assert isinstance(mode, TubeMode)
+        assert mode.name == "tube"
+
+    def test_explicit_nrmse_not_overridden_by_final_only(self):
+        """Explicit mode='nrmse' is respected even when final_only is True."""
+        mode = resolve_mode(
+            {"mode": "nrmse"},
+            tolerance=1e-4,
+            default_final_only=True,
+        )
+        assert isinstance(mode, NrmseMode)
+
+    def test_tube_config_ignores_non_tube_keys(self):
+        """Non-tube keys in override dict are not passed to TubeConfig."""
+        override = {
+            "mode": "tube",
+            "tube_abs": 3.0,
+            "tolerance": 0.5,  # Not a tube config key
+            "some_other_key": True,
+        }
+        mode = resolve_mode(override, tolerance=0.5)
+        assert isinstance(mode, TubeMode)
+        assert mode.config.tube_abs == 3.0
+
+    def test_tube_with_time_varying_points(self):
+        """Tube config with tube_points passes through correctly."""
+        points = [
+            {"time": 0.0, "upper": 1.0, "lower": 0.5},
+            {"time": 100.0, "upper": 5.0, "lower": 2.0},
+        ]
+        override = {
+            "mode": "tube",
+            "tube_points": points,
+            "tube_interpolation": "constant",
+        }
+        mode = resolve_mode(override, tolerance=1e-4)
+        assert isinstance(mode, TubeMode)
+        assert mode.config.tube_points == points
+        assert mode.config.tube_interpolation == "constant"
+
+
+class TestTubeConfigToDict:
+    """Tests for TubeConfig.to_dict() round-trip."""
+
+    def test_minimal(self):
+        """Default TubeConfig produces empty dict."""
+        cfg = TubeConfig()
+        assert cfg.to_dict() == {}
+
+    def test_band_mode(self):
+        cfg = TubeConfig(tube_width_mode="band", tube_abs=5.0)
+        d = cfg.to_dict()
+        assert d["tube_width_mode"] == "band"
+        assert d["tube_abs"] == 5.0
+        assert "tube_rel" not in d  # Zero values omitted
+
+    def test_with_points(self):
+        points = [{"time": 0.0, "abs": 1.0}]
+        cfg = TubeConfig(tube_points=points, tube_interpolation="constant")
+        d = cfg.to_dict()
+        assert d["tube_points"] == points
+        assert d["tube_interpolation"] == "constant"
+
+
+class TestModeCompare:
+    """Integration: each mode produces correct VariableComparison."""
+
+    ref_time = np.array([0.0, 0.5, 1.0])
+    ref_values = np.array([1.0, 2.0, 3.0])
+    act_values_close = np.array([1.0001, 2.0001, 3.0001])
+    act_values_far = np.array([1.5, 2.5, 3.5])
+
+    def test_nrmse_mode_pass(self):
+        mode = NrmseMode(NrmseConfig(tolerance=0.01))
+        vc = mode.compare(self.ref_time, self.ref_values,
+                          self.ref_time, self.act_values_close)
+        assert vc.passed
+        assert vc.mode == "nrmse"
+
+    def test_nrmse_mode_fail(self):
+        mode = NrmseMode(NrmseConfig(tolerance=1e-4))
+        vc = mode.compare(self.ref_time, self.ref_values,
+                          self.ref_time, self.act_values_far)
+        assert not vc.passed
+
+    def test_tube_mode_pass(self):
+        mode = TubeMode(TubeConfig(tube_abs=1.0))
+        vc = mode.compare(self.ref_time, self.ref_values,
+                          self.ref_time, self.act_values_close)
+        assert vc.passed
+        assert vc.mode == "tube"
+        assert vc.tube_points_inside == 1.0
+
+    def test_tube_mode_fail(self):
+        mode = TubeMode(TubeConfig(tube_abs=0.001))
+        vc = mode.compare(self.ref_time, self.ref_values,
+                          self.ref_time, self.act_values_far)
+        assert not vc.passed
+        assert vc.tube_points_inside < 1.0
+
+    def test_final_only_mode_pass(self):
+        mode = FinalOnlyMode(FinalOnlyConfig(tolerance=0.01))
+        vc = mode.compare(self.ref_time, self.ref_values,
+                          self.ref_time, self.act_values_close)
+        assert vc.passed
+        assert vc.mode == "nrmse"  # _compare_final_values doesn't set mode
+
+    def test_final_only_mode_fail(self):
+        mode = FinalOnlyMode(FinalOnlyConfig(tolerance=1e-6))
+        vc = mode.compare(self.ref_time, self.ref_values,
+                          self.ref_time, self.act_values_far)
+        assert not vc.passed
+
+
+class TestCompareTestWithModes:
+    """End-to-end: compare_test dispatches via resolve_mode correctly."""
+
+    def test_final_only_flag_does_not_override_tube(self):
+        """Bug fix: final_only=True must not override mode='tube'."""
+        test = _make_test(variable_overrides={
+            "x": {"mode": "tube", "tube_abs": 0.01},
+        })
+        result, ref = _make_result_and_ref(offset=0.005)
+        comp = compare_test(test, result, ref, default_tolerance=1e-4, final_only=True)
+        assert comp.passed
+        assert comp.variables[0].mode == "tube"
+
+    def test_final_only_flag_applies_when_no_explicit_mode(self):
+        """final_only=True applies to variables without explicit mode."""
+        test = _make_test()
+        result, ref = _make_result_and_ref(offset=0.005)
+        # final_only compares only last values: ref=3.0, act=3.005
+        # relative error = 0.005/3.0 ≈ 0.00167, tolerance=0.01 → pass
+        comp = compare_test(test, result, ref, default_tolerance=0.01, final_only=True)
+        assert comp.passed

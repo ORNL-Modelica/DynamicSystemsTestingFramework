@@ -69,15 +69,8 @@ def cmd_discover(args: argparse.Namespace) -> int:
 
 def _get_runner(config):
     """Get the appropriate simulator runner for the configured simulator."""
-    backend = config.simulator_backend
-    if backend == "Dymola":
-        from .simulators.dymola import DymolaRunner
-        return DymolaRunner(config)
-    else:
-        raise ValueError(
-            f"Unsupported simulator backend: {backend} (from '{config.simulator}'). "
-            f"Supported: Dymola"
-        )
+    from .simulators import get_runner
+    return get_runner(config)
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -113,7 +106,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     elif args.interactive is not None:
         from .comparison.comparator import compare_all
 
-        comparisons = compare_all(tests, results, store, config)
+        comparisons = compare_all(tests, results, store, config.tolerance, config.final_only)
         return _interactive_review(
             tests, results, comparisons, store, config,
             review_filter=args.interactive,
@@ -121,7 +114,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         from .comparison.comparator import compare_all
 
-        comparisons = compare_all(tests, results, store, config)
+        comparisons = compare_all(tests, results, store, config.tolerance, config.final_only)
 
         if args.report:
             return _generate_report_suite(comparisons, results, tests, store, config)
@@ -142,7 +135,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     store = ReferenceStore(config)
     _write_id_mapping(store, config)
     results = runner.read_last_results(tests)
-    comparisons = compare_all(tests, results, store, config)
+    comparisons = compare_all(tests, results, store, config.tolerance, config.final_only)
 
     if getattr(args, "report", False):
         return _generate_report_suite(comparisons, results, tests, store, config)

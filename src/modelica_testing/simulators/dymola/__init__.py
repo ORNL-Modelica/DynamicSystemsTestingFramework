@@ -1,5 +1,5 @@
 """Dymola simulator backend."""
 
-from .runner import DymolaRunner
+from .runner import DymolaConfig, DymolaRunner
 
-__all__ = ["DymolaRunner"]
+__all__ = ["DymolaConfig", "DymolaRunner"]
