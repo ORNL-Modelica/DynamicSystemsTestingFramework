@@ -73,6 +73,9 @@ details summary:hover { color: #333; }
 .artifacts a { margin-right: 0.3em; }
 .artifacts-prominent { margin-bottom: 1.5em; padding: 1em; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; }
 .artifacts-prominent h2 { margin-top: 0; border: none; padding: 0; }
+.warnings-prominent { margin-bottom: 1.5em; padding: 1em; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; }
+.warnings-prominent h2 { margin-top: 0; border: none; padding: 0 0 0.4em 0; }
+.warnings-prominent table { margin: 0; }
 .meta-table { width: auto; min-width: 400px; }
 .meta-table td:first-child { font-weight: 500; white-space: nowrap; }
 </style>
@@ -105,6 +108,19 @@ details summary:hover { color: #333; }
 </div>
 {% endif %}
 
+{# === STRUCTURAL WARNINGS === #}
+{% if warnings %}
+<div class="warnings-prominent">
+  <h2>Structural Warnings ({{ warnings | length }})</h2>
+  <table>
+    <tr><th>Field</th><th>Reference</th><th>Current</th></tr>
+    {% for w in warnings %}
+    <tr><td>{{ w.field }}</td><td>{{ w.reference }}</td><td>{{ w.current }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
 {# === REFERENCE INFO (moved up, after summary) === #}
 {% if ref_info %}
 <details class="artifacts">
@@ -129,6 +145,47 @@ details summary:hover { color: #333; }
     <p>{% for a in artifacts %}<a href="{{ a.uri }}">{{ a.label }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}</p>
   </details>
   {% endif %}
+{% endif %}
+
+{# === SIM PARAMS (collapsible, moved up) === #}
+{% if sim_params %}
+<details>
+  <summary>Simulation Parameters</summary>
+  <table class="meta-table"><tr><th>Parameter</th><th>Current</th><th>Reference</th></tr>
+  {% for row in sim_params %}
+  <tr{% if row.changed %} style="background:#fff3cd"{% endif %}><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
+  {% endfor %}
+  </table>
+</details>
+{% endif %}
+
+{# === STATISTICS (collapsible, moved up) === #}
+{% if statistics_sections %}
+<details>
+  <summary>Statistics ({{ statistics_sections | length }} sections)</summary>
+  {% for section in statistics_sections %}
+  <h3>{{ section.title }}</h3>
+  <table>
+  <tr><th>Metric</th><th>Current</th><th>Reference</th></tr>
+  {% for row in section.rows %}
+  <tr{% if row.changed %} style="background:#fff3cd"{% endif %}><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
+  {% endfor %}
+  </table>
+  {% endfor %}
+</details>
+{% endif %}
+
+{# === DIAGNOSTIC PLOTS (moved up, above variables) === #}
+{% if diag_trajectories %}
+<details>
+  <summary>Diagnostics ({{ diag_trajectories | length }} variables)</summary>
+  {% for traj in diag_trajectories %}
+  <div class="plot-section">
+    <h3><span class="info">INFO</span> {{ traj.name }}</h3>
+    <div class="plotly-chart" id="diag-plot-{{ loop.index0 }}"></div>
+  </div>
+  {% endfor %}
+</details>
 {% endif %}
 
 {# === TOLERANCE CONTROL + EXPORT === #}
@@ -160,7 +217,7 @@ details summary:hover { color: #333; }
 {% if variables %}
 <h2>Variables</h2>
 <table id="var-table">
-<tr><th>Status</th><th>Variable</th><th>Mode</th><th>NRMSE</th><th>Tolerance</th></tr>
+<tr><th>Status</th><th>Variable</th><th>Mode</th><th>NRMSE</th><th>Tolerance</th><th>Pass/Fail Criterion</th></tr>
 {% for v in variables %}
 <tr data-idx="{{ loop.index0 }}">
   <td class="var-status"><span class="{{ 'pass' if v.passed else 'fail' }}">{{ "PASS" if v.passed else "FAIL" }}</span></td>
@@ -168,6 +225,7 @@ details summary:hover { color: #333; }
   <td>{{ v.mode | default("nrmse") }}{% if v.tube_points_inside is not none %} ({{ "%.0f" | format(v.tube_points_inside * 100) }}% in){% endif %}</td>
   <td class="var-nrmse">{{ "%.4e" | format(v.nrmse) }}</td>
   <td><input type="number" class="var-tol-input" data-idx="{{ loop.index0 }}" step="0.001" min="0" value="{{ v.tolerance_used }}" title="NRMSE tolerance for this variable"></td>
+  <td class="var-criterion">{{ v.criterion }}</td>
 </tr>
 {% endfor %}
 </table>
@@ -237,19 +295,6 @@ details summary:hover { color: #333; }
 {% endfor %}
 {% endif %}
 
-{# === DIAGNOSTIC PLOTS === #}
-{% if diag_trajectories %}
-<details>
-  <summary>Diagnostics ({{ diag_trajectories | length }} variables)</summary>
-  {% for traj in diag_trajectories %}
-  <div class="plot-section">
-    <h3><span class="info">INFO</span> {{ traj.name }}</h3>
-    <div class="plotly-chart" id="diag-plot-{{ loop.index0 }}"></div>
-  </div>
-  {% endfor %}
-</details>
-{% endif %}
-
 {# === NO-BASELINE PLOTS === #}
 {% if nobaseline_trajectories %}
 <h2>Simulated Variables (No Baseline)</h2>
@@ -259,34 +304,6 @@ details summary:hover { color: #333; }
   <div class="plotly-chart" id="nb-plot-{{ loop.index0 }}"></div>
 </div>
 {% endfor %}
-{% endif %}
-
-{# === STATISTICS (collapsible) === #}
-{% if statistics_sections %}
-<details>
-  <summary>Statistics ({{ statistics_sections | length }} sections)</summary>
-  {% for section in statistics_sections %}
-  <h3>{{ section.title }}</h3>
-  <table>
-  <tr><th>Metric</th><th>Current</th><th>Reference</th></tr>
-  {% for row in section.rows %}
-  <tr{% if row.changed %} style="background:#fff3cd"{% endif %}><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
-  {% endfor %}
-  </table>
-  {% endfor %}
-</details>
-{% endif %}
-
-{# === SIM PARAMS (collapsible) === #}
-{% if sim_params %}
-<details>
-  <summary>Simulation Parameters</summary>
-  <table class="meta-table"><tr><th>Parameter</th><th>Current</th><th>Reference</th></tr>
-  {% for row in sim_params %}
-  <tr{% if row.changed %} style="background:#fff3cd"{% endif %}><td>{{ row.label }}</td><td>{{ row.current }}</td><td>{{ row.reference }}</td></tr>
-  {% endfor %}
-  </table>
-</details>
 {% endif %}
 
 <script>
@@ -373,14 +390,14 @@ function updateVarStatus(idx) {
     plotLabel.className = `var-plot-status ${passed ? 'pass' : 'fail'}`;
     plotLabel.textContent = passed ? 'PASS' : 'FAIL';
   }
-  // Update tolerance line on NRMSE error plot
+  // Update tolerance line + fail zone on NRMSE error plot
   const nrmseEl = document.getElementById(`plot-nrmse-${idx}`);
   if (nrmseEl && nrmseEl.data) {
     const tol = perVarTolerances[idx];
-    const xRange = nrmseEl.layout.xaxis.range || [0, 1];
     Plotly.relayout(nrmseEl, {
       'shapes[0].y0': tol,
       'shapes[0].y1': tol,
+      'shapes[1].y0': tol,
     });
   }
 }
@@ -556,9 +573,19 @@ function renderPlots() {
       }, PLOT_CFG);
 
       const tol = perVarTolerances[idx];
+      const avgNrmse = nrmseError.reduce((s, v) => s + v, 0) / nrmseError.length;
+      const nrmseMax = Math.max(...nrmseError, tol);
+      const tStart = commonTime[0];
+      const tEnd = commonTime[commonTime.length - 1];
       Plotly.newPlot(nrmseEl, [{
         x: commonTime, y: nrmseError, name: 'NRMSE', type: 'scatter', mode: 'lines',
         line: { color: '#2196F3', width: 1 },
+      }, {
+        x: [commonTime[worstIdx], commonTime[worstIdx]],
+        y: [0, nrmseError[worstIdx]],
+        name: 'Max', type: 'scatter', mode: 'lines',
+        line: { color: '#9C27B0', width: 1, dash: 'dot' },
+        showlegend: false,
       }], {
         yaxis: { ...errYAxis, title: { text: 'NRMSE', standoff: 10 } },
         xaxis: { title: 'Time', hoverformat: '.6~g' },
@@ -566,15 +593,30 @@ function renderPlots() {
         legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)', font: { size: 10 } },
         hovermode: 'x unified',
         shapes: [{
-          type: 'line', x0: commonTime[0], x1: commonTime[commonTime.length - 1],
+          type: 'line', x0: tStart, x1: tEnd,
           y0: tol, y1: tol,
           line: { color: 'gray', width: 1, dash: 'dash' },
+        }, {
+          type: 'rect', xref: 'x', yref: 'y',
+          x0: tStart, x1: tEnd, y0: tol, y1: nrmseMax * 1.1,
+          fillcolor: '#f44336', opacity: 0.08,
+          line: { width: 0 },
+          layer: 'below',
+        }, {
+          type: 'line', x0: tStart, x1: tEnd,
+          y0: avgNrmse, y1: avgNrmse,
+          line: { color: '#4CAF50', width: 1, dash: 'dashdot' },
         }],
         annotations: [{
-          x: commonTime[commonTime.length - 1], y: tol,
+          x: tEnd, y: tol,
           text: 'tolerance', showarrow: false,
           font: { size: 9, color: 'gray' },
           xanchor: 'right', yanchor: 'bottom',
+        }, {
+          x: tEnd, y: avgNrmse,
+          text: `avg ${avgNrmse.toExponential(2)}`, showarrow: false,
+          font: { size: 9, color: '#4CAF50' },
+          xanchor: 'right', yanchor: 'top',
         }],
       }, PLOT_CFG);
 

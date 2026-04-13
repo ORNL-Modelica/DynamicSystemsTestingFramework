@@ -534,6 +534,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         test_model=test,
         spec_path=spec_path,
         ref_file=ref_file,
+        warnings=comp.warnings,
     )
 
     if html_path:

@@ -76,6 +76,7 @@ def _build_template_context(
     test_model=None,
     result=None,
     ref_file: Optional[Path] = None,
+    warnings: Optional[list] = None,
 ) -> dict:
     """Build the full template context dict from comparison data."""
     if cur_stats is None:
@@ -173,6 +174,22 @@ def _build_template_context(
     # --- Variable comparison data ---
     variables = []
     for vc in comparisons:
+        mode = vc.mode or "nrmse"
+        if mode == "tube" and vc.tube_points_inside is not None:
+            criterion = (
+                f"{vc.tube_points_inside * 100:.1f}% inside tube "
+                f"→ {'PASS' if vc.passed else 'FAIL'} (requires 100%)"
+            )
+        elif mode == "final_only":
+            criterion = (
+                f"Final value error {vc.max_abs_error:.3e} vs tolerance "
+                f"{vc.tolerance_used:.3e} → {'PASS' if vc.passed else 'FAIL'}"
+            )
+        else:
+            criterion = (
+                f"NRMSE {vc.nrmse:.3e} vs tolerance {vc.tolerance_used:.3e} "
+                f"→ {'PASS' if vc.passed else 'FAIL'}"
+            )
         variables.append({
             "name": vc.name or f"x[{vc.index}]",
             "passed": bool(vc.passed),
@@ -185,7 +202,8 @@ def _build_template_context(
             "actual_final": float(vc.actual_final),
             "is_constant": bool(vc.is_constant),
             "tolerance_used": float(vc.tolerance_used),
-            "mode": vc.mode,
+            "mode": mode,
+            "criterion": criterion,
             "tube_points_inside": float(vc.tube_points_inside) if vc.tube_points_inside is not None else None,
             "tube_worst_violation": float(vc.tube_worst_violation) if vc.tube_worst_violation is not None else None,
             "tube_worst_violation_time": float(vc.tube_worst_violation_time) if vc.tube_worst_violation_time is not None else None,
@@ -331,10 +349,19 @@ def _build_template_context(
                 "changed": cur_val is not None and ref_val is not None and str(cur_val) != str(ref_val),
             })
 
+    warning_rows = []
+    for w in warnings or []:
+        warning_rows.append({
+            "field": w.field,
+            "reference": str(w.reference_value),
+            "current": str(w.current_value),
+        })
+
     return {
         "model_id": model_id,
         "n_passed": n_passed,
         "sim_failed": sim_failed,
+        "warnings": warning_rows,
         "key_stats": key_stats,
         "ref_info": ref_info,
         "sim_params": sim_params,
@@ -412,8 +439,13 @@ def _plot_variable(
 
         ax_rel = axes[2]
         ax_rel.plot(ref_time, rel_error, color="#9C27B0", linewidth=0.8)
-        ax_rel.axhline(y=tolerance, color="gray", linestyle="--", alpha=0.5,
-                       label=f"tolerance ({tolerance:.0e})")
+        avg_err = float(np.mean(rel_error))
+        ymax = max(float(np.max(rel_error)), tolerance) * 1.1
+        ax_rel.axhspan(tolerance, ymax, color="#f44336", alpha=0.08)
+        ax_rel.axhline(y=tolerance, color="gray", linestyle="--", alpha=0.6,
+                       label=f"tolerance ({tolerance:.2e})")
+        ax_rel.axhline(y=avg_err, color="#4CAF50", linestyle="-.", alpha=0.6,
+                       linewidth=0.8, label=f"avg ({avg_err:.2e})")
         ax_rel.axvline(ref_time[max_idx], color="#9C27B0", alpha=0.3, linestyle=":")
         ax_rel.set_ylabel("NRMSE Error")
         ax_rel.set_xlabel("Time")
@@ -442,6 +474,7 @@ def generate_comparison_plots(
     test_model=None,
     spec_path: Optional[Path] = None,
     ref_file: Optional[Path] = None,
+    warnings: Optional[list] = None,
 ) -> Optional[Path]:
     """Generate per-variable comparison PNGs and an HTML viewer.
 
@@ -571,7 +604,7 @@ def generate_comparison_plots(
     context = _build_template_context(
         model_id, png_files, comparisons, ref_data, cur_stats,
         diag_png_files, nobaseline_png_files, test_dir, test_model, result,
-        ref_file=ref_file,
+        ref_file=ref_file, warnings=warnings,
     )
 
     # Add spec path for "Save to Spec" functionality
@@ -693,6 +726,7 @@ def generate_report_suite(
             test_dir=test_dir,
             test_model=test,
             ref_file=ref_file,
+            warnings=comp.warnings,
         )
 
         if html_path:
