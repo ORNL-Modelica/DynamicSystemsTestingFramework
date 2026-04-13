@@ -5,6 +5,7 @@ import json
 import logging
 import platform
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -488,6 +489,8 @@ def generate_comparison_plots(
         logger.warning("matplotlib not installed — install with: uv pip install matplotlib")
         return None
 
+    if plot_dir.exists():
+        shutil.rmtree(plot_dir)
     plot_dir.mkdir(parents=True, exist_ok=True)
 
     # Get reference time and variables

@@ -41,7 +41,8 @@
       "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(find src:*)",
-      "Bash(grep -v ':0$')"
+      "Bash(grep -v ':0$')",
+      "Bash(UV_LINK_MODE=copy uv run pytest -q)"
     ]
   }
 }
