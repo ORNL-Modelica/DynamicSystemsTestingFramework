@@ -712,6 +712,8 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
 
 def _render_one_test(args: dict, report_dir: Path) -> dict:
     """Render a single test's report. Returns the index entry."""
+    import time as _time
+    t0 = _time.monotonic()
     plot_dir = report_dir / args["report_id"]
     html_path = generate_comparison_plots(
         model_id=args["model_id"],
@@ -725,6 +727,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         warnings=args["warnings"],
         last_run_at=args["last_run_at"],
     )
+    render_elapsed = _time.monotonic() - t0
     return {
         "model_id": args["model_id"],
         "status_text": args["status_text"],
@@ -737,6 +740,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         "n_warnings": args["n_warnings"],
         "last_run_at": args["last_run_at"],
         "report_path": f'{args["report_id"]}/interactive.html' if html_path else None,
+        "_render_elapsed": render_elapsed,
     }
 
 
@@ -756,7 +760,9 @@ def generate_report_suite(
     Returns the path to the index HTML file.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time as _time
 
+    report_wall_start = _time.monotonic()
     report_dir = config.work_dir / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
 
@@ -824,6 +830,18 @@ def generate_report_suite(
     index_path = report_dir / "index.html"
     _render_template("index.html", index_context, index_path)
 
+    # Phase timing — exposes whether parallelism is helping
+    wall = _time.monotonic() - report_wall_start
+    elapsed = [t.get("_render_elapsed", 0.0) for t in index_tests]
+    total_work = sum(elapsed)
+    if elapsed:
+        slowest = max(elapsed)
+        avg = total_work / len(elapsed)
+        speedup = (total_work / wall) if wall > 0 else 0.0
+        print(
+            f"Report phase: {wall:.0f}s wall, {total_work:.0f}s total work, "
+            f"{speedup:.1f}x parallel speedup (avg {avg:.1f}s/test, slowest {slowest:.1f}s)"
+        )
     return index_path
 
 

@@ -84,8 +84,12 @@ uv run python -m modelica_testing --config testing.json manifest dump
 uv run python -m modelica_testing --config testing.json manifest cleanup --orphans
 uv run python -m modelica_testing --config testing.json manifest cleanup --orphans --apply
 
-# Persistent-worker mode (Dymola Python interface; per-test live progress + natural load balancing)
-uv run python -m modelica_testing --config testing.json run --persistent --parallel 4 --report
+# Persistent workers via the Dymola Python interface are the DEFAULT.
+# Live per-test dashboard, natural load balancing, per-test timeout watchdog.
+uv run python -m modelica_testing --config testing.json run --parallel 4 --report
+
+# Force the legacy batched .mos runner (e.g., for environments without the Python interface)
+uv run python -m modelica_testing --config testing.json run --batch --parallel 4 --batch-size 3 --report
 
 # Diagnose discovery of the Dymola Python interface archive
 uv run python -m modelica_testing check-dymola

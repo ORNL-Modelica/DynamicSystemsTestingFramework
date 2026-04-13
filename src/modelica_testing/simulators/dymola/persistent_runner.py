@@ -45,14 +45,60 @@ from .interface_loader import load_dymola_interface
 logger = logging.getLogger(__name__)
 
 
-# Serialize Dymola subprocess launches so we can reliably attribute a new
-# PID to the worker that spawned it (subprocess snapshot diff around launch).
-_LAUNCH_LOCK = threading.Lock()
-
-
 # ---------------------------------------------------------------------------
 # Stderr noise suppression
 # ---------------------------------------------------------------------------
+
+_parallel_startup_patched = False
+
+
+def _patch_dymola_for_parallel_startup() -> None:
+    """Narrow Dymola's broad startup lock so workers can launch in parallel.
+
+    `dymola.dymola_interface_internal.dymola_lock` is held for the entire
+    `DymolaInterface.__init__`, which includes `_check_dymola` — an HTTP
+    ping retry loop that waits for the just-spawned Dymola to come up
+    (~7s per worker). With this lock in place, N workers all serialize on
+    startup, so 10 workers take 10×7 = 70s instead of ~7s.
+
+    The genuinely shared state is just port selection (otherwise two workers
+    could pick the same random port and collide). We narrow the critical
+    section to just `_find_available_port` and replace the broad lock with
+    a no-op so the slow per-worker waits overlap.
+    """
+    global _parallel_startup_patched
+    if _parallel_startup_patched:
+        return
+    try:
+        import dymola.dymola_interface_internal as _di  # type: ignore[import-not-found]
+    except ImportError:
+        return
+
+    _port_lock = threading.Lock()
+    _orig_find_port = _di.DymolaInterfaceInternal._find_available_port
+
+    def _safe_find_port(self):
+        with _port_lock:
+            return _orig_find_port(self)
+
+    _di.DymolaInterfaceInternal._find_available_port = _safe_find_port  # type: ignore[method-assign]
+
+    class _NoLock:
+        def acquire(self, blocking=True, timeout=-1):
+            return True
+
+        def release(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    _di.dymola_lock = _NoLock()  # type: ignore[attr-defined]
+    _parallel_startup_patched = True
+
 
 _NOISE_PATTERNS = (
     "WinError 10061",
@@ -114,20 +160,6 @@ class _suppress_stderr_noise:
         return False  # don't suppress exceptions — noise window expires naturally
 
 
-def _dymola_pids_snapshot() -> set[int]:
-    """Return PIDs of all running Dymola processes on this machine."""
-    import psutil
-    pids: set[int] = set()
-    for p in psutil.process_iter(["name"]):
-        try:
-            name = (p.info.get("name") or "").lower()
-            if "dymola" in name:
-                pids.add(p.pid)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    return pids
-
-
 class DymolaWorker:
     """One live Dymola process wrapped as a test runner."""
 
@@ -150,20 +182,20 @@ class DymolaWorker:
     def start(self) -> None:
         """Launch Dymola and apply startup: settings + library loads.
 
-        The actual DymolaInterface() launch is serialized across workers so
-        we can diff the Dymola-process set and attribute the new PID(s) to
-        this worker. Library loading happens after the lock is released so
-        it stays parallel.
+        Launches run fully in parallel — PID attribution is read directly
+        from DymolaInterface's internal subprocess handle, so we never need
+        to serialize around a process-set snapshot.
         """
         kwargs: dict = {"showwindow": bool(self.dymola_config.show_ide)}
         if self.config.simulator_path:
             kwargs["dymolapath"] = str(self.config.simulator_path)
 
-        with _LAUNCH_LOCK:
-            before = _dymola_pids_snapshot()
-            self.dymola = self._DI(**kwargs)
-            after = _dymola_pids_snapshot()
-            self.pids = after - before
+        self.dymola = self._DI(**kwargs)
+        # DymolaInterfaceInternal stores its subprocess as `_dymola_process`
+        # (a subprocess.Popen). Fall back to an empty set if the attribute
+        # ever moves — kill-by-pid just becomes best-effort in that case.
+        proc = getattr(self.dymola, "_dymola_process", None)
+        self.pids = {proc.pid} if proc is not None and getattr(proc, "pid", None) else set()
 
         # Establish working directory
         self.dymola.cd(str(self.config.work_dir))
@@ -448,9 +480,11 @@ class PersistentDymolaRunner(DymolaRunner):
 
         # Import lazily so the dependency only matters in --persistent mode.
         di_cls = load_dymola_interface(self.config.dymola_interface_path)
-        # Patch Dymola's logger now that the module is importable, so
-        # timeout-noise suppression can take effect from the first timeout.
+        # Patch Dymola's logger so timeout-noise suppression takes effect
+        # from the first timeout, and narrow its module-level startup lock
+        # so workers can launch in parallel (instead of ~7s × N serialized).
         _install_dymola_log_filter()
+        _patch_dymola_for_parallel_startup()
 
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         total = len(tests)
@@ -621,13 +655,15 @@ class PersistentDymolaRunner(DymolaRunner):
             w.close()
 
         wall = time.monotonic() - start_all
+        total_work = sum(r.elapsed for r in results)
+        speedup = (total_work / wall) if wall > 0 else 0.0
         n_ok = sum(1 for r in results if r.success)
         n_timeout = sum(1 for r in results if r.timed_out)
         n_fail = total - n_ok - n_timeout
         print(file=sys.stderr)
         print(
             f"Persistent run complete: {n_ok} ok, {n_fail} failed, {n_timeout} timed out "
-            f"({wall:.0f}s wall)",
+            f"({wall:.0f}s wall, {total_work:.0f}s total work, {speedup:.1f}x parallel speedup)",
             file=sys.stderr,
         )
 

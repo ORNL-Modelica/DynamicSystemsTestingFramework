@@ -147,7 +147,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     store = ReferenceStore(config)
     _write_id_mapping(store, config)
 
-    runner = _get_runner(config, persistent=getattr(args, "persistent", False))
+    runner = _get_runner(config, persistent=not getattr(args, "batch", False))
 
     # --rerun selects tests by status from prior comparisons (no new sim yet).
     # Default category: failed. Implies --merge so the report covers the full suite.
@@ -908,9 +908,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_run.add_argument("--work-dir", type=str, help="Working directory for output")
     p_run.add_argument("--parallel", type=int, help="Number of parallel Dymola instances")
     p_run.add_argument("--batch-size", type=int, dest="batch_size",
-                       help="Tests per Dymola session (default: all-per-worker). Small values (3-5) give better load balancing and crash isolation but reload the library more often. Ignored in --persistent mode.")
-    p_run.add_argument("--persistent", action="store_true",
-                       help="Use persistent Dymola workers (Python interface) instead of batched .mos scripts. Library loads once per worker; tests dispatched one at a time via queue for per-test progress granularity and natural load balancing.")
+                       help="(--batch only) Tests per Dymola session (default: all-per-worker). Small values (3-5) give better load balancing and crash isolation but reload the library more often.")
+    p_run.add_argument("--batch", action="store_true",
+                       help="Use the legacy batched .mos runner instead of the default persistent-worker mode. Falls back to this automatically if the Dymola Python interface can't be loaded.")
     p_run.add_argument("--tolerance", type=float, help="Override comparison tolerance")
     p_run.add_argument("--final-only", action="store_true", help="Compare only final values")
     p_run.add_argument(

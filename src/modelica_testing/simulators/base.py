@@ -413,21 +413,38 @@ class SimulatorRunner(ABC):
         total = len(work_items)
         completed = 0
         print(f"\nReading {total} result files...")
+        wall_start = time.monotonic()
+        per_test_elapsed: list[float] = []
+        elapsed_lock = Lock()
 
         def _read_one(item):
             test_key, model_id, test_model, rr = item
-            return test_key, model_id, self.read_result(test_model, test_key, rr)
+            t0 = time.monotonic()
+            res = self.read_result(test_model, test_key, rr)
+            return test_key, model_id, res, time.monotonic() - t0
 
         # Parallelize reads with thread pool
         with ThreadPoolExecutor() as executor:
             futures = {executor.submit(_read_one, item): item for item in work_items}
             for future in as_completed(futures):
-                test_key, model_id, result = future.result()
+                test_key, model_id, result, dt = future.result()
                 results[model_id] = result
+                with elapsed_lock:
+                    per_test_elapsed.append(dt)
                 completed += 1
                 short = model_id.rsplit(".", 1)[-1]
                 _print_progress(completed, total, f"{test_key} {short}", "read")
 
+        wall = time.monotonic() - wall_start
+        total_work = sum(per_test_elapsed)
+        if per_test_elapsed:
+            speedup = (total_work / wall) if wall > 0 else 0.0
+            avg = total_work / len(per_test_elapsed)
+            slowest = max(per_test_elapsed)
+            print(
+                f"Read phase: {wall:.0f}s wall, {total_work:.0f}s total work, "
+                f"{speedup:.1f}x parallel speedup (avg {avg:.1f}s/test, slowest {slowest:.1f}s)"
+            )
         return results
 
     def read_last_results(

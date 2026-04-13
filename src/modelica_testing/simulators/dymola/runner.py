@@ -169,12 +169,12 @@ class DymolaRunner(SimulatorRunner):
         n_ok = sum(1 for r in all_results if r.success)
         n_fail = sum(1 for r in all_results if not r.success and not r.timed_out)
         n_timeout = sum(1 for r in all_results if r.timed_out)
-        total_time = sum(r.elapsed for r in all_results)
+        total_work = sum(r.elapsed for r in all_results)
 
         print(file=sys.stderr)
         print(
             f"Simulations complete: {n_ok} ok, {n_fail} failed, "
-            f"{n_timeout} timed out ({total_time:.0f}s total)",
+            f"{n_timeout} timed out ({total_work:.0f}s total work)",
             file=sys.stderr,
         )
 

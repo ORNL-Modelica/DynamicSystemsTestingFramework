@@ -49,7 +49,8 @@
       "Read(//tmp/**)",
       "Bash(unzip -o \"/mnt/c/Program Files/Dymola 2026x/Modelica/Library/python_interface/dymola-2026.0-py3-none-any.whl\")",
       "Bash(grep -nE \"WinError|urlopen|10061|10054|print.*error|sys\\\\.stderr|sys\\\\.__stderr__|traceback\" /tmp/dymola-inspect/dymola/*.py)",
-      "Bash(grep -n \"class DymolaLogger\\\\|DymolaLogger\\\\.\" /tmp/dymola-inspect/dymola/*.py)"
+      "Bash(grep -n \"class DymolaLogger\\\\|DymolaLogger\\\\.\" /tmp/dymola-inspect/dymola/*.py)",
+      "Bash(grep:*)"
     ]
   }
 }
