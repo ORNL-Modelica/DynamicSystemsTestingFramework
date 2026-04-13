@@ -83,6 +83,12 @@ uv run python -m modelica_testing --config testing.json manifest dump
 # Prune orphan manifest entries (models no longer in discovery — dry-run by default)
 uv run python -m modelica_testing --config testing.json manifest cleanup --orphans
 uv run python -m modelica_testing --config testing.json manifest cleanup --orphans --apply
+
+# Persistent-worker mode (Dymola Python interface; per-test live progress + natural load balancing)
+uv run python -m modelica_testing --config testing.json run --persistent --parallel 4 --report
+
+# Diagnose discovery of the Dymola Python interface archive
+uv run python -m modelica_testing check-dymola
 ```
 
 ## Running Tests

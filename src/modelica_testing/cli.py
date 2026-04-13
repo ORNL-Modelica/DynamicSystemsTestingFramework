@@ -121,10 +121,18 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
-def _get_runner(config):
-    """Get the appropriate simulator runner for the configured simulator."""
+def _get_runner(config, persistent: bool = False):
+    """Get the appropriate simulator runner for the configured simulator.
+
+    When *persistent* is True and the backend is Dymola, swap to the
+    persistent-worker runner that drives Dymola via its Python interface.
+    """
     from .simulators import get_runner
-    return get_runner(config)
+    runner = get_runner(config)
+    if persistent and config.simulator_backend == "Dymola":
+        from .simulators.dymola.persistent_runner import PersistentDymolaRunner
+        runner = PersistentDymolaRunner(config)
+    return runner
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -139,7 +147,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     store = ReferenceStore(config)
     _write_id_mapping(store, config)
 
-    runner = _get_runner(config)
+    runner = _get_runner(config, persistent=getattr(args, "persistent", False))
 
     # --rerun selects tests by status from prior comparisons (no new sim yet).
     # Default category: failed. Implies --merge so the report covers the full suite.
@@ -254,6 +262,43 @@ def cmd_export(args: argparse.Namespace) -> int:
 
     return 0
 
+
+
+def cmd_check_dymola(args: argparse.Namespace) -> int:
+    """Diagnose discovery of Dymola's Python interface."""
+    from .simulators.dymola.interface_loader import describe_dymola_interface
+
+    override = Path(args.dymola_interface) if getattr(args, "dymola_interface", None) else None
+    info = describe_dymola_interface(override)
+
+    print("Dymola Python interface diagnostic")
+    print("==================================")
+    print(f"  Archive found:   {info['archive'] or '(none)'}")
+    if info['format']:
+        print(f"  Format:          .{info['format']}")
+    print(f"  sys.path entry:  {info['sys_path_entry'] or '(none)'}")
+    print(f"  import ok:       {info['import_ok']}")
+    if info.get("dymola_interface_module"):
+        print(f"  Module:          {info['dymola_interface_module']}")
+    if info["error"]:
+        print(f"  Error:           {info['error']}")
+    print()
+    print("Searched roots:")
+    for r in info["search_roots"]:
+        print(f"  - {r}")
+    if info["discovered_dirs"]:
+        print("Discovered install dirs (newest first):")
+        for d in info["discovered_dirs"]:
+            print(f"  - {d}")
+
+    if info["import_ok"]:
+        print("\nOK — ready to use the Dymola Python interface.")
+        return 0
+    print("\nFAIL — fix one of:")
+    print("  1. Pass --dymola-interface <path>")
+    print("  2. Set DYMOLA_INTERFACE_PATH env var")
+    print("  3. Add 'dymola_interface_path' to testing.json")
+    return 1
 
 
 def cmd_manifest(args: argparse.Namespace) -> int:
@@ -791,6 +836,8 @@ def _build_config(args: argparse.Namespace) -> Config:
         kwargs["parallel"] = args.parallel
     if hasattr(args, "batch_size") and args.batch_size is not None:
         kwargs["batch_size"] = args.batch_size
+    if hasattr(args, "dymola_interface") and args.dymola_interface:
+        kwargs["dymola_interface_path"] = Path(args.dymola_interface)
     if hasattr(args, "tolerance") and args.tolerance:
         kwargs["tolerance"] = args.tolerance
     if hasattr(args, "final_only") and args.final_only:
@@ -822,6 +869,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--test-spec", type=str, default=None,
         help="Path to test_spec.json (external test definitions)",
+    )
+    parser.add_argument(
+        "--dymola-interface", type=str, default=None,
+        help="Path to Dymola's Python interface archive (dymola.egg or dymola-*.whl) "
+             "or the directory containing it. Overrides auto-discovery.",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -856,7 +908,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_run.add_argument("--work-dir", type=str, help="Working directory for output")
     p_run.add_argument("--parallel", type=int, help="Number of parallel Dymola instances")
     p_run.add_argument("--batch-size", type=int, dest="batch_size",
-                       help="Tests per Dymola session (default: all-per-worker). Small values (3-5) give better load balancing and crash isolation but reload the library more often.")
+                       help="Tests per Dymola session (default: all-per-worker). Small values (3-5) give better load balancing and crash isolation but reload the library more often. Ignored in --persistent mode.")
+    p_run.add_argument("--persistent", action="store_true",
+                       help="Use persistent Dymola workers (Python interface) instead of batched .mos scripts. Library loads once per worker; tests dispatched one at a time via queue for per-test progress granularity and natural load balancing.")
     p_run.add_argument("--tolerance", type=float, help="Override comparison tolerance")
     p_run.add_argument("--final-only", action="store_true", help="Compare only final values")
     p_run.add_argument(
@@ -960,6 +1014,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Path to JSON file with tolerance settings (e.g., from interactive report export)",
     )
 
+    # check-dymola — diagnostic for the Dymola Python interface loader
+    subparsers.add_parser(
+        "check-dymola",
+        help="Locate and load Dymola's Python interface; report what was found",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -974,6 +1034,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "manifest": cmd_manifest,
         "add": cmd_add,
         "spec-update": cmd_spec_update,
+        "check-dymola": cmd_check_dymola,
     }
 
     return commands[args.command](args)

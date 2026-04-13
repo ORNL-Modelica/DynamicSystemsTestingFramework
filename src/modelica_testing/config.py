@@ -175,6 +175,10 @@ class Config:
     # Output
     work_dir: Optional[Path] = None
 
+    # Optional override for Dymola's Python interface archive (dymola.egg or dymola-*.whl).
+    # If unset, auto-discovers under platform install roots.
+    dymola_interface_path: Optional[Path] = None
+
     # Test spec file (external test definitions)
     test_spec_file: Optional[Path] = None
 

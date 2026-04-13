@@ -166,6 +166,14 @@
 - `runner.ref_id_map: dict[model_id, "ref_NNNN"]` is populated by the CLI before `run_tests` (from `ReferenceStore.index`); runner consults it at registration time so links work even mid-run before the report is generated
 - `finalize()` strips the meta-refresh tag so the final dashboard doesn't keep reloading after the run completes
 
+### Persistent Dymola workers via Python interface
+- `simulators/dymola/interface_loader.py` auto-discovers the `dymola` archive (`.whl` for ≥2025, `.egg` for older) under platform install roots (`C:\Program Files\Dymola *\Modelica\Library\python_interface/`). Wheels are extracted once into a user cache dir; eggs are added to `sys.path` directly (zipimport). Override via `--dymola-interface` / `dymola_interface_path` / `DYMOLA_INTERFACE_PATH`. Diagnose with `modelica-testing check-dymola`
+- `PersistentDymolaRunner` subclasses `DymolaRunner` and overrides only `run_tests`; inherits `read_result` and config extraction. Each worker is a `DymolaWorker` wrapping one `DymolaInterface` instance
+- Reliable per-worker PID tracking: `_LAUNCH_LOCK` serializes the `DymolaInterface()` constructor call so `_dymola_pids_snapshot()` before/after reliably attributes new Dymola PIDs to the spawning worker. Library-loading happens outside the lock, so it stays parallel
+- Timeout watchdog: `run_test_with_timeout` spawns a daemon runner thread, joins with the test's timeout. On expiry: `close(grace=1s)` attempts graceful shutdown, then `psutil.Process(pid).kill()` on tracked PIDs. Inner thread finishes cleanup out-of-band (short `join(0.5)` is enough; the thread is daemon and its result is already discarded)
+- Worker restart: after a timeout/exception, `w.dymola = None`. Next iteration of `_worker_loop` sees `is_alive() == False` and calls `_try_restart(w)` — new `DymolaInterface` + library reload. Cap at `MAX_RESTARTS_PER_WORKER = 3`; after that, tests dispatched to that slot get a clean "Worker dead; restart exhausted" failure
+- Noise suppression: Dymola's `DymolaLogger._PrintMessage` uses `print(msg)` to stdout, so stderr filters don't catch its urllib-retry noise. We monkey-patch `DymolaLogger._PrintMessage` instead — during kill-window grace periods, lines matching `WinError 10054/10061` or `urlopen error` are silently dropped. Outside the window, full passthrough
+
 ### Persistent test_keys (manifest accumulates across runs)
 - `assign_test_keys()` (`simulators/base.py`) is the single allocation point. Loads existing `batch_manifest.json` if present, builds `model_id → test_key` reverse lookup, reuses existing test_keys for known models, assigns the next sequential `test_NNNN` for new models, stamps `last_run_at` on tests being run
 - A model always gets the same `test_NNNN` for its lifetime — reruns naturally overwrite their own slot, prior dirs of unrelated tests stay intact
