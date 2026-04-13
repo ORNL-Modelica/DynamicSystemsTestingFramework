@@ -171,15 +171,28 @@ class ProgressReporter:
         # file even if a higher-level lock is bypassed.
         tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         tmp.write_text(text, encoding="utf-8")
-        try:
-            tmp.replace(path)
-        except OSError:
-            # Last-resort cleanup if replace fails for any reason
+        # Retry replace on Windows — antivirus, search indexer, browser
+        # previews, and Explorer can briefly lock either the tmp or the
+        # target file and cause WinError 5/32. Short backoff usually clears it.
+        last_err: Optional[OSError] = None
+        for delay in (0, 0.05, 0.1, 0.2, 0.5):
+            if delay:
+                time.sleep(delay)
             try:
-                tmp.unlink()
-            except OSError:
-                pass
-            raise
+                tmp.replace(path)
+                return
+            except OSError as e:
+                last_err = e
+        # Give up: clean up tmp and silently drop this update so progress
+        # writes never crash the run. Worst case the dashboard misses one tick.
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        # Re-raise on the very first write so a misconfiguration is visible,
+        # but suppress later transient failures.
+        if not (path.parent / path.name).exists():
+            raise last_err
 
     def _write_json(self, snapshot: dict) -> None:
         path = self.work_dir / "status.json"

@@ -641,6 +641,91 @@ def _render_template(template_name: str, context: dict, output_path: Path) -> No
     output_path.write_text(html, encoding="utf-8")
 
 
+def _build_per_test_args(comp, results, test_lookup, store, config, test_key_by_model):
+    """Resolve all per-test inputs needed to render that test's report."""
+    model_id = comp.model_id
+    result = results.get(model_id)
+    test = test_lookup.get(model_id)
+    ref_data = store.get_reference(model_id)
+
+    if not comp.sim_success:
+        status_text, status_class = "SIM_FAIL", "sim-fail"
+    elif not comp.has_reference:
+        status_text, status_class = "NO_REF", "no-ref"
+    elif comp.passed:
+        status_text, status_class = "PASS", "pass"
+    else:
+        status_text, status_class = "FAIL", "fail"
+
+    n_vars = len(comp.variables) if comp.variables else 0
+    n_vars_passed = sum(1 for v in comp.variables if v.passed) if comp.variables else 0
+    worst_nrmse = max((v.nrmse for v in comp.variables), default=None)
+
+    test_key = test_key_by_model.get(model_id)
+    test_dir = config.work_dir / test_key if test_key else None
+
+    ref_file = None
+    test_id = store.index.get_id(model_id)
+    if test_id:
+        from ..storage.reference_store import RefIndex
+        ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
+
+    if comp.test_id:
+        report_id = f"ref_{comp.test_id}"
+    elif test_key:
+        report_id = test_key
+    else:
+        report_id = _sanitize_filename(model_id)
+
+    return {
+        "model_id": model_id,
+        "ref_data": ref_data,
+        "result": result,
+        "test": test,
+        "test_dir": test_dir,
+        "ref_file": ref_file,
+        "warnings": comp.warnings,
+        "report_id": report_id,
+        "test_key": test_key,
+        "status_text": status_text,
+        "status_class": status_class,
+        "n_vars": n_vars,
+        "n_vars_passed": n_vars_passed,
+        "worst_nrmse": worst_nrmse,
+        "n_warnings": len(comp.warnings) if comp.warnings else 0,
+        "ref_id": f"ref_{comp.test_id}" if comp.test_id else None,
+        "comp_variables": comp.variables,
+    }
+
+
+def _render_one_test(args: dict, report_dir: Path) -> dict:
+    """Render a single test's report. Returns the index entry."""
+    plot_dir = report_dir / args["report_id"]
+    html_path = generate_comparison_plots(
+        model_id=args["model_id"],
+        ref_data=args["ref_data"],
+        result=args["result"],
+        comparisons=args["comp_variables"],
+        plot_dir=plot_dir,
+        test_dir=args["test_dir"],
+        test_model=args["test"],
+        ref_file=args["ref_file"],
+        warnings=args["warnings"],
+    )
+    return {
+        "model_id": args["model_id"],
+        "status_text": args["status_text"],
+        "status_class": args["status_class"],
+        "ref_id": args["ref_id"],
+        "test_key": args["test_key"],
+        "worst_nrmse": args["worst_nrmse"],
+        "n_vars": args["n_vars"],
+        "n_vars_passed": args["n_vars_passed"],
+        "n_warnings": args["n_warnings"],
+        "report_path": f'{args["report_id"]}/interactive.html' if html_path else None,
+    }
+
+
 def generate_report_suite(
     comparisons: list,
     results: dict,
@@ -650,105 +735,61 @@ def generate_report_suite(
 ) -> Path:
     """Generate per-test comparison reports and an index page.
 
+    Per-test report rendering runs on a thread pool sized by config.parallel.
+    matplotlib's Agg backend releases the GIL during PNG rendering, so threads
+    give a meaningful speedup without the pickling cost of a process pool.
+
     Returns the path to the index HTML file.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     report_dir = config.work_dir / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
 
     test_lookup = {t.model_id: t for t in tests}
-    index_tests = []
 
-    for comp in comparisons:
-        model_id = comp.model_id
-        result = results.get(model_id)
-        test = test_lookup.get(model_id)
-        ref_data = store.get_reference(model_id)
+    # Cache test_key lookup once instead of scanning manifests per test
+    test_key_by_model: dict[str, str] = {}
+    manifest_paths = sorted(config.work_dir.glob("batch_manifest.json"))
+    if manifest_paths:
+        from ..simulators import BatchManifest
+        for mp in manifest_paths:
+            bm = BatchManifest.load(mp)
+            for tk, entry in bm.manifest.items():
+                test_key_by_model.setdefault(entry["model_id"], tk)
 
-        # Determine status
-        if not comp.sim_success:
-            status_text = "SIM_FAIL"
-            status_class = "sim-fail"
-        elif not comp.has_reference:
-            status_text = "NO_REF"
-            status_class = "no-ref"
-        elif comp.passed:
-            status_text = "PASS"
-            status_class = "pass"
-        else:
-            status_text = "FAIL"
-            status_class = "fail"
+    # Resolve per-test args sequentially (cheap dict/store lookups), then
+    # render reports in parallel
+    work = [
+        _build_per_test_args(comp, results, test_lookup, store, config, test_key_by_model)
+        for comp in comparisons
+    ]
 
-        # Compute summary metrics
-        worst_nrmse = None
-        n_vars = len(comp.variables) if comp.variables else 0
-        n_vars_passed = sum(1 for v in comp.variables if v.passed) if comp.variables else 0
-        if comp.variables:
-            worst_nrmse = max(v.nrmse for v in comp.variables)
+    n_workers = max(1, min(getattr(config, "parallel", 1) or 1, len(work)))
+    index_tests: list[dict] = []
+    total_reports = len(work)
 
-        # Find test directory
-        test_key = None
-        manifest_paths = sorted(config.work_dir.glob("batch_manifest.json"))
-        if manifest_paths:
-            from ..simulators import BatchManifest
-            for mp in manifest_paths:
-                bm = BatchManifest.load(mp)
-                for tk, entry in bm.manifest.items():
-                    if entry["model_id"] == model_id:
-                        test_key = tk
-                        break
-                if test_key:
-                    break
+    from ..simulators.base import _print_progress
+    print(f"Generating {total_reports} reports (parallel={n_workers})...")
 
-        test_dir = config.work_dir / test_key if test_key else None
-
-        # Resolve reference file path for clickable link in report
-        ref_file = None
-        test_id = store.index.get_id(model_id)
-        if test_id:
-            from ..storage.reference_store import RefIndex
-            ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
-
-        # Generate per-test report
-        # Use ref_NNNN for tests with a reference, test_NNNN for no-baseline.
-        # Both are short, avoiding Windows 260-char path limits.
-        report_path = None
-        if comp.test_id:
-            report_id = f"ref_{comp.test_id}"
-        elif test_key:
-            report_id = test_key
-        else:
-            report_id = _sanitize_filename(model_id)
-        plot_dir = report_dir / report_id
-
-        html_path = generate_comparison_plots(
-            model_id=model_id,
-            ref_data=ref_data,
-            result=result,
-            comparisons=comp.variables,
-            plot_dir=plot_dir,
-            test_dir=test_dir,
-            test_model=test,
-            ref_file=ref_file,
-            warnings=comp.warnings,
-        )
-
-        if html_path:
-            report_path = f"{report_id}/interactive.html"
-
-        ref_id = f"ref_{comp.test_id}" if comp.test_id else None
-
-        index_tests.append({
-            "model_id": model_id,
-            "status_text": status_text,
-            "status_class": status_class,
-            "ref_id": ref_id,
-            "test_key": test_key,
-            "worst_nrmse": worst_nrmse,
-            "n_vars": n_vars,
-            "n_vars_passed": n_vars_passed,
-            "n_warnings": len(comp.warnings) if comp.warnings else 0,
-            "report_path": report_path,
-        })
+    if n_workers <= 1 or len(work) <= 1:
+        for i, args in enumerate(work, 1):
+            index_tests.append(_render_one_test(args, report_dir))
+            short = args["model_id"].rsplit(".", 1)[-1]
+            _print_progress(i, total_reports, short, "ok")
+    else:
+        # Preserve original test order in the index
+        results_by_model: dict[str, dict] = {}
+        completed = 0
+        with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="report") as pool:
+            futures = {pool.submit(_render_one_test, args, report_dir): args["model_id"] for args in work}
+            for future in as_completed(futures):
+                entry = future.result()
+                results_by_model[entry["model_id"]] = entry
+                completed += 1
+                short = entry["model_id"].rsplit(".", 1)[-1]
+                _print_progress(completed, total_reports, short, "ok")
+        index_tests = [results_by_model[args["model_id"]] for args in work]
 
     # Build index context
     n_total = len(comparisons)

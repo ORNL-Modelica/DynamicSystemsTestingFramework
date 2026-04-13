@@ -614,6 +614,8 @@ def compare_all(
     final_only: bool = False,
 ) -> list[TestComparison]:
     """Compare all test results against stored references."""
+    import sys as _sys
+    print(f"Comparing {len(tests)} tests against references...", file=_sys.stderr)
     comparisons = []
 
     for test in tests:
