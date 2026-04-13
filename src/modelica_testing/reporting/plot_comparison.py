@@ -78,6 +78,7 @@ def _build_template_context(
     result=None,
     ref_file: Optional[Path] = None,
     warnings: Optional[list] = None,
+    last_run_at: Optional[float] = None,
 ) -> dict:
     """Build the full template context dict from comparison data."""
     if cur_stats is None:
@@ -358,10 +359,17 @@ def _build_template_context(
             "current": str(w.current_value),
         })
 
+    last_run_str = ""
+    if last_run_at:
+        from datetime import datetime
+        last_run_str = datetime.fromtimestamp(last_run_at).isoformat(timespec="seconds")
+
     return {
         "model_id": model_id,
         "n_passed": n_passed,
         "sim_failed": sim_failed,
+        "last_run_at": last_run_at,
+        "last_run_str": last_run_str,
         "warnings": warning_rows,
         "key_stats": key_stats,
         "ref_info": ref_info,
@@ -476,6 +484,7 @@ def generate_comparison_plots(
     spec_path: Optional[Path] = None,
     ref_file: Optional[Path] = None,
     warnings: Optional[list] = None,
+    last_run_at: Optional[float] = None,
 ) -> Optional[Path]:
     """Generate per-variable comparison PNGs and an HTML viewer.
 
@@ -607,7 +616,7 @@ def generate_comparison_plots(
     context = _build_template_context(
         model_id, png_files, comparisons, ref_data, cur_stats,
         diag_png_files, nobaseline_png_files, test_dir, test_model, result,
-        ref_file=ref_file, warnings=warnings,
+        ref_file=ref_file, warnings=warnings, last_run_at=last_run_at,
     )
 
     # Add spec path for "Save to Spec" functionality
@@ -641,12 +650,15 @@ def _render_template(template_name: str, context: dict, output_path: Path) -> No
     output_path.write_text(html, encoding="utf-8")
 
 
-def _build_per_test_args(comp, results, test_lookup, store, config, test_key_by_model):
+def _build_per_test_args(comp, results, test_lookup, store, config, manifest_meta_by_model):
     """Resolve all per-test inputs needed to render that test's report."""
     model_id = comp.model_id
     result = results.get(model_id)
     test = test_lookup.get(model_id)
     ref_data = store.get_reference(model_id)
+    meta = manifest_meta_by_model.get(model_id, {})
+    test_key = meta.get("test_key")
+    last_run_at = meta.get("last_run_at")
 
     if not comp.sim_success:
         status_text, status_class = "SIM_FAIL", "sim-fail"
@@ -661,7 +673,6 @@ def _build_per_test_args(comp, results, test_lookup, store, config, test_key_by_
     n_vars_passed = sum(1 for v in comp.variables if v.passed) if comp.variables else 0
     worst_nrmse = max((v.nrmse for v in comp.variables), default=None)
 
-    test_key = test_key_by_model.get(model_id)
     test_dir = config.work_dir / test_key if test_key else None
 
     ref_file = None
@@ -694,6 +705,7 @@ def _build_per_test_args(comp, results, test_lookup, store, config, test_key_by_
         "worst_nrmse": worst_nrmse,
         "n_warnings": len(comp.warnings) if comp.warnings else 0,
         "ref_id": f"ref_{comp.test_id}" if comp.test_id else None,
+        "last_run_at": last_run_at,
         "comp_variables": comp.variables,
     }
 
@@ -711,6 +723,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         test_model=args["test"],
         ref_file=args["ref_file"],
         warnings=args["warnings"],
+        last_run_at=args["last_run_at"],
     )
     return {
         "model_id": args["model_id"],
@@ -722,6 +735,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         "n_vars": args["n_vars"],
         "n_vars_passed": args["n_vars_passed"],
         "n_warnings": args["n_warnings"],
+        "last_run_at": args["last_run_at"],
         "report_path": f'{args["report_id"]}/interactive.html' if html_path else None,
     }
 
@@ -748,20 +762,23 @@ def generate_report_suite(
 
     test_lookup = {t.model_id: t for t in tests}
 
-    # Cache test_key lookup once instead of scanning manifests per test
-    test_key_by_model: dict[str, str] = {}
+    # Cache test_key + last_run_at lookup once instead of scanning manifests per test
+    manifest_meta_by_model: dict[str, dict] = {}
     manifest_paths = sorted(config.work_dir.glob("batch_manifest.json"))
     if manifest_paths:
         from ..simulators import BatchManifest
         for mp in manifest_paths:
             bm = BatchManifest.load(mp)
             for tk, entry in bm.manifest.items():
-                test_key_by_model.setdefault(entry["model_id"], tk)
+                manifest_meta_by_model.setdefault(entry["model_id"], {
+                    "test_key": tk,
+                    "last_run_at": entry.get("last_run_at"),
+                })
 
     # Resolve per-test args sequentially (cheap dict/store lookups), then
     # render reports in parallel
     work = [
-        _build_per_test_args(comp, results, test_lookup, store, config, test_key_by_model)
+        _build_per_test_args(comp, results, test_lookup, store, config, manifest_meta_by_model)
         for comp in comparisons
     ]
 

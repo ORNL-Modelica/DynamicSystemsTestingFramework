@@ -168,6 +168,47 @@ class BatchManifest:
         return cls(batch_id=0, work_dir=path.parent, manifest=normalized)
 
 
+def assign_test_keys(
+    work_dir: Path,
+    tests: list,
+) -> tuple[dict[str, dict], list[tuple]]:
+    """Assign test_keys for the given tests, reusing existing manifest entries.
+
+    Returns (merged_manifest_map, [(test, test_key)]).
+    Existing entries for tests not in the input list are preserved
+    so the manifest accumulates across runs (incremental workflow).
+    Each entry gets a `last_run_at` timestamp updated for tests being run.
+    """
+    manifest_path = work_dir / "batch_manifest.json"
+    if manifest_path.exists():
+        existing = BatchManifest.load(manifest_path).manifest
+    else:
+        existing = {}
+
+    model_to_key = {entry["model_id"]: tk for tk, entry in existing.items()}
+    used_nums = set()
+    for tk in existing:
+        try:
+            used_nums.add(int(tk.split("_")[-1]))
+        except (ValueError, IndexError):
+            pass
+    next_num = max(used_nums) + 1 if used_nums else 1
+
+    timestamp = time.time()
+    test_items = []
+    for test in tests:
+        if test.model_id in model_to_key:
+            test_key = model_to_key[test.model_id]
+        else:
+            test_key = f"test_{next_num:04d}"
+            next_num += 1
+            existing[test_key] = {"model_id": test.model_id, "ref_id": None}
+        existing[test_key]["last_run_at"] = timestamp
+        test_items.append((test, test_key))
+
+    return existing, test_items
+
+
 # ---------------------------------------------------------------------------
 # Progress output (shared across simulators)
 # ---------------------------------------------------------------------------
@@ -264,13 +305,14 @@ class SimulatorRunner(ABC):
         from .progress import ProgressReporter
         self.progress = ProgressReporter(self.config.work_dir, total)
 
-        # Build test keys and manifest
-        test_items = []
-        manifest_map = {}
-        for i, test in enumerate(tests):
-            test_key = f"test_{i + 1:04d}"
-            manifest_map[test_key] = test.model_id
-            test_items.append((test, test_key, i + 1))
+        # Assign test_keys (reuse existing from prior runs if present — supports
+        # incremental workflows where the manifest accumulates known tests).
+        manifest_map, key_pairs = assign_test_keys(self.config.work_dir, tests)
+        test_items = [
+            (test, test_key, i + 1)
+            for i, (test, test_key) in enumerate(key_pairs)
+        ]
+        for test, test_key, _ in test_items:
             report_dir = self.ref_id_map.get(test.model_id) or test_key
             self.progress.register(test_key, test.model_id, report_dir=report_dir)
 

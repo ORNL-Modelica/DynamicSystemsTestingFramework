@@ -166,6 +166,20 @@
 - `runner.ref_id_map: dict[model_id, "ref_NNNN"]` is populated by the CLI before `run_tests` (from `ReferenceStore.index`); runner consults it at registration time so links work even mid-run before the report is generated
 - `finalize()` strips the meta-refresh tag so the final dashboard doesn't keep reloading after the run completes
 
+### Persistent test_keys (manifest accumulates across runs)
+- `assign_test_keys()` (`simulators/base.py`) is the single allocation point. Loads existing `batch_manifest.json` if present, builds `model_id → test_key` reverse lookup, reuses existing test_keys for known models, assigns the next sequential `test_NNNN` for new models, stamps `last_run_at` on tests being run
+- A model always gets the same `test_NNNN` for its lifetime — reruns naturally overwrite their own slot, prior dirs of unrelated tests stay intact
+- Per-test work directories are `rmtree`'d only for tests being run *this invocation* (`for test, test_key in test_items`), not for everything in the manifest
+- Both `base.SimulatorRunner.run_tests` and `DymolaRunner.run_tests` go through the same helper to keep behavior consistent across backends
+- Manifest entry shape: `{model_id, ref_id, last_run_at}`. Legacy plain-string-value format still loadable via `BatchManifest.load()`
+- Orphan handling: `run` and `compare` notify (one line) when the manifest contains entries for models no longer discovered. `manifest cleanup --orphans` lists them with their on-disk dirs (work + report); `--apply` removes entries and dirs. Never auto-prunes — discovery is too fragile (transient parse errors, missing deps) to trust as a delete trigger
+
+### --merge expands report scope to the full manifest
+- `run --merge` keeps the *run* scope as `tests` (filtered) but expands the *read/compare/report* scope to every model in `manifest.manifest`
+- `runner.read_results` already handles `rr=None` for non-rerun tests by reading whatever `dsres.mat` exists in the test_dir on disk — so prior results merge naturally with fresh ones, no special path needed
+- `--rerun` always sets `args.merge = True` since rerunning failed tests in isolation defeats the goal (you want to see them in context of the whole suite)
+- Stale-data visibility: `last_run_at` is rendered as a relative time on the index (with ISO tooltip); rows >60s older than the newest run are greyed out and tagged "Stale: from a prior run; rerun to refresh"
+
 ### Configurable batch size with queue dispatch
 - `Config.batch_size` (CLI: `--batch-size N`). Unset → one big batch per worker (current behavior, minimizes library reloads). Set → many small batches, all submitted to the `ThreadPoolExecutor`; workers pull next batch as they free up
 - Crash/timeout blast radius is bounded by `batch_size` — a hung test only takes down its batch, not its worker's whole share

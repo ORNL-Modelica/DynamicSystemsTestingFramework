@@ -10,18 +10,72 @@ from .config import Config
 from .discovery.test_registry import TestModel, discover_tests
 
 
+def _resolve_filter_patterns(spec: str) -> list[str]:
+    """Resolve a --filter argument into a list of glob patterns.
+
+    Accepts:
+      - "Foo.Bar.*"           — single glob
+      - "Foo.A,Foo.B,Foo.C"   — comma-separated globs
+      - "@path/to/file.txt"   — file with one pattern per line; '#' starts a comment
+    """
+    if spec.startswith("@"):
+        path = Path(spec[1:])
+        if not path.exists():
+            raise FileNotFoundError(f"Filter file not found: {path}")
+        patterns = []
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if line:
+                patterns.append(line)
+        return patterns
+    return [p.strip() for p in spec.split(",") if p.strip()]
+
+
 def _filter_tests(
     tests: list[TestModel],
     pattern: Optional[str] = None,
     package: Optional[str] = None,
 ) -> list[TestModel]:
-    """Filter tests by glob pattern on model_id or package prefix."""
+    """Filter tests by glob/list/file on model_id, plus optional package prefix."""
     filtered = tests
     if package:
         filtered = [t for t in filtered if t.model_id.startswith(package)]
     if pattern:
-        filtered = [t for t in filtered if fnmatch.fnmatch(t.model_id, pattern)]
+        patterns = _resolve_filter_patterns(pattern)
+        filtered = [
+            t for t in filtered
+            if any(fnmatch.fnmatch(t.model_id, p) for p in patterns)
+        ]
     return filtered
+
+
+def _find_orphan_manifest_entries(config, all_tests: list) -> dict[str, str]:
+    """Return {test_key: model_id} for manifest entries whose model_id is no
+    longer in the discovered tests. These usually indicate renamed/removed
+    models — they don't break correctness (compare_all skips them) but their
+    work dirs and report dirs accumulate on disk.
+    """
+    manifest_path = config.work_dir / "batch_manifest.json"
+    if not manifest_path.exists():
+        return {}
+    from .simulators import BatchManifest
+    manifest = BatchManifest.load(manifest_path)
+    discovered = {t.model_id for t in all_tests}
+    return {
+        tk: entry["model_id"]
+        for tk, entry in manifest.manifest.items()
+        if entry["model_id"] not in discovered
+    }
+
+
+def _notify_orphans(config, all_tests: list) -> None:
+    """One-line notice if orphan manifest entries exist."""
+    orphans = _find_orphan_manifest_entries(config, all_tests)
+    if orphans:
+        print(
+            f"Note: {len(orphans)} orphan manifest entries (models no longer in "
+            f"discovery). Run 'manifest cleanup --orphans' to list/prune."
+        )
 
 
 def _write_id_mapping(store, config) -> None:
@@ -76,14 +130,9 @@ def _get_runner(config):
 def cmd_run(args: argparse.Namespace) -> int:
     """Run tests and compare/accept results."""
     config = _build_config(args)
-    tests = discover_tests(config)
-    tests = _filter_tests(tests, args.filter, args.package)
-
-    if not tests:
-        print("No tests matched the filter.")
-        return 1
-
-    print(f"Running {len(tests)} tests...")
+    all_tests = discover_tests(config)
+    tests = _filter_tests(all_tests, args.filter, args.package)
+    _notify_orphans(config, all_tests)
 
     from .storage.reference_store import ReferenceStore
 
@@ -91,6 +140,30 @@ def cmd_run(args: argparse.Namespace) -> int:
     _write_id_mapping(store, config)
 
     runner = _get_runner(config)
+
+    # --rerun selects tests by status from prior comparisons (no new sim yet).
+    # Default category: failed. Implies --merge so the report covers the full suite.
+    if getattr(args, "rerun", None) is not None:
+        from .comparison.comparator import compare_all
+        rerun_filter = args.rerun or "failed"
+        rerun_categories = _parse_review_filter(rerun_filter)
+        prior_results = runner.read_last_results(all_tests)
+        if not prior_results:
+            print("--rerun requires prior results in the work directory. Run a full pass first.")
+            return 1
+        prior_comps = compare_all(
+            all_tests, prior_results, store, config.tolerance, config.final_only,
+        )
+        rerun_models = {c.model_id for c in prior_comps if _should_review(c, rerun_categories)}
+        tests = [t for t in tests if t.model_id in rerun_models]
+        args.merge = True
+        print(f"--rerun {rerun_filter}: selected {len(tests)} of {len(prior_comps)} tests")
+
+    if not tests:
+        print("No tests matched the filter.")
+        return 1
+
+    print(f"Running {len(tests)} tests...")
     # Pre-populate model_id → "ref_NNNN" map so the live dashboard can link
     # to the correct per-test report directory (matches generate_report_suite naming).
     for test in tests:
@@ -103,27 +176,40 @@ def cmd_run(args: argparse.Namespace) -> int:
     for m in manifests:
         m.enrich_ref_ids(store.index)
 
-    results = runner.read_results(manifests, tests)
+    # --merge expands the read/compare/report scope to every test that has
+    # results on disk (per the persistent batch manifest), not just what was
+    # rerun this invocation. Lets you incrementally rerun a subset and still
+    # get a full report covering the whole suite.
+    if getattr(args, "merge", False):
+        merged_model_ids = {
+            entry["model_id"]
+            for m in manifests for entry in m.manifest.values()
+        }
+        scope_tests = [t for t in all_tests if t.model_id in merged_model_ids]
+    else:
+        scope_tests = tests
+
+    results = runner.read_results(manifests, scope_tests)
 
     if args.accept:
-        stored = store.accept_results(tests, results)
+        stored = store.accept_results(scope_tests, results)
         print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
         return 0
     elif args.interactive is not None:
         from .comparison.comparator import compare_all
 
-        comparisons = compare_all(tests, results, store, config.tolerance, config.final_only)
+        comparisons = compare_all(scope_tests, results, store, config.tolerance, config.final_only)
         return _interactive_review(
-            tests, results, comparisons, store, config,
+            scope_tests, results, comparisons, store, config,
             review_filter=args.interactive,
         )
     else:
         from .comparison.comparator import compare_all
 
-        comparisons = compare_all(tests, results, store, config.tolerance, config.final_only)
+        comparisons = compare_all(scope_tests, results, store, config.tolerance, config.final_only)
 
         if args.report:
-            return _generate_report_suite(comparisons, results, tests, store, config)
+            return _generate_report_suite(comparisons, results, scope_tests, store, config)
 
         return _output_report(comparisons, args)
 
@@ -131,8 +217,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 def cmd_compare(args: argparse.Namespace) -> int:
     """Compare last run results against stored references."""
     config = _build_config(args)
-    tests = discover_tests(config)
-    tests = _filter_tests(tests, args.filter, args.package)
+    all_tests = discover_tests(config)
+    tests = _filter_tests(all_tests, args.filter, args.package)
+    _notify_orphans(config, all_tests)
 
     from .comparison.comparator import compare_all
     from .storage.reference_store import ReferenceStore
@@ -212,6 +299,8 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         return 0
 
     elif action == "cleanup":
+        if getattr(args, "orphans", False):
+            return _cleanup_orphans(config, apply=getattr(args, "apply", False))
         removed = store.cleanup_obsolete()
         if removed:
             print(f"Removed {removed} obsolete reference files.")
@@ -220,6 +309,68 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         return 0
 
     return 1
+
+
+def _cleanup_orphans(config, apply: bool) -> int:
+    """List or prune manifest entries (and their on-disk dirs) for models
+    no longer in discover_tests. Dry-run by default; pass apply=True to delete.
+    """
+    all_tests = discover_tests(config)
+    orphans = _find_orphan_manifest_entries(config, all_tests)
+    if not orphans:
+        print("No orphan manifest entries.")
+        return 0
+
+    report_dir = config.work_dir / "reports"
+    print(f"Found {len(orphans)} orphan manifest entries:")
+    for tk, model_id in sorted(orphans.items()):
+        work = config.work_dir / tk
+        # Try both possible report-dir names
+        rep_test = report_dir / tk
+        rep_ref = None
+        from .storage.reference_store import ReferenceStore, RefIndex
+        store = ReferenceStore(config)
+        ref_id = store.index.get_id(model_id)
+        if ref_id:
+            rep_ref = report_dir / f"ref_{ref_id}"
+        bits = []
+        if work.exists():
+            bits.append(f"work_dir={tk}/")
+        if rep_test.exists():
+            bits.append(f"reports/{tk}/")
+        if rep_ref and rep_ref.exists():
+            bits.append(f"reports/ref_{ref_id}/")
+        print(f"  {tk}  {model_id}  [{', '.join(bits) or 'manifest only'}]")
+
+    if not apply:
+        print("\nDry run. Re-run with --apply to actually remove.")
+        return 0
+
+    import shutil
+    from .simulators import BatchManifest
+    manifest_path = config.work_dir / "batch_manifest.json"
+    manifest = BatchManifest.load(manifest_path)
+    n_dirs = 0
+    for tk, model_id in orphans.items():
+        for candidate in [
+            config.work_dir / tk,
+            report_dir / tk,
+        ]:
+            if candidate.exists():
+                shutil.rmtree(candidate)
+                n_dirs += 1
+        from .storage.reference_store import ReferenceStore
+        store = ReferenceStore(config)
+        ref_id = store.index.get_id(model_id)
+        if ref_id:
+            rep_ref = report_dir / f"ref_{ref_id}"
+            if rep_ref.exists():
+                shutil.rmtree(rep_ref)
+                n_dirs += 1
+        manifest.manifest.pop(tk, None)
+    manifest.save()
+    print(f"\nRemoved {len(orphans)} manifest entries and {n_dirs} directories.")
+    return 0
 
 
 
@@ -679,12 +830,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_discover = subparsers.add_parser(
         "discover", help="Discover and list all test models"
     )
-    p_discover.add_argument("--filter", type=str, help="Glob pattern for model_id")
+    p_discover.add_argument("--filter", type=str, help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id")
     p_discover.add_argument("--package", type=str, help="Filter by package prefix")
 
     # run
     p_run = subparsers.add_parser("run", help="Run tests in Dymola")
-    p_run.add_argument("--filter", type=str, help="Glob pattern for model_id")
+    p_run.add_argument("--filter", type=str, help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id")
     p_run.add_argument("--package", type=str, help="Filter by package prefix")
     p_run.add_argument(
         "-i", "--interactive", nargs="?", const="all", default=None,
@@ -720,12 +871,25 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--report", action="store_true",
         help="Generate HTML report suite with index page and per-test reports",
     )
+    p_run.add_argument(
+        "--merge", action="store_true",
+        help="When used with --filter, expand the read/compare/report scope to "
+             "include all tests in the persistent batch manifest (not just the "
+             "filtered subset). Lets you rerun a few tests but still see a full "
+             "report covering the whole suite.",
+    )
+    p_run.add_argument(
+        "--rerun", nargs="?", const="failed", default=None, metavar="CATEGORIES",
+        help="Rerun tests selected by status from the prior run. Categories: "
+             "failed, no-baseline, warnings, sim-failed, passed (comma-separated). "
+             "Default: failed. Implies --merge.",
+    )
 
     # compare
     p_compare = subparsers.add_parser(
         "compare", help="Compare last results against references"
     )
-    p_compare.add_argument("--filter", type=str, help="Glob pattern for model_id")
+    p_compare.add_argument("--filter", type=str, help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id")
     p_compare.add_argument("--package", type=str, help="Filter by package prefix")
     p_compare.add_argument("--tolerance", type=float, help="Override comparison tolerance")
     p_compare.add_argument("--final-only", action="store_true", help="Compare only final values")
@@ -745,7 +909,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Export format",
     )
     p_export.add_argument("--output", type=str, help="Output file path")
-    p_export.add_argument("--filter", type=str, help="Glob pattern for model_id")
+    p_export.add_argument("--filter", type=str, help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id")
     p_export.add_argument("--package", type=str, help="Filter by package prefix")
 
     # manifest
@@ -761,6 +925,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_manifest.add_argument(
         "--show-obsolete", action="store_true",
         help="Also show obsolete entries (show only)",
+    )
+    p_manifest.add_argument(
+        "--orphans", action="store_true",
+        help="cleanup: target orphan batch_manifest entries (models no longer "
+             "in discovery) instead of obsolete reference files. Lists by "
+             "default; pass --apply to actually remove.",
+    )
+    p_manifest.add_argument(
+        "--apply", action="store_true",
+        help="cleanup --orphans: actually delete orphan dirs and manifest entries (default is dry-run).",
     )
 
     # add

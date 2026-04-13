@@ -72,13 +72,11 @@ class DymolaRunner(SimulatorRunner):
         from ..progress import ProgressReporter
         self.progress = ProgressReporter(self.config.work_dir, total)
 
-        # Build test keys and manifest
-        test_items = []
-        manifest_map = {}
-        for i, test in enumerate(tests):
-            test_key = f"test_{i + 1:04d}"
-            manifest_map[test_key] = {"model_id": test.model_id, "ref_id": None}
-            test_items.append((test, test_key))
+        # Assign test_keys (reuse existing from prior runs if present —
+        # supports incremental workflow where the manifest accumulates).
+        from ..base import assign_test_keys
+        manifest_map, test_items = assign_test_keys(self.config.work_dir, tests)
+        for test, test_key in test_items:
             report_dir = self.ref_id_map.get(test.model_id) or test_key
             self.progress.register(test_key, test.model_id, report_dir=report_dir)
 
@@ -89,7 +87,8 @@ class DymolaRunner(SimulatorRunner):
         )
         manifest.save()
 
-        # Clean and create per-test directories, generate per-test .mos scripts
+        # Clean and recreate per-test directories ONLY for tests being run
+        # this batch (preserves prior dirs for tests not in this run).
         import shutil
         for test, test_key in test_items:
             test_dir = self.config.work_dir / test_key

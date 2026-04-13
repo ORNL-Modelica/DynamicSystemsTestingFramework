@@ -46,6 +46,7 @@ details summary:hover { color: #333; }
 </head>
 <body>
 <h1>{{ model_id }}</h1>
+{% if last_run_str %}<div style="font-size:0.85em; color:#888; margin-bottom:0.5em;">Last run: {{ last_run_str }}</div>{% endif %}
 
 {# === TOP-LEVEL SUMMARY === #}
 <div class="summary">

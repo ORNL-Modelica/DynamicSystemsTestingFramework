@@ -59,6 +59,18 @@ uv run python -m modelica_testing --config testing.json run --report ./reports
 uv run python -m modelica_testing --config testing.json run --parallel 4 --batch-size 3
 # Live progress: open work_dir/dashboard.html (auto-refreshes every 2s; URL printed on start)
 
+# Filter accepts: glob, comma-separated list, or @file (one pattern per line, # comments)
+uv run python -m modelica_testing --config testing.json run --filter "Foo.A,Foo.B"
+uv run python -m modelica_testing --config testing.json run --filter @rerun.txt
+
+# Incremental rerun + full merged report (rerun a subset, report covers everything)
+uv run python -m modelica_testing --config testing.json run --filter @failed.txt --merge --report
+
+# Auto-rerun previously failed tests (implies --merge)
+uv run python -m modelica_testing --config testing.json run --rerun --report
+# Or pick categories: failed, no-baseline, warnings, sim-failed, passed
+uv run python -m modelica_testing --config testing.json run --rerun failed,sim-failed --report
+
 # Compare without re-running simulations (uses last results)
 uv run python -m modelica_testing --config testing.json compare
 
@@ -67,6 +79,10 @@ uv run python -m modelica_testing --config testing.json spec-update tolerance_co
 
 # Dump reference manifest (ref ID to model name mapping) without running tests
 uv run python -m modelica_testing --config testing.json manifest dump
+
+# Prune orphan manifest entries (models no longer in discovery — dry-run by default)
+uv run python -m modelica_testing --config testing.json manifest cleanup --orphans
+uv run python -m modelica_testing --config testing.json manifest cleanup --orphans --apply
 ```
 
 ## Running Tests

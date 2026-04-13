@@ -64,11 +64,12 @@ a:hover { text-decoration: underline; }
   <th>Worst NRMSE</th>
   <th>Variables</th>
   <th>Warnings</th>
+  <th>Last Run</th>
 </tr>
 </thead>
 <tbody>
 {% for t in tests %}
-<tr data-status="{{ t.status_class }}">
+<tr data-status="{{ t.status_class }}" data-last-run="{{ t.last_run_at or 0 }}">
   <td><span class="{{ t.status_class }}">{{ t.status_text }}</span></td>
   <td>{{ t.ref_id or "—" }}</td>
   <td>{{ t.test_key or "—" }}</td>
@@ -76,10 +77,40 @@ a:hover { text-decoration: underline; }
   <td>{% if t.worst_nrmse is not none %}{{ "%.4e" | format(t.worst_nrmse) }}{% else %}—{% endif %}</td>
   <td>{% if t.n_vars %}{{ t.n_vars_passed }}/{{ t.n_vars }}{% else %}—{% endif %}</td>
   <td>{% if t.n_warnings %}<span class="warn">{{ t.n_warnings }}</span>{% else %}—{% endif %}</td>
+  <td class="last-run">{% if t.last_run_at %}{{ t.last_run_at }}{% else %}—{% endif %}</td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
+<script>
+// Render last-run as relative time and tag stale rows
+(function() {
+  const now = Date.now() / 1000;
+  let newest = 0;
+  document.querySelectorAll('#results-table tbody tr').forEach(row => {
+    const ts = parseFloat(row.dataset.lastRun);
+    if (ts > newest) newest = ts;
+  });
+  document.querySelectorAll('#results-table tbody tr').forEach(row => {
+    const ts = parseFloat(row.dataset.lastRun);
+    const cell = row.querySelector('td.last-run');
+    if (!ts) { cell.textContent = '—'; return; }
+    const ageS = Math.max(0, now - ts);
+    let label;
+    if (ageS < 60) label = `${Math.round(ageS)}s ago`;
+    else if (ageS < 3600) label = `${Math.round(ageS / 60)}m ago`;
+    else if (ageS < 86400) label = `${Math.round(ageS / 3600)}h ago`;
+    else label = `${Math.round(ageS / 86400)}d ago`;
+    const abs = new Date(ts * 1000).toLocaleString();
+    cell.innerHTML = `<span title="${abs}">${label}</span>`;
+    // Mark stale (not part of the most recent run batch — > 60s older than newest)
+    if (newest - ts > 60) {
+      cell.style.color = '#888';
+      row.title = 'Stale: from a prior run; rerun to refresh';
+    }
+  });
+})();
+</script>
 
 <script>
 function filterRows(status, btn) {
