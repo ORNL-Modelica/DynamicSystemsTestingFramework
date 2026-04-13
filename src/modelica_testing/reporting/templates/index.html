@@ -19,6 +19,7 @@ th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; font-size:
 th { background: #f5f5f5; font-weight: 600; cursor: pointer; user-select: none; }
 th:hover { background: #e8e8e8; }
 tr:hover { background: #f9f9f9; }
+tr.selected td { background: #e3f2fd; }
 .pass { color: #4CAF50; }
 .fail { color: #f44336; }
 .no-ref { color: #FF9800; }
@@ -29,6 +30,24 @@ a:hover { text-decoration: underline; }
 .filter-bar button { margin-right: 0.5em; padding: 0.3em 0.8em; border: 1px solid #ccc; border-radius: 3px; background: white; cursor: pointer; font-size: 0.85em; }
 .filter-bar button:hover { background: #f0f0f0; }
 .filter-bar button.active { background: #1976D2; color: white; border-color: #1976D2; }
+
+.actions-panel { background: white; border: 1px solid #ddd; border-radius: 4px; padding: 0.8em 1em; margin-bottom: 1em; }
+.actions-panel.has-selection { border-color: #1976D2; background: #f5f9fd; }
+.actions-row { display: flex; align-items: center; gap: 0.6em; flex-wrap: wrap; margin-bottom: 0.5em; }
+.actions-row:last-child { margin-bottom: 0; }
+.actions-row .label { font-weight: 600; font-size: 0.9em; min-width: 90px; }
+.actions-panel button { padding: 0.3em 0.7em; border: 1px solid #ccc; border-radius: 3px; background: white; cursor: pointer; font-size: 0.82em; }
+.actions-panel button:hover { background: #f0f0f0; }
+.actions-panel button.btn-primary { background: #1976D2; color: white; border-color: #1976D2; }
+.actions-panel button.btn-primary:hover { background: #1565C0; }
+.actions-panel button[disabled] { opacity: 0.4; cursor: not-allowed; }
+.actions-panel .count { font-weight: 600; color: #1976D2; font-size: 0.95em; }
+.actions-panel .cmd-out { width: 100%; font-family: monospace; font-size: 0.82em; padding: 0.4em 0.6em; border: 1px solid #ccc; border-radius: 3px; background: #fafafa; resize: vertical; min-height: 2.4em; margin-top: 0.5em; }
+.actions-panel .save-status { font-size: 0.82em; color: #4CAF50; display: none; }
+.actions-panel .save-status.shown { display: inline; }
+
+.sel-col { width: 28px; text-align: center; }
+.sel-col input { cursor: pointer; }
 </style>
 </head>
 <body>
@@ -54,9 +73,32 @@ a:hover { text-decoration: underline; }
   <button onclick="filterRows('pass', this)">Passed</button>
 </div>
 
+<div class="actions-panel" id="actions-panel">
+  <div class="actions-row">
+    <span class="label">Selection:</span>
+    <span class="count"><span id="sel-count">0</span> of <span id="vis-count">0</span> visible selected</span>
+    <button onclick="selectVisible(true)">Select all visible</button>
+    <button onclick="selectVisible(false)">Clear</button>
+    <button onclick="selectByStatus('fail')">+ Failed</button>
+    <button onclick="selectByStatus('sim-fail')">+ Sim Failed</button>
+    <button onclick="selectByStatus('no-ref')">+ No Baseline</button>
+    <button onclick="selectByWarnings()">+ With Warnings</button>
+    <button onclick="selectStale()">+ Stale</button>
+  </div>
+  <div class="actions-row">
+    <span class="label">Export:</span>
+    <button class="btn-primary" id="btn-copy-list" onclick="copyList()" disabled>Copy filter list</button>
+    <button id="btn-download" onclick="downloadFilter()" disabled>Download selected.txt</button>
+    <button id="btn-copy-cmd" onclick="copyCommand()" disabled>Copy rerun command</button>
+    <span class="save-status" id="save-status">Copied!</span>
+  </div>
+  <textarea class="cmd-out" id="cmd-out" readonly placeholder="Select rows to build a rerun command..."></textarea>
+</div>
+
 <table id="results-table">
 <thead>
 <tr>
+  <th class="sel-col"><input type="checkbox" id="sel-all" onclick="toggleAllVisible(this.checked)" title="Select/clear all visible"></th>
   <th>Status</th>
   <th>Ref</th>
   <th>Test</th>
@@ -69,7 +111,8 @@ a:hover { text-decoration: underline; }
 </thead>
 <tbody>
 {% for t in tests %}
-<tr data-status="{{ t.status_class }}" data-last-run="{{ t.last_run_at or 0 }}">
+<tr data-status="{{ t.status_class }}" data-last-run="{{ t.last_run_at or 0 }}" data-warnings="{{ t.n_warnings or 0 }}" data-model-id="{{ t.model_id }}">
+  <td class="sel-col"><input type="checkbox" class="row-sel" onchange="onRowToggle(this)"></td>
   <td><span class="{{ t.status_class }}">{{ t.status_text }}</span></td>
   <td>{{ t.ref_id or "—" }}</td>
   <td>{{ t.test_key or "—" }}</td>
@@ -83,7 +126,7 @@ a:hover { text-decoration: underline; }
 </tbody>
 </table>
 <script>
-// Render last-run as relative time and tag stale rows
+// Render last-run as relative time, tag stale rows
 (function() {
   const now = Date.now() / 1000;
   let newest = 0;
@@ -103,29 +146,136 @@ a:hover { text-decoration: underline; }
     else label = `${Math.round(ageS / 86400)}d ago`;
     const abs = new Date(ts * 1000).toLocaleString();
     cell.innerHTML = `<span title="${abs}">${label}</span>`;
-    // Mark stale (not part of the most recent run batch — > 60s older than newest)
     if (newest - ts > 60) {
       cell.style.color = '#888';
       row.title = 'Stale: from a prior run; rerun to refresh';
+      row.dataset.stale = '1';
     }
   });
 })();
-</script>
 
-<script>
 function filterRows(status, btn) {
   document.querySelectorAll('.filter-bar button').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   document.querySelectorAll('#results-table tbody tr').forEach(row => {
     if (status === 'all') { row.style.display = ''; return; }
-    const s = row.dataset.status;
     if (status === 'warn') {
-      row.style.display = row.querySelector('td:last-child span') ? '' : 'none';
+      row.style.display = parseInt(row.dataset.warnings) > 0 ? '' : 'none';
     } else {
-      row.style.display = s === status ? '' : 'none';
+      row.style.display = row.dataset.status === status ? '' : 'none';
     }
   });
+  updateSelectionUI();
 }
+
+// ---- Selection ----
+function visibleRows() {
+  return Array.from(document.querySelectorAll('#results-table tbody tr'))
+    .filter(r => r.style.display !== 'none');
+}
+function selectedRows() {
+  return Array.from(document.querySelectorAll('#results-table tbody tr.selected'));
+}
+function setRowSelected(row, selected) {
+  row.classList.toggle('selected', selected);
+  const cb = row.querySelector('input.row-sel');
+  if (cb) cb.checked = selected;
+}
+function selectVisible(selected) {
+  visibleRows().forEach(r => setRowSelected(r, selected));
+  updateSelectionUI();
+}
+function selectByStatus(status) {
+  visibleRows().filter(r => r.dataset.status === status).forEach(r => setRowSelected(r, true));
+  updateSelectionUI();
+}
+function selectByWarnings() {
+  visibleRows().filter(r => parseInt(r.dataset.warnings) > 0).forEach(r => setRowSelected(r, true));
+  updateSelectionUI();
+}
+function selectStale() {
+  visibleRows().filter(r => r.dataset.stale === '1').forEach(r => setRowSelected(r, true));
+  updateSelectionUI();
+}
+function toggleAllVisible(checked) {
+  selectVisible(checked);
+}
+function onRowToggle(cb) {
+  cb.closest('tr').classList.toggle('selected', cb.checked);
+  updateSelectionUI();
+}
+function updateSelectionUI() {
+  const sel = selectedRows();
+  const vis = visibleRows();
+  document.getElementById('sel-count').textContent = sel.length;
+  document.getElementById('vis-count').textContent = vis.length;
+  const visSel = vis.filter(r => r.classList.contains('selected')).length;
+  const selAll = document.getElementById('sel-all');
+  selAll.checked = vis.length > 0 && visSel === vis.length;
+  selAll.indeterminate = visSel > 0 && visSel < vis.length;
+
+  const has = sel.length > 0;
+  document.getElementById('actions-panel').classList.toggle('has-selection', has);
+  ['btn-copy-list', 'btn-download', 'btn-copy-cmd'].forEach(
+    id => { document.getElementById(id).disabled = !has; }
+  );
+
+  // Update command preview
+  const ids = sel.map(r => r.dataset.modelId);
+  const cmd = ids.length === 0
+    ? ''
+    : (ids.length <= 3
+        ? `modelica-testing run --filter "${ids.join(',')}" --merge --report`
+        : `modelica-testing run --filter @selected.txt --merge --report   # ${ids.length} models`);
+  document.getElementById('cmd-out').value = cmd;
+}
+
+function flashStatus() {
+  const el = document.getElementById('save-status');
+  el.classList.add('shown');
+  setTimeout(() => el.classList.remove('shown'), 1200);
+}
+function copyToClipboard(text) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(flashStatus, () => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); flashStatus(); } catch (e) {}
+  document.body.removeChild(ta);
+}
+function copyList() {
+  const ids = selectedRows().map(r => r.dataset.modelId);
+  copyToClipboard(ids.join(','));
+}
+function copyCommand() {
+  const ids = selectedRows().map(r => r.dataset.modelId);
+  const cmd = ids.length <= 3
+    ? `modelica-testing run --filter "${ids.join(',')}" --merge --report`
+    : `modelica-testing run --filter @selected.txt --merge --report`;
+  copyToClipboard(cmd);
+}
+function downloadFilter() {
+  const ids = selectedRows().map(r => r.dataset.modelId);
+  const blob = new Blob([ids.join('\n') + '\n'], {type: 'text/plain'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'selected.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  flashStatus();
+}
+
+updateSelectionUI();
 </script>
 
 </body>

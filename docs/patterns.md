@@ -174,6 +174,14 @@
 - Manifest entry shape: `{model_id, ref_id, last_run_at}`. Legacy plain-string-value format still loadable via `BatchManifest.load()`
 - Orphan handling: `run` and `compare` notify (one line) when the manifest contains entries for models no longer discovered. `manifest cleanup --orphans` lists them with their on-disk dirs (work + report); `--apply` removes entries and dirs. Never auto-prunes — discovery is too fragile (transient parse errors, missing deps) to trust as a delete trigger
 
+### Index-page batch actions feed the CLI filter
+- Index template (`reporting/templates/index.html`) has a checkbox column + action panel. All selection state lives client-side in the DOM (rows get `.selected` class + a checked input)
+- Bulk selectors (`+ Failed`, `+ Sim Failed`, `+ No Baseline`, `+ With Warnings`, `+ Stale`) operate over **visible** rows so the existing filter buttons act as a pre-filter for selection
+- Stale detection reuses the `last_run_at` heuristic (>60s older than newest); the row's `data-stale="1"` attribute is set by the same JS that renders the relative-time column
+- Three export formats: clipboard comma-list, downloaded `selected.txt` (one model_id per line — directly consumable by `--filter @file`), and a copyable command string that auto-switches between inline `"A,B,C"` (≤3 models) and `@selected.txt` (more)
+- Live command preview in a textarea so users see exactly what they'll get before clicking Copy
+- No server, no API — composes with the static HTML report design (works over `file://`)
+
 ### --merge expands report scope to the full manifest
 - `run --merge` keeps the *run* scope as `tests` (filtered) but expands the *read/compare/report* scope to every model in `manifest.manifest`
 - `runner.read_results` already handles `rr=None` for non-rerun tests by reading whatever `dsres.mat` exists in the test_dir on disk — so prior results merge naturally with fresh ones, no special path needed
