@@ -310,8 +310,32 @@ class DymolaRunner(SimulatorRunner):
                 except OSError:
                     pass
 
+            # A simulation truly completed only if BOTH:
+            #   1. dsfinal.txt exists (Dymola writes it at end of successful sim)
+            #   2. mat file's last time reaches the requested stop_time
+            # dsres.mat existence alone is insufficient — Dymola writes
+            # incrementally, so a killed/aborted sim can leave a partial file.
+            dsfinal_path = test_dir / "dsfinal.txt"
+            sim_completed = False
+            completion_msg: Optional[str] = None
+            if not translation_failed and mat_path.exists() and dsfinal_path.exists():
+                from .mat_reader import read_mat_time_extents
+                extents = read_mat_time_extents(mat_path)
+                stop_time = float(test.stop_time)
+                if extents is not None:
+                    last_time = extents[1]
+                    tol = max(1e-6, abs(stop_time) * 1e-6)
+                    if last_time + tol >= stop_time:
+                        sim_completed = True
+                    else:
+                        completion_msg = (
+                            f"Stopped early at T={last_time:.6g} of {stop_time:.6g}"
+                        )
+                else:
+                    completion_msg = "dsres.mat unreadable"
+
             per_elapsed = batch_elapsed / len(test_items)
-            if mat_path.exists() and not translation_failed:
+            if sim_completed:
                 _print_progress(
                     index_offset + i + 1, total, label, "ok",
                     elapsed=per_elapsed,
@@ -328,16 +352,22 @@ class DymolaRunner(SimulatorRunner):
                         test_key, success=True, elapsed=per_elapsed,
                     )
             else:
-                msg = "Translation failed" if translation_failed else "No result file produced"
+                if translation_failed:
+                    msg = "Translation failed"
+                elif not mat_path.exists():
+                    msg = "No result file produced"
+                elif not dsfinal_path.exists():
+                    msg = "Simulation aborted (no dsfinal.txt)"
+                else:
+                    msg = completion_msg or "Simulation incomplete"
                 # Try to get error from dslog
                 dslog_path = test_dir / "dslog.txt"
                 if dslog_path.exists():
                     try:
                         log_text = dslog_path.read_text(encoding="utf-8", errors="replace")
                         if "ERROR" in log_text or "error" in log_text:
-                            # Extract last few lines for context
                             lines = log_text.strip().split("\n")
-                            msg = " | ".join(lines[-3:])
+                            msg = msg + " | " + " | ".join(lines[-3:])
                     except OSError:
                         pass
 
@@ -367,7 +397,28 @@ class DymolaRunner(SimulatorRunner):
         test_key: str,
         run_result: Optional[TestRunResult],
     ) -> TestResult:
-        stats = run_result.statistics if run_result else None
+        stats = dict(run_result.statistics) if run_result and run_result.statistics else None
+        # Surface phase-timing breakdown so it appears in reports.
+        # All values are wall-clock seconds captured on the Python side —
+        # distinct from Dymola's own CPU-time stats (which cover just
+        # integration work, not our full test pipeline).
+        if run_result and (run_result.translation_wall is not None or run_result.sim_wall is not None):
+            # Ordered: translation → simulation → other → total (rough
+            # operation order). Rounded to 2 decimals at storage time so
+            # the on-disk reference JSON stays clean.
+            timing = {}
+            if run_result.translation_wall is not None:
+                timing["translation_wall"] = round(run_result.translation_wall, 2)
+            if run_result.sim_wall is not None:
+                timing["sim_wall"] = round(run_result.sim_wall, 2)
+            if run_result.elapsed:
+                t_acct = (run_result.translation_wall or 0.0) + (run_result.sim_wall or 0.0)
+                other = max(0.0, run_result.elapsed - t_acct)
+                timing["other_wall"] = round(other, 2)
+                timing["total_wall"] = round(run_result.elapsed, 2)
+            if stats is None:
+                stats = {}
+            stats["timing"] = timing
         test_dir = self.config.work_dir / test_key
         mat_path = test_dir / "dsres.mat"
 

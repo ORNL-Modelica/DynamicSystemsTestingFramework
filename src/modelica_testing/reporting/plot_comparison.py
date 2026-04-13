@@ -46,11 +46,25 @@ def _format_value(val) -> str:
     return str(val)
 
 
-def _build_stats_section(title: str, ref_cat: dict, cur_cat: dict) -> Optional[dict]:
-    """Build a statistics section dict for the template."""
-    all_keys = sorted(set(ref_cat.keys()) | set(cur_cat.keys()))
-    if not all_keys:
+def _build_stats_section(
+    title: str,
+    ref_cat: dict,
+    cur_cat: dict,
+    key_order: Optional[list[str]] = None,
+) -> Optional[dict]:
+    """Build a statistics section dict for the template.
+
+    If `key_order` is provided, keys appear in that order; unrecognized keys
+    append alphabetically. If omitted, all keys appear alphabetically.
+    """
+    all_keys_set = set(ref_cat.keys()) | set(cur_cat.keys())
+    if not all_keys_set:
         return None
+    if key_order:
+        all_keys = [k for k in key_order if k in all_keys_set]
+        all_keys += sorted(all_keys_set - set(key_order))
+    else:
+        all_keys = sorted(all_keys_set)
     rows = []
     for key in all_keys:
         ref_val = _format_value(ref_cat.get(key, ""))
@@ -146,32 +160,60 @@ def _build_template_context(
             })
 
     # --- Statistics sections (auto-detected) ---
-    statistics_sections = []
+    # Render every top-level dict in stats as its own collapsible section
+    # plus a "Simulation Statistics" section that mops up all top-level
+    # scalar keys. Future categories (e.g., "timing") drop in for free.
+    SECTION_TITLES = {
+        "translation": "Translation Statistics",
+        "simulation": "Simulation Statistics",
+        "timing": "Timing",
+    }
+    # Collect all dict-valued section keys across both refs and current
+    section_keys: list[str] = []
+    seen: set[str] = set()
+    for src in (ref_stats, cur_stats):
+        for k, v in src.items():
+            if isinstance(v, dict) and k not in seen:
+                seen.add(k)
+                section_keys.append(k)
 
-    # Translation
-    ref_translation = ref_stats.get("translation", {})
-    cur_translation = cur_stats.get("translation", {})
-    if isinstance(ref_translation, dict) or isinstance(cur_translation, dict):
-        section = _build_stats_section(
-            "Translation Statistics",
-            ref_translation if isinstance(ref_translation, dict) else {},
-            cur_translation if isinstance(cur_translation, dict) else {},
-        )
+    # Render each known section; preserve conventional order first, then
+    # append any unrecognized categories in the order they were encountered.
+    preferred = ["translation", "simulation", "timing"]
+    ordered_keys = [k for k in preferred if k in seen] + [
+        k for k in section_keys if k not in preferred
+    ]
+
+    statistics_sections = []
+    for key in ordered_keys:
+        ref_cat = ref_stats.get(key, {}) if isinstance(ref_stats.get(key), dict) else {}
+        cur_cat = cur_stats.get(key, {}) if isinstance(cur_stats.get(key), dict) else {}
+        # Merge top-level scalar keys into the simulation section for back-compat
+        if key == "simulation":
+            for k, v in ref_stats.items():
+                if not isinstance(v, dict):
+                    ref_cat.setdefault(k, v)
+            for k, v in cur_stats.items():
+                if not isinstance(v, dict):
+                    cur_cat.setdefault(k, v)
+        title = SECTION_TITLES.get(key, key.replace("_", " ").title())
+        # Timing section: rough-operation order rather than alphabetical
+        key_order = None
+        if key == "timing":
+            key_order = ["translation_wall", "sim_wall", "other_wall", "total_wall"]
+        section = _build_stats_section(title, ref_cat, cur_cat, key_order=key_order)
         if section:
             statistics_sections.append(section)
 
-    # Simulation + top-level scalar stats (CPUtime, EventCounter)
-    ref_sim_stats = {**(ref_stats.get("simulation", {}) if isinstance(ref_stats.get("simulation"), dict) else {})}
-    cur_sim_stats = {**(cur_stats.get("simulation", {}) if isinstance(cur_stats.get("simulation"), dict) else {})}
-    for k, v in ref_stats.items():
-        if not isinstance(v, dict):
-            ref_sim_stats[k] = v
-    for k, v in cur_stats.items():
-        if not isinstance(v, dict):
-            cur_sim_stats[k] = v
-    section = _build_stats_section("Simulation Statistics", ref_sim_stats, cur_sim_stats)
-    if section:
-        statistics_sections.append(section)
+    # If there was no simulation section but we have top-level scalars,
+    # render them anyway under "Simulation Statistics"
+    if "simulation" not in seen:
+        ref_scalars = {k: v for k, v in ref_stats.items() if not isinstance(v, dict)}
+        cur_scalars = {k: v for k, v in cur_stats.items() if not isinstance(v, dict)}
+        if ref_scalars or cur_scalars:
+            section = _build_stats_section("Simulation Statistics", ref_scalars, cur_scalars)
+            if section:
+                statistics_sections.append(section)
 
     # --- Variable comparison data ---
     variables = []
@@ -688,6 +730,10 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
     else:
         report_id = _sanitize_filename(model_id)
 
+    # Pull phase-timing breakdown out of stats if present (runner stashes it)
+    cur_stats = result.statistics if result and result.statistics else {}
+    timing = cur_stats.get("timing") if isinstance(cur_stats.get("timing"), dict) else {}
+
     return {
         "model_id": model_id,
         "ref_data": ref_data,
@@ -706,6 +752,9 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
         "n_warnings": len(comp.warnings) if comp.warnings else 0,
         "ref_id": f"ref_{comp.test_id}" if comp.test_id else None,
         "last_run_at": last_run_at,
+        "translation_wall": timing.get("translation_wall"),
+        "sim_wall": timing.get("sim_wall"),
+        "total_wall": timing.get("total_wall"),
         "comp_variables": comp.variables,
     }
 
@@ -739,6 +788,9 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         "n_vars_passed": args["n_vars_passed"],
         "n_warnings": args["n_warnings"],
         "last_run_at": args["last_run_at"],
+        "translation_wall": args.get("translation_wall"),
+        "sim_wall": args.get("sim_wall"),
+        "total_wall": args.get("total_wall"),
         "report_path": f'{args["report_id"]}/interactive.html' if html_path else None,
         "_render_elapsed": render_elapsed,
     }

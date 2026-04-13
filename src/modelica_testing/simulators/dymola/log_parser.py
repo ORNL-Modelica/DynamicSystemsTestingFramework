@@ -213,14 +213,16 @@ def _extract_system_pair(
 def _parse_simulation_stats(text: str, stats: dict) -> None:
     """Extract simulation runtime statistics from a Dymola log."""
 
-    # CPU time
+    # CPU time for integration (from dslog — just the integration step,
+    # excludes init / output writing. Distinct from the `CPUtime` diagnostic
+    # variable's final value which covers the full simulation.)
     m = re.search(
         r'CPU-time for (?:integration|simulation)\s*[=:]\s*([\d.eE+\-]+)\s*s',
         text, re.IGNORECASE
     )
     if m:
         stats.setdefault("simulation", {})
-        stats["simulation"]["cpu_time"] = float(m.group(1))
+        stats["simulation"]["cpu_time_integration"] = float(m.group(1))
 
     # All other simulation stats use the same pattern: label with possible
     # whitespace padding before the colon

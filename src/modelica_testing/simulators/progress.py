@@ -82,6 +82,7 @@ class TestStatus:
     detail: Optional[str] = None
     worker_id: Optional[int] = None
     report_dir: Optional[str] = None  # e.g., "ref_0042" or "test_0005" — matches generate_report_suite naming
+    phase: Optional[str] = None  # "translating" / "simulating" / ... while status == "running"
 
 
 class ProgressReporter:
@@ -112,6 +113,14 @@ class ProgressReporter:
                 ts.status = "running"
                 ts.started_at = time.monotonic()
                 ts.worker_id = worker_id
+                ts.phase = None
+        self._write()
+
+    def on_phase(self, test_key: str, phase: str) -> None:
+        with self._lock:
+            ts = self._tests.get(test_key)
+            if ts is not None and ts.status == "running":
+                ts.phase = phase
         self._write()
 
     def on_finish(
@@ -236,11 +245,14 @@ class ProgressReporter:
             # 404s harmlessly if --report wasn't used or hasn't finished yet
             report_dir = t.get("report_dir") or t["test_key"]
             model_link = f'<a href="reports/{html_mod.escape(report_dir)}/interactive.html">{model_id}</a>'
+            status_label = t["status"]
+            if t["status"] == "running" and t.get("phase"):
+                status_label = f'{t["status"]} ({t["phase"]})'
             rows.append(
                 f'<tr class="{t["status"]}">'
                 f'<td>{test_link}</td>'
                 f'<td>{model_link}</td>'
-                f'<td><span class="status {t["status"]}">{t["status"]}</span></td>'
+                f'<td><span class="status {t["status"]}">{status_label}</span></td>'
                 f'<td>{worker_str}</td>'
                 f'<td>{elapsed_str}</td>'
                 f'<td>{detail}</td>'

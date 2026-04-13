@@ -30,7 +30,7 @@ class TestLogParser:
         """Extract simulation CPU time (ConstantTest is trivially fast)."""
         stats = parse_dslog(sample_dslog)
         assert "simulation" in stats
-        assert "cpu_time" in stats["simulation"]
+        assert "cpu_time_integration" in stats["simulation"]
 
     def test_nonexistent_file(self, tmp_path):
         """Nonexistent file returns None."""
@@ -62,7 +62,7 @@ class TestLogParser:
         dslog.write_text(content)
         stats = parse_dslog(dslog)
         assert stats is not None
-        assert stats["simulation"]["cpu_time"] == pytest.approx(0.234)
+        assert stats["simulation"]["cpu_time_integration"] == pytest.approx(0.234)
         assert stats["simulation"]["jacobian_evaluations"] == 10
         assert stats["simulation"]["state_events"] == 3
         assert stats["simulation"]["accepted_steps"] == 500

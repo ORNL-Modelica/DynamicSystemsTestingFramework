@@ -215,6 +215,36 @@ def read_dymola_mat(
         return None
 
 
+def read_mat_time_extents(mat_path: Path) -> Optional[tuple[float, float]]:
+    """Cheaply read just the first and last time values from a Dymola .mat.
+
+    Useful for verifying a simulation reached its requested stop time
+    (a partial / killed simulation can leave a valid-looking .mat with
+    data only up to where it stopped). Returns None if the file is
+    unreadable or contains no time data.
+
+    Bypasses the full variable-iteration in read_dymola_mat — Dymola stores
+    time as row 0 of data_2, so we only need that single row from disk.
+    """
+    try:
+        with open(mat_path, "rb") as f:
+            blocks = _scan_mat4_headers(f)
+        if "data_2" not in blocks:
+            return None
+        d2_offset, d2_dtype, d2_mrows, d2_ncols = blocks["data_2"]
+        # Map only enough to read row 0 (time) — column-major Fortran order
+        data_2 = np.memmap(
+            mat_path, dtype=d2_dtype, mode="r",
+            offset=d2_offset, shape=(d2_mrows, d2_ncols),
+            order="F",
+        )
+        if d2_mrows == 0 or d2_ncols == 0:
+            return None
+        return float(data_2[0, 0]), float(data_2[0, -1])
+    except Exception:
+        return None
+
+
 def _parse_name_matrix(name_matrix: np.ndarray) -> list[str]:
     """Parse Dymola's name matrix into a list of variable name strings.
 

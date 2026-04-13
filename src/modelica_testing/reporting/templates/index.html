@@ -18,6 +18,8 @@ table { border-collapse: collapse; width: 100%; background: white; margin-bottom
 th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; font-size: 0.9em; }
 th { background: #f5f5f5; font-weight: 600; cursor: pointer; user-select: none; }
 th:hover { background: #e8e8e8; }
+th.sorted-asc::after { content: " ▲"; color: #1976D2; font-size: 0.85em; }
+th.sorted-desc::after { content: " ▼"; color: #1976D2; font-size: 0.85em; }
 tr:hover { background: #f9f9f9; }
 tr.selected td { background: #e3f2fd; }
 .pass { color: #4CAF50; }
@@ -99,19 +101,34 @@ a:hover { text-decoration: underline; }
 <thead>
 <tr>
   <th class="sel-col"><input type="checkbox" id="sel-all" onclick="toggleAllVisible(this.checked)" title="Select/clear all visible"></th>
-  <th>Status</th>
-  <th>Ref</th>
-  <th>Test</th>
-  <th>Model</th>
-  <th>Worst NRMSE</th>
-  <th>Variables</th>
-  <th>Warnings</th>
-  <th>Last Run</th>
+  <th data-sort="text" data-key="status">Status</th>
+  <th data-sort="text" data-key="ref">Ref</th>
+  <th data-sort="text" data-key="test">Test</th>
+  <th data-sort="text" data-key="model">Model</th>
+  <th data-sort="num" data-key="nrmse">Worst NRMSE</th>
+  <th data-sort="num" data-key="vars">Variables</th>
+  <th data-sort="num" data-key="warnings">Warnings</th>
+  <th data-sort="num" data-key="translate" title="Translation wall time (s)">Translate (s)</th>
+  <th data-sort="num" data-key="sim" title="Simulation wall time (s)">Sim (s)</th>
+  <th data-sort="num" data-key="total" title="Total wall time (s) — includes translate, sim, savelog, overhead">Total (s)</th>
+  <th data-sort="num" data-key="last-run">Last Run</th>
 </tr>
 </thead>
 <tbody>
 {% for t in tests %}
-<tr data-status="{{ t.status_class }}" data-last-run="{{ t.last_run_at or 0 }}" data-warnings="{{ t.n_warnings or 0 }}" data-model-id="{{ t.model_id }}">
+<tr data-status="{{ t.status_class }}"
+    data-last-run="{{ t.last_run_at or 0 }}"
+    data-warnings="{{ t.n_warnings or 0 }}"
+    data-model-id="{{ t.model_id }}"
+    data-sort-status="{{ t.status_text }}"
+    data-sort-ref="{{ t.ref_id or '' }}"
+    data-sort-test="{{ t.test_key or '' }}"
+    data-sort-model="{{ t.model_id }}"
+    data-sort-nrmse="{{ t.worst_nrmse if t.worst_nrmse is not none else -1 }}"
+    data-sort-vars="{{ t.n_vars_passed if t.n_vars else -1 }}"
+    data-sort-translate="{{ t.translation_wall if t.translation_wall is not none else -1 }}"
+    data-sort-sim="{{ t.sim_wall if t.sim_wall is not none else -1 }}"
+    data-sort-total="{{ t.total_wall if t.total_wall is not none else -1 }}">
   <td class="sel-col"><input type="checkbox" class="row-sel" onchange="onRowToggle(this)"></td>
   <td><span class="{{ t.status_class }}">{{ t.status_text }}</span></td>
   <td>{{ t.ref_id or "—" }}</td>
@@ -120,6 +137,9 @@ a:hover { text-decoration: underline; }
   <td>{% if t.worst_nrmse is not none %}{{ "%.4e" | format(t.worst_nrmse) }}{% else %}—{% endif %}</td>
   <td>{% if t.n_vars %}{{ t.n_vars_passed }}/{{ t.n_vars }}{% else %}—{% endif %}</td>
   <td>{% if t.n_warnings %}<span class="warn">{{ t.n_warnings }}</span>{% else %}—{% endif %}</td>
+  <td>{% if t.translation_wall is not none %}{{ "%.2f" | format(t.translation_wall) }}{% else %}—{% endif %}</td>
+  <td>{% if t.sim_wall is not none %}{{ "%.2f" | format(t.sim_wall) }}{% else %}—{% endif %}</td>
+  <td>{% if t.total_wall is not none %}{{ "%.2f" | format(t.total_wall) }}{% else %}—{% endif %}</td>
   <td class="last-run">{% if t.last_run_at %}{{ t.last_run_at }}{% else %}—{% endif %}</td>
 </tr>
 {% endfor %}
@@ -276,6 +296,48 @@ function downloadFilter() {
 }
 
 updateSelectionUI();
+
+// ---- Column sorting ----
+(function() {
+  const table = document.getElementById('results-table');
+  const tbody = table.querySelector('tbody');
+  const headers = table.querySelectorAll('thead th[data-sort]');
+  headers.forEach(th => {
+    th.addEventListener('click', () => sortBy(th));
+  });
+
+  function sortBy(th) {
+    const key = th.dataset.key;
+    const kind = th.dataset.sort;  // 'num' or 'text'
+    const current = th.classList.contains('sorted-asc') ? 'asc'
+                  : th.classList.contains('sorted-desc') ? 'desc'
+                  : null;
+    const dir = current === 'asc' ? 'desc' : 'asc';
+
+    headers.forEach(h => h.classList.remove('sorted-asc', 'sorted-desc'));
+    th.classList.add('sorted-' + dir);
+
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort((a, b) => {
+      let av = a.dataset['sort' + key[0].toUpperCase() + key.slice(1)];
+      let bv = b.dataset['sort' + key[0].toUpperCase() + key.slice(1)];
+      if (key === 'last-run') { av = a.dataset.lastRun; bv = b.dataset.lastRun; }
+      if (key === 'warnings') { av = a.dataset.warnings; bv = b.dataset.warnings; }
+      if (kind === 'num') {
+        av = parseFloat(av); bv = parseFloat(bv);
+        if (isNaN(av)) av = -Infinity;
+        if (isNaN(bv)) bv = -Infinity;
+      } else {
+        av = (av || '').toLowerCase();
+        bv = (bv || '').toLowerCase();
+      }
+      if (av < bv) return dir === 'asc' ? -1 : 1;
+      if (av > bv) return dir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    rows.forEach(r => tbody.appendChild(r));
+  }
+})();
 </script>
 
 </body>

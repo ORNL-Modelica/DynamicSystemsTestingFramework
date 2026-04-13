@@ -53,6 +53,9 @@ class TestRunResult:
     error_message: Optional[str] = None
     timed_out: bool = False
     statistics: Optional[dict] = None
+    # Phase breakdown (captured by the persistent runner; None in batch mode)
+    translation_wall: Optional[float] = None
+    sim_wall: Optional[float] = None
 
 
 # Variables to exclude when resolving "*" or glob patterns (Dymola internals, etc.)

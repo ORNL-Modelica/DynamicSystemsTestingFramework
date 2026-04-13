@@ -39,6 +39,7 @@ from ..base import (
     assign_test_keys,
 )
 from .log_parser import parse_dslog
+from .mat_reader import read_mat_time_extents
 from .runner import DymolaRunner, DymolaConfig
 from .interface_loader import load_dymola_interface
 
@@ -233,25 +234,57 @@ class DymolaWorker:
                 cmd += ";"
             self._exec_setting(cmd)
 
-    def run_test(self, test: TestModel, test_key: str) -> TestRunResult:
-        """Run one test in this worker. Returns the TestRunResult."""
+    def run_test(
+        self,
+        test: TestModel,
+        test_key: str,
+        progress=None,
+    ) -> TestRunResult:
+        """Run one test in this worker. Returns the TestRunResult.
+
+        Splits translateModel + simulateModel into separate calls so we can
+        time them independently and emit per-phase progress events.
+        """
         test_dir = self.config.work_dir / test_key
         # Fresh dir each time — prevents stale dsres.mat / dslog.txt bleed-through
         if test_dir.exists():
             shutil.rmtree(test_dir)
         test_dir.mkdir(parents=True, exist_ok=True)
 
-        short_name = test.model_id.rsplit(".", 1)[-1]
-        label = f"{test_key} {short_name}"
-
         start = time.monotonic()
-        translation_failed = False
-        sim_ok = False
+        translation_wall: Optional[float] = None
+        sim_wall: Optional[float] = None
         try:
             self.dymola.cd(str(test_dir))
             self.dymola.clearlog()
 
-            # Arguments — mirror _generate_test_mos
+            # Phase 1: translate (may reuse cached translation — nearly free in that case)
+            if progress is not None:
+                progress.on_phase(test_key, "translating")
+            t_trans_start = time.monotonic()
+            translation_ok = bool(self.dymola.translateModel(test.model_id))
+            translation_wall = time.monotonic() - t_trans_start
+
+            if not translation_ok:
+                # Save log, fail fast — skip the simulate call
+                try:
+                    self.dymola.savelog(str(test_dir / "translation_log.txt"))
+                except Exception:
+                    pass
+                elapsed = time.monotonic() - start
+                self._n_tests_run += 1
+                return TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    error_message="Translation failed",
+                    translation_wall=translation_wall,
+                )
+
+            # Phase 2: simulate (uses cached translation)
+            if progress is not None:
+                progress.on_phase(test_key, "simulating")
             call_kwargs: dict = {
                 "method": test.method,
                 "tolerance": test.tolerance,
@@ -264,28 +297,51 @@ class DymolaWorker:
             elif test.output_interval is not None:
                 call_kwargs["outputInterval"] = test.output_interval
 
-            sim_ok = bool(self.dymola.simulateModel(test.model_id, **call_kwargs))
-            # Persist translation log so post-hoc analysis matches batch mode
+            t_sim_start = time.monotonic()
+            # simulateModel returns bool; actual success/failure determined
+            # by on-disk artifacts in _evaluate_from_disk
+            _ = self.dymola.simulateModel(test.model_id, **call_kwargs)
+            sim_wall = time.monotonic() - t_sim_start
+
+            # Phase 3: finalize (savelog)
+            if progress is not None:
+                progress.on_phase(test_key, "finalizing")
             self.dymola.savelog(str(test_dir / "translation_log.txt"))
         except Exception as exc:  # DymolaException or connection loss
             elapsed = time.monotonic() - start
             self._n_tests_run += 1
             msg = f"DymolaInterface error: {exc}"
-            _print_progress(
-                self.worker_id + 1, 0, label, "FAIL", elapsed=elapsed, detail=msg[:80],
-            )
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
                 success=False,
                 elapsed=elapsed,
                 error_message=msg,
+                translation_wall=translation_wall,
+                sim_wall=sim_wall,
             )
 
         elapsed = time.monotonic() - start
         self._n_tests_run += 1
+        result = self._evaluate_from_disk(test, test_key, elapsed)
+        # Attach phase timings to the result
+        result.translation_wall = translation_wall
+        result.sim_wall = sim_wall
+        return result
 
-        # Evaluate against disk exactly like the batch path
+    def _evaluate_from_disk(
+        self,
+        test: TestModel,
+        test_key: str,
+        elapsed: float,
+    ) -> TestRunResult:
+        """Inspect on-disk artifacts (dsres.mat + logs) and produce a
+        TestRunResult. Used both on the normal happy path and as a fallback
+        from `run_test_with_timeout` when the in-process flow couldn't
+        finish (timeout / worker exception) but the simulation may have
+        actually completed and written its mat file.
+        """
+        test_dir = self.config.work_dir / test_key
         statistics = parse_dslog(test_dir / "dslog.txt")
         translation_stats = parse_dslog(test_dir / "translation_log.txt")
         if translation_stats:
@@ -300,6 +356,7 @@ class DymolaWorker:
                     else:
                         statistics[k] = v
 
+        translation_failed = False
         translation_log = test_dir / "translation_log.txt"
         if translation_log.exists():
             try:
@@ -309,8 +366,32 @@ class DymolaWorker:
             except OSError:
                 pass
 
+        # A simulation truly completed only if BOTH:
+        #   1. dsfinal.txt exists (Dymola writes it at end of successful sim)
+        #   2. mat file's last time reaches the requested stop_time
+        # dsres.mat existence alone is insufficient — Dymola writes it
+        # incrementally, so a killed-mid-sim leaves a partial file.
         mat_path = test_dir / "dsres.mat"
-        if mat_path.exists() and not translation_failed:
+        dsfinal_path = test_dir / "dsfinal.txt"
+        success = False
+        completion_msg: Optional[str] = None
+        if not translation_failed and mat_path.exists() and dsfinal_path.exists():
+            extents = read_mat_time_extents(mat_path)
+            stop_time = float(test.stop_time)
+            if extents is not None:
+                last_time = extents[1]
+                # Allow a tiny tolerance — output_interval may not align perfectly
+                tol = max(1e-6, abs(stop_time) * 1e-6)
+                if last_time + tol >= stop_time:
+                    success = True
+                else:
+                    completion_msg = (
+                        f"Stopped early at T={last_time:.6g} of {stop_time:.6g}"
+                    )
+            else:
+                completion_msg = "dsres.mat unreadable"
+
+        if success:
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
@@ -319,14 +400,23 @@ class DymolaWorker:
                 statistics=statistics,
             )
 
-        msg = "Translation failed" if translation_failed else "No result file produced"
+        # Build the most informative failure message we can
+        if translation_failed:
+            msg = "Translation failed"
+        elif not mat_path.exists():
+            msg = "No result file produced"
+        elif not dsfinal_path.exists():
+            msg = "Simulation aborted (no dsfinal.txt)"
+        else:
+            msg = completion_msg or "Simulation incomplete"
+
         dslog_path = test_dir / "dslog.txt"
         if dslog_path.exists():
             try:
                 log_text = dslog_path.read_text(encoding="utf-8", errors="replace")
                 if "ERROR" in log_text or "error" in log_text:
                     lines = log_text.strip().split("\n")
-                    msg = " | ".join(lines[-3:])
+                    msg = msg + " | " + " | ".join(lines[-3:])
             except OSError:
                 pass
 
@@ -382,6 +472,7 @@ class DymolaWorker:
         test: TestModel,
         test_key: str,
         timeout: float,
+        progress=None,
     ) -> TestRunResult:
         """Run the test with a watchdog. On timeout, hard-kill Dymola.
 
@@ -394,7 +485,7 @@ class DymolaWorker:
 
         def _runner():
             try:
-                result_box[0] = self.run_test(test, test_key)
+                result_box[0] = self.run_test(test, test_key, progress=progress)
             except BaseException as e:
                 exc_box[0] = e
 
@@ -403,16 +494,18 @@ class DymolaWorker:
         t.join(timeout)
 
         if t.is_alive():
-            # Timed out — hard-kill Dymola so the inner thread unblocks.
-            # We intentionally don't wait long for the inner thread: it's a
-            # daemon and will die on process exit. Dymola's Python interface
-            # retries internal HTTP calls for several seconds after the
-            # process is killed, emitting "WinError 10061" / "urlopen error"
-            # on stderr — muting stderr briefly swallows that spam.
+            # Hard-kill Dymola. Inner thread becomes daemon noise.
             with _suppress_stderr_noise():
                 self.close(grace=1.0)
                 t.join(0.5)
             elapsed = time.monotonic() - start_ts
+
+            # Even after a watchdog kill, the simulation may have completed
+            # and written dsres.mat just before/during the kill. Trust disk.
+            disk_result = self._evaluate_from_disk(test, test_key, elapsed)
+            if disk_result.success:
+                return disk_result
+
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
@@ -423,15 +516,24 @@ class DymolaWorker:
             )
 
         if exc_box[0] is not None:
-            # Unexpected exception — assume the Dymola connection is broken
-            self.close(grace=2.0)
+            # Worker-level exception (e.g., DymolaInterface dropped its JSON-RPC
+            # connection mid-call). Check whether the simulation completed
+            # anyway — Dymola often crashes/disconnects after writing the result.
             elapsed = time.monotonic() - start_ts
+            disk_result = self._evaluate_from_disk(test, test_key, elapsed)
+            if disk_result.success:
+                # Worker connection is still considered broken — restart on next iter
+                self.close(grace=1.0)
+                return disk_result
+
+            self.close(grace=1.0)
+            exc = exc_box[0]
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
                 success=False,
                 elapsed=elapsed,
-                error_message=f"Worker exception: {exc_box[0]}",
+                error_message=f"Worker exception: {type(exc).__name__}: {exc}",
             )
 
         return result_box[0]  # type: ignore[return-value]
@@ -578,10 +680,22 @@ class PersistentDymolaRunner(DymolaRunner):
                 idx = completed[0]
             label = f"{test_key} {test.model_id.rsplit('.', 1)[-1]}"
             status = "ok" if tr.success else ("TIMEOUT" if tr.timed_out else "FAIL")
+            # Include phase timings in detail when available
+            parts = []
+            if tr.translation_wall is not None:
+                parts.append(f"xlate {tr.translation_wall:.1f}s")
+            if tr.sim_wall is not None:
+                parts.append(f"sim {tr.sim_wall:.1f}s")
+            if tr.success and parts:
+                detail_str = ", ".join(parts)
+            elif not tr.success:
+                detail_str = (tr.error_message or "")[:80]
+            else:
+                detail_str = None
             _print_progress(
                 idx, total, label, status,
                 elapsed=tr.elapsed,
-                detail=None if tr.success else (tr.error_message or "")[:80],
+                detail=detail_str,
             )
             if self.progress is not None:
                 self.progress.on_finish(
@@ -634,7 +748,9 @@ class PersistentDymolaRunner(DymolaRunner):
 
                     timeout = float(test.timeout if test.timeout is not None
                                     else self.config.timeout)
-                    tr = w.run_test_with_timeout(test, test_key, timeout)
+                    tr = w.run_test_with_timeout(
+                        test, test_key, timeout, progress=self.progress,
+                    )
                     _record(test, test_key, tr)
                     # After a timeout or worker exception, is_alive() is False;
                     # restart happens lazily on the next iteration.
