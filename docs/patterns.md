@@ -166,6 +166,22 @@
 - `runner.ref_id_map: dict[model_id, "ref_NNNN"]` is populated by the CLI before `run_tests` (from `ReferenceStore.index`); runner consults it at registration time so links work even mid-run before the report is generated
 - `finalize()` strips the meta-refresh tag so the final dashboard doesn't keep reloading after the run completes
 
+### Per-phase timing on the persistent runner
+- `DymolaWorker.run_test` splits `simulateModel` into explicit `translateModel` + `simulateModel` + `savelog` so each phase is measured independently. Timings (`translation_wall`, `sim_wall`) are fields on `TestRunResult`; total wall is `elapsed`
+- `runner.read_result` stashes the breakdown under `stats["timing"]` with keys `translation_wall`, `sim_wall`, `other_wall` (= total − translation − sim), `total_wall`. Values are rounded to 2 decimals at storage time so reference JSON stays clean
+- `ProgressReporter.on_phase(test_key, phase)` tracks `"translating"` / `"simulating"` / `"finalizing"` — dashboard status cell shows `running (simulating)` live, so translation time is visible before sim completes
+- Console progress line gains `[xlate 1.2s, sim 63.0s]` detail on success
+- Report's stats-section builder now iterates every top-level dict in `stats` (not just `translation` + `simulation`) and renders each as its own collapsible section. Any future stat category drops in for free; `_build_stats_section` accepts an optional `key_order` so the Timing section preserves operation order rather than sorting alphabetically
+- Index page gains sortable `Translate (s)` / `Sim (s)` / `Total (s)` columns plus click-to-sort on all columns (text / numeric via `data-sort-*` attributes)
+- `simulation.cpu_time` renamed to `simulation.cpu_time_integration` to disambiguate from the `CPUtime` diagnostic-variable final (those measure different scopes — integration step vs. full simulation)
+
+### Verify sim completion via dsfinal.txt + reached-stop-time
+- `dsres.mat` is written incrementally by Dymola — a killed-mid-sim leaves a partial-but-valid-looking file. Existence alone isn't sufficient proof of completion
+- `mat_reader.read_mat_time_extents(mat_path)` cheaply reads just row 0 of `data_2` (time) via memmap and returns `(first, last)`
+- Success criteria (applied in both batch and persistent runners): translation didn't abort AND `dsres.mat` exists AND `dsfinal.txt` exists AND `last_time ≥ stop_time − tol`
+- Failure messages are specific so users know why: `"Translation failed"` / `"No result file produced"` / `"Simulation aborted (no dsfinal.txt)"` / `"Stopped early at T=4.7 of 10.0"` — plus last few ERROR lines from dslog appended
+- Lenient timeout: the watchdog kills but then checks disk; a sim that completed just past the deadline gets credit rather than being wasted
+
 ### Persistent Dymola workers via Python interface
 - `simulators/dymola/interface_loader.py` auto-discovers the `dymola` archive (`.whl` for ≥2025, `.egg` for older) under platform install roots (`C:\Program Files\Dymola *\Modelica\Library\python_interface/`). Wheels are extracted once into a user cache dir; eggs are added to `sys.path` directly (zipimport). Override via `--dymola-interface` / `dymola_interface_path` / `DYMOLA_INTERFACE_PATH`. Diagnose with `modelica-testing check-dymola`
 - `PersistentDymolaRunner` subclasses `DymolaRunner` and overrides only `run_tests`; inherits `read_result` and config extraction. Each worker is a `DymolaWorker` wrapping one `DymolaInterface` instance
