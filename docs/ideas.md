@@ -36,14 +36,17 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 28 | JSON size management for large suites | M | Medium | Sidecar files + lazy fetch when embedded JSON exceeds ~20 MB |
 | 29 | Progressive enhancement: optional server | H | Medium | Thin FastAPI layer for accept-from-browser, re-compare, lazy loading |
 | 30 | Notebook integration helper | L | Low | Data-loading utility for `comparison_data.json` in Jupyter |
-| 31 | Parallel process progress reporting | M | High | Live status from parallel simulation workers; tqdm, rich, or custom callback |
+| 31 | ~~Parallel process progress reporting~~ | M | High | **DONE** — `ProgressReporter` writes `status.json` + auto-refreshing `dashboard.html` to work_dir; per-test status, worker attribution, ETA, links to per-test work dir + reports |
 | 32 | Parallelize report generation | M | Medium | `--report` is sequential matplotlib/Jinja2 per test; embarrassingly parallel |
 | 33 | Batch actions from HTML report | M | High | Checkboxes to select tests, generate CLI commands for rerun/accept/disable |
-| 34 | NRMSE panel annotations + metric clarity | L | Medium | Max/avg markers on error plot; clarify which metric drives pass/fail |
+| 34 | ~~NRMSE panel annotations + metric clarity~~ | L | Medium | **DONE** — avg-NRMSE line + shaded fail zone (above tolerance) on both matplotlib and Plotly NRMSE panels; "Pass/Fail Criterion" column added to variable table (mode-aware: NRMSE-vs-tolerance, %-inside-tube, or final-error-vs-tolerance) |
 | 35 | Filter by test list file | L | Medium | `--filter @tests.txt` or `--filter model1,model2` for explicit test lists |
 | 36 | Cross-platform reference comparison | H | High | Compare results across OS/simulator versions; use alternate ref as baseline |
-| 37 | Per-test report section reordering | L | Low | Move simulator/statistics/diagnostics above variables table |
+| 37 | ~~Per-test report section reordering~~ | L | Low | **DONE** — Sim Params → Statistics → Diagnostics now sit above Variables in both `comparison.html` and `interactive.html`; structural warnings rendered as prominent yellow box near top |
 | 38 | Incremental run + report workflow | M | High | Rerun subset of tests, merge with previous results, regenerate report without full rerun |
+| 39 | Live log tailing for per-test progress | M | Medium | Inside a Dymola batch, individual test transitions are invisible. Tail stdout/translation_log.txt and parse "Translating ModelX" / "Integration terminated" markers to flip dashboard status mid-batch. Per-backend log-marker hook |
+| 40 | Persistent Dymola workers with dynamic dispatch | H | High | N long-lived Dymola processes, library loaded once per worker lifetime, tests sent one-at-a-time via stdin / `RunScript()`. Per-test natural granularity, true work-stealing. Biggest refactor but ideal end state |
+| 41 | Dashboard refinements | L | Low | Per-test report link uses `ref_NNNN`/`test_NNNN` correctly; could add: filter buttons on dashboard (failed only, running only), keyboard-jump to next failure, dark mode |
 
 **Recommended order**: 1-3, 5-6, 8 are done. Next priorities: 14-16 (performance + ref link), 17-19 (quick HTML improvements), 11-12 (high-effort, high-value), or 7, 9 (medium effort).
 

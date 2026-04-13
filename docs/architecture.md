@@ -26,8 +26,9 @@ src/modelica_testing/
 ├── simulators/
 │   ├── __init__.py           # Simulator registry: @register decorator, get_runner() factory
 │   ├── base.py               # SimulatorRunner ABC, VariableResult, TestResult, BatchManifest
+│   ├── progress.py           # Backend-agnostic ProgressReporter (status.json + auto-refresh dashboard.html)
 │   └── dymola/
-│       ├── runner.py          # DymolaRunner (@register("Dymola")), DymolaConfig, batch .mos generation
+│       ├── runner.py          # DymolaRunner (@register("Dymola")), DymolaConfig, batch .mos generation, queue-dispatched batches
 │       ├── mat_reader.py      # Custom MAT4 binary parser with numpy.memmap for selective reads
 │       └── log_parser.py      # Parses dslog.txt + translation_log.txt for statistics
 ├── comparison/
@@ -54,11 +55,15 @@ discover_tests(config)
     → test_registry merges both into list[TestModel]
 
 runner.run_tests(tests)
+    → creates ProgressReporter, registers each test (with report_dir from runner.ref_id_map)
     → generates startup.mos (loads libs, enables OutputCPUtime + TranslationInCommandLog)
     → generates per-test .mos (clearlog, simulateModel, savelog)
-    → generates shutdown.mos, batch .mos
-    → launches Dymola subprocess(es)
+    → generates shutdown.mos, per-batch .mos scripts
+    → splits tests into batches: config.batch_size if set, else ceil(total/parallel)
+    → submits all batches to ThreadPoolExecutor (queue-dispatched; worker_id from thread slot)
+    → emits progress.on_start when batch begins, progress.on_finish per test as results parsed
     → parses dslog.txt (runtime stats) + translation_log.txt (structural stats) per test
+    → progress.finalize() strips auto-refresh from dashboard.html
     → returns list[BatchManifest] with TestRunResult per test
 
 runner.read_results(manifests, tests)

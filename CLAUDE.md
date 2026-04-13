@@ -55,6 +55,10 @@ uv run python -m modelica_testing --config testing.json run --accept
 # Generate HTML report with per-test plots (static + interactive Plotly)
 uv run python -m modelica_testing --config testing.json run --report ./reports
 
+# Parallel run with small-batch queue dispatch (better load balancing + crash isolation)
+uv run python -m modelica_testing --config testing.json run --parallel 4 --batch-size 3
+# Live progress: open work_dir/dashboard.html (auto-refreshes every 2s; URL printed on start)
+
 # Compare without re-running simulations (uses last results)
 uv run python -m modelica_testing --config testing.json compare
 

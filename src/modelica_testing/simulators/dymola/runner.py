@@ -79,7 +79,8 @@ class DymolaRunner(SimulatorRunner):
             test_key = f"test_{i + 1:04d}"
             manifest_map[test_key] = {"model_id": test.model_id, "ref_id": None}
             test_items.append((test, test_key))
-            self.progress.register(test_key, test.model_id)
+            report_dir = self.ref_id_map.get(test.model_id) or test_key
+            self.progress.register(test_key, test.model_id, report_dir=report_dir)
 
         manifest = BatchManifest(
             batch_id=0,

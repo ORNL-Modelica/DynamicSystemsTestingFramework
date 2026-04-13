@@ -91,6 +91,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     _write_id_mapping(store, config)
 
     runner = _get_runner(config)
+    # Pre-populate model_id → "ref_NNNN" map so the live dashboard can link
+    # to the correct per-test report directory (matches generate_report_suite naming).
+    for test in tests:
+        ref_id = store.index.get_id(test.model_id)
+        if ref_id:
+            runner.ref_id_map[test.model_id] = f"ref_{ref_id}"
     manifests = runner.run_tests(tests)
 
     # Enrich batch manifest with ref IDs now that store is available

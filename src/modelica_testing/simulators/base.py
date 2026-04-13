@@ -221,6 +221,9 @@ class SimulatorRunner(ABC):
     def __init__(self, config: Config):
         self.config = config
         self.progress = None  # set to a ProgressReporter during run_tests()
+        # Optional model_id → "ref_NNNN" map for dashboard report links
+        # (set by CLI before run_tests if reference IDs are known)
+        self.ref_id_map: dict[str, Optional[str]] = {}
 
     def run_single_test(
         self,
@@ -268,7 +271,8 @@ class SimulatorRunner(ABC):
             test_key = f"test_{i + 1:04d}"
             manifest_map[test_key] = test.model_id
             test_items.append((test, test_key, i + 1))
-            self.progress.register(test_key, test.model_id)
+            report_dir = self.ref_id_map.get(test.model_id) or test_key
+            self.progress.register(test_key, test.model_id, report_dir=report_dir)
 
         manifest = BatchManifest(
             batch_id=0,

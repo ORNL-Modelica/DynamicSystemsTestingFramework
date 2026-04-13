@@ -81,6 +81,7 @@ class TestStatus:
     elapsed: Optional[float] = None
     detail: Optional[str] = None
     worker_id: Optional[int] = None
+    report_dir: Optional[str] = None  # e.g., "ref_0042" or "test_0005" — matches generate_report_suite naming
 
 
 class ProgressReporter:
@@ -97,9 +98,11 @@ class ProgressReporter:
         self._tests: dict[str, TestStatus] = {}
         self._start_time = time.monotonic()
 
-    def register(self, test_key: str, model_id: str) -> None:
+    def register(self, test_key: str, model_id: str, report_dir: Optional[str] = None) -> None:
         with self._lock:
-            self._tests[test_key] = TestStatus(test_key=test_key, model_id=model_id)
+            self._tests[test_key] = TestStatus(
+                test_key=test_key, model_id=model_id, report_dir=report_dir,
+            )
         self._write()
 
     def on_start(self, test_key: str, worker_id: Optional[int] = None) -> None:
@@ -213,12 +216,17 @@ class ProgressReporter:
             worker_str = f"W{t['worker_id']}" if t["worker_id"] is not None else ""
             detail = html_mod.escape(t["detail"] or "")
             test_key = html_mod.escape(t["test_key"])
+            model_id = html_mod.escape(t["model_id"])
             # Test directory link (always exists during/after run)
             test_link = f'<a href="{test_key}/">{test_key}</a>'
+            # Per-test report link (matches generate_report_suite naming);
+            # 404s harmlessly if --report wasn't used or hasn't finished yet
+            report_dir = t.get("report_dir") or t["test_key"]
+            model_link = f'<a href="reports/{html_mod.escape(report_dir)}/interactive.html">{model_id}</a>'
             rows.append(
                 f'<tr class="{t["status"]}">'
                 f'<td>{test_link}</td>'
-                f'<td>{html_mod.escape(t["model_id"])}</td>'
+                f'<td>{model_link}</td>'
                 f'<td><span class="status {t["status"]}">{t["status"]}</span></td>'
                 f'<td>{worker_str}</td>'
                 f'<td>{elapsed_str}</td>'

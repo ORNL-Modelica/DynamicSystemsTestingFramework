@@ -158,6 +158,20 @@
 - `pipe.T[1]` matches nothing because `[1]` is treated as a character class matching only `1`
 - Use the custom `_pattern_to_regex()` instead
 
+### Backend-agnostic live progress via meta-refresh dashboard
+- `ProgressReporter` (`simulators/progress.py`) holds in-memory `TestStatus` per test (`queued` / `running` / `passed` / `failed` / `timed_out`) plus elapsed/detail/worker_id
+- Writes `status.json` (structured, for tooling) + `dashboard.html` (auto-refreshes via `<meta http-equiv="refresh" content="2">`) to `work_dir` on every state change — no server needed, works over `file://`
+- Atomic write pattern: unique tmp filenames (`status.json.{pid}.{uuid}.tmp`) + a dedicated `_write_lock` serializing the write+replace. Both are required on Windows where `replace` fails when another thread holds the file
+- `register(test_key, model_id, report_dir)` accepts a per-test report dir name (`"ref_NNNN"` or `"test_NNNN"`) so the dashboard's model-name link points at the canonical per-test report (`reports/{report_dir}/interactive.html`) — matches `generate_report_suite` naming
+- `runner.ref_id_map: dict[model_id, "ref_NNNN"]` is populated by the CLI before `run_tests` (from `ReferenceStore.index`); runner consults it at registration time so links work even mid-run before the report is generated
+- `finalize()` strips the meta-refresh tag so the final dashboard doesn't keep reloading after the run completes
+
+### Configurable batch size with queue dispatch
+- `Config.batch_size` (CLI: `--batch-size N`). Unset → one big batch per worker (current behavior, minimizes library reloads). Set → many small batches, all submitted to the `ThreadPoolExecutor`; workers pull next batch as they free up
+- Crash/timeout blast radius is bounded by `batch_size` — a hung test only takes down its batch, not its worker's whole share
+- `worker_id` for the dashboard comes from the actual pool thread slot via `threading.current_thread().name` (regex-matched suffix), not the batch index — stable attribution across many batches per worker
+- Tradeoff: smaller batches reload Dymola's library more often. Sweet spot is ~3-10 depending on per-test runtime
+
 ### Don't run Dymola per-test in separate processes
 - Library loading overhead (30-60s) dominates. Batch execution loads once per worker.
 
