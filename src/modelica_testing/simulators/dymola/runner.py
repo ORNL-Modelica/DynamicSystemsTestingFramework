@@ -69,6 +69,9 @@ class DymolaRunner(SimulatorRunner):
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         total = len(tests)
 
+        from ..progress import ProgressReporter
+        self.progress = ProgressReporter(self.config.work_dir, total)
+
         # Build test keys and manifest
         test_items = []
         manifest_map = {}
@@ -76,6 +79,7 @@ class DymolaRunner(SimulatorRunner):
             test_key = f"test_{i + 1:04d}"
             manifest_map[test_key] = {"model_id": test.model_id, "ref_id": None}
             test_items.append((test, test_key))
+            self.progress.register(test_key, test.model_id)
 
         manifest = BatchManifest(
             batch_id=0,
@@ -97,41 +101,65 @@ class DymolaRunner(SimulatorRunner):
         startup_path = _generate_startup_mos(self.config, self.dymola_config)
         shutdown_path = _generate_shutdown_mos(self.config)
 
-        # Split tests into batches for parallel workers
+        # Split tests into batches for parallel workers.
+        # If batch_size is set, chunks are that size (many small batches, queue-dispatched
+        # to workers — better load balancing, smaller crash blast radius).
+        # Otherwise use one big batch per worker (original behavior, minimizes library reloads).
         n_workers = max(1, self.config.parallel)
-        batch_size = math.ceil(total / n_workers)
+        if self.config.batch_size and self.config.batch_size > 0:
+            batch_size = self.config.batch_size
+        else:
+            batch_size = math.ceil(total / n_workers)
         batches = []
         for i in range(0, total, batch_size):
             batches.append(test_items[i:i + batch_size])
 
         print(
-            f"Running {total} tests in {len(batches)} batch(es)"
+            f"Running {total} tests in {len(batches)} batch(es) of up to {batch_size}"
             f" (parallel={n_workers}, timeout={self.config.timeout}s/test)",
             file=sys.stderr,
         )
+        dashboard = self.config.work_dir / "dashboard.html"
+        print(f"Live progress: {dashboard.resolve().as_uri()}", file=sys.stderr)
 
         # Generate and run batch scripts
         all_results: list[TestRunResult] = []
 
         if n_workers <= 1:
-            # Sequential: single batch
-            results = self._run_batch(
-                batches[0], startup_path, shutdown_path, 0, total
-            )
-            all_results.extend(results)
+            # Sequential: run all batches in order on a single worker
+            offset = 0
+            for batch in batches:
+                results = self._run_batch(
+                    batch, startup_path, shutdown_path, offset, total, worker_id=0,
+                )
+                all_results.extend(results)
+                offset += len(batch)
         else:
-            # Parallel: one thread per batch
+            # Parallel: submit every batch to the pool; workers pull next
+            # batch as they become free (natural load balancing + crash isolation).
+            # worker_id attribution comes from the thread name so the dashboard can
+            # group tests by actual worker slot rather than batch index.
             from concurrent.futures import ThreadPoolExecutor, as_completed
+            import threading, re
+
+            def _worker_slot() -> int:
+                m = re.search(r"(\d+)$", threading.current_thread().name)
+                return int(m.group(1)) if m else 0
+
+            def _run(batch, offset):
+                return self._run_batch(
+                    batch, startup_path, shutdown_path,
+                    offset, total, worker_id=_worker_slot(),
+                )
 
             offset = 0
             futures = {}
-            with ThreadPoolExecutor(max_workers=n_workers) as pool:
-                for batch_idx, batch in enumerate(batches):
-                    future = pool.submit(
-                        self._run_batch, batch, startup_path, shutdown_path,
-                        offset, total,
-                    )
-                    futures[future] = batch_idx
+            with ThreadPoolExecutor(
+                max_workers=n_workers, thread_name_prefix="dym-worker"
+            ) as pool:
+                for batch in batches:
+                    future = pool.submit(_run, batch, offset)
+                    futures[future] = offset
                     offset += len(batch)
 
                 for future in as_completed(futures):
@@ -151,6 +179,8 @@ class DymolaRunner(SimulatorRunner):
         )
 
         manifest.results = all_results
+        if self.progress is not None:
+            self.progress.finalize()
         return [manifest]
 
     def _run_batch(
@@ -160,10 +190,18 @@ class DymolaRunner(SimulatorRunner):
         shutdown_path: Path,
         index_offset: int,
         total: int,
+        worker_id: Optional[int] = None,
     ) -> list[TestRunResult]:
         """Run a batch of tests in a single Dymola session."""
         work_dir = self.config.work_dir
         batch_id = index_offset  # Use offset as unique batch ID
+
+        # Emit start events for all tests in this batch — we can't observe
+        # individual test transitions within a batched Dymola session, but the
+        # user at least knows which tests are currently in flight.
+        if self.progress is not None:
+            for _, test_key in test_items:
+                self.progress.on_start(test_key, worker_id=worker_id)
 
         # Generate the batch script
         batch_script = _generate_batch_mos(
@@ -201,15 +239,21 @@ class DymolaRunner(SimulatorRunner):
             proc.communicate()
             # Mark all tests as timed out
             results = []
+            per_elapsed = batch_elapsed / len(test_items)
             for test, test_key in test_items:
                 results.append(TestRunResult(
                     model_id=test.model_id,
                     test_key=test_key,
                     success=False,
-                    elapsed=batch_elapsed / len(test_items),
+                    elapsed=per_elapsed,
                     error_message=f"Batch timed out after {total_timeout}s",
                     timed_out=True,
                 ))
+                if self.progress is not None:
+                    self.progress.on_finish(
+                        test_key, success=False, elapsed=per_elapsed,
+                        detail="Batch timed out", timed_out=True,
+                    )
             return results
 
         except FileNotFoundError:
@@ -222,6 +266,11 @@ class DymolaRunner(SimulatorRunner):
                     elapsed=0.0,
                     error_message=f"Dymola not found: {self.config.simulator_path}",
                 ))
+                if self.progress is not None:
+                    self.progress.on_finish(
+                        test_key, success=False, elapsed=0.0,
+                        detail="Dymola not found",
+                    )
             return results
 
         # Evaluate results per test: check if .mat file was produced
@@ -261,18 +310,23 @@ class DymolaRunner(SimulatorRunner):
                 except OSError:
                     pass
 
+            per_elapsed = batch_elapsed / len(test_items)
             if mat_path.exists() and not translation_failed:
                 _print_progress(
                     index_offset + i + 1, total, label, "ok",
-                    elapsed=batch_elapsed / len(test_items),
+                    elapsed=per_elapsed,
                 )
                 results.append(TestRunResult(
                     model_id=test.model_id,
                     test_key=test_key,
                     success=True,
-                    elapsed=batch_elapsed / len(test_items),
+                    elapsed=per_elapsed,
                     statistics=statistics,
                 ))
+                if self.progress is not None:
+                    self.progress.on_finish(
+                        test_key, success=True, elapsed=per_elapsed,
+                    )
             else:
                 msg = "Translation failed" if translation_failed else "No result file produced"
                 # Try to get error from dslog
@@ -289,16 +343,21 @@ class DymolaRunner(SimulatorRunner):
 
                 _print_progress(
                     index_offset + i + 1, total, label, "FAIL",
-                    elapsed=batch_elapsed / len(test_items), detail=msg[:80],
+                    elapsed=per_elapsed, detail=msg[:80],
                 )
                 results.append(TestRunResult(
                     model_id=test.model_id,
                     test_key=test_key,
                     success=False,
-                    elapsed=batch_elapsed / len(test_items),
+                    elapsed=per_elapsed,
                     error_message=msg,
                     statistics=statistics,
                 ))
+                if self.progress is not None:
+                    self.progress.on_finish(
+                        test_key, success=False, elapsed=per_elapsed,
+                        detail=msg[:120],
+                    )
 
         return results
 

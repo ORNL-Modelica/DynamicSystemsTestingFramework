@@ -42,7 +42,8 @@
       "Bash(find:*)",
       "Bash(find src:*)",
       "Bash(grep -v ':0$')",
-      "Bash(UV_LINK_MODE=copy uv run pytest -q)"
+      "Bash(UV_LINK_MODE=copy uv run pytest -q)",
+      "Bash(UV_PROJECT_ENVIRONMENT=/tmp/mt-venv uv run pytest -q)"
     ]
   }
 }

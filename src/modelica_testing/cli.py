@@ -632,6 +632,8 @@ def _build_config(args: argparse.Namespace) -> Config:
         kwargs["work_dir"] = Path(args.work_dir)
     if hasattr(args, "parallel") and args.parallel:
         kwargs["parallel"] = args.parallel
+    if hasattr(args, "batch_size") and args.batch_size is not None:
+        kwargs["batch_size"] = args.batch_size
     if hasattr(args, "tolerance") and args.tolerance:
         kwargs["tolerance"] = args.tolerance
     if hasattr(args, "final_only") and args.final_only:
@@ -696,6 +698,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     p_run.add_argument("--work-dir", type=str, help="Working directory for output")
     p_run.add_argument("--parallel", type=int, help="Number of parallel Dymola instances")
+    p_run.add_argument("--batch-size", type=int, dest="batch_size",
+                       help="Tests per Dymola session (default: all-per-worker). Small values (3-5) give better load balancing and crash isolation but reload the library more often.")
     p_run.add_argument("--tolerance", type=float, help="Override comparison tolerance")
     p_run.add_argument("--final-only", action="store_true", help="Compare only final values")
     p_run.add_argument(

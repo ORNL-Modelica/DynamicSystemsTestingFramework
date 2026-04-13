@@ -167,6 +167,7 @@ class Config:
 
     # Simulation / comparison
     parallel: int = 1
+    batch_size: Optional[int] = None  # tests per Dymola session; None = ceil(total/parallel) (one big batch per worker)
     tolerance: float = DEFAULT_COMPARISON_TOLERANCE
     final_only: bool = False
     timeout: int = 60

@@ -220,6 +220,7 @@ class SimulatorRunner(ABC):
 
     def __init__(self, config: Config):
         self.config = config
+        self.progress = None  # set to a ProgressReporter during run_tests()
 
     def run_single_test(
         self,
@@ -257,6 +258,9 @@ class SimulatorRunner(ABC):
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         total = len(tests)
 
+        from .progress import ProgressReporter
+        self.progress = ProgressReporter(self.config.work_dir, total)
+
         # Build test keys and manifest
         test_items = []
         manifest_map = {}
@@ -264,6 +268,7 @@ class SimulatorRunner(ABC):
             test_key = f"test_{i + 1:04d}"
             manifest_map[test_key] = test.model_id
             test_items.append((test, test_key, i + 1))
+            self.progress.register(test_key, test.model_id)
 
         manifest = BatchManifest(
             batch_id=0,
@@ -312,6 +317,7 @@ class SimulatorRunner(ABC):
         )
 
         manifest.results = run_results
+        self.progress.finalize()
         return [manifest]
 
     def read_results(
