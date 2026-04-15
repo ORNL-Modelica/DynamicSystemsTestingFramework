@@ -1,5 +1,50 @@
 # Architecture
 
+> See [vision.md](vision.md) for where the framework is going. This document describes both the **forward conceptual model** (the six-layer abstraction every phase is converging on) and the **current state** (what is implemented today). Sections labelled *Current* describe today's code; sections labelled *Forward* describe abstractions we are aligning the code toward.
+
+## Conceptual Model (Forward)
+
+The framework is a pipeline of six typed, plug-in layers:
+
+```
+  Source          → what holds the behavior to test
+    │               (Modelica library, FMU, Julia script, Simulink model, CSV / HDF5 data file)
+    ▼
+  Discovery       → how tests are produced from a Source
+    │               (.mo UnitTests scan, test_spec.json, FMU directory scan, experiment registry)
+    ▼
+  Backend         → how a test is executed, with declared capabilities
+    │               (Dymola Python / FMPy / OMPython / JuliaCall / MATLAB engine / data-file ingest)
+    ▼
+  Dataset         → typed result
+    │               (TimeSeries, Scalars, Events, Spectrum, Distribution; Field reserved)
+    ▼
+  Metric          → scoring function on Dataset vs. baseline
+    │               (NRMSE, tube, final-only, event-timing, spectral, Fréchet, KS, user-defined)
+    ▼
+  MetricTree      → composition: AND / OR / weighted / K-of-N → overall pass/fail + diagnostics
+```
+
+**Backend capabilities** are declared on the runner contract, not inferred from type:
+- `supports_persistent_workers`, `supports_batch_fallback`, `supports_fmu_export`,
+  `supports_experiment_ingest`, `produced_datasets`.
+Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` → `FMPy.simulate()`) are composed from capabilities, not hardcoded modes.
+
+### Layer ↔ Code mapping (Current)
+
+| Layer | Current implementation | Status |
+|---|---|---|
+| Source | Modelica `package.mo` directory (via `config.package_path`) | single concrete type |
+| Discovery | `discovery/mo_parser.py` + `discovery/spec_parser.py` | two modes, both Modelica-flavored |
+| Backend | `simulators/` registry; only `DymolaRunner` implemented | registry designed for extension, never exercised |
+| Dataset | Implicit `TimeSeries` (produced by `read_result()`) | one concrete type, not formalised |
+| Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `FinalOnlyMode` | strategy pattern already in place |
+| MetricTree | Implicit AND over per-variable `ComparisonMode` | no explicit tree, no OR / weighted / K-of-N |
+
+The forward work is to make each layer *explicit, typed, and user-extensible* — most of the structural skeletons are already there, they just aren't exposed as first-class plug-in points. See [extensibility.md](extensibility.md) for per-layer plug-in contracts.
+
+---
+
 ## Project Layout
 
 ```
@@ -136,11 +181,57 @@ The `comparison` section is optional. When present, it stores the comparison tol
 No persistent manifest file for the index. The in-memory `RefIndex` is built by scanning ref files at startup.
 Valid statuses: `active` (normal), `skip` (temporarily excluded), `obsolete` (pending deletion).
 
+### Forward: multiple named baselines
+
+The reference file evolves from a single flat baseline to a map of named baselines, each with provenance metadata. This subsumes regression testing, validation-against-experiment, and cross-simulator verification in one abstraction (see [vision.md](vision.md) "Multiple named baselines").
+
+```json
+{
+  "model_id": "...", "test_id": "0001", "status": "active",
+  "baselines": {
+    "primary": {
+      "provenance": {
+        "origin": "dymola-regression",
+        "captured_at": "2026-01-15T12:34:56Z",
+        "simulator": "Dymola 2024x",
+        "os": "windows",
+        "notes": "Accepted after refactor of heat-transfer coefficient.",
+        "citation": null
+      },
+      "simulation": {"stop_time": 100, "tolerance": 1e-4, ...},
+      "time": [...], "variables": [...],
+      "diagnostics": [...], "statistics": {...}
+    },
+    "experiment": {
+      "provenance": {
+        "origin": "rig-run-2024-03-15",
+        "captured_at": "2024-03-15T09:20:00Z",
+        "notes": "Benchmark 3B, lab 2 test stand. Pressure transducer calibrated 2024-02-01.",
+        "citation": "Internal report XYZ-2024-042, §4.3"
+      },
+      "time": [...], "variables": [...]
+    },
+    "analytical": {
+      "provenance": {"origin": "closed-form", "citation": "Nomura et al. 2019, eq. 12"},
+      "time": [...], "variables": [...]
+    }
+  },
+  "metric_tree": { ... },
+  "n_vars": 3
+}
+```
+
+Provenance fields are open-ended (`origin`, `captured_at`, `simulator`, `os`, `notes`, `citation`, plus arbitrary user-supplied metadata). This enables traceability — critical for experiment-backed baselines where *where the data came from* matters as much as the data itself.
+
+The current single-baseline layout is the degenerate case: one baseline named `"primary"` with provenance derived from the runner. Migration is mechanical.
+
 Two manifest files are written to the work directory before simulation starts:
 - `batch_manifest.json` — maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN"}` for all tests in the batch
 - `reference_manifest.json` — maps ref IDs to model names; also available via `manifest dump` CLI command
 
 ## Simulator Abstraction
+
+### Current
 
 ```
 SimulatorRunner (ABC)
@@ -153,3 +244,19 @@ SimulatorRunner (ABC)
               ├── run_tests() — batch .mos scripts, parallel workers
               └── read_result() — mat_reader + variable pattern resolution
 ```
+
+### Forward
+
+Rename to `Backend` (a `Runner` is one execution strategy *within* a Backend). Each Backend declares capabilities; the framework enables/disables workflows based on what the Backend supports rather than on its class.
+
+```
+Backend (ABC)
+  ├── capabilities: frozenset[Capability]           # supports_persistent_workers, supports_batch_fallback,
+  │                                                  # supports_fmu_export, supports_experiment_ingest, ...
+  ├── produced_datasets: frozenset[DatasetType]    # {TimeSeries, Events}, or {TimeSeries} for data-file ingest
+  ├── run_tests(tests) → list[BatchManifest]       # orchestration (persistent workers / batch / ingest)
+  ├── read_result(test) → Dataset                  # typed result (not only TimeSeries)
+  └── export_fmu(test) → Path                      # optional; present iff supports_fmu_export
+```
+
+Concrete targets (roadmap): `DymolaBackend` (current, refactored), `FmpyBackend` (Phase 2), `OmcBackend`, `JuliaBackend`, `MatlabBackend`, `DataFileBackend` (experiments).

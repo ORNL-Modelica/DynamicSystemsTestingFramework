@@ -2,9 +2,11 @@
 
 ## Project Overview
 
-**ModelicaTesting** is a standalone Python tool for regression testing Modelica libraries. It is library-agnostic — it works with any Modelica library that uses the `UnitTests` pattern for tracking simulation variables, or with external test specifications (`test_spec.json`).
+**ModelicaTesting** (working name — expected to be renamed once the multi-backend abstraction stabilizes) is a Python framework for regression and unit testing of time-dependent system behavior.
 
-The tool discovers tests by scanning `.mo` files and/or reading `test_spec.json`, runs simulations via Dymola (batch mode), compares results against stored references using NRMSE or tube-based envelope comparison, and reports pass/fail.
+**Current state**: a Dymola-native, interactive regression harness for Modelica libraries. Discovers tests by scanning `.mo` files and/or reading `test_spec.json`, simulates via Dymola (Python interface by default, batch `.mos` fallback), compares results against stored references (NRMSE with event-boundary handling, tolerance tubes, or final-only), and reports via live dashboard + interactive Plotly HTML + JUnit XML.
+
+**Forward direction**: [docs/vision.md](docs/vision.md) lays out a six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree) enabling additional backends (FMPy / OpenModelica / Julia / Simulink / data-file ingest), additional dataset types (events, spectra, distributions), and composable metrics (AND / OR / weighted / K-of-N). The current Dymola implementation is the first consumer of the abstraction, not its reference model. See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
 ## Project Structure
 
