@@ -117,7 +117,7 @@ A Backend must:
 
 ### Current
 
-`SimulatorRunner` ABC with `DymolaRunner` as the only concrete implementation. No capability declarations; `supports_persistent_workers` and `supports_batch_fallback` are true *de facto* but not exposed. Forward work renames `SimulatorRunner` → `Backend` and adds capability declarations.
+`SimulatorRunner` ABC with `DymolaRunner` as the only concrete implementation. Phase 1.2 added `Capability` + `DatasetType` enums and the `capabilities` / `produced_datasets` class-attribute contract. `DymolaRunner` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT}` and produces `{TIME_SERIES}`. The framework doesn't yet consult these declarations (nothing gates on them yet) — they exist so Phase 2's second backend can slot in without a contract break. Rename `SimulatorRunner` → `Backend` is deferred until the second backend lands.
 
 ---
 
@@ -137,7 +137,7 @@ Types:
 
 ### Current
 
-Only `TimeSeries`, implicit (no typed class — it's a dict on `TestResult`). Forward work adds typed Dataset classes and wires `read_result` return type.
+Only `TimeSeries` materialized (as `TestResult.variables` — list of `VariableResult`). The `DatasetType` enum exists and backends declare `produced_datasets`, but no typed `Dataset` wrapper class has been introduced — it would be gratuitous churn with one concrete type. The wrapper lands when a second Dataset type (e.g. `Events` for Gap D metrics) actually needs to discriminate.
 
 ---
 
@@ -250,7 +250,7 @@ Composed case:
 
 ### Current
 
-MetricTree does not exist as a first-class concept yet. The implicit tree is `AND(NrmseMode(var_1), NrmseMode(var_2), ...)`. Forward work introduces MetricTree and wires the current flat-AND as a degenerate instance.
+Phase 1.5 introduced the MetricTree abstraction as a first-class module: `src/modelica_testing/comparison/metric_tree.py` exposes `MetricResult` plus `AndCombinator` / `OrCombinator` / `KOfNCombinator` / `WarnCombinator` and an `implicit_and_tree(variables)` adapter that reproduces the current flat-AND semantics exactly (covered by 18 unit tests in `tests/test_metric_tree.py`). The main comparison pipeline still computes pass/fail directly from per-variable results — wiring MetricTree in as the canonical evaluator, and accepting user-authored trees from `test_spec.json`, is deferred to a later phase where real use cases (OR / weighted / K-of-N / warn on cross-baseline) drive the schema design.
 
 ---
 

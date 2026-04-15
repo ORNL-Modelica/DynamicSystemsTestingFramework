@@ -8,6 +8,8 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out a six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree) enabling additional backends (FMPy / OpenModelica / Julia / Simulink / data-file ingest), additional dataset types (events, spectra, distributions), and composable metrics (AND / OR / weighted / K-of-N). The current Dymola implementation is the first consumer of the abstraction, not its reference model. See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
+**Phase 1 status (complete)**: Foundation abstractions are in place — `Capability` / `DatasetType` enums declared on `DymolaRunner`; `VariableComparison` carries a `diagnostics` bag; `comparison/metric_tree.py` provides `MetricResult` + `And/Or/KOfN/WarnCombinator` + `implicit_and_tree()` (unit-tested, not yet wired into the pipeline); `Config.source_type` reserved; `examples/modelica/ModelicaTestingLib/` relocated; reference-file `Baseline` view supports a hybrid schema for named baselines (primary stays flat; additional baselines live under an optional `baselines` key). Zero runtime-behavior change. Decisions D44–D47 in [docs/decisions.md](docs/decisions.md). Phase 2 (FMPy backend + Reference-FMUs) is the next unit of work.
+
 ## Project Structure
 
 ```

@@ -47,6 +47,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 39 | Live log tailing for per-test progress | M | Medium | Inside a Dymola batch, individual test transitions are invisible. Tail stdout/translation_log.txt and parse "Translating ModelX" / "Integration terminated" markers to flip dashboard status mid-batch. Per-backend log-marker hook |
 | 40 | ~~Persistent Dymola workers with dynamic dispatch~~ | H | High | **DONE** — now the default (`--batch` inverse escape hatch). `DymolaInterface` auto-discovered (`.whl`/`.egg`), launches parallelized via `dymola_lock` patch, PID-tracked via `._dymola_process.pid`. Per-test timeout watchdog with disk-check rescue (trusts dsfinal.txt + reached stop_time). Worker restart (cap 3). Per-phase timing breakdown (translate/sim/other/total, rounded to 2 decimals), phase visible live on dashboard. Noise suppression during kills via `DymolaLogger` monkey-patch. `check-dymola` diagnoses loader |
 | 41 | Dashboard refinements | L | Low | Filter buttons on dashboard (failed only, running only), keyboard-jump to next failure, dark mode. Index page got sortable columns + timing columns — dashboard could match |
+| 42 | Quick-save selected results to reference | M | High | CLI: `accept --filter X` reads existing work_dir results and writes to reference, no resim. HTML report: "Copy accept command" button next to "Copy rerun command". Pairs with Phase 1.7 multi-baseline (accept writes to `primary` baseline by default; `--baseline <name>` overrides) |
+| 43 | Per-test timeout + other per-test knobs in test_spec | L | Medium | Extend `test_spec.json` to allow per-test `timeout`, `batch_size_hint`, etc. Currently only simulation/comparison settings are per-test. Show in per-test report (Sim Params section). Belongs in same schema expansion as MetricTree |
+| 44 | Dymola-interface resilience tracking | M | Medium | Port-bind race on worker startup (~1/20 fails), "Mismatch request/response ID in JSON-RPC call", "Remote end closed connection without response". Existing worker-restart rescues most. Could add: post-port-find `SO_REUSEADDR`+bind-probe before returning, broader noise-pattern filter, exponential-backoff retry on RPC mismatch |
 
 **Recommended order**: 1-3, 5-6, 8 are done. Next priorities: 14-16 (performance + ref link), 17-19 (quick HTML improvements), 11-12 (high-effort, high-value), or 7, 9 (medium effort).
 
@@ -394,3 +397,35 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Added `status` and `date_added` to metadata table
 - Diagnostic finals (CPUtime, EventCounter) were already merged into simulation stats table with change highlighting
 - Fixed metadata table column header from "Simulation" to "Current"
+
+## Quick-save selected results to reference (#42)
+
+- **Motivation**: Current accept workflow requires either `-i` (one-at-a-time review) or `--accept` (all at once). Neither is ideal when the user has already reviewed the HTML report and knows which subset of results to accept. Forcing a resim via `run --filter X --accept` is wasteful when the results are already on disk from the previous run.
+- **Proposed CLI**: `modelica-testing accept --filter X` — reads `work_dir` artefacts and writes to reference, no simulation. Mirrors the `run --filter` UX exactly. Accepts `@file` and glob syntax.
+- **HTML report**: add a "Copy accept command" button next to "Copy rerun command" on the index page. Uses the same row-selection UI. Generated command shape: `modelica-testing [--config ...] accept --filter "Model1,Model2"` (or `@selected.txt` for >3).
+- **Phase 1.7 interaction**: once named baselines land, `accept` needs a `--baseline <name>` flag (defaults to `primary`). Accepting against `experiment` would require the user to have supplied experiment data separately — probably out of scope for the HTML-button flow; CLI-only.
+- **Edge cases**: what if the work_dir is from a different filter-run than the one the user selected? Need to verify each selected test has actual results before writing. Silent skip vs. error is a UX call.
+
+## Per-test timeout + other per-test knobs in test_spec (#43)
+
+- **Motivation**: Today `timeout` is global (`config.timeout`, default 60s). Complex tests legitimately need longer; fast tests could benefit from shorter bounds to fail-fast. Users already think per-test ("this CIET nureth model takes 10+ minutes") — the config doesn't reflect that.
+- **Additions to `test_spec.json`**:
+  - `simulation.timeout` (seconds; overrides config default)
+  - `simulation.batch_size_hint` (run alone / with others) — useful for resource-intensive tests
+  - `simulation.memory_limit_mb` (future) — when the backend supports it
+- **Report surface**: show the effective per-test timeout in the per-test report's "Simulation Parameters" section (like we already show stop_time, tolerance, method).
+- **Schema compatibility**: additive — existing specs continue to use the global default.
+- **Scope alignment**: belongs in the same schema pass that introduces MetricTree (Phase 3). Both are `test_spec` extensions; handle them together to avoid two schema bumps.
+
+## Dymola-interface resilience tracking (#44)
+
+- **Observed symptoms** (pre-existing, not regression):
+  - *Port race*: `Worker N: start FAILED — The port XXXXX is already in use. Please use another port.` Occurs ~1/20 worker starts under `--parallel 20`. Framework auto-recovers via worker-restart logic (`persistent_runner.py:723`).
+  - *RPC ID mismatch*: `DymolaInterface error: Mismatch request/response ID in JSON-RPC call.` Dymola's internal RPC got confused — usually a timed-out request whose late response collided with the next request's ID.
+  - *Remote end closed*: `Remote end closed connection without response.` Dymola subprocess died or the HTTP channel dropped. Not currently in `_NOISE_PATTERNS`.
+- **Possible mitigations**:
+  - *Port race*: after `_find_available_port`, try a brief `socket.bind(port)` probe inside the lock; if it fails, loop to next candidate. Closes the find-to-bind window.
+  - *RPC mismatch*: on this exception, force a worker restart rather than propagating (one-shot retry at the test level). Existing watchdog already does this via timeout — make the exception path symmetric.
+  - *Remote end closed*: add to `_NOISE_PATTERNS` to suppress noise; treat as worker death and restart.
+- **Diagnostic telemetry**: emit a per-worker `resilience_events.json` sidecar in `work_dir` counting start-failures, RPC-mismatches, and worker-restarts so users can see whether parallelism is healthy.
+- **When to work on**: watch for frequency in real-world use. If it's 1-in-20 starts and the rescue always works, leave it. If it grows or masks real failures, promote to Phase 2 work.

@@ -3,15 +3,22 @@
 Reference files (ref_NNNN.json) are the source of truth. Each file contains
 model_id, test_id, status, date_added, and last_updated metadata. An in-memory
 index is built by scanning ref files — no persistent manifest file needed.
+
+Phase 1.7a: a `Baseline` view is exposed alongside the raw-dict API. Today the
+on-disk format is flat (one implicit baseline per file); the view synthesizes
+a single baseline named ``"primary"`` from the flat fields. Phase 1.7b will
+write the new format (``baselines: {name: {...}}``) and this reader will
+present both formats through the same view API.
 """
 
 import csv
 import json
 import logging
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -20,6 +27,108 @@ from ..discovery.test_registry import TestModel
 from ..simulators import TestResult, VariableResult
 
 logger = logging.getLogger(__name__)
+
+#: Name of the default (and, for legacy flat files, only) baseline.
+PRIMARY_BASELINE = "primary"
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """A single named baseline extracted from a reference file.
+
+    Phase 1.7a: populated either from the new ``baselines: {name: {...}}``
+    schema, or synthesized from a legacy flat reference file. Readers can
+    treat both the same way. See docs/architecture.md "Forward: multiple
+    named baselines".
+    """
+
+    #: Baseline name (e.g. ``"primary"``, ``"experiment"``, ``"analytical"``).
+    name: str
+    #: Shared time vector (all variables in this baseline share one time grid).
+    time: list[float]
+    #: Variable entries: ``[{"index", "name", "values"}, ...]``.
+    variables: list[dict]
+    #: Diagnostic variable entries (same shape as ``variables``).
+    diagnostics: list[dict] = field(default_factory=list)
+    #: Simulation parameters that produced this baseline.
+    simulation: dict = field(default_factory=dict)
+    #: Comparison configuration (tolerance, variable_overrides).
+    comparison: dict = field(default_factory=dict)
+    #: Statistics captured at baseline-acceptance time.
+    statistics: dict = field(default_factory=dict)
+    #: Provenance metadata: origin, captured_at, simulator, os, notes,
+    #: citation, plus arbitrary user metadata. For legacy flat files this
+    #: is synthesized from ``date_added`` / ``last_updated``.
+    provenance: dict = field(default_factory=dict)
+
+
+def _baseline_from_flat(data: dict) -> Baseline:
+    """Synthesize a ``"primary"`` baseline from a legacy flat reference dict.
+
+    The legacy format has fields (``time``, ``variables``, ``comparison``, ...)
+    at the top level of the ref JSON. This adapter lifts them into a Baseline
+    view so readers can target a single API across schema versions.
+    """
+    provenance: dict[str, Any] = {"origin": "legacy-flat"}
+    if "date_added" in data:
+        provenance["captured_at"] = data["date_added"]
+    if "last_updated" in data and data.get("last_updated") != data.get("date_added"):
+        provenance["last_updated"] = data["last_updated"]
+
+    return Baseline(
+        name=PRIMARY_BASELINE,
+        time=data.get("time", []),
+        variables=data.get("variables", []),
+        diagnostics=data.get("diagnostics", []),
+        simulation=data.get("simulation", {}),
+        comparison=data.get("comparison", {}),
+        statistics=data.get("statistics", {}),
+        provenance=provenance,
+    )
+
+
+def _extract_baselines(data: dict) -> dict[str, Baseline]:
+    """Return all baselines in a reference file, keyed by name.
+
+    Ref files use a **hybrid schema**:
+
+    * The ``"primary"`` baseline is always stored as flat top-level fields
+      (``time``, ``variables``, ``simulation``, ``comparison``,
+      ``statistics``, ``diagnostics``). This preserves compatibility with
+      every existing reader and every existing ref file.
+    * Optional *additional* named baselines (``experiment``, ``analytical``,
+      user-defined) live under a top-level ``baselines`` map whose entries
+      have the same per-baseline shape as the flat primary.
+
+    A file with only flat fields is read as ``{"primary": Baseline}``.
+    A file that also carries ``baselines`` is read as
+    ``{"primary": ..., <additional>: ..., ...}``. ``primary`` in a
+    ``baselines`` map is not legal — the flat fields are primary.
+    """
+    out: dict[str, Baseline] = {PRIMARY_BASELINE: _baseline_from_flat(data)}
+
+    extras = data.get("baselines")
+    if isinstance(extras, dict):
+        for name, entry in extras.items():
+            if name == PRIMARY_BASELINE:
+                # Flat fields are authoritative for primary; ignore any
+                # accidental primary entry under baselines.
+                logger.warning(
+                    "Ref file has a 'primary' entry under 'baselines' — "
+                    "ignoring; the flat top-level fields are the primary baseline."
+                )
+                continue
+            out[name] = Baseline(
+                name=name,
+                time=entry.get("time", []),
+                variables=entry.get("variables", []),
+                diagnostics=entry.get("diagnostics", []),
+                simulation=entry.get("simulation", {}),
+                comparison=entry.get("comparison", {}),
+                statistics=entry.get("statistics", {}),
+                provenance=entry.get("provenance", {}),
+            )
+    return out
 
 # Pattern matching ref_NNNN.json filenames
 _REF_FILE_PATTERN = re.compile(r"^ref_(\d{4,})\.json$")
@@ -150,7 +259,12 @@ class ReferenceStore:
         return self.ref_dir / RefIndex.ref_filename(test_id)
 
     def get_reference(self, model_id: str) -> Optional[dict]:
-        """Load reference data for a model. Returns None if not found."""
+        """Load reference data for a model. Returns None if not found.
+
+        Returns the raw dict as stored on disk. Most callers should prefer
+        :meth:`get_baseline` or :meth:`get_baselines`, which present a
+        schema-version-independent view.
+        """
         ref_file = self._ref_file_for_model(model_id)
         if ref_file is None or not ref_file.exists():
             return None
@@ -159,6 +273,34 @@ class ReferenceStore:
         except (json.JSONDecodeError, OSError) as e:
             logger.error("Failed to read reference %s: %s", ref_file, e)
             return None
+
+    def get_baselines(self, model_id: str) -> dict[str, Baseline]:
+        """Return all named baselines for a model.
+
+        For legacy flat ref files, returns a single synthetic ``"primary"``
+        baseline. For the new multi-baseline schema (Phase 1.7b), returns
+        the authored map. Empty dict if the model has no reference file.
+        """
+        data = self.get_reference(model_id)
+        if data is None:
+            return {}
+        return _extract_baselines(data)
+
+    def get_baseline(
+        self,
+        model_id: str,
+        name: str = PRIMARY_BASELINE,
+    ) -> Optional[Baseline]:
+        """Return one named baseline for a model, or None if not found.
+
+        Defaults to ``"primary"`` — which is what every existing caller
+        implicitly wants (there is only one baseline per file today).
+        """
+        return self.get_baselines(model_id).get(name)
+
+    def list_baseline_names(self, model_id: str) -> list[str]:
+        """Return the names of baselines available for a model."""
+        return list(self.get_baselines(model_id).keys())
 
     def store_reference(
         self,
@@ -259,6 +401,19 @@ class ReferenceStore:
         ref_data["n_vars"] = len(variables)
         ref_data["time"] = shared_time_list
         ref_data["variables"] = variables
+
+        # Preserve any additional named baselines (experiment, analytical, ...).
+        # Primary is always the flat top-level fields above; the ``baselines``
+        # key only carries non-primary baselines. Accepting new primary results
+        # must not wipe out user-supplied experiment/analytical baselines.
+        if existing and isinstance(existing.get("baselines"), dict):
+            extras = {
+                name: entry
+                for name, entry in existing["baselines"].items()
+                if name != PRIMARY_BASELINE
+            }
+            if extras:
+                ref_data["baselines"] = extras
 
         ref_file.write_text(
             json.dumps(ref_data, indent=2) + "\n", encoding="utf-8"

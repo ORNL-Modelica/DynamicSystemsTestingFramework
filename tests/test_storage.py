@@ -7,9 +7,12 @@ import numpy as np
 import pytest
 
 from modelica_testing.storage.reference_store import (
+    Baseline,
+    PRIMARY_BASELINE,
     RefIndex,
     ReferenceStore,
     _downsample,
+    _extract_baselines,
 )
 from modelica_testing.simulators.base import TestResult, VariableResult
 from modelica_testing.discovery.test_registry import TestModel
@@ -411,3 +414,188 @@ class TestReferenceStore:
         ref = store2.get_reference(test.model_id)
         assert ref is not None
         assert ref["model_id"] == test.model_id
+
+
+# ---------------------------------------------------------------------------
+# Baseline view (Phase 1.7a: read-side unified interface)
+# ---------------------------------------------------------------------------
+
+class TestBaselineView:
+    """Legacy flat files and forward multi-baseline files must present the
+    same ``Baseline`` view to readers."""
+
+    def test_extract_baselines_legacy_flat(self):
+        """Legacy flat schema → single synthetic ``primary`` baseline."""
+        flat = {
+            "model_id": "MyLib.Test1",
+            "date_added": "2026-01-15T10:00:00+00:00",
+            "last_updated": "2026-02-20T12:30:00+00:00",
+            "simulation": {"stop_time": 10.0, "tolerance": 1e-4},
+            "comparison": {"tolerance": 0.01},
+            "statistics": {"CPUtime": 2.5},
+            "time": [0.0, 1.0, 2.0],
+            "variables": [{"index": 1, "name": "x", "values": [0.0, 1.0, 2.0]}],
+            "diagnostics": [{"name": "CPUtime", "values": [0.1, 0.2, 0.3]}],
+        }
+        baselines = _extract_baselines(flat)
+        assert list(baselines.keys()) == [PRIMARY_BASELINE]
+        b = baselines[PRIMARY_BASELINE]
+        assert isinstance(b, Baseline)
+        assert b.time == [0.0, 1.0, 2.0]
+        assert b.simulation["stop_time"] == 10.0
+        assert b.comparison["tolerance"] == 0.01
+        assert b.statistics["CPUtime"] == 2.5
+        assert len(b.variables) == 1
+        assert len(b.diagnostics) == 1
+        # Provenance synthesized from file metadata
+        assert b.provenance["origin"] == "legacy-flat"
+        assert b.provenance["captured_at"] == "2026-01-15T10:00:00+00:00"
+        assert b.provenance["last_updated"] == "2026-02-20T12:30:00+00:00"
+
+    def test_extract_baselines_legacy_no_last_updated_diff(self):
+        """When last_updated == date_added, don't duplicate in provenance."""
+        flat = {
+            "date_added": "2026-01-15T10:00:00+00:00",
+            "last_updated": "2026-01-15T10:00:00+00:00",
+            "time": [], "variables": [],
+        }
+        b = _extract_baselines(flat)[PRIMARY_BASELINE]
+        assert "captured_at" in b.provenance
+        assert "last_updated" not in b.provenance
+
+    def test_extract_baselines_hybrid_schema(self):
+        """Hybrid: flat primary + optional additional baselines under ``baselines`` key."""
+        data = {
+            "model_id": "MyLib.Test1",
+            "date_added": "2026-01-15T10:00:00+00:00",
+            # flat fields are the primary baseline
+            "simulation": {"stop_time": 10.0},
+            "time": [0.0, 1.0],
+            "variables": [{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            # additional baselines live under this key
+            "baselines": {
+                "experiment": {
+                    "provenance": {
+                        "origin": "rig-run-2024-03-15",
+                        "citation": "Internal report XYZ",
+                    },
+                    "time": [0.0, 0.5, 1.0],
+                    "variables": [{"index": 1, "name": "x", "values": [0.0, 0.6, 1.05]}],
+                },
+                "analytical": {
+                    "provenance": {"origin": "closed-form"},
+                    "time": [0.0, 1.0],
+                    "variables": [{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+                },
+            },
+        }
+        baselines = _extract_baselines(data)
+        assert set(baselines.keys()) == {"primary", "experiment", "analytical"}
+        # Primary comes from the flat top-level fields
+        assert baselines["primary"].simulation["stop_time"] == 10.0
+        assert baselines["primary"].time == [0.0, 1.0]
+        assert baselines["primary"].provenance["origin"] == "legacy-flat"
+        # Additional baselines come from the nested map
+        assert baselines["experiment"].provenance["citation"] == "Internal report XYZ"
+        assert baselines["experiment"].time == [0.0, 0.5, 1.0]
+        assert baselines["analytical"].provenance["origin"] == "closed-form"
+
+    def test_extract_baselines_ignores_primary_under_baselines_key(self):
+        """An accidental 'primary' entry under ``baselines`` is ignored in favor of flat fields."""
+        data = {
+            "simulation": {"stop_time": 10.0},
+            "time": [0.0],
+            "variables": [],
+            "baselines": {
+                "primary": {"simulation": {"stop_time": 999.0}, "time": [], "variables": []},
+            },
+        }
+        baselines = _extract_baselines(data)
+        assert set(baselines.keys()) == {"primary"}
+        assert baselines["primary"].simulation["stop_time"] == 10.0  # from flat, not nested
+
+    def test_get_baseline_returns_primary_by_default(self, sample_models_dir, tmp_path):
+        """End-to-end: store a ref, then read it back via the Baseline view."""
+        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        store = ReferenceStore(config)
+        test = TestReferenceStore()._make_test_model()
+        result = TestReferenceStore()._make_test_result()
+        store.store_reference(test, result)
+
+        b = store.get_baseline(test.model_id)
+        assert b is not None
+        assert b.name == PRIMARY_BASELINE
+        assert len(b.variables) == 2
+        assert b.provenance["origin"] == "legacy-flat"
+
+    def test_get_baseline_unknown_name_returns_none(self, sample_models_dir, tmp_path):
+        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        store = ReferenceStore(config)
+        test = TestReferenceStore()._make_test_model()
+        store.store_reference(test, TestReferenceStore()._make_test_result())
+
+        assert store.get_baseline(test.model_id, name="experiment") is None
+
+    def test_list_baseline_names_legacy(self, sample_models_dir, tmp_path):
+        """Legacy files always expose exactly ``["primary"]``."""
+        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        store = ReferenceStore(config)
+        test = TestReferenceStore()._make_test_model()
+        store.store_reference(test, TestReferenceStore()._make_test_result())
+
+        assert store.list_baseline_names(test.model_id) == [PRIMARY_BASELINE]
+
+    def test_get_baselines_no_reference(self, sample_models_dir, tmp_path):
+        """No ref file → empty dict (not None, not error)."""
+        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        store = ReferenceStore(config)
+        assert store.get_baselines("MyLib.Nonexistent") == {}
+        assert store.list_baseline_names("MyLib.Nonexistent") == []
+        assert store.get_baseline("MyLib.Nonexistent") is None
+
+    def test_store_reference_preserves_additional_baselines(self, sample_models_dir, tmp_path):
+        """Accepting new primary results must not wipe out non-primary baselines."""
+        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        store = ReferenceStore(config)
+        test = TestReferenceStore()._make_test_model()
+
+        # 1. Store initial primary.
+        store.store_reference(test, TestReferenceStore()._make_test_result())
+
+        # 2. Manually inject an experiment baseline into the ref file (simulates
+        #    a user adding an experiment baseline out-of-band).
+        ref_file = store.ref_dir / "ref_0001.json"
+        data = json.loads(ref_file.read_text(encoding="utf-8"))
+        data["baselines"] = {
+            "experiment": {
+                "provenance": {"origin": "rig-run-2024-03-15", "citation": "Report XYZ"},
+                "time": [0.0, 0.5, 1.0],
+                "variables": [{"index": 1, "name": "x", "values": [0.0, 0.5, 1.0]}],
+            }
+        }
+        ref_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+        # 3. Accept fresh primary results → experiment baseline must survive.
+        store.store_reference(test, TestReferenceStore()._make_test_result())
+
+        data_after = json.loads(ref_file.read_text(encoding="utf-8"))
+        assert "experiment" in data_after.get("baselines", {})
+        assert data_after["baselines"]["experiment"]["provenance"]["citation"] == "Report XYZ"
+
+    def test_store_reference_drops_accidental_primary_under_baselines(self, sample_models_dir, tmp_path):
+        """On rewrite, any 'primary' entry under 'baselines' is dropped (flat fields are authoritative)."""
+        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        store = ReferenceStore(config)
+        test = TestReferenceStore()._make_test_model()
+        store.store_reference(test, TestReferenceStore()._make_test_result())
+
+        ref_file = store.ref_dir / "ref_0001.json"
+        data = json.loads(ref_file.read_text(encoding="utf-8"))
+        data["baselines"] = {"primary": {"simulation": {"stop_time": 999.0}}}
+        ref_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+        store.store_reference(test, TestReferenceStore()._make_test_result())
+        data_after = json.loads(ref_file.read_text(encoding="utf-8"))
+        # Either the baselines key is absent, or it exists but has no primary entry
+        assert "primary" not in data_after.get("baselines", {})
+
