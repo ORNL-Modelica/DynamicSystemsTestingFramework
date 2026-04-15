@@ -12,6 +12,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# FMPy backend (Phase 2). Install with: uv pip install -e ".[fmpy]"
+# Or bundled with dev: uv pip install -e ".[dev,fmpy]"
+fmpy = ["fmpy>=0.3"]
 
 [project.scripts]
 modelica-testing = "modelica_testing.cli:main_entry"
@@ -27,6 +30,8 @@ packages = ["src/modelica_testing"]
 testpaths = ["tests"]
 markers = [
     "dymola: requires Dymola installation",
+    "fmpy: requires fmpy package",
+    "reference_fmus: requires Reference-FMUs submodule at examples/fmu/reference-fmus",
 ]
 filterwarnings = [
     "ignore::pytest.PytestCollectionWarning",
