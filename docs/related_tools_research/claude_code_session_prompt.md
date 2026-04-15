@@ -15,9 +15,9 @@ This evaluation will directly inform a go/no-go development decision.
 
 You have access to:
 
-1. **`C:\Users\fig\Downloads\regressionsystems/claude_sonnet.html`** — A comprehensive landscape analysis of open-source regression and unit testing frameworks for time-dependent simulations (FMI/FMU, Modelica, Julia SciML, Python-based). This covers ~25 existing tools, a deep comparison table, pros/cons, ecosystem gaps, and recommended architectures. **Read this first.**
+1. **`./research_report.html`** — A comprehensive landscape analysis of open-source regression and unit testing frameworks for time-dependent simulations (FMI/FMU, Modelica, Julia SciML, Python-based). This covers ~25 existing tools, a deep comparison table, pros/cons, ecosystem gaps, and recommended architectures. **Read this first.**
 
-2. **`C:\Users\fig\Downloads\regressionsystems/*.md`** — Responses to the same research question from multiple LLMs (ChatGPT, Gemini, etc.). These may contain additional tools, framings, or perspectives not covered in the main report. **Scan these for any tools or patterns not mentioned in the landscape report.**
+2. **`./llm_responses/*.md`** — Additional LLM responses to the same research question from multiple LLMs (ChatGPT, Gemini, etc.). These may contain additional tools, framings, or perspectives not covered in the main report. **Scan these for any tools or patterns not mentioned in the landscape report.**
 
 3. **D:\Modelica\ModelicaTesting** — The prototype tool under evaluation. This is the primary subject. It has a CLAUDE.md, README.md, and docs for framing the tool you can pull from.
 
