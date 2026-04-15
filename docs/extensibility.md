@@ -117,7 +117,12 @@ A Backend must:
 
 ### Current
 
-`SimulatorRunner` ABC with `DymolaRunner` as the only concrete implementation. Phase 1.2 added `Capability` + `DatasetType` enums and the `capabilities` / `produced_datasets` class-attribute contract. `DymolaRunner` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT}` and produces `{TIME_SERIES}`. The framework doesn't yet consult these declarations (nothing gates on them yet) — they exist so Phase 2's second backend can slot in without a contract break. Rename `SimulatorRunner` → `Backend` is deferred until the second backend lands.
+`SimulatorRunner` ABC with two concrete implementations: `DymolaRunner` (native Modelica) and `FmpyRunner` (FMU). Phase 1.2 introduced the `Capability` + `DatasetType` enums and the `capabilities` / `produced_datasets` class-attribute contract; Phase 2.3 validated the contract with a second backend.
+
+- `DymolaRunner` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT}` — the last is currently a placeholder until a cross-backend verification feature wires it.
+- `FmpyRunner` declares `{PERSISTENT_WORKERS}` — no batch fallback (FMPy *is* the Python path), no FMU export (FMPy consumes FMUs), no experiment ingest.
+
+Both produce `{TIME_SERIES}`. The framework doesn't yet *gate* features on the declarations — consumers of `capabilities` (feature toggling, CLI warnings) are a later phase once a concrete decision depends on capability flags. Rename `SimulatorRunner` → `Backend` is still deferred; the existing name now applies to both a Modelica-backed *and* FMU-backed implementation, which makes the rename more valuable but also a cleaner one-shot change to land at a single time.
 
 ---
 

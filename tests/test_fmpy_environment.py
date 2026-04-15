@@ -119,16 +119,3 @@ def test_fmpy_backend_registers_under_name():
     assert runner.produced_datasets == frozenset({DatasetType.TIME_SERIES})
 
 
-@pytest.mark.fmpy
-@pytest.mark.skipif(not _fmpy_available(), reason="fmpy not installed")
-def test_fmpy_runner_simulation_is_not_yet_implemented():
-    """Phase 2.2 explicitly does not implement simulation — raises a clear error."""
-    from modelica_testing.simulators.fmpy import FmpyRunner
-
-    class _FakeConfig:
-        simulator = "FMPy"
-        source_type = "fmu"
-
-    runner = FmpyRunner(_FakeConfig())
-    with pytest.raises(NotImplementedError, match="Phase 2.3"):
-        runner.run_single_test(test=None, test_key="k", index=0, total=1)
