@@ -147,7 +147,16 @@ class Config:
     for the Modelica library being tested.
     """
 
-    # Path to the Modelica package directory (contains package.mo)
+    # Source type: "modelica" (default, `package_path` points at a package.mo dir),
+    # "fmu" (Phase 2), "julia" / "simulink" / "data-file" (future). See docs/vision.md.
+    # Discovery + backend selection gate on this. No effect yet — only Modelica is
+    # implemented — but present so future backends slot in without a Config break.
+    source_type: str = "modelica"
+
+    # Path to the Modelica package directory (contains package.mo).
+    # When source_type != "modelica", this is generalized to the source location
+    # (FMU directory, Julia script, CSV file, ...). Will be renamed to `source_path`
+    # in Phase 2 when the second backend lands.
     package_path: Optional[Path] = None
 
     # Reference results location (can be a separate repo/directory)
@@ -248,6 +257,11 @@ class Config:
         if not file_config:
             config_dir = self.reference_root if self.reference_root else repo_root
             file_config = _create_default_config(config_dir, self.library_name)
+
+        # Source type (optional; default "modelica" from dataclass).
+        # testing.json may set: "source_type": "fmu" | "julia" | ... (future)
+        if "source_type" in file_config:
+            self.source_type = file_config["source_type"]
 
         # OS detection
         if self.os_name is None:
