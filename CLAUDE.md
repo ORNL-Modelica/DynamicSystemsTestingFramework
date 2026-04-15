@@ -22,7 +22,9 @@ ModelicaTesting/
 │       ├── storage/             # JSON reference storage with in-memory index
 │       └── reporting/           # Console, JUnit XML, HTML reporters, plot generation
 │           └── templates/       # Jinja2 templates (comparison.html, interactive.html) + comparison_data.json sidecar
-├── ModelicaTestingLib/          # Modelica library: UnitTests component + example models
+├── examples/
+│   └── modelica/
+│       └── ModelicaTestingLib/  # Modelica library: UnitTests component + example models
 │   ├── Components/UnitTests.mo  # Reusable UnitTests component for tracking variables
 │   ├── Examples/                # SimpleTest, EventTest, ConstantTest, IntervalTest, NoUnitTest
 │   └── Resources/ReferenceResults/  # testing.json + reference baselines for this library

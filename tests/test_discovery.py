@@ -31,7 +31,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 class TestMoParser:
     def test_parse_with_unit_tests(self):
         """Parse a .mo file that has a UnitTests component."""
-        result = parse_mo_file(PROJECT_ROOT / "ModelicaTestingLib" / "Examples" / "SimpleTest.mo")
+        result = parse_mo_file(PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib" / "Examples" / "SimpleTest.mo")
         assert result is not None
         assert result.model_id == "ModelicaTestingLib.Examples.SimpleTest"
         assert result.unit_test is not None
@@ -40,12 +40,12 @@ class TestMoParser:
 
     def test_parse_without_unit_tests(self):
         """Parse a .mo file without UnitTests => returns None (nothing to test)."""
-        result = parse_mo_file(PROJECT_ROOT / "ModelicaTestingLib" / "Examples" / "NoUnitTest.mo")
+        result = parse_mo_file(PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib" / "Examples" / "NoUnitTest.mo")
         assert result is None
 
     def test_parse_experiment(self):
         """Extract experiment annotation."""
-        result = parse_mo_file(PROJECT_ROOT / "ModelicaTestingLib" / "Examples" / "SimpleTest.mo")
+        result = parse_mo_file(PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib" / "Examples" / "SimpleTest.mo")
         assert result.experiment is not None
         assert result.experiment.stop_time == 10.0
         assert result.experiment.tolerance == 1e-6
@@ -53,7 +53,7 @@ class TestMoParser:
 
     def test_parse_output_interval(self):
         """Extract Interval from experiment annotation."""
-        result = parse_mo_file(PROJECT_ROOT / "ModelicaTestingLib" / "Examples" / "IntervalTest.mo")
+        result = parse_mo_file(PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib" / "Examples" / "IntervalTest.mo")
         assert result is not None
         assert result.experiment.output_interval == 0.5
         assert result.experiment.number_of_intervals is None

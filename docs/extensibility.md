@@ -283,7 +283,7 @@ src/modelica_testing/
 
 examples/
   modelica/
-    ModelicaTestingLib/    # current top-level lib, relocated in Phase 1
+    ModelicaTestingLib/    # Modelica demo library (also used as pytest fixture)
   fmu/
     reference-fmus/        # FMI org's Reference-FMUs (pinned)
   julia/                   # planned

@@ -20,7 +20,7 @@ def fixtures_dir():
 @pytest.fixture
 def sample_models_dir():
     """Path to the ModelicaTestingLib Modelica library."""
-    return PROJECT_ROOT / "ModelicaTestingLib"
+    return PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib"
 
 
 @pytest.fixture

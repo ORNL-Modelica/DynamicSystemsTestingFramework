@@ -315,12 +315,12 @@ uv run pytest -m "not dymola"
 
 ### Testing ModelicaTestingLib itself
 
-The project includes `ModelicaTestingLib/`, a small Modelica library used both as a test fixture and as a reference implementation. To regression test it (requires Dymola):
+The project includes `examples/modelica/ModelicaTestingLib/`, a small Modelica library used both as a test fixture and as a reference implementation. To regression test it (requires Dymola):
 
 ```bash
 # Run and compare against stored references
-uv run modelica-testing --reference-root ModelicaTestingLib/Resources/ReferenceResults run
+uv run modelica-testing --reference-root examples/modelica/ModelicaTestingLib/Resources/ReferenceResults run
 
 # Accept new baselines after intentional changes
-uv run modelica-testing --reference-root ModelicaTestingLib/Resources/ReferenceResults run --accept
+uv run modelica-testing --reference-root examples/modelica/ModelicaTestingLib/Resources/ReferenceResults run --accept
 ```
