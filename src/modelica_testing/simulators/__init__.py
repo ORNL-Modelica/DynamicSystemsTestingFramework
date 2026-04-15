@@ -68,6 +68,7 @@ def _import_builtin_backend(name: str) -> None:
     """Import a built-in backend module so it registers itself."""
     builtins = {
         "Dymola": ".dymola",
+        "FMPy": ".fmpy",
     }
     module = builtins.get(name)
     if module:

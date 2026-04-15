@@ -173,9 +173,6 @@ class BatchManifest:
         """Per-test subdirectory for all simulation artifacts."""
         return self.work_dir / test_key
 
-    def mat_file(self, test_key: str) -> Path:
-        return self.test_dir(test_key) / "dsres.mat"
-
     def model_id(self, test_key: str) -> str:
         """Get the model ID for a test key."""
         return self.manifest[test_key]["model_id"]

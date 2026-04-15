@@ -27,6 +27,7 @@ CONFIG_FILENAME = "testing.json"
 SIMULATOR_BACKENDS = {
     "Dymola": "Dymola",
     "OpenModelica": "OpenModelica",
+    "FMPy": "FMPy",
 }
 
 
