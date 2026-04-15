@@ -20,7 +20,14 @@ _EPS = 100 * np.finfo(np.float64).eps
 
 @dataclass
 class VariableComparison:
-    """Comparison result for a single tracked variable."""
+    """Comparison result for a single tracked variable.
+
+    Conforms to the ``MetricResult`` contract in docs/extensibility.md:
+    carries a ``passed`` flag, a numeric score (``nrmse`` for NRMSE mode,
+    ``tube_points_inside`` for tube mode), and a structured ``diagnostics``
+    bag for metric-specific extras (e.g. event-timing deltas, spectral
+    peaks) that future metrics may attach without widening the schema.
+    """
     index: int
     name: str
     passed: bool
@@ -38,6 +45,9 @@ class VariableComparison:
     tube_points_inside: Optional[float] = None  # Fraction of points inside tube (0-1)
     tube_worst_violation: Optional[float] = None  # Largest violation (absolute)
     tube_worst_violation_time: Optional[float] = None  # Time of worst violation
+    # Open-ended structured extras — future metrics attach here instead of
+    # growing this dataclass (event-timing, spectral, domain-specific scores).
+    diagnostics: dict = field(default_factory=dict)
 
 
 @dataclass

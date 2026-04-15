@@ -15,6 +15,8 @@ from ...config import Config
 from ...discovery.test_registry import TestModel
 from .. import register
 from ..base import (
+    Capability,
+    DatasetType,
     SimulatorRunner,
     TestRunResult,
     TestResult,
@@ -56,6 +58,13 @@ class DymolaRunner(SimulatorRunner):
     load libraries once, run N tests, exit. This dramatically reduces
     startup overhead for large test suites.
     """
+
+    capabilities = frozenset({
+        Capability.PERSISTENT_WORKERS,  # DymolaInterface-based workers (default)
+        Capability.BATCH_FALLBACK,      # .mos script runner (--batch flag)
+        Capability.FMU_EXPORT,          # reserved: Dymola can export FMUs (not yet wired)
+    })
+    produced_datasets = frozenset({DatasetType.TIME_SERIES})
 
     def __init__(self, config: Config):
         super().__init__(config)

@@ -7,6 +7,7 @@ import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from threading import Lock
 from typing import Optional
@@ -17,6 +18,39 @@ from ..config import Config
 from ..discovery.test_registry import TestModel
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Backend capabilities + dataset types (Phase 1 abstraction)
+# ---------------------------------------------------------------------------
+# See docs/vision.md and docs/extensibility.md. Each backend declares what it
+# supports; framework features gate on these rather than on backend class.
+
+class Capability(str, Enum):
+    """Declared abilities of a simulator backend."""
+
+    #: Backend can hold a loaded model in memory across multiple tests.
+    PERSISTENT_WORKERS = "persistent-workers"
+    #: Backend exposes a non-interactive script-driven fallback.
+    BATCH_FALLBACK = "batch-fallback"
+    #: Backend can export a test artefact as an FMU (enables cross-backend verification).
+    FMU_EXPORT = "fmu-export"
+    #: Backend reads pre-recorded data instead of simulating (e.g., CSV from a test rig).
+    EXPERIMENT_INGEST = "experiment-ingest"
+
+
+class DatasetType(str, Enum):
+    """Typed categories of result data a backend may produce.
+
+    The framework currently materialises only ``TIME_SERIES``. Other types
+    are reserved for Phase 3+ metrics (events, spectra, distributions).
+    """
+
+    TIME_SERIES = "time-series"
+    SCALARS = "scalars"
+    EVENTS = "events"
+    SPECTRUM = "spectrum"
+    DISTRIBUTION = "distribution"
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +294,16 @@ class SimulatorRunner(ABC):
     Subclasses must implement read_result(). They should override
     run_tests() for batch execution, or implement run_single_test()
     to use the default per-process execution.
+
+    Subclasses should override ``capabilities`` and ``produced_datasets`` to
+    declare what they support. The framework gates features on these
+    declarations rather than on backend class (see docs/extensibility.md).
     """
+
+    #: Capabilities the backend declares (populate in subclass).
+    capabilities: frozenset[Capability] = frozenset()
+    #: Dataset types the backend can produce (populate in subclass).
+    produced_datasets: frozenset[DatasetType] = frozenset({DatasetType.TIME_SERIES})
 
     def __init__(self, config: Config):
         self.config = config
