@@ -45,6 +45,8 @@ a:hover { text-decoration: underline; }
 .actions-panel button[disabled] { opacity: 0.4; cursor: not-allowed; }
 .actions-panel .count { font-weight: 600; color: #1976D2; font-size: 0.95em; }
 .actions-panel .cmd-out { width: 100%; font-family: monospace; font-size: 0.82em; padding: 0.4em 0.6em; border: 1px solid #ccc; border-radius: 3px; background: #fafafa; resize: vertical; min-height: 2.4em; margin-top: 0.5em; }
+.actions-panel .cmd-help { font-size: 0.78em; color: #555; margin-top: 0.4em; line-height: 1.4; }
+.actions-panel .cmd-help code { background: #eee; padding: 0.05em 0.3em; border-radius: 2px; font-size: 0.95em; }
 .actions-panel .save-status { font-size: 0.82em; color: #4CAF50; display: none; }
 .actions-panel .save-status.shown { display: inline; }
 
@@ -95,6 +97,12 @@ a:hover { text-decoration: underline; }
     <span class="save-status" id="save-status">Copied!</span>
   </div>
   <textarea class="cmd-out" id="cmd-out" readonly placeholder="Select rows to build a rerun command..."></textarea>
+  <div class="cmd-help">
+    Prepend <code>uv run</code> for an editable dev install; omit it if you installed via <code>uv tool install</code> or <code>pipx</code>.
+    <br>
+    <code>--merge</code> keeps prior results on disk, and <code>--report</code> regenerates a full HTML report covering <em>all</em> tests (not just the filtered subset) — so you can see whether a fix moved the overall pass/fail count.
+    Drop <code>--merge</code> to get a focused report of only the reran tests.
+  </div>
 </div>
 
 <table id="results-table">
@@ -146,6 +154,11 @@ a:hover { text-decoration: underline; }
 </tbody>
 </table>
 <script>
+// CLI prefix captured at report-generation time — already includes --config
+// (or --package-path / --reference-root) resolved to absolute paths, so the
+// command works from any CWD.
+const RERUN_PREFIX = {{ rerun_prefix | tojson }};
+
 // Render last-run as relative time, tag stale rows
 (function() {
   const now = Date.now() / 1000;
@@ -245,8 +258,8 @@ function updateSelectionUI() {
   const cmd = ids.length === 0
     ? ''
     : (ids.length <= 3
-        ? `modelica-testing run --filter "${ids.join(',')}" --merge --report`
-        : `modelica-testing run --filter @selected.txt --merge --report   # ${ids.length} models`);
+        ? `${RERUN_PREFIX} --filter "${ids.join(',')}" --merge --report`
+        : `${RERUN_PREFIX} --filter @selected.txt --merge --report   # ${ids.length} models`);
   document.getElementById('cmd-out').value = cmd;
 }
 
@@ -277,8 +290,8 @@ function copyList() {
 function copyCommand() {
   const ids = selectedRows().map(r => r.dataset.modelId);
   const cmd = ids.length <= 3
-    ? `modelica-testing run --filter "${ids.join(',')}" --merge --report`
-    : `modelica-testing run --filter @selected.txt --merge --report`;
+    ? `${RERUN_PREFIX} --filter "${ids.join(',')}" --merge --report`
+    : `${RERUN_PREFIX} --filter @selected.txt --merge --report`;
   copyToClipboard(cmd);
 }
 function downloadFilter() {

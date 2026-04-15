@@ -10,26 +10,42 @@ Library-agnostic — works with any Modelica library. Tests can be defined in-mo
 - Dymola (for running simulations)
 - Dependencies managed via [uv](https://docs.astral.sh/uv/)
 
+## Installation & Invocation
+
+The package ships a console script named `modelica-testing`.
+
+```bash
+# End users: install as an isolated tool
+uv tool install modelica-testing     # then run plain: modelica-testing ...
+
+# Developers: editable install inside the project
+uv pip install -e ".[dev]"
+uv run modelica-testing ...          # canonical dev form
+python -m modelica_testing ...       # equivalent fallback
+```
+
+All examples below use `uv run modelica-testing`. Drop the `uv run` prefix if you installed via `uv tool install` / `pipx`.
+
 ## Quick Start
 
 ```bash
 # Discover tests in a library
-uv run python -m modelica_testing --package-path /path/to/MyLibrary/MyLib discover
+uv run modelica-testing --package-path /path/to/MyLibrary/MyLib discover
 
 # Run tests and compare against stored references
-uv run python -m modelica_testing --package-path /path/to/MyLibrary/MyLib run
+uv run modelica-testing --package-path /path/to/MyLibrary/MyLib run
 
 # Run with explicit reference location
-uv run python -m modelica_testing \
+uv run modelica-testing \
   --package-path /path/to/MyLibrary/MyLib \
   --reference-root /path/to/my-refs \
   run
 
 # Accept results as new baselines
-uv run python -m modelica_testing --package-path /path/to/MyLibrary/MyLib run --accept
+uv run modelica-testing --package-path /path/to/MyLibrary/MyLib run --accept
 
 # Run a subset
-uv run python -m modelica_testing run --filter "*_Test" --package MyLib.Blocks
+uv run modelica-testing run --filter "*_Test" --package MyLib.Blocks
 ```
 
 `--package-path` points at the directory containing `package.mo`. If omitted, the tool auto-detects from the current working directory.
@@ -94,7 +110,7 @@ Variable patterns:
 Point the tool at your spec file:
 
 ```bash
-uv run python -m modelica_testing --test-spec test_spec.json discover
+uv run modelica-testing --test-spec test_spec.json discover
 ```
 
 Or reference it from `testing.json`:
@@ -164,7 +180,7 @@ The `simulators` map supports multiple versions and platforms. The tool picks th
 ### CLI flags override config
 
 ```bash
-uv run python -m modelica_testing run \
+uv run modelica-testing run \
   --package-path /path/to/MyLib \
   --reference-root /path/to/my-refs \
   --simulator "Dymola 2024x" \
@@ -176,42 +192,42 @@ uv run python -m modelica_testing run \
 ### discover — Find tests
 
 ```bash
-uv run python -m modelica_testing discover
-uv run python -m modelica_testing discover --filter "MyLib.Fluid.*"
-uv run python -m modelica_testing discover --package MyLib.Fluid
+uv run modelica-testing discover
+uv run modelica-testing discover --filter "MyLib.Fluid.*"
+uv run modelica-testing discover --package MyLib.Fluid
 ```
 
 ### run — Simulate and compare
 
 ```bash
 # Run and compare against stored references
-uv run python -m modelica_testing run
+uv run modelica-testing run
 
 # Accept results as new baselines
-uv run python -m modelica_testing run --accept
+uv run modelica-testing run --accept
 
 # Parallel with timeout
-uv run python -m modelica_testing run --parallel 4 --timeout 300
+uv run modelica-testing run --parallel 4 --timeout 300
 
 # Compare only final values
-uv run python -m modelica_testing run --final-only --tolerance 1e-3
+uv run modelica-testing run --final-only --tolerance 1e-3
 
 # Show Dymola GUI for debugging
-uv run python -m modelica_testing run --show-ide --filter "MyLib.SomeTest"
+uv run modelica-testing run --show-ide --filter "MyLib.SomeTest"
 ```
 
 ### compare — Compare without re-running
 
 ```bash
-uv run python -m modelica_testing compare
+uv run modelica-testing compare
 ```
 
 ### Report formats
 
 ```bash
-uv run python -m modelica_testing run --report-format console  # Default
-uv run python -m modelica_testing run --report-format junit    # JUnit XML for CI
-uv run python -m modelica_testing run --report-format html     # HTML report
+uv run modelica-testing run --report-format console  # Default
+uv run modelica-testing run --report-format junit    # JUnit XML for CI
+uv run modelica-testing run --report-format html     # HTML report
 ```
 
 ### manifest — Manage test IDs
@@ -220,36 +236,36 @@ Tests are assigned stable numeric IDs stored in `test_manifest.json`. IDs are ne
 
 ```bash
 # Show all registered tests
-uv run python -m modelica_testing manifest show
+uv run modelica-testing manifest show
 
 # Rebuild manifest from discovered tests
-uv run python -m modelica_testing manifest rebuild
+uv run modelica-testing manifest rebuild
 
 # Remove reference files for obsolete tests
-uv run python -m modelica_testing manifest cleanup
+uv run modelica-testing manifest cleanup
 ```
 
 ### export — Export reference data
 
 ```bash
-uv run python -m modelica_testing export --format json
-uv run python -m modelica_testing export --format csv
+uv run modelica-testing export --format json
+uv run modelica-testing export --format csv
 ```
 
 ### convert — Change reference file format
 
 ```bash
 # Old abbreviated filenames -> numeric IDs + manifest
-uv run python -m modelica_testing convert to-manifest
+uv run modelica-testing convert to-manifest
 
 # Numeric IDs -> human-readable filenames
-uv run python -m modelica_testing convert from-manifest
+uv run modelica-testing convert from-manifest
 ```
 
 ### migrate — Import from buildingspy
 
 ```bash
-uv run python -m modelica_testing migrate /path/to/old/ReferenceResults
+uv run modelica-testing migrate /path/to/old/ReferenceResults
 ```
 
 ## Reference Results
@@ -325,7 +341,7 @@ Mirrors the `AbsRelRMS.mo` logic: absolute and relative errors with machine-epsi
 
 ```yaml
 - run: |
-    uv run python -m modelica_testing \
+    uv run modelica-testing \
       --package-path ./MyLibrary \
       --reference-root ./references \
       run --report-format junit

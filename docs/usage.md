@@ -89,13 +89,13 @@ Lists all discoverable tests without running anything.
 
 ```bash
 # All tests
-uv run python -m modelica_testing --config testing.json discover
+uv run modelica-testing --config testing.json discover
 
 # Filter by package
-uv run python -m modelica_testing --config testing.json discover --package MyLib.Fluid
+uv run modelica-testing --config testing.json discover --package MyLib.Fluid
 
 # Filter by glob pattern
-uv run python -m modelica_testing --config testing.json discover --filter "*Pipe*"
+uv run modelica-testing --config testing.json discover --filter "*Pipe*"
 ```
 
 Output shows model ID, variable count, stop time, solver method, and source (unit_tests, spec, or both).
@@ -106,19 +106,19 @@ Runs simulations and compares against stored reference baselines.
 
 ```bash
 # Run all tests, report pass/fail
-uv run python -m modelica_testing --config testing.json run
+uv run modelica-testing --config testing.json run
 
 # Run a subset
-uv run python -m modelica_testing --config testing.json run --package MyLib.Fluid
+uv run modelica-testing --config testing.json run --package MyLib.Fluid
 
 # Run with 4 parallel Dymola instances
-uv run python -m modelica_testing --config testing.json run --parallel 4
+uv run modelica-testing --config testing.json run --parallel 4
 
 # Accept all results as new baselines (first run, or after intentional changes)
-uv run python -m modelica_testing --config testing.json run --accept
+uv run modelica-testing --config testing.json run --accept
 
 # Interactive review — decide per test
-uv run python -m modelica_testing --config testing.json run -i
+uv run modelica-testing --config testing.json run -i
 ```
 
 **Options:**
@@ -153,16 +153,16 @@ uv run python -m modelica_testing --config testing.json run -i
 Uses the last simulation results (from `testing_output/`) and compares against current references. Useful after changing tolerances or updating references externally.
 
 ```bash
-uv run python -m modelica_testing --config testing.json compare
+uv run modelica-testing --config testing.json compare
 
 # With different tolerance
-uv run python -m modelica_testing --config testing.json compare --tolerance 0.001
+uv run modelica-testing --config testing.json compare --tolerance 0.001
 
 # Only check final values
-uv run python -m modelica_testing --config testing.json compare --final-only
+uv run modelica-testing --config testing.json compare --final-only
 
 # Output as JUnit XML (for CI)
-uv run python -m modelica_testing --config testing.json compare --report-format junit
+uv run modelica-testing --config testing.json compare --report-format junit
 ```
 
 ### `export` — Dump reference data
@@ -171,16 +171,16 @@ Exports stored reference data to JSON or CSV for external inspection.
 
 ```bash
 # Export all references as JSON
-uv run python -m modelica_testing --config testing.json export
+uv run modelica-testing --config testing.json export
 
 # Export as CSV
-uv run python -m modelica_testing --config testing.json export --format csv
+uv run modelica-testing --config testing.json export --format csv
 
 # Export to specific file
-uv run python -m modelica_testing --config testing.json export --output results.csv --format csv
+uv run modelica-testing --config testing.json export --output results.csv --format csv
 
 # Export subset
-uv run python -m modelica_testing --config testing.json export --package MyLib.Fluid
+uv run modelica-testing --config testing.json export --package MyLib.Fluid
 ```
 
 ### `manifest` — Manage test IDs
@@ -189,16 +189,16 @@ Each test gets a stable numeric ID (e.g., `ref_0001.json`). The manifest tracks 
 
 ```bash
 # Show all active tests and their IDs
-uv run python -m modelica_testing --config testing.json manifest show
+uv run modelica-testing --config testing.json manifest show
 
 # Also show obsolete (retired) tests
-uv run python -m modelica_testing --config testing.json manifest show --show-obsolete
+uv run modelica-testing --config testing.json manifest show --show-obsolete
 
 # Delete reference files for obsolete tests
-uv run python -m modelica_testing --config testing.json manifest cleanup
+uv run modelica-testing --config testing.json manifest cleanup
 
 # Rebuild manifest from currently discovered tests
-uv run python -m modelica_testing --config testing.json manifest rebuild
+uv run modelica-testing --config testing.json manifest rebuild
 ```
 
 ### `add` — Add test to spec
@@ -207,10 +207,10 @@ Adds a model to `test_spec.json` without manually editing the file.
 
 ```bash
 # Add a test with specific variables
-uv run python -m modelica_testing --config testing.json add MyLib.Examples.NewTest --variables "pipe.T[1]" "tank.level"
+uv run modelica-testing --config testing.json add MyLib.Examples.NewTest --variables "pipe.T[1]" "tank.level"
 
 # Add simulate-only (no variable tracking)
-uv run python -m modelica_testing --config testing.json add MyLib.Examples.NewTest
+uv run modelica-testing --config testing.json add MyLib.Examples.NewTest
 ```
 
 ---
@@ -225,30 +225,30 @@ mkdir -p /path/to/MyLib-Tests/ReferenceResults
 # Edit testing.json with package_path, simulator, etc.
 
 # 2. Verify discovery
-uv run python -m modelica_testing --config /path/to/testing.json discover
+uv run modelica-testing --config /path/to/testing.json discover
 
 # 3. Run all tests and accept as initial baselines
-uv run python -m modelica_testing --config /path/to/testing.json run --accept
+uv run modelica-testing --config /path/to/testing.json run --accept
 ```
 
 ### Routine regression testing
 
 ```bash
 # Run tests after code changes
-uv run python -m modelica_testing --config testing.json run
+uv run modelica-testing --config testing.json run
 
 # If tests fail, review interactively
-uv run python -m modelica_testing --config testing.json run -i
+uv run modelica-testing --config testing.json run -i
 ```
 
 ### CI integration
 
 ```bash
 # JUnit output for CI systems
-uv run python -m modelica_testing --config testing.json run --report-format junit
+uv run modelica-testing --config testing.json run --report-format junit
 
 # HTML report
-uv run python -m modelica_testing --config testing.json run --report-format html
+uv run modelica-testing --config testing.json run --report-format html
 ```
 
 ---
@@ -319,8 +319,8 @@ The project includes `ModelicaTestingLib/`, a small Modelica library used both a
 
 ```bash
 # Run and compare against stored references
-uv run python -m modelica_testing --reference-root ModelicaTestingLib/Resources/ReferenceResults run
+uv run modelica-testing --reference-root ModelicaTestingLib/Resources/ReferenceResults run
 
 # Accept new baselines after intentional changes
-uv run python -m modelica_testing --reference-root ModelicaTestingLib/Resources/ReferenceResults run --accept
+uv run modelica-testing --reference-root ModelicaTestingLib/Resources/ReferenceResults run --accept
 ```

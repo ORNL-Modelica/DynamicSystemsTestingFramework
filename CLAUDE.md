@@ -34,67 +34,69 @@ ModelicaTesting/
 
 ## Running the Tool
 
+The package ships a console script (`[project.scripts]` in `pyproject.toml`). The canonical dev invocation is `uv run modelica-testing ...`. `python -m modelica_testing ...` is supported as a fallback (both call `cli.main_entry`). End users install via `uv tool install modelica-testing` (or `pipx install`) and run plain `modelica-testing`.
+
 ```bash
 # With testing.json containing package_path — single entry point
-uv run python -m modelica_testing --config path/to/testing.json run
+uv run modelica-testing --config path/to/testing.json run
 
 # Or with explicit flags
-uv run python -m modelica_testing --package-path /path/to/MyLib --reference-root /path/to/refs run
+uv run modelica-testing --package-path /path/to/MyLib --reference-root /path/to/refs run
 
 # Interactive review (accept/skip/plot per test)
-uv run python -m modelica_testing --config testing.json run -i
+uv run modelica-testing --config testing.json run -i
 
 # Interactive review filtered to specific categories
-uv run python -m modelica_testing --config testing.json run -i failed
-uv run python -m modelica_testing --config testing.json run -i no-baseline
+uv run modelica-testing --config testing.json run -i failed
+uv run modelica-testing --config testing.json run -i no-baseline
 # Categories: failed, no-baseline, warnings, sim-failed, passed, all
 
 # Accept all results as new baselines
-uv run python -m modelica_testing --config testing.json run --accept
+uv run modelica-testing --config testing.json run --accept
 
 # Generate HTML report with per-test plots (static + interactive Plotly)
-uv run python -m modelica_testing --config testing.json run --report ./reports
+uv run modelica-testing --config testing.json run --report ./reports
 
 # Parallel run with small-batch queue dispatch (better load balancing + crash isolation)
-uv run python -m modelica_testing --config testing.json run --parallel 4 --batch-size 3
+uv run modelica-testing --config testing.json run --parallel 4 --batch-size 3
 # Live progress: open work_dir/dashboard.html (auto-refreshes every 2s; URL printed on start)
 
 # Filter accepts: glob, comma-separated list, or @file (one pattern per line, # comments)
-uv run python -m modelica_testing --config testing.json run --filter "Foo.A,Foo.B"
-uv run python -m modelica_testing --config testing.json run --filter @rerun.txt
+uv run modelica-testing --config testing.json run --filter "Foo.A,Foo.B"
+uv run modelica-testing --config testing.json run --filter @rerun.txt
 
 # Incremental rerun + full merged report (rerun a subset, report covers everything)
-uv run python -m modelica_testing --config testing.json run --filter @failed.txt --merge --report
+uv run modelica-testing --config testing.json run --filter @failed.txt --merge --report
 
 # Auto-rerun previously failed tests (implies --merge)
-uv run python -m modelica_testing --config testing.json run --rerun --report
+uv run modelica-testing --config testing.json run --rerun --report
 # Or pick categories: failed, no-baseline, warnings, sim-failed, passed
-uv run python -m modelica_testing --config testing.json run --rerun failed,sim-failed --report
+uv run modelica-testing --config testing.json run --rerun failed,sim-failed --report
 
 # Compare without re-running simulations (uses last results)
-uv run python -m modelica_testing --config testing.json compare
+uv run modelica-testing --config testing.json compare
 
 # Apply tolerance config exported from interactive report to test_spec.json
-uv run python -m modelica_testing --config testing.json spec-update tolerance_config.json
+uv run modelica-testing --config testing.json spec-update tolerance_config.json
 
 # Dump reference manifest (ref ID to model name mapping) without running tests
-uv run python -m modelica_testing --config testing.json manifest dump
+uv run modelica-testing --config testing.json manifest dump
 
 # Prune orphan manifest entries (models no longer in discovery — dry-run by default)
-uv run python -m modelica_testing --config testing.json manifest cleanup --orphans
-uv run python -m modelica_testing --config testing.json manifest cleanup --orphans --apply
+uv run modelica-testing --config testing.json manifest cleanup --orphans
+uv run modelica-testing --config testing.json manifest cleanup --orphans --apply
 
 # Persistent workers via the Dymola Python interface are the DEFAULT.
 # Live per-test dashboard (with phase: translating / simulating / finalizing),
 # natural load balancing, per-test timeout watchdog with disk-check rescue,
 # per-phase timing in per-test report ("Timing" section) and on index (sortable columns).
-uv run python -m modelica_testing --config testing.json run --parallel 4 --report
+uv run modelica-testing --config testing.json run --parallel 4 --report
 
 # Force the legacy batched .mos runner (e.g., for environments without the Python interface)
-uv run python -m modelica_testing --config testing.json run --batch --parallel 4 --batch-size 3 --report
+uv run modelica-testing --config testing.json run --batch --parallel 4 --batch-size 3 --report
 
 # Diagnose discovery of the Dymola Python interface archive
-uv run python -m modelica_testing check-dymola
+uv run modelica-testing check-dymola
 ```
 
 ## Running Tests
