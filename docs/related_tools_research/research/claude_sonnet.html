@@ -1,0 +1,1725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simulation Regression Testing: Ecosystem Report</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600;700&family=IBM+Plex+Serif:ital,wght@0,400;1,400&display=swap');
+
+  :root {
+    --bg: #0d0f14;
+    --surface: #141820;
+    --surface2: #1c2330;
+    --border: #2a3445;
+    --accent: #00c8ff;
+    --accent2: #7c3aed;
+    --accent3: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --text: #e2e8f0;
+    --text-muted: #64748b;
+    --text-dim: #94a3b8;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+    --serif: 'IBM Plex Serif', serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.7;
+  }
+
+  /* Header */
+  .hero {
+    background: linear-gradient(135deg, #0d0f14 0%, #101828 50%, #0f1923 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 60px 48px 48px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -80px; right: -80px;
+    width: 400px; height: 400px;
+    background: radial-gradient(circle, rgba(0,200,255,0.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero::after {
+    content: '';
+    position: absolute;
+    bottom: -60px; left: 20%;
+    width: 300px; height: 300px;
+    background: radial-gradient(circle, rgba(124,58,237,0.05) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .tag-line {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  .hero h1 {
+    font-family: var(--sans);
+    font-size: clamp(28px, 4vw, 48px);
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.2;
+    max-width: 820px;
+    margin-bottom: 20px;
+  }
+  .hero h1 span { color: var(--accent); }
+  .hero-sub {
+    font-size: 15px;
+    color: var(--text-dim);
+    max-width: 680px;
+    font-weight: 300;
+  }
+  .meta-row {
+    margin-top: 28px;
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .meta-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+  }
+  .meta-badge.active { border-color: var(--accent3); color: var(--accent3); }
+  .meta-badge.warn { border-color: var(--warn); color: var(--warn); }
+
+  /* Nav */
+  .toc-nav {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 48px;
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+  }
+  .toc-nav a {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    text-decoration: none;
+    padding: 14px 16px;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    transition: all 0.2s;
+    letter-spacing: 0.5px;
+  }
+  .toc-nav a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Layout */
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 48px; }
+
+  section { padding: 52px 0; border-bottom: 1px solid var(--border); }
+  section:last-child { border-bottom: none; }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  h2 {
+    font-family: var(--sans);
+    font-size: 26px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+  h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+    margin-top: 24px;
+  }
+  h4 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    margin-top: 20px;
+  }
+  p { color: var(--text-dim); margin-bottom: 14px; }
+  .section-intro { color: var(--text-dim); font-size: 15px; margin-bottom: 32px; max-width: 760px; }
+
+  /* Tool cards */
+  .tool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .tool-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    position: relative;
+    transition: border-color 0.2s;
+  }
+  .tool-card:hover { border-color: rgba(0,200,255,0.3); }
+  .tool-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .tool-name {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+  }
+  .tool-name a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .tool-name a:hover { text-decoration: underline; }
+  .activity-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 4px;
+  }
+  .active { background: var(--accent3); box-shadow: 0 0 6px var(--accent3); }
+  .moderate { background: var(--warn); }
+  .dormant { background: var(--danger); }
+  .tool-ecosystem {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .tool-desc { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+  .tool-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text-muted);
+  }
+  .tag.ts { background: rgba(0,200,255,0.08); border-color: rgba(0,200,255,0.2); color: #67e8f9; }
+  .tag.ci { background: rgba(16,185,129,0.08); border-color: rgba(16,185,129,0.2); color: #6ee7b7; }
+  .tag.xsim { background: rgba(124,58,237,0.08); border-color: rgba(124,58,237,0.2); color: #c4b5fd; }
+
+  /* Category headers */
+  .cat-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 20px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cat-icon {
+    width: 36px; height: 36px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .cat-icon.fmi { background: rgba(0,200,255,0.1); border: 1px solid rgba(0,200,255,0.2); }
+  .cat-icon.modelica { background: rgba(124,58,237,0.1); border: 1px solid rgba(124,58,237,0.2); }
+  .cat-icon.julia { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.2); }
+  .cat-icon.python { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2); }
+  .cat-title { font-size: 18px; font-weight: 700; color: #fff; }
+  .cat-count {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  /* Comparison table */
+  .table-wrap {
+    overflow-x: auto;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    margin-top: 24px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead tr { background: var(--surface2); }
+  thead th {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 12px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  thead th:first-child { color: var(--accent); }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background 0.15s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: rgba(255,255,255,0.02); }
+  td {
+    padding: 11px 14px;
+    color: var(--text-dim);
+    vertical-align: middle;
+  }
+  td:first-child { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 600; }
+  .check { color: var(--accent3); font-size: 14px; }
+  .partial { color: var(--warn); font-size: 14px; }
+  .cross { color: var(--danger); font-size: 14px; }
+  .level-high { color: var(--accent3); font-weight: 600; }
+  .level-mid { color: var(--warn); font-weight: 600; }
+  .level-low { color: var(--danger); font-weight: 600; }
+
+  /* Pros/cons */
+  .pros-cons-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 16px;
+  }
+  .pro-box, .con-box {
+    background: var(--surface);
+    border-radius: 6px;
+    padding: 18px;
+  }
+  .pro-box { border: 1px solid rgba(16,185,129,0.2); }
+  .con-box { border: 1px solid rgba(239,68,68,0.2); }
+  .pro-box h4 { color: var(--accent3); margin-top: 0; }
+  .con-box h4 { color: var(--danger); margin-top: 0; }
+  .pro-box li, .con-box li {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 7px;
+    padding-left: 16px;
+    position: relative;
+    list-style: none;
+  }
+  .pro-box li::before { content: '+'; position: absolute; left: 0; color: var(--accent3); font-weight: 700; }
+  .con-box li::before { content: '–'; position: absolute; left: 0; color: var(--danger); font-weight: 700; }
+  ul.pro-list, ul.con-list { padding: 0; }
+
+  /* Tool detail blocks */
+  .tool-detail {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .tool-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .tool-detail-name {
+    font-size: 17px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .tool-detail-name a { color: var(--accent); text-decoration: none; }
+  .tool-detail-name a:hover { text-decoration: underline; }
+  .status-pill {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    letter-spacing: 0.5px;
+  }
+  .status-pill.active { background: rgba(16,185,129,0.15); color: var(--accent3); border: 1px solid rgba(16,185,129,0.3); }
+  .status-pill.moderate { background: rgba(245,158,11,0.1); color: var(--warn); border: 1px solid rgba(245,158,11,0.2); }
+  .status-pill.dormant { background: rgba(239,68,68,0.1); color: var(--danger); border: 1px solid rgba(239,68,68,0.2); }
+
+  /* Gaps */
+  .gap-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--danger);
+    border-radius: 0 6px 6px 0;
+    padding: 18px 20px;
+    margin-bottom: 12px;
+  }
+  .gap-card h3 { margin-top: 0; color: var(--text); font-size: 14px; }
+  .gap-card p { margin-bottom: 0; font-size: 13px; }
+  .gap-card.warn { border-left-color: var(--warn); }
+  .gap-card.note { border-left-color: var(--accent2); }
+
+  /* Architecture patterns */
+  .pattern-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 22px;
+    margin-bottom: 20px;
+  }
+  .pattern-card h3 { margin-top: 0; color: #fff; font-size: 15px; margin-bottom: 10px; }
+  .pattern-card .pattern-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 2px;
+    background: rgba(124,58,237,0.15);
+    border: 1px solid rgba(124,58,237,0.3);
+    color: #c4b5fd;
+    display: inline-block;
+    margin-bottom: 12px;
+  }
+  .code-block {
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: #a8b5c9;
+    overflow-x: auto;
+    margin: 14px 0;
+    line-height: 1.6;
+  }
+  .code-block .cm { color: #4a5568; }
+  .code-block .kw { color: var(--accent); }
+  .code-block .str { color: #68d391; }
+  .code-block .fn { color: #f6ad55; }
+  .code-block .num { color: #fc8181; }
+
+  /* Alert boxes */
+  .alert {
+    padding: 14px 18px;
+    border-radius: 4px;
+    font-size: 13px;
+    margin: 16px 0;
+    border-left: 3px solid;
+  }
+  .alert.info { background: rgba(0,200,255,0.05); border-color: var(--accent); color: #93c5fd; }
+  .alert.warn { background: rgba(245,158,11,0.05); border-color: var(--warn); color: #fcd34d; }
+  .alert.success { background: rgba(16,185,129,0.05); border-color: var(--accent3); color: #6ee7b7; }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  @media (max-width: 768px) {
+    .hero, .toc-nav, .container { padding-left: 20px; padding-right: 20px; }
+    .tool-grid { grid-template-columns: 1fr; }
+    .pros-cons-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="tag-line">// Research Report · April 2026</div>
+  <h1>Regression &amp; Unit Testing for<br><span>Time-Dependent Simulations</span></h1>
+  <p class="hero-sub">A comprehensive evaluation of open-source frameworks, tools, and methodologies across the FMI/FMU, Modelica, Julia SciML, and Python simulation ecosystems — with CI/CD integration patterns and identified ecosystem gaps.</p>
+  <div class="meta-row">
+    <span class="meta-badge active">● FMI/FMU</span>
+    <span class="meta-badge active">● OpenModelica</span>
+    <span class="meta-badge active">● Julia SciML</span>
+    <span class="meta-badge active">● Python Harnesses</span>
+    <span class="meta-badge warn">⚠ Proprietary Gaps Noted</span>
+  </div>
+</div>
+
+<!-- TOC NAV -->
+<nav class="toc-nav">
+  <a href="#categorized">01 · Categorized Tools</a>
+  <a href="#comparison">02 · Comparison Table</a>
+  <a href="#procon">03 · Pros/Cons</a>
+  <a href="#gaps">04 · Ecosystem Gaps</a>
+  <a href="#patterns">05 · Architectures</a>
+</nav>
+
+<!-- SECTION 1: CATEGORIZED TOOLS -->
+<section id="categorized">
+  <div class="container">
+    <div class="section-label">// Deliverable 01</div>
+    <h2>Categorized List of Tools</h2>
+    <p class="section-intro">Tools grouped by ecosystem and primary function. Activity levels based on GitHub commit history as of early 2026. Each card links to the canonical repository and annotates supported testing capabilities.</p>
+
+    <div class="legend">
+      <span class="legend-item"><span class="legend-dot active"></span> Active (&lt;3 mo)</span>
+      <span class="legend-item"><span class="legend-dot moderate" style="background:var(--warn)"></span> Moderate (3–18 mo)</span>
+      <span class="legend-item"><span class="legend-dot dormant"></span> Dormant/Archived</span>
+    </div>
+
+    <!-- FMI/FMU -->
+    <div class="cat-header" style="margin-top:24px">
+      <div class="cat-icon fmi">🔌</div>
+      <div>
+        <div class="cat-title">FMI/FMU Validation &amp; Testing Tools</div>
+        <div class="cat-count">9 tools identified</div>
+      </div>
+    </div>
+
+    <div class="tool-grid">
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/CATIA-Systems/FMPy" target="_blank">FMPy</a></div>
+            <div class="tool-ecosystem">FMI · Python · Modelica Association</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">The de-facto standard Python library for simulating and validating FMUs. Offers a GUI, CLI, and API. Supports FMI 1.0, 2.0, 3.0. Powers the official fmi-standard.org web validator. Produces CSV time-series results suitable for regression comparison.</p>
+        <div class="tool-tags">
+          <span class="tag ts">time-series</span>
+          <span class="tag ci">CI-ready</span>
+          <span class="tag">FMI 3.0</span>
+          <span class="tag">validation</span>
+          <span class="tag xsim">cross-check</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/modelica/Reference-FMUs" target="_blank">Reference-FMUs + fmusim</a></div>
+            <div class="tool-ecosystem">FMI · C · Modelica Association</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">Official Modelica Association reference FMUs (BouncingBall, Clocks, etc.) plus the <code>fmusim</code> CLI simulator. Tests correct call-sequence compliance, event handling, and FMI state machine; outputs CSV. Indispensable for FMI implementors.</p>
+        <div class="tool-tags">
+          <span class="tag ts">time-series</span>
+          <span class="tag">event-detection</span>
+          <span class="tag">FMI 2/3</span>
+          <span class="tag">official</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/modelica/fmi-cross-check" target="_blank">FMI Cross-Check</a></div>
+            <div class="tool-ecosystem">FMI · Python · Modelica Association</div>
+          </div>
+          <div class="activity-dot moderate" title="Moderate – temporarily archived"></div>
+        </div>
+        <p class="tool-desc">Industry-wide cross-tool FMU interoperability validation suite. 1530+ FMUs tested across tool pairings. Defines reference CSV trajectories (<code>*_ref.csv</code>) and tolerance options (<code>*_ref.opt</code>) as a standard format for trajectory comparison. Currently being reworked.</p>
+        <div class="tool-tags">
+          <span class="tag ts">time-series</span>
+          <span class="tag xsim">cross-simulator</span>
+          <span class="tag">ref-trajectories</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/modelica-tools/FMUComplianceChecker" target="_blank">FMUComplianceChecker</a></div>
+            <div class="tool-ecosystem">FMI · C · Modelica-Tools (archived)</div>
+          </div>
+          <div class="activity-dot dormant" title="Discontinued"></div>
+        </div>
+        <p class="tool-desc">Historical FMU 1.0/2.0 compliance checker from QTronic/Synopsys. Now discontinued; FMPy and Reference-FMUs are the recommended replacements. Still useful for understanding the validation paradigm. Supported CSV input stimuli, log levels, and event checking.</p>
+        <div class="tool-tags">
+          <span class="tag">FMI 1/2 only</span>
+          <span class="tag">archived</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/open-simulation-platform/libcosim" target="_blank">libcosim (OSP)</a></div>
+            <div class="tool-ecosystem">FMI · C++ · DNV / Open Simulation Platform</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">Production-grade C++ co-simulation engine for FMI 1.0/2.0 used in maritime industry digital twins. Includes scenario runner, observer/manipulator interfaces, and CSV output. Python wrapper (<code>libcosimpy</code>) uses pytest. Fixed-step master algorithm with configurable step size.</p>
+        <div class="tool-tags">
+          <span class="tag ts">time-series</span>
+          <span class="tag ci">pytest</span>
+          <span class="tag">SSP/OSP</span>
+          <span class="tag xsim">co-sim</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/open-simulation-platform/libcosimpy" target="_blank">libcosimpy</a></div>
+            <div class="tool-ecosystem">FMI · Python · Open Simulation Platform</div>
+          </div>
+          <div class="activity-dot moderate" title="Moderate"></div>
+        </div>
+        <p class="tool-desc">Python wrapper for libcosim enabling pytest-based testing of FMU co-simulations. Tests can be structured as standard pytest fixtures; supports ECCO adaptive stepping algorithm for energy-conservation co-simulation. FMUs added manually or via SSP config files.</p>
+        <div class="tool-tags">
+          <span class="tag ci">pytest</span>
+          <span class="tag ts">time-series</span>
+          <span class="tag">FMI 2.0</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/CATIA-Systems/FMPy" target="_blank">FMPy Validation Module</a></div>
+            <div class="tool-ecosystem">FMI · Python · Modelica Association</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">FMPy's built-in <code>validate()</code> function performs FMU schema validation, checks for required XML fields, and verifies simulation behavior. Used by the official online FMU validator at fmi-standard.org. Integrates cleanly with pytest via <code>assert validate_fmu(path) == []</code>.</p>
+        <div class="tool-tags">
+          <span class="tag ci">CI-ready</span>
+          <span class="tag">schema-check</span>
+          <span class="tag">FMI 3.0</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/fmi-tools/fmi-library" target="_blank">FMI Library (FMIL)</a></div>
+            <div class="tool-ecosystem">FMI · C · Modelica Association</div>
+          </div>
+          <div class="activity-dot moderate" title="Moderate"></div>
+        </div>
+        <p class="tool-desc">Low-level C library for FMU 1.0/2.0 import. Used as the foundation for FMUComplianceChecker and many other tools. Provides the binding layer for FMU shared libraries. Useful for building custom testing harnesses in C/C++ with direct FMI API control.</p>
+        <div class="tool-tags">
+          <span class="tag">C API</span>
+          <span class="tag">FMI 1/2</span>
+          <span class="tag">low-level</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/open-simulation-platform/osp-validator" target="_blank">osp-validator</a></div>
+            <div class="tool-ecosystem">FMI · Kotlin · Open Simulation Platform</div>
+          </div>
+          <div class="activity-dot moderate" title="Moderate"></div>
+        </div>
+        <p class="tool-desc">Validation tool for OSP system structure configs and FMU model interfaces. Checks semantic correctness of variable connections (not just type compatibility). Part of the OSP toolchain for maritime co-simulation; extends standard FMI validation with domain semantics.</p>
+        <div class="tool-tags">
+          <span class="tag">semantic-validation</span>
+          <span class="tag">OSP/SSP</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODELICA -->
+    <div class="cat-header" style="margin-top:40px">
+      <div class="cat-icon modelica">📐</div>
+      <div>
+        <div class="cat-title">Modelica Testing Frameworks</div>
+        <div class="cat-count">5 tools identified</div>
+      </div>
+    </div>
+
+    <div class="tool-grid">
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/OpenModelica/OpenModelicaLibraryTesting" target="_blank">OpenModelicaLibraryTesting</a></div>
+            <div class="tool-ecosystem">Modelica · Python · OSMC</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">Official OSMC nightly regression test suite for Modelica libraries. Simulates models using OMC, stores results in SQLite, compares against reference MAT/CSV files with configurable tolerances. Reports published at libraries.openmodelica.org. Covers C++, FMI, daeMode runtimes.</p>
+        <div class="tool-tags">
+          <span class="tag ts">time-series</span>
+          <span class="tag ci">CI-ready</span>
+          <span class="tag">MAT/CSV</span>
+          <span class="tag xsim">FMI runtime</span>
+          <span class="tag">nightly</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/OpenModelica/openmodelica-library-testing-action" target="_blank">OM Library Testing Action</a></div>
+            <div class="tool-ecosystem">Modelica · GitHub Actions · OSMC</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">GitHub Action that wraps OpenModelicaLibraryTesting for use in any Modelica library's CI pipeline. Installs OMC, runs simulations, compares against reference files, publishes HTML reports to GitHub Pages. Exemplary CI integration; accepts <code>reference-files-dir</code> parameter.</p>
+        <div class="tool-tags">
+          <span class="tag ci">GitHub Actions</span>
+          <span class="tag ts">time-series</span>
+          <span class="tag">HTML reports</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/pstelzig/MoPyRegtest" target="_blank">MoPyRegtest</a></div>
+            <div class="tool-ecosystem">Modelica · Python/pytest · Open-source</div>
+          </div>
+          <div class="activity-dot moderate" title="Moderate"></div>
+        </div>
+        <p class="tool-desc">Lightweight Python regression testing framework for Modelica libraries (Modelica 2023 paper). Uses .mos file interface so it works with any compliant Modelica tool — not locked to OMC. Supports pluggable comparison metrics. Integrates naturally with pytest and GitHub Actions.</p>
+        <div class="tool-tags">
+          <span class="tag ci">pytest</span>
+          <span class="tag ts">CSV comparison</span>
+          <span class="tag">pluggable metrics</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/modelica-tools/csv-compare" target="_blank">csv-compare</a></div>
+            <div class="tool-ecosystem">Modelica · C# · Modelica-Tools</div>
+          </div>
+          <div class="activity-dot moderate" title="Moderate"></div>
+        </div>
+        <p class="tool-desc">Dedicated tool for comparing simulation result CSV files with adjustable absolute/relative tolerances. Used extensively in Modelica library development. Supports recursive directory comparison (batch mode). Published by the modelica-tools org; actively maintained.</p>
+        <div class="tool-tags">
+          <span class="tag ts">time-series</span>
+          <span class="tag">tolerance</span>
+          <span class="tag">batch mode</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/OpenModelica/OMSimulator" target="_blank">OMSimulator</a></div>
+            <div class="tool-ecosystem">FMI/SSP · C++ · OSMC</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">FMI/SSP-based co-simulation environment integrated into OMEdit and OMC. Can be invoked as a testing backend in OpenModelicaLibraryTesting via the <code>--fmisimulator</code> flag. Enables cross-validation between native OMC results and FMU-based simulation results.</p>
+        <div class="tool-tags">
+          <span class="tag xsim">FMI/SSP</span>
+          <span class="tag">co-sim</span>
+          <span class="tag">OMC-integrated</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- JULIA/SCIML -->
+    <div class="cat-header" style="margin-top:40px">
+      <div class="cat-icon julia">⚡</div>
+      <div>
+        <div class="cat-title">Julia / SciML Testing Approaches</div>
+        <div class="cat-count">6 tools identified</div>
+      </div>
+    </div>
+
+    <div class="tool-grid">
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/SciML/DiffEqDevTools.jl" target="_blank">DiffEqDevTools.jl</a></div>
+            <div class="tool-ecosystem">Julia · SciML</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">Core testing engine for the entire SciML ecosystem. Provides convergence testing, work-precision diagrams, solver shootouts, and error approximation. <code>test_convergence()</code> verifies numerical order of ODE/SDE solvers. Used in every SciML CI pipeline.</p>
+        <div class="tool-tags">
+          <span class="tag ci">CI-ready</span>
+          <span class="tag ts">convergence</span>
+          <span class="tag">work-precision</span>
+          <span class="tag">SDE support</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/SciML/SciMLBenchmarks.jl" target="_blank">SciMLBenchmarks.jl</a></div>
+            <div class="tool-ecosystem">Julia · SciML</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">Comprehensive benchmark suite for ODE, SDE, DAE solvers covering Julia, Python, MATLAB, and R. Work-precision diagrams built on low-tolerance reference solutions. Runs on self-hosted GitHub Actions with 32-core EPYC for reproducible hardware benchmarks. Published at benchmarks.sciml.ai.</p>
+        <div class="tool-tags">
+          <span class="tag ci">GitHub Actions</span>
+          <span class="tag">cross-lang</span>
+          <span class="tag">reference-solutions</span>
+          <span class="tag">DAE/SDE</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/SciML/DiffEqProblemLibrary.jl" target="_blank">DiffEqProblemLibrary.jl</a></div>
+            <div class="tool-ecosystem">Julia · SciML</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">Library of pre-made ODE, SDE, DDE, DAE test problems with known/analytic solutions for benchmarking and regression testing. Includes classical stiff problems (Robertson, Van der Pol), non-stiff problems, and biological models. Enables standard benchmark suite reproducibility.</p>
+        <div class="tool-tags">
+          <span class="tag">benchmark suite</span>
+          <span class="tag">analytic solutions</span>
+          <span class="tag">stiff/non-stiff</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/SciML/ModelingToolkit.jl" target="_blank">ModelingToolkit.jl</a></div>
+            <div class="tool-ecosystem">Julia · SciML</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">Acausal symbolic modeling framework. Testing typically uses Julia's <code>Test.jl</code> with <code>@test sol[x, end] ≈ ref atol=1e-6</code> patterns. Supports DAE index reduction, automatic sparsity detection, and structural analysis — all of which are testable properties.</p>
+        <div class="tool-tags">
+          <span class="tag ci">Test.jl</span>
+          <span class="tag">DAE</span>
+          <span class="tag">symbolic</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/SciML/FMIFlux.jl" target="_blank">FMI.jl / FMIFlux.jl</a></div>
+            <div class="tool-ecosystem">Julia · SciML / ThummeTo</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">Julia-native FMI integration. FMI.jl loads/simulates FMUs seamlessly inside Julia. FMIFlux.jl enables NeuralFMU training — embedding FMUs inside neural networks. Testing can compare FMU trajectories against native Julia models using standard <code>Test.jl</code> tolerance assertions.</p>
+        <div class="tool-tags">
+          <span class="tag xsim">FMU↔Julia</span>
+          <span class="tag">FMI 2/3</span>
+          <span class="tag">NeuralFMU</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/OpenModelica/BaseModelicaLibraryTesting.jl" target="_blank">BaseModelicaLibraryTesting.jl</a></div>
+            <div class="tool-ecosystem">Julia · Experimental · OpenModelica</div>
+          </div>
+          <div class="activity-dot moderate" title="Experimental"></div>
+        </div>
+        <p class="tool-desc">Experimental Julia-based library testing for OpenModelica's BaseModelica export with MTK.jl import. Bridges the Modelica and Julia ecosystems for cross-validation. Early stage but signals the direction of OM/SciML convergence.</p>
+        <div class="tool-tags">
+          <span class="tag xsim">OM↔Julia</span>
+          <span class="tag">experimental</span>
+          <span class="tag">MTK.jl</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- PYTHON -->
+    <div class="cat-header" style="margin-top:40px">
+      <div class="cat-icon python">🐍</div>
+      <div>
+        <div class="cat-title">Python-Based General Testing Harnesses</div>
+        <div class="cat-count">5 approaches identified</div>
+      </div>
+    </div>
+
+    <div class="tool-grid">
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/CATIA-Systems/FMPy" target="_blank">FMPy + pytest pattern</a></div>
+            <div class="tool-ecosystem">Python · pytest · Community</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">The most common community pattern: wrap <code>simulate_fmu()</code> in a pytest test, compare result arrays using <code>numpy.testing.assert_allclose()</code> with <code>rtol</code>/<code>atol</code>. Golden CSV trajectories stored in <code>tests/reference/</code> and loaded as numpy arrays for comparison.</p>
+        <div class="tool-tags">
+          <span class="tag ci">pytest</span>
+          <span class="tag ts">numpy comparison</span>
+          <span class="tag">golden files</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/modelon-community/PyFMI" target="_blank">PyFMI</a></div>
+            <div class="tool-ecosystem">Python · LGPL · Modelon / OSMC</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">Mature Python package for FMU simulation (Cython-based, wraps FMIL). Supports FMI 1.0/2.0 for ME and CS. Trajectory results accessible as structured arrays; integrates with scipy for event detection. Widely used in academic and industrial workflows.</p>
+        <div class="tool-tags">
+          <span class="tag ts">time-series</span>
+          <span class="tag">FMI 1/2</span>
+          <span class="tag">Cython</span>
+          <span class="tag">scipy</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name">pytest-regressions (simulation)</div>
+            <div class="tool-ecosystem">Python · pytest ecosystem · Generic</div>
+          </div>
+          <div class="activity-dot active" title="Active"></div>
+        </div>
+        <p class="tool-desc">General-purpose regression testing framework with <code>data_regression</code> (JSON/YAML), <code>num_regression</code> (numpy arrays), and <code>dataframe_regression</code> fixtures. <code>num_regression.check()</code> stores golden arrays and compares with configurable tolerances — directly applicable to simulation time-series outputs.</p>
+        <div class="tool-tags">
+          <span class="tag ci">pytest</span>
+          <span class="tag ts">numpy arrays</span>
+          <span class="tag">golden files</span>
+          <span class="tag">auto-update</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name">PySimulator</div>
+            <div class="tool-ecosystem">Python · GUI · DLR / OpenModelica</div>
+          </div>
+          <div class="activity-dot dormant" title="Dormant"></div>
+        </div>
+        <p class="tool-desc">Simulation and analysis environment with plugin-based simulator support (OpenModelica, Dymola, FMPy). Historical significance: its regression plugin was the first systematic cross-tool Modelica comparison framework. Now mostly superseded by MoPyRegtest and FMPy but still referenced in literature.</p>
+        <div class="tool-tags">
+          <span class="tag xsim">cross-tool</span>
+          <span class="tag">GUI</span>
+          <span class="tag">plugin-based</span>
+        </div>
+      </div>
+
+      <div class="tool-card">
+        <div class="tool-card-header">
+          <div>
+            <div class="tool-name"><a href="https://github.com/SciML/diffeqpy" target="_blank">diffeqpy / diffeqr</a></div>
+            <div class="tool-ecosystem">Python/R → Julia · SciML</div>
+          </div>
+          <div class="activity-dot moderate" title="Moderate"></div>
+        </div>
+        <p class="tool-desc">Bridges SciML's Julia solvers to Python and R. Enables Python test scripts to drive Julia ODE/SDE solvers, enabling cross-solver regression testing: compare a Python scipy result against a Julia DiffEq result for the same problem at matched tolerances.</p>
+        <div class="tool-tags">
+          <span class="tag xsim">Python↔Julia</span>
+          <span class="tag">ODE/SDE</span>
+          <span class="tag ci">pytest-compatible</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 2: COMPARISON TABLE -->
+<section id="comparison">
+  <div class="container">
+    <div class="section-label">// Deliverable 02</div>
+    <h2>Deep Comparison Table</h2>
+    <p class="section-intro">All major tools compared across eight key dimensions. Ratings reflect community consensus, documented features, and practical experience reports. "Cross-sim" means the tool can validate results across different simulators or solver backends.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>Time-Series Comparison</th>
+            <th>Tolerance Handling</th>
+            <th>Event Detection</th>
+            <th>Cross-Simulator</th>
+            <th>Stochastic Support</th>
+            <th>CI/CD Integration</th>
+            <th>Setup Ease</th>
+            <th>Large Model Scale</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>FMPy</td>
+            <td><span class="check">✓</span> CSV/numpy</td>
+            <td><span class="check">✓</span> rtol/atol</td>
+            <td><span class="partial">◑</span> basic</td>
+            <td><span class="partial">◑</span> FMU only</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-high">Excellent</span></td>
+            <td><span class="level-high">Easy</span></td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+          <tr>
+            <td>Reference-FMUs</td>
+            <td><span class="check">✓</span> CSV</td>
+            <td><span class="check">✓</span> via fmusim</td>
+            <td><span class="check">✓</span> native</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-mid">Good</span></td>
+            <td><span class="level-high">Easy</span></td>
+            <td><span class="level-low">Low</span></td>
+          </tr>
+          <tr>
+            <td>FMI Cross-Check</td>
+            <td><span class="check">✓</span> ref.csv</td>
+            <td><span class="check">✓</span> ref.opt</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="check">✓</span> multi-tool</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-mid">Good</span></td>
+            <td><span class="level-mid">Medium</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>OM LibraryTesting</td>
+            <td><span class="check">✓</span> MAT/CSV</td>
+            <td><span class="check">✓</span> configurable</td>
+            <td><span class="partial">◑</span></td>
+            <td><span class="partial">◑</span> FMI runtime</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-high">Excellent</span></td>
+            <td><span class="level-mid">Medium</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>OM Testing Action</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-high">Native GH Actions</span></td>
+            <td><span class="level-high">Easy</span></td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+          <tr>
+            <td>MoPyRegtest</td>
+            <td><span class="check">✓</span> CSV</td>
+            <td><span class="check">✓</span> pluggable</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="partial">◑</span> any .mos tool</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-high">Excellent</span></td>
+            <td><span class="level-high">Easy</span></td>
+            <td><span class="level-low">Low</span></td>
+          </tr>
+          <tr>
+            <td>csv-compare</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span> abs+rel</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-mid">CLI only</span></td>
+            <td><span class="level-high">Easy</span></td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+          <tr>
+            <td>libcosim / libcosimpy</td>
+            <td><span class="check">✓</span> CSV</td>
+            <td><span class="partial">◑</span> manual</td>
+            <td><span class="partial">◑</span> via observer</td>
+            <td><span class="check">✓</span> co-sim</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-mid">pytest + CMake</span></td>
+            <td><span class="level-low">Complex</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>DiffEqDevTools.jl</td>
+            <td><span class="check">✓</span> solution obj</td>
+            <td><span class="check">✓</span> abstol/reltol</td>
+            <td><span class="partial">◑</span> via callbacks</td>
+            <td><span class="partial">◑</span> solver shootout</td>
+            <td><span class="check">✓</span> SDE/SDEs</td>
+            <td><span class="level-high">Excellent (Julia CI)</span></td>
+            <td><span class="level-high">Easy</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>SciMLBenchmarks.jl</td>
+            <td><span class="check">✓</span> work-precision</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="check">✓</span> multi-lang</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="level-mid">Self-hosted runners</td>
+            <td><span class="level-mid">Medium</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>FMI.jl</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="partial">◑</span> manual</td>
+            <td><span class="partial">◑</span></td>
+            <td><span class="check">✓</span> FMU↔Julia</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-high">Julia CI</span></td>
+            <td><span class="level-high">Easy</span></td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+          <tr>
+            <td>pytest-regressions</td>
+            <td><span class="check">✓</span> numpy arrays</td>
+            <td><span class="check">✓</span> rtol/atol</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-high">Native pytest</span></td>
+            <td><span class="level-high">Very Easy</span></td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+          <tr>
+            <td>PyFMI</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="partial">◑</span> manual</td>
+            <td><span class="partial">◑</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="level-mid">pytest-compatible</span></td>
+            <td><span class="level-mid">Medium (Cython)</span></td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:14px; font-size:12px; font-family:var(--mono); color:var(--text-muted)">✓ = Full support &nbsp;◑ = Partial/workaround needed &nbsp;✗ = Not supported natively</p>
+  </div>
+</section>
+
+<!-- SECTION 3: PROS/CONS -->
+<section id="procon">
+  <div class="container">
+    <div class="section-label">// Deliverable 03</div>
+    <h2>Pros / Cons Analysis</h2>
+    <p class="section-intro">In-depth analysis of each major tool or approach, covering practical strengths and documented weaknesses from the developer community.</p>
+
+    <!-- FMPy -->
+    <div class="tool-detail">
+      <div class="tool-detail-header">
+        <div class="tool-detail-name"><a href="https://github.com/CATIA-Systems/FMPy" target="_blank">FMPy</a> <span style="color:var(--text-muted); font-weight:300; font-size:14px">— Primary FMU simulation &amp; validation library</span></div>
+        <span class="status-pill active">ACTIVE</span>
+      </div>
+      <div class="pros-cons-grid">
+        <div class="pro-box">
+          <h4>Strengths</h4>
+          <ul class="pro-list">
+            <li>Official Modelica Association backing; most widely-used FMU Python tool</li>
+            <li>Supports FMI 1.0, 2.0, and 3.0 natively including SSP</li>
+            <li>Built-in <code>validate_fmu()</code> for structural/schema validation</li>
+            <li>GUI, CLI, and full Python API — zero lock-in</li>
+            <li>Powers fmi-standard.org online validator; battle-tested</li>
+            <li>Cross-check validation script built-in (<code>fmpy.cross_check</code>)</li>
+            <li>Easy pytest integration: results as structured numpy arrays</li>
+          </ul>
+        </div>
+        <div class="con-box">
+          <h4>Weaknesses</h4>
+          <ul class="con-list">
+            <li>No built-in golden-file management; requires manual numpy/CSV comparison</li>
+            <li>Event detection testing requires custom logic; no built-in event assertion</li>
+            <li>No stochastic simulation or ensemble support</li>
+            <li>FMI 3.0 support is newer and less battle-tested than 2.0</li>
+            <li>No native cross-simulator validation (comparing FMU vs. native model)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- OM Library Testing -->
+    <div class="tool-detail">
+      <div class="tool-detail-header">
+        <div class="tool-detail-name"><a href="https://github.com/OpenModelica/OpenModelicaLibraryTesting" target="_blank">OpenModelicaLibraryTesting</a> + <a href="https://github.com/OpenModelica/openmodelica-library-testing-action" target="_blank">GitHub Action</a></div>
+        <span class="status-pill active">ACTIVE</span>
+      </div>
+      <div class="pros-cons-grid">
+        <div class="pro-box">
+          <h4>Strengths</h4>
+          <ul class="pro-list">
+            <li>Fully automated nightly CI; covers 50+ Modelica libraries</li>
+            <li>Reference MAT/CSV files with configurable tolerance via JSON config</li>
+            <li>HTML report generation + GitHub Pages deployment built-in</li>
+            <li>Covers multiple runtimes: C++, FMI, daeMode, old frontend</li>
+            <li>GitHub Action packaging makes integration trivial for library authors</li>
+            <li>SQLite result storage enables historical trend analysis</li>
+          </ul>
+        </div>
+        <div class="con-box">
+          <h4>Weaknesses</h4>
+          <ul class="con-list">
+            <li>OMC install is heavy (~1GB); CI compute cost is significant</li>
+            <li>Limited to OpenModelica as simulator (despite .mos interface hints)</li>
+            <li>Reference file generation requires running OMC — bootstrapping problem</li>
+            <li>No stochastic simulation support</li>
+            <li>Test discovery depends on Modelica experiment annotations (<code>StopTime</code>)</li>
+            <li>Cross-simulator validation requires manual OMSimulator setup</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- MoPyRegtest -->
+    <div class="tool-detail">
+      <div class="tool-detail-header">
+        <div class="tool-detail-name"><a href="https://github.com/pstelzig/MoPyRegtest" target="_blank">MoPyRegtest</a></div>
+        <span class="status-pill moderate">MODERATE</span>
+      </div>
+      <div class="pros-cons-grid">
+        <div class="pro-box">
+          <h4>Strengths</h4>
+          <ul class="pro-list">
+            <li>Tool-agnostic via .mos scripting interface (OpenModelica, Dymola, etc.)</li>
+            <li>Pluggable comparison metrics — easy to add custom error measures</li>
+            <li>Native pytest integration; tests look like standard Python unit tests</li>
+            <li>Lightweight — minimal dependencies, easy to install</li>
+            <li>Formally published (Modelica 2023 conference paper)</li>
+          </ul>
+        </div>
+        <div class="con-box">
+          <h4>Weaknesses</h4>
+          <ul class="con-list">
+            <li>Small community; limited real-world adoption reports</li>
+            <li>No built-in parallelism for large test suites</li>
+            <li>No HTML report generation; results are pytest output only</li>
+            <li>No event detection, stochastic, or cross-simulator support</li>
+            <li>Requires simulator to support .mos scripting (not all do)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- DiffEqDevTools -->
+    <div class="tool-detail">
+      <div class="tool-detail-header">
+        <div class="tool-detail-name"><a href="https://github.com/SciML/DiffEqDevTools.jl" target="_blank">DiffEqDevTools.jl</a> + <a href="https://github.com/SciML/SciMLBenchmarks.jl" target="_blank">SciMLBenchmarks.jl</a></div>
+        <span class="status-pill active">ACTIVE</span>
+      </div>
+      <div class="pros-cons-grid">
+        <div class="pro-box">
+          <h4>Strengths</h4>
+          <ul class="pro-list">
+            <li>Purpose-built for numerical solver correctness verification</li>
+            <li>Work-precision diagrams reveal accuracy vs. compute trade-offs</li>
+            <li>Convergence testing verifies theoretical solver order empirically</li>
+            <li>Covers ODE, SDE, DDE, DAE — stochastic support is a differentiator</li>
+            <li>Cross-language benchmarking (Julia, Python, MATLAB, R) via SciMLBenchmarks</li>
+            <li>Deeply integrated with SciML CI; every solver PR runs convergence tests</li>
+            <li>Reference solutions at ultra-low tolerance to bootstrap comparisons</li>
+          </ul>
+        </div>
+        <div class="con-box">
+          <h4>Weaknesses</h4>
+          <ul class="con-list">
+            <li>Julia-ecosystem-only; difficult to apply to non-Julia models</li>
+            <li>No FMI/FMU support (FMI.jl bridges this but adds complexity)</li>
+            <li>Self-hosted CI runners needed for reproducible benchmarks (expensive)</li>
+            <li>Work-precision diagrams don't directly map to regression testing of model outputs</li>
+            <li>No golden-file based trajectory comparison for end-user models</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- libcosim -->
+    <div class="tool-detail">
+      <div class="tool-detail-header">
+        <div class="tool-detail-name"><a href="https://github.com/open-simulation-platform/libcosim" target="_blank">libcosim / cosim-cli (OSP)</a></div>
+        <span class="status-pill active">ACTIVE</span>
+      </div>
+      <div class="pros-cons-grid">
+        <div class="pro-box">
+          <h4>Strengths</h4>
+          <ul class="pro-list">
+            <li>Production-grade co-simulation engine; actively used in maritime industry</li>
+            <li>Scenario runner enables systematic input sweep testing</li>
+            <li>Observer/manipulator pattern allows variable injection mid-simulation</li>
+            <li>SSP standard support for multi-FMU system-level testing</li>
+            <li>Python wrapper with pytest; ECCO adaptive stepping for energy conservation</li>
+          </ul>
+        </div>
+        <div class="con-box">
+          <h4>Weaknesses</h4>
+          <ul class="con-list">
+            <li>Complex setup: requires Conan, CMake, C++ build chain</li>
+            <li>FMI 3.0 support not yet available (2.0 only as of early 2026)</li>
+            <li>No built-in tolerance-based trajectory comparison — must write your own</li>
+            <li>Maritime/engineering domain focus; tooling UX reflects that</li>
+            <li>Small developer community outside Nordic/maritime industry</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- SECTION 4: GAPS -->
+<section id="gaps">
+  <div class="container">
+    <div class="section-label">// Deliverable 04</div>
+    <h2>Gaps in the Ecosystem</h2>
+    <p class="section-intro">Critical missing capabilities, community pain points, and areas dominated by proprietary tooling. These represent high-value opportunities for open-source development.</p>
+
+    <h3 style="margin-top:0; color:var(--danger)">🔴 Critical Missing Capabilities</h3>
+
+    <div class="gap-card">
+      <h3>No Unified, Standardized Regression Framework</h3>
+      <p>There is no single framework that covers the full workflow: simulate → store golden trajectory → compare with tolerance → report diff → update golden on intent. Each ecosystem has partial solutions (csv-compare, MoPyRegtest, DiffEqDevTools) but no standard that works across FMI, Modelica, and ODE solver ecosystems simultaneously. The FMI Cross-Check provides a standard format (<code>*_ref.csv</code> / <code>*_ref.opt</code>) but it is only tool-to-tool, not general-purpose.</p>
+    </div>
+
+    <div class="gap-card">
+      <h3>No Standardized Event Detection Testing</h3>
+      <p>Hybrid systems (bouncing balls, switching controllers, thermostat models) require verifying that discrete events occur at the correct times. No open-source tool provides a declarative assertion language for event timing, like <code>assert event(x_crosses_zero) at t ≈ 0.5s ± 1ms</code>. FMPy and PyFMI detect events but provide no structured test assertion framework around them.</p>
+    </div>
+
+    <div class="gap-card">
+      <h3>No Stochastic Simulation Regression in FMI/Modelica Ecosystems</h3>
+      <p>SciML/DiffEqDevTools handles SDE convergence testing in Julia, but the FMI and Modelica ecosystems have zero standardized support for stochastic simulation regression. Comparing stochastic trajectories requires statistical tests (KS-test, confidence interval checking) rather than point-wise tolerances, and none of the FMI/Modelica tools support this.</p>
+    </div>
+
+    <div class="gap-card">
+      <h3>Weak Cross-Simulator Validation Tooling</h3>
+      <p>While FMI.jl enables FMU↔Julia comparison, and the FMI Cross-Check enables tool-to-tool comparison, there is no general-purpose framework for validating that a model gives consistent results across simulators (e.g., FMPy vs. PyFMI vs. libcosimpy for the same FMU; or OpenModelica vs. Dymola for the same Modelica model). Cross-tool discrepancies beyond expected numerical tolerance are a well-known industry problem.</p>
+    </div>
+
+    <h3 style="margin-top:32px; color:var(--warn)">🟡 Reported Pain Points</h3>
+
+    <div class="gap-card warn">
+      <h3>Golden Reference File Management</h3>
+      <p>No simulation-specific tool provides automatic golden file update workflows (analogous to <code>pytest --update-goldens</code> or Rust <code>insta</code> snapshots). Developers must manually regenerate reference CSVs and commit them, with no tooling to diff, review, or selectively update changed trajectories. This is particularly painful for large Modelica libraries with hundreds of models.</p>
+    </div>
+
+    <div class="gap-card warn">
+      <h3>CI/CD Compute Cost for Simulation Tests</h3>
+      <p>Heavy simulators (OMC, Dymola) make CI expensive. The OM library testing documentation explicitly notes that installing OMC in GitHub Actions requires "significant computational resources and valuable usage time." Long simulation runtimes conflict with fast feedback CI expectations. Solutions like Docker caching and pre-built OMC images help but are not standardized.</p>
+    </div>
+
+    <div class="gap-card warn">
+      <h3>Numerical Drift and Platform-Specific Results</h3>
+      <p>The same model compiled on different OS/compiler combinations produces numerically different trajectories even with identical solver settings. This makes bit-exact regression testing impossible and requires tolerance-based comparison — but choosing appropriate tolerances is non-trivial and not well-documented. The FMI Cross-Check's <code>ref.opt</code> format is the closest to a standard approach.</p>
+    </div>
+
+    <h3 style="margin-top:32px; color:var(--accent2)">🟣 Proprietary-Dominated Areas</h3>
+
+    <div class="gap-card note">
+      <h3>Dymola Regression Testing</h3>
+      <p>Dymola (Dassault Systèmes) is the most widely used Modelica tool in automotive/aerospace industries. Its regression testing is built into the Dymola environment and is proprietary. Open-source alternatives that can process Dymola's result files (MAT format) exist (buildingspy, OMPython reading MAT) but a Dymola-compatible open-source CI harness does not.</p>
+    </div>
+
+    <div class="gap-card note">
+      <h3>Simulink / MATLAB Ecosystem</h3>
+      <p>MATLAB/Simulink testing relies on proprietary Simulink Test and Model Advisor. While FMIKit-Simulink enables FMU import/export, regression testing of Simulink models in open-source CI pipelines is essentially unsupported. Simulix (GPL3, generates FMUs from Simulink via C-API) is the closest open bridge, but it is experimental and limited.</p>
+    </div>
+
+    <div class="gap-card note">
+      <h3>Physics-Based CAE Simulation Testing</h3>
+      <p>Large-scale FEA/CFD simulation regression (OpenFOAM, FEniCS, ANSYS) is a largely separate ecosystem. These simulations produce spatial-temporal field data rather than time-series scalars, requiring different comparison infrastructure. No tool bridges this domain with the FMI/Modelica regression paradigm.</p>
+    </div>
+
+  </div>
+</section>
+
+<!-- SECTION 5: ARCHITECTURES -->
+<section id="patterns">
+  <div class="container">
+    <div class="section-label">// Deliverable 05</div>
+    <h2>Recommended Architectures / Patterns</h2>
+    <p class="section-intro">Battle-tested patterns for structuring simulation regression tests. Each includes a concrete code example and CI configuration. Links to real repository implementations are provided where available.</p>
+
+    <!-- Pattern 1 -->
+    <div class="pattern-card">
+      <span class="pattern-tag">PATTERN 01 · MOST COMMON</span>
+      <h3>Golden Trajectory Comparison with Tolerances (FMPy + pytest + numpy)</h3>
+      <p>The most widely adopted pattern. Simulate an FMU, store CSV trajectories as golden references in version control, and compare future results within tolerance bands. Works for any FMU via FMPy. Uses <code>numpy.testing.assert_allclose</code> for vectorized tolerance comparison.</p>
+
+      <div class="alert info">📁 Real example: <a href="https://github.com/modelica/fmi-cross-check" style="color:var(--accent)">modelica/fmi-cross-check</a> uses this exact pattern with <code>*_ref.csv</code> + <code>*_ref.opt</code> files</div>
+
+      <div class="code-block">
+<span class="cm"># tests/test_bouncing_ball.py</span>
+<span class="kw">import</span> numpy <span class="kw">as</span> np
+<span class="kw">import</span> pytest
+<span class="kw">from</span> fmpy <span class="kw">import</span> simulate_fmu, read_model_description
+
+GOLDEN_CSV = <span class="str">"tests/reference/BouncingBall_ref.csv"</span>
+FMU_PATH   = <span class="str">"models/BouncingBall.fmu"</span>
+
+<span class="kw">def</span> <span class="fn">test_bouncing_ball_trajectory</span>():
+    result = simulate_fmu(
+        FMU_PATH,
+        stop_time=<span class="num">3.0</span>,
+        output_interval=<span class="num">0.01</span>,
+        output_variables=[<span class="str">'h'</span>, <span class="str">'v'</span>]
+    )
+    reference = np.genfromtxt(GOLDEN_CSV, delimiter=<span class="str">','</span>, names=<span class="kw">True</span>)
+
+    np.testing.assert_allclose(
+        result[<span class="str">'h'</span>], reference[<span class="str">'h'</span>],
+        rtol=<span class="num">1e-4</span>, atol=<span class="num">1e-6</span>,
+        err_msg=<span class="str">"Height trajectory deviates from reference"</span>
+    )
+
+<span class="kw">def</span> <span class="fn">test_fmu_validates</span>():
+    <span class="kw">from</span> fmpy.validation <span class="kw">import</span> validate_fmu
+    problems = validate_fmu(FMU_PATH)
+    <span class="kw">assert</span> problems == [], f<span class="str">"FMU validation failed: {problems}"</span>
+      </div>
+
+      <div class="code-block">
+<span class="cm"># .github/workflows/fmu-regression.yml</span>
+name: FMU Regression Tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install fmpy pytest numpy
+      - run: pytest tests/ -v --tb=short
+      </div>
+    </div>
+
+    <!-- Pattern 2 -->
+    <div class="pattern-card">
+      <span class="pattern-tag">PATTERN 02 · MODELICA LIBRARIES</span>
+      <h3>Modelica CI with OpenModelica Library Testing Action</h3>
+      <p>For Modelica library authors. Uses the official <a href="https://github.com/OpenModelica/openmodelica-library-testing-action" target="_blank" style="color:var(--accent)">openmodelica-library-testing-action</a> to automate the full pipeline: install OMC → simulate models → compare against reference MAT files → publish HTML results to GitHub Pages.</p>
+
+      <div class="alert success">✓ This is the gold-standard for open-source Modelica library CI. The OpenModelica organization uses this for 50+ libraries.</div>
+
+      <div class="code-block">
+<span class="cm"># .github/workflows/modelica-regression.yml</span>
+jobs:
+  library-testing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.10'}
+
+      - name: Setup OpenModelica
+        uses: OpenModelica/setup-openmodelica@v1
+        with:
+          version: stable
+          packages: |
+            omc
+          libraries: |
+            Modelica 4.0.0
+          omc-diff: true
+
+      - name: Run library regression tests
+        uses: OpenModelica/openmodelica-library-testing-action@v0.2.0
+        with:
+          library: 'MyLibrary'
+          library-version: '2.2.0'
+          modelica-file: 'MyLibrary/package.mo'
+          omc-version: 'stable'
+          reference-files-dir: 'ReferenceFiles'
+          reference-files-extension: 'mat'
+          pages-root-url: 'https://myorg.github.io/MyLibrary/'
+
+      - name: Deploy results to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./MyLibrary.html/
+      </div>
+    </div>
+
+    <!-- Pattern 3 -->
+    <div class="pattern-card">
+      <span class="pattern-tag">PATTERN 03 · JULIA/SCIML</span>
+      <h3>SciML Convergence Testing + Snapshot Regression</h3>
+      <p>Standard pattern in the SciML ecosystem. Uses <code>DiffEqDevTools.jl</code> for convergence-order verification, and Julia's native <code>Test.jl</code> for point-in-time trajectory regression. The <a href="https://github.com/SciML/DiffEqProblemLibrary.jl" target="_blank" style="color:var(--accent)">DiffEqProblemLibrary.jl</a> provides standard test problems.</p>
+
+      <div class="code-block">
+<span class="cm"># test/test_van_der_pol.jl</span>
+<span class="kw">using</span> Test, OrdinaryDiffEq, DiffEqDevTools, DiffEqProblemLibrary
+
+ODEProblemLibrary.importodeproblems()
+
+<span class="cm"># Convergence test: verify solver achieves theoretical order</span>
+<span class="kw">@testset</span> <span class="str">"Van der Pol convergence order"</span> <span class="kw">begin</span>
+    prob = ODEProblemLibrary.prob_ode_vanderpol
+    abstols = <span class="num">1</span> ./ <span class="num">10</span> .^ (<span class="num">4</span>:<span class="num">7</span>)
+    reltols = <span class="num">1</span> ./ <span class="num">10</span> .^ (<span class="num">4</span>:<span class="num">7</span>)
+    
+    sim = test_convergence(abstols, reltols, prob, Tsit5())
+    @test sim.𝒪est[:final] ≈ <span class="num">4</span> atol=<span class="num">0.3</span>  <span class="cm"># Tsit5 is order 4</span>
+<span class="kw">end</span>
+
+<span class="cm"># Trajectory regression: snapshot at key time points</span>
+<span class="kw">@testset</span> <span class="str">"Van der Pol trajectory regression"</span> <span class="kw">begin</span>
+    prob = ODEProblem((u,p,t) -> [u[<span class="num">2</span>]; ((<span class="num">1</span>-u[<span class="num">1</span>]^<span class="num">2</span>)*u[<span class="num">2</span>]-u[<span class="num">1</span>])],
+                      [<span class="num">2.0</span>, <span class="num">0.0</span>], (<span class="num">0.0</span>, <span class="num">10.0</span>))
+    sol = solve(prob, Tsit5(), abstol=<span class="num">1e-10</span>, reltol=<span class="num">1e-10</span>)
+
+    <span class="cm"># Compare endpoint against known reference</span>
+    @test sol[<span class="num">1</span>, <span class="kw">end</span>] ≈ REFERENCE_X1_ENDPOINT rtol=<span class="num">1e-6</span>
+    @test sol[<span class="num">2</span>, <span class="kw">end</span>] ≈ REFERENCE_X2_ENDPOINT rtol=<span class="num">1e-6</span>
+<span class="kw">end</span>
+      </div>
+    </div>
+
+    <!-- Pattern 4 -->
+    <div class="pattern-card">
+      <span class="pattern-tag">PATTERN 04 · CROSS-SIMULATOR</span>
+      <h3>FMU vs. Native Model Cross-Validation (FMI.jl + ModelingToolkit.jl)</h3>
+      <p>Using Julia's <a href="https://github.com/ThummeTo/FMI.jl" target="_blank" style="color:var(--accent)">FMI.jl</a> to simulate an FMU alongside a native MTK.jl model of the same system. Validates that the FMU export preserves model semantics by comparing time-series trajectories within solver-order-appropriate tolerances.</p>
+
+      <div class="code-block">
+<span class="cm"># Cross-validate Modelica FMU against native Julia ModelingToolkit model</span>
+<span class="kw">using</span> FMI, ModelingToolkit, OrdinaryDiffEq, Test
+
+<span class="cm"># --- Simulate the FMU ---</span>
+fmu = loadFMU(<span class="str">"BouncingBall.fmu"</span>)
+fmu_solution = simulate(fmu, (<span class="num">0.0</span>, <span class="num">3.0</span>))
+
+<span class="cm"># --- Native Julia model (equivalent physics) ---</span>
+@variables t h(t) v(t)
+D = Differential(t)
+eqs = [D(h) ~ v; D(v) ~ -<span class="num">9.81</span>]  <span class="cm"># simplified</span>
+sys = ODESystem(eqs, t)
+native_sol = solve(ODEProblem(sys, [h=><span class="num">1.0</span>, v=><span class="num">0.0</span>], (<span class="num">0</span>,<span class="num">3.0</span>)))
+
+<span class="cm"># --- Cross-compare at matched time points ---</span>
+t_compare = <span class="num">0.0</span>:<span class="num">0.1</span>:<span class="num">3.0</span>
+@test fmu_solution.values.saveval ≈ native_sol(t_compare)[<span class="num">1</span>,:] rtol=<span class="num">1e-3</span>
+
+unloadFMU(fmu)
+      </div>
+    </div>
+
+    <!-- Pattern 5 -->
+    <div class="pattern-card">
+      <span class="pattern-tag">PATTERN 05 · ADVANCED</span>
+      <h3>Hybrid Python Testing Harness: pytest-regressions + FMPy + Scenario Parameterization</h3>
+      <p>A production-grade pattern combining <code>pytest-regressions</code> for golden-file management, FMPy for simulation, and <code>pytest.mark.parametrize</code> for scenario coverage. The <code>num_regression</code> fixture handles the golden-file update workflow automatically.</p>
+
+      <div class="code-block">
+<span class="cm"># tests/test_heat_pump.py  —  pytest-regressions + FMPy pattern</span>
+<span class="kw">import</span> pytest
+<span class="kw">import</span> numpy <span class="kw">as</span> np
+<span class="kw">from</span> fmpy <span class="kw">import</span> simulate_fmu
+<span class="kw">from</span> pytest_regressions <span class="kw">import</span> num_regression  <span class="cm"># noqa: F401 (fixture)</span>
+
+SCENARIOS = [
+    (<span class="str">"nominal"</span>, {<span class="str">"T_set"</span>: <span class="num">293.15</span>, <span class="str">"T_ambient"</span>: <span class="num">275.0</span>}),
+    (<span class="str">"cold_day"</span>, {<span class="str">"T_set"</span>: <span class="num">293.15</span>, <span class="str">"T_ambient"</span>: <span class="num">255.0</span>}),
+    (<span class="str">"hot_day"</span>, {<span class="str">"T_set"</span>: <span class="num">293.15</span>, <span class="str">"T_ambient"</span>: <span class="num">300.0</span>}),
+]
+
+@pytest.mark.parametrize(<span class="str">"name,params"</span>, SCENARIOS)
+<span class="kw">def</span> <span class="fn">test_heat_pump_scenario</span>(name, params, num_regression):
+    result = simulate_fmu(
+        <span class="str">"HeatPump.fmu"</span>,
+        start_values=params,
+        stop_time=<span class="num">3600</span>,
+        output_interval=<span class="num">60</span>,
+        output_variables=[<span class="str">'T_supply'</span>, <span class="str">'P_compressor'</span>, <span class="str">'COP'</span>]
+    )
+    <span class="cm"># First run: creates reference CSV; subsequent runs: compares with tolerance</span>
+    num_regression.check(
+        {<span class="str">'T_supply'</span>: result[<span class="str">'T_supply'</span>],
+         <span class="str">'P_compressor'</span>: result[<span class="str">'P_compressor'</span>],
+         <span class="str">'COP'</span>: result[<span class="str">'COP'</span>]},
+        default_tolerance={<span class="str">"rtol"</span>: <span class="num">1e-4</span>, <span class="str">"atol"</span>: <span class="num">0</span>},
+        basename=f<span class="str">"heat_pump_{name}"</span>
+    )
+
+<span class="cm"># Update goldens: pytest --force-regen</span>
+      </div>
+
+      <div class="alert warn">⚠ When using <code>pytest-regressions</code>, commit generated golden files to version control. Use <code>--force-regen</code> only on intentional model changes. Include golden-file diffs in code review.</div>
+    </div>
+
+    <!-- Pattern 6: CI Pipeline Architecture -->
+    <div class="pattern-card">
+      <span class="pattern-tag">PATTERN 06 · CI/CD PIPELINE</span>
+      <h3>Full CI-Driven Simulation Verification Pipeline</h3>
+      <p>A complete GitHub Actions workflow strategy for simulation-heavy projects. Separates fast unit tests (model validation, schema checks) from slow integration tests (full simulation + trajectory comparison) using job dependencies and caching.</p>
+
+      <div class="code-block">
+<span class="cm"># .github/workflows/simulation-ci.yml  —  Multi-stage pipeline</span>
+name: Simulation Regression CI
+on: [push, pull_request]
+
+jobs:
+  <span class="cm"># Stage 1: Fast checks (no simulation needed)</span>
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install fmpy
+      - name: Validate all FMUs
+        run: |
+          python -c "
+          from fmpy.validation import validate_fmu
+          import glob, sys
+          errors = []
+          for fmu in glob.glob('models/**/*.fmu', recursive=True):
+              problems = validate_fmu(fmu)
+              if problems: errors.extend([f'{fmu}: {p}' for p in problems])
+          if errors: sys.exit('\n'.join(errors))
+          "
+
+  <span class="cm"># Stage 2: Simulation regression (requires golden files)</span>
+  regression:
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-group: [fmu-tests, modelica-tests, system-tests]
+    steps:
+      - uses: actions/checkout@v4
+        with: {lfs: true}  <span class="cm"># Golden files in Git LFS</span>
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/fmpy
+          key: fmpy-${{ hashFiles('models/**/*.fmu') }}
+      - run: pip install fmpy pytest numpy pytest-regressions
+      - run: pytest tests/${{ matrix.test-group }}/ -v --tb=long
+        env:
+          REGRESSION_RTOL: "1e-4"
+          REGRESSION_ATOL: "1e-8"
+
+  <span class="cm"># Stage 3: Cross-simulator validation (scheduled, not on every PR)</span>
+  cross-validate:
+    needs: regression
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker run --rm -v $PWD:/work myorg/om-fmpy-compare
+      </div>
+    </div>
+
+    <div class="alert success" style="margin-top:24px">
+      <strong>Key architectural principle:</strong> Separate <em>structural validation</em> (FMU schema, XML, exported variables) from <em>numerical regression</em> (trajectory comparison) from <em>cross-simulator validation</em> into distinct CI stages. Only the first is fast enough for every commit; the rest can be scheduled or triggered on PR merges.
+    </div>
+
+    <!-- Summary table -->
+    <h3 style="margin-top:36px">Quick Reference: Which Pattern for Which Use Case?</h3>
+    <div class="table-wrap" style="margin-top:16px">
+      <table>
+        <thead>
+          <tr>
+            <th>Use Case</th>
+            <th>Recommended Pattern</th>
+            <th>Key Tools</th>
+            <th>CI Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>FMU compliance validation</td>
+            <td>FMPy validate_fmu() in pytest</td>
+            <td>FMPy, Reference-FMUs</td>
+            <td><span class="level-high">Low (seconds)</span></td>
+          </tr>
+          <tr>
+            <td>FMU trajectory regression</td>
+            <td>Pattern 01: numpy + golden CSV</td>
+            <td>FMPy, numpy, pytest</td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+          <tr>
+            <td>Modelica library CI</td>
+            <td>Pattern 02: OM Testing Action</td>
+            <td>OMC, openmodelica-library-testing-action</td>
+            <td><span class="level-low">High (OMC install)</span></td>
+          </tr>
+          <tr>
+            <td>Modelica unit tests (tool-agnostic)</td>
+            <td>MoPyRegtest + pytest</td>
+            <td>MoPyRegtest, OMC/Dymola</td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+          <tr>
+            <td>ODE/SDE solver correctness</td>
+            <td>Pattern 03: DiffEqDevTools convergence</td>
+            <td>DiffEqDevTools.jl, Julia CI</td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+          <tr>
+            <td>Multi-scenario parametric testing</td>
+            <td>Pattern 05: pytest-regressions + FMPy</td>
+            <td>pytest-regressions, FMPy, numpy</td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+          <tr>
+            <td>FMU vs. native model validation</td>
+            <td>Pattern 04: FMI.jl + MTK.jl</td>
+            <td>FMI.jl, ModelingToolkit.jl</td>
+            <td><span class="level-mid">Medium</span></td>
+          </tr>
+          <tr>
+            <td>Multi-FMU co-simulation testing</td>
+            <td>libcosimpy + pytest + SSP</td>
+            <td>libcosim, OSP, SSP configs</td>
+            <td><span class="level-low">High (C++ build)</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</section>
+
+<!-- Footer -->
+<div style="background: var(--surface); border-top: 1px solid var(--border); padding: 32px 48px;">
+  <div style="max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: gap; gap: 16px;">
+    <div>
+      <div style="font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">SOURCES &amp; KEY REPOSITORIES</div>
+      <div style="font-size: 12px; color: var(--text-muted); line-height: 1.8;">
+        <a href="https://github.com/CATIA-Systems/FMPy" target="_blank" style="color:var(--accent); margin-right:12px">CATIA-Systems/FMPy</a>
+        <a href="https://github.com/modelica/Reference-FMUs" target="_blank" style="color:var(--accent); margin-right:12px">modelica/Reference-FMUs</a>
+        <a href="https://github.com/OpenModelica/OpenModelicaLibraryTesting" target="_blank" style="color:var(--accent); margin-right:12px">OpenModelica/OpenModelicaLibraryTesting</a>
+        <a href="https://github.com/OpenModelica/openmodelica-library-testing-action" target="_blank" style="color:var(--accent); margin-right:12px">openmodelica-library-testing-action</a>
+        <a href="https://github.com/pstelzig/MoPyRegtest" target="_blank" style="color:var(--accent); margin-right:12px">pstelzig/MoPyRegtest</a>
+        <a href="https://github.com/SciML/DiffEqDevTools.jl" target="_blank" style="color:var(--accent); margin-right:12px">SciML/DiffEqDevTools.jl</a>
+        <a href="https://github.com/SciML/SciMLBenchmarks.jl" target="_blank" style="color:var(--accent); margin-right:12px">SciML/SciMLBenchmarks.jl</a>
+        <a href="https://github.com/open-simulation-platform/libcosim" target="_blank" style="color:var(--accent); margin-right:12px">open-simulation-platform/libcosim</a>
+        <a href="https://github.com/modelica/fmi-cross-check" target="_blank" style="color:var(--accent)">modelica/fmi-cross-check</a>
+      </div>
+    </div>
+    <div style="font-family: var(--mono); font-size: 10px; color: var(--text-muted); text-align: right;">
+      Research via live web search<br>April 2026
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
