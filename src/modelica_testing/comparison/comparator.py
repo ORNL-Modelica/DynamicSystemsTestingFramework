@@ -2,13 +2,18 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import numpy as np
 
 from ..discovery.test_registry import TestModel
 from ..simulators import TestResult
 from ..storage.reference_store import ReferenceStore
+
+if TYPE_CHECKING:
+    # Annotation-only — runtime import is inside compare_test() to break the
+    # comparator ↔ metric_tree cycle (metric_tree imports VariableComparison).
+    from .metric_tree import MetricResult
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +74,11 @@ class TestComparison:
     error_message: Optional[str] = None
     sim_success: bool = True
     has_reference: bool = True
+    # Phase 3.1: MetricTree root for this test. Today populated as the
+    # implicit flat-AND over per-variable comparisons (matches `passed`
+    # exactly). Phase 3.2+ replaces with user-authored trees from
+    # test_spec.json. None when no comparison ran (sim failure, no baseline).
+    metric_tree: Optional["MetricResult"] = None
 
 
 def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
@@ -530,6 +540,7 @@ def compare_test(
             Variables with ``mode: "tube"`` are *not* affected.
     """
     from .modes import resolve_mode
+    from .metric_tree import implicit_and_tree
 
     ref_test_id = reference.get("test_id")
 
@@ -549,7 +560,6 @@ def compare_test(
     if shared_ref_time is not None:
         shared_ref_time = np.array(shared_ref_time)
     comparisons = []
-    all_passed = True
 
     # Resolve base comparison tolerance: per-test > reference > config > default
     ref_comparison = reference.get("comparison", {})
@@ -578,7 +588,6 @@ def compare_test(
                 reference_final=float("nan"),
                 actual_final=float(var_result.values[-1]) if len(var_result.values) > 0 else float("nan"),
             ))
-            all_passed = False
             continue
 
         if shared_ref_time is not None:
@@ -604,15 +613,19 @@ def compare_test(
         vc.tolerance_used = tolerance
         comparisons.append(vc)
 
-        if not vc.passed:
-            all_passed = False
+    # Phase 3.1: pass/fail flows from the MetricTree root, not a separate
+    # accumulator. Today the tree is the implicit flat-AND of per-variable
+    # leaves — same semantics as before. Phase 3.3+ swaps in user-authored
+    # trees from test_spec.json.
+    tree = implicit_and_tree(comparisons)
 
     return TestComparison(
         model_id=test.model_id,
-        passed=all_passed,
+        passed=tree.passed,
         test_id=ref_test_id,
         variables=comparisons,
         warnings=structural_warnings,
+        metric_tree=tree,
     )
 
 

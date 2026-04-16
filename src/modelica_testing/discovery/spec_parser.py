@@ -125,6 +125,16 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
         if "variable_overrides" in comp:
             test.variable_overrides = comp["variable_overrides"]
 
+        # Phase 3.2: optional MetricTree spec. Parse-only — Phase 3.3 wires
+        # it into compare_test. Errors here are raised so a malformed spec
+        # is loud at discovery, not silently ignored at compare time.
+        metrics_raw = entry.get("metrics")
+        if metrics_raw is not None:
+            from ..comparison.tree_spec import parse_metric_tree
+            test.metric_tree_spec = parse_metric_tree(
+                metrics_raw, _path=f"tests[{model_id}].metrics",
+            )
+
         tests.append(test)
 
     return tests

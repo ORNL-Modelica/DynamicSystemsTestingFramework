@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ..config import (
     Config,
@@ -11,6 +11,9 @@ from ..config import (
     DEFAULT_TOLERANCE,
 )
 from .mo_parser import MoParseResult, parse_mo_file
+
+if TYPE_CHECKING:
+    from ..comparison.tree_spec import SpecNode
 
 
 @dataclass
@@ -41,6 +44,11 @@ class TestModel:
     comparison_tolerance: Optional[float] = None  # Overrides config.tolerance
     variable_overrides: dict[str, dict] = field(default_factory=dict)
     # variable_overrides format: {"var_name": {"tolerance": 0.1}, ...}
+
+    # Phase 3.2: optional user-authored MetricTree spec from test_spec.json
+    # under the "metrics" key. When set, Phase 3.3+ will use this in place
+    # of the implicit flat-AND. Parse-only today — no behavior gated on it.
+    metric_tree_spec: Optional["SpecNode"] = None
 
     # Where this test was defined: "unit_tests", "spec", "both"
     source: str = "unit_tests"
