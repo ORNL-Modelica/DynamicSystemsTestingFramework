@@ -45,6 +45,14 @@ class TestLeafSpec:
         assert isinstance(node, LeafSpec)
         assert node.metric == "final-only"
 
+    def test_range_leaf_keeps_min_max_params(self):
+        node = parse_metric_tree({
+            "metric": "range", "variable": "h", "min": 0.0, "max": 1.1,
+        })
+        assert isinstance(node, LeafSpec)
+        assert node.metric == "range"
+        assert node.params == {"min": 0.0, "max": 1.1}
+
     def test_unknown_metric_rejected(self):
         with pytest.raises(MetricSpecError, match="unknown metric 'fft-peak'"):
             parse_metric_tree({"metric": "fft-peak", "variable": "x"})

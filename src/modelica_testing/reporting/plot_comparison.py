@@ -93,6 +93,7 @@ def _build_template_context(
     ref_file: Optional[Path] = None,
     warnings: Optional[list] = None,
     last_run_at: Optional[float] = None,
+    metric_tree=None,
 ) -> dict:
     """Build the full template context dict from comparison data."""
     if cur_stats is None:
@@ -406,6 +407,19 @@ def _build_template_context(
         from datetime import datetime
         last_run_str = datetime.fromtimestamp(last_run_at).isoformat(timespec="seconds")
 
+    # Phase 3.4: render-friendly MetricTree view for the template. Rendered
+    # whenever the user authored an explicit tree via "metrics" — even a
+    # trivial flat-AND is surfaced so the user sees their spec took effect.
+    # Suppressed for the implicit tree (which the per-variable table already
+    # conveys on its own).
+    metric_tree_view = None
+    is_user_tree = (
+        test_model is not None and getattr(test_model, "metric_tree_spec", None) is not None
+    )
+    if metric_tree is not None and is_user_tree:
+        from ..comparison.tree_eval import to_view
+        metric_tree_view = to_view(metric_tree)
+
     return {
         "model_id": model_id,
         "n_passed": n_passed,
@@ -425,6 +439,7 @@ def _build_template_context(
         "trajectories": trajectories,
         "diag_trajectories": diag_trajectories,
         "nobaseline_trajectories": nobaseline_trajectories,
+        "metric_tree_view": metric_tree_view,
     }
 
 
@@ -527,6 +542,7 @@ def generate_comparison_plots(
     ref_file: Optional[Path] = None,
     warnings: Optional[list] = None,
     last_run_at: Optional[float] = None,
+    metric_tree=None,
 ) -> Optional[Path]:
     """Generate per-variable comparison PNGs and an HTML viewer.
 
@@ -659,6 +675,7 @@ def generate_comparison_plots(
         model_id, png_files, comparisons, ref_data, cur_stats,
         diag_png_files, nobaseline_png_files, test_dir, test_model, result,
         ref_file=ref_file, warnings=warnings, last_run_at=last_run_at,
+        metric_tree=metric_tree,
     )
 
     # Add spec path for "Save to Spec" functionality
@@ -756,6 +773,7 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
         "sim_wall": timing.get("sim_wall"),
         "total_wall": timing.get("total_wall"),
         "comp_variables": comp.variables,
+        "metric_tree": comp.metric_tree,
     }
 
 
@@ -775,6 +793,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         ref_file=args["ref_file"],
         warnings=args["warnings"],
         last_run_at=args["last_run_at"],
+        metric_tree=args.get("metric_tree"),
     )
     render_elapsed = _time.monotonic() - t0
     return {

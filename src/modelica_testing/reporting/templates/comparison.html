@@ -42,6 +42,15 @@ details summary:hover { color: #333; }
 .info { color: #607D8B; }
 .var-table { width: 100%; }
 .var-table td:first-child { width: 3em; }
+.metric-tree { background: white; padding: 1em 1.5em; border: 1px solid #eee; border-radius: 4px; margin-bottom: 1.5em; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; }
+.metric-tree ul { list-style: none; padding-left: 1.2em; margin: 0.2em 0; border-left: 1px dashed #ccc; }
+.metric-tree li { margin: 0.25em 0; }
+.metric-tree .tag { font-weight: 600; }
+.metric-tree .combinator-tag { color: #5c6bc0; }
+.metric-tree .leaf-tag { color: #37474f; }
+.metric-tree .warned { color: #f57c00; font-weight: 600; margin-left: 0.4em; }
+.metric-tree .score { color: #888; margin-left: 0.4em; }
+.metric-tree .tol { color: #888; margin-left: 0.4em; font-size: 0.9em; }
 </style>
 </head>
 <body>
@@ -155,6 +164,32 @@ details summary:hover { color: #333; }
   {% endfor %}
   </table>
 </details>
+{% endif %}
+
+{# === METRIC TREE (only rendered when a non-trivial user tree exists) === #}
+{% if metric_tree_view %}
+<h2>Metric Tree</h2>
+<div class="metric-tree">
+  <ul>
+  {%- for node in [metric_tree_view] recursive %}
+    <li>
+      <span class="{{ 'pass' if node.passed else 'fail' }}">{{ "PASS" if node.passed else "FAIL" }}</span>
+      {%- if node.kind == "combinator" %}
+        <span class="tag combinator-tag">{{ node.label }}</span>
+        {%- if node.warned %} <span class="warned">[child warned]</span>{% endif %}
+        {%- if node.children %}
+        <ul>{{ loop(node.children) }}</ul>
+        {%- endif %}
+      {%- else %}
+        <span class="tag leaf-tag">{{ node.label }}</span>
+        {%- if node.mode %} <span class="score">[{{ node.mode }}]</span>{% endif %}
+        {%- if node.score is not none %} <span class="score">score={{ "%.4e" | format(node.score) }}</span>{% endif %}
+        {%- if node.tolerance is not none %} <span class="tol">tol={{ "%.4e" | format(node.tolerance) }}</span>{% endif %}
+      {%- endif %}
+    </li>
+  {%- endfor %}
+  </ul>
+</div>
 {% endif %}
 
 {# === VARIABLE TABLE (condensed: name + status + NRMSE) === #}

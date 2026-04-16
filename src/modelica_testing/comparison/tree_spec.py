@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Union
 
 VALID_COMBINATORS = frozenset({"and", "or", "k-of-n", "warn"})
-VALID_METRICS = frozenset({"nrmse", "tube", "final-only"})
+VALID_METRICS = frozenset({"nrmse", "tube", "final-only", "range"})
 
 
 class MetricSpecError(ValueError):

@@ -476,6 +476,66 @@ def _compare_tube(
     )
 
 
+def _compare_range(
+    act_time: np.ndarray,
+    act_values: np.ndarray,
+    min_value: Optional[float],
+    max_value: Optional[float],
+) -> VariableComparison:
+    """Check that every sample of the actual signal lies within [min, max].
+
+    Reference data is not used — the bounds come from the spec itself.
+    This gives the MetricTree a leaf type that works without a stored
+    baseline (the "is this variable always within safe limits" pattern).
+    """
+    above = (
+        np.maximum(act_values - max_value, 0.0)
+        if max_value is not None
+        else np.zeros_like(act_values)
+    )
+    below = (
+        np.maximum(min_value - act_values, 0.0)
+        if min_value is not None
+        else np.zeros_like(act_values)
+    )
+    violations = np.maximum(above, below)
+
+    n_total = len(act_values)
+    n_inside = int(np.sum(violations <= 0))
+    fraction_inside = n_inside / n_total if n_total > 0 else 1.0
+
+    worst_idx = int(np.argmax(violations)) if n_total > 0 else 0
+    max_violation = float(violations[worst_idx]) if n_total > 0 else 0.0
+    worst_time = float(act_time[worst_idx]) if n_total > 0 else 0.0
+
+    passed = max_violation <= 0.0
+    act_range = float(np.max(act_values) - np.min(act_values)) if n_total > 0 else 0.0
+    act_final = float(act_values[-1]) if n_total > 0 else 0.0
+
+    return VariableComparison(
+        index=0,
+        name="",
+        passed=passed,
+        # Signal-free metric: use max_violation as the score ("0 = all in bounds,
+        # larger = farther out of bounds"). nrmse/rmse are overloaded here for
+        # reporting uniformity.
+        nrmse=max_violation,
+        rmse=float(np.sqrt(np.mean(violations ** 2))) if n_total > 0 else 0.0,
+        signal_range=act_range,
+        max_abs_error=max_violation,
+        max_abs_error_time=worst_time,
+        reference_final=float("nan"),
+        actual_final=act_final,
+        is_constant=act_range < _EPS,
+        mode="range",
+        # Repurpose the tube fields for consistent reporting — "inside" reads
+        # as "inside bounds" here.
+        tube_points_inside=fraction_inside,
+        tube_worst_violation=max_violation,
+        tube_worst_violation_time=worst_time,
+    )
+
+
 def _check_structural_changes(
     reference: dict,
     result: TestResult,

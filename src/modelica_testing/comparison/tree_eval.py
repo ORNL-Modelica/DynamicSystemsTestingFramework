@@ -38,6 +38,7 @@ _METRIC_TO_MODE_KEY = {
     "nrmse": None,
     "tube": "tube",
     "final-only": "final_only",
+    "range": "range",
 }
 
 
@@ -80,6 +81,46 @@ def collect_leaf_variables(tree: MetricResult) -> list[VariableComparison]:
     out: list[VariableComparison] = []
     _walk_leaves(tree, out)
     return out
+
+
+def to_view(tree: MetricResult) -> dict:
+    """Serialize a ``MetricResult`` tree into a JSON-safe nested dict
+    for Jinja consumption. Shape is render-oriented — no simulation data,
+    no numpy arrays.
+
+    Fields per node:
+      * ``kind``      — "leaf" | "combinator"
+      * ``passed``    — bool
+      * ``label``     — human-readable (variable name for leaves,
+                        "and[N]" / "or[N]" / "warn" / "k-of-n[K/N]" for combinators)
+      * ``score``     — float or None
+      * ``mode``      — metric mode on leaves (nrmse / tube / final_only)
+      * ``tolerance`` — on leaves, the tolerance applied
+      * ``warned``    — True on ``warn`` nodes whose child failed
+      * ``children``  — recursive list (empty for leaves)
+    """
+    node: dict = {
+        "kind": "leaf" if not tree.children else "combinator",
+        "passed": bool(tree.passed),
+        "label": tree.label,
+        "score": tree.score,
+        "children": [to_view(c) for c in tree.children],
+    }
+    diag = tree.diagnostics or {}
+    if not tree.children:
+        # Leaf diagnostics come from leaf_from_variable
+        if "mode" in diag:
+            node["mode"] = diag["mode"]
+        if "tolerance" in diag:
+            node["tolerance"] = diag["tolerance"]
+        if "max_abs_error" in diag:
+            node["max_abs_error"] = diag["max_abs_error"]
+    else:
+        # Combinator diagnostics: n_failed / n_passed / k / n / warned
+        for key in ("n_failed", "n_passed", "k", "n", "warned"):
+            if key in diag:
+                node[key] = diag[key]
+    return node
 
 
 # ---------------------------------------------------------------------------

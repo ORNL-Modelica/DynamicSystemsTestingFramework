@@ -143,6 +143,53 @@ class TestLeafEval:
         assert tree.passed
         assert tree.diagnostics["mode"] == "tube"
 
+    def test_range_leaf_passes_when_signal_within_bounds(self):
+        spec = parse_metric_tree({
+            "metric": "range", "variable": "x", "min": 0.0, "max": 2.0,
+        })
+        t, ref_vals = _linear()  # 0..1
+        _, act_vals = _linear(offset=0.5)  # 0.5..1.5
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
+            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
+            shared_ref_time=None,
+            base_tolerance=1e-4,
+        )
+        assert tree.passed
+        assert tree.diagnostics["mode"] == "range"
+
+    def test_range_leaf_fails_when_signal_exceeds_max(self):
+        spec = parse_metric_tree({
+            "metric": "range", "variable": "x", "min": 0.0, "max": 0.5,
+        })
+        t, ref_vals = _linear()
+        _, act_vals = _linear()  # 0..1, exceeds 0.5
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
+            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
+            shared_ref_time=None,
+            base_tolerance=1e-4,
+        )
+        assert not tree.passed
+
+    def test_range_leaf_min_only(self):
+        """Only a min bound is specified — max is unbounded."""
+        spec = parse_metric_tree({
+            "metric": "range", "variable": "x", "min": 0.0,
+        })
+        t, ref_vals = _linear()
+        _, act_vals = _linear(offset=100.0)  # Huge, but positive
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
+            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
+            shared_ref_time=None,
+            base_tolerance=1e-4,
+        )
+        assert tree.passed
+
     def test_final_only_leaf(self):
         spec = parse_metric_tree({
             "metric": "final-only", "variable": "x", "tolerance": 0.01,

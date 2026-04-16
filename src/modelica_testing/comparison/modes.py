@@ -21,6 +21,7 @@ import numpy as np
 from .comparator import (
     VariableComparison,
     _compare_final_values,
+    _compare_range,
     _compare_trajectories,
     _compare_tube,
 )
@@ -98,6 +99,17 @@ class FinalOnlyConfig:
     tolerance: float = 1e-4
 
 
+@dataclass(frozen=True)
+class RangeConfig:
+    """Configuration for range (bounds-check) comparison.
+
+    At least one of ``min_value`` or ``max_value`` must be set. Bounds
+    are declared in the spec itself — reference data is not consulted.
+    """
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
+
+
 # ---------------------------------------------------------------------------
 # Mode implementations
 # ---------------------------------------------------------------------------
@@ -150,6 +162,32 @@ class FinalOnlyMode(ComparisonMode):
         return _compare_final_values(ref_final, act_final, self.config.tolerance)
 
 
+class RangeMode(ComparisonMode):
+    """Per-point bounds check (min <= actual <= max).
+
+    First leaf type that doesn't consume the reference trajectory — the
+    bounds come from the spec. Validates the MetricTree leaf contract
+    beyond NRMSE/tube/final-only.
+    """
+
+    def __init__(self, config: RangeConfig):
+        if config.min_value is None and config.max_value is None:
+            raise ValueError(
+                "RangeConfig requires at least one of min_value / max_value"
+            )
+        self.config = config
+
+    @property
+    def name(self) -> str:
+        return "range"
+
+    def compare(self, ref_time, ref_values, act_time, act_values):
+        return _compare_range(
+            act_time, act_values,
+            self.config.min_value, self.config.max_value,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Factory: resolve override dict → ComparisonMode
 # ---------------------------------------------------------------------------
@@ -181,6 +219,14 @@ def resolve_mode(
     if mode_name == "tube":
         tube_kwargs = {k: var_override[k] for k in _TUBE_KEYS if k in var_override}
         return TubeMode(TubeConfig(**tube_kwargs))
+
+    if mode_name == "range":
+        # Accept "min" / "max" from the user-facing spec and map to the
+        # internal min_value / max_value (which don't shadow Python builtins).
+        return RangeMode(RangeConfig(
+            min_value=var_override.get("min"),
+            max_value=var_override.get("max"),
+        ))
 
     if mode_name == "final_only" or (not mode_name and default_final_only):
         return FinalOnlyMode(FinalOnlyConfig(tolerance=tolerance))

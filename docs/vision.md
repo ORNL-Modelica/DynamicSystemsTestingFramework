@@ -47,7 +47,7 @@ The framework is structured around six layers. Each is a plug-in point; each has
   MetricTree      — composition: AND / OR / weighted / K-of-N combinators over Metrics → overall pass/fail + diagnostics
 ```
 
-Today, layers exist implicitly: Source is always a Modelica `package.mo` directory, Discovery is `.mo` scan + `test_spec.json`, Backend is `DymolaRunner`, Dataset is always time-series, Metric is one of three built-ins, MetricTree is an implicit AND. The work is to make each layer explicit, typed, and user-extensible.
+Most layers are explicit: Source selects via `source_type` (Modelica or FMU today), Discovery scans `.mo` and/or reads `test_spec.json`, Backend registry carries Dymola + FMPy, Dataset is still time-series only, Metric offers four built-ins (NRMSE, tube, final-only, range), MetricTree accepts user-authored trees from `test_spec.json` with AND / OR / k-of-n / warn combinators. What remains implicit: datasets beyond time-series, multi-baseline tree leaves, cross-backend verification.
 
 ---
 

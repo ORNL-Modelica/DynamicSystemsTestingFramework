@@ -239,23 +239,36 @@ Simple case (unchanged, still valid — interpreted as flat AND of `nrmse` per v
 {"tolerance": 0.01, "variables": ["pipe.T[1]", "pipe.m_flow"]}
 ```
 
-Composed case:
+Composed case (landed in Phase 3 — schema lives under the `metrics` key):
 
 ```json
 {
-  "metric_tree": {
+  "metrics": {
     "combinator": "or",
     "children": [
-      {"metric": "tube", "config": {"tube_rel": 0.02}, "variable": "pipe.T[1]"},
-      {"metric": "nrmse", "config": {"tolerance": 0.05}, "variable": "pipe.T[1]"}
+      {"metric": "tube", "variable": "pipe.T[1]", "tube_rel": 0.02},
+      {"metric": "nrmse", "variable": "pipe.T[1]", "tolerance": 0.05}
     ]
   }
 }
 ```
 
+Leaf metrics available today: `nrmse`, `tube`, `final-only`, `range`. Leaf params (tolerance, tube_*, min/max) live flat on the leaf node — same field names as the legacy `variable_overrides`. Combinators: `and`, `or`, `k-of-n` (requires `k`), `warn` (exactly one child).
+
+When `metrics` is set, the tree fully controls scoring on that test — legacy `comparison.variable_overrides` is ignored (the same fields move into each leaf's params).
+
 ### Current
 
-Phase 1.5 introduced the MetricTree abstraction as a first-class module: `src/modelica_testing/comparison/metric_tree.py` exposes `MetricResult` plus `AndCombinator` / `OrCombinator` / `KOfNCombinator` / `WarnCombinator` and an `implicit_and_tree(variables)` adapter that reproduces the current flat-AND semantics exactly (covered by 18 unit tests in `tests/test_metric_tree.py`). The main comparison pipeline still computes pass/fail directly from per-variable results — wiring MetricTree in as the canonical evaluator, and accepting user-authored trees from `test_spec.json`, is deferred to a later phase where real use cases (OR / weighted / K-of-N / warn on cross-baseline) drive the schema design.
+Phase 3 wired MetricTree end-to-end:
+- `comparison/metric_tree.py` — combinators + `MetricResult` (landed Phase 1).
+- `comparison/tree_spec.py` — parses user specs (`"metrics"` block) into `LeafSpec` / `CombinatorSpec` with path-bearing validation errors.
+- `comparison/tree_eval.py` — walks a parsed spec against simulation + reference data to produce an evaluated `MetricResult` tree, and serializes the result for report rendering.
+- `compare_test()` derives `TestComparison.passed` from the tree root. Users authoring a `metrics` block get their tree; others get the implicit flat-AND (behavior-preserving for all pre-Phase-3 specs).
+- Per-test HTML report renders the tree when user-authored (`comparison.html`).
+
+Leaf contract is validated across four metrics spanning two shapes: three reference-consuming (`nrmse`, `tube`, `final-only`) and one signal-only (`range` — bounds come from the spec, not a baseline).
+
+Deferred (Phase 4+): multi-baseline leaves (`"against": "experiment"`), cross-backend verification, additional leaf types (event-timing, spectral, Fréchet, KS), `weighted` combinator.
 
 ---
 
