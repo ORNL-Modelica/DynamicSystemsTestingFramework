@@ -7,6 +7,13 @@
       "simulation": {
         "stop_time": 3.0,
         "tolerance": 1e-6
+      },
+      "metrics": {
+        "combinator": "and",
+        "children": [
+          {"metric": "nrmse", "variable": "h", "tolerance": 1e-3},
+          {"metric": "nrmse", "variable": "v", "tolerance": 1e-3}
+        ]
       }
     },
     {

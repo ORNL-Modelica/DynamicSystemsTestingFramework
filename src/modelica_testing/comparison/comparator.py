@@ -541,6 +541,7 @@ def compare_test(
     """
     from .modes import resolve_mode
     from .metric_tree import implicit_and_tree
+    from .tree_eval import collect_leaf_variables, evaluate_spec
 
     ref_test_id = reference.get("test_id")
 
@@ -568,6 +569,34 @@ def compare_test(
         or ref_comparison.get("tolerance")
         or default_tolerance
     )
+
+    # Phase 3.3: when the spec provides an explicit MetricTree, it fully
+    # replaces the implicit flat-AND + per-variable overrides. The user's
+    # tree declares *which* variables participate and *how* each is scored,
+    # so the legacy ``comparison.variable_overrides`` is ignored on this
+    # path (documented — same fields move into each leaf's params).
+    if test.metric_tree_spec is not None:
+        var_results_by_name = {v.name: v for v in result.variables if v.name}
+        ref_vars_by_name: dict[str, dict] = {}
+        for rv in reference.get("variables", []):
+            rn = rv.get("name") or rv.get("expression", "")
+            if rn and rn not in ref_vars_by_name:
+                ref_vars_by_name[rn] = rv
+        tree = evaluate_spec(
+            test.metric_tree_spec,
+            var_results_by_name,
+            ref_vars_by_name,
+            shared_ref_time,
+            base_tolerance,
+        )
+        return TestComparison(
+            model_id=test.model_id,
+            passed=tree.passed,
+            test_id=ref_test_id,
+            variables=collect_leaf_variables(tree),
+            warnings=structural_warnings,
+            metric_tree=tree,
+        )
 
     # Merge variable overrides: spec overrides take precedence over reference
     ref_var_overrides = ref_comparison.get("variable_overrides", {})
