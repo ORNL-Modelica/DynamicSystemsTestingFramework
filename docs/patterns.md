@@ -239,3 +239,11 @@
 ### Don't put `--reference-root` on both parent parser and subcommands
 - argparse subcommand defaults (`None`) override the parent parser's value
 - Top-level args that apply globally should only be on the parent parser
+
+## Forward hooks
+
+### `comparison_data.json` sidecar is the stable contract for future interactive UI
+- Every per-test report directory writes `comparison_data.json` alongside `comparison.html` / `interactive.html` — the full render context serialized to JSON
+- Any future interactive viewer (client-side JS single-page app, tolerance playground, tree-editor) can be built against this file without touching the Python side
+- **Preserve this** when extending reports: new context fields go into the dict, old fields stay JSON-serializable
+- If you ever need richer client interaction (live tolerance editing, tree drag-and-drop), the upgrade path is JS in the existing templates reading the sidecar — not a GUI rewrite

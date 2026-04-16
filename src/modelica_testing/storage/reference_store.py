@@ -386,15 +386,23 @@ class ReferenceStore:
         if result.statistics:
             ref_data["statistics"] = result.statistics
 
-        # Diagnostic variables (CPUtime, EventCounter) — stored but not compared
+        # Diagnostic variables (CPUtime, EventCounter) — stored as a scalar
+        # summary, not a full trajectory. The trajectory value (especially
+        # CPUtime) is nondeterministic — storing it caused every re-accept
+        # to produce a spurious git diff and bloated the baseline files.
+        # Users who want a diagnostic's full trajectory can add its name to
+        # the test's variables/variable_patterns list — it'll be tracked
+        # like any other variable at that point.
         if result.diagnostics:
             diag_list = []
             for diag in result.diagnostics:
-                _, values_list = _downsample(shared_time, diag.values)
-                diag_list.append({
-                    "name": diag.name,
-                    "values": values_list,
-                })
+                values = np.asarray(diag.values)
+                entry: dict = {"name": diag.name}
+                if values.size > 0:
+                    entry["final"] = float(values[-1])
+                    entry["min"] = float(values.min())
+                    entry["max"] = float(values.max())
+                diag_list.append(entry)
             ref_data["diagnostics"] = diag_list
 
         # Data fields last — keeps metadata readable at the top of the file

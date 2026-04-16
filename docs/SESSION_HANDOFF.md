@@ -19,6 +19,14 @@ state and candidate next moves. Replaces the prior Phase 2 → 3 handoff.
   Pick up when the repo goes public (or when there's a reason to spend
   private-repo Action minutes pre-launch).
 
+**Cleanup pass** (post-Phase-3) — complete. Decisions D54–D55.
+
+- Diagnostic variables now stored as scalar summary (`final/min/max`), not full trajectory. Kills spurious git diffs on every `--accept`. Reporter tolerates legacy shape.
+- Reports use a mode-aware "Score" column in the condensed variables table (was "NRMSE" — misleading for `range` / `tube` leaves). "Worst NRMSE" key stat card renamed "Worst Score".
+- Backend-aware artifacts: `DymolaRunner` / `FmpyRunner` each declare their own `artifact_files`; reporter walks the runner's list instead of hardcoding Dymola filenames.
+- `docs/usage.md` `simulation` fields documented (including per-test `timeout`; noted that FMPy doesn't honor per-test timeouts today, Dymola does).
+- `docs/patterns.md` captures `comparison_data.json` as the stable forward hook for any future interactive UI.
+
 **Phase 3** (MetricTree wiring) — complete. Decisions D51–D53.
 
 - 3.1: `compare_test` builds a `MetricResult` tree and derives `passed`

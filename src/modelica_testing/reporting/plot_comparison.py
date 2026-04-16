@@ -94,6 +94,7 @@ def _build_template_context(
     warnings: Optional[list] = None,
     last_run_at: Optional[float] = None,
     metric_tree=None,
+    artifact_files: tuple[tuple[str, str], ...] = (),
 ) -> dict:
     """Build the full template context dict from comparison data."""
     if cur_stats is None:
@@ -217,20 +218,34 @@ def _build_template_context(
                 statistics_sections.append(section)
 
     # --- Variable comparison data ---
+    # "score_display" is a mode-aware human-readable summary ("NRMSE 2.1e-16",
+    # "100% in tube", "max_viol 0.0e+00"). Replaces the old NRMSE-centric
+    # column in the condensed variables table — the mode-specific raw fields
+    # (nrmse, rmse, tube_points_inside, ...) are still carried for the
+    # expanded details table.
     variables = []
     for vc in comparisons:
         mode = vc.mode or "nrmse"
         if mode == "tube" and vc.tube_points_inside is not None:
+            score_display = f"{vc.tube_points_inside * 100:.1f}% in tube"
             criterion = (
                 f"{vc.tube_points_inside * 100:.1f}% inside tube "
                 f"→ {'PASS' if vc.passed else 'FAIL'} (requires 100%)"
             )
+        elif mode == "range" and vc.tube_worst_violation is not None:
+            score_display = f"max_viol {vc.tube_worst_violation:.3e}"
+            criterion = (
+                f"max violation {vc.tube_worst_violation:.3e} "
+                f"→ {'PASS' if vc.passed else 'FAIL'} (requires 0)"
+            )
         elif mode == "final_only":
+            score_display = f"|err| {vc.max_abs_error:.3e}"
             criterion = (
                 f"Final value error {vc.max_abs_error:.3e} vs tolerance "
                 f"{vc.tolerance_used:.3e} → {'PASS' if vc.passed else 'FAIL'}"
             )
         else:
+            score_display = f"NRMSE {vc.nrmse:.3e}"
             criterion = (
                 f"NRMSE {vc.nrmse:.3e} vs tolerance {vc.tolerance_used:.3e} "
                 f"→ {'PASS' if vc.passed else 'FAIL'}"
@@ -248,6 +263,7 @@ def _build_template_context(
             "is_constant": bool(vc.is_constant),
             "tolerance_used": float(vc.tolerance_used),
             "mode": mode,
+            "score_display": score_display,
             "criterion": criterion,
             "tube_points_inside": float(vc.tube_points_inside) if vc.tube_points_inside is not None else None,
             "tube_worst_violation": float(vc.tube_worst_violation) if vc.tube_worst_violation is not None else None,
@@ -281,7 +297,12 @@ def _build_template_context(
             }
             trajectories.append(traj)
 
-    # Diagnostic trajectories
+    # Diagnostic trajectories. Baselines now store a scalar summary for
+    # diagnostic variables (no trajectory — CPUtime etc. are nondeterministic
+    # and were producing spurious git diffs). When a baseline only has the
+    # summary, ``ref_values`` is empty and the Plotly trace skips the
+    # reference overlay. Legacy baselines with a full ``values`` array still
+    # work — we pass it through until they're re-accepted.
     diag_trajectories = []
     if result and result.diagnostics:
         ref_diags_by_name = {}
@@ -291,12 +312,13 @@ def _build_template_context(
 
         for diag in result.diagnostics:
             ref_diag = ref_diags_by_name.get(diag.name)
+            ref_values = ref_diag.get("values", []) if ref_diag else []
             diag_trajectories.append({
                 "name": diag.name,
                 "act_time": diag.time.tolist(),
                 "act_values": diag.values.tolist(),
-                "ref_time": ref_time_list,
-                "ref_values": ref_diag["values"] if ref_diag else [],
+                "ref_time": ref_time_list if ref_values else [],
+                "ref_values": ref_values,
             })
 
     # No-baseline trajectories
@@ -316,6 +338,38 @@ def _build_template_context(
         for png_name, name in (diag_png_files or [])
     ]
 
+    # --- Diagnostic summary rows (current final/min/max vs. reference summary) ---
+    # Replaces the old full-trajectory comparison for diagnostic variables.
+    # The trajectory is informational; the summary values are the actual
+    # regression signal (final CPUtime, total event count).
+    diag_summaries = []
+    if result and result.diagnostics:
+        ref_diags_by_name = {}
+        if ref_data:
+            for rd in ref_data.get("diagnostics", []):
+                ref_diags_by_name[rd["name"]] = rd
+        for diag in result.diagnostics:
+            values = np.asarray(diag.values)
+            cur_final = float(values[-1]) if values.size else None
+            ref_entry = ref_diags_by_name.get(diag.name, {})
+            # Accept either new summary shape (final/min/max) or legacy full-
+            # trajectory shape (values) for back-read during transition.
+            if "final" in ref_entry:
+                ref_final = ref_entry.get("final")
+            elif "values" in ref_entry and ref_entry["values"]:
+                ref_final = float(ref_entry["values"][-1])
+            else:
+                ref_final = None
+            diag_summaries.append({
+                "name": diag.name,
+                "current": _format_value(cur_final) if cur_final is not None else "",
+                "reference": _format_value(ref_final) if ref_final is not None else "",
+                "changed": (
+                    cur_final is not None and ref_final is not None
+                    and cur_final != ref_final
+                ),
+            })
+
     compared_plots = [
         {"png": png_name, "name": vc.name or f"x[{vc.index}]", "passed": vc.passed}
         for png_name, vc in png_files
@@ -327,17 +381,12 @@ def _build_template_context(
     ]
 
     # --- Artifact links ---
+    # Backend declares its interesting per-test files on the runner class's
+    # ``artifact_files`` attribute. The reporter just walks that list and
+    # skips entries that aren't on disk — no hardcoded Dymola names here.
     artifacts = []
     if test_dir and test_dir.exists():
-        artifact_files = [
-            ("dslog.txt", "Simulation log"),
-            ("translation_log.txt", "Translation log"),
-            ("dsin.txt", "Simulation input"),
-            ("dsfinal.txt", "Final values"),
-            ("simulate.mos", "Simulation script"),
-            ("dsres.mat", "Result file"),
-        ]
-        for fname, label in artifact_files:
+        for fname, label in (artifact_files or ()):
             fpath = test_dir / fname
             if fpath.exists():
                 artifacts.append({"uri": fpath.resolve().as_uri(), "label": label})
@@ -359,9 +408,13 @@ def _build_template_context(
         return val if not isinstance(val, dict) else None
 
     key_stats = []
-    worst_nrmse = max((vc.nrmse for vc in comparisons), default=None)
-    if worst_nrmse is not None:
-        key_stats.append({"label": "Worst NRMSE", "current": f"{worst_nrmse:.4e}", "reference": ""})
+    # "Worst Score" — for NRMSE leaves this is the max NRMSE (lower is better);
+    # for range/tube leaves the nrmse field carries mode-specific content
+    # (max_violation / fraction-inside). Mixed-mode tests get the worst
+    # across whatever leaves they contain.
+    worst_score = max((vc.nrmse for vc in comparisons), default=None)
+    if worst_score is not None:
+        key_stats.append({"label": "Worst Score", "current": f"{worst_score:.4e}", "reference": ""})
 
     stat_picks = [
         ("translation", "continuous_time_states", "Continuous States"),
@@ -433,6 +486,7 @@ def _build_template_context(
         "statistics_sections": statistics_sections,
         "variables": variables,
         "diagnostic_plots": diagnostic_plots,
+        "diagnostic_summaries": diag_summaries,
         "compared_plots": compared_plots,
         "nobaseline_plots": nobaseline_plots,
         "artifacts": artifacts,
@@ -543,6 +597,7 @@ def generate_comparison_plots(
     warnings: Optional[list] = None,
     last_run_at: Optional[float] = None,
     metric_tree=None,
+    artifact_files: tuple[tuple[str, str], ...] = (),
 ) -> Optional[Path]:
     """Generate per-variable comparison PNGs and an HTML viewer.
 
@@ -574,6 +629,9 @@ def generate_comparison_plots(
             ref_diags[rd["name"]] = rd
 
     # --- Diagnostic variable plots (shown first) ---
+    # Baselines store only a scalar summary for diagnostics; if the old
+    # full-trajectory shape is present, overlay it — otherwise plot the
+    # actual alone.
     diag_png_files = []
     if result and result.diagnostics:
         for diag in result.diagnostics:
@@ -582,12 +640,14 @@ def generate_comparison_plots(
             png_path = plot_dir / png_name
 
             ref_diag = ref_diags.get(diag.name)
-            ref_d_values = np.array(ref_diag["values"]) if ref_diag else None
+            legacy_values = ref_diag.get("values") if ref_diag else None
+            ref_d_values = np.array(legacy_values) if legacy_values else None
 
             fig, _, _ = _plot_variable(
                 plt,
                 diag.time, diag.values, diag.name, 0,
-                ref_time=ref_time, ref_values=ref_d_values,
+                ref_time=ref_time if ref_d_values is not None else None,
+                ref_values=ref_d_values,
                 is_diagnostic=True,
             )
 
@@ -675,7 +735,7 @@ def generate_comparison_plots(
         model_id, png_files, comparisons, ref_data, cur_stats,
         diag_png_files, nobaseline_png_files, test_dir, test_model, result,
         ref_file=ref_file, warnings=warnings, last_run_at=last_run_at,
-        metric_tree=metric_tree,
+        metric_tree=metric_tree, artifact_files=artifact_files,
     )
 
     # Add spec path for "Save to Spec" functionality
@@ -709,7 +769,7 @@ def _render_template(template_name: str, context: dict, output_path: Path) -> No
     output_path.write_text(html, encoding="utf-8")
 
 
-def _build_per_test_args(comp, results, test_lookup, store, config, manifest_meta_by_model):
+def _build_per_test_args(comp, results, test_lookup, store, config, manifest_meta_by_model, artifact_files=()):
     """Resolve all per-test inputs needed to render that test's report."""
     model_id = comp.model_id
     result = results.get(model_id)
@@ -774,6 +834,7 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
         "total_wall": timing.get("total_wall"),
         "comp_variables": comp.variables,
         "metric_tree": comp.metric_tree,
+        "artifact_files": artifact_files,
     }
 
 
@@ -794,6 +855,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         warnings=args["warnings"],
         last_run_at=args["last_run_at"],
         metric_tree=args.get("metric_tree"),
+        artifact_files=args.get("artifact_files", ()),
     )
     render_elapsed = _time.monotonic() - t0
     return {
@@ -863,6 +925,15 @@ def generate_report_suite(
 
     test_lookup = {t.model_id: t for t in tests}
 
+    # Resolve the backend's artifact file list once up front — class attribute,
+    # no runner instantiation needed (avoids triggering the fmpy import if the
+    # extra isn't installed).
+    from ..simulators import get_runner_class
+    try:
+        artifact_files = tuple(get_runner_class(config).artifact_files)
+    except ValueError:
+        artifact_files = ()
+
     # Cache test_key + last_run_at lookup once instead of scanning manifests per test
     manifest_meta_by_model: dict[str, dict] = {}
     manifest_paths = sorted(config.work_dir.glob("batch_manifest.json"))
@@ -879,7 +950,7 @@ def generate_report_suite(
     # Resolve per-test args sequentially (cheap dict/store lookups), then
     # render reports in parallel
     work = [
-        _build_per_test_args(comp, results, test_lookup, store, config, manifest_meta_by_model)
+        _build_per_test_args(comp, results, test_lookup, store, config, manifest_meta_by_model, artifact_files)
         for comp in comparisons
     ]
 

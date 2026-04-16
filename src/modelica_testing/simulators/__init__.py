@@ -24,6 +24,7 @@ __all__ = [
     "BatchManifest",
     "resolve_variable_patterns",
     "get_runner",
+    "get_runner_class",
 ]
 
 
@@ -48,12 +49,19 @@ def get_runner(config: "Config") -> SimulatorRunner:
     Backends self-register via the ``@register`` decorator.  Importing the
     backend module triggers registration.
     """
-    backend = config.simulator_backend
+    return get_runner_class(config)(config)
 
-    # Lazy-import known backends so they register on demand
+
+def get_runner_class(config: "Config") -> type[SimulatorRunner]:
+    """Return the runner *class* for the config's backend, without instantiating.
+
+    Useful for reading class-level attributes (e.g. ``artifact_files``) from
+    contexts that don't want to pay instantiation cost or trigger optional-
+    dependency import errors (FmpyRunner.__init__ imports fmpy).
+    """
+    backend = config.simulator_backend
     if backend not in _REGISTRY:
         _import_builtin_backend(backend)
-
     cls = _REGISTRY.get(backend)
     if cls is None:
         available = ", ".join(sorted(_REGISTRY)) or "(none)"
@@ -61,7 +69,7 @@ def get_runner(config: "Config") -> SimulatorRunner:
             f"Unsupported simulator backend: {backend} "
             f"(from '{config.simulator}'). Available: {available}"
         )
-    return cls(config)
+    return cls
 
 
 def _import_builtin_backend(name: str) -> None:

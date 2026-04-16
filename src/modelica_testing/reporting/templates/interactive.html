@@ -100,7 +100,7 @@ details summary:hover { color: #333; }
 {% if key_stats %}
 <div class="key-stats">
 {% for s in key_stats %}
-  <div class="key-stat{{ ' changed' if s.changed | default(false) else '' }}" {% if s.label == 'Worst NRMSE' %}id="key-stat-nrmse"{% endif %}>
+  <div class="key-stat{{ ' changed' if s.changed | default(false) else '' }}" {% if s.label in ('Worst NRMSE', 'Worst Score') %}id="key-stat-nrmse"{% endif %}>
     <div class="label">{{ s.label }}</div>
     <div class="value">{{ s.current or "\u2014" }}</div>
     {% if s.reference %}<div class="ref">ref: {{ s.reference }}</div>{% endif %}

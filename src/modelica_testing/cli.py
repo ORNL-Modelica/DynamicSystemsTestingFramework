@@ -726,6 +726,12 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         from .storage.reference_store import RefIndex
         ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
 
+    from .simulators import get_runner_class
+    try:
+        artifact_files = tuple(get_runner_class(config).artifact_files)
+    except ValueError:
+        artifact_files = ()
+
     html_path = generate_comparison_plots(
         model_id=model_id,
         ref_data=ref_data,
@@ -738,6 +744,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         ref_file=ref_file,
         warnings=comp.warnings,
         metric_tree=comp.metric_tree,
+        artifact_files=artifact_files,
     )
 
     if html_path:

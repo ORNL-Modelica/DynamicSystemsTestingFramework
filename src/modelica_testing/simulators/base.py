@@ -301,6 +301,12 @@ class SimulatorRunner(ABC):
     capabilities: frozenset[Capability] = frozenset()
     #: Dataset types the backend can produce (populate in subclass).
     produced_datasets: frozenset[DatasetType] = frozenset({DatasetType.TIME_SERIES})
+    #: Per-test files the backend produces that should appear in the report's
+    #: "Simulation Artifacts" section as ``(filename, label)`` pairs.
+    #: Backend-agnostic reporter walks this list and skips files that don't
+    #: exist — lets each runner own its artifact names without the reporter
+    #: hardcoding anyone's on-disk conventions.
+    artifact_files: tuple[tuple[str, str], ...] = ()
 
     def __init__(self, config: Config):
         self.config = config

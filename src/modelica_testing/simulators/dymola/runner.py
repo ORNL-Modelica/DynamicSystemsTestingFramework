@@ -65,6 +65,14 @@ class DymolaRunner(SimulatorRunner):
         Capability.FMU_EXPORT,          # reserved: Dymola can export FMUs (not yet wired)
     })
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
+    artifact_files = (
+        ("dslog.txt", "Simulation log"),
+        ("translation_log.txt", "Translation log"),
+        ("dsin.txt", "Simulation input"),
+        ("dsfinal.txt", "Final values"),
+        ("simulate.mos", "Simulation script"),
+        ("dsres.mat", "Result file"),
+    )
 
     def __init__(self, config: Config):
         super().__init__(config)

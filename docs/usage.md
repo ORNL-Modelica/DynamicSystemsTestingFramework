@@ -52,21 +52,47 @@ Tests are discovered from two sources (can be combined):
 
 ```json
 {
-  "tests": {
-    "MyLib.Examples.SimpleTest": {
+  "tests": [
+    {
+      "model": "MyLib.Examples.SimpleTest",
       "variables": ["pipe.T[1]", "tank.level"],
-      "stop_time": 100,
-      "tolerance": 1e-4
+      "simulation": {
+        "stop_time": 100,
+        "tolerance": 1e-4,
+        "timeout": 60
+      },
+      "comparison": {
+        "tolerance": 0.01,
+        "variable_overrides": {
+          "pipe.T[1]": {"tolerance": 0.1}
+        }
+      }
     },
-    "MyLib.Examples.AnotherTest": {
+    {
+      "model": "MyLib.Examples.AnotherTest",
       "variables": ["*"],
-      "stop_time": 500
+      "simulation": {"stop_time": 500}
     }
-  }
+  ]
 }
 ```
 
 Variable patterns support `*` and `?` wildcards. `["*"]` tracks all non-parameter variables. `[]` (empty list) simulates without tracking variables.
+
+**Per-test fields inside `simulation` (all optional):**
+
+| Field | Type | Description |
+|---|---|---|
+| `stop_time` | float | Simulation end time. Overrides the model's `experiment` annotation. |
+| `tolerance` | float | Solver tolerance. |
+| `method` | string | Solver method name (e.g. `"Dassl"`, `"Esdirk45a"`). |
+| `number_of_intervals` | int | Output sample count. |
+| `output_interval` | float | Output interval (alternative to `number_of_intervals`). |
+| `timeout` | int | Per-test timeout in seconds. Overrides the global `--timeout` flag. Honored by the Dymola backend (both persistent and batch modes); FMPy runs to completion regardless today. |
+
+**FMU backend only**: add an `"fmu": "path/to/Model.fmu"` field (path relative to the spec file) to point at a prebuilt FMU.
+
+**MetricTree**: add a top-level `"metrics"` block to author an explicit pass/fail tree — see `docs/extensibility.md` §6 for the schema.
 
 ---
 

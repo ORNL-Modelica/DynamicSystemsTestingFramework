@@ -259,7 +259,13 @@ class TestReferenceStore:
         assert ref2["date_added"] == original_date
 
     def test_diagnostics_stored(self, sample_models_dir, tmp_path):
-        """Diagnostics section is stored in reference JSON."""
+        """Diagnostics are stored as a scalar summary, not a full trajectory.
+
+        Full trajectories of nondeterministic values (CPUtime) were
+        producing spurious git diffs on every re-accept — the summary
+        keeps the regression-meaningful data (final, min, max) without
+        bloating the baseline file.
+        """
         config = Config(
             package_path=sample_models_dir,
             reference_root=tmp_path / "refs",
@@ -273,7 +279,13 @@ class TestReferenceStore:
 
         assert "diagnostics" in ref
         assert len(ref["diagnostics"]) == 1
-        assert ref["diagnostics"][0]["name"] == "CPUtime"
+        diag = ref["diagnostics"][0]
+        assert diag["name"] == "CPUtime"
+        # Summary shape: {final, min, max}; no 'values' trajectory.
+        assert diag["final"] == pytest.approx(1.0)  # last value of linspace(0,1,101)
+        assert diag["min"] == pytest.approx(0.0)
+        assert diag["max"] == pytest.approx(1.0)
+        assert "values" not in diag
 
     def test_statistics_stored(self, sample_models_dir, tmp_path):
         """Statistics with diagnostic finals are stored."""

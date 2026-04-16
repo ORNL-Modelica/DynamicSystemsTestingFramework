@@ -70,6 +70,9 @@ class FmpyRunner(SimulatorRunner):
         #   EXPERIMENT_INGEST — not applicable
     })
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
+    artifact_files = (
+        ("result.npz", "Result file"),
+    )
 
     #: Filename used for the on-disk structured-array cache per test.
     RESULT_FILENAME = "result.npz"
