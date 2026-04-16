@@ -19,6 +19,17 @@ state and candidate next moves. Replaces the prior Phase 2 → 3 handoff.
   Pick up when the repo goes public (or when there's a reason to spend
   private-repo Action minutes pre-launch).
 
+**Phase 4.A** (multi-baseline MetricTree leaves) — complete. Decision D56.
+
+- 4.A.1: `evaluate_spec` takes `baselines: dict[str, BaselineView]` (signature refactor, behavior-preserving).
+- 4.A.2: `LeafSpec.against: str = "primary"` + parser validation.
+- 4.A.3: `compare_test` loads every named baseline from the reference file via `_extract_baselines(reference)` and threads them into the evaluator.
+- 4.A.4: `ReferenceStore.add_named_baseline(model_id, name, ...)` for programmatic non-primary baseline authoring. Refuses to overwrite primary (that's `store_reference`'s job).
+- 4.A.5: Per-test report's Metric Tree section shows `against=<name>` on non-primary leaves.
+- 4.A.6: BouncingBall in `examples/fmu/test_spec.json` now uses a `warn`-wrapped leaf scoring against a synthetic sparse `experiment` baseline. End-to-end validated.
+
+Test count: **309 passed**.
+
 **Cleanup pass** (post-Phase-3) — complete. Decisions D54–D55.
 
 - Diagnostic variables now stored as scalar summary (`final/min/max`), not full trajectory. Kills spurious git diffs on every `--accept`. Reporter tolerates legacy shape.

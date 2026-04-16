@@ -13,7 +13,10 @@
         "children": [
           {"metric": "nrmse", "variable": "h", "tolerance": 1e-3},
           {"metric": "nrmse", "variable": "v", "tolerance": 1e-3},
-          {"metric": "range", "variable": "h", "min": -0.01, "max": 1.1}
+          {"metric": "range", "variable": "h", "min": -0.01, "max": 1.1},
+          {"combinator": "warn", "children": [
+            {"metric": "nrmse", "variable": "h", "against": "experiment", "tolerance": 0.2}
+          ]}
         ]
       }
     },

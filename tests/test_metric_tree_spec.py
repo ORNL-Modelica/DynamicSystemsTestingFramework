@@ -53,6 +53,28 @@ class TestLeafSpec:
         assert node.metric == "range"
         assert node.params == {"min": 0.0, "max": 1.1}
 
+    def test_leaf_against_defaults_to_primary(self):
+        node = parse_metric_tree({"metric": "nrmse", "variable": "h"})
+        assert isinstance(node, LeafSpec)
+        assert node.against == "primary"
+
+    def test_leaf_against_explicit_named_baseline(self):
+        node = parse_metric_tree({
+            "metric": "nrmse", "variable": "h", "against": "experiment",
+            "tolerance": 0.05,
+        })
+        assert isinstance(node, LeafSpec)
+        assert node.against == "experiment"
+        # against is not folded into params
+        assert "against" not in node.params
+        assert node.params == {"tolerance": 0.05}
+
+    def test_leaf_against_empty_string_rejected(self):
+        with pytest.raises(MetricSpecError, match="against.*non-empty"):
+            parse_metric_tree({
+                "metric": "nrmse", "variable": "h", "against": "",
+            })
+
     def test_unknown_metric_rejected(self):
         with pytest.raises(MetricSpecError, match="unknown metric 'fft-peak'"):
             parse_metric_tree({"metric": "fft-peak", "variable": "x"})

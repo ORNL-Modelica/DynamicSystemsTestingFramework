@@ -42,11 +42,18 @@ class LeafSpec:
     tube_width_mode, ...). The shape mirrors the existing
     ``variable_overrides`` payload in test_spec.json so the same tube/NRMSE
     parameter names work in both contexts.
+
+    ``against`` selects which named baseline the leaf scores against (Phase
+    4.A.2). Defaults to ``"primary"`` — the baseline stored at the flat top
+    level of the reference file. Non-primary names (``"experiment"``,
+    ``"analytical"``, ...) reference entries under the reference's
+    ``baselines`` map. Unknown names are rejected at evaluation time.
     """
 
     metric: str
     variable: str
     params: dict = field(default_factory=dict)
+    against: str = "primary"
 
 
 @dataclass
@@ -155,6 +162,17 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
             f"{path}.variable: required string field"
         )
 
+    # ``against`` picks which named baseline the leaf scores against.
+    # Defaults to "primary"; must be a non-empty string if present.
+    against = raw.get("against", "primary")
+    if not isinstance(against, str) or not against:
+        raise MetricSpecError(
+            f"{path}.against: must be a non-empty string, got {against!r}"
+        )
+
     # Everything else is metric-specific params (tolerance, tube_rel, ...).
-    params = {k: v for k, v in raw.items() if k not in {"metric", "variable"}}
-    return LeafSpec(metric=metric, variable=variable, params=params)
+    params = {
+        k: v for k, v in raw.items()
+        if k not in {"metric", "variable", "against"}
+    }
+    return LeafSpec(metric=metric, variable=variable, params=params, against=against)

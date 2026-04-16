@@ -636,17 +636,31 @@ def compare_test(
     # so the legacy ``comparison.variable_overrides`` is ignored on this
     # path (documented — same fields move into each leaf's params).
     if test.metric_tree_spec is not None:
+        from ..storage.reference_store import _extract_baselines
+        from .tree_eval import BaselineView
         var_results_by_name = {v.name: v for v in result.variables if v.name}
-        ref_vars_by_name: dict[str, dict] = {}
-        for rv in reference.get("variables", []):
-            rn = rv.get("name") or rv.get("expression", "")
-            if rn and rn not in ref_vars_by_name:
-                ref_vars_by_name[rn] = rv
+        # Phase 4.A.3: load every named baseline from the reference file.
+        # Primary comes from the flat top-level fields; any additional
+        # baselines (experiment, analytical, ...) come from the "baselines"
+        # map. Leaves pick which one via leaf.against (defaults to primary).
+        all_baselines = _extract_baselines(reference)
+        baselines: dict[str, BaselineView] = {}
+        for name, bl in all_baselines.items():
+            refs_by_name: dict[str, dict] = {}
+            for rv in bl.variables:
+                rn = rv.get("name") or rv.get("expression", "")
+                if rn and rn not in refs_by_name:
+                    refs_by_name[rn] = rv
+            bl_time = np.array(bl.time) if bl.time else None
+            baselines[name] = BaselineView(
+                name=name,
+                ref_vars_by_name=refs_by_name,
+                shared_ref_time=bl_time,
+            )
         tree = evaluate_spec(
             test.metric_tree_spec,
             var_results_by_name,
-            ref_vars_by_name,
-            shared_ref_time,
+            baselines,
             base_tolerance,
         )
         return TestComparison(

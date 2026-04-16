@@ -298,6 +298,85 @@ class ReferenceStore:
         """
         return self.get_baselines(model_id).get(name)
 
+    def add_named_baseline(
+        self,
+        model_id: str,
+        name: str,
+        time: list[float],
+        variables: list[dict],
+        *,
+        provenance: Optional[dict] = None,
+        simulation: Optional[dict] = None,
+        statistics: Optional[dict] = None,
+        overwrite: bool = True,
+    ) -> bool:
+        """Add or update a **non-primary** named baseline on an existing reference.
+
+        Primary stays at the flat top-level (written by ``store_reference``
+        on ``--accept``). Additional baselines live under the ``baselines``
+        map. Use this for programmatic authoring of experiment / analytical
+        / cross-backend baselines that don't come from running the framework
+        itself. The model must already have a primary baseline on disk —
+        this helper adds to an existing ref file, it does not create one.
+
+        Args:
+            model_id: Must already have a ref file (primary baseline).
+            name: Baseline name (``"experiment"``, ``"analytical"``, ...).
+                  ``"primary"`` is rejected — primary is written by
+                  ``store_reference`` only.
+            time: Shared time vector for all variables in this baseline.
+            variables: ``[{"index", "name", "values"}, ...]``.
+            provenance: Optional origin metadata (captured_at, source,
+                citation, notes, ...). Stored verbatim under the baseline's
+                ``provenance`` key.
+            simulation: Optional simulation parameters that produced this
+                baseline (stop_time, method, ...). Free-form dict.
+            statistics: Optional statistics captured at baseline-acceptance
+                time. Free-form dict.
+            overwrite: When False, refuses to replace an existing baseline
+                of the same name (returns False).
+
+        Returns:
+            True on write, False if overwrite=False and the name exists.
+        """
+        if name == PRIMARY_BASELINE:
+            raise ValueError(
+                "'primary' baselines are written by store_reference only; "
+                "add_named_baseline is for non-primary baselines."
+            )
+        if not name:
+            raise ValueError("baseline name must be a non-empty string")
+
+        ref_file = self._ref_file_for_model(model_id)
+        if ref_file is None or not ref_file.exists():
+            raise FileNotFoundError(
+                f"No primary baseline for {model_id!r} — run the test with "
+                f"--accept first to create the reference file, then add "
+                f"non-primary baselines."
+            )
+
+        data = self.get_reference(model_id) or {}
+        extras = data.setdefault("baselines", {})
+        if not overwrite and name in extras:
+            return False
+
+        entry: dict[str, Any] = {
+            "time": list(time),
+            "variables": list(variables),
+        }
+        if provenance:
+            entry["provenance"] = dict(provenance)
+        if simulation:
+            entry["simulation"] = dict(simulation)
+        if statistics:
+            entry["statistics"] = dict(statistics)
+        extras[name] = entry
+
+        ref_file.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        return True
+
     def list_baseline_names(self, model_id: str) -> list[str]:
         """Return the names of baselines available for a model."""
         return list(self.get_baselines(model_id).keys())

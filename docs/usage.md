@@ -94,6 +94,45 @@ Variable patterns support `*` and `?` wildcards. `["*"]` tracks all non-paramete
 
 **MetricTree**: add a top-level `"metrics"` block to author an explicit pass/fail tree — see `docs/extensibility.md` §6 for the schema.
 
+### Multiple named baselines
+
+A reference file can carry more than one baseline: the `primary` baseline (what the framework writes on `--accept`, stored at the flat top level) plus any number of named baselines under a `baselines` map — `experiment`, `analytical`, `dymola`, etc. MetricTree leaves can pick which baseline to score against via `"against": "<name>"` (default is `"primary"`):
+
+```json
+{
+  "model": "MyLib.HeatExchanger",
+  "variables": ["T"],
+  "metrics": {
+    "combinator": "and",
+    "children": [
+      {"metric": "nrmse", "variable": "T", "tolerance": 0.01},
+      {"combinator": "warn", "children": [
+        {"metric": "nrmse", "variable": "T", "against": "experiment", "tolerance": 0.1}
+      ]}
+    ]
+  }
+}
+```
+
+Non-primary baselines can be added programmatically:
+
+```python
+from modelica_testing.config import Config
+from modelica_testing.storage.reference_store import ReferenceStore
+
+config = Config(config_file="path/to/testing.json")
+store = ReferenceStore(config)
+store.add_named_baseline(
+    model_id="MyLib.HeatExchanger",
+    name="experiment",
+    time=[0.0, 1.0, 2.0],
+    variables=[{"index": 1, "name": "T", "values": [300.0, 310.5, 315.2]}],
+    provenance={"origin": "rig-run-2026-04-17", "citation": "Report Q2"},
+)
+```
+
+The model must already have a primary baseline (run with `--accept` once). Primary stays untouched by subsequent accepts — see D47 in `docs/decisions.md` for schema details.
+
 ---
 
 ## Commands

@@ -196,6 +196,7 @@ details summary:hover { color: #333; }
       {%- else %}
         <span class="tag leaf-tag">{{ node.label }}</span>
         {%- if node.mode %} <span class="score">[{{ node.mode }}]</span>{% endif %}
+        {%- if node.against and node.against != "primary" %} <span class="score">against={{ node.against }}</span>{% endif %}
         {%- if node.score is not none %} <span class="score">score={{ "%.4e" | format(node.score) }}</span>{% endif %}
         {%- if node.tolerance is not none %} <span class="tol">tol={{ "%.4e" | format(node.tolerance) }}</span>{% endif %}
       {%- endif %}

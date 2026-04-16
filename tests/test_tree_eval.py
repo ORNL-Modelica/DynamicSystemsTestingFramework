@@ -9,6 +9,8 @@ import pytest
 
 from modelica_testing.comparison.comparator import compare_test
 from modelica_testing.comparison.tree_eval import (
+    BaselineView,
+    PRIMARY_BASELINE,
     collect_leaf_variables,
     evaluate_spec,
 )
@@ -20,6 +22,17 @@ from modelica_testing.simulators.base import TestResult, VariableResult
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _primary(ref_vars_by_name, shared_ref_time=None) -> dict:
+    """Shortcut: wrap a single ``primary`` baseline for the evaluator."""
+    return {
+        PRIMARY_BASELINE: BaselineView(
+            name=PRIMARY_BASELINE,
+            ref_vars_by_name=ref_vars_by_name,
+            shared_ref_time=shared_ref_time,
+        ),
+    }
 
 def _result_with(variables: dict[str, tuple[np.ndarray, np.ndarray]]) -> TestResult:
     """Build a TestResult with the given name → (time, values) pairs."""
@@ -78,8 +91,7 @@ class TestLeafEval:
         tree = evaluate_spec(
             spec,
             var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
-            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
-            shared_ref_time=None,
+            baselines=_primary({"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}}, None),
             base_tolerance=1e-4,
         )
         assert tree.passed
@@ -95,8 +107,7 @@ class TestLeafEval:
         tree = evaluate_spec(
             spec,
             var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
-            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
-            shared_ref_time=None,
+            baselines=_primary({"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}}, None),
             base_tolerance=1e-4,
         )
         assert not tree.passed
@@ -108,20 +119,64 @@ class TestLeafEval:
         tree = evaluate_spec(
             spec,
             var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
-            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
-            shared_ref_time=None,
+            baselines=_primary({"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}}, None),
             base_tolerance=0.1,  # Generous; should pass
         )
         assert tree.passed
         assert tree.diagnostics["tolerance"] == 0.1
+
+    def test_leaf_against_named_baseline(self):
+        """A leaf with ``against: 'experiment'`` scores against that baseline."""
+        spec = parse_metric_tree({
+            "metric": "nrmse", "variable": "x", "against": "experiment",
+            "tolerance": 0.2,
+        })
+        t, ref_vals = _linear()
+        _, act_vals = _linear(offset=0.01)
+        # Actual is close to "experiment" (offset 0.01) but far from "primary" (offset 0.5)
+        _, primary_vals = _linear(offset=0.5)
+
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
+            baselines={
+                "primary": BaselineView(
+                    name="primary",
+                    ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": primary_vals.tolist()}},
+                ),
+                "experiment": BaselineView(
+                    name="experiment",
+                    ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
+                ),
+            },
+            base_tolerance=1e-4,
+        )
+        # Scores against "experiment" (offset 0.01, within tolerance 0.2) → pass.
+        # If it incorrectly fell through to "primary" (offset 0.5), it would fail.
+        assert tree.passed
+
+    def test_leaf_against_unknown_baseline_fails(self):
+        """A leaf naming an absent baseline produces a hard-fail leaf result."""
+        spec = parse_metric_tree({
+            "metric": "nrmse", "variable": "x", "against": "nonexistent",
+        })
+        t, ref_vals = _linear()
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=ref_vals)},
+            baselines={"primary": BaselineView(name="primary", ref_vars_by_name={})},
+            base_tolerance=1e-4,
+        )
+        assert not tree.passed
+        # Label surfaces the broken baseline name for the report
+        assert "nonexistent" in tree.label
 
     def test_missing_variable_fails_leaf(self):
         spec = parse_metric_tree({"metric": "nrmse", "variable": "missing"})
         tree = evaluate_spec(
             spec,
             var_results_by_name={},
-            ref_vars_by_name={},
-            shared_ref_time=None,
+            baselines=_primary({}, None),
             base_tolerance=1e-4,
         )
         assert not tree.passed
@@ -136,8 +191,7 @@ class TestLeafEval:
         tree = evaluate_spec(
             spec,
             var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
-            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
-            shared_ref_time=None,
+            baselines=_primary({"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}}, None),
             base_tolerance=1e-4,
         )
         assert tree.passed
@@ -152,8 +206,7 @@ class TestLeafEval:
         tree = evaluate_spec(
             spec,
             var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
-            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
-            shared_ref_time=None,
+            baselines=_primary({"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}}, None),
             base_tolerance=1e-4,
         )
         assert tree.passed
@@ -168,8 +221,7 @@ class TestLeafEval:
         tree = evaluate_spec(
             spec,
             var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
-            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
-            shared_ref_time=None,
+            baselines=_primary({"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}}, None),
             base_tolerance=1e-4,
         )
         assert not tree.passed
@@ -184,8 +236,7 @@ class TestLeafEval:
         tree = evaluate_spec(
             spec,
             var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
-            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
-            shared_ref_time=None,
+            baselines=_primary({"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}}, None),
             base_tolerance=1e-4,
         )
         assert tree.passed
@@ -199,8 +250,7 @@ class TestLeafEval:
         tree = evaluate_spec(
             spec,
             var_results_by_name={"x": VariableResult(index=1, name="x", time=t, values=act_vals)},
-            ref_vars_by_name={"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}},
-            shared_ref_time=None,
+            baselines=_primary({"x": {"index": 1, "name": "x", "time": t.tolist(), "values": ref_vals.tolist()}}, None),
             base_tolerance=1e-4,
         )
         assert tree.passed
@@ -227,8 +277,7 @@ class TestCombinatorEval:
         return evaluate_spec(
             parse_metric_tree(spec_dict),
             var_results_by_name=var_results,
-            ref_vars_by_name=ref_vars,
-            shared_ref_time=None,
+            baselines=_primary(ref_vars, None),
             base_tolerance=base_tolerance,
         )
 
@@ -333,8 +382,7 @@ class TestCombinatorEval:
         tree = evaluate_spec(
             parse_metric_tree(spec),
             var_results_by_name=var_results,
-            ref_vars_by_name=ref_vars,
-            shared_ref_time=None,
+            baselines=_primary(ref_vars, None),
             base_tolerance=1e-4,
         )
         assert tree.passed
@@ -373,8 +421,7 @@ class TestCollectLeaves:
         tree = evaluate_spec(
             parse_metric_tree(spec),
             var_results_by_name=var_results,
-            ref_vars_by_name=ref_vars,
-            shared_ref_time=None,
+            baselines=_primary(ref_vars, None),
             base_tolerance=0.1,
         )
         leaves = collect_leaf_variables(tree)
@@ -438,6 +485,51 @@ class TestCompareTestIntegration:
         test.variable_overrides = {"x": {"tolerance": 1e-12}}
         comp = compare_test(test, result, reference)
         assert comp.passed  # Tree's 0.1 tolerance wins; override ignored
+
+    def test_tree_leaf_against_non_primary_baseline(self):
+        """compare_test loads all named baselines; a leaf's ``against`` picks one.
+
+        Reference file carries a ``primary`` baseline (flat top-level fields)
+        plus an ``experiment`` baseline under ``baselines``. The test's tree
+        has two leaves: one against primary (strict), one against experiment
+        wrapped in warn. Actual matches experiment exactly but drifts from
+        primary — overall passes (strict fails, but warn doesn't gate).
+        """
+        t, primary_vals = _linear()
+        _, exp_vals = _linear(offset=0.05)
+        _, act_vals = _linear(offset=0.05)  # matches experiment, drifts from primary
+
+        result = _result_with({"x": (t, act_vals)})
+        # Reference: primary (flat) + experiment (under baselines)
+        reference = {
+            "test_id": "0001",
+            "time": t.tolist(),
+            "variables": [{"index": 1, "name": "x", "values": primary_vals.tolist()}],
+            "baselines": {
+                "experiment": {
+                    "time": t.tolist(),
+                    "variables": [{"index": 1, "name": "x", "values": exp_vals.tolist()}],
+                },
+            },
+        }
+
+        test = _test_model({
+            "combinator": "and",
+            "children": [
+                {
+                    "combinator": "warn",
+                    "children": [
+                        {"metric": "nrmse", "variable": "x", "tolerance": 1e-6},
+                    ],
+                },
+                {"metric": "nrmse", "variable": "x", "against": "experiment", "tolerance": 0.01},
+            ],
+        })
+        comp = compare_test(test, result, reference)
+        # warn-wrapped primary drift doesn't fail; experiment match passes → overall pass.
+        assert comp.passed
+        # Tree should have the warn branch and the against-experiment leaf.
+        assert comp.metric_tree is not None
 
     def test_spec_variables_list_matches_tree_leaves(self):
         """TestComparison.variables comes from collect_leaf_variables."""
