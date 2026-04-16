@@ -97,24 +97,24 @@ def discover_tests(config: Config) -> list[TestModel]:
     from the spec are added alongside UnitTests variables, and the source
     is marked as "both". Spec simulation parameters override experiment defaults.
     """
-    # Step 1: Discover UnitTests from .mo files
+    # Step 1: Discover UnitTests from .mo files (Modelica source only)
     ut_tests: dict[str, TestModel] = {}
-    library_dir = config.library_dir
+    if config.source_type == "modelica":
+        library_dir = config.library_dir
+        for mo_file in sorted(library_dir.rglob("*.mo")):
+            try:
+                content = mo_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "UnitTests" not in content:
+                continue
 
-    for mo_file in sorted(library_dir.rglob("*.mo")):
-        try:
-            content = mo_file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if "UnitTests" not in content:
-            continue
+            result = parse_mo_file(mo_file)
+            if result is None:
+                continue
 
-        result = parse_mo_file(mo_file)
-        if result is None:
-            continue
-
-        test = _build_test_model(result)
-        ut_tests[test.model_id] = test
+            test = _build_test_model(result)
+            ut_tests[test.model_id] = test
 
     # Step 2: Load external test spec (if configured)
     spec_tests: dict[str, TestModel] = {}

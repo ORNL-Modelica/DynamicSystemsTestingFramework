@@ -227,25 +227,45 @@ class Config:
                     config_found_dir = search_dir.resolve()
                     break
 
-        # Resolve package path — CLI arg > config file > auto-detect
-        if self.package_path is not None:
-            self.package_path = Path(self.package_path).resolve()
-            if not (self.package_path / "package.mo").exists():
-                self.package_path = find_package_dir(self.package_path)
-        elif "package_path" in file_config:
-            base_dir = config_found_dir or Path.cwd()
-            self.package_path = (base_dir / file_config["package_path"]).resolve()
-            if not (self.package_path / "package.mo").exists():
-                self.package_path = find_package_dir(self.package_path)
+        # Source type peek — controls whether we look for a Modelica package.
+        # Done before package_path resolution so non-modelica backends (FMU,
+        # data-file, ...) can skip the package.mo lookup entirely.
+        source_type_hint = file_config.get("source_type", self.source_type)
+
+        if source_type_hint == "modelica":
+            # Resolve package path — CLI arg > config file > auto-detect
+            if self.package_path is not None:
+                self.package_path = Path(self.package_path).resolve()
+                if not (self.package_path / "package.mo").exists():
+                    self.package_path = find_package_dir(self.package_path)
+            elif "package_path" in file_config:
+                base_dir = config_found_dir or Path.cwd()
+                self.package_path = (base_dir / file_config["package_path"]).resolve()
+                if not (self.package_path / "package.mo").exists():
+                    self.package_path = find_package_dir(self.package_path)
+            else:
+                self.package_path = find_package_dir()
+
+            # Read library name from package.mo
+            if self.library_name is None:
+                self.library_name = read_package_name(self.package_path)
+
+            # The parent of the package dir is where testing.json typically lives
+            repo_root = self.package_path.parent
         else:
-            self.package_path = find_package_dir()
-
-        # Read library name from package.mo
-        if self.library_name is None:
-            self.library_name = read_package_name(self.package_path)
-
-        # The parent of the package dir is where testing.json typically lives
-        repo_root = self.package_path.parent
+            # Non-modelica source: no package.mo to discover. The "library"
+            # is conceptually the FMU set / data set / etc. described by
+            # the config. repo_root falls back to the config dir or cwd.
+            if self.package_path is not None:
+                self.package_path = Path(self.package_path).resolve()
+            repo_root = config_found_dir or (
+                self.package_path if self.package_path else Path.cwd()
+            )
+            if self.library_name is None:
+                self.library_name = (
+                    file_config.get("library_name")
+                    or (config_found_dir.name if config_found_dir else repo_root.name)
+                )
 
         # If no config was found yet (package_path wasn't available for search),
         # try repo_root now

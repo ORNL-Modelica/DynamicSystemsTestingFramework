@@ -1,0 +1,31 @@
+{
+  "tests": [
+    {
+      "model": "BouncingBall",
+      "fmu": "reference-fmus-binaries/2.0/BouncingBall.fmu",
+      "variables": ["h", "v"],
+      "simulation": {
+        "stop_time": 3.0,
+        "tolerance": 1e-6
+      }
+    },
+    {
+      "model": "Dahlquist",
+      "fmu": "reference-fmus-binaries/2.0/Dahlquist.fmu",
+      "variables": ["x"],
+      "simulation": {
+        "stop_time": 10.0,
+        "tolerance": 1e-6
+      }
+    },
+    {
+      "model": "VanDerPol",
+      "fmu": "reference-fmus-binaries/2.0/VanDerPol.fmu",
+      "variables": ["x0", "x1"],
+      "simulation": {
+        "stop_time": 20.0,
+        "tolerance": 1e-6
+      }
+    }
+  ]
+}

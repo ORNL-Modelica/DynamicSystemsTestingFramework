@@ -52,7 +52,9 @@
       "Bash(grep -n \"class DymolaLogger\\\\|DymolaLogger\\\\.\" /tmp/dymola-inspect/dymola/*.py)",
       "Bash(grep:*)",
       "Bash(mkdir -p /tmp/ref-fmus-probe)",
-      "Bash(unzip -l /tmp/ref-fmus-probe/Reference-FMUs.zip)"
+      "Bash(unzip -l /tmp/ref-fmus-probe/Reference-FMUs.zip)",
+      "Bash(uv pip *)",
+      "Bash(BROWSER=true uv run modelica-testing --config examples/fmu/testing.json run --report)"
     ]
   }
 }
