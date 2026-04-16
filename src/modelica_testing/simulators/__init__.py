@@ -1,4 +1,4 @@
-"""Simulator backends for running Modelica simulations."""
+"""Simulator backends. Concrete today: Dymola, FMPy. Pluggable via ``@register``."""
 
 from __future__ import annotations
 

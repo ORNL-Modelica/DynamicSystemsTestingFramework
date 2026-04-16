@@ -94,8 +94,8 @@
 ### Config resolution order
 - CLI args > `testing.json` file > defaults
 - `testing.json` search: reference_root → repo_root → package_dir → cwd
-- All relative paths in `testing.json` (`package_path`, `test_spec`, `dependencies`, `reference_root`) resolve relative to where `testing.json` was found
-- `testing.json` can be the single entry point: include `package_path` and run with just `--config` or `--reference-root`
+- All relative paths in `testing.json` (`source_path`, `test_spec`, `dependencies`, `reference_root`) resolve relative to where `testing.json` was found
+- `testing.json` can be the single entry point: include `source_path` and run with just `--config` or `--reference-root`
 - `test_spec.json` is permanent, not temporary — it defines what to test; references define what to expect
 
 ### Ref files are the source of truth, not a manifest

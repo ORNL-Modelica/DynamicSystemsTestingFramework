@@ -1,5 +1,5 @@
 {
-  "package_path": "../../",
+  "source_path": "../../",
   "simulator": "Dymola",
   "simulators": {
     "Dymola": [
@@ -8,5 +8,20 @@
     ]
   },
   "dependencies": [],
-  "test_spec": "test_spec.json"
+  "test_spec": "test_spec.json",
+  "recognizers": [
+    {
+      "name": "demo:icons-example-as-simulate-only",
+      "applies_to": ["modelica"],
+      "match": {
+        "type": "extends",
+        "class_pattern": "*Icons.Example"
+      },
+      "fields": {
+        "simulate_only": {"from": "constant", "value": true},
+        "stop_time": {"from": "experiment-annotation", "name": "StopTime"},
+        "tolerance": {"from": "experiment-annotation", "name": "Tolerance"}
+      }
+    }
+  ]
 }

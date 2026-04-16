@@ -60,8 +60,8 @@ def _make_test(fmu_path: Path, variables: list[str], stop_time: float = 3.0):
 
     return TestModel(
         model_id=fmu_path.stem,
-        mo_file=fmu_path,            # FMPy backend reads .fmu path from here
-        package_path="",
+        source_file=fmu_path,        # FMPy backend reads .fmu path from here
+        source_package="",
         short_name=fmu_path.stem,
         n_vars=len(variables),
         variable_patterns=variables,

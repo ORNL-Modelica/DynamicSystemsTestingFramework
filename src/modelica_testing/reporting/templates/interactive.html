@@ -193,9 +193,9 @@ details summary:hover { color: #333; }
 {% if variables %}
 <div class="tolerance-panel">
   <div class="tolerance-row">
-    <label for="global-tolerance" title="NRMSE threshold — variables with NRMSE below this value pass">Test Tolerance (NRMSE):</label>
+    <label for="global-tolerance" title="NRMSE threshold — applies to NRMSE-mode variables only">Test Tolerance (NRMSE only):</label>
     <input type="number" id="global-tolerance" step="0.001" min="0">
-    <span class="hint">NRMSE threshold for all variables. Per-variable overrides in the table take precedence.</span>
+    <span class="hint">NRMSE threshold for NRMSE-mode variables. Other modes (tube/range/event-timing/dominant-frequency) carry mode-specific thresholds in their per-variable params and aren't affected by this slider.</span>
   </div>
   <div class="export-row">
     <details open>
@@ -218,14 +218,18 @@ details summary:hover { color: #333; }
 {% if variables %}
 <h2>Variables</h2>
 <table id="var-table">
-<tr><th>Status</th><th>Variable</th><th>Mode</th><th>NRMSE</th><th>Tolerance</th><th>Pass/Fail Criterion</th></tr>
+<tr><th>Status</th><th>Variable</th><th>Mode</th><th>Score</th><th>Tolerance</th><th>Pass/Fail Criterion</th></tr>
 {% for v in variables %}
 <tr data-idx="{{ loop.index0 }}">
   <td class="var-status"><span class="{{ 'pass' if v.passed else 'fail' }}">{{ "PASS" if v.passed else "FAIL" }}</span></td>
   <td>{{ v.name }}{% if v.is_constant %} (const){% endif %}</td>
-  <td>{{ v.mode | default("nrmse") }}{% if v.tube_points_inside is not none %} ({{ "%.0f" | format(v.tube_points_inside * 100) }}% in){% endif %}</td>
-  <td class="var-nrmse">{{ "%.4e" | format(v.nrmse) }}</td>
-  <td><input type="number" class="var-tol-input" data-idx="{{ loop.index0 }}" step="0.001" min="0" value="{{ v.tolerance_used }}" title="NRMSE tolerance for this variable"></td>
+  <td>{{ v.mode | default("nrmse") }}</td>
+  <td class="var-score">{{ v.score_display | default("NRMSE %.4e" | format(v.nrmse)) }}</td>
+  {% if v.mode in ("nrmse", "final_only") or not v.mode %}
+  <td><input type="number" class="var-tol-input" data-idx="{{ loop.index0 }}" step="0.001" min="0" value="{{ v.tolerance_used }}" title="Tolerance for this variable (re-evaluates on change)"></td>
+  {% else %}
+  <td><span class="hint" title="The {{ v.mode }} mode uses mode-specific thresholds; the slider applies only to NRMSE-mode variables.">n/a (mode={{ v.mode }})</span></td>
+  {% endif %}
   <td class="var-criterion">{{ v.criterion }}</td>
 </tr>
 {% endfor %}
@@ -372,8 +376,15 @@ const tubePassState = {};
 
 function computePass(idx) {
   const v = VARIABLES[idx];
-  if (varModes[idx] === 'tube') {
+  const mode = varModes[idx];
+  if (mode === 'tube') {
     if (idx in tubePassState) return tubePassState[idx];
+    return v.passed;
+  }
+  // Only NRMSE mode is recomputable from the per-variable tolerance slider.
+  // Other modes (range, event-timing, dominant-frequency, final_only) carry
+  // mode-specific thresholds in their original config — slider doesn't apply.
+  if (mode && mode !== 'nrmse') {
     return v.passed;
   }
   return v.nrmse < perVarTolerances[idx];

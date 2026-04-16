@@ -64,8 +64,8 @@ def _test_model(metrics_raw: dict) -> TestModel:
     """Build a TestModel with a parsed MetricTree spec."""
     return TestModel(
         model_id="Test.Model",
-        mo_file=Path(""),
-        package_path="Test",
+        source_file=Path(""),
+        source_package="Test",
         short_name="Model",
         n_vars=0,
         metric_tree_spec=parse_metric_tree(metrics_raw),

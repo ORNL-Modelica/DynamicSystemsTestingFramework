@@ -389,8 +389,8 @@ def _make_test(comparison_tolerance=None, variable_overrides=None):
     """Create a minimal TestModel for tolerance tests."""
     return TestModel(
         model_id="Test.Model",
-        mo_file=Path(""),
-        package_path="Test",
+        source_file=Path(""),
+        source_package="Test",
         short_name="Model",
         n_vars=1,
         comparison_tolerance=comparison_tolerance,

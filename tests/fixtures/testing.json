@@ -1,5 +1,5 @@
 {
-  "package_path": "../../ModelicaTestingLib",
+  "source_path": "../../ModelicaTestingLib",
   "simulator": "Dymola",
   "simulators": {},
   "dependencies": [],

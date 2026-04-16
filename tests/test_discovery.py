@@ -235,7 +235,7 @@ class TestSpecParser:
 class TestDiscoverTests:
     def test_discover_from_mo_files(self, sample_models_dir):
         """Discover tests from .mo files with UnitTests."""
-        config = Config(package_path=sample_models_dir)
+        config = Config(source_path=sample_models_dir)
         tests = discover_tests(config)
         model_ids = [t.model_id for t in tests]
         assert "ModelicaTestingLib.Examples.SimpleTest" in model_ids
@@ -243,7 +243,7 @@ class TestDiscoverTests:
     def test_discover_with_spec(self, sample_models_dir, sample_test_spec):
         """Discover with spec file adds spec-only tests."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             test_spec_file=sample_test_spec,
         )
         tests = discover_tests(config)
@@ -255,7 +255,7 @@ class TestDiscoverTests:
     def test_source_tracking(self, sample_models_dir, sample_test_spec):
         """Source field correctly tracks origin of each test."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             test_spec_file=sample_test_spec,
         )
         tests = discover_tests(config)
@@ -289,7 +289,7 @@ class TestDiscoverTests:
         }))
 
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             test_spec_file=spec_path,
         )
         tests = discover_tests(config)

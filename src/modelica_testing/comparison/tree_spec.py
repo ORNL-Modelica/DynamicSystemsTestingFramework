@@ -26,8 +26,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Union
 
-VALID_COMBINATORS = frozenset({"and", "or", "k-of-n", "warn"})
-VALID_METRICS = frozenset({"nrmse", "tube", "final-only", "range"})
+VALID_COMBINATORS = frozenset({"and", "or", "k-of-n", "warn", "weighted"})
+VALID_METRICS = frozenset({
+    "nrmse", "tube", "final-only", "range",
+    "event-timing", "dominant-frequency",
+})
 
 
 class MetricSpecError(ValueError):
@@ -58,21 +61,38 @@ class LeafSpec:
 
 @dataclass
 class CombinatorSpec:
-    """A combinator node: and/or/k-of-n/warn over child specs.
+    """A combinator node: and/or/k-of-n/warn/weighted over child specs.
 
     ``k`` is required iff ``combinator == "k-of-n"``. ``warn`` requires
-    exactly one child; the others require at least one.
+    exactly one child; the others require at least one. ``weighted`` (4.E)
+    requires ``weights`` (list parallel to children), ``threshold``, and an
+    optional ``direction`` (``"less"`` default, or ``"greater"``).
     """
 
     combinator: str
     children: list[Union["LeafSpec", "CombinatorSpec"]]
     k: int = 0  # only meaningful for k-of-n
+    # Weighted-only fields (empty/zero for other combinators).
+    weights: list[float] = field(default_factory=list)
+    threshold: float = 0.0
+    direction: str = "less"
 
     def __post_init__(self):
         if self.combinator == "k-of-n" and self.k <= 0:
             raise MetricSpecError(
                 f"k-of-n combinator requires positive 'k'; got {self.k}"
             )
+        if self.combinator == "weighted":
+            if len(self.weights) != len(self.children):
+                raise MetricSpecError(
+                    f"weighted combinator: weights ({len(self.weights)}) "
+                    f"must match children ({len(self.children)})"
+                )
+            if self.direction not in ("less", "greater"):
+                raise MetricSpecError(
+                    f"weighted combinator: direction must be 'less' or 'greater', "
+                    f"got {self.direction!r}"
+                )
 
 
 SpecNode = Union[LeafSpec, CombinatorSpec]
@@ -145,7 +165,50 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
                 f"{path}.k: k={k} exceeds number of children ({len(children)})"
             )
 
-    return CombinatorSpec(combinator=name, children=children, k=k)
+    weights: list[float] = []
+    threshold = 0.0
+    direction = "less"
+    if name == "weighted":
+        weights_raw = raw.get("weights")
+        if not isinstance(weights_raw, list):
+            raise MetricSpecError(
+                f"{path}.weights: 'weighted' combinator requires a list of weights"
+            )
+        if len(weights_raw) != len(children):
+            raise MetricSpecError(
+                f"{path}.weights: length ({len(weights_raw)}) must match "
+                f"children ({len(children)})"
+            )
+        try:
+            weights = [float(w) for w in weights_raw]
+        except (TypeError, ValueError) as exc:
+            raise MetricSpecError(
+                f"{path}.weights: all weights must be numeric ({exc})"
+            )
+        if "threshold" not in raw:
+            raise MetricSpecError(
+                f"{path}.threshold: 'weighted' combinator requires 'threshold'"
+            )
+        try:
+            threshold = float(raw["threshold"])
+        except (TypeError, ValueError):
+            raise MetricSpecError(
+                f"{path}.threshold: must be numeric, got {raw['threshold']!r}"
+            )
+        direction = raw.get("direction", "less")
+        if direction not in ("less", "greater"):
+            raise MetricSpecError(
+                f"{path}.direction: must be 'less' or 'greater', got {direction!r}"
+            )
+
+    return CombinatorSpec(
+        combinator=name,
+        children=children,
+        k=k,
+        weights=weights,
+        threshold=threshold,
+        direction=direction,
+    )
 
 
 def _parse_leaf(raw: dict, path: str) -> LeafSpec:

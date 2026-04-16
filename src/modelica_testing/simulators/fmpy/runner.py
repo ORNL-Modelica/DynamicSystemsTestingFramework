@@ -5,8 +5,8 @@ Consumes prebuilt FMUs via the FMPy Python library. Produces the same
 comparator, storage, and reporting layers work unchanged.
 
 Simulation flow per test (``run_single_test``):
-  1. Resolve the FMU path from ``test.mo_file`` (spec_parser puts it there
-     when the spec entry has an ``"fmu"`` field).
+  1. Resolve the FMU path from ``test.source_file`` (spec_parser puts it
+     there when the spec entry has an ``"fmu"`` field).
   2. Read the model description to discover scalar variables.
   3. Resolve ``test.variable_patterns`` against the declared names.
   4. Call ``fmpy.simulate_fmu`` with the resolved settings.
@@ -19,6 +19,7 @@ Simulation flow per test (``run_single_test``):
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import time
 from pathlib import Path
@@ -121,8 +122,14 @@ class FmpyRunner(SimulatorRunner):
         if self.progress:
             self.progress.on_start(test_key)
 
+        timeout = float(
+            test.timeout if test.timeout is not None else self.config.timeout
+        )
+
         wall_start = time.monotonic()
         try:
+            if self.progress:
+                self.progress.on_phase(test_key, "loading")
             md = fmpy.read_model_description(str(fmu_path))
             available = _list_scalar_variables(md)
             requested = _resolve_requested_outputs(test, available)
@@ -141,7 +148,40 @@ class FmpyRunner(SimulatorRunner):
             elif test.number_of_intervals is not None and test.number_of_intervals > 0:
                 sim_kwargs["output_interval"] = test.stop_time / test.number_of_intervals
 
-            result = fmpy.simulate_fmu(**sim_kwargs)
+            if self.progress:
+                self.progress.on_phase(test_key, "simulating")
+
+            # FMPy runs in-process; can't kill the C-level FMU compute. Run in a
+            # thread and treat result(timeout=...) as the deadline. On timeout
+            # the worker thread is left to finish in background — acceptable for
+            # the typical sub-second FMU; documented trade-off.
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(fmpy.simulate_fmu, **sim_kwargs)
+            try:
+                result = future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                elapsed = time.monotonic() - wall_start
+                msg = (
+                    f"FMPy simulation exceeded {timeout}s timeout "
+                    f"(worker thread continues until the FMU returns; "
+                    f"can't be force-killed in-process)"
+                )
+                logger.warning("Test %s: %s", test.model_id, msg)
+                if self.progress:
+                    self.progress.on_finish(
+                        test_key, success=False, elapsed=elapsed,
+                        detail=msg, timed_out=True,
+                    )
+                return TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    error_message=msg,
+                    sim_wall=elapsed,
+                )
+            finally:
+                executor.shutdown(wait=False)
 
         except Exception as exc:  # FMPy raises various exception types
             elapsed = time.monotonic() - wall_start
@@ -149,7 +189,7 @@ class FmpyRunner(SimulatorRunner):
             logger.warning("Test %s: %s", test.model_id, msg)
             if self.progress:
                 self.progress.on_finish(
-                    test_key, success=False, elapsed=elapsed, error=msg,
+                    test_key, success=False, elapsed=elapsed, detail=msg,
                 )
             return TestRunResult(
                 model_id=test.model_id,
@@ -235,10 +275,10 @@ class FmpyRunner(SimulatorRunner):
 def _resolve_fmu_path(test: TestModel) -> Optional[Path]:
     """Get the FMU binary path for a test.
 
-    MVP: spec_parser stores the resolved path in ``test.mo_file``. The field
-    name is Modelica-flavored; its contents for FMU tests are the .fmu file.
+    spec_parser stores the resolved path in ``test.source_file`` when the
+    spec entry has an ``"fmu"`` field.
     """
-    p = test.mo_file
+    p = test.source_file
     return p if p and str(p) else None
 
 

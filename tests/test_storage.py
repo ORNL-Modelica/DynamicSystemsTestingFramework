@@ -179,8 +179,8 @@ class TestReferenceStore:
     def _make_test_model(self, model_id="ModelicaTestingLib.Examples.Test1"):
         return TestModel(
             model_id=model_id,
-            mo_file=Path(""),
-            package_path="ModelicaTestingLib.Examples",
+            source_file=Path(""),
+            source_package="ModelicaTestingLib.Examples",
             short_name=model_id.rsplit(".", 1)[-1],
             n_vars=2,
             variable_patterns=[],
@@ -205,7 +205,7 @@ class TestReferenceStore:
     def test_store_and_load(self, sample_models_dir, tmp_path):
         """Store a reference and load it back."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -225,7 +225,7 @@ class TestReferenceStore:
     def test_status_and_dates_stored(self, sample_models_dir, tmp_path):
         """status, date_added, and last_updated are in stored reference."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -242,7 +242,7 @@ class TestReferenceStore:
     def test_date_added_preserved_on_update(self, sample_models_dir, tmp_path):
         """date_added stays the same when a reference is updated."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -267,7 +267,7 @@ class TestReferenceStore:
         bloating the baseline file.
         """
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -290,7 +290,7 @@ class TestReferenceStore:
     def test_statistics_stored(self, sample_models_dir, tmp_path):
         """Statistics with diagnostic finals are stored."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -306,7 +306,7 @@ class TestReferenceStore:
     def test_failed_result_not_stored(self, sample_models_dir, tmp_path):
         """Failed simulations are not stored as references."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -319,7 +319,7 @@ class TestReferenceStore:
     def test_set_status(self, sample_models_dir, tmp_path):
         """set_status updates the status field in the ref file."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -335,7 +335,7 @@ class TestReferenceStore:
     def test_cleanup_obsolete(self, sample_models_dir, tmp_path):
         """cleanup_obsolete removes files with obsolete status."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -354,7 +354,7 @@ class TestReferenceStore:
     def test_number_of_intervals_auto_derived(self, sample_models_dir, tmp_path):
         """numberOfIntervals is derived from result when not explicitly set."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -374,7 +374,7 @@ class TestReferenceStore:
     def test_output_interval_preserved(self, sample_models_dir, tmp_path):
         """output_interval is stored when explicitly set."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -391,7 +391,7 @@ class TestReferenceStore:
     def test_json_field_order(self, sample_models_dir, tmp_path):
         """Metadata fields come before data fields in reference JSON."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store = ReferenceStore(config)
@@ -413,7 +413,7 @@ class TestReferenceStore:
     def test_index_rebuilt_from_files(self, sample_models_dir, tmp_path):
         """A new ReferenceStore instance rebuilds the index from ref files."""
         config = Config(
-            package_path=sample_models_dir,
+            source_path=sample_models_dir,
             reference_root=tmp_path / "refs",
         )
         store1 = ReferenceStore(config)
@@ -528,7 +528,7 @@ class TestBaselineView:
 
     def test_get_baseline_returns_primary_by_default(self, sample_models_dir, tmp_path):
         """End-to-end: store a ref, then read it back via the Baseline view."""
-        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
         result = TestReferenceStore()._make_test_result()
@@ -541,7 +541,7 @@ class TestBaselineView:
         assert b.provenance["origin"] == "legacy-flat"
 
     def test_get_baseline_unknown_name_returns_none(self, sample_models_dir, tmp_path):
-        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
         store.store_reference(test, TestReferenceStore()._make_test_result())
@@ -550,7 +550,7 @@ class TestBaselineView:
 
     def test_list_baseline_names_legacy(self, sample_models_dir, tmp_path):
         """Legacy files always expose exactly ``["primary"]``."""
-        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
         store.store_reference(test, TestReferenceStore()._make_test_result())
@@ -559,7 +559,7 @@ class TestBaselineView:
 
     def test_get_baselines_no_reference(self, sample_models_dir, tmp_path):
         """No ref file → empty dict (not None, not error)."""
-        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         assert store.get_baselines("MyLib.Nonexistent") == {}
         assert store.list_baseline_names("MyLib.Nonexistent") == []
@@ -567,7 +567,7 @@ class TestBaselineView:
 
     def test_store_reference_preserves_additional_baselines(self, sample_models_dir, tmp_path):
         """Accepting new primary results must not wipe out non-primary baselines."""
-        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
 
@@ -596,7 +596,7 @@ class TestBaselineView:
 
     def test_add_named_baseline_writes_non_primary(self, sample_models_dir, tmp_path):
         """add_named_baseline puts a new baseline under the ``baselines`` map."""
-        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
         store.store_reference(test, TestReferenceStore()._make_test_result())
@@ -617,7 +617,7 @@ class TestBaselineView:
         assert store.get_baseline(test.model_id, name="primary") is not None
 
     def test_add_named_baseline_rejects_primary_name(self, sample_models_dir, tmp_path):
-        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
         store.store_reference(test, TestReferenceStore()._make_test_result())
@@ -626,7 +626,7 @@ class TestBaselineView:
 
     def test_add_named_baseline_requires_primary_on_disk(self, sample_models_dir, tmp_path):
         """Can't add a non-primary baseline to a model that has no reference file."""
-        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         with pytest.raises(FileNotFoundError):
             store.add_named_baseline(
@@ -634,7 +634,7 @@ class TestBaselineView:
             )
 
     def test_add_named_baseline_overwrite_false_refuses_existing(self, sample_models_dir, tmp_path):
-        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
         store.store_reference(test, TestReferenceStore()._make_test_result())
@@ -650,7 +650,7 @@ class TestBaselineView:
 
     def test_store_reference_drops_accidental_primary_under_baselines(self, sample_models_dir, tmp_path):
         """On rewrite, any 'primary' entry under 'baselines' is dropped (flat fields are authoritative)."""
-        config = Config(package_path=sample_models_dir, reference_root=tmp_path / "refs")
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
         test = TestReferenceStore()._make_test_model()
         store.store_reference(test, TestReferenceStore()._make_test_result())

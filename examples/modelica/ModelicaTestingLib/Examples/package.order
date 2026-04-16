@@ -3,3 +3,4 @@ EventTest
 ConstantTest
 IntervalTest
 NoUnitTest
+SimulateOnlyTest

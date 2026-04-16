@@ -10,7 +10,7 @@ from ..config import (
     DEFAULT_STOP_TIME,
     DEFAULT_TOLERANCE,
 )
-from .mo_parser import MoParseResult, parse_mo_file
+from .recognizer import RecognizerResult, get_recognizers
 
 if TYPE_CHECKING:
     from ..comparison.tree_spec import SpecNode
@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 class TestModel:
     """A fully resolved test model with all metadata needed for simulation."""
     model_id: str
-    mo_file: Path
-    package_path: str
+    source_file: Path
+    source_package: str
     short_name: str
     n_vars: int
     x_expressions: list[str] = field(default_factory=list)
@@ -50,79 +50,123 @@ class TestModel:
     # of the implicit flat-AND. Parse-only today — no behavior gated on it.
     metric_tree_spec: Optional["SpecNode"] = None
 
+    # PTA.4 — richer-contract fields settable via recognizers. Additive;
+    # defaults preserve pre-PTA behavior.
+    #
+    # simulate_only: when True, the test passes iff the simulation completes
+    # without error — no per-variable comparison. Wired end-to-end in PTA.5.
+    simulate_only: bool = False
+    # requested_fmu_export: placeholder for 4.B (cross-backend verification).
+    # Recognizers can set this today; no consumer until 4.B lands.
+    requested_fmu_export: bool = False
+    # requested_baselines: names of additional baselines to produce for this
+    # test (e.g., ["dymola-via-fmpy"]). Placeholder for 4.B.
+    requested_baselines: list[str] = field(default_factory=list)
+
     # Where this test was defined: "unit_tests", "spec", "both"
     source: str = "unit_tests"
 
 
-def _build_test_model(mo_result: MoParseResult) -> TestModel:
-    """Build a TestModel from .mo parse results.
+def _build_test_model_from_recognizer_results(
+    model_id: str, results: list[RecognizerResult],
+) -> TestModel:
+    """Merge per-recognizer results for one model into a TestModel.
 
-    Applies experiment() annotation values over defaults.
+    Later results override earlier ones per-field. The bundled recognizer
+    registers first; user-provided recognizers (PTA.3) append, so user values
+    win on conflicts. Fields no recognizer set fall back to TestModel's
+    dataclass defaults.
     """
-    parts = mo_result.model_id.rsplit(".", 1)
-    package_path = parts[0] if len(parts) > 1 else ""
+    parts = model_id.rsplit(".", 1)
+    source_package = parts[0] if len(parts) > 1 else ""
     short_name = parts[-1]
 
-    ut = mo_result.unit_test
-    exp = mo_result.experiment
-
     model = TestModel(
-        model_id=mo_result.model_id,
-        mo_file=mo_result.mo_file,
-        package_path=package_path,
+        model_id=model_id,
+        source_file=Path(""),
+        source_package=source_package,
         short_name=short_name,
-        n_vars=ut.n if ut else 1,
-        x_expressions=ut.x_expressions if ut else [],
-        x_raw=ut.x_raw if ut else "",
-        x_reference=ut.x_reference if ut else None,
-        error_expected=ut.error_expected if ut else 1e-6,
+        n_vars=1,
         result_file=short_name,
     )
 
-    if exp:
-        if exp.stop_time is not None:
-            model.stop_time = exp.stop_time
-        if exp.tolerance is not None:
-            model.tolerance = exp.tolerance
-        if exp.method is not None:
-            model.method = exp.method
-        if exp.number_of_intervals is not None:
-            model.number_of_intervals = exp.number_of_intervals
-        if exp.output_interval is not None:
-            model.output_interval = exp.output_interval
+    for r in results:
+        if r.source_file is not None:
+            model.source_file = r.source_file
+        if r.n_vars is not None:
+            model.n_vars = r.n_vars
+        if r.x_expressions:
+            model.x_expressions = list(r.x_expressions)
+        if r.x_raw:
+            model.x_raw = r.x_raw
+        if r.x_reference is not None:
+            model.x_reference = list(r.x_reference)
+        if r.error_expected is not None:
+            model.error_expected = r.error_expected
+        if r.stop_time is not None:
+            model.stop_time = r.stop_time
+        if r.tolerance is not None:
+            model.tolerance = r.tolerance
+        if r.method is not None:
+            model.method = r.method
+        if r.number_of_intervals is not None:
+            model.number_of_intervals = r.number_of_intervals
+        if r.output_interval is not None:
+            model.output_interval = r.output_interval
+        if r.simulate_only is not None:
+            model.simulate_only = r.simulate_only
+        if r.requested_fmu_export is not None:
+            model.requested_fmu_export = r.requested_fmu_export
+        if r.requested_baselines is not None:
+            model.requested_baselines = list(r.requested_baselines)
 
     return model
 
 
 def discover_tests(config: Config) -> list[TestModel]:
-    """Discover all test models from UnitTests blocks and/or external spec.
+    """Discover all test models from registered recognizers and/or external spec.
 
     Sources (merged by model_id):
-    1. UnitTests components in .mo files (experiment annotation for sim params)
-    2. External test_spec.json (if configured, overrides experiment annotation)
+    1. Source-file recognizers (PTA.1+) — for ``source_type == "modelica"``,
+       walks ``*.mo`` and runs every registered Modelica recognizer. Bundled
+       default is the ``UnitTests`` + ``experiment(...)`` recognizer; user-
+       provided recognizers (PTA.3) layer on top.
+    2. External test_spec.json (if configured, overrides recognizer values).
 
-    When a model appears in both UnitTests and spec, variable patterns
-    from the spec are added alongside UnitTests variables, and the source
-    is marked as "both". Spec simulation parameters override experiment defaults.
+    When a model appears in both recognizers and spec, variable patterns
+    from the spec are added alongside the recognizer-derived variables, and
+    the source is marked as "both". Spec simulation parameters override
+    recognizer values when explicitly set.
     """
-    # Step 1: Discover UnitTests from .mo files (Modelica source only)
+    # Trigger bundled-recognizer registration on first call.
+    from . import mo_parser  # noqa: F401
+
+    # Step 1: Run recognizers over source files.
+    # Bundled recognizers come from the module-level registry (filtered by
+    # config.disabled_bundled); user-provided recognizers from config.recognizers
+    # append, so user values win on per-field merge in
+    # _build_test_model_from_recognizer_results.
     ut_tests: dict[str, TestModel] = {}
     if config.source_type == "modelica":
         library_dir = config.library_dir
+        bundled = [r for r in get_recognizers("modelica")
+                   if r.name not in config.disabled_bundled]
+        user = [r for r in config.recognizers if "modelica" in r.applies_to]
+        recognizers = bundled + user
+
+        per_model: dict[str, list[RecognizerResult]] = {}
         for mo_file in sorted(library_dir.rglob("*.mo")):
-            try:
-                content = mo_file.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            if "UnitTests" not in content:
-                continue
+            for recognizer in recognizers:
+                if not recognizer.applies_to_path(mo_file, library_dir):
+                    continue
+                result = recognizer.recognize(mo_file)
+                if result is not None:
+                    per_model.setdefault(result.model_id, []).append(result)
 
-            result = parse_mo_file(mo_file)
-            if result is None:
-                continue
-
-            test = _build_test_model(result)
-            ut_tests[test.model_id] = test
+        for model_id, results in per_model.items():
+            ut_tests[model_id] = _build_test_model_from_recognizer_results(
+                model_id, results,
+            )
 
     # Step 2: Load external test spec (if configured)
     spec_tests: dict[str, TestModel] = {}

@@ -1,4 +1,4 @@
-"""Configuration constants and path resolution for the Modelica testing system."""
+"""Configuration constants and path resolution for the testing system."""
 
 import json
 import logging
@@ -144,21 +144,20 @@ def _resolve_simulator_path(
 class Config:
     """Runtime configuration for the testing system.
 
-    The primary input is package_path — the directory containing package.mo
-    for the Modelica library being tested.
+    The primary input is source_path — for source_type == "modelica" this is
+    the directory containing package.mo for the library being tested; for FMU
+    / Julia / data-file sources it generalizes to that source location.
     """
 
-    # Source type: "modelica" (default, `package_path` points at a package.mo dir),
+    # Source type: "modelica" (default, `source_path` points at a package.mo dir),
     # "fmu" (Phase 2), "julia" / "simulink" / "data-file" (future). See docs/vision.md.
-    # Discovery + backend selection gate on this. No effect yet — only Modelica is
-    # implemented — but present so future backends slot in without a Config break.
+    # Discovery + backend selection gate on this.
     source_type: str = "modelica"
 
-    # Path to the Modelica package directory (contains package.mo).
-    # When source_type != "modelica", this is generalized to the source location
-    # (FMU directory, Julia script, CSV file, ...). Will be renamed to `source_path`
-    # in Phase 2 when the second backend lands.
-    package_path: Optional[Path] = None
+    # Path to the source location for the library being tested.
+    # For source_type == "modelica": the directory containing package.mo.
+    # For other source types: the FMU directory / Julia script / CSV file / etc.
+    source_path: Optional[Path] = None
 
     # Reference results location (can be a separate repo/directory)
     reference_root: Optional[Path] = None
@@ -195,6 +194,17 @@ class Config:
     # Diagnostic variables: auto-captured from simulation, shown in reports but not compared
     diagnostic_variables: list[str] = field(default_factory=lambda: ["CPUtime", "EventCounter"])
 
+    # User-provided recognizers (PTA.3) — parsed from testing.json's
+    # "recognizers" list via discovery.json_recognizer.parse_recognizer_spec.
+    # Stored on Config so they're scoped to this run (no module-registry leak
+    # across multiple Config instances or between tests).
+    recognizers: list = field(default_factory=list)
+
+    # Names of bundled recognizers to disable (PTA.3). E.g.,
+    # ["modelica:bundled-unit-tests"] when the user has only custom-convention
+    # tests and wants the bundled UnitTests recognizer off.
+    disabled_bundled: list[str] = field(default_factory=list)
+
     # Config file path
     config_file: Optional[Path] = None
 
@@ -206,7 +216,7 @@ class Config:
         if self.reference_root is not None:
             self.reference_root = Path(self.reference_root).resolve()
 
-        # Load config file first — it may provide package_path
+        # Load config file first — it may provide source_path
         file_config = {}
         config_found_dir = None
         if self.config_file:
@@ -217,8 +227,8 @@ class Config:
             search_dirs = [Path.cwd()]
             if self.reference_root is not None:
                 search_dirs.insert(0, self.reference_root)
-            if self.package_path is not None:
-                pkg = Path(self.package_path).resolve()
+            if self.source_path is not None:
+                pkg = Path(self.source_path).resolve()
                 search_dirs.insert(0, pkg)        # package dir
                 search_dirs.insert(0, pkg.parent)  # repo root
             for search_dir in search_dirs:
@@ -228,38 +238,38 @@ class Config:
                     break
 
         # Source type peek — controls whether we look for a Modelica package.
-        # Done before package_path resolution so non-modelica backends (FMU,
+        # Done before source_path resolution so non-modelica backends (FMU,
         # data-file, ...) can skip the package.mo lookup entirely.
         source_type_hint = file_config.get("source_type", self.source_type)
 
         if source_type_hint == "modelica":
-            # Resolve package path — CLI arg > config file > auto-detect
-            if self.package_path is not None:
-                self.package_path = Path(self.package_path).resolve()
-                if not (self.package_path / "package.mo").exists():
-                    self.package_path = find_package_dir(self.package_path)
-            elif "package_path" in file_config:
+            # Resolve source path — CLI arg > config file > auto-detect
+            if self.source_path is not None:
+                self.source_path = Path(self.source_path).resolve()
+                if not (self.source_path / "package.mo").exists():
+                    self.source_path = find_package_dir(self.source_path)
+            elif "source_path" in file_config:
                 base_dir = config_found_dir or Path.cwd()
-                self.package_path = (base_dir / file_config["package_path"]).resolve()
-                if not (self.package_path / "package.mo").exists():
-                    self.package_path = find_package_dir(self.package_path)
+                self.source_path = (base_dir / file_config["source_path"]).resolve()
+                if not (self.source_path / "package.mo").exists():
+                    self.source_path = find_package_dir(self.source_path)
             else:
-                self.package_path = find_package_dir()
+                self.source_path = find_package_dir()
 
             # Read library name from package.mo
             if self.library_name is None:
-                self.library_name = read_package_name(self.package_path)
+                self.library_name = read_package_name(self.source_path)
 
             # The parent of the package dir is where testing.json typically lives
-            repo_root = self.package_path.parent
+            repo_root = self.source_path.parent
         else:
             # Non-modelica source: no package.mo to discover. The "library"
             # is conceptually the FMU set / data set / etc. described by
             # the config. repo_root falls back to the config dir or cwd.
-            if self.package_path is not None:
-                self.package_path = Path(self.package_path).resolve()
+            if self.source_path is not None:
+                self.source_path = Path(self.source_path).resolve()
             repo_root = config_found_dir or (
-                self.package_path if self.package_path else Path.cwd()
+                self.source_path if self.source_path else Path.cwd()
             )
             if self.library_name is None:
                 self.library_name = (
@@ -267,7 +277,7 @@ class Config:
                     or (config_found_dir.name if config_found_dir else repo_root.name)
                 )
 
-        # If no config was found yet (package_path wasn't available for search),
+        # If no config was found yet (source_path wasn't available for search),
         # try repo_root now
         if not file_config and config_found_dir is None:
             file_config = load_config_file(repo_root)
@@ -303,6 +313,17 @@ class Config:
         # Diagnostic variables
         if "diagnostic_variables" in file_config:
             self.diagnostic_variables = file_config["diagnostic_variables"]
+
+        # User-provided recognizers (PTA.3) — declarative JSON specs become
+        # Recognizer instances stored on Config. CLI-provided recognizers
+        # take precedence; testing.json fills in if Config wasn't given any.
+        if not self.recognizers and "recognizers" in file_config:
+            from .discovery.json_recognizer import parse_recognizer_spec
+            self.recognizers = [
+                parse_recognizer_spec(spec) for spec in file_config["recognizers"]
+            ]
+        if not self.disabled_bundled and "disable_bundled" in file_config:
+            self.disabled_bundled = list(file_config["disable_bundled"])
 
         # Resolve simulator executable path
         if self.simulator_path is None:
@@ -376,8 +397,12 @@ class Config:
 
     @property
     def library_dir(self) -> Path:
-        """Path to the library's top-level package directory (contains package.mo)."""
-        return self.package_path
+        """Path to the library's top-level package directory (contains package.mo).
+
+        Modelica-source convenience accessor; for source_type == "modelica" this
+        is identical to ``source_path``.
+        """
+        return self.source_path
 
     @property
     def reference_dir(self) -> Path:

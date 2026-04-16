@@ -329,6 +329,59 @@ class DymolaWorker:
         result.sim_wall = sim_wall
         return result
 
+    def export_fmu(self, test: TestModel, output_dir: Path) -> Path:
+        """Export ``test.model_id`` as an FMU into ``output_dir`` (4.B.2).
+
+        Uses Dymola's ``translateModelFMU`` API. Dymola produces the FMU in
+        the current working directory; we cd to ``output_dir`` so it lands
+        next to the chain's other artefacts, then return the resolved path.
+
+        Requires the FMI export option in the Dymola license; raises a clear
+        message on failure.
+        """
+        if self.dymola is None:
+            raise RuntimeError(
+                f"Worker {self.worker_id}: cannot export FMU before start()"
+            )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self.dymola.cd(str(output_dir))
+        # Dymola's translateModelFMU returns the FMU file path (without .fmu)
+        # on success, or an empty string on failure. fmiVersion="2" is the
+        # broadly compatible default; fmiType="all" gives both ME + CS.
+        try:
+            result = self.dymola.translateModelFMU(
+                test.model_id,
+                storeResult=False,
+                modelName="",
+                fmiVersion="2",
+                fmiType="all",
+                includeSource=False,
+                includeImage=0,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"DymolaInterface.translateModelFMU failed for "
+                f"{test.model_id}: {exc}"
+            ) from exc
+        if not result:
+            raise RuntimeError(
+                f"Dymola FMU export returned no path for {test.model_id} "
+                f"(check Dymola license includes FMI export, and the model "
+                f"translates successfully)"
+            )
+        # Dymola returns the basename without .fmu — append it.
+        fmu_path = output_dir / f"{result}.fmu"
+        if not fmu_path.exists():
+            # Fallback: scan for any .fmu Dymola may have produced.
+            candidates = list(output_dir.glob("*.fmu"))
+            if not candidates:
+                raise RuntimeError(
+                    f"Dymola FMU export claimed success but no .fmu found "
+                    f"in {output_dir} (returned: {result!r})"
+                )
+            fmu_path = candidates[0]
+        return fmu_path.resolve()
+
     def _evaluate_from_disk(
         self,
         test: TestModel,
@@ -575,6 +628,36 @@ class PersistentDymolaRunner(DymolaRunner):
     Subclasses the batched DymolaRunner so it inherits `read_result` and config
     extraction; only overrides `run_tests`.
     """
+
+    def export_fmu(self, test: TestModel, output_dir: Path) -> Path:
+        """Spin up a one-shot worker to export a single FMU (4.B.2).
+
+        Heavier than reusing a worker from the pool, but keeps the export
+        path independent of the pool's lifecycle (so 4.B's cross-backend
+        chain can call this from arbitrary places). Optimization: have the
+        chain orchestration reuse an idle worker via a future helper.
+
+        VALIDATION CAVEAT: requires Windows + Dymola + the FMI export
+        license option. Cannot be exercised in CI on Linux WSL; tests use
+        a mock DymolaInterface.
+        """
+        di_cls = load_dymola_interface(self.config.dymola_interface_path)
+        _patch_dymola_for_parallel_startup()
+        worker = DymolaWorker(
+            worker_id=-1,
+            config=self.config,
+            dymola_config=self.dymola_config,
+            dymola_interface_cls=di_cls,
+        )
+        worker.start()
+        try:
+            return worker.export_fmu(test, output_dir)
+        finally:
+            try:
+                if worker.dymola is not None:
+                    worker.dymola.close()
+            except Exception:
+                pass
 
     def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
         if not tests:

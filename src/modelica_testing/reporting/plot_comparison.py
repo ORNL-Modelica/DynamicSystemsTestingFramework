@@ -244,6 +244,28 @@ def _build_template_context(
                 f"Final value error {vc.max_abs_error:.3e} vs tolerance "
                 f"{vc.tolerance_used:.3e} → {'PASS' if vc.passed else 'FAIL'}"
             )
+        elif mode == "event-timing":
+            diag = vc.diagnostics or {}
+            ref_n = diag.get("ref_event_count", "?")
+            act_n = diag.get("act_event_count", "?")
+            tol = diag.get("time_tolerance", 0.0)
+            score_display = f"Δt {vc.nrmse:.3e} ({act_n}/{ref_n} events)"
+            criterion = (
+                f"Max event Δt {vc.nrmse:.3e} vs {tol:.3e} "
+                f"({act_n} actual events / {ref_n} reference) "
+                f"→ {'PASS' if vc.passed else 'FAIL'}"
+            )
+        elif mode == "dominant-frequency":
+            diag = vc.diagnostics or {}
+            f_ref = diag.get("ref_dominant_hz", 0.0)
+            f_act = diag.get("act_dominant_hz", 0.0)
+            tol = diag.get("rel_tolerance", 0.0)
+            score_display = f"|Δf|/f {vc.nrmse:.3e} ({f_act:.3g}/{f_ref:.3g} Hz)"
+            criterion = (
+                f"Relative freq error {vc.nrmse:.3e} vs {tol:.3e} "
+                f"(actual {f_act:.3g} Hz / reference {f_ref:.3g} Hz) "
+                f"→ {'PASS' if vc.passed else 'FAIL'}"
+            )
         else:
             score_display = f"NRMSE {vc.nrmse:.3e}"
             criterion = (
@@ -882,8 +904,8 @@ def _build_rerun_prefix(config) -> str:
 
     Produces e.g. `modelica-testing --config "/abs/path/testing.json" run` so
     the appended ` --filter ... --merge --report` works from any CWD. Prefers
-    --config when available; otherwise falls back to --package-path (+ optional
-    --reference-root when it isn't under the package directory).
+    --config when available; otherwise falls back to --source-path (+ optional
+    --reference-root when it isn't under the source directory).
     """
     def q(p) -> str:
         s = str(p)
@@ -893,8 +915,8 @@ def _build_rerun_prefix(config) -> str:
         return f"modelica-testing --config {q(config.config_file)} run"
 
     parts = ["modelica-testing"]
-    if getattr(config, "package_path", None):
-        parts += ["--package-path", q(config.package_path)]
+    if getattr(config, "source_path", None):
+        parts += ["--source-path", q(config.source_path)]
     if getattr(config, "reference_root", None):
         parts += ["--reference-root", q(config.reference_root)]
     parts.append("run")

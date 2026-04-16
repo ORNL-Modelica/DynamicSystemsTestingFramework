@@ -76,13 +76,13 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
             variables = []
 
         parts = model_id.rsplit(".", 1)
-        package_path = parts[0] if len(parts) > 1 else ""
+        source_package = parts[0] if len(parts) > 1 else ""
         short_name = parts[-1]
 
         # Optional "fmu" field: path (relative to spec file) to an FMU binary.
         # Used by the FMPy backend as the simulation source. For Modelica
-        # tests, this field is omitted and mo_file stays empty (the .mo lives
-        # in the package discovered via package_path).
+        # tests, this field is omitted and source_file stays empty (the .mo
+        # lives in the package discovered via source_package).
         source_file = Path("")
         fmu_rel = entry.get("fmu")
         if fmu_rel:
@@ -95,8 +95,8 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
 
         test = TestModel(
             model_id=model_id,
-            mo_file=source_file,
-            package_path=package_path,
+            source_file=source_file,
+            source_package=source_package,
             short_name=short_name,
             n_vars=0,  # Will be resolved after simulation for pattern-based
             variable_patterns=variables,

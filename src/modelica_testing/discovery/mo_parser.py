@@ -264,3 +264,48 @@ def parse_mo_file(path: Path) -> Optional[MoParseResult]:
         unit_test=unit_test,
         experiment=experiment,
     )
+
+
+# ---------------------------------------------------------------------------
+# Bundled recognizer (PTA.1)
+# ---------------------------------------------------------------------------
+
+from .recognizer import Recognizer, RecognizerResult, register
+
+
+class BundledModelicaUnitTestsRecognizer(Recognizer):
+    """The default Modelica recognizer.
+
+    Matches any class that instantiates the ``UnitTests`` component (with
+    parameters ``n``, ``x={...}``, optional ``error_expected``) plus the
+    standard ``experiment(...)`` annotation. Wraps :func:`parse_mo_file` and
+    translates its ``MoParseResult`` into the framework-neutral
+    :class:`RecognizerResult` shape.
+    """
+
+    name = "modelica:bundled-unit-tests"
+    applies_to = frozenset({"modelica"})
+
+    def recognize(self, source_file: Path) -> Optional[RecognizerResult]:
+        parsed = parse_mo_file(source_file)
+        if parsed is None:
+            return None
+        ut = parsed.unit_test
+        exp = parsed.experiment
+        return RecognizerResult(
+            model_id=parsed.model_id,
+            source_file=parsed.mo_file,
+            n_vars=ut.n if ut else None,
+            x_expressions=list(ut.x_expressions) if ut else [],
+            x_raw=ut.x_raw if ut else "",
+            x_reference=list(ut.x_reference) if ut and ut.x_reference is not None else None,
+            error_expected=ut.error_expected if ut else None,
+            stop_time=exp.stop_time if exp else None,
+            tolerance=exp.tolerance if exp else None,
+            method=exp.method if exp else None,
+            number_of_intervals=exp.number_of_intervals if exp else None,
+            output_interval=exp.output_interval if exp else None,
+        )
+
+
+register(BundledModelicaUnitTestsRecognizer())

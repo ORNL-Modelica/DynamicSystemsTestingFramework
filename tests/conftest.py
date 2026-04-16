@@ -63,7 +63,7 @@ def tmp_config_dir(tmp_path, sample_models_dir):
     shutil.copytree(sample_models_dir, models_dest)
 
     config = {
-        "package_path": "ModelicaTestingLib",
+        "source_path": "ModelicaTestingLib",
         "simulator": "Dymola",
         "simulators": {},
         "dependencies": [],

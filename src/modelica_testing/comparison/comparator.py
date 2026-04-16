@@ -536,6 +536,137 @@ def _compare_range(
     )
 
 
+def _compare_event_timing(
+    ref_time: np.ndarray,
+    act_time: np.ndarray,
+    time_tolerance: float = 1e-3,
+    count_must_match: bool = True,
+) -> VariableComparison:
+    """Compare event instants between reference and actual signals (4.C.1).
+
+    Events are detected as duplicate-time-point markers (the existing Modelica
+    convention). Pass when (a) ``count_must_match`` and the event counts agree,
+    (b) each pairwise event time differs by at most ``time_tolerance``.
+
+    The score (``nrmse`` field — repurposed for reporting uniformity) is the
+    max event-time delta. ``diagnostics`` carries the count + delta.
+    """
+    ref_boundaries = _find_event_boundaries(ref_time)
+    act_boundaries = _find_event_boundaries(act_time)
+    ref_events = [float(ref_time[b[0]]) for b in ref_boundaries]
+    act_events = [float(act_time[b[0]]) for b in act_boundaries]
+
+    n = min(len(ref_events), len(act_events))
+    max_delta = 0.0
+    delta_at = 0.0
+    for i in range(n):
+        d = abs(ref_events[i] - act_events[i])
+        if d > max_delta:
+            max_delta = d
+            delta_at = ref_events[i]
+
+    counts_match = len(ref_events) == len(act_events)
+    passed = max_delta <= time_tolerance and (counts_match or not count_must_match)
+
+    return VariableComparison(
+        index=0, name="", passed=passed,
+        nrmse=max_delta,
+        rmse=max_delta,
+        signal_range=0.0,
+        max_abs_error=max_delta,
+        max_abs_error_time=delta_at,
+        reference_final=float("nan"),
+        actual_final=float("nan"),
+        mode="event-timing",
+        diagnostics={
+            "ref_event_count": len(ref_events),
+            "act_event_count": len(act_events),
+            "max_time_delta": max_delta,
+            "time_tolerance": time_tolerance,
+            "counts_match": counts_match,
+        },
+    )
+
+
+def _compare_dominant_frequency(
+    ref_time: np.ndarray,
+    ref_values: np.ndarray,
+    act_time: np.ndarray,
+    act_values: np.ndarray,
+    rel_tolerance: float = 0.01,
+    min_frequency: float = 0.0,
+) -> VariableComparison:
+    """Compare the dominant frequency of two signals via FFT (4.C.2).
+
+    Resamples both signals to a uniform grid (the longer of the two), takes
+    the FFT, finds the peak above ``min_frequency`` Hz (defaults to all
+    non-DC), and compares ``|f_act - f_ref| / f_ref < rel_tolerance``.
+
+    Useful for oscillator regressions where the *frequency* is the regression
+    signal of interest, not the per-point trajectory.
+    """
+    if len(ref_values) < 4 or len(act_values) < 4:
+        return VariableComparison(
+            index=0, name="", passed=False,
+            nrmse=float("inf"), rmse=0.0, signal_range=0.0,
+            max_abs_error=0.0, max_abs_error_time=0.0,
+            reference_final=float("nan"), actual_final=float("nan"),
+            mode="dominant-frequency",
+            diagnostics={"reason": "signal too short for FFT (need >=4 samples)"},
+        )
+
+    def _peak_freq(t: np.ndarray, v: np.ndarray) -> float:
+        # Resample to uniform grid for FFT.
+        n = max(len(t), 64)
+        t_uniform = np.linspace(t[0], t[-1], n)
+        # Strip duplicate times before interp.
+        unique_t, unique_idx = np.unique(t, return_index=True)
+        v_uniform = np.interp(t_uniform, unique_t, v[unique_idx])
+        # Detrend (remove DC).
+        v_uniform = v_uniform - np.mean(v_uniform)
+        dt = (t_uniform[-1] - t_uniform[0]) / (n - 1)
+        if dt <= 0:
+            return 0.0
+        spectrum = np.abs(np.fft.rfft(v_uniform))
+        freqs = np.fft.rfftfreq(n, d=dt)
+        # Mask DC + below min_frequency
+        mask = freqs > max(min_frequency, 0.0)
+        if not np.any(mask):
+            return 0.0
+        peak_idx = int(np.argmax(spectrum[mask]))
+        return float(freqs[mask][peak_idx])
+
+    f_ref = _peak_freq(ref_time, ref_values)
+    f_act = _peak_freq(act_time, act_values)
+    if f_ref <= 0:
+        # Reference has no detectable frequency; compare by absolute delta only.
+        passed = abs(f_act - f_ref) <= rel_tolerance
+        rel_err = abs(f_act - f_ref)
+    else:
+        rel_err = abs(f_act - f_ref) / f_ref
+        passed = rel_err <= rel_tolerance
+
+    act_range = float(np.max(act_values) - np.min(act_values))
+    return VariableComparison(
+        index=0, name="", passed=passed,
+        nrmse=rel_err,  # repurposed: relative frequency error
+        rmse=rel_err,
+        signal_range=act_range,
+        max_abs_error=abs(f_act - f_ref),
+        max_abs_error_time=0.0,
+        reference_final=float("nan"),
+        actual_final=float("nan"),
+        mode="dominant-frequency",
+        diagnostics={
+            "ref_dominant_hz": f_ref,
+            "act_dominant_hz": f_act,
+            "rel_error": rel_err,
+            "rel_tolerance": rel_tolerance,
+            "min_frequency": min_frequency,
+        },
+    )
+
+
 def _check_structural_changes(
     reference: dict,
     result: TestResult,
@@ -612,6 +743,25 @@ def compare_test(
             test_id=ref_test_id,
             sim_success=False,
             error_message=result.error_message or "Simulation failed",
+        )
+
+    # PTA.5 — simulate_only short-circuit: when the recognizer marked this
+    # test as "just check that it simulates", skip per-variable comparison
+    # and the whole baseline machinery. The sim already succeeded above.
+    if test.simulate_only:
+        from .metric_tree import MetricResult
+        leaf = MetricResult(
+            passed=True,
+            score=None,
+            label="simulate-only",
+            diagnostics={"note": "no comparison performed; simulation succeeded"},
+        )
+        return TestComparison(
+            model_id=test.model_id,
+            passed=True,
+            test_id=ref_test_id,
+            variables=[],
+            metric_tree=leaf,
         )
 
     structural_warnings = _check_structural_changes(reference, result)

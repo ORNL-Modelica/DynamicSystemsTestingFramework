@@ -67,33 +67,33 @@ class TestUtilityFunctions:
 # ---------------------------------------------------------------------------
 
 class TestConfig:
-    def test_explicit_package_path(self, sample_models_dir):
-        """Config with explicit package_path."""
-        config = Config(package_path=sample_models_dir)
-        assert config.package_path == sample_models_dir.resolve()
+    def test_explicit_source_path(self, sample_models_dir):
+        """Config with explicit source_path."""
+        config = Config(source_path=sample_models_dir)
+        assert config.source_path == sample_models_dir.resolve()
         assert config.library_name == "ModelicaTestingLib"
 
     def test_default_simulator(self, sample_models_dir):
         """Default simulator is Dymola."""
-        config = Config(package_path=sample_models_dir)
+        config = Config(source_path=sample_models_dir)
         assert config.simulator == "Dymola"
         assert config.simulator_backend == "Dymola"
 
     def test_config_from_file(self, tmp_config_dir):
-        """Config loaded from testing.json with package_path."""
+        """Config loaded from testing.json with source_path."""
         config = Config(
             config_file=str(tmp_config_dir / "testing.json"),
         )
         assert config.library_name == "ModelicaTestingLib"
         assert config.simulator_setup == ["OutputCPUtime := true;"]
 
-    def test_config_relative_package_path(self, tmp_config_dir):
-        """package_path in testing.json resolves relative to config file."""
+    def test_config_relative_source_path(self, tmp_config_dir):
+        """source_path in testing.json resolves relative to config file."""
         config = Config(
             config_file=str(tmp_config_dir / "testing.json"),
         )
-        assert config.package_path.is_absolute()
-        assert (config.package_path / "package.mo").exists()
+        assert config.source_path.is_absolute()
+        assert (config.source_path / "package.mo").exists()
 
     def test_config_relative_test_spec(self, tmp_path, sample_models_dir):
         """test_spec path resolves relative to config file location."""
@@ -110,7 +110,7 @@ class TestConfig:
 
         # Create config pointing to spec
         cfg = {
-            "package_path": "ModelicaTestingLib",
+            "source_path": "ModelicaTestingLib",
             "simulator": "Dymola",
             "test_spec": "my_spec.json",
         }
@@ -132,7 +132,7 @@ class TestConfig:
         dep_dir.mkdir(parents=True)
 
         cfg = {
-            "package_path": "ModelicaTestingLib",
+            "source_path": "ModelicaTestingLib",
             "simulator": "Dymola",
             "dependencies": ["deps/SomeLib"],
         }
@@ -158,7 +158,7 @@ class TestConfig:
         models_dest = tmp_path / "models"
         shutil.copytree(sample_models_dir, models_dest)
 
-        cfg = {"package_path": "../models", "simulator": "Dymola"}
+        cfg = {"source_path": "../models", "simulator": "Dymola"}
         (ref_dir / "testing.json").write_text(json.dumps(cfg))
 
         config = Config(config_file=str(ref_dir / "testing.json"))
@@ -166,7 +166,7 @@ class TestConfig:
 
     def test_reference_dir_partitioned(self, sample_models_dir):
         """reference_dir is partitioned by simulator backend and OS."""
-        config = Config(package_path=sample_models_dir)
+        config = Config(source_path=sample_models_dir)
         ref_dir = config.reference_dir
         # Should contain simulator and OS in path
         parts = ref_dir.parts
@@ -176,7 +176,7 @@ class TestConfig:
 
     def test_default_diagnostic_variables(self, sample_models_dir):
         """Default diagnostic variables include CPUtime and EventCounter."""
-        config = Config(package_path=sample_models_dir)
+        config = Config(source_path=sample_models_dir)
         assert "CPUtime" in config.diagnostic_variables
         assert "EventCounter" in config.diagnostic_variables
 
@@ -188,7 +188,7 @@ class TestConfig:
         shutil.copytree(sample_models_dir, models_dest)
 
         cfg = {
-            "package_path": "ModelicaTestingLib",
+            "source_path": "ModelicaTestingLib",
             "simulator": "Dymola",
             "diagnostic_variables": ["CPUtime", "EventCounter", "MyCustomVar"],
         }

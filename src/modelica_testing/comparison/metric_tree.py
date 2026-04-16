@@ -150,6 +150,72 @@ class KOfNCombinator(Combinator):
         )
 
 
+class WeightedCombinator(Combinator):
+    """Weighted sum of child scores against a threshold (4.E).
+
+    Pass condition is direction-aware:
+      - ``direction="less"`` (default — NRMSE-like; lower is better):
+        ``sum(w_i * score_i) < threshold``.
+      - ``direction="greater"`` (tube-like; higher is better):
+        ``sum(w_i * score_i) > threshold``.
+
+    All children must produce a numeric score; if any child has ``score=None``,
+    the weighted node fails (with a diagnostic explaining why) since the
+    aggregate is undefined.
+    """
+
+    name = "weighted"
+
+    def __init__(self, weights: list[float], threshold: float, direction: str = "less"):
+        if direction not in ("less", "greater"):
+            raise ValueError(
+                f"weighted: direction must be 'less' or 'greater', got {direction!r}"
+            )
+        if not weights:
+            raise ValueError("weighted: requires at least one weight")
+        self.weights = list(weights)
+        self.threshold = float(threshold)
+        self.direction = direction
+
+    def combine(self, children: list[MetricResult]) -> MetricResult:
+        if len(children) != len(self.weights):
+            raise ValueError(
+                f"weighted: weights ({len(self.weights)}) must match "
+                f"children ({len(children)})"
+            )
+        if any(c.score is None for c in children):
+            return MetricResult(
+                passed=False,
+                score=None,
+                label=f"weighted[{len(children)}]",
+                diagnostics={
+                    "reason": "child has no numeric score; weighted sum undefined",
+                    "weights": list(self.weights),
+                    "threshold": self.threshold,
+                    "direction": self.direction,
+                },
+                children=list(children),
+            )
+        weighted_sum = sum(w * c.score for w, c in zip(self.weights, children))
+        passed = (
+            weighted_sum < self.threshold
+            if self.direction == "less"
+            else weighted_sum > self.threshold
+        )
+        return MetricResult(
+            passed=passed,
+            score=weighted_sum,
+            label=f"weighted[{len(children)}]",
+            diagnostics={
+                "weighted_sum": weighted_sum,
+                "threshold": self.threshold,
+                "direction": self.direction,
+                "weights": list(self.weights),
+            },
+            children=list(children),
+        )
+
+
 class WarnCombinator(Combinator):
     """Single-child wrapper that always passes the parent but surfaces the
     child's diagnostics as warnings.

@@ -286,7 +286,11 @@ def _print_progress(
 # ---------------------------------------------------------------------------
 
 class SimulatorRunner(ABC):
-    """Abstract interface for running Modelica simulations.
+    """Abstract interface for running simulations across backends.
+
+    Concrete backends today: Dymola, FMPy. The abstraction is dataset-shape
+    agnostic — a backend declares what it produces (``produced_datasets``)
+    and what it can do (``capabilities``).
 
     Subclasses must implement read_result(). They should override
     run_tests() for batch execution, or implement run_single_test()
@@ -314,6 +318,21 @@ class SimulatorRunner(ABC):
         # Optional model_id → "ref_NNNN" map for dashboard report links
         # (set by CLI before run_tests if reference IDs are known)
         self.ref_id_map: dict[str, Optional[str]] = {}
+
+    def export_fmu(self, test: TestModel, output_dir: "Path") -> "Path":
+        """Export the test's model as an FMU into ``output_dir``.
+
+        Backends must declare ``Capability.FMU_EXPORT`` in their
+        ``capabilities`` to call this; the default raises
+        :class:`NotImplementedError`. Used by 4.B's cross-backend chain
+        (e.g., Dymola export → FMPy simulate as a second baseline).
+
+        Returns the absolute path to the produced ``.fmu`` file.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support FMU export. "
+            f"Backend must declare Capability.FMU_EXPORT and override export_fmu()."
+        )
 
     def run_single_test(
         self,

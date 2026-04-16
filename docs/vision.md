@@ -47,7 +47,29 @@ The framework is structured around six layers. Each is a plug-in point; each has
   MetricTree      — composition: AND / OR / weighted / K-of-N combinators over Metrics → overall pass/fail + diagnostics
 ```
 
-Most layers are explicit: Source selects via `source_type` (Modelica or FMU today), Discovery scans `.mo` and/or reads `test_spec.json`, Backend registry carries Dymola + FMPy, Dataset is still time-series only, Metric offers four built-ins (NRMSE, tube, final-only, range), MetricTree accepts user-authored trees from `test_spec.json` with AND / OR / k-of-n / warn combinators. What remains implicit: datasets beyond time-series, multi-baseline tree leaves, cross-backend verification.
+Most layers are explicit: Source selects via `source_type` (Modelica or FMU today), Discovery scans `.mo` and/or reads `test_spec.json`, Backend registry carries Dymola + FMPy, Dataset is still time-series only, Metric offers four built-ins (NRMSE, tube, final-only, range), MetricTree accepts user-authored trees from `test_spec.json` with AND / OR / k-of-n / warn combinators. What remains implicit: datasets beyond time-series, additional discovery strategies, more leaf types, weighted combinator.
+
+---
+
+## Pluggable in-source test annotations
+
+Pre-PTA, Modelica discovery hardcoded one recognizer: a class containing the `UnitTests` component (with parameters `n`, `x={...}`, `error_expected`) plus the standard `experiment(...)` annotation. That was a usable default but a hard adoption barrier — a library that already has its own test-tagging convention had to either rewrite every model to instantiate `UnitTests`, or fork the framework.
+
+**Now (Phase 5 / PTA, complete)**: in-source test annotation is a **registered recognizer**, not a hardcoded pattern. The bundled `ModelicaTestingLib.Components.UnitTests` is one recognizer (the recommended default); users who can't adopt it provide a small JSON map from their convention to the framework's concepts — no Python required.
+
+A recognizer declares:
+
+- **What it looks for** (Modelica class name / annotation pattern / FMU vendor extension / Julia macro / …)
+- **How fields map** to the framework's `TestModel` (which parameter holds the variables-to-track, which holds the timeout, …)
+- **What it can extract** as a capability profile — `{variables, reference_signals, timeout, tolerance, requested_fmu_export, simulate_only, …}`. Recognizers don't need to extract everything; a "minimal" recognizer can declare only "this is a test, simulate it" and pass on success.
+
+Discovery composes results from every registered recognizer, merging by model_id. A library can ship its own recognizer alongside the bundled default — both run; results combine.
+
+The contract is **richer than today's purely-declarative `UnitTests`**: an annotation can request *runtime behavior* (cross-backend verification, FMU export, increased timeout, …) so users keep test orchestration concerns in the model where the test logic lives, rather than splitting them across `.mo` and `test_spec.json`.
+
+The same registry shape applies cross-source: an FMU recognizer could read vendor extensions from `modelDescription.xml`; a Julia recognizer could parse a `@unittest` macro. Each registers as a recognizer with its own capability profile; Discovery doesn't care which Source produced them.
+
+This is the natural completion of the "Modelica is the first consumer, not the reference model" principle (§Forward-looking principles): the in-source test convention itself becomes pluggable, not just the simulation backend.
 
 ---
 

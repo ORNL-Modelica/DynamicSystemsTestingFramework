@@ -23,6 +23,7 @@ from ..simulators import VariableResult
 from .comparator import VariableComparison
 from .metric_tree import (
     AndCombinator,
+    WeightedCombinator,
     Combinator,
     KOfNCombinator,
     MetricResult,
@@ -58,6 +59,8 @@ _METRIC_TO_MODE_KEY = {
     "tube": "tube",
     "final-only": "final_only",
     "range": "range",
+    "event-timing": "event-timing",
+    "dominant-frequency": "dominant-frequency",
 }
 
 
@@ -166,6 +169,8 @@ def _build_combinator(spec: CombinatorSpec) -> Combinator:
         return KOfNCombinator(spec.k)
     if name == "warn":
         return WarnCombinator()
+    if name == "weighted":
+        return WeightedCombinator(spec.weights, spec.threshold, spec.direction)
     # tree_spec validates on parse; this is just a defensive fallback.
     raise ValueError(f"Unknown combinator: {name!r}")
 

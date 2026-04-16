@@ -39,7 +39,7 @@ A Source describes *what* holds the behavior under test. Sources are not classes
 
 ### Current
 
-Implicit. `config.package_path` is hardcoded to "Modelica library with `package.mo`". The forward work is to introduce a `Source` tag and generalize `package_path` into `source.path`.
+Two source types live today: `"modelica"` (default — `Config.source_path` points at a `package.mo` directory) and `"fmu"` (Phase 2 — `Config.source_path` is the FMU dir; per-test `"fmu"` field in `test_spec.json` names the binary). Discovery and backend selection gate on `Config.source_type`. Adding a new source means setting `source_type` and teaching `discover_tests` how to enumerate its tests; the backend layer below is independent.
 
 ---
 
@@ -70,13 +70,37 @@ The "tests declared alongside the model itself" pattern is valuable in every eco
 
 Native strategies are *optional* per ecosystem — a Source type can ship without one and rely on `test_spec.json`. Strategies compose: a Modelica Source can use both `.mo` scan + `test_spec.json` simultaneously (current behavior), with results merged by model ID.
 
-### Current
+### Current — pluggable recognizer registry (Phase 5 / PTA + follow-ups)
 
-Two strategies, both Modelica-flavored:
-- `mo_parser.py` — scans `.mo` for `UnitTests` components.
-- `spec_parser.py` — reads `test_spec.json`.
+The Modelica `.mo` scan is itself a registry of **recognizers**. Each recognizer inspects one source file and emits a `RecognizerResult` describing a test it found. Discovery runs every registered recognizer that applies to the configured `source_type` and merges results by `model_id` (per-field, last writer wins).
 
-Merged by `test_registry.discover_tests()`. The `test_spec.json` format is already ecosystem-neutral; the `.mo` scan is Modelica-specific (appropriate — it's one strategy among many).
+- `discovery/recognizer.py` — `Recognizer` ABC, `RecognizerResult`, module-level registry (`get_recognizers(source_type)`), `applies_to_path(source_file, base)` for per-file pre-filtering.
+- `discovery/mo_parser.py` — bundled `BundledModelicaUnitTestsRecognizer` (the `UnitTests` component + `experiment(...)` annotation pattern). Self-registers on import.
+- `discovery/json_recognizer.py` — `JsonRecognizer`, configured by a JSON spec (no Python required). Modelica match types: `component-instantiation`, `extends`, `class-name-glob`, `all-of`, `any-of`. Field sources: `parameter`, `constant`, `experiment-annotation`, `annotation`. Supports `paths_include` / `paths_exclude` folder filter. Schema docs at the top of the module.
+- `discovery/spec_parser.py` — `test_spec.json` reads (the universal fallback); merged after recognizers by `model_id`.
+
+User-provided recognizers live on `Config.recognizers` (parsed from `testing.json`'s `"recognizers"` list); `Config.disabled_bundled` opts a bundled recognizer out by name. **Default is additive**: bundled returns None on files it doesn't recognize, so adding a custom recognizer doesn't remove anything. Disable is the explicit escape for the rare "ship-bundled-as-dep but don't discover its examples" case.
+
+### Recognizer contract
+
+A `Recognizer` declares two attributes and one method:
+
+```python
+class Recognizer(ABC):
+    name: str                       # unique; used in diagnostics + disable_bundled
+    applies_to: frozenset[str]      # Config.source_type values it applies to
+
+    @abstractmethod
+    def recognize(self, source_file: Path) -> Optional[RecognizerResult]: ...
+```
+
+The match-type vocabulary is **per-source-type**. Modelica has `component-instantiation`, `extends`, …; FMU would declare its own (e.g. `model-description-vendor-extension`); each source type owns its parser and its match types.
+
+### Deferred (capture-and-revisit)
+
+- `not-of` match composition (single-child negation) — useful but validation-by-leaf-types needs special-casing for negation. No concrete user need yet.
+- Cross-source recognizers (FMU vendor extensions, Julia macros). Same registry shape; each source type owns its match-type vocabulary.
+- `quick_check(content) -> bool` optimization on recognizers if per-file regex becomes a bottleneck on very large libraries.
 
 ---
 
@@ -176,14 +200,15 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
 3. `diagnostics` must be JSON-serializable (travels to reports + reference files).
 4. Metric-specific configuration is typed (frozen dataclass), registered with the metric, and validated on construction.
 
-### Currently registered (forward)
+### Currently registered
 
-- **`nrmse`** — piecewise NRMSE with event-boundary handling. Current `NrmseMode`, refactored.
-- **`tube`** — envelope comparison, three width modes. Current `TubeMode`, refactored.
-- **`final-only`** — compare only final values. Current `FinalOnlyMode`, refactored.
-- **`event-timing`** *(planned)* — assert events occur within a time tolerance.
+- **`nrmse`** — piecewise NRMSE with event-boundary handling. `NrmseMode`.
+- **`tube`** — envelope comparison, three width modes. `TubeMode`.
+- **`final-only`** — compare only final values. `FinalOnlyMode`.
+- **`range`** — signal-only bounds check (no baseline needed). `RangeMode`. D53.
+- **`event-timing`** — compare event instants via duplicate-time detection. `EventTimingMode`. D62.
+- **`dominant-frequency`** — FFT peak comparison. `DominantFrequencyMode`. D62.
 - **`x-tolerance`** *(planned)* — pyfunnel x+y funnel comparison.
-- **`spectral-coherence`** *(planned)* — frequency-domain similarity.
 - **`fréchet`** / **`iso-18571`** *(future)* — shape-sensitive metrics.
 - **`ks-distribution`** *(future)* — stochastic regression.
 
@@ -216,11 +241,11 @@ MetricTree composes Metrics with Boolean / weighted logic. Leaves are `Metric` e
 
 ### Built-in combinators
 
-- **`and`** — all children pass; score = min (or product). The current implicit behavior.
+- **`and`** — all children pass; score = min. The current implicit behavior.
 - **`or`** — any child passes; score = max.
-- **`weighted`** — weighted sum of child scores against a threshold. Parameters: `{child: weight, threshold: float}`.
+- **`weighted`** — weighted sum of child scores against a threshold. Direction-aware (`less` for NRMSE-like, `greater` for tube-like). Parameters: `{weights: [float], threshold: float, direction: "less"|"greater"}`. D61.
 - **`k-of-n`** — at least K children pass.
-- **`warn`** — single-child wrapper that always passes the parent but surfaces the child's failing diagnostics as warnings in the report. Used to include comparisons (e.g. against experimental data) as informational without gating pass/fail.
+- **`warn`** — single-child wrapper that always passes the parent but surfaces the child's failing diagnostics as warnings in the report.
 
 ### Combinator contract
 

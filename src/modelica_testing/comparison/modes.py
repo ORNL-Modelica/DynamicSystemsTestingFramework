@@ -20,6 +20,8 @@ import numpy as np
 
 from .comparator import (
     VariableComparison,
+    _compare_dominant_frequency,
+    _compare_event_timing,
     _compare_final_values,
     _compare_range,
     _compare_trajectories,
@@ -110,6 +112,20 @@ class RangeConfig:
     max_value: Optional[float] = None
 
 
+@dataclass(frozen=True)
+class EventTimingConfig:
+    """Configuration for event-timing comparison (4.C.1)."""
+    time_tolerance: float = 1e-3
+    count_must_match: bool = True
+
+
+@dataclass(frozen=True)
+class DominantFrequencyConfig:
+    """Configuration for dominant-frequency-shift comparison (4.C.2)."""
+    rel_tolerance: float = 0.01
+    min_frequency: float = 0.0
+
+
 # ---------------------------------------------------------------------------
 # Mode implementations
 # ---------------------------------------------------------------------------
@@ -160,6 +176,42 @@ class FinalOnlyMode(ComparisonMode):
         ref_final = float(ref_values[-1]) if len(ref_values) > 0 else 0.0
         act_final = float(act_values[-1]) if len(act_values) > 0 else 0.0
         return _compare_final_values(ref_final, act_final, self.config.tolerance)
+
+
+class EventTimingMode(ComparisonMode):
+    """Compare event instants (duplicate-time markers) between signals."""
+
+    def __init__(self, config: EventTimingConfig):
+        self.config = config
+
+    @property
+    def name(self) -> str:
+        return "event-timing"
+
+    def compare(self, ref_time, ref_values, act_time, act_values):
+        return _compare_event_timing(
+            ref_time, act_time,
+            time_tolerance=self.config.time_tolerance,
+            count_must_match=self.config.count_must_match,
+        )
+
+
+class DominantFrequencyMode(ComparisonMode):
+    """Compare the dominant frequency of two signals (FFT peak)."""
+
+    def __init__(self, config: DominantFrequencyConfig):
+        self.config = config
+
+    @property
+    def name(self) -> str:
+        return "dominant-frequency"
+
+    def compare(self, ref_time, ref_values, act_time, act_values):
+        return _compare_dominant_frequency(
+            ref_time, ref_values, act_time, act_values,
+            rel_tolerance=self.config.rel_tolerance,
+            min_frequency=self.config.min_frequency,
+        )
 
 
 class RangeMode(ComparisonMode):
@@ -226,6 +278,18 @@ def resolve_mode(
         return RangeMode(RangeConfig(
             min_value=var_override.get("min"),
             max_value=var_override.get("max"),
+        ))
+
+    if mode_name == "event-timing":
+        return EventTimingMode(EventTimingConfig(
+            time_tolerance=var_override.get("time_tolerance", 1e-3),
+            count_must_match=var_override.get("count_must_match", True),
+        ))
+
+    if mode_name == "dominant-frequency":
+        return DominantFrequencyMode(DominantFrequencyConfig(
+            rel_tolerance=var_override.get("rel_tolerance", tolerance),
+            min_frequency=var_override.get("min_frequency", 0.0),
         ))
 
     if mode_name == "final_only" or (not mode_name and default_final_only):

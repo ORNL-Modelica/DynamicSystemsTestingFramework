@@ -18,6 +18,19 @@
 
 **Phase 4.A status (complete)**: Multi-baseline MetricTree leaves. Leaves select via `"against": "<name>"` (default `"primary"`). `comparator.compare_test` loads every named baseline from the reference file via `_extract_baselines(reference)` and threads them into the evaluator as `baselines: dict[str, BaselineView]`. New `ReferenceStore.add_named_baseline(model_id, name, ...)` helper for programmatic non-primary baseline authoring (primary stays owned by `store_reference`). Per-test HTML shows `against=<name>` on non-primary leaves. BouncingBall demo has a synthetic `experiment` baseline + a `warn`-wrapped leaf scoring against it. Test count: 253 → 309. Decision D56.
 
+**Phase 4.D status (complete)**: Modelica-neutral rename sweep + bundled cleanup follow-ups. Hard break: `TestModel.mo_file` → `source_file`, `TestModel.package_path` → `source_package`, `Config.package_path` → `Config.source_path` (CLI `--source-path`, `testing.json` key `source_path`). Modelica-specific code paths (`mo_parser`, `find_package_dir`, `dymola/`, ...) keep their Modelica names — they're genuinely Modelica-only. Bundled into the same phase: FMPy now honors `test.timeout` / `config.timeout` via `concurrent.futures` (worker thread leaks on timeout — acceptable for sub-second FMUs since C-level FMU compute can't be force-killed in-process); FMPy emits `loading` / `simulating` phase labels for dashboard parity with Dymola's `translating / simulating / finalizing`. External `testing.json` consumers (TRANSFORM) need a one-line key rename. Test count unchanged: 309. Decisions D57–D58.
+
+**Phase 5 / PTA status (complete)**: Pluggable in-source test annotations. The Modelica `.mo` scan was generalized into a `Recognizer` registry (`discovery/recognizer.py`); the previous hardcoded `UnitTests` + `experiment(...)` pattern is now `BundledModelicaUnitTestsRecognizer`, one of N registered. Users declare custom recognizers as JSON in `testing.json` (`"recognizers"` list) — `JsonRecognizer` (`discovery/json_recognizer.py`) handles both `component-instantiation` and `extends` matchers, with `parameter` / `constant` / `experiment-annotation` field sources. Discovery merges results by `model_id`; bundled registers first, user appends, last-writer-wins per field — additive default + explicit `disable_bundled` opt-out. `TestModel` gained richer-contract fields (`simulate_only`, `requested_fmu_export`, `requested_baselines`); `simulate_only` is wired end-to-end in the comparator (test passes iff sim succeeds; no per-variable comparison; the others are 4.B placeholders). Demo lives in `examples/modelica/ModelicaTestingLib`: new `Icons/Example.mo` + `Examples/SimulateOnlyTest.mo` exercised by a recognizer entry in the bundled `testing.json`. Decomposition: PTA.1 registry → PTA.2 JSON schema → PTA.3 wire-into-Config → PTA.4 richer fields → PTA.5 simulate_only end-to-end → PTA.6 demo → PTA.7 docs+D59. Test count: 309 → 358. Decision D59.
+
+**Bundled phase: PTA follow-ups + 4.E + 4.C + 4.B + interactive HTML (complete)**: Five originally-separate moves landed in one session.
+- **PTA follow-ups (D60)**: `paths_include`/`paths_exclude` per-recognizer (folder filter); `all-of`/`any-of` match composition (recursive `CompositeMatch`); `class-name-glob` match type; `annotation` field source (extracts from any Modelica annotation block, not just `experiment(...)`).
+- **4.E weighted combinator (D61)**: `WeightedCombinator` joins and/or/k-of-n/warn — `sum(w_i * score_i) <` (or `>`) `threshold`. Direction-aware so it works for NRMSE-shaped (lower better) and tube-shaped (higher better) trees.
+- **4.C leaf metrics (D62)**: `event-timing` (compare event instants via duplicate-time detection; `time_tolerance`); `dominant-frequency` (FFT peak comparison; `rel_tolerance`). Same `ComparisonMode` plumbing as `range` (D53).
+- **4.B cross-backend (D63)**: `Capability.FMU_EXPORT` is now real; `DymolaWorker.export_fmu` uses `translateModelFMU`; `simulators/cross_backend.py::produce_dymola_via_fmpy_baseline` chains primary export → FMPy simulate → named baseline `"dymola-via-fmpy"`. CLI's `cmd_run` invokes the chain after primary `run_tests` for tests with `requested_baselines=["dymola-via-fmpy"]` (PTA.4 field). **Validation caveat**: real Dymola export requires Windows + Dymola FMI license; tests use mocked `DymolaInterface` for the export step (FMPy half is real).
+- **Interactive HTML (D64)**: NRMSE-only column → mode-aware `score_display`; per-variable tolerance input shows `n/a (mode=...)` for non-NRMSE modes; JS `computePass` special-cases non-NRMSE modes to use the originally-computed `v.passed`. Surgical fix preserves NRMSE slider workflow.
+
+Test count: 358 → 404. Decisions D60–D64.
+
 ## Project Structure
 
 ```
@@ -51,11 +64,11 @@ ModelicaTesting/
 The package ships a console script (`[project.scripts]` in `pyproject.toml`). The canonical dev invocation is `uv run modelica-testing ...`. `python -m modelica_testing ...` is supported as a fallback (both call `cli.main_entry`). End users install via `uv tool install modelica-testing` (or `pipx install`) and run plain `modelica-testing`.
 
 ```bash
-# With testing.json containing package_path — single entry point
+# With testing.json containing source_path — single entry point
 uv run modelica-testing --config path/to/testing.json run
 
 # Or with explicit flags
-uv run modelica-testing --package-path /path/to/MyLib --reference-root /path/to/refs run
+uv run modelica-testing --source-path /path/to/MyLib --reference-root /path/to/refs run
 
 # Interactive review (accept/skip/plot per test)
 uv run modelica-testing --config testing.json run -i
@@ -124,7 +137,7 @@ uv run pytest                  # Run the test suite
 
 The tool looks for `testing.json` near the library root or reference root. Key fields:
 
-- `package_path` — path to library's package.mo directory (relative to testing.json)
+- `source_path` — path to library's source location (Modelica package.mo directory, FMU directory, ...; relative to testing.json)
 - `simulator` — named entry like `"Dymola"` or `"Dymola 2025"`
 - `simulators` — map of simulator names to candidate executable paths
 - `simulator_setup` — list of Modelica commands run after library loading (user-specific settings)

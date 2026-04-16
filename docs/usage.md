@@ -8,7 +8,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 
 ```json
 {
-  "package_path": "../../MyLibrary/MyLib",
+  "source_path": "../../MyLibrary/MyLib",
   "simulator": "Dymola",
   "simulators": {
     "Dymola": [
@@ -31,7 +31,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `package_path` | No | Path to library's `package.mo` directory. Relative to `testing.json` location. Can be provided via `--package-path` instead. |
+| `source_path` | No | Path to library source location (Modelica package.mo directory, FMU directory, etc.). Relative to `testing.json` location. Can be provided via `--source-path` instead. |
 | `simulator` | No | Simulator name (default: `"Dymola"`). Use named entries like `"Dymola 2025"` to target specific versions. |
 | `simulators` | No | Map of simulator names to candidate executable paths (first existing path wins). Falls back to system PATH. |
 | `dependencies` | No | Paths to dependency library roots loaded before simulation. Relative to `testing.json` location. |
@@ -44,11 +44,37 @@ All relative paths resolve from where `testing.json` is located.
 
 ### Test definitions
 
-Tests are discovered from two sources (can be combined):
+Tests are discovered from three sources (can be combined; merged by model_id, last writer wins per field):
 
-**1. In-model `UnitTests` components** — discovered automatically by scanning `.mo` files. No setup needed.
+**1. Bundled in-model recognizer** — finds any class with the `ModelicaTestingLib.Components.UnitTests` component plus the standard `experiment(...)` annotation. Scans `.mo` files automatically, no setup needed.
 
-**2. External `test_spec.json`** — for models without `UnitTests`, or to override variable tracking:
+**2. User-provided recognizers in `testing.json`** (Phase 5 / PTA) — declarative JSON; finds tests via your library's own convention without forcing adoption of `UnitTests`. Example:
+
+```json
+{
+  "source_path": "../../",
+  "simulator": "Dymola",
+  "recognizers": [
+    {
+      "name": "mylib:icons-example-as-simulate-only",
+      "applies_to": ["modelica"],
+      "match": {
+        "type": "extends",
+        "class_pattern": "*Icons.Example"
+      },
+      "fields": {
+        "simulate_only": {"from": "constant", "value": true},
+        "stop_time": {"from": "experiment-annotation", "name": "StopTime"}
+      }
+    }
+  ],
+  "disable_bundled": []
+}
+```
+
+Modelica match types: `component-instantiation` (`component_name`), `extends` (`class_pattern` glob). Field sources: `parameter` (from matched component), `constant` (literal value), `experiment-annotation` (from standard `experiment(...)` block). Per-field merge with last-writer-wins lets a user recognizer override individual fields without disabling bundled. To turn the bundled recognizer off entirely (e.g. when a dependency lib's example tests would otherwise be discovered), add its name to `disable_bundled`: `["modelica:bundled-unit-tests"]`. See `examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json` for a working demo.
+
+**3. External `test_spec.json`** — for per-test overrides, MetricTrees, or variable specifications independent of any in-model annotation:
 
 ```json
 {
@@ -88,7 +114,7 @@ Variable patterns support `*` and `?` wildcards. `["*"]` tracks all non-paramete
 | `method` | string | Solver method name (e.g. `"Dassl"`, `"Esdirk45a"`). |
 | `number_of_intervals` | int | Output sample count. |
 | `output_interval` | float | Output interval (alternative to `number_of_intervals`). |
-| `timeout` | int | Per-test timeout in seconds. Overrides the global `--timeout` flag. Honored by the Dymola backend (both persistent and batch modes); FMPy runs to completion regardless today. |
+| `timeout` | int | Per-test timeout in seconds. Overrides the global `--timeout` flag. Honored by both backends — Dymola via the persistent-runner watchdog, FMPy via `concurrent.futures` (worker thread is left to finish in background since FMPy runs in-process). |
 
 **FMU backend only**: add an `"fmu": "path/to/Model.fmu"` field (path relative to the spec file) to point at a prebuilt FMU.
 
@@ -141,12 +167,12 @@ All commands accept these global options:
 
 ```
 --config PATH          Path to testing.json (default: auto-search)
---package-path PATH    Path to library's package.mo directory
+--source-path PATH     Path to library source location (Modelica package dir, FMU dir, ...)
 --reference-root PATH  Path to reference results root
 --test-spec PATH       Path to test_spec.json
 ```
 
-If `testing.json` includes `package_path`, you only need `--config` or `--reference-root`.
+If `testing.json` includes `source_path`, you only need `--config` or `--reference-root`.
 
 ### `discover` — Find tests
 
@@ -287,7 +313,7 @@ uv run modelica-testing --config testing.json add MyLib.Examples.NewTest
 ```bash
 # 1. Create reference directory and testing.json
 mkdir -p /path/to/MyLib-Tests/ReferenceResults
-# Edit testing.json with package_path, simulator, etc.
+# Edit testing.json with source_path, simulator, etc.
 
 # 2. Verify discovery
 uv run modelica-testing --config /path/to/testing.json discover

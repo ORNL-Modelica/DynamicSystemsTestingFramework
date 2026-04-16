@@ -184,6 +184,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     for m in manifests:
         m.enrich_ref_ids(store.index)
 
+    # 4.B.4 — cross-backend chains. Tests whose recognizer set
+    # requested_baselines to include a known chain target (today only
+    # "dymola-via-fmpy") get a second baseline produced by chaining backends.
+    # MetricTree leaves can then score against it via "against": "<chain-name>".
+    _run_cross_backend_chains(tests, runner, config, store)
+
     # --merge expands the read/compare/report scope to every test that has
     # results on disk (per the persistent batch manifest), not just what was
     # rerun this invocation. Lets you incrementally rerun a subset and still
@@ -220,6 +226,39 @@ def cmd_run(args: argparse.Namespace) -> int:
             return _generate_report_suite(comparisons, results, scope_tests, store, config)
 
         return _output_report(comparisons, args)
+
+
+def _run_cross_backend_chains(tests, runner, config, store) -> None:
+    """For each test with ``requested_baselines`` listing a known chain target,
+    invoke the chain and store the resulting named baseline (4.B.4).
+
+    Today only ``dymola-via-fmpy`` is recognized. Failures are logged + skipped
+    (don't abort the run); chains are best-effort enrichment of baselines.
+    Requires Windows + Dymola (with FMI export) for the export step — the chain
+    silently no-ops on platforms that don't support it (logs a warning).
+    """
+    from .simulators.cross_backend import (
+        CROSS_BACKEND_BASELINE_NAME,
+        produce_dymola_via_fmpy_baseline,
+    )
+
+    chain_tests = [
+        t for t in tests
+        if CROSS_BACKEND_BASELINE_NAME in (t.requested_baselines or [])
+    ]
+    if not chain_tests:
+        return
+
+    print(f"Running cross-backend chains for {len(chain_tests)} test(s)...")
+    n_ok = 0
+    for t in chain_tests:
+        ok = produce_dymola_via_fmpy_baseline(t, runner, config, store)
+        if ok:
+            n_ok += 1
+            print(f"  {t.model_id}: '{CROSS_BACKEND_BASELINE_NAME}' baseline written")
+        else:
+            print(f"  {t.model_id}: chain skipped (see logs)")
+    print(f"Cross-backend chains: {n_ok}/{len(chain_tests)} succeeded")
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -826,8 +865,8 @@ def _output_report(comparisons: list, args: argparse.Namespace) -> int:
 def _build_config(args: argparse.Namespace) -> Config:
     """Build Config from parsed CLI arguments."""
     kwargs = {}
-    if args.package_path:
-        kwargs["package_path"] = Path(args.package_path)
+    if args.source_path:
+        kwargs["source_path"] = Path(args.source_path)
     if hasattr(args, "config") and args.config:
         kwargs["config_file"] = Path(args.config)
     if hasattr(args, "reference_root") and args.reference_root:
@@ -863,8 +902,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         description="Modelica Library Regression Testing System",
     )
     parser.add_argument(
-        "--package-path", type=str, default=None,
-        help="Path to the Modelica package directory containing package.mo (default: auto-detect from cwd)",
+        "--source-path", type=str, default=None,
+        help="Path to the source for the library under test (Modelica package dir containing package.mo, FMU dir, ...). Default: auto-detect from cwd.",
     )
     parser.add_argument(
         "--config", type=str, default=None,
