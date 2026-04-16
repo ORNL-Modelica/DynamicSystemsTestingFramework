@@ -160,6 +160,10 @@ def discover_tests(config: Config) -> list[TestModel]:
                 existing.comparison_tolerance = spec_test.comparison_tolerance
             if spec_test.variable_overrides:
                 existing.variable_overrides.update(spec_test.variable_overrides)
+            if spec_test.timeout is not None:
+                existing.timeout = spec_test.timeout
+            if spec_test.metric_tree_spec is not None:
+                existing.metric_tree_spec = spec_test.metric_tree_spec
         else:
             # Spec-only test
             merged[model_id] = spec_test

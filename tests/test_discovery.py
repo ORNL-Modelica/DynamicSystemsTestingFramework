@@ -263,3 +263,43 @@ class TestDiscoverTests:
 
         assert by_id["ModelicaTestingLib.Examples.SimpleTest"].source == "unit_tests"
         assert by_id["ModelicaTestingLib.Examples.SpecOnly"].source == "spec"
+
+    def test_spec_timeout_and_metrics_survive_merge_with_unittests(
+        self, sample_models_dir, tmp_path,
+    ):
+        """Regression: a test discovered from both UnitTests and test_spec
+        must keep the spec's ``simulation.timeout`` and ``metrics`` block.
+
+        The merge in discover_tests used to copy stop_time/tolerance/method/
+        number_of_intervals/output_interval/comparison_tolerance/
+        variable_overrides from the spec, but silently dropped ``timeout`` and
+        ``metric_tree_spec`` — so users who set a per-test timeout on a model
+        with an in-model UnitTests block got the default timeout instead.
+        """
+        spec_path = tmp_path / "test_spec.json"
+        spec_path.write_text(json.dumps({
+            "tests": [{
+                "model": "ModelicaTestingLib.Examples.SimpleTest",
+                "variables": ["x"],
+                "simulation": {"timeout": 300},
+                "metrics": {
+                    "metric": "nrmse", "variable": "x", "tolerance": 0.01,
+                },
+            }],
+        }))
+
+        config = Config(
+            package_path=sample_models_dir,
+            test_spec_file=spec_path,
+        )
+        tests = discover_tests(config)
+        by_id = {t.model_id: t for t in tests}
+        simple = by_id["ModelicaTestingLib.Examples.SimpleTest"]
+
+        assert simple.source == "both", "fixture model should merge both sources"
+        assert simple.timeout == 300, (
+            "timeout from test_spec.simulation must survive the merge"
+        )
+        assert simple.metric_tree_spec is not None, (
+            "metric_tree_spec from test_spec.metrics must survive the merge"
+        )
