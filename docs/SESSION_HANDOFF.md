@@ -1,4 +1,4 @@
-# Session handoff — post-D65 (FMU-pathway scoping + cross-backend labeled experimental)
+# Session handoff — post-D66 (Phase 6-9 design grill landed; reporter-as-IDE committed)
 
 **Date**: 2026-04-17
 
@@ -30,7 +30,8 @@ start-value overrides, python-driver tests) both deferred to a future
 **Phase 4.D** (rename sweep + cleanup follow-ups) — complete. D57–D58.
 **Phase 5 / PTA** (pluggable test annotations) — complete. D59.
 **Bundled session** (PTA follow-ups + 4.E + 4.C + 4.B + interactive HTML) — complete. D60–D64.
-**FMU-pathway scope + cross-backend experimental labeling** — complete. D65.
+**FMU-pathway scope + cross-backend experimental labeling** — complete. D65. Smoke test passed on Dymola 2026x (2026-04-17).
+**Phase 6-9 design grill (docs-only)** — complete. D66. Identity locked, baseline roles split into primary/companion/soft_check, reporter-as-IDE committed, Phase 8 removed, recommender contained.
 
 ### Current snapshot
 
@@ -84,34 +85,53 @@ start-value overrides, python-driver tests) both deferred to a future
 
 ---
 
-## Candidate next moves
+## Candidate next moves (D66 roadmap)
 
-### Tool rename (deferred from 4.D and the bundled session)
+### Phase 6 — Reporter-as-IDE (post-paper, this is the primary next move)
 
-"ModelicaTesting" → neutral name. Touches package name, CLI prog name, HTML report titles, top-of-file docstrings, `pyproject.toml`, all imports. Naming/branding decision still needs deliberation.
+MVP = **6.1 + 6.4 (~3-4 weeks)**. Ships the first closed authoring loop for all six existing modes.
 
-### Real Dymola validation pass for 4.B
+- **6.0** Performance budget: interactive.html for a 50-var test stays under ~5 MB. Decimate trajectories; sidecar JSON for full-resolution.
+- **6.1** Per-leaf detail panels. Config-dataclass-derived UI auto-rendered for each mode; custom overrides for tube (conditional fields) and range (visual handles). Replaces the `n/a (mode=...)` cells. Each simple mode ships an in-browser JS pass/fail recompute (nrmse, tube, range, final-only); event-timing and dominant-frequency skip live preview (CLI-authoritative).
+- **6.4** Full-fidelity `spec-update`. RFC 6902 JSON-Patch download format; read-modify-write preserves unknown keys and `description`/`info`/`metadata` conventions. Tests in Python exhaustively cover the patch schema and round-trip faithfulness.
 
-**Superseded by D65** — deferred as part of the "FMU-path semantic gap closure" phase. First concrete step when the user is next on Windows: run `scripts/smoke_test_dymola_export.py` to lock the `translateModelFMU` signature cheaply. Full chain validation + demo model waits on the semantic-gap phase.
+Post-MVP, in rough order of independent shippability:
+- **6.3** Multi-baseline picker (view-only multi-select overlay; primary + companions + soft_checks).
+- **6.2** Tree-level controls (combinator thresholds, weighted-combinator weights, add/remove/swap leaves for authoring).
+- **6.5** Edit/view mode toggle.
+- **6.6** Draft-tree preview against already-simulated data (browser-side, no server).
 
-### Dataset types beyond TIME_SERIES
+Parallel track: golden-file HTML snapshot tests, markdown QA checklist at `docs/qa/reporter_checklist.md`, JSON-Schema export command.
 
-`Events`, `Spectrum`, `Distribution`, `Scalars`, `Field` — all named in vision. None implemented. Adds dataset-discrimination machinery and metric-dataset-compatibility validation. Larger architectural work.
+### Baseline-role implementation (wired alongside Phase 6)
 
-### More leaf types still on the wishlist
+D66 commits to three distinct roles. Implementation items:
+- Split `ReferenceStore` named-baseline storage into two sections: companions (file-path or frozen under `ReferenceResults/.../companions/`) and soft_checks (under `ReferenceResults/.../soft_checks/`). Existing named-baseline code becomes soft_checks with a one-off migration.
+- `companion add <test> <name> <path>` and `companion freeze <test> <name>` CLI commands.
+- `import-baseline <test> <name> <path>` CLI command for importing another regression system's primary as a soft_check.
+- Validator rules: primary-required-outside-warn; soft_check-must-be-in-warn; companions-never-targeted. Schema errors with clear messages.
+- Cross-backend chain (D65) output now clearly a soft_check (update cross_backend.py terminology).
+
+### Phase 7 — Rule-based recommender (post-Phase-6 MVP)
+
+Contained to signal → metric tree proposals. Each `ComparisonMode` declares `baseline_compatibility` (`requires_baseline`, shape requirements) so candidates are filtered automatically. Bounded feature vocabulary in `recommender/features.py`. Complexity budget per proposal. Not runtime-load-bearing. No ML.
+
+### Phase 9 — Dataset types beyond TIME_SERIES (post-Phase-6 full)
+
+`Events`, `Spectrum`, `Distribution`, `Scalars`, `Field`. Reordered after the reporter rewrite because Phase 6 gives us a shape-aware render contract to plug each new dataset type into.
+
+### Additional leaf types (additive, can parallel Phase 6)
 
 - **Fréchet / iso-18571** — shape-sensitive metric.
-- **KS-distribution** — stochastic regression.
+- **KS-distribution** — stochastic regression (needs Distribution dataset from Phase 9).
 - **x-tolerance / pyfunnel** — funnel comparison.
 
-### Deferred PTA features (still open)
+### Deferred (post-feature-complete)
 
-- `not-of` match composition.
-- More cross-source recognizers (FMU vendor extensions, Julia macros).
-
-### Deferred reporter polish
-
-- Per-variable detail panel with mode-specific controls (would replace the read-only "n/a" cells in interactive HTML).
+- **Tool rename** — "ModelicaTesting" → neutral name. Touches package, CLI prog, HTML titles, `pyproject.toml`, all imports. Naming decision pending.
+- **FMU-path semantic gap closure** (D65 follow-on) — input schedules, CS/ME choice, start-value overrides, python-driver tests, real Dymola validation.
+- **Deferred PTA features** — `not-of` match composition; more cross-source recognizers (FMU vendor extensions, Julia macros).
+- **Phase 8 (removed)** — ML-backed recommender is out-of-scope-in-repo; belongs in a downstream tool consuming our handoff artifacts.
 
 ---
 
@@ -121,13 +141,15 @@ start-value overrides, python-driver tests) both deferred to a future
 |---|---|
 | Source | 🟢 modelica + fmu concrete. |
 | Discovery | 🟢 Pluggable recognizer registry; bundled + JSON-driven; folder filter; match composition. |
-| Backend | 🟢 Dymola + FMPy; FMU_EXPORT capability now real on Dymola; cross-backend chain orchestrated. |
-| Dataset | 🟡 Only `TIME_SERIES` produced. |
-| Metric | 🟢 6 concrete (nrmse/tube/final-only/range/event-timing/dominant-frequency). |
-| MetricTree | 🟢 5 combinators (and/or/k-of-n/warn/weighted); user-authored; multi-baseline; chain-produced baselines. |
-| Reference | 🟢 Multi-baseline live; chain-baselines write through `add_named_baseline`. |
+| Backend | 🟢 Dymola + FMPy; FMU_EXPORT capability now real on Dymola; cross-backend chain orchestrated (experimental per D65). |
+| Dataset | 🟡 Only `TIME_SERIES` produced. Phase 9. |
+| Metric | 🟢 6 concrete (nrmse/tube/final-only/range/event-timing/dominant-frequency). Per-mode UI override slots pending (Phase 6). |
+| MetricTree | 🟢 5 combinators (and/or/k-of-n/warn/weighted); user-authored. Validator refinement pending for D66 baseline-role rules. |
+| Reference | 🟡 Multi-baseline live via flat named-baseline storage. D66 splits into three roles: primary (exists), companion references (new), soft_checks (reframe of current "named baselines"). Implementation pending alongside Phase 6. |
+| Reporter | 🟡 Static + interactive HTML exist; NRMSE slider + mode-aware Score column. Phase 6 expands to per-leaf controls, tree-level controls, multi-baseline picker, full-fidelity round-trip. |
+| Recommender | ⚪ Not started. Phase 7, rule-based only. |
 
-Largest remaining gap: **dataset types beyond time-series** (events, spectra, distributions). Cross-backend chain shipped with a validation caveat (needs Windows + Dymola license to fully exercise).
+Largest remaining gap by impact: **reporter-as-IDE (Phase 6)** — authoring surface has to mature before more leaves compound the `n/a (mode=...)` debt. Next structural piece: **baseline-role split (D66)** — wired alongside Phase 6. After that: **dataset types (Phase 9)**. Cross-backend chain shipped with a validation caveat (D65); `scripts/smoke_test_dymola_export.py` passed on Dymola 2026x so signature/license/cwd are locked.
 
 ---
 
@@ -170,4 +192,4 @@ If fmpy is missing: `uv pip install -e ".[dev,fmpy]"`.
 
 ## Starter prompt for the next session
 
-> Continuing work on the ModelicaTesting project. Read `docs/SESSION_HANDOFF.md` first — the last session (D65) grilled the deferred-validation question for the cross-backend FMU chain and surfaced a broader concern: both the chain AND the primary FMPy path today only support *autonomous* FMUs (no external input schedules, no CS/ME choice, no start-value overrides, no python-driver tests). Cross-backend chain is now labeled experimental with a runtime warning; FMPy primary has a Limitations docstring (Phase 2 validation for reference FMUs still holds). A standalone `scripts/smoke_test_dymola_export.py` exists for the user to run on Windows to lock `translateModelFMU` signature. Real validation + chain generalization + python-driver tests are bundled into a future "FMU-path semantic gap closure" phase. Read `CLAUDE.md` and D65 for context. Recommend a next move with a decomposition — big-ticket items are: tool rename (still deferred), dataset types beyond time-series (events, spectra, distributions), additional leaf types (Fréchet, KS, pyfunnel), or the FMU-path semantic gap closure phase itself.
+> Continuing work on the ModelicaTesting project. Read `docs/SESSION_HANDOFF.md` first — the last session (D66) was a docs-only design grill that locked identity, baseline model, and Phase 6-9 structure. Key commitments: tool identity is **regression testing, period** (V&V by composing instances of the tool on experiment data); baseline roles split into **primary** (regression anchor, required, validator-enforced), **companion references** (visual-only, file-path, graceful degradation), **soft_checks** (warn-wrapped cross-regression imports, never hard-fail); the **interactive HTML is the primary authoring surface**, CLI is the execution surface, round-trip via RFC 6902 JSON-Patch + `spec-update` read-modify-write preserving unknown keys; `ComparisonMode` stays pure compute, UI auto-derives from typed Config dataclasses with override slots; **Phase 6 MVP = 6.1 per-leaf controls + 6.4 full-fidelity spec-update** (~3-4 weeks), live preview for simple modes only; recommender (Phase 7) is rule-based with hard input/output/complexity contracts and `ComparisonMode.baseline_compatibility`; **Phase 8 (ML) removed** — ML belongs in downstream tools consuming our artifacts. Read `CLAUDE.md`, `docs/vision.md`, and D66 for the full shape. Conference paper lands this week; post-paper the concrete next move is **Phase 6.1+6.4 MVP**. Other big-ticket items remain: tool rename (deferred), Fréchet/KS/pyfunnel leaves (additive, low risk, can parallel 6.1), dataset types beyond time-series (Phase 9, post-reporter-rewrite), FMU-path semantic gap closure (separate phase, needs Windows + Dymola for validation).

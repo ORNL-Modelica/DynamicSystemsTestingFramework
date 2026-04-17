@@ -95,6 +95,39 @@ Not implemented in initial broadening phases — but the capability hook is in t
 
 ---
 
+## Reporter as authoring IDE (D66)
+
+The interactive HTML report is the **primary authoring surface** for acceptance criteria — not just a review UI. Users compose tube widths, range bounds, combinator structures, and multi-criteria scoring interactively against a freshly-simulated signal, then download a patch and apply it via the CLI. Editing `test_spec.json` by hand stays supported; it is not the intended default.
+
+**Workflow boundary (hard)**: the reporter is the authoring surface; the CLI is the execution surface. Reporter state lives in the browser until an explicit download. No local server; no live-apply; no auto-rerun. The download payload is an **RFC 6902 JSON-Patch** against the test spec. The `spec-update` CLI applies the patch via read-modify-write, preserving unknown keys and the `description` / `info` / `metadata` conventions for human notes.
+
+**Per-leaf modularity**: `ComparisonMode` stays pure compute (no UI coupling). UI controls are **auto-derived from each mode's typed Config dataclass** (NrmseConfig, TubeConfig, …) with override slots where richer UI makes sense (tube conditional fields, range visual handles). Tightening Config types to use `Literal[...]` for enum-like fields buys JSON-Schema export as a first-class handoff artifact.
+
+**Live preview policy**: modes with simple math (nrmse, tube, range, final-only) ship an in-browser JS recompute function so users see pass/fail update as they drag. Modes with numerical subtlety (event-timing, dominant-frequency) omit live preview — user edits values, runs CLI for authoritative pass/fail. This is a deliberate split: live preview where accuracy is cheap, CLI-authoritative where accuracy requires the real comparator.
+
+**Testing asymmetry**: the Python data contract (patch schema, spec-update round-trip, JSON-Schema export, validator rules) is exhaustively tested. The JS layer is covered by golden-file HTML structure snapshots and a human QA checklist (`docs/qa/reporter_checklist.md`) — no JS unit test framework, no E2E harness unless the reporter becomes a regression source.
+
+**Performance budget**: interactive.html for a 50-variable test stays under ~5 MB embedded payload. Trajectories decimated when needed; full-resolution data lives in a sidecar the reporter lazy-loads on demand.
+
+---
+
+## Rule-based recommender (Phase 7)
+
+A lightweight heuristic layer that looks at a signal (and optional baseline) and **proposes a starter metric tree** for the user to inspect and tune. Never replaces authoring; seeds it.
+
+**Hard containment rules (D66)**:
+
+1. **Input contract**: signal (time + values) + optional baseline. Nothing else — no source file, no model ID, no simulation metadata. The recommender never "understands the model."
+2. **Output contract**: one or more proposed metric subtrees in the same JSON shape users author. Nothing else — no model change suggestions, no parameter hints, no simulator recommendations.
+3. **Feature vocabulary is bounded and declared**: each signal feature (mean, std, range, monotonicity, event count, FFT peak ratio, step-like score, SNR, …) lives as a named function in `recommender/features.py`. New features require a decision entry.
+4. **Rule-based only, not model-based**: proposals come from an auditable `(feature-predicate → leaf-spec)` table. Each `ComparisonMode` declares its **baseline compatibility** (`requires_baseline` flag + shape requirements) so the recommender filters candidates automatically — e.g., `event-timing` only proposed when events are detectable; `range` proposed for no-baseline signals.
+5. **Complexity budget per proposal**: at minimum one leaf targeting primary (when a baseline exists). At most three leaves total. At most one combinator layer. Prefer simpler leaves (`range`/`final-only`/`tube` before `event-timing`/`dominant-frequency`). A recommender that proposes complex trees is a recommender users can't trust.
+6. **Not runtime-load-bearing**: if `recommender/` disappears, tests still run. The recommender is a tooling convenience, not a load-bearing part of the comparator.
+
+**No ML in repo**. ML-backed ranking, clustering, or prediction belong in a separate tool that consumes our handoff artifacts. The framework emits artifacts cleanly shaped for such tools; it does not host them.
+
+---
+
 ## Metric composition
 
 Today, a test passes iff every variable's single metric passes. This is too narrow for the target audience:
@@ -108,43 +141,71 @@ Today, a test passes iff every variable's single metric passes. This is too narr
 
 The `test_spec.json` schema extends to express MetricTrees. Simple cases remain terse (a bare variable list with a scalar tolerance stays valid and is interpreted as a flat AND of NRMSE-per-variable).
 
-### Multiple named baselines
+### Baseline model: three distinct roles (D66)
 
-A test can carry **multiple named baselines**, not a single reference. Example: a Dymola simulation compared against (a) its own prior regression trace, (b) data from a physical experiment, (c) a closed-form analytical solution, (d) another simulator's output. Each baseline is named and carries provenance metadata (origin, capture date, citation, notes).
+The tool is a **regression testing** framework. "Does this signal match the stored reference within tolerance?" is the single question it answers. Reference data takes three distinct roles — not a single flat "named baseline" concept:
 
-MetricTree leaves reference baselines by name (`{"metric": "nrmse", "against": "primary", ...}`). The user controls each baseline's pass/fail role by where they place it in the tree:
+**Primary baseline** — the regression anchor.
+- Always the stored simulation result for this test.
+- Created and overwritten by `--accept`.
+- Required when the test carries a MetricTree.
+- At least one tree leaf must target primary outside a `warn` combinator (validator rule). This keeps every regression test honestly regression-checked.
 
-- **Hard fail** — the baseline comparison is inside an `and` branch.
-- **Warning only** — wrapped in a `warn` combinator that always passes but surfaces child diagnostics as warnings in the report.
-- **Display only** — baseline is stored but no MetricTree leaf references it; reporter auto-overlays it on plots for context without contributing to pass/fail.
+**Companion references** — visual overlays, never scored.
+- External time-series data (experimental CSV, analytical solution output, vendor reference, digitized plot data).
+- Stored as file paths in the test spec; two storage options — `external` (path points outside the repo; tool loads best-effort on each run) or `frozen` (file copied into `ReferenceResults/.../companions/`; immutable).
+- Load failures emit a warning on the test but do not affect pass/fail — graceful degradation.
+- MetricTree leaves cannot target companions (schema error). Companions are plot-only.
+- Commands: `companion add <test> <name> <path>` / `companion freeze <test> <name>`.
 
-The same abstraction covers three distinct use cases with no special modes:
+**Soft checks** — warn-wrapped scoring only.
+- Another regression system's primary imported here (e.g., the `dymola-via-fmpy` chain's output; another ecosystem's regression baseline).
+- MetricTree leaves can target soft_checks via `"against": "<name>"`, but the validator enforces that they be inside a `warn` combinator — soft_checks can never hard-fail a test.
+- Commands: produced by cross-backend chains, or `import-baseline <test> <name> <path-to-another-systems-ref>`.
 
-| Use case | How expressed |
-|---|---|
-| Regression against prior self | One baseline (`primary`), AND branch |
-| Validation against experiment | Two baselines (`primary` + `experiment`), second may be AND (hard) or `warn` (soft) |
-| Cross-simulator / cross-backend verification | Two baselines (`dymola` + `fmu`), a metric compares them |
+**Composable regression systems**. To regression-test experimental data itself, run the tool *on* the experimental data as its own tests. That produces its own primary baselines. Then import those baselines into sim tests as soft_checks for cross-checks. One tool, multiple instances, clean composition. This replaces "experiment-as-primary in a sim test" — which would blur the regression identity — with "experiment-has-its-own-regression-tests; sim tests soft-check against them."
 
-This subsumes Gap E (cross-simulator validation) as a composable feature rather than a hardcoded mode.
+The picker in the interactive reporter multi-selects across primary + companions + soft_checks for visual overlays only, with zero scoring effect. Each baseline-kind renders in a distinct visual style.
+
+This three-role split subsumes Gap E (cross-simulator validation) as a composable feature — a cross-backend chain produces a soft_check named by convention (`dymola-via-fmpy`), and a warn-wrapped leaf scores against it. Primary stays the regression anchor.
 
 ---
 
-## Scope: what is in, what is out
+## Scope: what is in, what is out (D66)
+
+The single question this tool answers: *"does this time-dependent signal match the stored reference within tolerance?"* Everything in scope serves that question; everything out of scope belongs to a different tool in an **economy of tools** that composes around ours.
 
 **In scope**:
 - Simulation regression (Modelica, FMU, Julia, Simulink, etc.).
 - Unit testing of simulated behavior (single-run pass/fail with tolerances).
-- Experiment / calibration regression (recorded data vs. expected trajectory).
+- Experiment / calibration regression via composable instances (experiment data gets its own regression test suite; sim tests soft_check against those baselines).
 - Cross-backend verification as a composable feature on top of capabilities.
+- Acceptance-criteria authoring via the interactive reporter (Phase 6 — reporter-as-IDE).
+- Rule-based recommender for starter criteria on new signals (Phase 7).
 - Deterministic and stochastic (via `Distribution` dataset + KS-style metrics) — stochastic is a later phase, but the abstraction accommodates it.
 
-**Out of scope (explicit anti-goals)**:
-- Being a simulator. We orchestrate existing simulators; we do not re-implement solvers or re-invent FMI.
-- FMU generation *as a framework feature*. If a backend supports FMU export as a capability, we expose it — but producing FMUs is the backend's job, not the framework's.
-- Locking to one IDE or one ecosystem. Every feature must be expressible without assuming the user uses Dymola (or any single tool).
-- Full replacement of `pytest`/`unittest`. The framework can be driven from them, and a minimal pytest-style plug-in is plausible, but the framework's scope is "compare signals against baselines," not "run arbitrary Python test functions."
-- Building data-acquisition / instrumentation pipelines. We ingest recorded data; we do not record it.
+**Out of scope (explicit anti-goals — hard lines)**:
+- **Being a simulator**. We orchestrate existing simulators; we do not re-implement solvers or re-invent FMI.
+- **FMU generation as a framework feature**. If a backend supports FMU export as a capability we expose it; producing FMUs is the backend's job.
+- **Parameter estimation / model calibration**. We check whether a model matches data; we do not tune parameters to fit data. A downstream calibration tool can consume our comparison artifacts.
+- **Root-cause analysis of failures at the physics layer**. We emit pass/fail, scores, and diagnostics (observations about the comparison — max deviation, where, when). We do not emit hypotheses about causes.
+- **Design-of-experiments / test selection**. We do not propose which sweeps to run or which tests to author.
+- **Property-based / fuzz testing**. We do not generate inputs to find edge cases.
+- **Static analysis / linting of model code**.
+- **Load / performance testing** (throughput, latency SLAs).
+- **General-purpose scientific visualization**. We render what comparison needs; we do not compete with matplotlib/Plotly-as-frameworks.
+- **Model repository / VCS**. We consume tests from a Source; we do not host or version the models themselves.
+- **ML in the repo**. The recommender (Phase 7) is rule-based. Any ML-backed recommender belongs in a separate tool that consumes our handoff artifacts. Learning from user behavior is out.
+- **Full replacement of `pytest`/`unittest`**. The framework can be driven from them; a pytest-style plug-in is plausible; but our scope is "compare signals against baselines," not "run arbitrary Python test functions."
+- **Locking to one IDE or one ecosystem**. Every feature must be expressible without assuming the user uses any specific tool.
+
+**Rejection criteria for new features**:
+- Does it answer "does this signal match expected?" → in
+- Does it require generating inputs or selecting which tests to run? → out
+- Does it require understanding *why* a test failed at the physics layer? → out
+- Does it compete with a general-purpose tool the user already has? → out
+
+**Economy of tools principle**. Our artifacts (reports, JSON outputs, JSON-Schema exports, diagnostics, comparison records) are designed as handoff-ready for downstream tools — calibration, RCA, parameter estimation. We do one thing well; we emit well-shaped outputs so other tools can build on us. We do not grow into those other tools.
 
 ---
 
@@ -155,3 +216,7 @@ This subsumes Gap E (cross-simulator validation) as a composable feature rather 
 3. **The baseline is the contract.** Tolerances, metric choices, and per-variable overrides live *with* the baseline so they travel with it — no separate config drift. (Already a strength of the current tool; preserve it.)
 4. **Clean breaks during development.** No backwards-compatibility shims while we are pre-1.0. Rename, restructure, remove as needed.
 5. **Modelica is the first consumer, not the reference model.** Design decisions must hold up when the source is an FMU or a CSV, not only when it's a `.mo` file.
+6. **Regression is the identity (D66).** The tool is a regression testing framework. Primary = stored regression anchor. Companions are visual-only. Soft_checks are warn-only. V&V against experiment is a composed use of the tool on experimental data, not a separate test shape.
+7. **Economy of tools (D66).** We do one thing well and emit well-shaped handoff artifacts. Calibration, RCA, parameter estimation, ML-backed ranking — those belong to downstream tools that consume our outputs. We do not grow into them.
+8. **Reporter is the authoring surface; CLI is the execution surface (D66).** No local servers, no live-apply. Download-patch + CLI-apply is the roundtrip.
+9. **Compute layers are UI-free (D66).** `ComparisonMode` and `SimulatorRunner` know nothing about presentation. Reporting is a parallel layer that derives UI from typed Config dataclasses + explicit overrides.
