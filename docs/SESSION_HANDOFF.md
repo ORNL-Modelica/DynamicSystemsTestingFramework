@@ -89,7 +89,7 @@ start-value overrides, python-driver tests) both deferred to a future
 
 ### Phase 6 — Reporter-as-IDE (post-paper, this is the primary next move)
 
-MVP = **6.1 + 6.4 (~3-4 weeks)**. Ships the first closed authoring loop for all six existing modes.
+MVP = **6.0 + 6.1 + 6.4 (~3–4 weeks)**. Implementation plan lives at `docs/PHASE_6_PLAN.md` with ordering, exit criteria per step, and review checkpoints. Ships the first closed authoring loop for all six existing modes.
 
 - **6.0** Performance budget: interactive.html for a 50-var test stays under ~5 MB. Decimate trajectories; sidecar JSON for full-resolution.
 - **6.1** Per-leaf detail panels. Config-dataclass-derived UI auto-rendered for each mode; custom overrides for tube (conditional fields) and range (visual handles). Replaces the `n/a (mode=...)` cells. Each simple mode ships an in-browser JS pass/fail recompute (nrmse, tube, range, final-only); event-timing and dominant-frequency skip live preview (CLI-authoritative).
@@ -190,6 +190,16 @@ If fmpy is missing: `uv pip install -e ".[dev,fmpy]"`.
 
 ---
 
-## Starter prompt for the next session
+## Starter prompt for the next session — Phase 6 MVP kickoff
 
-> Continuing work on the ModelicaTesting project. Read `docs/SESSION_HANDOFF.md` first — the last session (D66) was a docs-only design grill that locked identity, baseline model, and Phase 6-9 structure. Key commitments: tool identity is **regression testing, period** (V&V by composing instances of the tool on experiment data); baseline roles split into **primary** (regression anchor, required, validator-enforced), **companion references** (visual-only, file-path, graceful degradation), **soft_checks** (warn-wrapped cross-regression imports, never hard-fail); the **interactive HTML is the primary authoring surface**, CLI is the execution surface, round-trip via RFC 6902 JSON-Patch + `spec-update` read-modify-write preserving unknown keys; `ComparisonMode` stays pure compute, UI auto-derives from typed Config dataclasses with override slots; **Phase 6 MVP = 6.1 per-leaf controls + 6.4 full-fidelity spec-update** (~3-4 weeks), live preview for simple modes only; recommender (Phase 7) is rule-based with hard input/output/complexity contracts and `ComparisonMode.baseline_compatibility`; **Phase 8 (ML) removed** — ML belongs in downstream tools consuming our artifacts. Read `CLAUDE.md`, `docs/vision.md`, and D66 for the full shape. Conference paper lands this week; post-paper the concrete next move is **Phase 6.1+6.4 MVP**. Other big-ticket items remain: tool rename (deferred), Fréchet/KS/pyfunnel leaves (additive, low risk, can parallel 6.1), dataset types beyond time-series (Phase 9, post-reporter-rewrite), FMU-path semantic gap closure (separate phase, needs Windows + Dymola for validation).
+> Resuming ModelicaTesting after the AMC 2026 paper drop. **Read `docs/PHASE_6_PLAN.md` first** — it is the implementation-oriented decomposition of this session's work. Also skim D66 in `docs/decisions.md` for the commitments behind the plan (identity, baseline-role split, reporter-as-IDE, Phase 8 removed). The concrete goal for this session is **Phase 6 MVP = 6.0 + 6.1 + 6.4** (~3–4 focused weeks):
+>
+> - **6.0** — performance budget. Interactive.html stays under ~5 MB for a 50-variable test; decimate trajectories + sidecar for full-resolution. Precondition to the rest.
+> - **6.1** — per-leaf detail panels replacing today's `n/a (mode=…)` cells. Six modes × (auto-derived UI + JS recompute) with two custom overrides (tube, range). Live preview for nrmse/tube/range/final-only; CLI-authoritative-only for event-timing + dominant-frequency.
+> - **6.4** — full-fidelity `spec-update` round-trip. Reporter emits RFC 6902 JSON-Patch; `cmd_spec_update` applies via read-modify-write preserving unknown keys (including `metadata`). New `export-schema` CLI derives JSON-Schema from the Config dataclasses.
+>
+> Baseline-role split lands alongside 6.0–6.4: `ReferenceStore` partitions primary / companions / soft_checks; new `companion add` / `companion freeze` / `import-baseline` CLIs; validator rules enforce D66 (primary-required-outside-warn, soft_checks-must-be-in-warn, companions-never-targeted).
+>
+> Follow the ordering + checkpoints in `docs/PHASE_6_PLAN.md`. Retire that file into D67 once the MVP merges. Out of scope for this MVP (do not absorb silently): 6.2/6.3/6.5/6.6, recommender (Phase 7), dataset types (Phase 9), tool rename, FMU-path semantic gap closure, any ML. Pre-session sanity check: `uv run pytest -q` expects 404 passed at commit `3a43487`.
+
+**Context to hand the agent on day 1**: `CLAUDE.md`, `docs/vision.md`, `docs/decisions.md` (especially D66), `docs/architecture.md`, `docs/PHASE_6_PLAN.md`. Parallel paper artifacts live at `/mnt/d/Papers/amc2026_testing/` — the paper's SNAPSHOT.md and experimental_log.md pin to the same commit; do not break claims in flight.
