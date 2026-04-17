@@ -15,6 +15,24 @@ Simulation flow per test (``run_single_test``):
      on-disk pattern the Dymola backend uses for ``dsres.mat``.
 
 ``read_result`` loads the .npz and builds a ``TestResult``.
+
+Limitations (D65 — "FMU-path semantic gap"):
+  The current ``fmpy.simulate_fmu`` call passes only ``filename`` /
+  ``stop_time`` / ``solver`` / ``relative_tolerance`` / ``output`` /
+  ``output_interval``. Specifically, the following are **not yet supported**:
+    - ``input=`` — no way to drive an external input schedule into the FMU.
+    - ``fmi_type=`` — FMPy auto-picks (co-simulation if present, else
+      model-exchange); tests cannot select explicitly.
+    - ``start_values=`` — cannot override FMU default start values from a
+      test spec.
+    - "Python-driver" tests — where the *test* is a script that steps the
+      FMU and sets inputs over time, rather than a single ``simulate_fmu``
+      call.
+  This pathway is therefore scoped to **autonomous FMUs** (inputs baked in,
+  co-sim/ME distinction irrelevant to the test's semantics). The Reference
+  FMUs shipped under ``examples/fmu/`` (BouncingBall / Dahlquist / VanDerPol)
+  are the validated shape. Generalizing beyond autonomous FMUs is deferred
+  to a dedicated future phase.
 """
 
 from __future__ import annotations

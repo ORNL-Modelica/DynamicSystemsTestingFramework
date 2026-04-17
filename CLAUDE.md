@@ -31,6 +31,8 @@
 
 Test count: 358 → 404. Decisions D60–D64.
 
+**FMU-pathway scope + cross-backend experimental labeling (complete)**: D65. Grilled the D63 deferred-validation caveat and surfaced a broader concern: the cross-backend chain (`produce_dymola_via_fmpy_baseline`) assumes Dymola-exports-FMU + FMPy-default-simulates is a meaningful cross-check, which is only true for *autonomous* tests (no external inputs, no python-driver, CS-vs-ME-irrelevant). Same semantic gap exists on the primary FMPy path. Changes: (a) `simulators/cross_backend.py` module docstring flagged **EXPERIMENTAL** with scope limits spelled out; one-time warning emitted by `cli._run_cross_backend_chains` when any chain fires; (b) `simulators/fmpy/runner.py` gained a **Limitations** block documenting what the current `simulate_fmu` call does *not* support (`input=` / `fmi_type=` / `start_values=` / python-driver tests) — scope-labeling only, *not* a Phase 2 status reversal (reference FMUs remain validated); (c) new `scripts/smoke_test_dymola_export.py` — standalone script the user ran on Windows to validate `translateModelFMU` signature + FMI license + cwd-on-Windows, independently of the test suite. **Smoke test PASSED on Dymola 2026x (2026-04-17)** against `Modelica.Blocks.Examples.PID_Controller` — signature/license/cwd dimensions of the validation caveat are now locked. Full chain (export → FMPy-simulate → baseline write) still unvalidated on real Dymola; semantic-gap generalization (input drivers, CS/ME choice, start-value overrides, python-driver tests) bundled into a future "FMU-path semantic gap closure" phase. No runtime-behavior change beyond the warning. Test count unchanged: 404. Decision D65.
+
 ## Project Structure
 
 ```

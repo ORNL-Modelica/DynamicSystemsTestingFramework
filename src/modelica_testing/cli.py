@@ -249,6 +249,12 @@ def _run_cross_backend_chains(tests, runner, config, store) -> None:
     if not chain_tests:
         return
 
+    print(
+        f"[experimental] Cross-backend chain '{CROSS_BACKEND_BASELINE_NAME}' is "
+        f"scoped to autonomous FMU-exportable tests only (no external inputs, "
+        f"no python-driver tests); end-to-end validation on real Dymola pending. "
+        f"See D65."
+    )
     print(f"Running cross-backend chains for {len(chain_tests)} test(s)...")
     n_ok = 0
     for t in chain_tests:

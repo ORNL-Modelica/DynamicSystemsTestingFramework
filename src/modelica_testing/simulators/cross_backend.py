@@ -1,4 +1,4 @@
-"""Cross-backend orchestration (4.B.3).
+"""Cross-backend orchestration (4.B.3). **EXPERIMENTAL** (D65).
 
 Helpers that chain backends to produce a named baseline. Today the only
 chain is **dymola-via-fmpy**: Dymola exports the model as an FMU, FMPy
@@ -6,9 +6,23 @@ simulates the FMU, and the FMPy result is stored as a non-primary baseline
 (`"dymola-via-fmpy"` by convention) that MetricTree leaves can score
 against via ``"against": "dymola-via-fmpy"``.
 
-VALIDATION CAVEAT: the Dymola export step requires Windows + Dymola + the
-FMI export license option. Cannot be exercised in CI on Linux WSL — tests
-mock the `export_fmu` step.
+EXPERIMENTAL — scope limits (D65):
+  - **Semantics**: the chain is only meaningful for *autonomous* tests —
+    models with no external inputs, no python driver stepping the FMU, no
+    need to choose between co-simulation and model-exchange. For a test
+    that is fundamentally "a python script driving an FMU with a scheduled
+    input sequence", this chain will produce a baseline whose values do
+    NOT reflect what the test actually does — the comparison against the
+    primary run becomes meaningless. Opt-in via ``requested_baselines``
+    should be reserved for autonomous tests until generalization lands.
+  - **Validation**: the Dymola export step requires Windows + Dymola + the
+    FMI export license option. Cannot be exercised in CI on Linux WSL —
+    tests mock the `export_fmu` step. End-to-end validation on real Dymola
+    is deferred to a dedicated phase.
+
+Generalization (input schedules, CS/ME choice, start-value overrides,
+python-driver tests) is deferred to a future "FMU-path semantic gap
+closure" phase.
 """
 
 from __future__ import annotations

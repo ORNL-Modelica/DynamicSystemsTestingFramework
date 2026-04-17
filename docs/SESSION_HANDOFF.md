@@ -1,12 +1,22 @@
-# Session handoff — post-bundled-phase (PTA-follow + 4.E + 4.C + 4.B + interactive HTML)
+# Session handoff — post-D65 (FMU-pathway scoping + cross-backend labeled experimental)
 
-**Date**: 2026-04-16
+**Date**: 2026-04-17
 
 A bundled session executed five originally-separate moves: PTA follow-ups
 (folder filter, match composition, class-name-glob, annotation source), 4.E
 (weighted combinator), 4.C (event-timing + dominant-frequency leaf metrics),
 4.B (cross-backend Dymola → FMPy chain), and interactive-HTML genericization
 for non-NRMSE leaves. Tool rename remains deferred.
+
+Follow-on (D65 — 2026-04-17): grilled the D63 deferred-validation caveat and
+scoped the FMU pathway honestly. Cross-backend chain flagged **experimental**
+with a runtime warning; FMPy primary gained a **Limitations** docstring (not
+a status reversal — it remains validated for autonomous reference FMUs); new
+`scripts/smoke_test_dymola_export.py` exists for the user to run on Windows
+to lock `translateModelFMU` signature + FMI license + cwd. Real end-to-end
+Dymola validation AND chain generalization (input drivers, CS/ME choice,
+start-value overrides, python-driver tests) both deferred to a future
+"FMU-path semantic gap closure" phase.
 
 ---
 
@@ -20,6 +30,7 @@ for non-NRMSE leaves. Tool rename remains deferred.
 **Phase 4.D** (rename sweep + cleanup follow-ups) — complete. D57–D58.
 **Phase 5 / PTA** (pluggable test annotations) — complete. D59.
 **Bundled session** (PTA follow-ups + 4.E + 4.C + 4.B + interactive HTML) — complete. D60–D64.
+**FMU-pathway scope + cross-backend experimental labeling** — complete. D65.
 
 ### Current snapshot
 
@@ -29,7 +40,7 @@ for non-NRMSE leaves. Tool rename remains deferred.
 - **Leaf metrics**: `nrmse`, `tube`, `final-only`, `range`, `event-timing` (D62), `dominant-frequency` (D62).
 - **Combinators**: `and`, `or`, `k-of-n`, `warn`, `weighted` (D61, direction-aware).
 - **Multi-baseline**: `"against": "<name>"` on leaves; chains can produce baselines (D63).
-- **Cross-backend chain**: `dymola-via-fmpy` — primary backend exports FMU → FMPy simulates → named baseline written. **Validation caveat**: Dymola export step needs Windows + FMI license.
+- **Cross-backend chain**: `dymola-via-fmpy` — primary backend exports FMU → FMPy simulates → named baseline written. **EXPERIMENTAL** (D65): scoped to autonomous FMU-exportable tests; end-to-end validation still needs Windows+Dymola. Runtime warning emitted when chain fires.
 - **Pluggable test discovery (PTA)**: `Recognizer` registry. Bundled `BundledModelicaUnitTestsRecognizer`; user-provided via `testing.json` `"recognizers"`. Match types: `component-instantiation`, `extends`, `class-name-glob`, `all-of`, `any-of`. Field sources: `parameter`, `constant`, `experiment-annotation`, `annotation`. Folder filter (`paths_include`/`paths_exclude`) per-recognizer.
 - **Richer-contract TestModel fields**: `simulate_only` (wired in comparator — pass iff sim succeeds), `requested_fmu_export`, `requested_baselines` (drives cross-backend chains).
 - **Interactive HTML**: mode-aware Score column; tolerance slider applies to NRMSE-mode variables only (others show `n/a (mode=...)`).
@@ -45,11 +56,31 @@ for non-NRMSE leaves. Tool rename remains deferred.
 - **ModelicaTestingLib**: PTA demo + `SimulateOnlyTest.mo`.
 - **TRANSFORM** (`D:\Modelica\TRANSFORM-UnitTests\ReferenceResults`): not yet exercised post-bundled-session; expected to keep working since all changes are additive.
 
-### What needs Windows + Dymola to validate (per D63)
+### What needs Windows + Dymola to validate (per D63 / D65)
 
-- `DymolaWorker.export_fmu` end-to-end (mocked in CI).
-- `produce_dymola_via_fmpy_baseline` chain (mock primary, real FMPy in CI).
-- CLI `_run_cross_backend_chains` integration.
+- ~~`DymolaWorker.export_fmu` signature/license/cwd~~ **DONE 2026-04-17**:
+  `scripts/smoke_test_dymola_export.py` passed on Dymola 2026x against
+  `Modelica.Blocks.Examples.PID_Controller`. Signature matches verbatim,
+  FMI export license present, cwd-on-Windows works, FMU produced.
+  Notable: Dymola sanitizes basenames with a `_0` disambiguation
+  (`PID_Controller` → `PID_0Controller.fmu`) — `export_fmu` is already
+  immune (uses Dymola's returned name + glob fallback).
+- `produce_dymola_via_fmpy_baseline` full chain on real Dymola output
+  (export a real FMU, feed it to FMPy, verify the baseline lands and is
+  numerically sensible against the Dymola primary result) — still pending.
+- CLI `_run_cross_backend_chains` integration end-to-end — still pending.
+
+### Deferred to a dedicated phase (D65)
+
+**"FMU-path semantic gap closure"** — bundle of:
+- `FmpyRunner.run_single_test` input-schedule support (`input=` param to `fmpy.simulate_fmu`).
+- Test-spec field for `fmi_type` selection (CS vs ME).
+- Test-spec field for `start_values` override.
+- Python-driver test shape: test declares a python entry point rather than
+  a single model ID; the entry point receives the FMU handle and drives it.
+- Cross-backend chain generalization to honor all of the above (inputs flow
+  from the test spec into both primary FMPy and the chain's FMPy half).
+- Real end-to-end Dymola validation pass + demo model in ModelicaTestingLib.
 
 ---
 
@@ -61,7 +92,7 @@ for non-NRMSE leaves. Tool rename remains deferred.
 
 ### Real Dymola validation pass for 4.B
 
-Run a representative test on Windows with Dymola, verify `dymola-via-fmpy` baseline lands and renders. Add a demo model in ModelicaTestingLib once validated.
+**Superseded by D65** — deferred as part of the "FMU-path semantic gap closure" phase. First concrete step when the user is next on Windows: run `scripts/smoke_test_dymola_export.py` to lock the `translateModelFMU` signature cheaply. Full chain validation + demo model waits on the semantic-gap phase.
 
 ### Dataset types beyond TIME_SERIES
 
@@ -139,4 +170,4 @@ If fmpy is missing: `uv pip install -e ".[dev,fmpy]"`.
 
 ## Starter prompt for the next session
 
-> Continuing work on the ModelicaTesting project. Read `docs/SESSION_HANDOFF.md` first — it summarizes where the last session left off (bundled phase: PTA follow-ups + 4.E weighted combinator + 4.C event-timing/dominant-frequency leaves + 4.B cross-backend chain + interactive HTML genericization). 4.B's Dymola FMU export step is implemented but needs Windows + Dymola + FMI license to validate end-to-end. Read `CLAUDE.md` and the most recent decisions D60–D64 for context. Then recommend a next move with a decomposition. The big-ticket remaining items are: tool rename (still deferred), real Dymola validation pass for 4.B, dataset types beyond time-series, additional leaf types (Fréchet, KS, pyfunnel).
+> Continuing work on the ModelicaTesting project. Read `docs/SESSION_HANDOFF.md` first — the last session (D65) grilled the deferred-validation question for the cross-backend FMU chain and surfaced a broader concern: both the chain AND the primary FMPy path today only support *autonomous* FMUs (no external input schedules, no CS/ME choice, no start-value overrides, no python-driver tests). Cross-backend chain is now labeled experimental with a runtime warning; FMPy primary has a Limitations docstring (Phase 2 validation for reference FMUs still holds). A standalone `scripts/smoke_test_dymola_export.py` exists for the user to run on Windows to lock `translateModelFMU` signature. Real validation + chain generalization + python-driver tests are bundled into a future "FMU-path semantic gap closure" phase. Read `CLAUDE.md` and D65 for context. Recommend a next move with a decomposition — big-ticket items are: tool rename (still deferred), dataset types beyond time-series (events, spectra, distributions), additional leaf types (Fréchet, KS, pyfunnel), or the FMU-path semantic gap closure phase itself.
