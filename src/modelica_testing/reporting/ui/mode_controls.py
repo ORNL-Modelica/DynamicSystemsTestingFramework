@@ -308,6 +308,19 @@ def registered_modes() -> list[str]:
 # Bundled registrations — six comparison modes
 # ---------------------------------------------------------------------------
 
+def _tube_cell_renderer(schema, *, mode, variable, values):
+    """6.1.4 — tube mode has a dedicated rich editor below the plot
+    (template lines ~260+). The variable-table cell just points at it."""
+    var_attr = html.escape(variable or "")
+    mode_attr = html.escape(mode or "")
+    return (
+        f'<div class="mode-controls tube-cell" data-mode="{mode_attr}" '
+        f'data-variable="{var_attr}">'
+        '<span class="hint">→ See tube editor below plot</span>'
+        '</div>'
+    )
+
+
 def _register_bundled() -> None:
     """Register the six built-in modes' UI at import time."""
     from ...comparison.modes import (
@@ -320,9 +333,13 @@ def _register_bundled() -> None:
     )
 
     register_mode_ui("nrmse", NrmseConfig)
-    register_mode_ui("tube", TubeConfig)  # 6.1.4 will attach a custom_renderer
+    # 6.1.4 — tube has a rich dedicated editor; cell defers to it.
+    register_mode_ui("tube", TubeConfig, custom_renderer=_tube_cell_renderer)
     register_mode_ui("final_only", FinalOnlyConfig)
-    register_mode_ui("range", RangeConfig)  # 6.1.4 may attach a custom_renderer
+    # range auto-derived panel is the 6.1.5 default; 6.1.4 adds visual
+    # reference lines on the trajectory plot via JS (no custom_renderer
+    # needed — the inputs stay in the cell, the plot overlay is additive).
+    register_mode_ui("range", RangeConfig)
     register_mode_ui("event-timing", EventTimingConfig)
     register_mode_ui("dominant-frequency", DominantFrequencyConfig)
 

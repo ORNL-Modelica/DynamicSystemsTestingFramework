@@ -78,6 +78,15 @@ details summary:hover { color: #333; }
 .warnings-prominent table { margin: 0; }
 .meta-table { width: auto; min-width: 400px; }
 .meta-table td:first-child { font-weight: 500; white-space: nowrap; }
+/* 6.1.5 — auto-derived per-mode control panels */
+.mode-controls { display: flex; flex-wrap: wrap; gap: 0.4em 0.8em; align-items: center; font-size: 0.85em; }
+.mode-controls .mc-field { display: inline-flex; align-items: center; gap: 0.3em; }
+.mode-controls .mc-field > span { color: #555; }
+.mode-controls input[type=number] { width: 6.5em; padding: 0.1em 0.25em; }
+.mode-controls input[type=text] { width: 7em; padding: 0.1em 0.25em; }
+.mode-controls select { padding: 0.1em 0.25em; }
+.mode-controls textarea { width: 12em; font-family: monospace; font-size: 0.85em; }
+.cli-authoritative { display: inline-block; margin-left: 0.5em; padding: 0.1em 0.45em; border-radius: 3px; background: #eef3ff; border: 1px solid #b5c5e8; color: #3a5ba0; font-size: 0.75em; }
 </style>
 </head>
 <body>
@@ -227,8 +236,10 @@ details summary:hover { color: #333; }
   <td class="var-score">{{ v.score_display | default("NRMSE %.4e" | format(v.nrmse)) }}</td>
   {% if v.mode in ("nrmse", "final_only") or not v.mode %}
   <td><input type="number" class="var-tol-input" data-idx="{{ loop.index0 }}" step="0.001" min="0" value="{{ v.tolerance_used }}" title="Tolerance for this variable (re-evaluates on change)"></td>
+  {% elif v.mode_controls_html %}
+  <td class="mode-controls-cell" data-idx="{{ loop.index0 }}" data-mode="{{ v.mode }}">{{ v.mode_controls_html | safe }}{% if v.cli_authoritative %}<span class="cli-authoritative" title="Edits reflected after running modelica-testing run">CLI-authoritative</span>{% endif %}</td>
   {% else %}
-  <td><span class="hint" title="The {{ v.mode }} mode uses mode-specific thresholds; the slider applies only to NRMSE-mode variables.">n/a (mode={{ v.mode }})</span></td>
+  <td><span class="hint">n/a</span></td>
   {% endif %}
   <td class="var-criterion">{{ v.criterion }}</td>
 </tr>
@@ -323,6 +334,48 @@ const SPEC_PATH = {{ spec_path | tojson }};
 // ---- State ----
 let globalTolerance = VARIABLES.length > 0 ? VARIABLES[0].tolerance_used : 1e-4;
 let perVarTolerances = VARIABLES.map(v => v.tolerance_used);
+// 6.1.2 — per-variable mode config dict, populated from the Python-rendered
+// panel. Edits in the auto-derived panel write back here via wireModeControls.
+let perVarModeConfigs = VARIABLES.map(v => Object.assign({}, v.mode_values || {}));
+
+// 6.1.2 — mode-to-scorer registry. Each scorer returns {passed, score, label}
+// from (variable, config, idx). Event-timing and dominant-frequency have no
+// entry: they fall back to the CLI-computed v.passed (D66 — honest no-preview).
+const MODE_SCORERS = {
+  nrmse: (v, cfg) => {
+    const tol = Number(cfg && cfg.tolerance);
+    const t = Number.isFinite(tol) && tol > 0 ? tol : v.tolerance_used;
+    return { passed: v.nrmse < t, score: v.nrmse, label: `NRMSE ${v.nrmse.toExponential(3)}` };
+  },
+  final_only: (v, cfg) => {
+    const tol = Number(cfg && cfg.tolerance);
+    const t = Number.isFinite(tol) && tol > 0 ? tol : v.tolerance_used;
+    return { passed: v.max_abs_error < t, score: v.max_abs_error, label: `|err| ${v.max_abs_error.toExponential(3)}` };
+  },
+  range: (v, cfg, idx) => {
+    const traj = TRAJECTORIES[idx];
+    if (!traj || !traj.act_values || !traj.act_values.length) {
+      return { passed: v.passed, score: null, label: '(no data)' };
+    }
+    const mn = (cfg && cfg.min_value !== null && cfg.min_value !== undefined && cfg.min_value !== '')
+      ? Number(cfg.min_value) : null;
+    const mx = (cfg && cfg.max_value !== null && cfg.max_value !== undefined && cfg.max_value !== '')
+      ? Number(cfg.max_value) : null;
+    let maxViol = 0;
+    for (const val of traj.act_values) {
+      if (mn !== null && val < mn) maxViol = Math.max(maxViol, mn - val);
+      if (mx !== null && val > mx) maxViol = Math.max(maxViol, val - mx);
+    }
+    return { passed: maxViol === 0, score: maxViol, label: `max_viol ${maxViol.toExponential(3)}` };
+  },
+  tube: (v, cfg, idx) => {
+    // Tube has a dedicated editor; trust its tubePassState (set by updateTube).
+    if (idx in tubePassState) {
+      return { passed: tubePassState[idx], score: null, label: '(tube editor)' };
+    }
+    return { passed: v.passed, score: null, label: '(tube editor)' };
+  },
+};
 
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
@@ -334,6 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.var-tol-input').forEach(input => {
     input.addEventListener('input', onVarTolChange);
   });
+  wireModeControls();
   renderPlots();
   renderDiagPlots();
   renderNBPlots();
@@ -353,6 +407,70 @@ function onGlobalChange(e) {
     }
   });
   updateAllStatus();
+}
+
+// 6.1.2 — wire auto-derived mode control inputs (6.1.1 panel) to the scorer.
+function wireModeControls() {
+  document.querySelectorAll('.mode-controls-cell').forEach(cell => {
+    const idx = parseInt(cell.dataset.idx);
+    if (isNaN(idx)) return;
+    cell.querySelectorAll('[data-field]').forEach(input => {
+      const handler = (e) => onModeFieldChange(idx, e.target);
+      input.addEventListener('input', handler);
+      input.addEventListener('change', handler);
+    });
+  });
+}
+
+function onModeFieldChange(idx, input) {
+  const field = input.dataset.field;
+  let val;
+  if (input.type === 'checkbox') {
+    val = input.checked;
+  } else if (input.type === 'number') {
+    val = input.value === '' ? null : parseFloat(input.value);
+    if (input.value !== '' && isNaN(val)) return;
+  } else if (input.dataset.passthrough === 'true') {
+    // Passthrough textarea — round-trip raw JSON if parseable, else string.
+    try { val = input.value ? JSON.parse(input.value) : null; }
+    catch (_) { val = input.value; }
+  } else {
+    // empty select value → null (Optional[Literal] unset slot)
+    val = input.value === '' ? null : input.value;
+  }
+  perVarModeConfigs[idx][field] = val;
+  // 6.1.4 — range inputs also update the trajectory-plot overlay.
+  if ((varModes[idx] || VARIABLES[idx].mode) === 'range' &&
+      (field === 'min_value' || field === 'max_value')) {
+    applyRangeOverlay(idx);
+  }
+  updateVarStatus(idx);
+  updateSummary();
+  updateExport();
+}
+
+// 6.1.4 — draw min/max reference lines on a range variable's trajectory
+// plot. Input-driven only (v1) — drag-to-edit is a later stretch.
+function applyRangeOverlay(idx) {
+  const el = document.getElementById(`plot-${idx}`);
+  if (!el || !el.data) return;
+  const cfg = perVarModeConfigs[idx] || {};
+  const shapes = [];
+  const mk = (y, label) => ({
+    type: 'line', xref: 'paper', x0: 0, x1: 1,
+    yref: 'y', y0: y, y1: y,
+    line: { color: '#f44336', width: 1.5, dash: 'dash' },
+    name: label,
+  });
+  if (cfg.min_value !== null && cfg.min_value !== undefined && cfg.min_value !== '') {
+    const mn = Number(cfg.min_value);
+    if (Number.isFinite(mn)) shapes.push(mk(mn, 'min'));
+  }
+  if (cfg.max_value !== null && cfg.max_value !== undefined && cfg.max_value !== '') {
+    const mx = Number(cfg.max_value);
+    if (Number.isFinite(mx)) shapes.push(mk(mx, 'max'));
+  }
+  Plotly.relayout(el, { shapes });
 }
 
 function onVarTolChange(e) {
@@ -376,18 +494,19 @@ const tubePassState = {};
 
 function computePass(idx) {
   const v = VARIABLES[idx];
-  const mode = varModes[idx];
-  if (mode === 'tube') {
-    if (idx in tubePassState) return tubePassState[idx];
+  const mode = varModes[idx] || v.mode || 'nrmse';
+  const scorer = MODE_SCORERS[mode];
+  if (!scorer) {
+    // event-timing / dominant-frequency — CLI-authoritative, no recompute.
     return v.passed;
   }
-  // Only NRMSE mode is recomputable from the per-variable tolerance slider.
-  // Other modes (range, event-timing, dominant-frequency, final_only) carry
-  // mode-specific thresholds in their original config — slider doesn't apply.
-  if (mode && mode !== 'nrmse') {
-    return v.passed;
+  // NRMSE is the special historical case — the tolerance slider writes
+  // perVarTolerances[], so mirror that into the config before scoring so
+  // slider + panel stay in sync.
+  if (mode === 'nrmse') {
+    perVarModeConfigs[idx].tolerance = perVarTolerances[idx];
   }
-  return v.nrmse < perVarTolerances[idx];
+  return scorer(v, perVarModeConfigs[idx], idx).passed;
 }
 
 function updateVarStatus(idx) {
@@ -545,6 +664,11 @@ function renderPlots() {
     });
 
     Plotly.newPlot(el, traces, makePlotLayout(traj.name), PLOT_CFG);
+
+    // 6.1.4 — range mode: overlay horizontal reference lines at min/max.
+    if ((varModes[idx] || VARIABLES[idx].mode) === 'range') {
+      applyRangeOverlay(idx);
+    }
 
     // --- Error panels (only if reference exists) ---
     const absEl = document.getElementById(`plot-abserr-${idx}`);

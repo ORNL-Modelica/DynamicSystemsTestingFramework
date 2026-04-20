@@ -79,6 +79,63 @@ def _build_stats_section(
     return {"title": title, "rows": rows}
 
 
+def _extract_mode_values(vc: VariableComparison, mode: str) -> dict:
+    """Produce the per-mode config-value dict for the UI panel + JS scorer.
+
+    Mirrors the fields each :class:`ComparisonMode` Config dataclass exposes.
+    Values come from the already-computed VariableComparison (``tolerance_used``
+    is authoritative), falling back to diagnostic/config defaults where the
+    raw spec isn't reachable from here.
+    """
+    diag = vc.diagnostics or {}
+    if mode == "nrmse":
+        return {"tolerance": float(vc.tolerance_used)}
+    if mode == "final_only":
+        return {"tolerance": float(vc.tolerance_used)}
+    if mode == "tube":
+        # Tube has its own rich editor; the auto-derived panel is supplementary.
+        return {
+            "tube_width_mode": diag.get("tube_width_mode"),
+            "tube_abs": float(diag.get("tube_abs", 0.0)),
+            "tube_rel": float(diag.get("tube_rel", 0.0)),
+            "tube_min_width": float(diag.get("tube_min_width", 0.0)),
+            "tube_interpolation": diag.get("tube_interpolation", "linear"),
+        }
+    if mode == "range":
+        # Range bounds round-trip via diagnostics (comparator stashes them).
+        return {
+            "min_value": diag.get("min_value"),
+            "max_value": diag.get("max_value"),
+        }
+    if mode == "event-timing":
+        return {
+            "time_tolerance": float(diag.get("time_tolerance", 1e-3)),
+            "count_must_match": bool(diag.get("count_must_match", True)),
+        }
+    if mode == "dominant-frequency":
+        return {
+            "rel_tolerance": float(diag.get("rel_tolerance", vc.tolerance_used)),
+            "min_frequency": float(diag.get("min_frequency", 0.0)),
+        }
+    return {}
+
+
+def _render_mode_controls(variable: str, mode: str, values: dict) -> str:
+    """Render the 6.1.1 auto-derived UI panel for this mode + values.
+
+    Returns an empty string when no UI is registered for the mode (caller
+    falls back to the hint span). Unknown / implicit mode defaults to
+    ``"nrmse"``.
+    """
+    from .ui.mode_controls import get_mode_ui
+
+    lookup = mode or "nrmse"
+    ui = get_mode_ui(lookup)
+    if ui is None:
+        return ""
+    return ui.render(variable=variable, values=values)
+
+
 def _build_template_context(
     model_id: str,
     png_files: list[tuple[str, VariableComparison]],
@@ -272,6 +329,10 @@ def _build_template_context(
                 f"NRMSE {vc.nrmse:.3e} vs tolerance {vc.tolerance_used:.3e} "
                 f"→ {'PASS' if vc.passed else 'FAIL'}"
             )
+        mode_values = _extract_mode_values(vc, mode)
+        mode_controls_html = _render_mode_controls(
+            vc.name or f"x[{vc.index}]", mode, mode_values,
+        )
         variables.append({
             "name": vc.name or f"x[{vc.index}]",
             "passed": bool(vc.passed),
@@ -290,6 +351,11 @@ def _build_template_context(
             "tube_points_inside": float(vc.tube_points_inside) if vc.tube_points_inside is not None else None,
             "tube_worst_violation": float(vc.tube_worst_violation) if vc.tube_worst_violation is not None else None,
             "tube_worst_violation_time": float(vc.tube_worst_violation_time) if vc.tube_worst_violation_time is not None else None,
+            # 6.1.5 — rendered control panel HTML + raw config values for JS.
+            "mode_controls_html": mode_controls_html,
+            "mode_values": mode_values,
+            # Modes without JS recompute get a CLI-authoritative badge.
+            "cli_authoritative": mode in ("event-timing", "dominant-frequency"),
         })
 
     # --- Trajectory data for interactive plots ---

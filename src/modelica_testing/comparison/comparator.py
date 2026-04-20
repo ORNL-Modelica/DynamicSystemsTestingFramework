@@ -533,6 +533,9 @@ def _compare_range(
         tube_points_inside=fraction_inside,
         tube_worst_violation=max_violation,
         tube_worst_violation_time=worst_time,
+        # Preserve the declared bounds so the reporter panel can pre-fill
+        # them (6.1.5 — auto-derived mode UI reads mode_values from here).
+        diagnostics={"min_value": min_value, "max_value": max_value},
     )
 
 
