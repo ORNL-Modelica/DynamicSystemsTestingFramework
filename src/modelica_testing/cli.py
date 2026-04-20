@@ -501,8 +501,11 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 
 def cmd_spec_update(args: argparse.Namespace) -> int:
-    """Update comparison tolerances in test_spec.json from a JSON file."""
+    """Update test_spec.json from either a legacy flat dict OR an RFC 6902
+    patch envelope (6.4.3). Auto-detect by shape: presence of ``"patch"``
+    → new path; else legacy ``update_test_comparison``."""
     import json as json_mod
+    from .discovery.patch_apply import PatchError, apply_patch
     from .discovery.spec_parser import update_test_comparison
 
     config = _build_config(args)
@@ -526,10 +529,72 @@ def cmd_spec_update(args: argparse.Namespace) -> int:
         print("JSON must contain a 'model' field")
         return 1
 
+    patch = update_data.get("patch")
+    if isinstance(patch, list):
+        # RFC 6902 path. Mutate in-memory first, then validate metric tree
+        # (6.4.4), then write — no partial state on validation failure.
+        try:
+            _apply_validated_patch(spec_path, model_id, patch, config)
+        except PatchError as e:
+            print(f"Patch failed: {e}")
+            return 1
+        print(f"Applied {len(patch)} op(s) to {model_id} → {spec_path}")
+        for op in patch:
+            print(f"  {op.get('op'):<8} {op.get('path'):<60} {op.get('value', '')}")
+        return 0
+
+    # Legacy path: overwrites comparison block. Preserved for a transition
+    # cycle; see PHASE_6_PLAN 6.4.3.
     update_test_comparison(spec_path, update_data)
-    print(f"Updated comparison settings for {model_id}")
+    print(f"Updated comparison settings for {model_id} (legacy dict format)")
     print(f"  Spec file: {spec_path}")
     return 0
+
+
+def _apply_validated_patch(spec_path, model_id, patch, config):
+    """Apply a patch with dry-run + validate → then write. Validator
+    enforcement lives in `comparison/validator.py`; we only invoke it
+    when the patched entry has a `metrics` tree."""
+    from .discovery.patch_apply import apply_patch
+
+    # Stage 1: dry-run apply in memory to check path/whitelist errors.
+    mutated = apply_patch(spec_path, model_id, patch, write=False)
+    # Stage 2: validate metric tree (if present).
+    _validate_entry_metric_tree(mutated, model_id, config)
+    # Stage 3: commit.
+    apply_patch(spec_path, model_id, patch, write=True)
+
+
+def _validate_entry_metric_tree(data, model_id, config):
+    """When the patched entry has a `metrics` tree, run the D66 validator.
+
+    Skipped when the entry has no tree (legacy implicit-AND) or when the
+    validator's baseline-role lookup can't be built (missing ref store).
+    """
+    entry = None
+    for e in data.get("tests", []):
+        if isinstance(e, dict) and e.get("model") == model_id:
+            entry = e
+            break
+    if entry is None or "metrics" not in entry:
+        return
+
+    from .comparison.tree_spec import parse_metric_tree
+    from .comparison.validator import role_lookup_from_store, validate_tree
+    from .discovery.patch_apply import PatchError
+    from .storage.reference_store import ReferenceStore
+
+    try:
+        tree = parse_metric_tree(entry["metrics"])
+    except Exception as e:
+        raise PatchError(f"patched metric tree is invalid: {e}")
+
+    store = ReferenceStore(config)
+    lookup = role_lookup_from_store(store, model_id)
+    errors = validate_tree(tree, lookup)
+    if errors:
+        msg = "; ".join(str(e) for e in errors)
+        raise PatchError(f"validator rejected the patched tree: {msg}")
 
 
 def cmd_companion(args: argparse.Namespace) -> int:
@@ -766,6 +831,23 @@ def migrate_baselines_tree(ref_root: Path, apply: bool) -> tuple[int, int]:
     if not apply and total_moves > 0:
         print(f"Re-run with --apply to actually move them.")
     return total_files, total_moves
+
+
+def cmd_export_schema(args: argparse.Namespace) -> int:
+    """Emit a JSON-Schema document describing ``test_spec.json`` (6.4.5)."""
+    import json as json_mod
+
+    from .reporting.schema_export import build_schema
+
+    schema = build_schema()
+    text = json_mod.dumps(schema, indent=2) + "\n"
+    out = getattr(args, "output", None)
+    if out:
+        Path(out).write_text(text, encoding="utf-8")
+        print(f"Wrote schema to {out}")
+    else:
+        sys.stdout.write(text)
+    return 0
 
 
 def cmd_migrate_baselines(args: argparse.Namespace) -> int:
@@ -1354,6 +1436,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_import.add_argument("name", type=str, help="Soft_check name (how MetricTree leaves will reference it)")
     p_import.add_argument("source_path", type=str, help="Path to source reference JSON (flat ref file shape)")
 
+    # export-schema — emit JSON-Schema for test_spec.json (6.4.5)
+    p_schema = subparsers.add_parser(
+        "export-schema",
+        help="Emit a JSON-Schema describing the test_spec.json shape",
+    )
+    p_schema.add_argument(
+        "--output", "-o", type=str, default=None,
+        help="Write schema to this file instead of stdout",
+    )
+
     # migrate-baselines — one-off migration from flat named-baselines to soft_checks/
     p_migrate = subparsers.add_parser(
         "migrate-baselines",
@@ -1387,6 +1479,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "companion": cmd_companion,
         "soft-check": cmd_soft_check,
         "import-baseline": cmd_import_baseline,
+        "export-schema": cmd_export_schema,
         "migrate-baselines": cmd_migrate_baselines,
         "check-dymola": cmd_check_dymola,
     }

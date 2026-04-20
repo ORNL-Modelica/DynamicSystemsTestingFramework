@@ -216,7 +216,8 @@ details summary:hover { color: #333; }
         <span class="save-status" id="save-status"></span>
       </div>
       <p style="font-size:0.8em; color:#888; margin-top:0.5em;">
-        To apply, download the JSON and run: <code>uv run python -m modelica_testing spec-update tolerance_update.json</code>
+        RFC 6902 JSON-Patch. To apply: <code>uv run modelica-testing spec-update spec_patch.json</code>.
+        Preserves existing <code>description</code> / <code>metadata</code> / unknown keys in <code>test_spec.json</code>.
       </p>
     </details>
   </div>
@@ -1591,43 +1592,76 @@ function renderNBPlots() {
 }
 
 // ---- Export / Save ----
-function buildExportData() {
-  const overrides = {};
-  VARIABLES.forEach((v, idx) => {
-    const tol = perVarTolerances[idx];
-    const mode = varModes[idx];
-
-    if (mode === 'tube' && tubeData[idx]) {
-      const td = tubeData[idx];
-      const override = { mode: 'tube', tube_width_mode: td.widthMode };
-      if (td.minWidth > 0) override.tube_min_width = td.minWidth;
-
-      // Check if constant (all points same value)
-      const allSame = td.points.every(p =>
-        p.upper === td.points[0].upper && p.lower === td.points[0].lower
-      );
-      if (allSame && td.synced && td.widthMode !== 'absolute') {
-        // Constant symmetric band/rel — use shorthand
-        const key = td.widthMode === 'rel' ? 'tube_rel' : 'tube_abs';
-        override[key] = td.points[0].upper;
-      } else {
-        // For absolute mode or varying points, always emit tube_points with upper+lower
-        override.tube_points = td.points.map(p => ({
-          time: p.time, upper: p.upper, lower: p.lower,
-        }));
-        override.tube_interpolation = td.interpolation;
-      }
-      overrides[v.name] = override;
-    } else if (Math.abs(tol - globalTolerance) > 1e-15) {
-      overrides[v.name] = { tolerance: tol };
-    }
-  });
-  const entry = { model: MODEL_ID, comparison: { tolerance: globalTolerance } };
-  if (Object.keys(overrides).length > 0) {
-    entry.comparison.variable_overrides = overrides;
-  }
-  return entry;
+// 6.4.2 — emit RFC 6902 JSON-Patch against the test entry (paths
+// relative, not /tests/N/...). cmd_spec_update applies via
+// read-modify-write, preserving unknown keys + description + metadata.
+function jsonPointerEscape(s) {
+  return String(s).replace(/~/g, '~0').replace(/\//g, '~1');
 }
+
+function floatsDiffer(a, b) {
+  if (a === b) return false;
+  if (a == null || b == null) return true;
+  const scale = Math.max(Math.abs(a), Math.abs(b), 1e-12);
+  return Math.abs(a - b) / scale > 1e-12;
+}
+
+function buildPatchData() {
+  const ops = [];
+  // Global-ish tolerance: only emit a top-level write if a known baseline
+  // existed. We don't track that here; the CLI ignores spurious identity
+  // writes (replace X=X on a value that's already X). Keep it simple:
+  // only emit global tolerance if the user actively changed it.
+  if (floatsDiffer(globalTolerance, VARIABLES.length ? VARIABLES[0].tolerance_used : null)) {
+    ops.push({
+      op: 'replace',
+      path: '/comparison/tolerance',
+      value: globalTolerance,
+    });
+  }
+
+  VARIABLES.forEach((v, idx) => {
+    const orig = v.mode_values || {};
+    const cur = perVarModeConfigs[idx] || {};
+    const varKey = jsonPointerEscape(v.name);
+    const basePath = `/comparison/variable_overrides/${varKey}`;
+
+    // NRMSE / final-only share a scalar tolerance input separate from the
+    // auto-derived panel; mirror perVarTolerances into the patch.
+    const mode = varModes[idx] || v.mode || 'nrmse';
+    if (mode === 'nrmse' || mode === 'final_only') {
+      const newTol = perVarTolerances[idx];
+      if (floatsDiffer(newTol, v.tolerance_used)) {
+        ops.push({
+          op: 'replace',
+          path: `${basePath}/tolerance`,
+          value: newTol,
+        });
+      }
+    }
+
+    // Per-mode field diffs — everything in the current config that
+    // differs from the original (or is newly set).
+    Object.keys(cur).forEach(field => {
+      const curVal = cur[field];
+      const origVal = orig[field];
+      if (curVal === origVal) return;
+      if (typeof curVal === 'number' && typeof origVal === 'number'
+          && !floatsDiffer(curVal, origVal)) return;
+      ops.push({
+        op: 'replace',
+        path: `${basePath}/${jsonPointerEscape(field)}`,
+        value: curVal,
+      });
+    });
+  });
+
+  return { model: MODEL_ID, patch: ops };
+}
+
+// Back-compat alias retained for any downstream that imported the old name
+// via window.buildExportData (vanishingly unlikely; remove next cycle).
+function buildExportData() { return buildPatchData(); }
 
 function updateExport() {
   const el = document.getElementById('export-json');
@@ -1646,7 +1680,7 @@ function downloadExport() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'tolerance_update.json';
+  a.download = 'spec_patch.json';
   a.click();
   URL.revokeObjectURL(url);
   showSaveStatus('Downloaded!');
