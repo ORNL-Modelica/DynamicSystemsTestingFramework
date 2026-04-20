@@ -194,6 +194,15 @@ class Config:
     # Diagnostic variables: auto-captured from simulation, shown in reports but not compared
     diagnostic_variables: list[str] = field(default_factory=lambda: ["CPUtime", "EventCounter"])
 
+    # Phase 6.0 — interactive.html payload budget. LTTB-decimates trajectories
+    # embedded for Plotly rendering; full-resolution arrays remain on disk in
+    # comparison_data.json. Only affects the HTML visual; pass/fail scoring,
+    # stored baselines, and the data sidecar are unaffected. Default 1000 keeps
+    # a 50-var × 5000-sample test under the ~5 MB budget given today's
+    # per-variable time-array duplication; the follow-up dedup (idea #47)
+    # will let this rise to 2000 at the same budget.
+    max_embedded_samples: int = 1000
+
     # User-provided recognizers (PTA.3) — parsed from testing.json's
     # "recognizers" list via discovery.json_recognizer.parse_recognizer_spec.
     # Stored on Config so they're scoped to this run (no module-registry leak
@@ -313,6 +322,10 @@ class Config:
         # Diagnostic variables
         if "diagnostic_variables" in file_config:
             self.diagnostic_variables = file_config["diagnostic_variables"]
+
+        # Reporter payload budget
+        if "max_embedded_samples" in file_config:
+            self.max_embedded_samples = int(file_config["max_embedded_samples"])
 
         # User-provided recognizers (PTA.3) — declarative JSON specs become
         # Recognizer instances stored on Config. CLI-provided recognizers

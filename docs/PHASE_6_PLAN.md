@@ -41,6 +41,7 @@ Bulk of the work. Six modes × (auto-derived UI + JS recompute) + two custom ove
 - Introspection utility: takes a Config dataclass, produces a UI schema (field name, type, default, choices for `Literal`s, optional `metadata` for display hints).
 - Renderer: schema → HTML form fragment (vanilla JS, no framework).
 - Register auto-derived UI for the four simple modes.
+- **Decision point for idea #46 (time-windowed leaves)**: at this checkpoint, evaluate whether the auto-derive generator can absorb a shared cross-mode `window: {start, end}` subschema without leaking into each mode's Config. If yes, include in the MVP (~½ day extra; two inputs per panel; trivial slice in `tree_eval.py`; patch path fits 6.4 whitelist). If it forces per-mode Config coupling, defer to post-MVP. Range-brush UI variant stays deferred either way.
 
 ### 6.1.2 — JS recompute ports
 

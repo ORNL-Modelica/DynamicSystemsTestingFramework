@@ -620,6 +620,7 @@ def generate_comparison_plots(
     last_run_at: Optional[float] = None,
     metric_tree=None,
     artifact_files: tuple[tuple[str, str], ...] = (),
+    max_embedded_samples: int = 2000,
 ) -> Optional[Path]:
     """Generate per-variable comparison PNGs and an HTML viewer.
 
@@ -763,19 +764,62 @@ def generate_comparison_plots(
     # Add spec path for "Save to Spec" functionality
     context["spec_path"] = str(spec_path.resolve()) if spec_path else ""
 
-    # Write comparison_data.json alongside the HTML
+    # Write comparison_data.json alongside the HTML. This is the
+    # full-resolution data artifact for downstream tooling (notebooks,
+    # future JS lazy-fetch on zoom). Decimation below only touches the
+    # in-memory context that flows into interactive.html — the sidecar
+    # stays untouched.
     data_path = plot_dir / "comparison_data.json"
     data_path.write_text(json.dumps(context, indent=2, default=str), encoding="utf-8")
 
-    # Render static HTML (matplotlib PNGs)
+    # Render static HTML (matplotlib PNGs — no inline trajectory data)
     html_path = plot_dir / "comparison.html"
     _render_template("comparison.html", context, html_path)
 
-    # Render interactive HTML (Plotly, inline data)
+    # Decimate trajectory arrays embedded into interactive.html. This
+    # caps the HTML payload for Plotly rendering; pass/fail scoring,
+    # stored baselines, and comparison_data.json are unaffected.
+    _decimate_context_for_html(context, max_embedded_samples)
+
+    # Render interactive HTML (Plotly, inline data — now decimated)
     interactive_path = plot_dir / "interactive.html"
     _render_template("interactive.html", context, interactive_path)
 
     return interactive_path
+
+
+def _decimate_context_for_html(context: dict, max_samples: int) -> None:
+    """LTTB-decimate trajectory arrays embedded into interactive.html.
+
+    Mutates ``context`` in place. Only touches ``trajectories``,
+    ``diag_trajectories``, and ``nobaseline_trajectories`` — everything
+    else (scores, statistics, ref info) passes through unchanged.
+    """
+    from .decimate import decimate_pair
+
+    if max_samples is None or max_samples <= 0:
+        return
+
+    for traj in context.get("trajectories", []) or []:
+        traj["act_time"], traj["act_values"] = decimate_pair(
+            traj.get("act_time"), traj.get("act_values"), max_samples
+        )
+        traj["ref_time"], traj["ref_values"] = decimate_pair(
+            traj.get("ref_time"), traj.get("ref_values"), max_samples
+        )
+
+    for traj in context.get("diag_trajectories", []) or []:
+        traj["act_time"], traj["act_values"] = decimate_pair(
+            traj.get("act_time"), traj.get("act_values"), max_samples
+        )
+        traj["ref_time"], traj["ref_values"] = decimate_pair(
+            traj.get("ref_time"), traj.get("ref_values"), max_samples
+        )
+
+    for traj in context.get("nobaseline_trajectories", []) or []:
+        traj["time"], traj["values"] = decimate_pair(
+            traj.get("time"), traj.get("values"), max_samples
+        )
 
 
 def _render_template(template_name: str, context: dict, output_path: Path) -> None:
@@ -857,6 +901,7 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
         "comp_variables": comp.variables,
         "metric_tree": comp.metric_tree,
         "artifact_files": artifact_files,
+        "max_embedded_samples": config.max_embedded_samples,
     }
 
 
@@ -878,6 +923,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         last_run_at=args["last_run_at"],
         metric_tree=args.get("metric_tree"),
         artifact_files=args.get("artifact_files", ()),
+        max_embedded_samples=args.get("max_embedded_samples", 2000),
     )
     render_elapsed = _time.monotonic() - t0
     return {

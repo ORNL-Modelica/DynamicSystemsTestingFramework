@@ -52,8 +52,11 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 44 | Dymola-interface resilience tracking | M | Medium | Port-bind race on worker startup (~1/20 fails), "Mismatch request/response ID in JSON-RPC call", "Remote end closed connection without response". Existing worker-restart rescues most. Could add: post-port-find `SO_REUSEADDR`+bind-probe before returning, broader noise-pattern filter, exponential-backoff retry on RPC mismatch |
 | 45 | Python-driven tests (user-code backend) | H | High | New sibling backend `CustomPythonRunner` + `PythonTestRecognizer` for `.py` test files. Contract = `run(context) -> SimulationResult` dataclass (time, variables, diagnostics, metadata); framework owns persistence. User implementation is free — fmpy-with-custom-inputs, pyomo, scipy.integrate, custom solvers, CSV loaders — framework only enforces the return shape. Prerequisite: refactor `FmpyRunner` to produce `SimulationResult` first, proving the contract on the existing case. Single backend per testing.json stays the pattern (no per-test dispatch). Post Phase-6-MVP; pairs with the deferred D65 FMU-path semantic-gap closure. |
 | 46 | Time-windowed leaf metrics | M | High | Scope any leaf metric to a `[t_start, t_end]` window — NRMSE on steady-state segment only, tube during transient only, final-only unchanged. Uniform field on all leaves (`"window": {"start": 10, "end": 50}`) rather than a new mode. Natural fit with MetricTree: compose window-scoped leaves via AND/OR for piecewise criteria. Ripples into 6.1 per-leaf UI (two inputs + range-brush on trajectory plot). |
+| 47 | Time-array dedup in interactive.html (6.0.1) | M | High | Every variable currently embeds `act_time` + `ref_time` per trajectory — within a single test these are shared across all variables, so a 50-var test embeds 100 redundant time arrays. Dedup = emit one shared pair per test + reference-by-index per variable; compounds ~50% payload reduction on top of LTTB decimation. Would raise the 6.0 cap from 1000 back to 2000 under the same 5 MB budget. Touches template JS at 6+ call sites (`TRAJECTORIES[idx].act_time`) — coordinated Python + Jinja + JS change. |
+| 48 | Lazy-fetch full-res on zoom (6.0.2) | M | High | Tier-2 of the payload strategy: JS detects zoom events via `plotly_relayout`, fetches `comparison_data.json` (full-resolution, already on disk next to the HTML), slices to the visible x-window, rerenders the window at native fidelity. Works from `file://` URLs — no server needed. Restores full visual fidelity for users who actually need it without inflating the standalone-HTML payload. |
+| 49 | Per-test max_embedded_samples override (6.0.3) | L | Medium | Extend `test_spec.json` `comparison` block with an optional `max_embedded_samples` field — escape hatch for tests with pathological signals (stiff ringing, sharp events) that legitimately need higher embedded fidelity than the global cap. Per-test resolution order same as tolerance (variable_override → test → config → default). Small, additive; can land anytime. |
 
-**Recommended order**: 1-3, 5-6, 8 are done. Next priorities: 14-16 (performance + ref link), 17-19 (quick HTML improvements), 11-12 (high-effort, high-value), or 7, 9 (medium effort). **#46 (time-windowed leaves)** is a Phase-6.1.1 inclusion candidate; **#45 (python-driven tests)** sits after the Phase 6 MVP alongside the deferred FMU-path semantic gap closure.
+**Recommended order**: 1-3, 5-6, 8 are done. Next priorities: 14-16 (performance + ref link), 17-19 (quick HTML improvements), 11-12 (high-effort, high-value), or 7, 9 (medium effort). **#46 (time-windowed leaves)** is a Phase-6.1.1 inclusion candidate; **#45 (python-driven tests)** sits after the Phase 6 MVP alongside the deferred FMU-path semantic gap closure. **#47 / #48 / #49 are 6.0 follow-ups** (payload tier-2/tier-3); land them in that order for the interactive HTML to scale cleanly past 50 variables.
 
 ---
 
@@ -469,3 +472,47 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   - **6.4 patch shape**: patch paths like `/tests/<id>/metrics/<ptr>/window/start` fit the whitelist trivially. Round-trip fidelity applies as-is.
 - **Recommendation for Phase 6**: the scalar-field version (two inputs, no brush) fits inside the MVP budget if bundled into 6.1.1. Flag as a candidate for inclusion at the **6.1.1 auto-derive machinery** checkpoint — if the config-to-UI generator can absorb window as a shared cross-mode subschema without leaking into each mode's Config, include it; if it forces mode-specific coupling, defer to post-MVP.
 - **Exit criteria if included**: every mode's config gains an optional `window`; comparator slices before leaf evaluation; UI auto-derives; one new fixture test exercising a piecewise-AND tree.
+
+## Time-array dedup in interactive.html — 6.0.1 follow-up (#47)
+
+- **Motivation**: Phase 6.0 introduced an LTTB decimation cap at 1000 samples/var because the same trajectory currently embeds four arrays per variable (`act_time`, `act_values`, `ref_time`, `ref_values`). A 50-var test at the 5 MB budget only fits cap=1000, not the PHASE_6_PLAN-intended cap=2000. The binding constraint is structural redundancy — within any single test, every variable shares the same `act_time` (from one simulation) and `ref_time` (from one baseline). Embedding them 50 times per test is pure waste.
+- **Proposal**: hoist the shared time arrays once to a per-test container:
+  ```js
+  const SHARED = { act_time: [...], ref_time: [...] };
+  const TRAJECTORIES = [
+    { index: 0, name: "h", act_values: [...], ref_values: [...] },
+    ...
+  ];
+  ```
+  JS accesses become `SHARED.act_time` instead of `TRAJECTORIES[idx].act_time`.
+- **Compounding payload win**: halves the per-test trajectory payload. Lets us raise the default cap back to 2000 at the same 5 MB budget — same visual fidelity plan as PHASE_6_PLAN originally specified.
+- **Scope & risk**: touches `reporting/plot_comparison.py` (trajectory-building) + `reporting/templates/interactive.html` (template structure + JS references at ~6 call sites: lines ~461, 713, 757, 904, 1082, 1307 of interactive.html). Coordinated Python + Jinja + JS change — non-trivial but contained.
+- **Edge case**: some backends may return different `act_time` grids per variable (irregular output). Current code already allows this; dedup assumes a shared grid. Guard: detect mismatched grids, fall back to per-variable time embedding (current shape). Rare enough that the guard path rarely triggers.
+- **Testing**: extend `test_report_size_budget.py` to assert that after 6.0.1 the cap=2000 still fits in 5 MB. Add JS smoke check via golden-file HTML snapshot (part of 6.1 testing infrastructure).
+- **When**: after 6.0 MVP ships; bundled with or just before 6.1.1 work starts so the reporter is structurally clean for the per-leaf panel additions.
+
+## Lazy-fetch full-res on zoom — 6.0.2 follow-up (#48)
+
+- **Motivation**: The decimation cap in 6.0 gives a fast, standalone "at-a-glance" visual. Users zooming in for detail see the same down-sampled curve, which is wrong — the full-resolution data is already on disk next to the HTML in `comparison_data.json`. Tier-2 of the payload strategy: fetch it on demand.
+- **Proposal**: hook Plotly's `plotly_relayout` event → read the new x-axis range → if the window contains significantly more decimated points than originally kept there (say > 2× compression loss), `fetch('./comparison_data.json')`, slice to the visible x-window, rerender that trace at full fidelity. Subsequent zooms reuse the already-fetched array.
+- **File-URL compatibility**: `fetch('./comparison_data.json')` works from `file://` URLs in modern browsers without a server. No backend needed.
+- **UX**: a subtle loading indicator during the first zoom fetch; silent on subsequent zooms within the cached window. "Full fidelity" badge when the visible window is un-decimated.
+- **Fallback**: if the fetch fails (file missing, CORS edge case, protocol restriction), degrade silently to the decimated trace — no UX break.
+- **Scope**: pure JS addition to `interactive.html` (~50 lines); no Python changes. Bundling pairs well with idea #17 (linked panel zoom) since both hook the same event.
+- **When**: after 6.0 / 6.0.1 ship; likely a small independent slice before or alongside 6.1.
+
+## Per-test max_embedded_samples override — 6.0.3 follow-up (#49)
+
+- **Motivation**: Most tests fit comfortably under the global 1000-sample cap (or 2000 once dedup lands). A few pathological cases won't: stiff solvers producing dense ringing, sharp-event signals where LTTB still loses shape at the global cap, or long-horizon tests where the user genuinely wants more samples. Escape hatch avoids lowering the global default for everyone.
+- **Proposal**: extend `test_spec.json` `comparison` block:
+  ```json
+  "comparison": {
+    "tolerance": 1e-4,
+    "max_embedded_samples": 10000,
+    "variable_overrides": {...}
+  }
+  ```
+  Resolution order: per-variable override (future, if needed) → per-test `comparison.max_embedded_samples` → `config.max_embedded_samples` → default.
+- **Implementation**: mirror the existing `comparison_tolerance` plumbing (test_registry field, spec_parser read, reporter threading). Small change — ~30 lines across 3 files.
+- **Size-regression safety**: the budget test should still pass; this just gives individual tests an opt-out, it doesn't raise the default.
+- **When**: after 6.0 ships. Low urgency — ship only when a real test surfaces the need.
