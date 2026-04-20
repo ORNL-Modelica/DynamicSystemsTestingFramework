@@ -21,7 +21,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 13 | Dependency-aware test ordering | H | Medium | Requires dependency graph extraction from Modelica sources |
 | 14 | Link to reference JSON file from HTML | L | Medium | Artifacts link to sim files but not the ref JSON; filename shown as text in ref_info but not clickable |
 | 15 | WebGL for large traces (scattergl) | L | High | Switch to `scattergl` when trace >5k points; SVG unusable beyond ~10k |
-| 16 | LTTB data decimation | M | High | Browser-side downsampling for 10k+ point traces; ~50 lines JS |
+| 16 | ~~LTTB data decimation~~ | M | High | **DONE** — shipped in Phase 6.0 as Python-side decimation on the HTML embed (`reporting/decimate.py`). Applied at `Config.max_embedded_samples` (default 1000) to the `TRAJECTORIES` embed; `comparison_data.json` stays full-res. Browser-side LTTB on zoom is idea #48 (lazy-fetch). |
 | 17 | Linked panel zoom | L | Medium | Sync x-axis across trajectory/abs-error/NRMSE panels via `plotly_relayout` |
 | 18 | Worst-violation annotation | L | Medium | Arrow + callout at worst error point on trajectory plot; data already in context |
 | 19 | Zoom-dependent statistics | L | Medium | Recompute NRMSE/max-error for visible window on zoom; ~40 lines JS |
@@ -51,12 +51,37 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 43 | Per-test timeout + other per-test knobs in test_spec | L | Medium | Extend `test_spec.json` to allow per-test `timeout`, `batch_size_hint`, etc. Currently only simulation/comparison settings are per-test. Show in per-test report (Sim Params section). Belongs in same schema expansion as MetricTree |
 | 44 | Dymola-interface resilience tracking | M | Medium | Port-bind race on worker startup (~1/20 fails), "Mismatch request/response ID in JSON-RPC call", "Remote end closed connection without response". Existing worker-restart rescues most. Could add: post-port-find `SO_REUSEADDR`+bind-probe before returning, broader noise-pattern filter, exponential-backoff retry on RPC mismatch |
 | 45 | Python-driven tests (user-code backend) | H | High | New sibling backend `CustomPythonRunner` + `PythonTestRecognizer` for `.py` test files. Contract = `run(context) -> SimulationResult` dataclass (time, variables, diagnostics, metadata); framework owns persistence. User implementation is free — fmpy-with-custom-inputs, pyomo, scipy.integrate, custom solvers, CSV loaders — framework only enforces the return shape. Prerequisite: refactor `FmpyRunner` to produce `SimulationResult` first, proving the contract on the existing case. Single backend per testing.json stays the pattern (no per-test dispatch). Post Phase-6-MVP; pairs with the deferred D65 FMU-path semantic-gap closure. |
-| 46 | Time-windowed leaf metrics | M | High | Scope any leaf metric to a `[t_start, t_end]` window — NRMSE on steady-state segment only, tube during transient only, final-only unchanged. Uniform field on all leaves (`"window": {"start": 10, "end": 50}`) rather than a new mode. Natural fit with MetricTree: compose window-scoped leaves via AND/OR for piecewise criteria. Ripples into 6.1 per-leaf UI (two inputs + range-brush on trajectory plot). |
+| 46 | Time-windowed leaf metrics (PARTIAL) | M | High | **Backend DONE** (Phase 6.1.1): `LeafSpec.window_start/end` parse from `"window": {"start": t, "end": t}` JSON; `tree_eval._slice_window` restricts both `ref_*` and `act_*` arrays before `mode.compare`; piecewise regression composes via existing AND/OR grammar. **UI still pending** — browser panels don't yet render window inputs, so users hand-write JSON. Add two number inputs (or a range-brush on the trajectory plot) to `reporting/ui/mode_controls.py`'s renderer; ~½ day scalar-input, ~1 day with brush. |
 | 47 | Time-array dedup in interactive.html (6.0.1) | M | High | Every variable currently embeds `act_time` + `ref_time` per trajectory — within a single test these are shared across all variables, so a 50-var test embeds 100 redundant time arrays. Dedup = emit one shared pair per test + reference-by-index per variable; compounds ~50% payload reduction on top of LTTB decimation. Would raise the 6.0 cap from 1000 back to 2000 under the same 5 MB budget. Touches template JS at 6+ call sites (`TRAJECTORIES[idx].act_time`) — coordinated Python + Jinja + JS change. |
 | 48 | Lazy-fetch full-res on zoom (6.0.2) | M | High | Tier-2 of the payload strategy: JS detects zoom events via `plotly_relayout`, fetches `comparison_data.json` (full-resolution, already on disk next to the HTML), slices to the visible x-window, rerenders the window at native fidelity. Works from `file://` URLs — no server needed. Restores full visual fidelity for users who actually need it without inflating the standalone-HTML payload. |
 | 49 | Per-test max_embedded_samples override (6.0.3) | L | Medium | Extend `test_spec.json` `comparison` block with an optional `max_embedded_samples` field — escape hatch for tests with pathological signals (stiff ringing, sharp events) that legitimately need higher embedded fidelity than the global cap. Per-test resolution order same as tolerance (variable_override → test → config → default). Small, additive; can land anytime. |
+| 50 | Companion + soft_check overlay rendering (6.3 slice) | M | High | **Baseline-role split shipped the data model; this ships the UX that makes it worth having.** Reporter stores companion pointers and soft_check trajectories on disk (D67) but doesn't render them on trajectory plots. `companion add` is invisible to users today. This entry: load CSV/JSON companion files (graceful degradation on missing file), overlay them as Plotly traces alongside primary + actual, add a view-only multi-select picker in the per-test report header. Covers the primary/companion/soft_check visual distinction D66 committed to but didn't wire in the MVP. Overlaps with PHASE_6_PLAN's 6.3 "multi-baseline picker" — a natural first 6.3 sub-step. 1–2 days. |
 
-**Recommended order**: 1-3, 5-6, 8 are done. Next priorities: 14-16 (performance + ref link), 17-19 (quick HTML improvements), 11-12 (high-effort, high-value), or 7, 9 (medium effort). **#46 (time-windowed leaves)** is a Phase-6.1.1 inclusion candidate; **#45 (python-driven tests)** sits after the Phase 6 MVP alongside the deferred FMU-path semantic gap closure. **#47 / #48 / #49 are 6.0 follow-ups** (payload tier-2/tier-3); land them in that order for the interactive HTML to scale cleanly past 50 variables.
+**Recommended order** (post-Phase-6-MVP, reorganized 2026-04-20):
+
+- **A. Finish half-shipped features** (close real debt from the MVP, small-to-medium):
+  - **#46 UI surfacing** — backend done; users hand-write JSON to use windows. Two number inputs on every auto-derived panel (or range-brush on plot).
+  - **#50 companion + soft_check overlay rendering** — baseline-role data model shipped; overlays don't render. `companion add` is invisible today.
+
+- **B. User-facing new features** (Phase 7 or FMU path — each 1–2+ weeks):
+  - **Phase 7 rule-based recommender** (signal → tree proposals; bounded vocabulary; see D66).
+  - **#45 python-driven tests + FMU-path semantic-gap closure** (D65 follow-on) — share a `SimulationResult` dataclass refactor. Unlocks pyomo / scipy / custom solvers + real industrial FMU testing.
+
+- **C. Performance / fidelity follow-ups** (nobody's blocked yet; ship opportunistically):
+  - **#47 time-array dedup (6.0.1)** — compounds on 6.0; lifts default cap 1000 → 2000.
+  - **#48 lazy-fetch on zoom (6.0.2)** — full-fidelity drill-down from decimated base.
+  - **#49 per-test override (6.0.3)** — escape hatch; ship when someone asks.
+  - Drag-to-edit range handles (6.1.4 stretch).
+
+- **D. External-distribution blocker** (technical scope small; blocked on a name):
+  - **Tool rename** — `"ModelicaTesting"` → neutral name. Touches package, CLI prog, HTML titles, `pyproject.toml`, all imports.
+
+- **E. New leaves + foundational** (additive, slot in anytime):
+  - **Phase 9 dataset types** unlock #23 Fréchet, #24 spectral coherence, #26 ISO 18571, #25 x-tolerance/pyfunnel.
+  - Small HTML polish: #7 variable ordering, #9 open-in-Dymola, #14 link to ref JSON, #17 linked panel zoom, #18 worst-violation annotation, #19 zoom-dependent stats.
+  - Larger: #11 test-discovery helper, #12 model-health analysis, #15 WebGL scattergl.
+
+**Immediate default**: finish **A** first (#46 UI + #50 overlays) — together they close the two half-shipped pieces of the MVP and make the reporter honestly complete before moving to new features.
 
 ---
 
@@ -516,3 +541,19 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **Implementation**: mirror the existing `comparison_tolerance` plumbing (test_registry field, spec_parser read, reporter threading). Small change — ~30 lines across 3 files.
 - **Size-regression safety**: the budget test should still pass; this just gives individual tests an opt-out, it doesn't raise the default.
 - **When**: after 6.0 ships. Low urgency — ship only when a real test surfaces the need.
+
+## Companion + soft_check overlay rendering — 6.3 first slice (#50)
+
+- **Motivation**: Phase 6 MVP shipped the baseline-role split in full (primary / companion / soft_check) — on disk, in the CLI (`companion add/list/freeze/remove`, `soft-check list/remove`, `import-baseline`), and in the validator. But the **reporter only plots the primary**. Companions persist as pointers but aren't loaded or rendered; soft_checks are scored against (via `against:` inside `warn`) but aren't visually overlaid either. A user who runs `companion add BouncingBall rig ./rig_data.csv` sees nothing in the HTML report. That's the part of D66's three-role model we haven't delivered yet.
+- **Proposal**:
+  - **Python side** (new module `reporting/overlay_loader.py`): `load_companion(companion: Companion) -> Optional[TrajectoryOverlay]` — reads CSV (with autodetected `time,value` / `t,y` / first-two-columns-are-time-and-value heuristic) or JSON (reuse `Baseline` shape), returns a `TrajectoryOverlay` dataclass with `{name, kind: "companion"|"soft_check", time, values, origin_path}`. Graceful degradation: file missing / malformed → log warning, return None (per D66 — reporter never crashes on a bad companion).
+  - **Context builder** (`_build_template_context`): gather `overlays: list[TrajectoryOverlay]` per variable (map by variable name), attach to each trajectory dict.
+  - **Template + JS**: overlays render as additional Plotly traces on the same plot — distinct colors, `legendgroup` collapsible. A small picker in the plot-section header toggles their visibility; state lives in `perVarOverlayVisibility[idx]`. Default visibility = primary + actual always on; companions + soft_checks default OFF to avoid clutter, user toggles on. Legend names include role prefix (`experiment (companion)`, `dymola-via-fmpy (soft_check)`).
+- **Scope explicitly NOT included** (remains in 6.3 proper):
+  - Tree-level authoring controls (6.2).
+  - Edit/view toggle (6.5).
+  - Draft-tree preview (6.6).
+- **Companion CSV heuristic**: the format is intentionally loose (rig export formats vary wildly). Safe defaults: first column is time, remaining columns are per-variable values named from the header row. Ambiguous cases log a warning and skip the companion rather than guessing wrong.
+- **Graceful-degradation guarantee** (D66 invariant): if a companion's data file is moved, deleted, or unreadable, the plot still renders with everything else intact — only that companion's trace is absent, and the picker marks it unavailable.
+- **Tests**: `test_overlay_loader.py` — CSV parsing (happy path, malformed row, missing file); JSON parsing; reporter context includes overlay entries when companions/soft_checks exist on a model. Refresh goldens for the two affected template branches (variable-table cell unchanged, per-plot section gains the picker element).
+- **When**: A-tier next step alongside #46 UI surfacing. Naturally ships as a single PR with #46 — both extend `reporting/ui/mode_controls.py` and the per-variable template section; their golden-hash changes overlap.
