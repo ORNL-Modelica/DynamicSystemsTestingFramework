@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal, Optional
 
 import numpy as np
 
@@ -69,14 +69,16 @@ class TubeConfig:
     """Configuration for tube comparison.
 
     Mirrors the fields previously scattered as arbitrary keys in the
-    variable_overrides dict, but with types enforced.
+    variable_overrides dict, but with types enforced. The tightened
+    `Literal[...]` choices feed the reporter's auto-derived UI
+    (reporting/ui/mode_controls.py).
     """
-    tube_width_mode: Optional[str] = None  # "band" | "rel" | "absolute" | None (legacy)
+    tube_width_mode: Optional[Literal["band", "rel", "absolute"]] = None
     tube_abs: float = 0.0
     tube_rel: float = 0.0
     tube_min_width: float = 0.0
     tube_points: Optional[list[dict]] = None
-    tube_interpolation: str = "linear"
+    tube_interpolation: Literal["linear", "constant"] = "linear"
 
     def to_dict(self) -> dict:
         """Convert back to the flat dict format consumed by _compare_tube."""

@@ -24,7 +24,7 @@ locate the offending entry quickly in a large spec.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Union
+from typing import Optional, Union
 
 VALID_COMBINATORS = frozenset({"and", "or", "k-of-n", "warn", "weighted"})
 VALID_METRICS = frozenset({
@@ -51,12 +51,20 @@ class LeafSpec:
     level of the reference file. Non-primary names (``"experiment"``,
     ``"analytical"``, ...) reference entries under the reference's
     ``baselines`` map. Unknown names are rejected at evaluation time.
+
+    ``window_start`` / ``window_end`` (idea #46, Phase 6.1.1) scope the
+    leaf to a sub-interval of the trajectory. Both optional; when set, the
+    leaf evaluates only against samples with ``window_start <= t <= window_end``.
+    Uniform across every metric — mode configs stay untouched, slicing
+    happens in :func:`tree_eval._evaluate_leaf` before ``mode.compare``.
     """
 
     metric: str
     variable: str
     params: dict = field(default_factory=dict)
     against: str = "primary"
+    window_start: Optional[float] = None
+    window_end: Optional[float] = None
 
 
 @dataclass
@@ -233,9 +241,35 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
             f"{path}.against: must be a non-empty string, got {against!r}"
         )
 
+    # ``window`` scopes the leaf to a sub-interval [start, end] (idea #46).
+    # Both endpoints optional; open-ended on either side supported. The
+    # comparator slices before calling mode.compare so every metric
+    # composes uniformly with the window.
+    window_start: Optional[float] = None
+    window_end: Optional[float] = None
+    window_raw = raw.get("window")
+    if window_raw is not None:
+        if not isinstance(window_raw, dict):
+            raise MetricSpecError(
+                f"{path}.window: expected an object with 'start'/'end', "
+                f"got {type(window_raw).__name__}"
+            )
+        if "start" in window_raw:
+            window_start = float(window_raw["start"])
+        if "end" in window_raw:
+            window_end = float(window_raw["end"])
+        if (window_start is not None and window_end is not None
+                and window_end <= window_start):
+            raise MetricSpecError(
+                f"{path}.window: end ({window_end}) must be > start ({window_start})"
+            )
+
     # Everything else is metric-specific params (tolerance, tube_rel, ...).
     params = {
         k: v for k, v in raw.items()
-        if k not in {"metric", "variable", "against"}
+        if k not in {"metric", "variable", "against", "window"}
     }
-    return LeafSpec(metric=metric, variable=variable, params=params, against=against)
+    return LeafSpec(
+        metric=metric, variable=variable, params=params, against=against,
+        window_start=window_start, window_end=window_end,
+    )

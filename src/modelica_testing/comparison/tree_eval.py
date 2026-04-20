@@ -201,11 +201,25 @@ def _evaluate_leaf(
         ref_time = np.array(ref_var["time"])
     ref_values = np.array(ref_var["values"])
 
+    act_time = var_result.time
+    act_values = var_result.values
+
+    # Apply the leaf window (idea #46) — slice both sides uniformly before
+    # handing to mode.compare. Mode configs stay untouched; slicing is a
+    # cross-cutting leaf property.
+    if leaf.window_start is not None or leaf.window_end is not None:
+        ref_time, ref_values = _slice_window(
+            ref_time, ref_values, leaf.window_start, leaf.window_end,
+        )
+        act_time, act_values = _slice_window(
+            act_time, act_values, leaf.window_start, leaf.window_end,
+        )
+
     override = _leaf_override_dict(leaf)
     tolerance = float(leaf.params.get("tolerance", base_tolerance))
     mode = resolve_mode(override, tolerance, default_final_only=False)
 
-    vc = mode.compare(ref_time, ref_values, var_result.time, var_result.values)
+    vc = mode.compare(ref_time, ref_values, act_time, act_values)
     vc.index = var_result.index
     vc.name = leaf.variable
     vc.tolerance_used = tolerance
@@ -213,7 +227,34 @@ def _evaluate_leaf(
     # Record which baseline this leaf scored against, so the reporter can
     # show "against=experiment" on non-primary leaves.
     leaf_result.diagnostics["against"] = leaf.against
+    if leaf.window_start is not None or leaf.window_end is not None:
+        leaf_result.diagnostics["window"] = {
+            "start": leaf.window_start,
+            "end": leaf.window_end,
+        }
     return leaf_result
+
+
+def _slice_window(
+    t: np.ndarray, v: np.ndarray,
+    start: Optional[float], end: Optional[float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(t, v)`` restricted to ``[start, end]`` (inclusive).
+
+    Open-ended on either side supported. Falls back to the original
+    arrays if the window leaves nothing — the downstream mode will
+    produce its own zero-sample failure rather than crashing here.
+    """
+    mask = np.ones(len(t), dtype=bool)
+    if start is not None:
+        mask &= t >= start
+    if end is not None:
+        mask &= t <= end
+    if not mask.any():
+        # Degenerate window — return empty arrays; modes that can't handle
+        # empty data (NRMSE / tube) will fail loudly with a clear error.
+        return t[:0], v[:0]
+    return t[mask], v[mask]
 
 
 def _leaf_override_dict(leaf: LeafSpec) -> dict:
