@@ -50,8 +50,10 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 42 | Quick-save selected results to reference | M | High | CLI: `accept --filter X` reads existing work_dir results and writes to reference, no resim. HTML report: "Copy accept command" button next to "Copy rerun command". Pairs with Phase 1.7 multi-baseline (accept writes to `primary` baseline by default; `--baseline <name>` overrides) |
 | 43 | Per-test timeout + other per-test knobs in test_spec | L | Medium | Extend `test_spec.json` to allow per-test `timeout`, `batch_size_hint`, etc. Currently only simulation/comparison settings are per-test. Show in per-test report (Sim Params section). Belongs in same schema expansion as MetricTree |
 | 44 | Dymola-interface resilience tracking | M | Medium | Port-bind race on worker startup (~1/20 fails), "Mismatch request/response ID in JSON-RPC call", "Remote end closed connection without response". Existing worker-restart rescues most. Could add: post-port-find `SO_REUSEADDR`+bind-probe before returning, broader noise-pattern filter, exponential-backoff retry on RPC mismatch |
+| 45 | Python-driven tests (user-code backend) | H | High | New sibling backend `CustomPythonRunner` + `PythonTestRecognizer` for `.py` test files. Contract = `run(context) -> SimulationResult` dataclass (time, variables, diagnostics, metadata); framework owns persistence. User implementation is free — fmpy-with-custom-inputs, pyomo, scipy.integrate, custom solvers, CSV loaders — framework only enforces the return shape. Prerequisite: refactor `FmpyRunner` to produce `SimulationResult` first, proving the contract on the existing case. Single backend per testing.json stays the pattern (no per-test dispatch). Post Phase-6-MVP; pairs with the deferred D65 FMU-path semantic-gap closure. |
+| 46 | Time-windowed leaf metrics | M | High | Scope any leaf metric to a `[t_start, t_end]` window — NRMSE on steady-state segment only, tube during transient only, final-only unchanged. Uniform field on all leaves (`"window": {"start": 10, "end": 50}`) rather than a new mode. Natural fit with MetricTree: compose window-scoped leaves via AND/OR for piecewise criteria. Ripples into 6.1 per-leaf UI (two inputs + range-brush on trajectory plot). |
 
-**Recommended order**: 1-3, 5-6, 8 are done. Next priorities: 14-16 (performance + ref link), 17-19 (quick HTML improvements), 11-12 (high-effort, high-value), or 7, 9 (medium effort).
+**Recommended order**: 1-3, 5-6, 8 are done. Next priorities: 14-16 (performance + ref link), 17-19 (quick HTML improvements), 11-12 (high-effort, high-value), or 7, 9 (medium effort). **#46 (time-windowed leaves)** is a Phase-6.1.1 inclusion candidate; **#45 (python-driven tests)** sits after the Phase 6 MVP alongside the deferred FMU-path semantic gap closure.
 
 ---
 
@@ -429,3 +431,41 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   - *Remote end closed*: add to `_NOISE_PATTERNS` to suppress noise; treat as worker death and restart.
 - **Diagnostic telemetry**: emit a per-worker `resilience_events.json` sidecar in `work_dir` counting start-failures, RPC-mismatches, and worker-restarts so users can see whether parallelism is healthy.
 - **When to work on**: watch for frequency in real-world use. If it's 1-in-20 starts and the rescue always works, leave it. If it grows or masks real failures, promote to Phase 2 work.
+
+## Python-driven tests (user-code backend) (#45)
+
+- **Motivation**: The current `FmpyRunner` calls `fmpy.simulate_fmu(...)` with defaults — no external inputs, no start-value overrides, no CS-vs-ME choice, no step-level callbacks. D65 flagged this as the "FMU-path semantic gap" and scope-labeled the cross-backend chain **EXPERIMENTAL**. Beyond FMU-driven workflows, users also want to plug in custom solvers, pyomo post-processing, scipy.integrate models, analytical comparisons, or even CSV loaders into the same regression framework. The framework should *not* grow handlers for each — it should define a return contract and let user python produce trajectories however it wants.
+- **Proposal — result contract**: Introduce a `SimulationResult` dataclass as the sole python-level contract:
+  ```python
+  @dataclass
+  class SimulationResult:
+      time: np.ndarray                       # 1D, monotonic
+      variables: dict[str, np.ndarray]       # each aligned with time
+      diagnostics: dict[str, float] = {}     # scalars (CPUtime, EventCounter-shape)
+      metadata: dict[str, Any] = {}          # solver info, status, wall-time notes
+  ```
+  Framework owns persistence (cache format — npz, parquet, whatever — stays internal). Users never touch the cache layer. This kills the "is fmpy's npz format the standard?" question — the dataclass is the standard; fmpy is one producer of it.
+- **Prerequisite refactor**: port `FmpyRunner` to produce `SimulationResult` internally *before* #45 lands. Proves the contract holds the existing case without regression and de-couples the cache format from fmpy's structured ndarray. Worth doing on its own merits regardless of #45.
+- **Discovery + execution split (layers intact)**:
+  - **Recognizer** (Discovery layer): new `PythonTestRecognizer` walks declared folders (`paths_include`), imports each `.py`, reads a module-level `TEST_SPEC = {...}` dict for tracked variables, stop_time, tolerances, metric tree, `against` targets. Produces `TestModel(source_file=py_path, ...)`. Slots into the PTA (D59) recognizer registry like any other.
+  - **Backend** (Backend layer): new sibling `CustomPythonRunner` (alongside `DymolaRunner`, `FmpyRunner`). Takes any `TestModel` whose source is a `.py`, imports the module, calls `run(context) -> SimulationResult`, wraps the output through the standard cache + comparator path. User writes **one** file; framework supplies both recognizer and executor — zero plugin friction on the user side.
+- **FmpyRunner naming**: stays `FmpyRunner`. `CustomPythonRunner` is a sibling, not a subclass. No visible "python-hosted" umbrella — users pick a named simulator in `testing.json`, same as today. Shared helpers (timeout, SimulationResult packaging) live in plain modules if they emerge, not a class hierarchy.
+- **No per-test backend dispatch (YAGNI)**: single backend per testing.json stays the pattern. Real-world evidence: `examples/modelica/ModelicaTestingLib/` and `examples/fmu/` are already separate testing.json files today, each single-backend, and that works. Mixing scenarios are rare — Modelica-plus-python in the same project is usually "python tooling around Modelica models," not independent python tests; cross-implementation comparisons (Modelica-vs-Julia) are niche; the D63 cross-backend chain is one test verified two ways and is already handled without per-test dispatch. **Trigger for revisiting**: a real user arriving with a single-project mixing need that isn't already the cross-backend chain shape.
+- **Security / trust boundary**: running user python is a trust shift. No sandboxing, no subprocess isolation — the user's code runs in the framework venv. Document explicitly: pointing `testing.json` at a python-test folder means trusting that code to run arbitrarily on your machine. Same trust model as pytest conftest.
+- **Scope discipline — NOT a pytest replacement**: `run(context) -> SimulationResult` only. User python produces a trajectory; the framework's MetricTree scores it. User code does NOT run its own assertions or pass/fail logic. If someone wants property/fuzz testing, parametric sweeps that dispatch on internal state, or assertion-style unit tests, that's pytest's job (D66 scope identity).
+- **Integration with Phase 6 MVP**: **out of scope**. Post-MVP; pairs with the deferred D65 FMU-path semantic-gap closure phase. The `SimulationResult` refactor is smaller and could land earlier as a standalone cleanup if a natural opportunity arises.
+
+## Time-windowed leaf metrics (#46)
+
+- **Motivation**: Many regression criteria are naturally piecewise — NRMSE matters during the steady-state tail, tube matters during the transient, final-only is window-irrelevant. Today users either accept a single global score or hand-author overlapping leaves that each recompute on the full trajectory. A time window is the missing axis.
+- **Proposal**: A uniform `"window": {"start": <t>, "end": <t>}` field on every leaf (optional; defaults to full trajectory). Evaluated by slicing the actual + reference trajectories to the window before handing off to the existing `ComparisonMode`. Both endpoints optional — open-ended on either side supported.
+- **Architecture fit**: One change in `comparison/tree_eval.py` — slice inputs before the `ComparisonMode.compare(...)` call. No change to the six compute modes. Leaves that already don't use time (range) treat the field as a no-op.
+- **Not a combinator**: deliberately *not* a new AND-with-time-bounds combinator — that would explode the grammar. The window is a leaf property, scoped narrowly; AND/OR above still compose as today.
+- **Composition**: NRMSE-on-[0,10] + NRMSE-on-[10,100] + tube-on-[10,50] under a root AND gives a piecewise regression contract. Same grammar, richer expressiveness.
+- **Integration with Phase 6**:
+  - **6.1 ripple**: every auto-derived UI panel gains two number inputs (`start`, `end`). Cheap — two fields, one new validator (`end > start`, both in trajectory range). Adds maybe ½ day to 6.1.1/6.1.2.
+  - **Live preview**: the JS port slices the already-cached arrays; trivial for nrmse/tube/range/final-only. No new recompute logic.
+  - **Custom override candidate**: a range-brush on the trajectory plot to visually pick window bounds (shaded region) — defer to post-MVP or batch with 6.1.4's range-plot-handles work (same UI primitive).
+  - **6.4 patch shape**: patch paths like `/tests/<id>/metrics/<ptr>/window/start` fit the whitelist trivially. Round-trip fidelity applies as-is.
+- **Recommendation for Phase 6**: the scalar-field version (two inputs, no brush) fits inside the MVP budget if bundled into 6.1.1. Flag as a candidate for inclusion at the **6.1.1 auto-derive machinery** checkpoint — if the config-to-UI generator can absorb window as a shared cross-mode subschema without leaking into each mode's Config, include it; if it forces mode-specific coupling, defer to post-MVP.
+- **Exit criteria if included**: every mode's config gains an optional `window`; comparator slices before leaf evaluation; UI auto-derives; one new fixture test exercising a piecewise-AND tree.
