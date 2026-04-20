@@ -42,7 +42,7 @@ pytestmark = [
 
 
 def _seed_primary_baseline(store_dir: Path, model_id: str) -> None:
-    """Drop a minimal primary baseline file so add_named_baseline succeeds."""
+    """Drop a minimal primary baseline file so soft_check writes succeed."""
     sim_dir = store_dir / "FMPy" / "linux"  # matches Config.reference_dir layout
     sim_dir.mkdir(parents=True, exist_ok=True)
     ref = {
@@ -117,17 +117,19 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
     ok = produce_dymola_via_fmpy_baseline(test, primary_runner, config, store)
     assert ok is True
 
-    # Verify the named baseline landed on the ref file
+    # Verify the soft_check landed in the new on-disk layout (D66)
+    soft_checks = store.get_soft_checks("BouncingBall")
+    assert CROSS_BACKEND_BASELINE_NAME in soft_checks
+    cb_soft_check = soft_checks[CROSS_BACKEND_BASELINE_NAME]
+    assert cb_soft_check.time
+    assert len(cb_soft_check.variables) >= 1
+    assert cb_soft_check.provenance["secondary_backend"] == "FMPy"
+
+    # Primary ref file is unchanged by soft_check writes — no legacy
+    # flat 'baselines' dict expected.
     ref = store.get_reference("BouncingBall")
     assert ref is not None
-    assert "baselines" in ref
-    assert CROSS_BACKEND_BASELINE_NAME in ref["baselines"]
-    cb_baseline = ref["baselines"][CROSS_BACKEND_BASELINE_NAME]
-    assert "time" in cb_baseline
-    assert "variables" in cb_baseline
-    # Should contain at least one variable trajectory
-    assert len(cb_baseline["variables"]) >= 1
-    assert cb_baseline["provenance"]["secondary_backend"] == "FMPy"
+    assert "baselines" not in ref or not ref["baselines"]
 
 
 def test_chain_returns_false_when_export_fails(tmp_path):

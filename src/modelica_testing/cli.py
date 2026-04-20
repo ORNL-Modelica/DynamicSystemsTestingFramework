@@ -532,6 +532,254 @@ def cmd_spec_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_companion(args: argparse.Namespace) -> int:
+    """Manage plot-only companion references (D66).
+
+    Companions are experimental / analytical / rig data shown as plot
+    overlays but never scored against. Four actions:
+      add <model> <name> <path> [--format csv|json]
+      list [<model>]
+      freeze <model> <name>
+      remove <model> <name>
+    """
+    config = _build_config(args)
+    from .storage.reference_store import ReferenceStore
+
+    store = ReferenceStore(config)
+    action = args.action
+
+    if action == "add":
+        try:
+            ok = store.add_companion(
+                args.model_id, args.name,
+                path=Path(args.path),
+                format=getattr(args, "format", None),
+            )
+        except (ValueError, FileNotFoundError) as e:
+            print(f"Error: {e}")
+            return 1
+        print(f"Registered companion {args.name!r} → {args.path}" if ok
+              else f"Failed to register companion {args.name!r}")
+        return 0 if ok else 1
+
+    if action == "list":
+        model_id = getattr(args, "model_id", None)
+        if model_id:
+            companions = store.get_companions(model_id)
+            if not companions:
+                print(f"No companions registered for {model_id}")
+                return 0
+            print(f"Companions for {model_id}:")
+            for name, co in companions.items():
+                extra = co.path if co.kind == "external" else co.data_file
+                print(f"  {name:<30} kind={co.kind:<8} format={co.format:<5} {extra}")
+            return 0
+        # All models
+        total = 0
+        for tid, entry in sorted(store.index.all_tests().items()):
+            if entry["status"] == "obsolete":
+                continue
+            companions = store.get_companions(entry["model_id"])
+            if companions:
+                print(f"{entry['model_id']}:")
+                for name, co in companions.items():
+                    extra = co.path if co.kind == "external" else co.data_file
+                    print(f"  {name:<30} kind={co.kind:<8} format={co.format:<5} {extra}")
+                total += len(companions)
+        if total == 0:
+            print("No companions registered.")
+        return 0
+
+    if action == "freeze":
+        try:
+            ok = store.freeze_companion(args.model_id, args.name)
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            return 1
+        if ok:
+            print(f"Frozen companion {args.name!r} for {args.model_id}")
+        else:
+            print(f"Companion {args.name!r} is already frozen or does not exist")
+        return 0
+
+    if action == "remove":
+        ok = store.remove_companion(args.model_id, args.name)
+        if ok:
+            print(f"Removed companion {args.name!r} from {args.model_id}")
+        else:
+            print(f"Companion {args.name!r} not found on {args.model_id}")
+        return 0 if ok else 1
+
+    return 1
+
+
+def cmd_soft_check(args: argparse.Namespace) -> int:
+    """Manage soft_check baselines (advisory cross-checks)."""
+    config = _build_config(args)
+    from .storage.reference_store import ReferenceStore
+
+    store = ReferenceStore(config)
+    action = args.action
+
+    if action == "list":
+        model_id = getattr(args, "model_id", None)
+        if model_id:
+            checks = store.get_soft_checks(model_id)
+            if not checks:
+                print(f"No soft_checks registered for {model_id}")
+                return 0
+            print(f"Soft_checks for {model_id}:")
+            for name, bl in checks.items():
+                origin = bl.provenance.get("source") or bl.provenance.get("origin") or "-"
+                print(f"  {name:<30} n_vars={len(bl.variables):<4} origin={origin}")
+            return 0
+        total = 0
+        for tid, entry in sorted(store.index.all_tests().items()):
+            if entry["status"] == "obsolete":
+                continue
+            checks = store.get_soft_checks(entry["model_id"])
+            if checks:
+                print(f"{entry['model_id']}:")
+                for name, bl in checks.items():
+                    origin = bl.provenance.get("source") or bl.provenance.get("origin") or "-"
+                    print(f"  {name:<30} n_vars={len(bl.variables):<4} origin={origin}")
+                total += len(checks)
+        if total == 0:
+            print("No soft_checks registered.")
+        return 0
+
+    if action == "remove":
+        ok = store.remove_soft_check(args.model_id, args.name)
+        if ok:
+            print(f"Removed soft_check {args.name!r} from {args.model_id}")
+        else:
+            print(f"Soft_check {args.name!r} not found on {args.model_id}")
+        return 0 if ok else 1
+
+    return 1
+
+
+def cmd_import_baseline(args: argparse.Namespace) -> int:
+    """Import another regression system's primary as a soft_check (D66).
+
+    Reads a reference-shape JSON from ``source_path`` (same schema a
+    ``ref_NNNN.json`` file uses at its top level) and stores it under
+    the local model's soft_checks with the given name.
+    """
+    import json as json_mod
+
+    config = _build_config(args)
+    from .storage.reference_store import ReferenceStore
+
+    store = ReferenceStore(config)
+    source = Path(args.source_path)
+    if not source.exists():
+        print(f"File not found: {source}")
+        return 1
+    try:
+        data = json_mod.loads(source.read_text(encoding="utf-8"))
+    except (json_mod.JSONDecodeError, OSError) as e:
+        print(f"Failed to read {source}: {e}")
+        return 1
+
+    time = data.get("time") or []
+    variables = data.get("variables") or []
+    if not time or not variables:
+        print(f"Source file missing 'time' or 'variables' — cannot import")
+        return 1
+
+    provenance = dict(data.get("provenance") or {})
+    provenance.setdefault("origin", "import-baseline")
+    provenance.setdefault("imported_from", str(source))
+
+    try:
+        ok = store.add_soft_check(
+            args.model_id, args.name,
+            time=time,
+            variables=variables,
+            diagnostics=data.get("diagnostics"),
+            simulation=data.get("simulation"),
+            statistics=data.get("statistics"),
+            provenance=provenance,
+        )
+    except (ValueError, FileNotFoundError) as e:
+        print(f"Error: {e}")
+        return 1
+    if ok:
+        print(f"Imported {source} → soft_check {args.name!r} on {args.model_id}")
+    return 0 if ok else 1
+
+
+def migrate_baselines_tree(ref_root: Path, apply: bool) -> tuple[int, int]:
+    """Walk ``ref_root`` and migrate legacy flat named-baselines to soft_checks.
+
+    Returns ``(files_touched, baselines_moved)``. Prints to stdout.
+    Callers not going through the CLI use this directly (cleaner tests).
+    """
+    import json as json_mod
+
+    print(f"Scanning {ref_root} for legacy flat named-baselines...")
+    print(f"Mode: {'APPLY' if apply else 'DRY-RUN — pass --apply to commit'}")
+    print()
+
+    total_files = 0
+    total_moves = 0
+    for ref_file in sorted(ref_root.rglob("ref_*.json")):
+        if "/companions/" in str(ref_file) or "/soft_checks/" in str(ref_file):
+            continue  # skip files that already live inside the new subdirs
+        try:
+            data = json_mod.loads(ref_file.read_text(encoding="utf-8"))
+        except (json_mod.JSONDecodeError, OSError) as e:
+            print(f"  ! {ref_file} — unreadable: {e}")
+            continue
+        extras = data.get("baselines")
+        if not extras or not isinstance(extras, dict):
+            continue
+
+        total_files += 1
+        ref_stem = ref_file.stem  # "ref_NNNN"
+        sc_dir = ref_file.parent / "soft_checks" / ref_stem
+        print(f"  {ref_file}")
+        for name, entry in extras.items():
+            total_moves += 1
+            target = sc_dir / f"{name}.json"
+            try:
+                rel = target.relative_to(ref_root)
+            except ValueError:
+                rel = target
+            print(f"    {name!r} -> {rel}")
+            if apply:
+                sc_dir.mkdir(parents=True, exist_ok=True)
+                target.write_text(
+                    json_mod.dumps(entry, indent=2) + "\n", encoding="utf-8"
+                )
+        if apply:
+            # Strip `baselines` from the primary file (leave everything else intact).
+            data.pop("baselines", None)
+            ref_file.write_text(
+                json_mod.dumps(data, indent=2) + "\n", encoding="utf-8"
+            )
+
+    print()
+    print(f"{total_moves} baseline(s) across {total_files} file(s) "
+          f"{'migrated' if apply else 'to migrate'}.")
+    if not apply and total_moves > 0:
+        print(f"Re-run with --apply to actually move them.")
+    return total_files, total_moves
+
+
+def cmd_migrate_baselines(args: argparse.Namespace) -> int:
+    """CLI wrapper — resolves config.reference_root and delegates."""
+    config = _build_config(args)
+    ref_root = config.reference_root
+    apply = getattr(args, "apply", False)
+    if not ref_root.exists():
+        print(f"reference_root does not exist: {ref_root}")
+        return 1
+    migrate_baselines_tree(ref_root, apply)
+    return 0
+
+
 def _get_spec_path(config) -> Path:
     """Get the test_spec.json path, using config or default location."""
     if config.test_spec_file is not None:
@@ -1068,6 +1316,54 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Path to JSON file with tolerance settings (e.g., from interactive report export)",
     )
 
+    # companion — manage plot-only overlays (D66 baseline-role split)
+    p_companion = subparsers.add_parser(
+        "companion",
+        help="Manage plot-only companion references (external data shown as overlays)",
+    )
+    p_companion.add_argument(
+        "action", choices=["add", "list", "freeze", "remove"],
+        help="'add': register an external file pointer. 'list': show companions. "
+             "'freeze': copy external data into ref storage. 'remove': deregister.",
+    )
+    p_companion.add_argument("model_id", nargs="?", help="Model ID (required for add/freeze/remove; optional for list)")
+    p_companion.add_argument("name", nargs="?", help="Companion name (required for add/freeze/remove)")
+    p_companion.add_argument("path", nargs="?", help="Path to data file (required for add)")
+    p_companion.add_argument("--format", choices=["csv", "json"], default=None,
+                             help="Data format (auto-detected from extension if omitted)")
+
+    # soft-check — manage advisory cross-check baselines (D66)
+    p_soft = subparsers.add_parser(
+        "soft-check",
+        help="Manage soft_check baselines (advisory cross-checks; warn-only scoring)",
+    )
+    p_soft.add_argument(
+        "action", choices=["list", "remove"],
+        help="'list': show soft_checks. 'remove': deregister. "
+             "Use 'import-baseline' to add a soft_check from another system's primary.",
+    )
+    p_soft.add_argument("model_id", nargs="?")
+    p_soft.add_argument("name", nargs="?")
+
+    # import-baseline — import another system's primary as a soft_check (D66)
+    p_import = subparsers.add_parser(
+        "import-baseline",
+        help="Import another regression system's primary as a soft_check",
+    )
+    p_import.add_argument("model_id", type=str, help="Local model ID to attach the soft_check to")
+    p_import.add_argument("name", type=str, help="Soft_check name (how MetricTree leaves will reference it)")
+    p_import.add_argument("source_path", type=str, help="Path to source reference JSON (flat ref file shape)")
+
+    # migrate-baselines — one-off migration from flat named-baselines to soft_checks/
+    p_migrate = subparsers.add_parser(
+        "migrate-baselines",
+        help="One-off migration: move pre-D66 flat named-baselines to soft_checks/",
+    )
+    p_migrate.add_argument(
+        "--apply", action="store_true",
+        help="Actually perform the moves (default is dry-run)",
+    )
+
     # check-dymola — diagnostic for the Dymola Python interface loader
     subparsers.add_parser(
         "check-dymola",
@@ -1088,6 +1384,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         "manifest": cmd_manifest,
         "add": cmd_add,
         "spec-update": cmd_spec_update,
+        "companion": cmd_companion,
+        "soft-check": cmd_soft_check,
+        "import-baseline": cmd_import_baseline,
+        "migrate-baselines": cmd_migrate_baselines,
         "check-dymola": cmd_check_dymola,
     }
 

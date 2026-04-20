@@ -134,6 +134,57 @@ def _extract_baselines(data: dict) -> dict[str, Baseline]:
 _REF_FILE_PATTERN = re.compile(r"^ref_(\d{4,})\.json$")
 
 
+def _ref_stem(ref_file: Path) -> str:
+    """Extract ``ref_NNNN`` stem from ``<ref_dir>/ref_NNNN.json``."""
+    return ref_file.stem
+
+
+def _soft_check_dir(ref_dir: Path, ref_file: Path) -> Path:
+    return ref_dir / "soft_checks" / _ref_stem(ref_file)
+
+
+def _companion_dir(ref_dir: Path, ref_file: Path) -> Path:
+    return ref_dir / "companions" / _ref_stem(ref_file)
+
+
+_COMPANION_FORMAT_EXT = {"csv": ".csv", "json": ".json"}
+
+
+def _infer_companion_format(path: str) -> str:
+    """Infer companion format from file extension. Defaults to JSON."""
+    lower = path.lower()
+    if lower.endswith(".csv"):
+        return "csv"
+    if lower.endswith(".json"):
+        return "json"
+    return "json"
+
+
+def _companion_extension(fmt: str) -> str:
+    """File extension for frozen-companion data files."""
+    return _COMPANION_FORMAT_EXT.get(fmt, ".json")
+
+
+@dataclass(frozen=True)
+class Companion:
+    """External or frozen reference data used as a plot-only overlay.
+
+    Companions are never scored against (D66) — they exist purely as
+    visual context (experimental data, analytical solutions, rig logs).
+    ``kind="external"`` stores only a path pointer; the file may move
+    or disappear and the reporter degrades gracefully.
+    ``kind="frozen"`` has been copied into ref storage (data_file sits
+    next to this metadata) and is stable across repo moves.
+    """
+
+    name: str
+    kind: str  # "external" | "frozen"
+    format: str  # "csv" | "json"
+    path: Optional[str] = None  # absolute path for external
+    data_file: Optional[str] = None  # basename for frozen (sibling of metadata)
+    provenance: dict = field(default_factory=dict)
+
+
 class RefIndex:
     """In-memory index mapping model IDs to ref files.
 
@@ -275,16 +326,22 @@ class ReferenceStore:
             return None
 
     def get_baselines(self, model_id: str) -> dict[str, Baseline]:
-        """Return all named baselines for a model.
+        """Return the primary baseline plus any registered soft_checks.
 
-        For legacy flat ref files, returns a single synthetic ``"primary"``
-        baseline. For the new multi-baseline schema (Phase 1.7b), returns
-        the authored map. Empty dict if the model has no reference file.
+        Companions are **not** returned here — they are plot-only
+        overlays and cannot be scored against (D66). Use
+        :meth:`get_companions` for those.
+
+        Empty dict if the model has no reference file.
         """
         data = self.get_reference(model_id)
         if data is None:
             return {}
-        return _extract_baselines(data)
+        # Primary + any pre-migration flat-baselines (for transition).
+        # Post-migration the flat-baselines dict is empty.
+        out = _extract_baselines(data)
+        out.update(self.get_soft_checks(model_id))
+        return out
 
     def get_baseline(
         self,
@@ -298,88 +355,309 @@ class ReferenceStore:
         """
         return self.get_baselines(model_id).get(name)
 
-    def add_named_baseline(
+    def list_baseline_names(self, model_id: str) -> list[str]:
+        """Return the names of baselines available for a model."""
+        return list(self.get_baselines(model_id).keys())
+
+    # ------------------------------------------------------------------
+    # Soft_checks (D66) — another regression system's primary imported
+    # here, or the output of a cross-backend chain (e.g. dymola-via-fmpy).
+    # Scored via ``against: "<name>"`` but validator enforces ``warn``
+    # wrapping — soft_checks never hard-fail.
+    # ------------------------------------------------------------------
+
+    def _soft_check_dir_for(self, model_id: str) -> Optional[Path]:
+        ref_file = self._ref_file_for_model(model_id)
+        if ref_file is None:
+            return None
+        return _soft_check_dir(self.ref_dir, ref_file)
+
+    def get_soft_checks(self, model_id: str) -> dict[str, Baseline]:
+        """Return all soft_checks registered for a model.
+
+        Empty dict if the model has no primary baseline or no
+        soft_checks are registered.
+        """
+        sc_dir = self._soft_check_dir_for(model_id)
+        if sc_dir is None or not sc_dir.is_dir():
+            return {}
+        out: dict[str, Baseline] = {}
+        for sc_file in sorted(sc_dir.glob("*.json")):
+            name = sc_file.stem
+            try:
+                entry = json.loads(sc_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Skipping unreadable soft_check %s: %s", sc_file, e)
+                continue
+            out[name] = Baseline(
+                name=name,
+                time=entry.get("time", []),
+                variables=entry.get("variables", []),
+                diagnostics=entry.get("diagnostics", []),
+                simulation=entry.get("simulation", {}),
+                comparison=entry.get("comparison", {}),
+                statistics=entry.get("statistics", {}),
+                provenance=entry.get("provenance", {}),
+            )
+        return out
+
+    def add_soft_check(
         self,
         model_id: str,
         name: str,
         time: list[float],
         variables: list[dict],
         *,
+        diagnostics: Optional[list[dict]] = None,
         provenance: Optional[dict] = None,
         simulation: Optional[dict] = None,
         statistics: Optional[dict] = None,
         overwrite: bool = True,
     ) -> bool:
-        """Add or update a **non-primary** named baseline on an existing reference.
+        """Register a soft_check baseline for a model.
 
-        Primary stays at the flat top-level (written by ``store_reference``
-        on ``--accept``). Additional baselines live under the ``baselines``
-        map. Use this for programmatic authoring of experiment / analytical
-        / cross-backend baselines that don't come from running the framework
-        itself. The model must already have a primary baseline on disk —
-        this helper adds to an existing ref file, it does not create one.
+        The model must already have a primary baseline on disk.
+        Name collision with an existing companion is rejected.
 
-        Args:
-            model_id: Must already have a ref file (primary baseline).
-            name: Baseline name (``"experiment"``, ``"analytical"``, ...).
-                  ``"primary"`` is rejected — primary is written by
-                  ``store_reference`` only.
-            time: Shared time vector for all variables in this baseline.
-            variables: ``[{"index", "name", "values"}, ...]``.
-            provenance: Optional origin metadata (captured_at, source,
-                citation, notes, ...). Stored verbatim under the baseline's
-                ``provenance`` key.
-            simulation: Optional simulation parameters that produced this
-                baseline (stop_time, method, ...). Free-form dict.
-            statistics: Optional statistics captured at baseline-acceptance
-                time. Free-form dict.
-            overwrite: When False, refuses to replace an existing baseline
-                of the same name (returns False).
-
-        Returns:
-            True on write, False if overwrite=False and the name exists.
+        Returns True on write, False if overwrite=False and the name exists.
         """
         if name == PRIMARY_BASELINE:
             raise ValueError(
-                "'primary' baselines are written by store_reference only; "
-                "add_named_baseline is for non-primary baselines."
+                "'primary' is reserved for the stored simulation result; "
+                "soft_checks live alongside, not in place of, primary."
             )
         if not name:
-            raise ValueError("baseline name must be a non-empty string")
+            raise ValueError("soft_check name must be a non-empty string")
 
         ref_file = self._ref_file_for_model(model_id)
         if ref_file is None or not ref_file.exists():
             raise FileNotFoundError(
-                f"No primary baseline for {model_id!r} — run the test with "
-                f"--accept first to create the reference file, then add "
-                f"non-primary baselines."
+                f"No primary baseline for {model_id!r}. Run the test with "
+                f"--accept first, then add soft_checks."
             )
 
-        data = self.get_reference(model_id) or {}
-        extras = data.setdefault("baselines", {})
-        if not overwrite and name in extras:
+        companions = self.get_companions(model_id)
+        if name in companions:
+            raise ValueError(
+                f"name {name!r} is already registered as a companion for "
+                f"{model_id!r}; companions and soft_checks share a namespace."
+            )
+
+        sc_dir = _soft_check_dir(self.ref_dir, ref_file)
+        sc_file = sc_dir / f"{name}.json"
+        if not overwrite and sc_file.exists():
             return False
 
         entry: dict[str, Any] = {
             "time": list(time),
             "variables": list(variables),
         }
-        if provenance:
-            entry["provenance"] = dict(provenance)
+        if diagnostics:
+            entry["diagnostics"] = list(diagnostics)
         if simulation:
             entry["simulation"] = dict(simulation)
         if statistics:
             entry["statistics"] = dict(statistics)
-        extras[name] = entry
+        if provenance:
+            entry["provenance"] = dict(provenance)
 
-        ref_file.write_text(
-            json.dumps(data, indent=2) + "\n", encoding="utf-8",
-        )
+        sc_dir.mkdir(parents=True, exist_ok=True)
+        sc_file.write_text(json.dumps(entry, indent=2) + "\n", encoding="utf-8")
         return True
 
-    def list_baseline_names(self, model_id: str) -> list[str]:
-        """Return the names of baselines available for a model."""
-        return list(self.get_baselines(model_id).keys())
+    def remove_soft_check(self, model_id: str, name: str) -> bool:
+        """Delete a soft_check. Returns True if removed, False if not found."""
+        sc_dir = self._soft_check_dir_for(model_id)
+        if sc_dir is None:
+            return False
+        sc_file = sc_dir / f"{name}.json"
+        if not sc_file.exists():
+            return False
+        sc_file.unlink()
+        # Remove empty parent directory.
+        try:
+            sc_dir.rmdir()
+        except OSError:
+            pass
+        return True
+
+    # ------------------------------------------------------------------
+    # Companions (D66) — external CSV / JSON / analytical data pointed
+    # to by file path; plot-only overlays; never scored against. Stored
+    # as ``kind="external"`` (path pointer) or ``kind="frozen"``
+    # (copied into ref storage).
+    # ------------------------------------------------------------------
+
+    def _companion_dir_for(self, model_id: str) -> Optional[Path]:
+        ref_file = self._ref_file_for_model(model_id)
+        if ref_file is None:
+            return None
+        return _companion_dir(self.ref_dir, ref_file)
+
+    def get_companions(self, model_id: str) -> dict[str, Companion]:
+        """Return all registered companions for a model (metadata only).
+
+        Does NOT read or validate the underlying data file — reporter
+        consumers are responsible for loading with graceful degradation.
+        """
+        co_dir = self._companion_dir_for(model_id)
+        if co_dir is None or not co_dir.is_dir():
+            return {}
+        out: dict[str, Companion] = {}
+        for meta_file in sorted(co_dir.glob("*.json")):
+            name = meta_file.stem
+            try:
+                entry = json.loads(meta_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Skipping unreadable companion meta %s: %s", meta_file, e)
+                continue
+            # Skip the sibling data file if it has a .json data extension
+            # — companion metadata is always the file matching the name
+            # with its `kind` declared inside. A frozen `.json` companion
+            # keeps its data in `<name>.data.json` (see add_companion).
+            if entry.get("kind") not in ("external", "frozen"):
+                continue
+            out[name] = Companion(
+                name=name,
+                kind=entry["kind"],
+                format=entry.get("format", "json"),
+                path=entry.get("path"),
+                data_file=entry.get("data_file"),
+                provenance=entry.get("provenance", {}),
+            )
+        return out
+
+    def add_companion(
+        self,
+        model_id: str,
+        name: str,
+        path: Path,
+        *,
+        format: Optional[str] = None,
+        provenance: Optional[dict] = None,
+    ) -> bool:
+        """Register an external file as a companion (pointer only, no copy).
+
+        The file is *not* read at registration. If it disappears later
+        the reporter degrades gracefully.
+
+        Args:
+            path: absolute or relative path to the external file. Stored
+                verbatim as a string.
+            format: ``"csv"`` or ``"json"``. Auto-detected from the file
+                extension if not given.
+        """
+        if name == PRIMARY_BASELINE:
+            raise ValueError("'primary' is reserved for the stored simulation result")
+        if not name:
+            raise ValueError("companion name must be a non-empty string")
+
+        ref_file = self._ref_file_for_model(model_id)
+        if ref_file is None or not ref_file.exists():
+            raise FileNotFoundError(
+                f"No primary baseline for {model_id!r}. Run the test with "
+                f"--accept first, then add companions."
+            )
+
+        soft_checks = self.get_soft_checks(model_id)
+        if name in soft_checks:
+            raise ValueError(
+                f"name {name!r} is already registered as a soft_check for "
+                f"{model_id!r}; companions and soft_checks share a namespace."
+            )
+
+        path_str = str(path)
+        fmt = format or _infer_companion_format(path_str)
+
+        meta = {
+            "kind": "external",
+            "format": fmt,
+            "path": path_str,
+        }
+        if provenance:
+            meta["provenance"] = dict(provenance)
+
+        co_dir = _companion_dir(self.ref_dir, ref_file)
+        co_dir.mkdir(parents=True, exist_ok=True)
+        meta_file = co_dir / f"{name}.json"
+        meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+        p = Path(path_str)
+        if not p.is_absolute() or not p.exists():
+            logger.info(
+                "companion %r registered but path %r is not currently readable "
+                "(external companions are pointer-only; reporter will degrade "
+                "gracefully if the file stays missing)",
+                name, path_str,
+            )
+        return True
+
+    def freeze_companion(self, model_id: str, name: str) -> bool:
+        """Copy an external companion's data into ref storage.
+
+        Converts ``kind="external"`` to ``kind="frozen"``. The data
+        file is copied beside the metadata as ``<name>.<ext>``
+        (preserving format). Already-frozen companions are a no-op.
+
+        Returns True on freeze, False if the companion is missing or
+        already frozen.
+        """
+        import shutil
+
+        companions = self.get_companions(model_id)
+        co = companions.get(name)
+        if co is None:
+            return False
+        if co.kind == "frozen":
+            logger.info("companion %r is already frozen; no-op", name)
+            return False
+
+        src = Path(co.path) if co.path else None
+        if src is None or not src.exists():
+            raise FileNotFoundError(
+                f"Cannot freeze companion {name!r}: source path {co.path!r} "
+                f"does not exist"
+            )
+
+        co_dir = self._companion_dir_for(model_id)
+        assert co_dir is not None
+        ext = _companion_extension(co.format)
+        data_basename = f"{name}{ext}"
+        dst = co_dir / data_basename
+        shutil.copyfile(src, dst)
+
+        meta_file = co_dir / f"{name}.json"
+        meta = {
+            "kind": "frozen",
+            "format": co.format,
+            "data_file": data_basename,
+        }
+        if co.provenance:
+            meta["provenance"] = dict(co.provenance)
+        meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        return True
+
+    def remove_companion(self, model_id: str, name: str) -> bool:
+        """Delete a companion registration. For frozen companions the
+        associated data file is also removed. Returns True if removed."""
+        co_dir = self._companion_dir_for(model_id)
+        if co_dir is None:
+            return False
+        meta_file = co_dir / f"{name}.json"
+        if not meta_file.exists():
+            return False
+        companions = self.get_companions(model_id)
+        co = companions.get(name)
+        meta_file.unlink()
+        if co and co.kind == "frozen" and co.data_file:
+            data_file = co_dir / co.data_file
+            if data_file.exists():
+                data_file.unlink()
+        try:
+            co_dir.rmdir()
+        except OSError:
+            pass
+        return True
 
     def store_reference(
         self,

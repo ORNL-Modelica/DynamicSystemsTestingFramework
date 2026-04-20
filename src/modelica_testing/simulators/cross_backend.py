@@ -1,10 +1,11 @@
 """Cross-backend orchestration (4.B.3). **EXPERIMENTAL** (D65).
 
-Helpers that chain backends to produce a named baseline. Today the only
-chain is **dymola-via-fmpy**: Dymola exports the model as an FMU, FMPy
-simulates the FMU, and the FMPy result is stored as a non-primary baseline
-(`"dymola-via-fmpy"` by convention) that MetricTree leaves can score
-against via ``"against": "dymola-via-fmpy"``.
+Helpers that chain backends to produce a **soft_check** baseline (D66).
+Today the only chain is **dymola-via-fmpy**: Dymola exports the model as
+an FMU, FMPy simulates the FMU, and the FMPy result is stored as a
+soft_check (`"dymola-via-fmpy"` by convention) that MetricTree leaves
+can score against via ``"against": "dymola-via-fmpy"`` — always inside
+a ``warn`` combinator, enforced by the validator.
 
 EXPERIMENTAL — scope limits (D65):
   - **Semantics**: the chain is only meaningful for *autonomous* tests —
@@ -60,12 +61,12 @@ def produce_dymola_via_fmpy_baseline(
       2. Build a clone of the test pointing at the FMU.
       3. Construct an :class:`FmpyRunner` (config tweaked to source_type="fmu").
       4. Run FMPy on the FMU + read back the result.
-      5. Persist the FMPy result as a named baseline via
-         :meth:`ReferenceStore.add_named_baseline`.
+      5. Persist the FMPy result as a soft_check via
+         :meth:`ReferenceStore.add_soft_check` (D66).
 
     Returns True on success, False if any step fails (logs the reason).
-    Requires the model to already have a primary baseline on disk
-    (``add_named_baseline`` is non-primary only — see D56).
+    Requires the model to already have a primary baseline on disk —
+    soft_checks augment primary, they do not replace it.
     """
     work = fmu_dir or (config.work_dir / f"chain_{test.model_id.replace('.', '_')}")
     work.mkdir(parents=True, exist_ok=True)
@@ -142,7 +143,7 @@ def produce_dymola_via_fmpy_baseline(
         for v in fmpy_result.variables
     ]
     try:
-        store.add_named_baseline(
+        store.add_soft_check(
             test.model_id,
             CROSS_BACKEND_BASELINE_NAME,
             time=time_vec,

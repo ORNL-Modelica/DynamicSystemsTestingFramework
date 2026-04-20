@@ -717,6 +717,7 @@ def compare_test(
     reference: dict,
     default_tolerance: float = DEFAULT_TOLERANCE,
     final_only: bool = False,
+    store=None,  # Optional[ReferenceStore] — if provided, soft_checks from the new subdir layout are merged in
 ) -> TestComparison:
     """Compare a test's simulation results against its reference.
 
@@ -789,11 +790,14 @@ def compare_test(
         from ..storage.reference_store import _extract_baselines
         from .tree_eval import BaselineView
         var_results_by_name = {v.name: v for v in result.variables if v.name}
-        # Phase 4.A.3: load every named baseline from the reference file.
-        # Primary comes from the flat top-level fields; any additional
-        # baselines (experiment, analytical, ...) come from the "baselines"
-        # map. Leaves pick which one via leaf.against (defaults to primary).
+        # Load primary from the flat ref file; merge in soft_checks from the
+        # `soft_checks/ref_NNNN/` subdir when a store is supplied (D66). Leaves
+        # pick which baseline to score against via `leaf.against` (defaults
+        # to primary). The transition also reads any pre-migration flat
+        # `baselines` dict so unmigrated ref files still evaluate correctly.
         all_baselines = _extract_baselines(reference)
+        if store is not None:
+            all_baselines.update(store.get_soft_checks(test.model_id))
         baselines: dict[str, BaselineView] = {}
         for name, bl in all_baselines.items():
             refs_by_name: dict[str, dict] = {}
@@ -919,6 +923,7 @@ def compare_all(
             test, result, reference,
             default_tolerance=default_tolerance,
             final_only=final_only,
+            store=store,
         )
         comparisons.append(comp)
 

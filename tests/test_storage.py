@@ -594,60 +594,6 @@ class TestBaselineView:
         assert "experiment" in data_after.get("baselines", {})
         assert data_after["baselines"]["experiment"]["provenance"]["citation"] == "Report XYZ"
 
-    def test_add_named_baseline_writes_non_primary(self, sample_models_dir, tmp_path):
-        """add_named_baseline puts a new baseline under the ``baselines`` map."""
-        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
-        store = ReferenceStore(config)
-        test = TestReferenceStore()._make_test_model()
-        store.store_reference(test, TestReferenceStore()._make_test_result())
-
-        ok = store.add_named_baseline(
-            test.model_id, "experiment",
-            time=[0.0, 0.5, 1.0],
-            variables=[{"index": 1, "name": "x", "values": [0.0, 0.5, 1.0]}],
-            provenance={"origin": "rig-run-2026-04-17", "citation": "Report Q2"},
-        )
-        assert ok
-
-        b = store.get_baseline(test.model_id, name="experiment")
-        assert b is not None
-        assert b.time == [0.0, 0.5, 1.0]
-        assert b.provenance["citation"] == "Report Q2"
-        # Primary must still be intact.
-        assert store.get_baseline(test.model_id, name="primary") is not None
-
-    def test_add_named_baseline_rejects_primary_name(self, sample_models_dir, tmp_path):
-        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
-        store = ReferenceStore(config)
-        test = TestReferenceStore()._make_test_model()
-        store.store_reference(test, TestReferenceStore()._make_test_result())
-        with pytest.raises(ValueError, match="primary"):
-            store.add_named_baseline(test.model_id, "primary", time=[], variables=[])
-
-    def test_add_named_baseline_requires_primary_on_disk(self, sample_models_dir, tmp_path):
-        """Can't add a non-primary baseline to a model that has no reference file."""
-        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
-        store = ReferenceStore(config)
-        with pytest.raises(FileNotFoundError):
-            store.add_named_baseline(
-                "MyLib.Nonexistent", "experiment", time=[], variables=[],
-            )
-
-    def test_add_named_baseline_overwrite_false_refuses_existing(self, sample_models_dir, tmp_path):
-        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
-        store = ReferenceStore(config)
-        test = TestReferenceStore()._make_test_model()
-        store.store_reference(test, TestReferenceStore()._make_test_result())
-        store.add_named_baseline(test.model_id, "experiment", time=[], variables=[])
-        # Second call with overwrite=False should be a no-op and return False.
-        ok = store.add_named_baseline(
-            test.model_id, "experiment", time=[1.0], variables=[],
-            overwrite=False,
-        )
-        assert ok is False
-        # Stored baseline unchanged
-        assert store.get_baseline(test.model_id, "experiment").time == []
-
     def test_store_reference_drops_accidental_primary_under_baselines(self, sample_models_dir, tmp_path):
         """On rewrite, any 'primary' entry under 'baselines' is dropped (flat fields are authoritative)."""
         config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
