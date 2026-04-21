@@ -199,7 +199,12 @@ def _match_component_instantiation(content: str, spec: dict) -> Optional[Compone
     tails = [".".join(segments[i:]) for i in range(len(segments))]
     pattern_str = "|".join(re.escape(t) for t in tails)
     pattern = re.compile(rf'\b(?:{pattern_str})\s+(\w+)\s*\(', re.DOTALL)
-    m = pattern.search(content)
+    # Strip annotations + string literals so prose mentioning the
+    # component class doesn't false-trigger. Offsets inside the stripped
+    # content stay valid for param-text extraction (block comments get
+    # replaced with spaces, preserving offsets).
+    stripped = _strip_modelica_literals(content)
+    m = pattern.search(stripped)
     if not m:
         return None
     instance_name = m.group(1)
@@ -207,10 +212,10 @@ def _match_component_instantiation(content: str, spec: dict) -> Optional[Compone
     paren_open = m.end() - 1
     depth = 0
     end = paren_open
-    for i in range(paren_open, len(content)):
-        if content[i] == "(":
+    for i in range(paren_open, len(stripped)):
+        if stripped[i] == "(":
             depth += 1
-        elif content[i] == ")":
+        elif stripped[i] == ")":
             depth -= 1
             if depth == 0:
                 end = i
@@ -218,18 +223,46 @@ def _match_component_instantiation(content: str, spec: dict) -> Optional[Compone
     return ComponentMatch(
         component_class=matched_class,
         instance_name=instance_name,
-        param_text=content[paren_open + 1:end],
+        param_text=stripped[paren_open + 1:end],
     )
 
 
 @_register_match("extends")
 def _match_extends(content: str, spec: dict) -> Optional[ExtendsMatch]:
     pattern_glob = spec["class_pattern"]
-    for m in re.finditer(r'\bextends\s+([\w.]+)', content):
+    # Strip comments + string literals first — prose like "extends
+    # ModelicaTestingLib.Icons.Example" inside a doc annotation would
+    # otherwise register as a real extends, misidentifying icon classes
+    # as tests.
+    stripped = _strip_modelica_literals(content)
+    for m in re.finditer(r'\bextends\s+([\w.]+)', stripped):
         extended = m.group(1)
         if fnmatch.fnmatchcase(extended, pattern_glob):
             return ExtendsMatch(extended_class=extended)
     return None
+
+
+# Modelica string literals + comments. Stripped before source-scan regexes
+# so prose inside a Documentation annotation doesn't trigger false matches
+# on ``extends``, ``UnitTests(...)``, etc.
+_MODELICA_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
+_MODELICA_LINE_COMMENT = re.compile(r'//[^\n]*')
+_MODELICA_BLOCK_COMMENT = re.compile(r'/\*[\s\S]*?\*/')
+
+
+def _strip_modelica_literals(content: str) -> str:
+    """Remove string literals + comments from Modelica source.
+
+    Used by match functions that scan for declarations — annotation
+    HTML / doc prose that happens to contain a keyword like
+    ``extends`` would otherwise trigger false positives.
+    """
+    # Order matters: strip block comments first (they can contain //),
+    # then line comments, then strings.
+    out = _MODELICA_BLOCK_COMMENT.sub(" ", content)
+    out = _MODELICA_LINE_COMMENT.sub("", out)
+    out = _MODELICA_STRING.sub(" ", out)
+    return out
 
 
 @_register_match("class-name-glob")

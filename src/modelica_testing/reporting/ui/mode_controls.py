@@ -376,6 +376,9 @@ def emit_mode_schemas() -> dict[str, dict]:
 def render_window_controls_html(
     variable: Optional[str] = None,
     values: Optional[dict[str, Any]] = None,
+    *,
+    time_start: Optional[float] = None,
+    time_end: Optional[float] = None,
 ) -> str:
     """Render the universal window inputs for a tree-backed leaf.
 
@@ -384,7 +387,9 @@ def render_window_controls_html(
     fields through the mode schema. Returns a ``<div class="window-controls"
     data-variable="...">`` with two number inputs, ``data-field="window_start"``
     and ``data-field="window_end"``. Empty ``values`` leaves the inputs
-    blank (open-ended window).
+    blank (open-ended window); ``time_start`` / ``time_end``, when given,
+    hint the simulation's full range via ``placeholder`` so users see the
+    bounds without auto-committing them.
 
     Emitted only for tree-backed variables (callers decide) — flat-override
     leaves have no window concept, so the reporter suppresses this fragment
@@ -396,15 +401,23 @@ def render_window_controls_html(
     end = values.get("end")
     start_attr = "" if start is None else f' value="{html.escape(str(start))}"'
     end_attr = "" if end is None else f' value="{html.escape(str(end))}"'
+    start_ph = (
+        f' placeholder="{html.escape(f"{time_start:g}")}"'
+        if time_start is not None else ''
+    )
+    end_ph = (
+        f' placeholder="{html.escape(f"{time_end:g}")}"'
+        if time_end is not None else ''
+    )
     return (
         f'<div class="window-controls" data-variable="{var_attr}" '
         'title="Restrict this leaf to a time window [start, end] before scoring">'
         '<span class="wc-label">Window:</span>'
         f'<label class="wc-field"><span>start</span>'
-        f'<input type="number" step="any" data-field="window_start"{start_attr}>'
+        f'<input type="number" step="any" data-field="window_start"{start_attr}{start_ph}>'
         '</label>'
         f'<label class="wc-field"><span>end</span>'
-        f'<input type="number" step="any" data-field="window_end"{end_attr}>'
+        f'<input type="number" step="any" data-field="window_end"{end_attr}{end_ph}>'
         '</label>'
         '</div>'
     )

@@ -252,6 +252,17 @@ class TestWindowControls:
         assert 'type="number"' in html
         assert 'step="any"' in html
 
+    def test_time_bounds_surface_as_placeholders(self):
+        """Simulation bounds fed via ``time_start`` / ``time_end`` render as
+        the inputs' ``placeholder`` — guidance without auto-committing."""
+        html = render_window_controls_html(
+            variable="h", time_start=0.0, time_end=10.0,
+        )
+        assert 'placeholder="0"' in html
+        assert 'placeholder="10"' in html
+        # Values stay blank — placeholder is a hint, not a commit.
+        assert 'value=' not in html
+
 
 class TestPlotContributionSlot:
     """Stage 1 — every ModeUI carries an optional plot_contribution callable.

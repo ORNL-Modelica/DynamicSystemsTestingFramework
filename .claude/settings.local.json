@@ -66,7 +66,9 @@
       "Bash(UPDATE_GOLDEN=1 uv run pytest tests/test_interactive_html_snapshot.py -q)",
       "Bash(getent hosts *)",
       "Bash(awk '{print \"  plotly_click handler refs:\", $1}')",
-      "Bash(awk '{print $5 \" bytes \\(\" $5/1024 \" KB\\)\"}')"
+      "Bash(awk '{print $5 \" bytes \\(\" $5/1024 \" KB\\)\"}')",
+      "Bash(sed -i '397,577d' /mnt/d/Modelica/ModelicaTesting/src/modelica_testing/reporting/templates/interactive.js)",
+      "Bash(sed -n '395,400p' /mnt/d/Modelica/ModelicaTesting/src/modelica_testing/reporting/templates/interactive.js)"
     ]
   }
 }

@@ -58,6 +58,15 @@ function initWorkingTree() {
 })();
 
 // ---- Helpers ----
+// currentTree() returns whichever tree the UI should reflect: the
+// original CLI-evaluated TREE_VIEW normally, or WORKING_TREE when the
+// user has made structural edits. Readers (plot contributions, tree
+// mounts, pass-state recompute, summary) go through this so structural
+// edits show up without duplicate code paths.
+function currentTree() {
+  return structureDirty && WORKING_TREE ? WORKING_TREE : TREE_VIEW;
+}
+
 function walkLeaves(node, fn) {
   if (!node) return;
   if (node.kind === 'leaf') { fn(node); return; }
@@ -66,7 +75,7 @@ function walkLeaves(node, fn) {
 
 function leavesForVariable(varname) {
   const out = [];
-  walkLeaves(TREE_VIEW, (leaf) => {
+  walkLeaves(currentTree(), (leaf) => {
     if (leaf.variable === varname) out.push(leaf);
   });
   return out;
@@ -285,47 +294,34 @@ const MODE_PLOT_CONTRIBUTIONS = {
   },
   'tube': (leaf, traj) => {
     if (!traj.ref_time || !traj.ref_time.length) return { traces: [], shapes: [] };
-    const p = leafState[leaf.path] ? leafState[leaf.path].params : {};
-    const rel = Number(p.tube_rel || 0);
-    const abs = Number(p.tube_abs || 0);
-    const minW = Number(p.tube_min_width || 0);
-    const mode = p.tube_width_mode;
+    const p = (leafState[leaf.path] || {}).params || {};
     const points = Array.isArray(p.tube_points) ? p.tube_points : [];
+    const editor = MODE_PLOT_EDITORS['tube'];
 
-    // Time-varying tube wins over the scalar widths when any control
-    // points are authored (matches _interpolate_tube_widths in the
-    // comparator; interp across the control grid, hold at the ends).
-    let widths_upper, widths_lower;
-    if (points.length > 0) {
-      const normalized = points.map(pt => ({
-        time: Number(pt.time ?? 0),
-        upper: Number(pt.upper ?? pt.abs ?? pt.rel ?? 0),
-        lower: Number(pt.lower ?? pt.abs ?? pt.rel ?? 0),
-      })).sort((a, b) => a.time - b.time);
-      const interp = (t, key) => {
-        if (t <= normalized[0].time) return normalized[0][key];
-        if (t >= normalized[normalized.length - 1].time) return normalized[normalized.length - 1][key];
-        for (let i = 1; i < normalized.length; i++) {
-          if (normalized[i].time >= t) {
-            const f = (t - normalized[i - 1].time) / (normalized[i].time - normalized[i - 1].time);
-            return normalized[i - 1][key] + f * (normalized[i][key] - normalized[i - 1][key]);
-          }
-        }
-        return normalized[normalized.length - 1][key];
-      };
-      widths_upper = traj.ref_time.map(t => Math.max(minW, interp(t, 'upper')));
-      widths_lower = traj.ref_time.map(t => Math.max(minW, interp(t, 'lower')));
+    let upper, lower;
+    if (points.length > 0 && editor && editor._resolveAllBoundsOnGrid) {
+      // Delegate to the editor's resolver so per-point / per-side modes
+      // flow through to the polygon. Same code path the table + pass/fail
+      // use — one source of truth for "what bounds does this config imply?"
+      const r = editor._resolveAllBoundsOnGrid(leaf, traj.ref_time);
+      upper = r.upper;
+      lower = r.lower;
     } else {
-      const w = traj.ref_values.map(v => {
+      // Scalar constant tube (no authored points) — fall back to width-mode
+      // arithmetic against ref values.
+      const rel = Number(p.tube_rel || 0);
+      const abs = Number(p.tube_abs || 0);
+      const minW = Number(p.tube_min_width || 0);
+      const mode = p.tube_width_mode;
+      const widths = traj.ref_values.map(v => {
         if (mode === 'rel') return Math.max(minW, rel * Math.abs(v));
         if (mode === 'band') return Math.max(minW, abs);
         return Math.max(minW, Math.max(abs, rel * Math.abs(v)));
       });
-      widths_upper = w; widths_lower = w;
+      upper = traj.ref_values.map((v, i) => v + widths[i]);
+      lower = traj.ref_values.map((v, i) => v - widths[i]);
     }
 
-    const upper = traj.ref_values.map((v, i) => v + widths_upper[i]);
-    const lower = traj.ref_values.map((v, i) => v - widths_lower[i]);
     const traces = [{
       x: traj.ref_time.concat([...traj.ref_time].reverse()),
       y: upper.concat([...lower].reverse()),
@@ -338,21 +334,28 @@ const MODE_PLOT_CONTRIBUTIONS = {
     }];
 
     // When this tube leaf is the active one, surface its control points
-    // as draggable-looking markers. Adds visual feedback that the
-    // interactive editor is wired to this plot.
-    if (activeLeafPath === leaf.path && points.length > 0) {
-      const pxt = points.map(pt => Number(pt.time ?? 0));
-      const pxu = points.map(pt => interpOnRef(traj, Number(pt.time ?? 0)) + Number(pt.upper ?? 0));
-      const pxl = points.map(pt => interpOnRef(traj, Number(pt.time ?? 0)) - Number(pt.lower ?? 0));
+    // as draggable-looking markers at their RESOLVED absolute y-values
+    // (so the markers land on the tube boundary whatever mode's in play).
+    // Legend excludes these — the polygon entry is already enough, and
+    // a per-variable plot with 2+ tube leaves would otherwise flood the
+    // legend with marker rows.
+    if (activeLeafPath === leaf.path && points.length > 0 && editor) {
+      const xs = points.map(pt => Number(pt.time));
+      const ups = points.map((pt, i) => editor._resolvePoint(leaf, pt, i).upper);
+      const los = points.map((pt, i) => editor._resolvePoint(leaf, pt, i).lower);
       traces.push({
-        x: pxt, y: pxu, mode: 'markers', type: 'scatter',
-        marker: { color: '#2e7d32', size: 9, symbol: 'triangle-up', line: {color: 'white', width: 1} },
+        x: xs, y: ups, mode: 'markers', type: 'scatter',
+        marker: { color: '#2e7d32', size: 10, symbol: 'triangle-up',
+                  line: { color: 'white', width: 1 } },
         name: `Tube upper pts ${leaf.path}`, hoverinfo: 'x+y',
+        showlegend: false,
       });
       traces.push({
-        x: pxt, y: pxl, mode: 'markers', type: 'scatter',
-        marker: { color: '#c62828', size: 9, symbol: 'triangle-down', line: {color: 'white', width: 1} },
+        x: xs, y: los, mode: 'markers', type: 'scatter',
+        marker: { color: '#c62828', size: 10, symbol: 'triangle-down',
+                  line: { color: 'white', width: 1 } },
         name: `Tube lower pts ${leaf.path}`, hoverinfo: 'x+y',
+        showlegend: false,
       });
     }
     return { traces, shapes: [] };
@@ -382,190 +385,693 @@ const MODE_PLOT_CONTRIBUTIONS = {
 // leaf activates it (for visual consistency) but no plot events wire.
 const MODE_PLOT_EDITORS = {};
 
-// Tube editor — control-point table + Shift+click to add a point.
-// Points live at ``leafState[path].params.tube_points`` as a list of
-// ``{time, upper, lower}``. Polygon re-renders via plot_contribution.
+// Tube editor — full reimplementation of the pre-Stage-2 prototype,
+// reshaped around path-keyed leafState. Features:
+//
+//   * Auto-seed two control points at trajectory start/end on first
+//     activation (when tube_points is empty), widthMode='rel', width=0.05,
+//     synced=true.
+//   * Control-point table — columns adapt to synced + widthMode:
+//     - synced + rel/band:  Time | Width     | ✕
+//     - synced + absolute:  Time | Upper | Lower | ✕
+//     - unsynced:           Time | Upper | Mode | Lower | Mode | ✕
+//   * Width mode selector (rel / band / absolute) — global when synced;
+//     per-point-per-side when unsynced.
+//   * Sync/unsync toggle, interpolation (linear / constant), min-width floor.
+//   * Shift+click on plot — adds a point; assigned to whichever bound
+//     (upper/lower) the click y is closest to.
+//   * Shift+drag on a control-point marker — moves it live.
+//   * Shift+right-click on a marker — removes (≥1 point must remain).
+//   * Live pass/fail + "% inside" + worst-violation readout.
 MODE_PLOT_EDITORS['tube'] = (function() {
-  const wired = new WeakMap();  // plotEl → cleanup fn
+  const editorState = {};   // leafPath → {synced, perPointModes}
+  const wired = new WeakMap();
+
+  // ---- state accessors ------------------------------------------------
+  function getParams(leaf) { return (leafState[leaf.path] || {}).params || {}; }
+  function getWidthMode(leaf) {
+    const m = getParams(leaf).tube_width_mode;
+    return (m === 'band' || m === 'rel' || m === 'absolute') ? m : 'rel';
+  }
+  function setWidthMode(leaf, mode) { getParams(leaf).tube_width_mode = mode; }
+  function getInterpolation(leaf) {
+    return getParams(leaf).tube_interpolation === 'constant' ? 'constant' : 'linear';
+  }
+  function setInterpolation(leaf, v) { getParams(leaf).tube_interpolation = v; }
+  function getMinWidth(leaf) { return Number(getParams(leaf).tube_min_width || 0); }
+  function setMinWidth(leaf, v) { getParams(leaf).tube_min_width = Number(v) || 0; }
 
   function getPoints(leaf) {
-    const p = leafState[leaf.path]?.params || {};
-    const pts = Array.isArray(p.tube_points) ? p.tube_points : [];
-    return pts.map(normalizePoint);
+    const p = getParams(leaf);
+    if (!Array.isArray(p.tube_points)) p.tube_points = [];
+    return p.tube_points;
   }
-
-  function normalizePoint(p) {
-    // Accept legacy {time, abs, rel} as symmetric upper=lower=abs||rel.
-    if (p.upper !== undefined || p.lower !== undefined) {
-      return { time: Number(p.time || 0),
-               upper: Number(p.upper ?? p.lower ?? 0),
-               lower: Number(p.lower ?? p.upper ?? 0) };
-    }
-    const w = Number(p.abs ?? p.rel ?? 0);
-    return { time: Number(p.time || 0), upper: w, lower: w };
-  }
-
+  // setPoints REPLACES the points array with fresh pt objects. Only use
+  // for structural changes (seed / add / remove / import) where object
+  // identity doesn't need to survive. For in-place edits (drag, input
+  // change), mutate pt.time / pt.upper / pt.lower directly on the
+  // reference returned by getPoints() — keeps drag.pt references valid
+  // through sort.
   function setPoints(leaf, pts) {
-    const state = leafState[leaf.path];
-    if (!state) return;
-    state.params.tube_points = pts.map(p => ({
-      time: Number(p.time), upper: Number(p.upper), lower: Number(p.lower),
+    getParams(leaf).tube_points = pts.map(p => ({
+      time: Number(p.time),
+      upper: Number(p.upper),
+      lower: Number(p.lower),
     }));
   }
+  // sortPointsAndModes re-orders in place so a drag in progress holding
+  // a pt reference still sees its pt move through the array. No clone
+  // — callers holding drag.pt keep a valid reference.
+  function sortPointsAndModes(leaf) {
+    const pts = getPoints(leaf);
+    if (pts.length <= 1) return;
+    const es = ensureEditorState(leaf);
+    const paired = pts.map((pt, i) => ({ pt, mode: es.perPointModes[i] || { upperMode: null, lowerMode: null } }));
+    paired.sort((a, b) => a.pt.time - b.pt.time);
+    for (let i = 0; i < paired.length; i++) {
+      pts[i] = paired[i].pt;
+      es.perPointModes[i] = paired[i].mode;
+    }
+  }
 
-  function renderTable(leaf, container, commit) {
+  function ensureEditorState(leaf) {
+    if (editorState[leaf.path]) return editorState[leaf.path];
+    // Infer synced from point values — saved asymmetric config re-opens unsynced.
+    const pts = getPoints(leaf);
+    const inferredSynced = pts.length === 0 ||
+      pts.every(p => Math.abs(Number(p.upper) - Number(p.lower)) < 1e-12);
+    editorState[leaf.path] = {
+      synced: inferredSynced,
+      perPointModes: pts.map(() => ({ upperMode: null, lowerMode: null })),
+    };
+    return editorState[leaf.path];
+  }
+
+  function refValueAt(leaf, t) {
+    const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+    const rt = traj.ref_time || traj.act_time || [];
+    const rv = traj.ref_values || traj.act_values || [];
+    return rt.length ? _interpLinear(rt, rv, t) : 0;
+  }
+  function signalRange(leaf) {
+    const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+    const rv = traj.ref_values || traj.act_values || [];
+    if (!rv.length) return 1.0;
+    return Math.max(...rv) - Math.min(...rv) || 1.0;
+  }
+  function roundSig(val, digits) {
+    if (val === 0) return 0;
+    const d = Math.ceil(Math.log10(Math.abs(val)));
+    const pow = Math.pow(10, digits - d);
+    return Math.round(val * pow) / pow;
+  }
+
+  function defaultBoundValue(leaf, t, mode) {
+    const rv = refValueAt(leaf, t);
+    const rvAbs = Math.abs(rv);
+    const fallbackBand = roundSig(signalRange(leaf) * 0.05, 3);
+    if (mode === 'rel') return { upper: 0.05, lower: 0.05 };
+    if (mode === 'absolute') {
+      const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
+      return { upper: roundSig(rv + band, 4), lower: roundSig(rv - band, 4) };
+    }
+    const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
+    return { upper: band, lower: band };
+  }
+
+  function seedIfEmpty(leaf) {
+    if (getPoints(leaf).length > 0) return;
+    const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+    const rt = traj.ref_time || traj.act_time || [];
+    if (!rt.length) return;
+    if (!getParams(leaf).tube_width_mode) setWidthMode(leaf, 'rel');
+    if (!getParams(leaf).tube_interpolation) setInterpolation(leaf, 'linear');
+    const mode = getWidthMode(leaf);
+    setPoints(leaf, [
+      { time: rt[0], ...defaultBoundValue(leaf, rt[0], mode) },
+      { time: rt[rt.length - 1], ...defaultBoundValue(leaf, rt[rt.length - 1], mode) },
+    ]);
+    const es = ensureEditorState(leaf);
+    es.perPointModes = [{ upperMode: null, lowerMode: null }, { upperMode: null, lowerMode: null }];
+  }
+
+  // ---- resolve point to absolute y-bounds ----------------------------
+  function resolvePoint(leaf, pt, ptIdx) {
+    const globalMode = getWidthMode(leaf);
+    const es = ensureEditorState(leaf);
+    const pm = es.perPointModes[ptIdx] || { upperMode: null, lowerMode: null };
+    const uMode = es.synced ? globalMode : (pm.upperMode || globalMode);
+    const lMode = es.synced ? globalMode : (pm.lowerMode || globalMode);
+    const rv = refValueAt(leaf, pt.time);
+    const rvAbs = Math.abs(rv);
+    const minW = getMinWidth(leaf);
+
+    let upper, lower;
+    if (uMode === 'absolute') upper = Number(pt.upper);
+    else if (uMode === 'rel') {
+      let w = Number(pt.upper) * rvAbs;
+      if (minW > 0) w = Math.max(w, minW);
+      upper = rv + w;
+    } else {
+      let w = Number(pt.upper);
+      if (minW > 0) w = Math.max(w, minW);
+      upper = rv + w;
+    }
+    if (lMode === 'absolute') lower = Number(pt.lower);
+    else if (lMode === 'rel') {
+      let w = Number(pt.lower) * rvAbs;
+      if (minW > 0) w = Math.max(w, minW);
+      lower = rv - w;
+    } else {
+      let w = Number(pt.lower);
+      if (minW > 0) w = Math.max(w, minW);
+      lower = rv - w;
+    }
+    return { upper, lower, uMode, lMode };
+  }
+
+  function setBoundFromAbsoluteY(leaf, ptIdx, bound, yAbs) {
+    const pts = getPoints(leaf);
+    const pt = pts[ptIdx];
+    if (!pt) return;
+    const globalMode = getWidthMode(leaf);
+    const es = ensureEditorState(leaf);
+    const pm = es.perPointModes[ptIdx] || { upperMode: null, lowerMode: null };
+    const isUpper = bound === 'upper';
+    const mode = es.synced ? globalMode : (pm[isUpper ? 'upperMode' : 'lowerMode'] || globalMode);
+    const rv = refValueAt(leaf, pt.time);
+    const rvAbs = Math.abs(rv);
+
+    if (mode === 'absolute') pt[bound] = roundSig(yAbs, 4);
+    else if (mode === 'rel') {
+      const offset = isUpper ? yAbs - rv : rv - yAbs;
+      pt[bound] = rvAbs > 1e-15 ? roundSig(Math.max(offset / rvAbs, 0), 3) : 0.05;
+    } else {
+      const offset = isUpper ? yAbs - rv : rv - yAbs;
+      pt[bound] = roundSig(Math.max(offset, 0), 3);
+    }
+    if (es.synced) pt[isUpper ? 'lower' : 'upper'] = pt[bound];
+    // In-place mutation only — don't clone via setPoints here. During a
+    // drag, callers hold a pt reference that must survive to the next
+    // frame; cloning would break that invariant.
+  }
+
+  // ---- pass/fail + rendering helpers ---------------------------------
+  function resolveAllBoundsOnGrid(leaf, grid) {
+    const pts = [...getPoints(leaf)].sort((a, b) => a.time - b.time);
+    const ctrlTimes = pts.map(p => p.time);
+    const resUpper = pts.map((p, i) => resolvePoint(leaf, p, i).upper);
+    const resLower = pts.map((p, i) => resolvePoint(leaf, p, i).lower);
+    const fn = getInterpolation(leaf) === 'constant' ? _interpStep : _interpLinear;
+    return {
+      upper: grid.map(t => fn(ctrlTimes, resUpper, t)),
+      lower: grid.map(t => fn(ctrlTimes, resLower, t)),
+      ctrlTimes, resUpper, resLower,
+    };
+  }
+
+  function evaluatePass(leaf) {
+    const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+    const rt = traj.ref_time || traj.act_time || [];
+    if (!rt.length || !getPoints(leaf).length) return { passed: true, pctInside: 100, worst: 0, worstT: 0 };
+    const { upper, lower } = resolveAllBoundsOnGrid(leaf, rt);
+    let nInside = 0, worst = 0, worstT = 0;
+    for (let i = 0; i < rt.length; i++) {
+      const actV = _interpLinear(traj.act_time || [], traj.act_values || [], rt[i]);
+      if (actV >= lower[i] && actV <= upper[i]) nInside++;
+      else {
+        const v = Math.max(actV - upper[i], lower[i] - actV);
+        if (v > worst) { worst = v; worstT = rt[i]; }
+      }
+    }
+    return {
+      passed: nInside === rt.length,
+      pctInside: (nInside / rt.length) * 100,
+      worst, worstT,
+    };
+  }
+
+  // ---- table UI -------------------------------------------------------
+  function unitLabel(mode) {
+    return mode === 'rel' ? 'fraction' : mode === 'absolute' ? 'y-value' : 'signal units';
+  }
+
+  // Re-render tube UI into every active slot for this leaf. Called on
+  // every state mutation — keeps the full-tree mount and per-variable
+  // mount in lock step. No per-slot parameter threads through the
+  // event handlers; if you mutate state, you call refresh(), period.
+  function refreshTables(leaf, commit) {
+    const slots = document.querySelectorAll(
+      `[data-path="${escapeSelector(leaf.path)}"] .node-editor`,
+    );
+    slots.forEach(slot => renderInto(leaf, slot, commit));
+  }
+
+  // Render the tube UI into its dedicated sub-container inside the
+  // slot. Leaves the slot's other children (window-brush control)
+  // alone — core lifecycle owns slot-level cleanup.
+  function renderInto(leaf, slot, commit) {
+    let container = slot.querySelector(':scope > .tube-editor-ui');
+    if (!container) {
+      container = document.createElement('div');
+      container.className = 'tube-editor-ui';
+      slot.appendChild(container);
+    }
     container.innerHTML = '';
-    const title = document.createElement('div');
-    title.className = 'editor-title';
-    title.textContent = 'Tube control points (time / upper / lower width)';
-    container.appendChild(title);
+
+    const es = ensureEditorState(leaf);
+    const widthMode = getWidthMode(leaf);
+
+    const controls = document.createElement('div');
+    controls.className = 'tube-editor-controls';
+    controls.innerHTML = `
+      <label>Width mode
+        <select data-tube-field="widthMode" ${!es.synced ? 'disabled' : ''}>
+          <option value="rel">rel (fraction of |ref|)</option>
+          <option value="band">band (± offset)</option>
+          <option value="absolute">absolute (y-value)</option>
+        </select>
+      </label>
+      <label>Symmetry
+        <select data-tube-field="synced">
+          <option value="true">synced (upper = lower)</option>
+          <option value="false">unsynced (per-side)</option>
+        </select>
+      </label>
+      <label>Interpolation
+        <select data-tube-field="interpolation">
+          <option value="linear">linear</option>
+          <option value="constant">step</option>
+        </select>
+      </label>
+      <label>Min width
+        <input type="number" step="any" min="0" data-tube-field="minWidth" style="width:6em">
+      </label>
+      <span class="tube-status"></span>
+    `;
+    controls.querySelector('[data-tube-field="widthMode"]').value = widthMode;
+    controls.querySelector('[data-tube-field="synced"]').value = String(es.synced);
+    controls.querySelector('[data-tube-field="interpolation"]').value = getInterpolation(leaf);
+    controls.querySelector('[data-tube-field="minWidth"]').value = getMinWidth(leaf);
+
+    controls.querySelector('[data-tube-field="widthMode"]').addEventListener('change', (e) => {
+      const old = widthMode, next = e.target.value;
+      if (old !== next) reprojectAllPoints(leaf, old, next);
+      setWidthMode(leaf, next);
+      refreshTables(leaf, commit); commit();
+    });
+    controls.querySelector('[data-tube-field="synced"]').addEventListener('change', (e) => {
+      const syn = e.target.value === 'true';
+      es.synced = syn;
+      if (syn) {
+        // In-place sync — mutate lower to match upper on each existing pt
+        // object; no setPoints clone, so downstream references stay valid.
+        getPoints(leaf).forEach(p => { p.lower = p.upper; });
+        es.perPointModes.forEach(pm => { pm.upperMode = null; pm.lowerMode = null; });
+      }
+      refreshTables(leaf, commit); commit();
+    });
+    controls.querySelector('[data-tube-field="interpolation"]').addEventListener('change', (e) => {
+      setInterpolation(leaf, e.target.value); commit();
+    });
+    controls.querySelector('[data-tube-field="minWidth"]').addEventListener('input', (e) => {
+      setMinWidth(leaf, e.target.value); commit();
+    });
+    container.appendChild(controls);
 
     const hint = document.createElement('div');
     hint.className = 'editor-hint';
-    hint.innerHTML = 'Shift+click the plot to add a point at that (time, value). Widths are offsets from the reference trajectory.';
+    hint.innerHTML = 'Shift+click on the plot to add a point · Shift+drag to move · Shift+right-click to delete';
     container.appendChild(hint);
 
     const table = document.createElement('table');
     table.className = 'tube-table';
-    const header = document.createElement('tr');
-    ['time', 'upper', 'lower', ''].forEach(h => {
-      const th = document.createElement('th'); th.textContent = h;
-      header.appendChild(th);
-    });
-    table.appendChild(header);
+    const header = table.insertRow();
+    const pts = getPoints(leaf);
+    if (es.synced && widthMode !== 'absolute') {
+      header.innerHTML = `<th>Time</th><th>Width (${unitLabel(widthMode)})</th><th></th>`;
+    } else if (es.synced && widthMode === 'absolute') {
+      header.innerHTML = `<th>Time</th><th>Upper (y)</th><th>Lower (y)</th><th></th>`;
+    } else {
+      header.innerHTML = `<th>Time</th><th>Upper</th><th>Mode</th><th>Lower</th><th>Mode</th><th></th>`;
+    }
 
-    const points = getPoints(leaf);
-    points.forEach((pt, i) => {
-      const row = document.createElement('tr');
-      for (const key of ['time', 'upper', 'lower']) {
-        const td = document.createElement('td');
-        const inp = document.createElement('input');
-        inp.type = 'number'; inp.step = 'any'; inp.value = pt[key];
-        inp.addEventListener('input', () => {
-          points[i][key] = parseFloat(inp.value);
-          if (Number.isFinite(points[i][key])) {
-            setPoints(leaf, points);
-            commit();
-          }
-        });
-        td.appendChild(inp);
-        row.appendChild(td);
+    pts.forEach((pt, i) => {
+      const row = table.insertRow();
+      if (es.synced && widthMode !== 'absolute') {
+        row.appendChild(numberCell(pt.time, v => onPointField(leaf, i, 'time', v, commit), 'any'));
+        row.appendChild(numberCell(pt.upper, v => onPointField(leaf, i, 'width', v, commit),
+                                   widthMode === 'rel' ? '0.001' : 'any', 0));
+        row.appendChild(removeCell(leaf, i, commit));
+      } else if (es.synced && widthMode === 'absolute') {
+        row.appendChild(numberCell(pt.time, v => onPointField(leaf, i, 'time', v, commit), 'any'));
+        row.appendChild(numberCell(pt.upper, v => onPointField(leaf, i, 'upper', v, commit), 'any'));
+        row.appendChild(numberCell(pt.lower, v => onPointField(leaf, i, 'lower', v, commit), 'any'));
+        row.appendChild(removeCell(leaf, i, commit));
+      } else {
+        const pm = es.perPointModes[i] || { upperMode: null, lowerMode: null };
+        const uMode = pm.upperMode || widthMode;
+        const lMode = pm.lowerMode || widthMode;
+        row.appendChild(numberCell(pt.time, v => onPointField(leaf, i, 'time', v, commit), 'any'));
+        row.appendChild(numberCell(pt.upper, v => onPointField(leaf, i, 'upper', v, commit),
+                                   uMode === 'rel' ? '0.001' : 'any'));
+        row.appendChild(modeCell(uMode, m => onSideMode(leaf, i, 'upper', m, commit)));
+        row.appendChild(numberCell(pt.lower, v => onPointField(leaf, i, 'lower', v, commit),
+                                   lMode === 'rel' ? '0.001' : 'any'));
+        row.appendChild(modeCell(lMode, m => onSideMode(leaf, i, 'lower', m, commit)));
+        row.appendChild(removeCell(leaf, i, commit));
       }
-      const rm = document.createElement('td');
-      const btn = document.createElement('button');
-      btn.className = 'node-btn node-btn-remove';
-      btn.textContent = '−'; btn.title = 'Remove point';
-      btn.addEventListener('click', () => {
-        points.splice(i, 1);
-        setPoints(leaf, points);
-        commit();
-        renderTable(leaf, container, commit);
-      });
-      rm.appendChild(btn);
-      row.appendChild(rm);
-      table.appendChild(row);
     });
     container.appendChild(table);
 
     const addBtn = document.createElement('button');
     addBtn.className = 'node-btn node-btn-add';
     addBtn.textContent = '+ add point';
-    addBtn.addEventListener('click', () => {
-      const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
-      const lastT = points.length ? points[points.length - 1].time
-                 : (traj.ref_time?.[0] ?? 0);
-      points.push({ time: lastT, upper: 0, lower: 0 });
-      setPoints(leaf, points);
-      commit();
-      renderTable(leaf, container, commit);
-    });
+    addBtn.addEventListener('click', () => addPointAt(leaf, null, null, commit));
     container.appendChild(addBtn);
+
+    updateStatusInContainer(leaf, container);
+  }
+
+  function numberCell(value, onChange, step, minVal) {
+    const td = document.createElement('td');
+    const inp = document.createElement('input');
+    inp.type = 'number'; inp.step = step || 'any';
+    if (minVal !== undefined) inp.min = String(minVal);
+    inp.value = value;
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      if (Number.isFinite(v)) onChange(v);
+    });
+    td.appendChild(inp);
+    return td;
+  }
+
+  function modeCell(mode, onChange) {
+    const td = document.createElement('td');
+    const sel = document.createElement('select');
+    for (const opt of ['band', 'rel', 'absolute']) {
+      const o = document.createElement('option');
+      o.value = opt; o.textContent = opt;
+      if (mode === opt) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener('change', () => onChange(sel.value));
+    td.appendChild(sel);
+    return td;
+  }
+
+  function removeCell(leaf, i, commit) {
+    const td = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'node-btn node-btn-remove';
+    btn.textContent = '✕';
+    btn.title = 'Remove point';
+    btn.addEventListener('click', () => removePointAt(leaf, i, commit));
+    td.appendChild(btn);
+    return td;
+  }
+
+  function onPointField(leaf, i, field, value, commit) {
+    const pts = getPoints(leaf);
+    const pt = pts[i];
+    if (!pt) return;
+    // In-place mutation only — preserves pt identity for any drag in flight.
+    if (field === 'time') pt.time = value;
+    else if (field === 'width') { pt.upper = value; pt.lower = value; }
+    else if (field === 'upper') pt.upper = value;
+    else if (field === 'lower') pt.lower = value;
+    if (field === 'time') sortPointsAndModes(leaf);
+    refreshTables(leaf, commit);
+    commit();
+  }
+
+  function onSideMode(leaf, i, side, newMode, commit) {
+    const es = ensureEditorState(leaf);
+    const pm = es.perPointModes[i];
+    const globalMode = getWidthMode(leaf);
+    const oldMode = pm[side + 'Mode'] || globalMode;
+    if (oldMode === newMode) return;
+
+    const pts = getPoints(leaf);
+    const pt = pts[i];
+    const rv = refValueAt(leaf, pt.time);
+    const rvAbs = Math.abs(rv);
+    const isUpper = side === 'upper';
+
+    let yAbs;
+    if (oldMode === 'absolute') yAbs = pt[side];
+    else if (oldMode === 'rel') {
+      const offset = pt[side] * rvAbs;
+      yAbs = isUpper ? rv + offset : rv - offset;
+    } else yAbs = isUpper ? rv + pt[side] : rv - pt[side];
+
+    if (newMode === 'absolute') pt[side] = roundSig(yAbs, 4);
+    else if (newMode === 'rel') {
+      const offset = isUpper ? yAbs - rv : rv - yAbs;
+      pt[side] = rvAbs > 1e-15 ? roundSig(Math.max(offset / rvAbs, 0), 3) : 0.05;
+    } else {
+      const offset = isUpper ? yAbs - rv : rv - yAbs;
+      pt[side] = roundSig(Math.max(offset, 0), 3);
+    }
+    pm[side + 'Mode'] = newMode;
+    // In-place mutation of pt; no clone.
+    refreshTables(leaf, commit);
+    commit();
+  }
+
+  function reprojectAllPoints(leaf, oldMode, newMode) {
+    // In-place reprojection — iterates the live array and mutates each
+    // pt. Caller holds the pt references; we keep them valid.
+    getPoints(leaf).forEach(pt => {
+      const rv = refValueAt(leaf, pt.time);
+      const rvAbs = Math.abs(rv);
+      for (const side of ['upper', 'lower']) {
+        const isUpper = side === 'upper';
+        let yAbs;
+        if (oldMode === 'absolute') yAbs = pt[side];
+        else if (oldMode === 'rel') {
+          const offset = pt[side] * rvAbs;
+          yAbs = isUpper ? rv + offset : rv - offset;
+        } else yAbs = isUpper ? rv + pt[side] : rv - pt[side];
+
+        if (newMode === 'absolute') pt[side] = roundSig(yAbs, 4);
+        else if (newMode === 'rel') {
+          const offset = isUpper ? yAbs - rv : rv - yAbs;
+          pt[side] = rvAbs > 1e-15 ? roundSig(Math.max(offset / rvAbs, 0), 3) : 0.05;
+        } else {
+          const offset = isUpper ? yAbs - rv : rv - yAbs;
+          pt[side] = roundSig(Math.max(offset, 0), 3);
+        }
+      }
+    });
+  }
+
+  function addPointAt(leaf, atT, atY, commit) {
+    const pts = getPoints(leaf);
+    const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+    const rt = traj.ref_time || traj.act_time || [];
+    let t;
+    if (atT != null) t = atT;
+    else if (pts.length >= 2) t = (pts[pts.length - 2].time + pts[pts.length - 1].time) / 2;
+    else t = rt.length ? rt[Math.floor(rt.length / 2)] : 0;
+
+    const mode = getWidthMode(leaf);
+    const d = defaultBoundValue(leaf, t, mode);
+    const newPt = { time: t, ...d };
+    const newIdx = pts.length;
+    pts.push(newPt);
+    ensureEditorState(leaf).perPointModes.push({ upperMode: null, lowerMode: null });
+    setPoints(leaf, pts);
+
+    // If the click came from the plot, bias the placement toward the clicked bound.
+    if (atY != null) {
+      const r = resolvePoint(leaf, newPt, newIdx);
+      const bound = Math.abs(atY - r.upper) <= Math.abs(atY - r.lower) ? 'upper' : 'lower';
+      setBoundFromAbsoluteY(leaf, newIdx, bound, atY);
+    }
+    sortPointsAndModes(leaf);
+    refreshTables(leaf, commit);
+    commit();
+  }
+
+  function removePointAt(leaf, i, commit) {
+    const pts = getPoints(leaf);
+    if (pts.length <= 1) return;
+    pts.splice(i, 1);
+    ensureEditorState(leaf).perPointModes.splice(i, 1);
+    setPoints(leaf, pts);
+    refreshTables(leaf, commit);
+    commit();
+  }
+
+  function updateStatusInContainer(leaf, container) {
+    const el = container.querySelector('.tube-status');
+    if (!el) return;
+    const r = evaluatePass(leaf);
+    el.innerHTML = r.passed
+      ? `<span class="pass">PASS</span> (${r.pctInside.toFixed(1)}% inside)`
+      : `<span class="fail">FAIL</span> (${r.pctInside.toFixed(1)}% inside · worst ${r.worst.toExponential(2)} at t=${r.worstT.toPrecision(4)})`;
+  }
+
+  // ---- plot interactions ---------------------------------------------
+  function attachPlotHandlers(leaf, plotEl, commit) {
+    // Drag tracks the pt reference, not an index. Sorting during drag
+    // reorders the array in place (sortPointsAndModes keeps the same pt
+    // objects); we re-derive the current index via indexOf each frame.
+    // This is what gives the "drag past another point" smooth-swap: the
+    // polygon re-draws on every frame with all points in time order,
+    // and the table row follows its pt object through the sort.
+    const drag = { active: false, pt: null, bound: null, clickStart: null };
+    let rafPending = null;
+
+    function pxToData(evt) {
+      const xa = plotEl._fullLayout?.xaxis;
+      const ya = plotEl._fullLayout?.yaxis;
+      if (!xa || !ya) return null;
+      const area = plotEl.querySelector('.nsewdrag') || plotEl;
+      const rect = area.getBoundingClientRect();
+      return { x: xa.p2d(evt.clientX - rect.left), y: ya.p2d(evt.clientY - rect.top) };
+    }
+
+    function findNearestCP(dataX, dataY) {
+      const xa = plotEl._fullLayout?.xaxis;
+      const ya = plotEl._fullLayout?.yaxis;
+      if (!xa || !ya) return null;
+      const pts = getPoints(leaf);
+      let best = null;
+      pts.forEach((pt, i) => {
+        const r = resolvePoint(leaf, pt, i);
+        for (const bound of ['upper', 'lower']) {
+          const dx = xa.d2p(pt.time) - xa.d2p(dataX);
+          const dy = ya.d2p(r[bound]) - ya.d2p(dataY);
+          const dist = Math.hypot(dx, dy);
+          if (!best || dist < best.dist) best = { pt, ptIdx: i, bound, dist };
+        }
+      });
+      return best;
+    }
+
+    function onMouseDown(evt) {
+      if (!evt.shiftKey || evt.button !== 0) return;
+      evt.stopPropagation();
+      evt.stopImmediatePropagation();
+      evt.preventDefault();
+      const d = pxToData(evt);
+      if (!d) return;
+      const nearest = findNearestCP(d.x, d.y);
+      if (nearest && nearest.dist < 15) {
+        drag.active = true;
+        drag.pt = nearest.pt;
+        drag.bound = nearest.bound;
+      } else {
+        drag.clickStart = d;
+      }
+    }
+
+    function onMouseMove(evt) {
+      if (drag.active) {
+        evt.preventDefault();
+        const d = pxToData(evt);
+        if (!d || !drag.pt) return;
+        // Mutate the tracked pt in place — no setPoints clone, so
+        // references stay alive across sort.
+        const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+        const rt = traj.ref_time || traj.act_time || [];
+        const tMin = rt[0], tMax = rt[rt.length - 1];
+        drag.pt.time = roundSig(Math.max(tMin, Math.min(tMax, d.x)), 6);
+        const ptIdx = getPoints(leaf).indexOf(drag.pt);
+        if (ptIdx >= 0) setBoundFromAbsoluteY(leaf, ptIdx, drag.bound, d.y);
+        // Sort during the drag so a point crossing another smoothly
+        // swaps array positions — the pt reference follows it.
+        sortPointsAndModes(leaf);
+        if (!rafPending) {
+          rafPending = requestAnimationFrame(() => {
+            refreshTables(leaf, commit);
+            commit();
+            rafPending = null;
+          });
+        }
+      } else if (drag.clickStart) {
+        const d = pxToData(evt);
+        if (!d) return;
+        if (Math.abs(d.x - drag.clickStart.x) > 1e-10 ||
+            Math.abs(d.y - drag.clickStart.y) > 1e-10) drag.clickStart = null;
+      }
+    }
+
+    function onMouseUp() {
+      if (drag.active) {
+        drag.active = false; drag.pt = null;
+        // Final sort + render on drop (rafPending may have a pending
+        // mid-frame refresh — this settles the final state either way).
+        sortPointsAndModes(leaf);
+        refreshTables(leaf, commit);
+        commit();
+        return;
+      }
+      if (drag.clickStart) {
+        const c = drag.clickStart;
+        drag.clickStart = null;
+        addPointAt(leaf, c.x, c.y, commit);
+      }
+    }
+
+    function onContextMenu(evt) {
+      if (!evt.shiftKey) return;
+      const d = pxToData(evt);
+      if (!d) return;
+      const nearest = findNearestCP(d.x, d.y);
+      if (nearest && nearest.dist < 15) {
+        evt.preventDefault();
+        removePointAt(leaf, nearest.ptIdx, commit);
+      }
+    }
+
+    plotEl.addEventListener('mousedown', onMouseDown, true);
+    plotEl.addEventListener('contextmenu', onContextMenu, true);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    wired.set(plotEl, () => {
+      plotEl.removeEventListener('mousedown', onMouseDown, true);
+      plotEl.removeEventListener('contextmenu', onContextMenu, true);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    });
   }
 
   return {
+    // Editor appends its sub-container into each slot (core already
+    // cleared the slot + injected the window-brush button).
     activate(leaf, plotEl, commit) {
-      // Inject editor UI inside the active leaf's dedicated slot.
-      document.querySelectorAll(`[data-path="${escapeSelector(leaf.path)}"] .node-editor`).forEach(slot => {
-        renderTable(leaf, slot, commit);
-      });
-
-      // Shift+click on the plot adds a control point at (x, ref-offset).
-      const handler = (e) => {
-        if (!e || !e.event || !e.event.shiftKey) return;
-        const pt = e.points?.[0];
-        const x = pt ? pt.x : (e.xvals?.[0]);
-        const y = pt ? pt.y : (e.yvals?.[0]);
-        if (x == null || y == null) return;
-        // Pick the reference value at x to compute width (y - ref).
-        const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
-        const refY = interpOnRef(traj, x);
-        const width = Math.abs(y - refY);
-        const pts = getPoints(leaf);
-        pts.push({ time: Number(x), upper: width, lower: width });
-        pts.sort((a, b) => a.time - b.time);
-        setPoints(leaf, pts);
-        commit();
-        // Re-render table to reflect the new point.
-        document.querySelectorAll(`[data-path="${escapeSelector(leaf.path)}"] .node-editor`).forEach(slot => {
-          renderTable(leaf, slot, commit);
-        });
-      };
-      plotEl.on('plotly_click', handler);
-
-      // Shift+right-click on the plot near an existing control point
-      // removes it. Plotly swallows right-click by default, so we hit
-      // DOM events directly, convert pixel→data via Plotly's p2d, and
-      // match the nearest point within a threshold (10% of x-range).
-      const removeHandler = (e) => {
-        if (e.button !== 2 || !e.shiftKey) return;
-        e.preventDefault();
-        const fl = plotEl._fullLayout;
-        if (!fl || !fl.xaxis) return;
-        const rect = plotEl.getBoundingClientRect();
-        // Plot area offset within the plot div.
-        const mx = e.clientX - rect.left - (fl._size?.l || 0);
-        if (mx < 0) return;
-        const dataX = fl.xaxis.p2d(mx);
-        const pts = getPoints(leaf);
-        if (!pts.length) return;
-        const xRange = fl.xaxis.range;
-        const threshold = 0.1 * Math.abs(xRange[1] - xRange[0]);
-        let bestIdx = -1, bestDist = Infinity;
-        pts.forEach((pt, i) => {
-          const d = Math.abs(pt.time - dataX);
-          if (d < bestDist && d < threshold) { bestDist = d; bestIdx = i; }
-        });
-        if (bestIdx < 0) return;
-        pts.splice(bestIdx, 1);
-        setPoints(leaf, pts);
-        commit();
-        document.querySelectorAll(
-          `[data-path="${escapeSelector(leaf.path)}"] .node-editor`,
-        ).forEach(slot => renderTable(leaf, slot, commit));
-      };
-      // Suppress the browser context menu only when Shift is held —
-      // plain right-click still opens it for unrelated use. Capture-
-      // phase listener so we fire before Plotly's own drag/select
-      // handlers stopPropagation (they register on inner svg layers).
-      const ctxHandler = (e) => { if (e.shiftKey) e.preventDefault(); };
-      plotEl.addEventListener('mousedown', removeHandler, true);
-      plotEl.addEventListener('contextmenu', ctxHandler, true);
-
-      wired.set(plotEl, () => {
-        plotEl.removeAllListeners && plotEl.removeAllListeners('plotly_click');
-        plotEl.removeEventListener('mousedown', removeHandler, true);
-        plotEl.removeEventListener('contextmenu', ctxHandler, true);
-      });
+      ensureEditorState(leaf);
+      seedIfEmpty(leaf);
+      refreshTables(leaf, commit);
+      attachPlotHandlers(leaf, plotEl, commit);
+      commit();
     },
+    // Editor only owns event-handler cleanup. Slot DOM is core's.
     deactivate(leaf, plotEl) {
-      document.querySelectorAll(`[data-path="${escapeSelector(leaf.path)}"] .node-editor`).forEach(slot => {
-        slot.innerHTML = '';
-      });
       const cleanup = wired.get(plotEl);
       if (cleanup) { cleanup(); wired.delete(plotEl); }
     },
+    // Exposed for the plot contribution so the polygon matches editor state.
+    _resolveAllBoundsOnGrid: resolveAllBoundsOnGrid,
+    _getPoints: getPoints,
+    _resolvePoint: resolvePoint,
   };
 })();
+
+function _interpStep(xArr, yArr, x) {
+  if (!xArr.length) return 0;
+  if (x <= xArr[0]) return yArr[0];
+  let val = yArr[0];
+  for (let i = 0; i < xArr.length; i++) {
+    if (xArr[i] <= x) val = yArr[i]; else break;
+  }
+  return val;
+}
 
 // Range editor — drag the min/max dashed lines directly on the plot.
 // Leans on Plotly's built-in ``edits.shapePosition`` config, which
@@ -576,7 +1082,6 @@ MODE_PLOT_EDITORS['tube'] = (function() {
 MODE_PLOT_EDITORS['range'] = (function() {
   const wired = new WeakMap();
   return {
-    plotConfigOverride() { return { edits: { shapePosition: true } }; },
     activate(leaf, plotEl, commit) {
       const handler = (evt) => {
         if (!evt) return;
@@ -623,12 +1128,18 @@ function interpOnRef(traj, x) {
 }
 
 // ---- Leaf activation (click a leaf to wire its editor) ----
+// Unified activate/deactivate lifecycle. ``.node-editor`` DOM cleanup
+// and window-brush injection are centralized here so no editor has to
+// manage DOM on deactivate (it only has to unwire its own event
+// handlers). Every state mutation going through this cycle is
+// idempotent — clicking the same leaf twice or switching leaves never
+// accumulates UI, avoiding the "extra brush button" / "duplicate
+// handler" class of bugs.
 function activateLeaf(leaf) {
   if (activeLeafPath === leaf.path) return;
   deactivateLeaf();
   activeLeafPath = leaf.path;
 
-  // Highlight the active leaf across all mounts.
   document.querySelectorAll(`[data-path="${escapeSelector(leaf.path)}"]`).forEach(el => {
     el.classList.add('node-active');
   });
@@ -641,48 +1152,56 @@ function activateLeaf(leaf) {
     updateExport();
   };
 
-  // Window brush — universal across modes (any leaf can carry a window).
-  // Plugs in alongside the mode-specific editor rather than through
-  // MODE_PLOT_EDITORS (which is metric-keyed).
-  if (plotEl) injectWindowBrushControl(leaf, plotEl, commit);
+  // Clear every .node-editor slot for this leaf (full-tree + per-variable
+  // mounts may both have one). Then inject the universal window-brush
+  // button into each. Then let the mode's editor (if any) append its
+  // own UI. Slot ownership sequence: core clears → core injects brush →
+  // editor appends. Editors only clean up their event handlers; DOM is
+  // core's responsibility.
+  getEditorSlots(leaf).forEach(slot => { slot.innerHTML = ''; });
+  if (plotEl) {
+    getEditorSlots(leaf).forEach(slot => {
+      slot.appendChild(buildWindowBrushControl(leaf, plotEl, commit));
+    });
+  }
 
   const editor = MODE_PLOT_EDITORS[leaf.metric];
   if (editor && plotEl) editor.activate(leaf, plotEl, commit);
 
-  // Re-render picks up the editor's plotConfigOverride (if any) and
-  // active-leaf-aware plot contributions (tube control-point markers).
   renderVariablePlot(leaf.variable, idx);
 }
 
-// Inject "🔲 Set window from plot" button into every active-leaf mount.
-// Clicking toggles Plotly into horizontal-select dragmode; the next
-// selection writes to ``leafState.window`` and restores normal zoom.
-function injectWindowBrushControl(leaf, plotEl, commit) {
-  document.querySelectorAll(`[data-path="${escapeSelector(leaf.path)}"] .node-editor`).forEach(slot => {
-    const wrap = document.createElement('div');
-    wrap.className = 'window-brush-wrap';
-    const btn = document.createElement('button');
-    btn.className = 'node-btn';
-    btn.textContent = '🔲 Set window from plot';
-    btn.title = 'Drag a horizontal range on the plot to set this leaf\'s window';
-    btn.addEventListener('click', () => enterBrushMode(leaf, plotEl, commit, btn));
-    wrap.appendChild(btn);
-    // "Clear window" — quick escape from an authored window back to full.
-    const clr = document.createElement('button');
-    clr.className = 'node-btn';
-    clr.textContent = 'clear';
-    clr.title = 'Remove window (leaf scores over full trajectory)';
-    clr.addEventListener('click', () => {
-      const state = leafState[leaf.path];
-      if (!state) return;
-      state.window = {};
-      syncSiblingInputs(leaf.path, 'window_start', null, null);
-      syncSiblingInputs(leaf.path, 'window_end', null, null);
-      commit();
-    });
-    wrap.appendChild(clr);
-    slot.appendChild(wrap);
+function getEditorSlots(leaf) {
+  return Array.from(document.querySelectorAll(
+    `[data-path="${escapeSelector(leaf.path)}"] .node-editor`,
+  ));
+}
+
+// Build — not inject — the window-brush control as a single DOM node.
+// Caller owns where it goes so lifecycle is deterministic.
+function buildWindowBrushControl(leaf, plotEl, commit) {
+  const wrap = document.createElement('div');
+  wrap.className = 'window-brush-wrap';
+  const btn = document.createElement('button');
+  btn.className = 'node-btn';
+  btn.textContent = '🔲 Set window from plot';
+  btn.title = 'Drag a horizontal range on the plot to set this leaf\'s window';
+  btn.addEventListener('click', () => enterBrushMode(leaf, plotEl, commit, btn));
+  wrap.appendChild(btn);
+  const clr = document.createElement('button');
+  clr.className = 'node-btn';
+  clr.textContent = 'clear';
+  clr.title = 'Remove window (leaf scores over full trajectory)';
+  clr.addEventListener('click', () => {
+    const state = leafState[leaf.path];
+    if (!state) return;
+    state.window = {};
+    syncSiblingInputs(leaf.path, 'window_start', null, null);
+    syncSiblingInputs(leaf.path, 'window_end', null, null);
+    commit();
   });
+  wrap.appendChild(clr);
+  return wrap;
 }
 
 function enterBrushMode(leaf, plotEl, commit, btn) {
@@ -719,12 +1238,14 @@ function deactivateLeaf() {
   activeLeafPath = null;
   document.querySelectorAll('.node-active').forEach(el => el.classList.remove('node-active'));
   if (leaf) {
+    // Editor cleans up its event handlers; DOM clearing is core's job.
     const editor = MODE_PLOT_EDITORS[leaf.metric];
     if (editor && editor.deactivate) {
       const idx = VARIABLE_INDEX[leaf.variable];
       const plotEl = document.getElementById(`plot-${idx}`);
       if (plotEl) editor.deactivate(leaf, plotEl);
     }
+    getEditorSlots(leaf).forEach(slot => { slot.innerHTML = ''; });
     renderVariablePlot(leaf.variable, VARIABLE_INDEX[leaf.variable]);
   }
 }
@@ -754,6 +1275,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderAllPlots();
   renderAllNodeTrees();
   wireOverlayPickers();
+  wireErrorOverlays();
   refreshPassStates();
   updateExport();
   // ESC deactivates the active leaf (escape hatch from edit mode).
@@ -763,7 +1285,17 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ---- Plotly rendering ----
-const PLOT_CFG = { responsive: true, displaylogo: false, scrollZoom: true };
+// Always enable shape-position drag — the range editor hooks
+// plotly_relayout with a shape-name filter so it only fires on shapes
+// it cares about; non-range plots have no draggable shapes anyway.
+// Keeping config static across renders means we can use Plotly.react
+// (which preserves zoom / pan) instead of newPlot (which resets them).
+const PLOT_CFG = {
+  responsive: true,
+  displaylogo: false,
+  scrollZoom: true,
+  edits: { shapePosition: true },
+};
 
 function renderAllPlots() {
   VARIABLE_ORDER.forEach((varname, idx) => renderVariablePlot(varname, idx));
@@ -829,28 +1361,41 @@ function renderVariablePlot(varname, idx) {
     if (w) shapes.push(w);
   }
 
-  // Active leaf's editor may want a tweaked plot config (e.g., range
-  // editor turns on shape dragging). Merge cleanly so other editors
-  // can layer config bits without stomping each other.
-  let cfg = PLOT_CFG;
-  if (activeLeafPath) {
-    const active = findLeaf(TREE_VIEW, activeLeafPath) || findLeaf(WORKING_TREE, activeLeafPath);
-    if (active && active.variable === varname) {
-      const editor = MODE_PLOT_EDITORS[active.metric];
-      if (editor && editor.plotConfigOverride) {
-        cfg = Object.assign({}, PLOT_CFG, editor.plotConfigOverride(active));
-      }
-    }
-  }
-
-  Plotly.newPlot(el, traces, {
-    xaxis: { title: 'Time', hoverformat: '.6~g' },
-    yaxis: { title: { text: 'Value', standoff: 10 }, tickformat: '.4g', automargin: true, nticks: 6 },
+  const layout = {
+    xaxis: { title: 'Time', hoverformat: '.6~g', uirevision: 'keep' },
+    yaxis: {
+      title: { text: 'Value', standoff: 10 }, tickformat: '.4g',
+      automargin: true, nticks: 6, uirevision: 'keep',
+    },
     margin: { t: 25, b: 45, l: 60, r: 20 },
     legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)' },
     hovermode: 'x unified',
     shapes,
-  }, cfg);
+    // Stable uirevision across re-renders preserves user zoom / pan —
+    // without it, Plotly.react reapplies default autorange every time
+    // traces change (e.g., on a tube-drag commit). Per-axis uirevision
+    // is what actually preserves the zoom state; the top-level one
+    // covers other user bits like legend clicks.
+    uirevision: 'keep',
+  };
+  // First paint uses newPlot (must establish the plot); subsequent
+  // re-renders use react so user-driven zoom/pan survive tube-edit
+  // commits. We track "already plotted" via the element's ._plotted
+  // marker — Plotly doesn't expose this natively.
+  if (el._mt_plotted) {
+    Plotly.react(el, traces, layout, PLOT_CFG);
+  } else {
+    Plotly.newPlot(el, traces, layout, PLOT_CFG);
+    el._mt_plotted = true;
+  }
+
+  // Plotly.newPlot wipes every trace — re-apply the error overlay if
+  // the dropdown has one selected. Source of truth is the DOM select;
+  // no extra persistent state in JS.
+  const errSel = document.querySelector(`.error-overlay-select[data-vidx="${idx}"]`);
+  if (errSel && errSel.value && errSel.value !== 'none') {
+    setErrorOverlay(idx, errSel.value);
+  }
 }
 
 // ---- Recursive SpecNodeView ----
@@ -861,17 +1406,20 @@ function renderVariablePlot(varname, idx) {
 function renderAllNodeTrees() {
   // Full unfiltered mount — Stage 3. Same recursive component as the
   // per-variable filtered mounts below. Edits in either view propagate
-  // via the shared path-keyed leafState.
+  // via the shared path-keyed leafState. When the user has made
+  // structural edits (+/−), ``currentTree()`` returns WORKING_TREE so
+  // the mutated tree shows up; otherwise the original TREE_VIEW.
+  const tree = currentTree();
   const fullContainer = document.getElementById('nodes-full');
   if (fullContainer) {
     fullContainer.innerHTML = '';
-    renderNode(TREE_VIEW, fullContainer, {});
+    renderNode(tree, fullContainer, {});
   }
   VARIABLE_ORDER.forEach((varname, idx) => {
     const container = document.getElementById(`nodes-${idx}`);
     if (!container) return;
     container.innerHTML = '';
-    renderNode(TREE_VIEW, container, { variableFilter: varname });
+    renderNode(tree, container, { variableFilter: varname });
   });
 }
 
@@ -907,12 +1455,11 @@ function renderCombinator(node, container, opts) {
   header.appendChild(label);
 
   // Structural controls — + adds a leaf child, − removes this node.
-  // Disabled on per-variable filtered views (structural edits only from
-  // the full-tree mount) and on the root of the working tree (no parent).
-  if (!opts.variableFilter) {
-    header.appendChild(addLeafButton(node));
-    if (opts.parent) header.appendChild(removeNodeButton(node, opts));
-  }
+  // Available on both full-tree AND per-variable mounts; per-variable
+  // mounts prefill the + modal with the filtered variable so edits
+  // stay scoped to what the user is looking at.
+  header.appendChild(addLeafButton(node, opts.variableFilter));
+  if (opts.parent) header.appendChild(removeNodeButton(node, opts));
 
   wrapper.appendChild(header);
   wrapper.appendChild(childContainer);
@@ -977,21 +1524,42 @@ function renderLeaf(leaf, container, opts) {
     badge.textContent = 'CLI-authoritative';
     header.appendChild(badge);
   }
-  // Structural control — − removes this leaf. Per-variable mount is
-  // read-only structurally; only the full-tree mount can add/remove.
-  if (!opts.variableFilter && opts.parent) {
-    header.appendChild(removeNodeButton(leaf, opts));
-  }
+  // Structural control — − removes this leaf. Available in every mount
+  // (full-tree + per-variable) so users can trim from wherever they're
+  // looking. The root of a working tree has no parent → no button.
+  if (opts.parent) header.appendChild(removeNodeButton(leaf, opts));
   wrapper.appendChild(header);
 
   // Controls — server-rendered HTML for mode fields + window inputs.
-  const innerHtml = (leaf.mode_controls_html || '') + (leaf.window_controls_html || '');
+  // Tube leaves intentionally skip mode schema inputs: the rich
+  // interactive editor (activated on click) owns that config surface
+  // and would duplicate the same fields. Window inputs still show for
+  // tube so the user can scope a tube to a time window.
+  const skipModeControls = (leaf.metric === 'tube');
+  const innerHtml =
+    (skipModeControls ? '' : (leaf.mode_controls_html || ''))
+    + (leaf.window_controls_html || '');
   if (innerHtml) {
     const controls = document.createElement('div');
     controls.className = 'node-controls';
     controls.innerHTML = innerHtml;
     wrapper.appendChild(controls);
     wireLeafInputs(controls, leaf);
+  }
+
+  // Tube-leaf summary when inactive — "N pts, rel" quick readout so
+  // the user sees config state without activating. The editor itself
+  // (with full table) mounts into .node-editor on activate.
+  if (leaf.metric === 'tube' && activeLeafPath !== leaf.path) {
+    const state = leafState[leaf.path];
+    const pts = (state?.params?.tube_points || []);
+    const wm = state?.params?.tube_width_mode || 'rel';
+    if (pts.length > 0) {
+      const summary = document.createElement('div');
+      summary.className = 'tube-summary';
+      summary.textContent = `${pts.length} control point${pts.length === 1 ? '' : 's'} · ${wm}`;
+      wrapper.appendChild(summary);
+    }
   }
 
   // Editor slot — MODE_PLOT_EDITORS[metric].activate mounts its rich
@@ -1031,12 +1599,14 @@ function statusPill(passed) {
 // leaf render artifacts (mode_controls_html, score_display) survive the
 // structural change. On export, a dirty WORKING_TREE is emitted whole.
 
-function addLeafButton(combinatorNode) {
+function addLeafButton(combinatorNode, presetVariable) {
   const btn = document.createElement('button');
   btn.className = 'node-btn node-btn-add';
   btn.textContent = '+';
-  btn.title = 'Add a leaf child';
-  btn.addEventListener('click', () => promptAddLeaf(combinatorNode));
+  btn.title = presetVariable
+    ? `Add a leaf for ${presetVariable}`
+    : 'Add a leaf child';
+  btn.addEventListener('click', () => promptAddLeaf(combinatorNode, presetVariable));
   return btn;
 }
 
@@ -1045,47 +1615,286 @@ function removeNodeButton(node, opts) {
   btn.className = 'node-btn node-btn-remove';
   btn.textContent = '−';
   btn.title = 'Remove this node';
-  btn.addEventListener('click', () => {
-    if (!confirm(`Remove ${node.kind === 'leaf' ? `leaf ${node.metric}·${node.variable}` : combinatorLabel(node)}?`)) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openRemoveConfirm(btn, node, opts);
+  });
+  return btn;
+}
+
+// Inline remove-confirm popup. Pops up next to the − button with the
+// node's label + ✓ / ✗ buttons. Replaces window.confirm (which hijacks
+// the page and can't be styled). One popup at a time — clicking another
+// − closes the previous.
+let _activeRemoveConfirm = null;
+
+function openRemoveConfirm(anchor, node, opts) {
+  closeRemoveConfirm();
+  const label = node.kind === 'leaf'
+    ? `leaf ${node.metric}·${node.variable}`
+    : combinatorLabel(node);
+  const pop = document.createElement('span');
+  pop.className = 'remove-confirm';
+  pop.innerHTML = `
+    <span class="remove-confirm-label">Remove ${_escHtml(label)}?</span>
+    <button class="node-btn remove-confirm-yes">Confirm</button>
+    <button class="node-btn remove-confirm-no">Cancel</button>
+  `;
+  anchor.insertAdjacentElement('afterend', pop);
+  _activeRemoveConfirm = pop;
+
+  const onOutside = (ev) => {
+    if (!pop.contains(ev.target) && ev.target !== anchor) closeRemoveConfirm();
+  };
+  const onEsc = (ev) => { if (ev.key === 'Escape') closeRemoveConfirm(); };
+  pop._cleanup = () => {
+    document.removeEventListener('mousedown', onOutside, true);
+    document.removeEventListener('keydown', onEsc);
+  };
+  setTimeout(() => {
+    document.addEventListener('mousedown', onOutside, true);
+    document.addEventListener('keydown', onEsc);
+  }, 0);
+
+  pop.querySelector('.remove-confirm-yes').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeRemoveConfirm();
     const parent = findWorkingNode(opts.parent.path);
     if (!parent || !parent.children) return;
     parent.children.splice(opts.indexInParent, 1);
     markStructureDirty();
   });
-  return btn;
+  pop.querySelector('.remove-confirm-no').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeRemoveConfirm();
+  });
 }
 
-function promptAddLeaf(combinatorNode) {
-  const metric = (prompt(
-    'Metric (nrmse / tube / final-only / range / event-timing / dominant-frequency):',
-    'nrmse',
-  ) || '').trim();
-  if (!metric) return;
-  const validMetrics = ['nrmse', 'tube', 'final-only', 'range', 'event-timing', 'dominant-frequency'];
-  if (!validMetrics.includes(metric)) {
-    alert(`Unknown metric ${JSON.stringify(metric)}. Valid: ${validMetrics.join(', ')}`);
-    return;
-  }
-  const varname = (prompt(
-    'Variable name (e.g. h, v):',
-    VARIABLE_ORDER[0] || '',
-  ) || '').trim();
-  if (!varname) return;
+function closeRemoveConfirm() {
+  if (!_activeRemoveConfirm) return;
+  if (_activeRemoveConfirm._cleanup) _activeRemoveConfirm._cleanup();
+  _activeRemoveConfirm.remove();
+  _activeRemoveConfirm = null;
+}
 
-  const node = findWorkingNode(combinatorNode.path);
+const VALID_METRICS = [
+  'nrmse', 'tube', 'final-only', 'range', 'event-timing', 'dominant-frequency',
+];
+
+function promptAddLeaf(combinatorNode, presetVariable) {
+  // Inline modal — two dropdowns (metric, variable) + OK / Cancel. The
+  // variable select is pre-populated with the tracked variables on
+  // this test; user can type a new name (via the "other..." option +
+  // text input) to add a leaf referencing a not-yet-tracked variable.
+  // ``presetVariable`` (from per-variable + button) pre-selects and
+  // locks the variable dropdown so the new leaf stays scoped to the
+  // plot the user clicked from.
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const dataListId = 'add-leaf-var-options';
+  overlay.innerHTML = `
+    <div class="modal-dialog" role="dialog" aria-label="Add leaf">
+      <h3>Add leaf</h3>
+      <label class="mc-field"><span>Metric</span>
+        <select id="add-leaf-metric">
+          ${VALID_METRICS.map(m => `<option value="${m}">${m}</option>`).join('')}
+        </select>
+      </label>
+      <label class="mc-field">
+        <span>Variable (type to filter; * ? globs accepted)</span>
+        <input id="add-leaf-variable" type="text" list="${dataListId}"
+               placeholder="start typing a variable name" autocomplete="off">
+        <datalist id="${dataListId}">
+          ${VARIABLE_ORDER.map(v => `<option value="${_escHtml(v)}"></option>`).join('')}
+        </datalist>
+      </label>
+      <div id="add-leaf-var-warning" class="var-warning"></div>
+      <div class="modal-actions">
+        <button class="btn" id="add-leaf-cancel">Cancel</button>
+        <button class="btn btn-primary" id="add-leaf-ok">Add</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const metricSel = overlay.querySelector('#add-leaf-metric');
+  const varInp = overlay.querySelector('#add-leaf-variable');
+  const warnEl = overlay.querySelector('#add-leaf-var-warning');
+  const cancelBtn = overlay.querySelector('#add-leaf-cancel');
+  const okBtn = overlay.querySelector('#add-leaf-ok');
+
+  function isGlob(s) { return /[*?]/.test(s); }
+  function checkVar() {
+    const v = varInp.value.trim();
+    if (!v || VARIABLE_ORDER.includes(v) || isGlob(v)) { warnEl.textContent = ''; return; }
+    // Allow but warn — user may be adding a not-yet-tracked variable.
+    warnEl.textContent = `Warning: '${v}' isn't tracked. Will be added anyway.`;
+  }
+  varInp.addEventListener('input', checkVar);
+
+  if (presetVariable) {
+    varInp.value = presetVariable;
+    varInp.readOnly = true;
+  }
+
+  const close = () => overlay.remove();
+  cancelBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  document.addEventListener('keydown', function escListener(e) {
+    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escListener); }
+  });
+  varInp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); okBtn.click(); }
+  });
+  // Autofocus — user wants to type immediately.
+  setTimeout(() => (presetVariable ? metricSel : varInp).focus(), 0);
+
+  okBtn.addEventListener('click', () => {
+    const metric = metricSel.value;
+    const varname = varInp.value.trim();
+    if (!varname) { varInp.focus(); return; }
+    close();
+    appendLeafToWorking(combinatorNode.path, metric, varname);
+  });
+}
+
+function appendLeafToWorking(parentPath, metric, varname) {
+  const node = findWorkingNode(parentPath);
   if (!node || !Array.isArray(node.children)) return;
-  node.children.push({
+  const schema = MODE_SCHEMAS[metric] || { fields: [] };
+  // Seed params from the schema defaults so scorers + plot contributions
+  // have real values to work with. Optional fields stay ``null`` (unset)
+  // per schema semantics; scalars with a non-null default take it.
+  const defaults = {};
+  for (const f of (schema.fields || [])) {
+    if (f.default !== null && f.default !== undefined) defaults[f.name] = f.default;
+  }
+  const bounds = _timeBoundsFor(varname);
+  const leaf = {
     kind: 'leaf',
     metric, variable: varname,
-    params: {}, against: 'primary', window: {},
+    params: Object.assign({}, defaults),
+    against: 'primary',
+    window: {},
     children: [],
-    // Render artifacts synthesized just-in-time — no server round-trip
-    // needed. pass/fail remains undefined (no evaluation yet).
-    name: varname, mode_effective: metric,
-    mode_values: {}, mode_controls_html: '', window_controls_html: '',
-    window_values: {}, cli_authoritative: ['event-timing', 'dominant-frequency'].includes(metric),
-  });
+    name: varname,
+    mode_effective: metric,
+    mode_values: Object.assign({}, defaults),
+    mode_controls_html: renderModeControlsHtmlJs(metric, varname, defaults),
+    window_controls_html: renderWindowControlsHtmlJs(varname, {}, bounds),
+    window_values: {},
+    cli_authoritative: ['event-timing', 'dominant-frequency'].includes(metric),
+  };
+  node.children.push(leaf);
+  // Rebuild paths first so the new leaf has its final path, then seed
+  // leafState under that path — scorers + plot contributions lookup
+  // ``leafState[path]`` and silently short-circuit when missing, which
+  // was the cause of "added tube but plot doesn't update".
+  rebuildPaths(WORKING_TREE, '/metrics');
+  leafState[leaf.path] = {
+    params: Object.assign({}, defaults),
+    window: {},
+    visible: true,
+    original_params: Object.assign({}, defaults),
+    original_window: {},
+  };
   markStructureDirty();
+}
+
+function _timeBoundsFor(varname) {
+  const traj = (VARIABLES_BY_NAME[varname] || {}).trajectory || {};
+  const rt = traj.ref_time || traj.act_time || [];
+  if (!rt.length) return {};
+  return { start: rt[0], end: rt[rt.length - 1] };
+}
+
+// ---- JS-side schema → HTML renderers ----
+// Mirror of ``render_schema_html`` + ``render_window_controls_html`` in
+// mode_controls.py. Needed so newly-added leaves can build their control
+// inputs without a server round-trip. Source of truth is still the Python
+// schema (emitted into MODE_SCHEMAS at render time); this JS is a dumb
+// walker.
+function renderModeControlsHtmlJs(mode, variable, values) {
+  const schema = MODE_SCHEMAS[mode];
+  if (!schema) return '';
+  const rows = (schema.fields || []).map(
+    f => renderSchemaFieldJs(f, (values || {})[f.name] ?? f.default),
+  );
+  return `<div class="mode-controls" data-mode="${_escHtml(mode)}" `
+       + `data-variable="${_escHtml(variable)}">${rows.join('')}</div>`;
+}
+
+function renderSchemaFieldJs(f, value) {
+  const label = _escHtml(f.label || f.name);
+  const name = _escHtml(f.name);
+  const title = f.help ? ` title="${_escHtml(f.help)}"` : '';
+
+  if (f.type === 'enum') {
+    const options = [];
+    if (f.optional) {
+      const sel = value == null ? ' selected' : '';
+      options.push(`<option value=""${sel}>(unset)</option>`);
+    }
+    for (const choice of (f.choices || [])) {
+      const sel = String(value) === choice ? ' selected' : '';
+      options.push(`<option value="${_escHtml(choice)}"${sel}>${_escHtml(choice)}</option>`);
+    }
+    return `<label class="mc-field mc-enum"${title}><span>${label}</span>`
+         + `<select data-field="${name}">${options.join('')}</select></label>`;
+  }
+  if (f.type === 'bool') {
+    const checked = value ? ' checked' : '';
+    return `<label class="mc-field mc-bool"${title}>`
+         + `<input type="checkbox" data-field="${name}"${checked}>`
+         + `<span>${label}</span></label>`;
+  }
+  if (f.type === 'float' || f.type === 'int') {
+    const step = f.type === 'float' ? 'any' : '1';
+    const val = value == null ? '' : ` value="${_escHtml(String(value))}"`;
+    return `<label class="mc-field mc-${f.type}"${title}><span>${label}</span>`
+         + `<input type="number" step="${step}" data-field="${name}"${val}></label>`;
+  }
+  if (f.type === 'str') {
+    const val = value == null ? '' : ` value="${_escHtml(String(value))}"`;
+    return `<label class="mc-field mc-str"${title}><span>${label}</span>`
+         + `<input type="text" data-field="${name}"${val}></label>`;
+  }
+  // passthrough — raw JSON textarea
+  let raw = '';
+  if (value != null) {
+    try { raw = _escHtml(JSON.stringify(value)); } catch (_) { raw = ''; }
+  }
+  return `<label class="mc-field mc-passthrough"${title}><span>${label}</span>`
+       + `<textarea data-field="${name}" data-passthrough="true" rows="2">${raw}</textarea></label>`;
+}
+
+function renderWindowControlsHtmlJs(variable, values, bounds) {
+  values = values || {};
+  bounds = bounds || {};
+  const start = values.start;
+  const end = values.end;
+  const startAttr = start == null ? '' : ` value="${_escHtml(String(start))}"`;
+  const endAttr = end == null ? '' : ` value="${_escHtml(String(end))}"`;
+  const startPh = bounds.start != null ? ` placeholder="${_escHtml(String(bounds.start))}"` : '';
+  const endPh = bounds.end != null ? ` placeholder="${_escHtml(String(bounds.end))}"` : '';
+  return `<div class="window-controls" data-variable="${_escHtml(variable)}" `
+       + `title="Restrict this leaf to a time window [start, end] before scoring">`
+       + `<span class="wc-label">Window:</span>`
+       + `<label class="wc-field"><span>start</span>`
+       + `<input type="number" step="any" data-field="window_start"${startAttr}${startPh}></label>`
+       + `<label class="wc-field"><span>end</span>`
+       + `<input type="number" step="any" data-field="window_end"${endAttr}${endPh}></label>`
+       + `</div>`;
+}
+
+function _escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function findWorkingNode(path) {
@@ -1119,18 +1928,12 @@ function markStructureDirty() {
 }
 
 function renderAllNodeTreesFromWorking() {
-  // Swap TREE_VIEW to WORKING_TREE for the render pass only; any
-  // downstream code that walks TREE_VIEW (e.g., plot rendering) picks
-  // up the structural change naturally.
-  const original = TREE_VIEW;
-  window.TREE_VIEW = WORKING_TREE;  // shadow so leavesForVariable() sees it
-  try {
-    renderAllNodeTrees();
-    // Plots may gain or lose leaves — re-render affected variables.
-    VARIABLE_ORDER.forEach((v, i) => renderVariablePlot(v, i));
-  } finally {
-    window.TREE_VIEW = original;
-  }
+  // Stage-4 structural edits route through currentTree() — it returns
+  // WORKING_TREE while structureDirty is set, so every reader picks up
+  // the mutated tree transparently.
+  renderAllNodeTrees();
+  // Plots may gain or lose leaves — re-render affected variables.
+  VARIABLE_ORDER.forEach((v, i) => renderVariablePlot(v, i));
 }
 
 // Spec-strip — convert a tree_view node into its pure spec form,
@@ -1315,6 +2118,73 @@ function setOverlayVisible(vidx, role, name, visible) {
       return;
     }
   }
+}
+
+// ---- Error overlays (signed / abs / NRMSE, right y-axis) ------------
+// Per-variable dropdown adds or removes a single error trace on the
+// right axis. State is path-tracked by vidx so switching between values
+// replaces cleanly (no trace accumulation).
+const ERROR_OVERLAY_TRACE_NAME = 'Error overlay';
+
+function wireErrorOverlays() {
+  document.querySelectorAll('.error-overlay-select').forEach(sel => {
+    sel.addEventListener('change', (e) => {
+      const vidx = parseInt(e.target.dataset.vidx);
+      if (isNaN(vidx)) return;
+      setErrorOverlay(vidx, e.target.value);
+    });
+  });
+}
+
+function setErrorOverlay(vidx, mode) {
+  const el = document.getElementById(`plot-${vidx}`);
+  if (!el || !el.data) return;
+  // Remove any existing error-overlay trace + right-axis.
+  for (let i = el.data.length - 1; i >= 0; i--) {
+    if (el.data[i].name === ERROR_OVERLAY_TRACE_NAME) {
+      Plotly.deleteTraces(el, i);
+    }
+  }
+  if (mode === 'none') {
+    Plotly.relayout(el, { yaxis2: null });
+    return;
+  }
+  const varname = VARIABLE_ORDER[vidx];
+  const traj = (VARIABLES_BY_NAME[varname] || {}).trajectory || {};
+  if (!traj.ref_time || !traj.ref_time.length) return;
+
+  // Interp act onto ref grid, compute chosen error.
+  const refT = traj.ref_time;
+  const refV = traj.ref_values || [];
+  const actOnRef = refT.map(t => _interpLinear(traj.act_time || [], traj.act_values || [], t));
+  const signed = refT.map((_, i) => actOnRef[i] - refV[i]);
+  const absErr = signed.map(Math.abs);
+
+  let yData, label;
+  if (mode === 'signed') { yData = signed; label = 'Signed error'; }
+  else if (mode === 'abs') { yData = absErr; label = 'Abs error'; }
+  else if (mode === 'nrmse') {
+    const rmin = Math.min(...refV);
+    const rmax = Math.max(...refV);
+    const range = rmax - rmin;
+    yData = range > 1e-15 ? absErr.map(e => e / range) : absErr.slice();
+    label = 'NRMSE (per-point)';
+  } else return;
+
+  Plotly.addTraces(el, {
+    x: refT, y: yData,
+    name: ERROR_OVERLAY_TRACE_NAME, type: 'scatter', mode: 'lines',
+    line: { color: '#f44336', width: 1 }, opacity: 0.6,
+    yaxis: 'y2', hovertemplate: `${label}: %{y:.4g}<extra></extra>`,
+  });
+  Plotly.relayout(el, {
+    yaxis2: {
+      title: { text: label, font: { color: '#f44336', size: 10 } },
+      tickformat: '.4g', nticks: 4, automargin: true,
+      overlaying: 'y', side: 'right', showgrid: false,
+      tickfont: { color: '#f44336', size: 10 },
+    },
+  });
 }
 
 // ---- Diagnostic / no-baseline plots (unchanged from previous template) ----

@@ -191,7 +191,10 @@ def _leaf_score_display(vc: VariableComparison) -> tuple[str, str]:
 
 
 def _augment_tree_view(
-    view: dict, comparisons_by_path: dict[str, VariableComparison],
+    view: dict,
+    comparisons_by_path: dict[str, VariableComparison],
+    *,
+    time_bounds_by_variable: Optional[dict[str, tuple[float, float]]] = None,
 ) -> None:
     """Walk ``view`` in place, enriching leaf nodes with render artifacts.
 
@@ -201,6 +204,10 @@ def _augment_tree_view(
     ``mode_values``, ``cli_authoritative``, ``tolerance_used``, and the
     raw numeric summary (``nrmse``, ``max_abs_error``, ...) used by the
     JS scorer registry.
+
+    ``time_bounds_by_variable`` feeds ``(t_start, t_end)`` into each
+    window control's ``placeholder`` so users see the simulation range
+    as a hint without auto-committing it.
     """
     if view.get("kind") == "leaf":
         path = view.get("path", "")
@@ -212,6 +219,8 @@ def _augment_tree_view(
         window_values = _extract_window_values(vc)
         var_label = vc.name or view.get("variable", "")
         score_display, criterion = _leaf_score_display(vc)
+        bounds = (time_bounds_by_variable or {}).get(var_label)
+        t_start, t_end = (bounds if bounds else (None, None))
         view.update({
             "mode_effective": mode,  # runtime mode (e.g., "final_only"); not the spec metric
             "name": var_label,
@@ -237,13 +246,19 @@ def _augment_tree_view(
             ),
             "mode_values": mode_values,
             "mode_controls_html": _render_mode_controls(var_label, mode, mode_values),
-            "window_controls_html": _render_window_controls(var_label, window_values),
+            "window_controls_html": _render_window_controls(
+                var_label, window_values,
+                time_start=t_start, time_end=t_end,
+            ),
             "window_values": window_values,
             "cli_authoritative": mode in ("event-timing", "dominant-frequency"),
         })
         return
     for child in view.get("children", []):
-        _augment_tree_view(child, comparisons_by_path)
+        _augment_tree_view(
+            child, comparisons_by_path,
+            time_bounds_by_variable=time_bounds_by_variable,
+        )
 
 
 def _extract_window_values(vc: VariableComparison) -> dict:
@@ -265,11 +280,24 @@ def _extract_window_values(vc: VariableComparison) -> dict:
     return out
 
 
-def _render_window_controls(variable: str, values: dict) -> str:
-    """Render the universal window inputs for a tree-backed leaf."""
+def _render_window_controls(
+    variable: str,
+    values: dict,
+    *,
+    time_start: Optional[float] = None,
+    time_end: Optional[float] = None,
+) -> str:
+    """Render the universal window inputs for a tree-backed leaf.
+
+    ``time_start`` / ``time_end`` populate the inputs' ``placeholder``
+    attribute with the variable's simulation range as a hint.
+    """
     from .ui.mode_controls import render_window_controls_html
 
-    return render_window_controls_html(variable=variable, values=values)
+    return render_window_controls_html(
+        variable=variable, values=values,
+        time_start=time_start, time_end=time_end,
+    )
 
 
 def _build_template_context(
@@ -651,8 +679,21 @@ def _build_template_context(
         else:
             comparisons_by_path = {}
 
+        # Collect per-variable simulation bounds so window inputs show
+        # the full-trajectory range as placeholder hints.
+        time_bounds: dict[str, tuple[float, float]] = {}
+        for traj in trajectories:
+            ref_time = traj.get("ref_time") or traj.get("act_time") or []
+            if ref_time:
+                time_bounds[traj["name"]] = (
+                    float(ref_time[0]), float(ref_time[-1]),
+                )
+
         tree_view = _spec_to_view(spec, evaluation_by_path=eval_by_path)
-        _augment_tree_view(tree_view, comparisons_by_path)
+        _augment_tree_view(
+            tree_view, comparisons_by_path,
+            time_bounds_by_variable=time_bounds,
+        )
 
         # Dedupe trajectories by variable name into a per-variable dict.
         # Overlays already attached per-trajectory-entry; first match wins.

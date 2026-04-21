@@ -275,7 +275,7 @@ def test_interactive_js_exports_required_globals():
         "MODE_PLOT_CONTRIBUTIONS", "MODE_PLOT_EDITORS",
         "activateLeaf", "deactivateLeaf",
         "buildPatchData", "nodeToSpec",
-        "injectWindowBrushControl",
+        "buildWindowBrushControl",
     ]:
         assert symbol in js, f"interactive.js missing expected symbol {symbol!r}"
 
@@ -292,4 +292,7 @@ def test_plot_editor_registry_wires_tube_and_range():
     assert "MODE_PLOT_EDITORS['tube']" in js
     assert "MODE_PLOT_EDITORS['range']" in js
     assert "shapePosition" in js  # range uses Plotly's shape-drag config
-    assert "plotly_click" in js   # tube's Shift+click add-point handler
+    # Tube v2 binds its Shift+click/drag/right-click via capture-phase DOM
+    # events (not plotly_click) so Plotly's pan/zoom doesn't swallow them.
+    assert "addEventListener('mousedown'" in js
+    assert "addEventListener('contextmenu'" in js

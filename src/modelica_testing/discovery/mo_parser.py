@@ -107,10 +107,34 @@ def _parse_float_list(raw: str) -> Optional[list[float]]:
         return None
 
 
+_MO_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
+_MO_LINE_COMMENT = re.compile(r'//[^\n]*')
+_MO_BLOCK_COMMENT = re.compile(r'/\*[\s\S]*?\*/')
+
+
+def _strip_modelica_literals(text: str) -> str:
+    """Strip comments + string literals from Modelica source.
+
+    Prevents false-positive matches where prose inside an
+    ``annotation(Documentation(...))`` block mentions a keyword like
+    ``UnitTests(...)`` or ``extends Foo``. Block comments replaced with
+    a single space (may shift offsets, fine since scanners operate on
+    the stripped text consistently).
+    """
+    out = _MO_BLOCK_COMMENT.sub(" ", text)
+    out = _MO_LINE_COMMENT.sub("", out)
+    out = _MO_STRING.sub(" ", out)
+    return out
+
+
 def _parse_unit_tests(text: str) -> Optional[UnitTestInfo]:
     """Extract UnitTests block parameters from model text."""
     # Match the UnitTests declaration — may span multiple lines
     # Patterns: "UnitTests unitTests(" or "ErrorAnalysis.UnitTests unitTests("
+    # Strip comments + strings first so documentation prose that mentions
+    # ``UnitTests(...)`` for example purposes doesn't misidentify the
+    # surrounding model as a test.
+    text = _strip_modelica_literals(text)
     pattern = re.compile(
         r'(?:Utilities\.ErrorAnalysis\.)?UnitTests\s+\w+\s*\(',
         re.DOTALL

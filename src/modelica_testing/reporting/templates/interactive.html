@@ -141,6 +141,39 @@ details summary:hover { color: #333; }
 .tube-table input { width: 5em; padding: 1px 4px; font-size: 0.82em; }
 .window-brush-wrap { display: flex; gap: 0.3em; margin-top: 0.5em; padding-top: 0.4em; border-top: 1px dashed #cfd8dc; align-items: center; }
 .node-btn.brush-armed { background: #fff3e0; border-color: #ffb74d; color: #e65100; }
+/* Inline modal for the + add-leaf dialog (replaces window.prompt) */
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-dialog { background: white; padding: 1.2em 1.4em; border-radius: 6px; min-width: 340px; max-width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.25); }
+.modal-dialog h3 { margin: 0 0 0.8em 0; }
+.modal-dialog label.mc-field { display: flex; flex-direction: column; align-items: stretch; gap: 0.2em; margin-bottom: 0.6em; font-size: 0.9em; }
+.modal-dialog label.mc-field > span { color: #555; font-size: 0.8em; }
+.modal-dialog select, .modal-dialog input { padding: 0.3em 0.5em; font-family: inherit; font-size: 0.95em; border: 1px solid #ccc; border-radius: 3px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.5em; margin-top: 0.8em; }
+.modal-dialog .var-warning { color: #c62828; font-size: 0.8em; margin-top: 0.2em; min-height: 1em; }
+/* Tube editor layout */
+.tube-editor-controls { display: flex; flex-wrap: wrap; gap: 0.6em 1em; align-items: center; margin-bottom: 0.6em; font-size: 0.85em; }
+.tube-editor-controls label { display: inline-flex; flex-direction: column; gap: 0.15em; color: #555; font-size: 0.75em; }
+.tube-editor-controls select, .tube-editor-controls input[type=number] { padding: 0.2em 0.3em; font-family: inherit; font-size: 0.9em; border: 1px solid #ccc; border-radius: 3px; }
+.tube-editor-controls .tube-status { margin-left: auto; font-size: 0.88em; }
+.tube-editor-controls .tube-status .pass { color: #2e7d32; font-weight: 600; }
+.tube-editor-controls .tube-status .fail { color: #c62828; font-weight: 600; }
+.tube-table { border-collapse: collapse; font-size: 0.85em; margin-bottom: 0.5em; }
+.tube-table th { background: #eceff1; padding: 0.3em 0.6em; text-align: left; font-weight: 600; font-size: 0.8em; }
+.tube-table td { padding: 0.2em 0.4em; }
+.tube-table input { width: 6em; padding: 1px 4px; font-size: 0.85em; }
+.tube-table select { font-size: 0.82em; padding: 0 0.2em; }
+.tube-summary { margin-top: 0.4em; padding-left: 1.4em; color: #607d8b; font-size: 0.8em; font-style: italic; }
+/* Per-plot controls row */
+.plot-controls { display: flex; gap: 1em; align-items: center; margin-bottom: 0.5em; font-size: 0.85em; color: #555; }
+.plot-controls label { display: inline-flex; align-items: center; gap: 0.4em; }
+.error-overlay-select { padding: 0.15em 0.3em; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.85em; }
+/* Inline remove-confirm popup (replaces window.confirm) */
+.remove-confirm { display: inline-flex; align-items: center; gap: 0.3em; margin-left: 0.5em; padding: 0.2em 0.5em; background: #fff3e0; border: 1px solid #ffb74d; border-radius: 4px; font-size: 0.8em; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
+.remove-confirm-label { color: #bf360c; margin-right: 0.2em; }
+.node-btn.remove-confirm-yes { color: #333; font-weight: 600; }
+.node-btn.remove-confirm-yes:hover { background: #f0f0f0; }
+.node-btn.remove-confirm-no { color: #546e7a; }
+.node-btn.remove-confirm-no:hover { background: #eceff1; }
 </style>
 </head>
 <body>
@@ -315,6 +348,17 @@ details summary:hover { color: #333; }
     <span class="var-status" data-vidx="{{ loop.index0 }}"></span>
     {{ varname }}
   </h2>
+  <div class="plot-controls">
+    <label class="error-overlay-control" title="Overlay an error trace on the secondary y-axis">
+      Error overlay
+      <select class="error-overlay-select" data-vidx="{{ loop.index0 }}">
+        <option value="none">none</option>
+        <option value="signed">signed error (act - ref)</option>
+        <option value="abs">abs error</option>
+        <option value="nrmse">NRMSE</option>
+      </select>
+    </label>
+  </div>
   {% if vardata.overlays %}
   <div class="overlay-picker" data-vidx="{{ loop.index0 }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
     <span class="ov-label">Overlays:</span>
