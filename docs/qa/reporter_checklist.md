@@ -1,221 +1,39 @@
 # Reporter QA checklist
 
-Manual click-through scenarios for the interactive HTML reporter (D66 Q8
-testing strategy). Run before releases; the auto tests cover the data
-contracts exhaustively but only a human can judge whether the UX feels
-right on a real report in a real browser.
+Manual QA pass for the interactive reporter. Most data-contract, render,
+and state-mutation scenarios are now automated in Python + Playwright
+(`tests/test_interactive_playwright.py`); this checklist covers the
+remaining ~20% that requires human judgment — visual quality, drag-based
+plot interactions, and UX feel on real reports.
+
+**What's automated** (skip these in manual QA):
+
+- Page renders without JS console errors (Playwright `pageerror` handler).
+- Variable section dedup, full-tree + per-variable mounts, leaf activation,
+  ESC deactivation, click-switch between leaves.
+- Scalar input edits → `leafState`, cross-mount input sync, window inputs
+  round-trip, `buildPatchData` emits correct ops.
+- `+` adds a leaf (via prompt), `−` marks `structureDirty` + emits
+  wholesale `/metrics` replace.
+- Tube editor activates with control-point table; add-point button commits.
+- Window brush button injected on leaf activation.
+- Overlay loading (missing file → `status="missing"`, bad parse → `"invalid"`).
+
+**What stays manual** — everything below.
 
 ## Prep
 
 ```bash
 uv run modelica-testing --config examples/fmu/testing.json run --report
-open testing_output/fmu/FMPy/linux/reports/index.html
+# Open the report in your browser:
+# testing_output/fmu/FMPy/linux/reports/ref_0001/interactive.html
 ```
 
-The FMU example is the reference fixture — it exercises three of the six
-modes (nrmse, range, warn-wrapped soft_check nrmse) plus the tube editor
-in the Dymola variant.
+The FMU example (BouncingBall) exercises: NRMSE leaf, range leaf, nested
+`warn` wrapper, soft_check overlay (`experiment`). Two variables (`h`,
+`v`) produce two plots.
 
-## Index page
-
-- [x] Test counts match the console output (`3 / 3 passed` on FMU
-  example, no "stale" indicators unless you've done a filtered rerun).
-- [x] Last-run timestamps show in the right column.
-- [x] Clicking a test row opens the per-test interactive report.
-
-## Per-test interactive report — all variables
-
-- [x] Page renders without JS console errors (`DevTools → Console`).
-- [x] All trajectory plots appear; axes and legends readable.
-- [x] Variable table shows one row per leaf/variable with a status pill,
-  mode name, score, and the tolerance / control cell.
-  - i see one who's "mode" = range. also, if changed to tube the tolerance option is still there though it is greyed out. 
-- [x] Summary card at the top reports the correct N-passed count.
-
-## Mode — NRMSE (BouncingBall `h` and `v` — first two rows)
-
-- [x] Tolerance cell contains a numeric input pre-filled with the
-  stored tolerance (e.g., `0.001`).
-- [x] Changing the input to a smaller value (e.g., `1e-12`) flips the
-  status pill + summary count + NRMSE plot's fail-zone band in
-  real time.
-- [ ] The `.modified` class on the input renders visibly different.
-  - i don't know what you mean
-
-## Mode — Range (BouncingBall `h` — third row)
-
-- [x] Cell shows two number inputs labeled Min value / Max value,
-  pre-filled with `-0.01` and `1.1`.
-- [x] Trajectory plot for this variable shows two dashed-red horizontal
-  reference lines at `-0.01` and `1.1`.
-    - though y scale was hiding the top. i had to zoom out slightly
-- [x] Dragging the Min input down to `-5` visibly lowers the reference
-  line in real time. Same for Max.
-    - yes but couldn't zoom out when i sent negative value something large like -5
-- [x] Changing bounds so the trajectory violates them flips the status
-  pill to FAIL with an updated `max_viol` score.
-
-## Mode — Soft_check nrmse against `experiment` (BouncingBall `h` — fourth row)
-
-- [x] Row shows `against=experiment` diagnostic somewhere in the score
-  display or alongside it.
-    - I see it in an "Overlay" section... don't understand it.
-    - i don't see it. also soft_check boolean only impacts first "h" plots (multiple toggle buttons but only impact first instance of h plots)
-- [x] Status pill is the test result (PASS by default with the current
-  reference data).
-- [ ] Verify by tightening the tolerance: the warn-wrapped failure should
-  NOT cascade into the test's overall PASS/FAIL — soft_checks are
-  advisory. Use the warn-combinator rendering in the metric tree view
-  (if present).
-    - don't see changes.
-
-## Mode — Tube (ModelicaTestingLib — Dymola-side)
-
-*(Requires a Dymola run; skip on FMU-only QA passes.)*
-
-- [ ] Cell shows `→ See tube editor below plot` (not duplicate inputs).
-- [ ] Rich tube editor below the plot works: add/remove points,
-  synced/unsynced toggle, rel/band/absolute width modes.
-- [ ] Shift+click on the plot adds a point. Shift+drag moves it.
-  Shift+right-click removes it.
-
-## Mode — Final-only
-
-- [ ] Tolerance cell behaves like NRMSE (numeric input + live recompute).
-- [ ] Score cell shows `|err| <value>`.
-
-  ** Only see NRMSE and Tube
-  
-## Mode — Event-timing / Dominant-frequency
-
-*(Not exercised by the default examples; construct a fixture if needed.)*
-
-- [ ] Cell shows the auto-derived panel inputs + `CLI-authoritative`
-  badge.
-- [ ] Edits to the inputs do NOT immediately recompute — status pill
-  stays on the CLI-computed value.
-
-## Export / round-trip (6.4)
-
-- [ ] "Export Tolerance Config" section shows a JSON-Patch envelope:
-  `{"model": "...", "patch": [...]}`.
-- [ ] Empty patch (no user edits) produces `{"model": "...", "patch": []}`.
-- [ ] Editing any input populates the `patch` array with matching
-  `{"op": "replace", "path": "/comparison/...", "value": ...}` entries.
-- [ ] "Copy to Clipboard" and "Download JSON" both produce the same
-  text (filename: `spec_patch.json`).
-- [ ] Apply the downloaded patch:
-  ```bash
-  uv run modelica-testing --config examples/fmu/testing.json spec-update spec_patch.json
-  ```
-  Verify:
-    - CLI prints the ops applied with paths.
-    - `test_spec.json` gets the scalar change.
-    - Any hand-authored `description` / `metadata` / `info` keys on the
-      entry or the `comparison` block survive unchanged.
-
-## Schema export (6.4.5)
-
-- [ ] `uv run modelica-testing export-schema` prints valid JSON-Schema
-  (draft 2020-12) to stdout.
-- [ ] The `$defs` section contains entries for the six modes, plus
-  `leaf`, `combinator`, `tree_node`, `test_entry`.
-- [ ] Feed the output to any JSON-Schema validator of choice; it
-  should parse without errors.
-
-## Baseline-role management CLIs (D66 — orthogonal to the HTML reporter)
-
-- [ ] `uv run modelica-testing --config examples/fmu/testing.json soft-check list`
-  lists soft_checks registered on BouncingBall (`experiment` should
-  appear post-migration).
-- [ ] `uv run modelica-testing --config examples/fmu/testing.json migrate-baselines`
-  on a repo with no legacy flat-baselines is a no-op.
-- [ ] `companion add <model> <name> <csv-path>` succeeds without
-  reading the file; `companion list` shows it as `kind=external`;
-  `companion freeze <model> <name>` copies the data sibling;
-  `companion list` now shows `kind=frozen`.
-
-## Failure modes
-
-- [ ] Patch with an out-of-whitelist path exits nonzero and does NOT
-  mutate the spec. Try:
-  ```json
-  {"model": "BouncingBall", "patch": [
-    {"op": "replace", "path": "/simulation/stop_time", "value": 100}
-  ]}
-  ```
-- [ ] Patch that would produce an invalid metric tree (e.g., a
-  `against: soft_check` leaf outside `warn`) is rejected by the
-  validator hook inside `cmd_spec_update` and the spec is NOT written.
-
-## Window UI round-trip (A1 / idea #46 UI surfacing)
-
-Tree-backed leaves only — BouncingBall is the canonical exerciser
-(`metrics` block with 4 leaves, paths `/metrics/children/{0,1,2,3/children/0}`).
-
-### Prep
-
-```bash
-# Save the spec so we can restore it after the manual test
-cp examples/fmu/test_spec.json /tmp/test_spec.baseline.json
-uv run modelica-testing --config examples/fmu/testing.json run --report
-# Open: testing_output/fmu/FMPy/linux/reports/ref_0001/interactive.html
-```
-
-### Render check
-
-- [ ] Every BouncingBall row (4 total: `h` nrmse, `v` nrmse, `h` range,
-  `h` warn) has a `Window:` row with two number inputs (`start`, `end`)
-  below the tolerance or mode cell.
-- [ ] Window inputs are blank initially (no window authored yet).
-- [ ] Non-tree tests (Dahlquist `ref_0002`, VanDerPol `ref_0003`) have
-  NO window inputs — they're flat-override and window only applies to
-  `LeafSpec`.
-
-### Edit + download
-
-- [ ] On the first row (`h` nrmse), enter `start=0.5`, `end=2.0`. The
-  Export Tolerance Config JSON updates live and includes:
-  ```json
-  {"op": "add", "path": "/metrics/children/0/window",
-   "value": {"start": 0.5, "end": 2.0}}
-  ```
-- [ ] "Download JSON" → `spec_patch.json` on disk.
-
-### Apply + verify
-
-```bash
-uv run modelica-testing --config examples/fmu/testing.json spec-update ~/Downloads/spec_patch.json
-```
-
-- [ ] CLI reports one op applied.
-- [ ] `examples/fmu/test_spec.json` now has `"window": {"start": 0.5,
-  "end": 2.0}` on the first child of `metrics.children`. Hand-authored
-  keys elsewhere in the file (if any) are byte-unchanged.
-- [ ] Re-run `run --report`; reopen `ref_0001/interactive.html`. The
-  first row's window inputs are pre-filled with `0.5` / `2.0`.
-- [ ] Score for that leaf reflects windowed NRMSE (typically very
-  small since BouncingBall passes trivially — window narrows the slice
-  but doesn't introduce error).
-
-### Remove path
-
-- [ ] Clear both window inputs on the first row. Export JSON updates to
-  include `{"op": "remove", "path": "/metrics/children/0/window"}`.
-- [ ] Download + apply; verify `window` key is gone from the spec.
-
-### Restore
-
-```bash
-cp /tmp/test_spec.baseline.json examples/fmu/test_spec.json
-```
-
-## Companion + soft_check overlay rendering (A2 / idea #50, 6.3 first slice)
-
-BouncingBall has an existing soft_check (`experiment`) and accepts
-ad-hoc companion registration for full exercise.
-
-### Prep — synthetic external companion
+For the full UX picture, also run once with a dev-registered companion:
 
 ```bash
 cat > /tmp/analytical.csv <<'EOF'
@@ -226,77 +44,118 @@ time,h
 3.0,0.0
 EOF
 uv run modelica-testing --config examples/fmu/testing.json companion add \
-    BouncingBall analytical /tmp/analytical.csv
-uv run modelica-testing --config examples/fmu/testing.json companion list
-uv run modelica-testing --config examples/fmu/testing.json run --report
-# Open: testing_output/fmu/FMPy/linux/reports/ref_0001/interactive.html
+  BouncingBall analytical /tmp/analytical.csv
+# ...then `run --report` again to exercise the overlay picker.
+# Cleanup when done: companion remove BouncingBall analytical
 ```
 
-### Render check
+## Visual quality (human-only)
 
-- [ ] Top of page (just above the Statistics details) shows an
-  `Overlays (2) — companion + soft_check` collapsible. Inside:
-    - `experiment` — role=soft_check, status=loaded, variables=`h`.
-    - `analytical` — role=companion (external), status=loaded,
-      variables=`h`.
-- [ ] Every `h` trajectory plot (rows 0, 2, 3 in BouncingBall) has an
-  `Overlays:` picker above it with two checkboxes:
-  `[soft_check] experiment` and `[companion] analytical`.
-- [ ] The `v` plot (row 1) has an `Overlays:` picker with ONLY
-  `[soft_check] experiment` (analytical's CSV has no `v` column, so
-  that entry is correctly suppressed).
-- [ ] Both checkboxes start unchecked — overlays are opt-in.
+- [ ] Layout isn't cramped or overflowing at typical widths (~1400 px).
+      Variable sections are clearly separated; the full-tree panel at top
+      doesn't feel cluttered when it has 4+ leaves.
+- [ ] Plot axis labels + tick marks readable; legend placement not
+      overlapping traces.
+- [ ] Colors hold their meaning across the report:
+      - Actual: blue (`#2196F3`)
+      - Reference: orange dashed (`#FF9800`)
+      - Tube polygon: green-tinted fill
+      - Range min/max lines: red dashed
+      - Window x-band highlight: blue-tinted
+      - Soft_check overlay: purple dotted
+      - Companion overlay: green dashdot
+      - Active leaf highlight: blue left border, light blue background
+- [ ] Pass/fail pills visually distinct and legible (green vs red).
+- [ ] Node tree indentation clear enough to see combinator nesting
+      (warn wrapper should visibly contain its child leaf).
 
-### Toggle behavior
+## Range autoscale edge case (known issue)
 
-- [ ] Check `experiment`: a purple dotted trace appears on the plot
-  labeled `Overlay: soft_check/experiment`. Uncheck: it goes back to
-  `legendonly` (the legend entry stays, no data is drawn).
-- [ ] Check `analytical`: a green dashdot trace appears labeled
-  `Overlay: companion/analytical`. Uncheck: returns to `legendonly`.
-- [ ] Both overlays can be on simultaneously without overlapping the
-  Actual / Reference traces' visual weight.
-- [ ] Non-`h` plots (the `v` row) show no `analytical` option — same
-  invariant as the render check, restated since toggle bugs sometimes
-  cross rows.
+- [ ] Range leaf with a min below the data's own range — e.g., set `min`
+      to `-5` on BouncingBall's `h` leaf. The red dashed line should still
+      be visible. **Known**: Plotly's y-axis autoscale doesn't include
+      layout shapes, so the line may clip off the bottom of the plot. If
+      you have to double-click the plot to zoom out, file that as a visual
+      polish item — not a blocker.
 
-### Graceful degradation — missing companion file
+## Drag-based plot interactions (hard to test synthetically)
 
-```bash
-mv /tmp/analytical.csv /tmp/analytical.csv.moved
-uv run modelica-testing --config examples/fmu/testing.json run --report
-```
+- [ ] **Tube Shift+click adds a point.** Activate a tube leaf (click its
+      header), hold Shift, click somewhere on the plot above or below the
+      reference trajectory. A new row should appear in the control-point
+      table with the clicked `(time, |Δ from ref|)` values. The tube
+      polygon should redraw live to include the new point.
+- [ ] **Range drag.** Activate a range leaf. Click-and-drag one of the
+      dashed red min/max lines vertically. On drop, the line snaps to
+      the new y-value; the leaf's `min_value` / `max_value` text input
+      updates to match. Verify the export-patch JSON now has the new value.
+- [ ] **Window brush.** Activate any leaf. Click the `🔲 Set window from
+      plot` button in its editor slot; the button turns orange ("Drag on
+      plot…"). Drag a horizontal range on the plot. On release, the
+      window_start + window_end inputs populate; the blue x-band
+      highlight appears across the selected range. Verify the
+      export-patch JSON shows the window `add` op.
 
-- [ ] Console shows a warning line like `Failed to load companion
-  'analytical' ... no such file`. The run still exits 0 (overlays never
-  fail a test).
-- [ ] Reopen the report. `Overlays` summary now shows `analytical` with
-  `status=missing` and the row has a yellow background. The `note`
-  column says `file not found: /tmp/analytical.csv`.
-- [ ] Picker checkboxes above `h` plots no longer include `analytical`
-  (nothing to render — by design).
+## Soft_check / companion overlay visuals
 
-### Cleanup
+Requires a registered companion (see Prep). On BouncingBall's `h` plot:
 
-```bash
-mv /tmp/analytical.csv.moved /tmp/analytical.csv  # restore so next run works
-uv run modelica-testing --config examples/fmu/testing.json companion remove \
-    BouncingBall analytical
-rm /tmp/analytical.csv
-```
+- [ ] `Overlays (N)` summary at the top of the report lists every
+      soft_check + companion, loaded or not.
+- [ ] Missing / moved companion files show with a yellow-highlighted row
+      in the summary + a `note` column explaining why.
+- [ ] Each plot with at least one matching overlay shows an `Overlays:`
+      picker row above it with role-colored badges (soft_check purple,
+      companion green).
+- [ ] Toggling an overlay checkbox shows/hides its trace on the plot
+      (default off → `visible: 'legendonly'` → `true` on check).
+- [ ] Overlays only appear on plots whose variable they carry data for —
+      a companion with only `h` data doesn't show a picker on the `v` plot.
 
-- [ ] After `companion remove` + `run --report`, the `Overlays`
-  summary shows only `experiment`. `analytical` is gone.
+## Structural editing (UX feel, not correctness)
 
-## Known gaps / deferred
+Playwright covers correctness. These check the UX:
 
-- Drag-to-edit the range reference lines (v2; today the inputs drive
-  the lines one-way).
-- Range-brush on the trajectory plot as a visual window editor (stretch
-  noted in the A1 handoff; scalar inputs are v1).
-- Bulk toggle (single switch that flips every overlay across every
-  plot). Today each plot toggles independently.
-- Overlay-vs-primary error panel (an analogue of the existing
-  reference-error panels, but for overlays). Not scoped.
-- JS unit framework / Playwright E2E (D66 Q8 — deferred indefinitely
-  unless the reporter becomes a regression source).
+- [ ] `+` button prompts for metric + variable in sequence. The prompt
+      text names valid metrics. If the user types an unknown metric, the
+      error message is clear.
+- [ ] `−` button asks for confirmation before removing. Confirmation
+      text includes the node's label ("Remove leaf nrmse·h?").
+- [ ] After a structural edit, the full tree re-renders AND the plots
+      update. Per-variable mounts reflect the new structure.
+- [ ] Export JSON (click "Download JSON") shows a single `/metrics`
+      replace op when structure has changed, not dozens of scalar ops.
+- [ ] Applying the downloaded patch:
+  ```bash
+  uv run modelica-testing --config examples/fmu/testing.json \
+    spec-update ~/Downloads/spec_patch.json
+  ```
+  - CLI exits 0 with the op applied.
+  - `examples/fmu/test_spec.json` reflects the structural change.
+  - Hand-authored sibling keys (description, metadata) on the test entry
+    survive unchanged.
+
+## Schema export (one-off sanity)
+
+- [ ] `uv run modelica-testing export-schema` emits valid JSON-Schema
+      2020-12 to stdout.
+- [ ] `$defs` contains entries for all six modes.
+- [ ] Pass it to any JSON-Schema validator; parses without errors.
+
+## Known limitations / deferred (don't file as bugs)
+
+- Pass/fail pills are CLI-authoritative across ALL modes — live recompute
+  was retired in Stage 2 along with `MODE_SCORERS`. Edits in the browser
+  don't flip pills until `modelica-testing run` is re-invoked. The
+  `cli_authoritative` badge only appears on `event-timing` and
+  `dominant-frequency`, but the semantics apply everywhere now. Expected.
+- Shift+drag / Shift+right-click on existing tube control points (move /
+  delete via plot interaction) not yet wired — only Shift+click-to-add
+  works on the plot today. Table inputs + row − buttons are the other
+  edit paths.
+- Window brush is one-shot per activation: drag once, set, brush mode
+  exits. No "keep selecting" lock.
+- `+` button only adds leaves. Wrapping a subtree in a new combinator
+  (e.g., `warn`) requires hand-editing the JSON spec.
+- Drag-to-edit range handles are input-driven ↔ drag two-way synced, but
+  Plotly's editable-shape drag can feel laggy on very zoomed-in plots.

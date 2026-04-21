@@ -752,6 +752,12 @@ def generate_comparison_plots(
     interactive_path = plot_dir / "interactive.html"
     _render_template("interactive.html", context, interactive_path)
 
+    # Copy the standalone interactive.js next to the HTML so the
+    # `<script src="interactive.js">` tag resolves. The JS is pure-static
+    # (no Jinja interpolations) — the HTML marshals the per-report data
+    # into window.MT_REPORT; the JS reads from there.
+    shutil.copyfile(_TEMPLATE_DIR / "interactive.js", plot_dir / "interactive.js")
+
     return interactive_path
 
 

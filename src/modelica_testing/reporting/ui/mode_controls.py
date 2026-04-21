@@ -433,10 +433,10 @@ def _register_bundled() -> None:
     # sits on top of them, activated by clicking the leaf node.
     register_mode_ui("tube", TubeConfig, has_plot_editor=True)
     register_mode_ui("final_only", FinalOnlyConfig)
-    # range auto-derived panel is the 6.1.5 default; 6.1.4 adds visual
-    # reference lines on the trajectory plot via JS (no custom_renderer
-    # needed — the inputs stay in the cell, the plot overlay is additive).
-    register_mode_ui("range", RangeConfig)
+    # Range has a JS-side interactive plot editor — drag the dashed
+    # min/max reference lines directly on the plot. Scalar inputs in
+    # the leaf's controls also edit the same state (bidirectional sync).
+    register_mode_ui("range", RangeConfig, has_plot_editor=True)
     register_mode_ui("event-timing", EventTimingConfig)
     register_mode_ui("dominant-frequency", DominantFrequencyConfig)
 

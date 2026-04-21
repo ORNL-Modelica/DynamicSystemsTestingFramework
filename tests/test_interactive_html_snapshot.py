@@ -180,14 +180,22 @@ def _render_interactive(context: dict) -> str:
 # ---------------------------------------------------------------------------
 
 _NOISE_PATTERNS = [
-    re.compile(r'const TREE_VIEW = .*?;', re.DOTALL),
-    re.compile(r'const VARIABLES_BY_NAME = .*?;', re.DOTALL),
-    re.compile(r'const MODE_SCHEMAS = .*?;', re.DOTALL),
-    re.compile(r'const DIAG_TRAJECTORIES = .*?;', re.DOTALL),
-    re.compile(r'const NB_TRAJECTORIES = .*?;', re.DOTALL),
+    # Stage-5 extraction: per-report data lives in window.MT_REPORT, which
+    # contains the bulky inline JSON blobs — strip the whole block.
+    re.compile(r'window\.MT_REPORT\s*=\s*\{.*?\};', re.DOTALL),
     re.compile(r'value="[0-9eE.+\-]+"'),  # strip embedded numeric defaults
     re.compile(r'>[0-9]+\.[0-9]+e[+\-]?[0-9]+<'),  # stringified floats inside tags
 ]
+
+
+_JS_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "src" / "modelica_testing" / "reporting" / "templates" / "interactive.js"
+)
+
+
+def _read_js() -> str:
+    return _JS_PATH.read_text(encoding="utf-8")
 
 
 def _structural_hash(html: str) -> str:
@@ -228,13 +236,11 @@ def test_interactive_html_structural_hash(mode):
     )
 
 
-def test_every_mode_fixture_contains_its_panel_signature():
-    """Each mode's render embeds its leaf metric in the TREE_VIEW JSON.
-    The control HTML is there too (as a JSON string, JSON-escaped) —
-    JS injects it at runtime via innerHTML."""
-    # `"metric": "<mode-name>"` appears inside the leaf in TREE_VIEW only;
-    # mode_schemas carries every mode's shape regardless of fixture, so we
-    # key on the leaf's metric value rather than schema-wide tokens.
+def test_every_mode_fixture_contains_its_leaf_metric_in_data():
+    """The rendered HTML carries each mode's leaf metric inside
+    ``window.MT_REPORT.TREE_VIEW``; that keeps the per-mode render
+    path honest without grepping for JS tokens that now live in
+    interactive.js."""
     metric_signatures = {
         "nrmse": '"metric": "nrmse"',
         "tube": '"metric": "tube"',
@@ -247,50 +253,43 @@ def test_every_mode_fixture_contains_its_panel_signature():
         ctx = _build_context(mode)
         html = _render_interactive(ctx)
         assert sig in html, f"Mode {mode!r} rendered HTML missing leaf signature {sig!r}"
-        # Also verify the mode's control HTML got embedded (JSON-escaped
-        # form of data-field="..."). If the mode lacks a control panel
-        # entirely, mode_controls_html is empty — skip.
-        ui_schema_names = {
-            "nrmse": "tolerance",
-            "tube": "tube_width_mode",
-            "final_only": "tolerance",
-            "range": "min_value",
-            "event-timing": "time_tolerance",
-            "dominant-frequency": "rel_tolerance",
-        }
-        field_name = ui_schema_names[mode]
-        # JSON-escaped: data-field=\"<name>\"
-        escaped = f'data-field=\\"{field_name}\\"'
-        assert escaped in html, (
-            f"Mode {mode!r} rendered HTML missing control field {field_name!r} "
-            f"(looked for {escaped!r})"
-        )
 
 
-def test_plot_contribution_registry_present_in_output():
-    """The Stage-2 JS registry replaces the old MODE_SCORERS map."""
+def test_html_loads_interactive_js():
+    """Stage-5 extraction: template must reference the standalone JS file."""
     ctx = _build_context("nrmse")
     html = _render_interactive(ctx)
-    assert "MODE_PLOT_CONTRIBUTIONS" in html
+    assert '<script src="interactive.js"></script>' in html
+    assert "window.MT_REPORT" in html
+
+
+def test_interactive_js_exports_required_globals():
+    """The standalone JS file must set up the same state the Stage-2
+    template + Stage-4 structural editor + Stage-5 plot-editor registries
+    expect. Checked by grep here (fast smoke); behavior checked by
+    Playwright."""
+    js = _read_js()
+    for symbol in [
+        "MODEL_ID", "TREE_VIEW", "VARIABLES_BY_NAME", "MODE_SCHEMAS",
+        "leafState", "WORKING_TREE", "activeLeafPath",
+        "MODE_PLOT_CONTRIBUTIONS", "MODE_PLOT_EDITORS",
+        "activateLeaf", "deactivateLeaf",
+        "buildPatchData", "nodeToSpec",
+        "injectWindowBrushControl",
+    ]:
+        assert symbol in js, f"interactive.js missing expected symbol {symbol!r}"
+
+
+def test_plot_contribution_registry_present_in_js():
+    js = _read_js()
+    assert "MODE_PLOT_CONTRIBUTIONS" in js
     for key in ["nrmse", "final-only", "range", "tube", "event-timing", "dominant-frequency"]:
-        assert f"'{key}'" in html, f"Contribution entry {key!r} missing from rendered HTML"
+        assert f"'{key}'" in js, f"Contribution entry {key!r} missing from interactive.js"
 
 
-def test_tree_view_and_variables_by_name_embedded():
-    ctx = _build_context("nrmse")
-    html = _render_interactive(ctx)
-    assert "const TREE_VIEW" in html
-    assert "const VARIABLES_BY_NAME" in html
-    assert "const MODE_SCHEMAS" in html
-
-
-def test_plot_editor_registry_wires_tube():
-    """Tube's interactive plot editor must be registered at template
-    render time so the JS can find it on leaf activation."""
-    ctx = _build_context("tube")
-    html = _render_interactive(ctx)
-    assert "MODE_PLOT_EDITORS" in html
-    assert "MODE_PLOT_EDITORS['tube']" in html
-    # Active-leaf plumbing hooks
-    assert "activateLeaf" in html
-    assert "deactivateLeaf" in html
+def test_plot_editor_registry_wires_tube_and_range():
+    js = _read_js()
+    assert "MODE_PLOT_EDITORS['tube']" in js
+    assert "MODE_PLOT_EDITORS['range']" in js
+    assert "shapePosition" in js  # range uses Plotly's shape-drag config
+    assert "plotly_click" in js   # tube's Shift+click add-point handler

@@ -305,6 +305,11 @@ class TestHasPlotEditor:
         assert ui is not None
         assert ui.has_plot_editor is True
 
+    def test_range_has_plot_editor(self):
+        ui = get_mode_ui("range")
+        assert ui is not None
+        assert ui.has_plot_editor is True
+
     def test_nrmse_has_no_plot_editor(self):
         ui = get_mode_ui("nrmse")
         assert ui is not None

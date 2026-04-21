@@ -51,6 +51,70 @@ Test count: **562 → 595** passing at HEAD.
 
 ---
 
+## Follow-up: interactive plot editors (tube + range drag + window brush)
+
+After the five-stage refactor settled, the rich interactive tube editor
+(flagged as critical) landed along with two more consumers of the same
+`MODE_PLOT_EDITORS` contract — proving the framework is reusable.
+
+**General contract** (JS side): `MODE_PLOT_EDITORS[metric] = { activate(leaf, plotEl, commit), deactivate(leaf, plotEl), plotConfigOverride?(leaf) }`. Parallel to `MODE_PLOT_CONTRIBUTIONS`. Leaf-click (either mount) activates; ESC or click-to-another-leaf deactivates. `ModeUI.has_plot_editor` is the Python-side marker.
+
+**Tube editor**: control-point table in the active leaf's `.node-editor` slot; time/upper/lower inputs per point + row remove; "+ add point" button; **Shift+click** on plot adds a point at `(time, |Δ from ref|)` with live redraw. Control-point markers render on the plot when active (green ▲ for upper, red ▼ for lower).
+
+**Range editor**: dashed min/max lines become draggable via Plotly's built-in `edits.shapePosition`. Drop fires `plotly_relayout`; shape names (`range_min:<leaf_path>` / `range_max:<leaf_path>`) let the editor match back to state fields. Drag updates state + syncs to the schema input.
+
+**Window brush** (universal across all metrics — window is leaf-level, not metric-level): every active leaf gets a `🔲 Set window from plot` button in its editor slot. Click arms Plotly's horizontal selection; drag on plot commits start/end to `leafState.window`. Companion `clear` button removes an authored window. Syncs bidirectionally with the `window_start`/`window_end` number inputs.
+
+Test count: **595 → 602** passing. Files touched: `mode_controls.py` (+`has_plot_editor` slot), `templates/interactive.html` (editor framework + tube + range + window brush + CSS), test additions in `test_mode_controls.py` and `test_interactive_html_snapshot.py`.
+
+**Still deferred**: Shift+drag on existing tube control points (move / right-click delete on plot); range editor can't resume drag while the leaf's min/max inputs are also being edited (minor); window brush one-shot per activation (no "keep selecting" mode).
+
+---
+
+## Follow-up: Playwright browser-driven tests
+
+Addresses the manual-QA gap the structural-hash snapshot couldn't — JS
+execution, click handlers, state mutations, plot events.
+
+**Extracted** the `<script>` body from `interactive.html` into a
+standalone `interactive.js` (~1200 lines of pure-static JS, no Jinja).
+HTML now marshals per-report data into `window.MT_REPORT` in one inline
+block, then loads `interactive.js` via `<script src>`. Render pipeline
+copies `interactive.js` next to `interactive.html` in each report dir.
+Plotly switched from the Fastly-blocked `cdn.plot.ly` to `cdnjs.cloudflare.com`
+(reachable from the user's network + from Playwright's Chromium).
+
+**Playwright tests** (`tests/test_interactive_playwright.py` — 16 tests,
+~40s wall):
+- `pytest.importorskip` gates the whole file — full suite still runs
+  clean on systems without Playwright.
+- Per-test page fixture renders a canonical BouncingBall-shaped fixture
+  (3 leaves, nested `warn`, two variables) into a `tmp_path`, opens
+  `file://` URL in headless Chromium.
+- **Covers**: per-variable section dedup, full-tree mount, per-variable
+  filtered mount, leaf activation (click), ESC deactivation, click-switch
+  between leaves, scalar input edits → leafState, cross-mount input sync,
+  window inputs → leafState.window, `buildPatchData` emits tolerance/window
+  ops correctly, `−` marks structureDirty + emits wholesale `/metrics`
+  replace, `+` via prompt adds a leaf, tube editor activates + add-point
+  button commits, window brush button injected on activation.
+- **Plot-interactive tests** (tube Shift+click, range drag, window brush
+  drag) require Plotly to load; gracefully `pytest.skip` when the CDN is
+  unreachable, so the suite doesn't flake on offline runs.
+
+**Dev-env prereqs** for Playwright (one-time, per machine):
+```bash
+uv pip install pytest-playwright
+uv run playwright install chromium
+```
+`playwright install chromium` downloads a ~110 MB headless shell to
+`~/.cache/ms-playwright/`. Both reachable from the user's WSL env via
+the aliyun pypi mirror + `cdn.playwright.dev` (Azure, not Fastly).
+
+Test count: **602 → 617** passing.
+
+---
+
 The Phase 6 MVP committed in earlier sessions — all seven steps from
 the retired `docs/PHASE_6_PLAN.md` are in. As of this session, the two
 A-tier half-shipped follow-ons (window UI + overlay rendering) are
