@@ -7,11 +7,15 @@ to catch functional regressions without styling churn.
 To refresh the snapshots after an intentional template change:
 
     UPDATE_GOLDEN=1 uv run pytest tests/test_interactive_html_snapshot.py
+
+Stage-2 rewrite: the template now mounts a recursive ``SpecNodeView``
+below one plot per unique variable. Fixtures build a single-leaf tree
+view per mode; the golden hashes confirm the per-mode render path
+exercises its registry entry end-to-end.
 """
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 from pathlib import Path
@@ -20,6 +24,7 @@ import numpy as np
 import pytest
 
 from modelica_testing.reporting.plot_comparison import _decimate_context_for_html
+from modelica_testing.reporting.ui.mode_controls import emit_mode_schemas
 
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
@@ -30,7 +35,17 @@ UPDATE = os.environ.get("UPDATE_GOLDEN") == "1"
 # Fixture synthesis — minimal template context per mode
 # ---------------------------------------------------------------------------
 
-def _common_trajectory(name: str, n: int = 50) -> dict:
+_MODE_TO_METRIC = {
+    "nrmse": "nrmse",
+    "tube": "tube",
+    "final_only": "final-only",
+    "range": "range",
+    "event-timing": "event-timing",
+    "dominant-frequency": "dominant-frequency",
+}
+
+
+def _trajectory(name: str, n: int = 50) -> dict:
     t = np.linspace(0.0, 10.0, n)
     return {
         "index": 1,
@@ -42,14 +57,25 @@ def _common_trajectory(name: str, n: int = 50) -> dict:
     }
 
 
-def _var_entry(mode: str, mode_values: dict, *,
-               mode_controls_html: str = "",
-               score_display: str = "",
-               criterion: str = "",
-               cli_authoritative: bool = False) -> dict:
+def _leaf(mode: str, mode_values: dict, *, path: str = "/metrics/children/0",
+          mode_controls_html: str = "",
+          window_controls_html: str = "") -> dict:
+    metric = _MODE_TO_METRIC[mode]
+    cli_auth = metric in ("event-timing", "dominant-frequency")
     return {
-        "name": "x",
+        "kind": "leaf",
+        "path": path,
+        "metric": metric,
+        "variable": "x",
+        "params": dict(mode_values),
+        "against": "primary",
+        "window": {},
+        "children": [],
         "passed": True,
+        "score": 1.0e-5,
+        "label": "x",
+        "name": "x",
+        "mode_effective": metric if metric != "final-only" else "final_only",
         "nrmse": 1.0e-5,
         "rmse": 1.0e-5,
         "signal_range": 2.0,
@@ -59,20 +85,23 @@ def _var_entry(mode: str, mode_values: dict, *,
         "actual_final": 0.0,
         "is_constant": False,
         "tolerance_used": 1.0e-4,
-        "mode": mode,
-        "score_display": score_display,
-        "criterion": criterion,
+        "score_display": "fixture",
+        "criterion": "fixture",
         "tube_points_inside": None,
         "tube_worst_violation": None,
         "tube_worst_violation_time": None,
+        "mode_values": dict(mode_values),
         "mode_controls_html": mode_controls_html,
-        "mode_values": mode_values,
-        "cli_authoritative": cli_authoritative,
+        "window_controls_html": window_controls_html,
+        "window_values": {},
+        "cli_authoritative": cli_auth,
     }
 
 
 def _build_context(mode: str) -> dict:
-    from modelica_testing.reporting.ui.mode_controls import get_mode_ui
+    from modelica_testing.reporting.ui.mode_controls import (
+        get_mode_ui, render_window_controls_html,
+    )
 
     mode_values_map = {
         "nrmse": {"tolerance": 1e-4},
@@ -85,14 +114,28 @@ def _build_context(mode: str) -> dict:
     }
     values = mode_values_map[mode]
     ui = get_mode_ui(mode)
-    controls = ui.render(variable="x", values=values) if ui else ""
-    cli_auth = mode in ("event-timing", "dominant-frequency")
+    controls_html = ui.render(variable="x", values=values) if ui else ""
+    window_html = render_window_controls_html(variable="x", values={})
 
-    variables = [_var_entry(mode, values,
-                            mode_controls_html=controls,
-                            score_display="fixture",
-                            criterion="fixture",
-                            cli_authoritative=cli_auth)]
+    leaf = _leaf(mode, values, mode_controls_html=controls_html,
+                 window_controls_html=window_html)
+    tree_view = {
+        "kind": "combinator",
+        "combinator": "and",
+        "path": "/metrics",
+        "passed": True,
+        "label": "and[1]",
+        "children": [leaf],
+    }
+    traj = _trajectory("x")
+    variables_by_name = {
+        "x": {
+            "name": "x",
+            "trajectory": traj,
+            "overlays": [],
+            "leaf_paths": [leaf["path"]],
+        },
+    }
 
     context = {
         "model_id": "Fixture.Mode." + mode.replace("-", "_"),
@@ -105,17 +148,20 @@ def _build_context(mode: str) -> dict:
         "ref_info": [],
         "sim_params": [],
         "statistics_sections": [],
-        "variables": variables,
         "diagnostic_plots": [],
         "diagnostic_summaries": [],
         "compared_plots": [],
         "nobaseline_plots": [],
         "artifacts": [],
-        "trajectories": [_common_trajectory("x")],
+        "trajectories": [traj],
         "diag_trajectories": [],
         "nobaseline_trajectories": [],
         "metric_tree_view": None,
         "spec_path": "",
+        "tree_view": tree_view,
+        "variables_by_name": variables_by_name,
+        "mode_schemas": emit_mode_schemas(),
+        "overlay_rows": [],
     }
     _decimate_context_for_html(context, 1000)
     return context
@@ -134,9 +180,11 @@ def _render_interactive(context: dict) -> str:
 # ---------------------------------------------------------------------------
 
 _NOISE_PATTERNS = [
-    re.compile(r'const TRAJECTORIES = \[.*?\];', re.DOTALL),
-    re.compile(r'const DIAG_TRAJECTORIES = \[.*?\];', re.DOTALL),
-    re.compile(r'const NB_TRAJECTORIES = \[.*?\];', re.DOTALL),
+    re.compile(r'const TREE_VIEW = .*?;', re.DOTALL),
+    re.compile(r'const VARIABLES_BY_NAME = .*?;', re.DOTALL),
+    re.compile(r'const MODE_SCHEMAS = .*?;', re.DOTALL),
+    re.compile(r'const DIAG_TRAJECTORIES = .*?;', re.DOTALL),
+    re.compile(r'const NB_TRAJECTORIES = .*?;', re.DOTALL),
     re.compile(r'value="[0-9eE.+\-]+"'),  # strip embedded numeric defaults
     re.compile(r'>[0-9]+\.[0-9]+e[+\-]?[0-9]+<'),  # stringified floats inside tags
 ]
@@ -146,7 +194,6 @@ def _structural_hash(html: str) -> str:
     stripped = html
     for pat in _NOISE_PATTERNS:
         stripped = pat.sub("", stripped)
-    # Collapse whitespace so cosmetic indentation churn doesn't trip us.
     stripped = re.sub(r'\s+', ' ', stripped).strip()
     return hashlib.sha256(stripped.encode("utf-8")).hexdigest()
 
@@ -172,7 +219,6 @@ def test_interactive_html_structural_hash(mode):
         golden_file.write_text(h + "\n", encoding="utf-8")
         if UPDATE:
             pytest.skip(f"Updated golden: {golden_file.name}")
-        # First-run capture — record but don't fail.
         return
 
     expected = golden_file.read_text(encoding="utf-8").strip()
@@ -183,25 +229,56 @@ def test_interactive_html_structural_hash(mode):
 
 
 def test_every_mode_fixture_contains_its_panel_signature():
-    """Beyond hashing, assert each mode's rendered HTML carries its
-    unique panel signature so a regression can't silently blank a mode."""
-    signatures = {
-        "nrmse": 'var-tol-input',  # existing slider, not auto-derived
-        "tube": 'See tube editor below plot',  # 6.1.4 — cell defers to rich editor
-        "final_only": 'var-tol-input',
-        "range": 'data-field="min_value"',
-        "event-timing": 'cli-authoritative',
-        "dominant-frequency": 'cli-authoritative',
+    """Each mode's render embeds its leaf metric in the TREE_VIEW JSON.
+    The control HTML is there too (as a JSON string, JSON-escaped) —
+    JS injects it at runtime via innerHTML."""
+    # `"metric": "<mode-name>"` appears inside the leaf in TREE_VIEW only;
+    # mode_schemas carries every mode's shape regardless of fixture, so we
+    # key on the leaf's metric value rather than schema-wide tokens.
+    metric_signatures = {
+        "nrmse": '"metric": "nrmse"',
+        "tube": '"metric": "tube"',
+        "final_only": '"metric": "final-only"',
+        "range": '"metric": "range"',
+        "event-timing": '"metric": "event-timing"',
+        "dominant-frequency": '"metric": "dominant-frequency"',
     }
-    for mode, sig in signatures.items():
+    for mode, sig in metric_signatures.items():
         ctx = _build_context(mode)
         html = _render_interactive(ctx)
-        assert sig in html, f"Mode {mode!r} rendered HTML missing signature {sig!r}"
+        assert sig in html, f"Mode {mode!r} rendered HTML missing leaf signature {sig!r}"
+        # Also verify the mode's control HTML got embedded (JSON-escaped
+        # form of data-field="..."). If the mode lacks a control panel
+        # entirely, mode_controls_html is empty — skip.
+        ui_schema_names = {
+            "nrmse": "tolerance",
+            "tube": "tube_width_mode",
+            "final_only": "tolerance",
+            "range": "min_value",
+            "event-timing": "time_tolerance",
+            "dominant-frequency": "rel_tolerance",
+        }
+        field_name = ui_schema_names[mode]
+        # JSON-escaped: data-field=\"<name>\"
+        escaped = f'data-field=\\"{field_name}\\"'
+        assert escaped in html, (
+            f"Mode {mode!r} rendered HTML missing control field {field_name!r} "
+            f"(looked for {escaped!r})"
+        )
 
 
-def test_mode_scorers_registry_present_in_output():
+def test_plot_contribution_registry_present_in_output():
+    """The Stage-2 JS registry replaces the old MODE_SCORERS map."""
     ctx = _build_context("nrmse")
     html = _render_interactive(ctx)
-    assert "const MODE_SCORERS" in html
-    for key in ["nrmse:", "tube:", "range:", "final_only:"]:
-        assert key in html, f"Scorer entry {key!r} missing from rendered HTML"
+    assert "MODE_PLOT_CONTRIBUTIONS" in html
+    for key in ["nrmse", "final-only", "range", "tube", "event-timing", "dominant-frequency"]:
+        assert f"'{key}'" in html, f"Contribution entry {key!r} missing from rendered HTML"
+
+
+def test_tree_view_and_variables_by_name_embedded():
+    ctx = _build_context("nrmse")
+    html = _render_interactive(ctx)
+    assert "const TREE_VIEW" in html
+    assert "const VARIABLES_BY_NAME" in html
+    assert "const MODE_SCHEMAS" in html

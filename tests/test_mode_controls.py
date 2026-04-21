@@ -15,11 +15,14 @@ from modelica_testing.comparison.modes import (
     TubeConfig,
 )
 from modelica_testing.reporting.ui.mode_controls import (
+    PlotContribution,
     derive_schema,
+    emit_mode_schemas,
     get_mode_ui,
     register_mode_ui,
     registered_modes,
     render_schema_html,
+    render_window_controls_html,
 )
 
 
@@ -213,3 +216,103 @@ class TestRegistry:
         ui = register_mode_ui("custom-over", C, custom_renderer=custom)
         html = ui.render(variable="z")
         assert html == "<custom-panel mode='custom-over'/>"
+
+
+class TestWindowControls:
+    """Idea #46 UI surfacing — universal window fragment emitted for
+    tree-backed leaves. Window lives on LeafSpec (not any ModeConfig),
+    so the renderer is standalone rather than threaded through a Schema."""
+
+    def test_empty_values_renders_blank_inputs(self):
+        html = render_window_controls_html(variable="h")
+        assert 'class="window-controls"' in html
+        assert 'data-variable="h"' in html
+        assert 'data-field="window_start"' in html
+        assert 'data-field="window_end"' in html
+        # No value= when unset
+        assert 'value=' not in html
+
+    def test_values_fill_inputs(self):
+        html = render_window_controls_html(variable="h", values={"start": 2.0, "end": 5.0})
+        assert 'value="2.0"' in html
+        assert 'value="5.0"' in html
+
+    def test_open_start_only_fills_end(self):
+        html = render_window_controls_html(variable="h", values={"end": 5.0})
+        assert html.count('value=') == 1
+        assert 'value="5.0"' in html
+
+    def test_escapes_variable_name(self):
+        html = render_window_controls_html(variable='<script>')
+        assert '<script>' not in html
+        assert '&lt;script&gt;' in html
+
+    def test_step_any_on_number_inputs(self):
+        html = render_window_controls_html(variable="h")
+        assert 'type="number"' in html
+        assert 'step="any"' in html
+
+
+class TestPlotContributionSlot:
+    """Stage 1 — every ModeUI carries an optional plot_contribution callable.
+    Default None means 'no static visual' (NRMSE today). Stage 2 fills in
+    the per-mode functions alongside the JS-side registry."""
+
+    def test_default_is_none(self):
+        ui = get_mode_ui("nrmse")
+        assert ui is not None
+        assert ui.plot_contribution is None
+        assert ui.contribute_to_plot({"tolerance": 1e-3}) is None
+
+    def test_contribute_to_plot_invokes_registered_fn(self):
+        from dataclasses import dataclass as _dc
+
+        @_dc
+        class Cfg:
+            min_value: float = 0.0
+
+        def contrib(values):
+            return PlotContribution(
+                shapes=[{"type": "line", "y0": values["min_value"], "y1": values["min_value"]}],
+            )
+
+        ui = register_mode_ui("contrib-test", Cfg, plot_contribution=contrib)
+        result = ui.contribute_to_plot({"min_value": -0.5})
+        assert isinstance(result, PlotContribution)
+        assert result.shapes == [{"type": "line", "y0": -0.5, "y1": -0.5}]
+        assert result.traces == []
+
+    def test_secondary_panel_request(self):
+        from dataclasses import dataclass as _dc
+
+        @_dc
+        class Cfg:
+            pass
+
+        def contrib(_values):
+            return PlotContribution(secondary_panel="spectrum")
+
+        ui = register_mode_ui("panel-test", Cfg, plot_contribution=contrib)
+        assert ui.contribute_to_plot({}).secondary_panel == "spectrum"
+
+
+class TestEmitModeSchemas:
+    """Bulk export for embedding into interactive.html (Stage 2 JS renderer)."""
+
+    def test_includes_every_bundled_mode(self):
+        schemas = emit_mode_schemas()
+        for mode in ("nrmse", "tube", "final_only", "range",
+                     "event-timing", "dominant-frequency"):
+            assert mode in schemas, f"{mode} missing from emit_mode_schemas"
+
+    def test_schema_entries_are_json_safe(self):
+        import json
+        schemas = emit_mode_schemas()
+        # Round-trip through JSON — catches any non-serializable field
+        round_trip = json.loads(json.dumps(schemas))
+        assert round_trip["nrmse"]["fields"][0]["name"] == "tolerance"
+
+    def test_tube_enum_choices_survive_serialization(self):
+        schemas = emit_mode_schemas()
+        tube_fields = {f["name"]: f for f in schemas["tube"]["fields"]}
+        assert tube_fields["tube_width_mode"]["choices"] == ["band", "rel", "absolute"]

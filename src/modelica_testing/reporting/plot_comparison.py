@@ -1,6 +1,5 @@
 """Generate comparison plots and HTML viewer for interactive review."""
 
-import html as html_mod
 import json
 import logging
 import platform
@@ -136,14 +135,148 @@ def _render_mode_controls(variable: str, mode: str, values: dict) -> str:
     return ui.render(variable=variable, values=values)
 
 
+def _leaf_score_display(vc: VariableComparison) -> tuple[str, str]:
+    """Return ``(score_display, criterion)`` for a leaf's UI labels.
+
+    Both strings are mode-aware; callers plug them into the variable-table
+    cell (legacy path) and the Stage-2 tree-node render (new path).
+    Extracted here so the two renderers agree on wording.
+    """
+    mode = vc.mode or "nrmse"
+    if mode == "tube" and vc.tube_points_inside is not None:
+        return (
+            f"{vc.tube_points_inside * 100:.1f}% in tube",
+            f"{vc.tube_points_inside * 100:.1f}% inside tube "
+            f"→ {'PASS' if vc.passed else 'FAIL'} (requires 100%)",
+        )
+    if mode == "range" and vc.tube_worst_violation is not None:
+        return (
+            f"max_viol {vc.tube_worst_violation:.3e}",
+            f"max violation {vc.tube_worst_violation:.3e} "
+            f"→ {'PASS' if vc.passed else 'FAIL'} (requires 0)",
+        )
+    if mode == "final_only":
+        return (
+            f"|err| {vc.max_abs_error:.3e}",
+            f"Final value error {vc.max_abs_error:.3e} vs tolerance "
+            f"{vc.tolerance_used:.3e} → {'PASS' if vc.passed else 'FAIL'}",
+        )
+    if mode == "event-timing":
+        diag = vc.diagnostics or {}
+        ref_n = diag.get("ref_event_count", "?")
+        act_n = diag.get("act_event_count", "?")
+        tol = diag.get("time_tolerance", 0.0)
+        return (
+            f"Δt {vc.nrmse:.3e} ({act_n}/{ref_n} events)",
+            f"Max event Δt {vc.nrmse:.3e} vs {tol:.3e} "
+            f"({act_n} actual events / {ref_n} reference) "
+            f"→ {'PASS' if vc.passed else 'FAIL'}",
+        )
+    if mode == "dominant-frequency":
+        diag = vc.diagnostics or {}
+        f_ref = diag.get("ref_dominant_hz", 0.0)
+        f_act = diag.get("act_dominant_hz", 0.0)
+        tol = diag.get("rel_tolerance", 0.0)
+        return (
+            f"|Δf|/f {vc.nrmse:.3e} ({f_act:.3g}/{f_ref:.3g} Hz)",
+            f"Relative freq error {vc.nrmse:.3e} vs {tol:.3e} "
+            f"(actual {f_act:.3g} Hz / reference {f_ref:.3g} Hz) "
+            f"→ {'PASS' if vc.passed else 'FAIL'}",
+        )
+    return (
+        f"NRMSE {vc.nrmse:.3e}",
+        f"NRMSE {vc.nrmse:.3e} vs tolerance {vc.tolerance_used:.3e} "
+        f"→ {'PASS' if vc.passed else 'FAIL'}",
+    )
+
+
+def _augment_tree_view(
+    view: dict, comparisons_by_path: dict[str, VariableComparison],
+) -> None:
+    """Walk ``view`` in place, enriching leaf nodes with render artifacts.
+
+    Stage-2 JS consumes the tree as the single source of truth for the
+    per-variable node UI. Each leaf needs: ``mode_controls_html``,
+    ``window_controls_html``, ``score_display``, ``criterion``,
+    ``mode_values``, ``cli_authoritative``, ``tolerance_used``, and the
+    raw numeric summary (``nrmse``, ``max_abs_error``, ...) used by the
+    JS scorer registry.
+    """
+    if view.get("kind") == "leaf":
+        path = view.get("path", "")
+        vc = comparisons_by_path.get(path)
+        if vc is None:
+            return
+        mode = vc.mode or "nrmse"
+        mode_values = _extract_mode_values(vc, mode)
+        window_values = _extract_window_values(vc)
+        var_label = vc.name or view.get("variable", "")
+        score_display, criterion = _leaf_score_display(vc)
+        view.update({
+            "mode_effective": mode,  # runtime mode (e.g., "final_only"); not the spec metric
+            "name": var_label,
+            "nrmse": float(vc.nrmse),
+            "rmse": float(vc.rmse),
+            "signal_range": float(vc.signal_range),
+            "max_abs_error": float(vc.max_abs_error),
+            "max_abs_error_time": float(vc.max_abs_error_time),
+            "reference_final": float(vc.reference_final),
+            "actual_final": float(vc.actual_final),
+            "is_constant": bool(vc.is_constant),
+            "tolerance_used": float(vc.tolerance_used),
+            "score_display": score_display,
+            "criterion": criterion,
+            "tube_points_inside": (
+                float(vc.tube_points_inside) if vc.tube_points_inside is not None else None
+            ),
+            "tube_worst_violation": (
+                float(vc.tube_worst_violation) if vc.tube_worst_violation is not None else None
+            ),
+            "tube_worst_violation_time": (
+                float(vc.tube_worst_violation_time) if vc.tube_worst_violation_time is not None else None
+            ),
+            "mode_values": mode_values,
+            "mode_controls_html": _render_mode_controls(var_label, mode, mode_values),
+            "window_controls_html": _render_window_controls(var_label, window_values),
+            "window_values": window_values,
+            "cli_authoritative": mode in ("event-timing", "dominant-frequency"),
+        })
+        return
+    for child in view.get("children", []):
+        _augment_tree_view(child, comparisons_by_path)
+
+
+def _extract_window_values(vc: VariableComparison) -> dict:
+    """Pull ``{"start": ..., "end": ...}`` from a leaf's recorded window.
+
+    ``tree_eval._evaluate_leaf`` stashes the window on the leaf's
+    ``diagnostics['window']`` dict when the LeafSpec declared one. Empty
+    dict when no window — the reporter omits the window UI in that case.
+    """
+    diag = vc.diagnostics or {}
+    window = diag.get("window")
+    if not isinstance(window, dict):
+        return {}
+    out = {}
+    if window.get("start") is not None:
+        out["start"] = float(window["start"])
+    if window.get("end") is not None:
+        out["end"] = float(window["end"])
+    return out
+
+
+def _render_window_controls(variable: str, values: dict) -> str:
+    """Render the universal window inputs for a tree-backed leaf."""
+    from .ui.mode_controls import render_window_controls_html
+
+    return render_window_controls_html(variable=variable, values=values)
+
+
 def _build_template_context(
     model_id: str,
-    png_files: list[tuple[str, VariableComparison]],
     comparisons: list[VariableComparison],
     ref_data: Optional[dict],
     cur_stats: Optional[dict],
-    diag_png_files: Optional[list[tuple[str, str]]],
-    nobaseline_png_files: Optional[list[tuple[str, str]]],
     test_dir: Optional[Path],
     test_model=None,
     result=None,
@@ -152,6 +285,7 @@ def _build_template_context(
     last_run_at: Optional[float] = None,
     metric_tree=None,
     artifact_files: tuple[tuple[str, str], ...] = (),
+    overlays: Optional[list] = None,
 ) -> dict:
     """Build the full template context dict from comparison data."""
     if cur_stats is None:
@@ -274,89 +408,12 @@ def _build_template_context(
             if section:
                 statistics_sections.append(section)
 
-    # --- Variable comparison data ---
-    # "score_display" is a mode-aware human-readable summary ("NRMSE 2.1e-16",
-    # "100% in tube", "max_viol 0.0e+00"). Replaces the old NRMSE-centric
-    # column in the condensed variables table — the mode-specific raw fields
-    # (nrmse, rmse, tube_points_inside, ...) are still carried for the
-    # expanded details table.
-    variables = []
-    for vc in comparisons:
-        mode = vc.mode or "nrmse"
-        if mode == "tube" and vc.tube_points_inside is not None:
-            score_display = f"{vc.tube_points_inside * 100:.1f}% in tube"
-            criterion = (
-                f"{vc.tube_points_inside * 100:.1f}% inside tube "
-                f"→ {'PASS' if vc.passed else 'FAIL'} (requires 100%)"
-            )
-        elif mode == "range" and vc.tube_worst_violation is not None:
-            score_display = f"max_viol {vc.tube_worst_violation:.3e}"
-            criterion = (
-                f"max violation {vc.tube_worst_violation:.3e} "
-                f"→ {'PASS' if vc.passed else 'FAIL'} (requires 0)"
-            )
-        elif mode == "final_only":
-            score_display = f"|err| {vc.max_abs_error:.3e}"
-            criterion = (
-                f"Final value error {vc.max_abs_error:.3e} vs tolerance "
-                f"{vc.tolerance_used:.3e} → {'PASS' if vc.passed else 'FAIL'}"
-            )
-        elif mode == "event-timing":
-            diag = vc.diagnostics or {}
-            ref_n = diag.get("ref_event_count", "?")
-            act_n = diag.get("act_event_count", "?")
-            tol = diag.get("time_tolerance", 0.0)
-            score_display = f"Δt {vc.nrmse:.3e} ({act_n}/{ref_n} events)"
-            criterion = (
-                f"Max event Δt {vc.nrmse:.3e} vs {tol:.3e} "
-                f"({act_n} actual events / {ref_n} reference) "
-                f"→ {'PASS' if vc.passed else 'FAIL'}"
-            )
-        elif mode == "dominant-frequency":
-            diag = vc.diagnostics or {}
-            f_ref = diag.get("ref_dominant_hz", 0.0)
-            f_act = diag.get("act_dominant_hz", 0.0)
-            tol = diag.get("rel_tolerance", 0.0)
-            score_display = f"|Δf|/f {vc.nrmse:.3e} ({f_act:.3g}/{f_ref:.3g} Hz)"
-            criterion = (
-                f"Relative freq error {vc.nrmse:.3e} vs {tol:.3e} "
-                f"(actual {f_act:.3g} Hz / reference {f_ref:.3g} Hz) "
-                f"→ {'PASS' if vc.passed else 'FAIL'}"
-            )
-        else:
-            score_display = f"NRMSE {vc.nrmse:.3e}"
-            criterion = (
-                f"NRMSE {vc.nrmse:.3e} vs tolerance {vc.tolerance_used:.3e} "
-                f"→ {'PASS' if vc.passed else 'FAIL'}"
-            )
-        mode_values = _extract_mode_values(vc, mode)
-        mode_controls_html = _render_mode_controls(
-            vc.name or f"x[{vc.index}]", mode, mode_values,
-        )
-        variables.append({
-            "name": vc.name or f"x[{vc.index}]",
-            "passed": bool(vc.passed),
-            "nrmse": float(vc.nrmse),
-            "rmse": float(vc.rmse),
-            "signal_range": float(vc.signal_range),
-            "max_abs_error": float(vc.max_abs_error),
-            "max_abs_error_time": float(vc.max_abs_error_time),
-            "reference_final": float(vc.reference_final),
-            "actual_final": float(vc.actual_final),
-            "is_constant": bool(vc.is_constant),
-            "tolerance_used": float(vc.tolerance_used),
-            "mode": mode,
-            "score_display": score_display,
-            "criterion": criterion,
-            "tube_points_inside": float(vc.tube_points_inside) if vc.tube_points_inside is not None else None,
-            "tube_worst_violation": float(vc.tube_worst_violation) if vc.tube_worst_violation is not None else None,
-            "tube_worst_violation_time": float(vc.tube_worst_violation_time) if vc.tube_worst_violation_time is not None else None,
-            # 6.1.5 — rendered control panel HTML + raw config values for JS.
-            "mode_controls_html": mode_controls_html,
-            "mode_values": mode_values,
-            # Modes without JS recompute get a CLI-authoritative badge.
-            "cli_authoritative": mode in ("event-timing", "dominant-frequency"),
-        })
+    # --- Overlay summary (companions + soft_checks, A2 / idea #50) ---
+    # Per-trajectory overlay attachment happens below, after trajectories
+    # are assembled. Summary at the test level surfaces missing/invalid
+    # companions in the picker even when they don't render a trace.
+    overlays = overlays or []
+    from .overlay_loader import attach_overlays_to_trajectories, overlay_summary
 
     # --- Trajectory data for interactive plots ---
     trajectories = []
@@ -420,12 +477,6 @@ def _build_template_context(
                 "values": var.values.tolist(),
             })
 
-    # --- Plot references ---
-    diagnostic_plots = [
-        {"png": png_name, "name": name}
-        for png_name, name in (diag_png_files or [])
-    ]
-
     # --- Diagnostic summary rows (current final/min/max vs. reference summary) ---
     # Replaces the old full-trajectory comparison for diagnostic variables.
     # The trajectory is informational; the summary values are the actual
@@ -458,16 +509,6 @@ def _build_template_context(
                 ),
             })
 
-    compared_plots = [
-        {"png": png_name, "name": vc.name or f"x[{vc.index}]", "passed": vc.passed}
-        for png_name, vc in png_files
-    ]
-
-    nobaseline_plots = [
-        {"png": png_name, "name": name}
-        for png_name, name in (nobaseline_png_files or [])
-    ]
-
     # --- Artifact links ---
     # Backend declares its interesting per-test files on the runner class's
     # ``artifact_files`` attribute. The reporter just walks that list and
@@ -480,7 +521,9 @@ def _build_template_context(
                 artifacts.append({"uri": fpath.resolve().as_uri(), "label": label})
 
     n_passed = sum(1 for vc in comparisons if vc.passed)
-    n_nobaseline = len(nobaseline_plots)
+    n_nobaseline = (
+        len(result.variables) if (not comparisons and result and result.variables) else 0
+    )
     sim_failed = len(comparisons) == 0 and n_nobaseline == 0
 
     # --- Key stats for top-level summary ---
@@ -548,18 +591,79 @@ def _build_template_context(
         from datetime import datetime
         last_run_str = datetime.fromtimestamp(last_run_at).isoformat(timespec="seconds")
 
-    # Phase 3.4: render-friendly MetricTree view for the template. Rendered
-    # whenever the user authored an explicit tree via "metrics" — even a
-    # trivial flat-AND is surfaced so the user sees their spec took effect.
-    # Suppressed for the implicit tree (which the per-variable table already
-    # conveys on its own).
-    metric_tree_view = None
-    is_user_tree = (
-        test_model is not None and getattr(test_model, "metric_tree_spec", None) is not None
+    # Stamp overlays onto each trajectory by variable name. Missing /
+    # invalid overlays drop off the per-plot path but stay in
+    # overlay_summary so the report can surface them as "not rendered".
+    attach_overlays_to_trajectories(trajectories, overlays)
+    overlay_rows = overlay_summary(overlays)
+
+    # --- Stage 2: recursive tree view + per-variable plot grouping ---
+    # Single source of truth for the Stage-2 UI:
+    #   * ``tree_view`` — the full SpecNode tree serialized with per-node
+    #     paths + evaluation results, leaves augmented with render
+    #     artifacts (mode_controls_html, score_display, ...). The JS
+    #     recursive component walks this directly.
+    #   * ``variables_by_name`` — one entry per unique variable, carrying
+    #     its trajectory + overlays + the leaf paths that target it.
+    #     Drives "one plot per variable" rendering; per-variable plot
+    #     sections mount a filtered view of the tree below.
+    #   * ``mode_schemas`` — typed control schemas for every registered
+    #     mode, so the JS can build controls for newly-added leaves
+    #     without a server round-trip.
+    from ..comparison.tree_spec import (
+        collect_leaf_paths as _collect_leaf_paths,
+        collect_variables as _collect_variables,
+        leaves_for_variable as _leaves_for_variable,
+        spec_to_view as _spec_to_view,
+        synthesize_implicit_tree as _synthesize_implicit_tree,
     )
-    if metric_tree is not None and is_user_tree:
-        from ..comparison.tree_eval import to_view
-        metric_tree_view = to_view(metric_tree)
+    from ..comparison.tree_eval import flatten_evaluation as _flatten_evaluation
+    from .ui.mode_controls import emit_mode_schemas as _emit_mode_schemas
+
+    tree_view: Optional[dict] = None
+    variables_by_name: dict[str, dict] = {}
+
+    if comparisons:
+        comparison_var_names = [
+            vc.name or f"x[{vc.index}]" for vc in comparisons
+        ]
+        if test_model is not None and getattr(test_model, "metric_tree_spec", None) is not None:
+            spec = test_model.metric_tree_spec
+        else:
+            spec = _synthesize_implicit_tree(
+                comparison_var_names,
+                variable_overrides=(
+                    getattr(test_model, "variable_overrides", None)
+                    if test_model else None
+                ),
+            )
+
+        eval_by_path = (
+            _flatten_evaluation(metric_tree) if metric_tree is not None else {}
+        )
+
+        # Map path → VariableComparison so _augment_tree_view can enrich
+        # each leaf with render artifacts. Length mismatch = spec/eval
+        # drift; skip augmentation rather than misaddress per-leaf data.
+        leaf_paths_full = _collect_leaf_paths(spec)
+        if len(leaf_paths_full) == len(comparisons):
+            comparisons_by_path = dict(zip(leaf_paths_full, comparisons))
+        else:
+            comparisons_by_path = {}
+
+        tree_view = _spec_to_view(spec, evaluation_by_path=eval_by_path)
+        _augment_tree_view(tree_view, comparisons_by_path)
+
+        # Dedupe trajectories by variable name into a per-variable dict.
+        # Overlays already attached per-trajectory-entry; first match wins.
+        for vn in _collect_variables(spec):
+            match_traj = next((t for t in trajectories if t["name"] == vn), None)
+            variables_by_name[vn] = {
+                "name": vn,
+                "trajectory": match_traj or {},
+                "overlays": (match_traj or {}).get("overlays", []),
+                "leaf_paths": [p for _, p in _leaves_for_variable(spec, vn)],
+            }
 
     return {
         "model_id": model_id,
@@ -572,104 +676,19 @@ def _build_template_context(
         "ref_info": ref_info,
         "sim_params": sim_params,
         "statistics_sections": statistics_sections,
-        "variables": variables,
-        "diagnostic_plots": diagnostic_plots,
         "diagnostic_summaries": diag_summaries,
-        "compared_plots": compared_plots,
-        "nobaseline_plots": nobaseline_plots,
         "artifacts": artifacts,
         "trajectories": trajectories,
         "diag_trajectories": diag_trajectories,
         "nobaseline_trajectories": nobaseline_trajectories,
-        "metric_tree_view": metric_tree_view,
+        # A2 / idea #50 — companion + soft_check overlays (default off).
+        "overlay_rows": overlay_rows,
+        # Stage 2 — recursive tree view + per-variable plot grouping.
+        "tree_view": tree_view,
+        "variables_by_name": variables_by_name,
+        "mode_schemas": _emit_mode_schemas(),
     }
 
-
-def _plot_variable(
-    plt,
-    act_time, act_values, name, index,
-    ref_time=None, ref_values=None,
-    is_diagnostic=False,
-    tolerance=1e-4,
-) -> tuple:
-    """Generate a comparison plot for one variable.
-
-    For diagnostic variables: single panel (trajectory only, no error panels).
-    For compared variables: 3 panels (trajectory, abs error, normalized error).
-
-    Returns (fig, status_text, status_color).
-    """
-    has_ref = ref_time is not None and ref_values is not None
-
-    if is_diagnostic:
-        fig, ax = plt.subplots(1, 1, figsize=(12, 4))
-        ax.plot(act_time, act_values, label="Actual", color="#2196F3", linewidth=1)
-        if has_ref:
-            ax.plot(ref_time, ref_values, label="Reference", color="#FF9800",
-                    linewidth=1, linestyle="--")
-        ax.set_ylabel("Value")
-        ax.set_xlabel("Time")
-        ax.set_title(f"{name} (diagnostic)")
-        ax.legend(loc="best", fontsize=9)
-        ax.grid(True, alpha=0.3)
-        return fig, "INFO", "#607D8B"
-
-    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True,
-                             gridspec_kw={"height_ratios": [3, 1, 1]})
-
-    ax_traj = axes[0]
-    ax_traj.plot(act_time, act_values, label="Actual", color="#2196F3", linewidth=1)
-    if has_ref:
-        ax_traj.plot(ref_time, ref_values, label="Reference", color="#FF9800",
-                    linewidth=1, linestyle="--")
-    ax_traj.set_ylabel("Value")
-    ax_traj.set_title(f"{name}")
-    ax_traj.legend(loc="best", fontsize=9)
-    ax_traj.grid(True, alpha=0.3)
-
-    if has_ref:
-        actual_interp = np.interp(ref_time, act_time, act_values)
-        abs_error = np.abs(actual_interp - ref_values)
-
-        signal_range = float(np.max(ref_values) - np.min(ref_values))
-        if signal_range > 100 * np.finfo(np.float64).eps:
-            rel_error = abs_error / signal_range
-        else:
-            rel_error = abs_error
-
-        ax_abs = axes[1]
-        ax_abs.plot(ref_time, abs_error, color="#f44336", linewidth=0.8)
-        max_idx = int(np.argmax(abs_error))
-        ax_abs.axvline(ref_time[max_idx], color="#f44336", alpha=0.3, linestyle=":")
-        ax_abs.set_ylabel("Abs Error")
-        ax_abs.grid(True, alpha=0.3)
-        ax_abs.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
-
-        ax_rel = axes[2]
-        ax_rel.plot(ref_time, rel_error, color="#9C27B0", linewidth=0.8)
-        avg_err = float(np.mean(rel_error))
-        ymax = max(float(np.max(rel_error)), tolerance) * 1.1
-        ax_rel.axhspan(tolerance, ymax, color="#f44336", alpha=0.08)
-        ax_rel.axhline(y=tolerance, color="gray", linestyle="--", alpha=0.6,
-                       label=f"tolerance ({tolerance:.2e})")
-        ax_rel.axhline(y=avg_err, color="#4CAF50", linestyle="-.", alpha=0.6,
-                       linewidth=0.8, label=f"avg ({avg_err:.2e})")
-        ax_rel.axvline(ref_time[max_idx], color="#9C27B0", alpha=0.3, linestyle=":")
-        ax_rel.set_ylabel("NRMSE Error")
-        ax_rel.set_xlabel("Time")
-        ax_rel.legend(loc="best", fontsize=8)
-        ax_rel.grid(True, alpha=0.3)
-        ax_rel.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
-    else:
-        axes[1].text(0.5, 0.5, "No reference data", transform=axes[1].transAxes,
-                    ha="center", va="center", color="gray")
-        axes[1].set_ylabel("Abs Error")
-        axes[2].text(0.5, 0.5, "No reference data", transform=axes[2].transAxes,
-                    ha="center", va="center", color="gray")
-        axes[2].set_ylabel("Rel Error")
-        axes[2].set_xlabel("Time")
-
-    return fig, None, None  # Status set by caller
 
 
 def generate_comparison_plots(
@@ -687,144 +706,27 @@ def generate_comparison_plots(
     metric_tree=None,
     artifact_files: tuple[tuple[str, str], ...] = (),
     max_embedded_samples: int = 2000,
+    overlays: Optional[list] = None,
 ) -> Optional[Path]:
     """Generate per-variable comparison PNGs and an HTML viewer.
 
-    Returns the path to the HTML file, or None if matplotlib is unavailable.
+    Returns the path to the rendered interactive.html.
     """
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        logger.warning("matplotlib not installed — install with: uv pip install matplotlib")
-        return None
-
     if plot_dir.exists():
         shutil.rmtree(plot_dir)
     plot_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get reference time and variables
-    ref_time = None
-    ref_vars = {}
-    ref_diags = {}
-    if ref_data:
-        shared_time = ref_data.get("time")
-        if shared_time is not None:
-            ref_time = np.array(shared_time)
-        for rv in ref_data.get("variables", []):
-            ref_vars[rv["index"]] = rv
-        for rd in ref_data.get("diagnostics", []):
-            ref_diags[rd["name"]] = rd
-
-    # --- Diagnostic variable plots (shown first) ---
-    # Baselines store only a scalar summary for diagnostics; if the old
-    # full-trajectory shape is present, overlay it — otherwise plot the
-    # actual alone.
-    diag_png_files = []
-    if result and result.diagnostics:
-        for diag in result.diagnostics:
-            safe_name = _sanitize_filename(diag.name)
-            png_name = f"diag_{safe_name}.png"
-            png_path = plot_dir / png_name
-
-            ref_diag = ref_diags.get(diag.name)
-            legacy_values = ref_diag.get("values") if ref_diag else None
-            ref_d_values = np.array(legacy_values) if legacy_values else None
-
-            fig, _, _ = _plot_variable(
-                plt,
-                diag.time, diag.values, diag.name, 0,
-                ref_time=ref_time if ref_d_values is not None else None,
-                ref_values=ref_d_values,
-                is_diagnostic=True,
-            )
-
-            plt.tight_layout()
-            fig.savefig(str(png_path), dpi=100, bbox_inches="tight")
-            plt.close(fig)
-            diag_png_files.append((png_name, diag.name))
-
-    # --- Compared variable plots ---
-    png_files = []
-    for vc in comparisons:
-        act_var = None
-        if result and result.variables:
-            for v in result.variables:
-                if v.index == vc.index:
-                    act_var = v
-                    break
-
-        if act_var is None:
-            continue
-
-        ref_var = ref_vars.get(vc.index)
-        has_ref = ref_var is not None and ref_time is not None
-
-        safe_name = _sanitize_filename(vc.name or f"x_{vc.index}")
-        png_name = f"var_{vc.index:03d}_{safe_name}.png"
-        png_path = plot_dir / png_name
-
-        ref_v = np.array(ref_var["values"]) if has_ref else None
-
-        fig, _, _ = _plot_variable(
-            plt,
-            act_var.time, act_var.values, vc.name or f"x[{vc.index}]", vc.index,
-            ref_time=ref_time if has_ref else None,
-            ref_values=ref_v,
-        )
-
-        # Add pass/fail annotation
-        status_text = "PASS" if vc.passed else "FAIL"
-        status_color = "#4CAF50" if vc.passed else "#f44336"
-        ax_top = fig.axes[0]
-        ax_top.annotate(
-            status_text, xy=(0.98, 0.95), xycoords="axes fraction",
-            fontsize=14, fontweight="bold", color=status_color,
-            ha="right", va="top",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor=status_color, alpha=0.8),
-        )
-
-        plt.tight_layout()
-        fig.savefig(str(png_path), dpi=100, bbox_inches="tight")
-        plt.close(fig)
-        png_files.append((png_name, vc))
-
-    # --- No-baseline variable plots (actual only, no comparison) ---
-    nobaseline_png_files = []
-    if not comparisons and result and result.variables:
-        for var in result.variables:
-            safe_name = _sanitize_filename(var.name or f"x_{var.index}")
-            png_name = f"var_{var.index:03d}_{safe_name}.png"
-            png_path = plot_dir / png_name
-
-            fig, ax = plt.subplots(1, 1, figsize=(12, 4))
-            ax.plot(var.time, var.values, label="Actual", color="#2196F3", linewidth=1)
-            ax.set_ylabel("Value")
-            ax.set_xlabel("Time")
-            ax.set_title(var.name or f"x[{var.index}]")
-            ax.legend(loc="best", fontsize=9)
-            ax.grid(True, alpha=0.3)
-            ax.annotate(
-                "NEW", xy=(0.98, 0.95), xycoords="axes fraction",
-                fontsize=14, fontweight="bold", color="#FF9800",
-                ha="right", va="top",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
-                          edgecolor="#FF9800", alpha=0.8),
-            )
-
-            plt.tight_layout()
-            fig.savefig(str(png_path), dpi=100, bbox_inches="tight")
-            plt.close(fig)
-            nobaseline_png_files.append((png_name, var.name or f"x[{var.index}]"))
-
-    # Build template context and render
+    # Stage 5 — static matplotlib per-variable PNGs were retired along
+    # with ``comparison.html``. Plotly inside interactive.html provides
+    # every plot the PNGs showed plus interactivity; nothing linked to
+    # the PNGs anymore.
     cur_stats = result.statistics if result else None
     context = _build_template_context(
-        model_id, png_files, comparisons, ref_data, cur_stats,
-        diag_png_files, nobaseline_png_files, test_dir, test_model, result,
+        model_id, comparisons, ref_data, cur_stats,
+        test_dir, test_model, result,
         ref_file=ref_file, warnings=warnings, last_run_at=last_run_at,
         metric_tree=metric_tree, artifact_files=artifact_files,
+        overlays=overlays,
     )
 
     # Add spec path for "Save to Spec" functionality
@@ -838,16 +740,15 @@ def generate_comparison_plots(
     data_path = plot_dir / "comparison_data.json"
     data_path.write_text(json.dumps(context, indent=2, default=str), encoding="utf-8")
 
-    # Render static HTML (matplotlib PNGs — no inline trajectory data)
-    html_path = plot_dir / "comparison.html"
-    _render_template("comparison.html", context, html_path)
-
     # Decimate trajectory arrays embedded into interactive.html. This
     # caps the HTML payload for Plotly rendering; pass/fail scoring,
     # stored baselines, and comparison_data.json are unaffected.
     _decimate_context_for_html(context, max_embedded_samples)
 
-    # Render interactive HTML (Plotly, inline data — now decimated)
+    # Render interactive HTML (Plotly, inline data — now decimated).
+    # Stage 5: the static ``comparison.html`` path was retired. The index
+    # page linked only to interactive.html; the per-variable PNGs still
+    # render next to it for direct reference.
     interactive_path = plot_dir / "interactive.html"
     _render_template("interactive.html", context, interactive_path)
 
@@ -873,6 +774,29 @@ def _decimate_context_for_html(context: dict, max_samples: int) -> None:
         traj["ref_time"], traj["ref_values"] = decimate_pair(
             traj.get("ref_time"), traj.get("ref_values"), max_samples
         )
+        # A2 — decimate overlay trajectories too. The embedded HTML already
+        # enforces a tight payload budget; overlays must share that cap
+        # rather than piggybacking a parallel full-resolution copy.
+        for ov in traj.get("overlays", []) or []:
+            ov["time"], ov["values"] = decimate_pair(
+                ov.get("time"), ov.get("values"), max_samples
+            )
+
+    # Stage-2 per-variable dict carries its own trajectory copy + overlays;
+    # decimate in place so the Stage-2 UI path shares the same budget.
+    for var_data in (context.get("variables_by_name") or {}).values():
+        traj = var_data.get("trajectory") or {}
+        if "act_time" in traj:
+            traj["act_time"], traj["act_values"] = decimate_pair(
+                traj.get("act_time"), traj.get("act_values"), max_samples
+            )
+            traj["ref_time"], traj["ref_values"] = decimate_pair(
+                traj.get("ref_time"), traj.get("ref_values"), max_samples
+            )
+        for ov in var_data.get("overlays", []) or []:
+            ov["time"], ov["values"] = decimate_pair(
+                ov.get("time"), ov.get("values"), max_samples
+            )
 
     for traj in context.get("diag_trajectories", []) or []:
         traj["act_time"], traj["act_values"] = decimate_pair(
@@ -903,6 +827,8 @@ def _render_template(template_name: str, context: dict, output_path: Path) -> No
 
 def _build_per_test_args(comp, results, test_lookup, store, config, manifest_meta_by_model, artifact_files=()):
     """Resolve all per-test inputs needed to render that test's report."""
+    from .overlay_loader import load_overlays
+
     model_id = comp.model_id
     result = results.get(model_id)
     test = test_lookup.get(model_id)
@@ -910,6 +836,10 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
     meta = manifest_meta_by_model.get(model_id, {})
     test_key = meta.get("test_key")
     last_run_at = meta.get("last_run_at")
+    # A2 — load every registered overlay for this model (soft_checks +
+    # companions). Failures are absorbed into Overlay.status so the
+    # report never breaks on a moved/renamed companion file.
+    overlays = load_overlays(store, model_id)
 
     if not comp.sim_success:
         status_text, status_class = "SIM_FAIL", "sim-fail"
@@ -968,6 +898,7 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
         "metric_tree": comp.metric_tree,
         "artifact_files": artifact_files,
         "max_embedded_samples": config.max_embedded_samples,
+        "overlays": overlays,
     }
 
 
@@ -990,6 +921,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         metric_tree=args.get("metric_tree"),
         artifact_files=args.get("artifact_files", ()),
         max_embedded_samples=args.get("max_embedded_samples", 2000),
+        overlays=args.get("overlays"),
     )
     render_elapsed = _time.monotonic() - t0
     return {

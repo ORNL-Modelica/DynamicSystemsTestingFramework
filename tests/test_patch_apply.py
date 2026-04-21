@@ -185,6 +185,143 @@ class TestErrorSurfacing:
             apply_patch(spec, "M", [{"op": "replace", "path": "bad-path", "value": 1}])
 
 
+class TestWholesaleMetricsReplace:
+    """Stage-4 structural edits emit a single ``add`` at ``/metrics`` with
+    the whole new tree. Verify wholesale replacement preserves hand-
+    authored sibling keys on the test entry."""
+
+    def test_add_metrics_tree_upserts_when_absent(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        _write_spec(spec, {"tests": [{
+            "model": "M",
+            "description": "hand-authored",
+            "comparison": {"tolerance": 1e-4},
+        }]})
+        new_tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "h"},
+                {"metric": "nrmse", "variable": "v"},
+            ],
+        }
+        apply_patch(spec, "M", [
+            {"op": "add", "path": "/metrics", "value": new_tree},
+        ])
+        entry = _read_spec(spec)["tests"][0]
+        assert entry["metrics"] == new_tree
+        assert entry["description"] == "hand-authored"
+        assert entry["comparison"]["tolerance"] == 1e-4
+
+    def test_add_metrics_tree_replaces_existing(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        _write_spec(spec, {"tests": [{
+            "model": "M",
+            "metrics": {"metric": "nrmse", "variable": "h"},
+            "description": "keep me",
+        }]})
+        new_tree = {
+            "combinator": "warn",
+            "children": [{"metric": "nrmse", "variable": "h"}],
+        }
+        apply_patch(spec, "M", [
+            {"op": "add", "path": "/metrics", "value": new_tree},
+        ])
+        entry = _read_spec(spec)["tests"][0]
+        assert entry["metrics"] == new_tree
+        assert entry["description"] == "keep me"
+
+    def test_add_metrics_preserves_sibling_test_entries(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        _write_spec(spec, {"tests": [
+            {"model": "A", "metrics": {"metric": "nrmse", "variable": "x"}},
+            {"model": "B", "metrics": {"metric": "nrmse", "variable": "y"}},
+        ]})
+        new_tree = {
+            "combinator": "and",
+            "children": [
+                {"metric": "nrmse", "variable": "y"},
+                {"metric": "range", "variable": "y", "min": -1, "max": 1},
+            ],
+        }
+        apply_patch(spec, "B", [
+            {"op": "add", "path": "/metrics", "value": new_tree},
+        ])
+        data = _read_spec(spec)
+        assert data["tests"][0]["metrics"] == {"metric": "nrmse", "variable": "x"}
+        assert data["tests"][1]["metrics"] == new_tree
+
+
+class TestWindowPath:
+    """Idea #46 UI surfacing — reporter emits window upserts via 'add' on
+    /metrics/.../window. Verify round-trip with tree leaves."""
+
+    def test_add_window_on_root_leaf(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        _write_spec(spec, {"tests": [{
+            "model": "M",
+            "metrics": {"metric": "nrmse", "variable": "h", "tolerance": 1e-4},
+        }]})
+        apply_patch(spec, "M", [
+            {"op": "add", "path": "/metrics/window", "value": {"start": 1.0, "end": 5.0}},
+        ])
+        metrics = _read_spec(spec)["tests"][0]["metrics"]
+        assert metrics["window"] == {"start": 1.0, "end": 5.0}
+        # Original fields untouched
+        assert metrics["metric"] == "nrmse"
+        assert metrics["variable"] == "h"
+
+    def test_add_window_on_nested_leaf(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        _write_spec(spec, {"tests": [{
+            "model": "M",
+            "metrics": {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {"metric": "nrmse", "variable": "y"},
+                ],
+            },
+        }]})
+        apply_patch(spec, "M", [
+            {"op": "add",
+             "path": "/metrics/children/1/window",
+             "value": {"start": 2.0}},
+        ])
+        children = _read_spec(spec)["tests"][0]["metrics"]["children"]
+        assert children[0] == {"metric": "nrmse", "variable": "x"}
+        assert children[1]["window"] == {"start": 2.0}
+
+    def test_add_upserts_existing_window(self, tmp_path):
+        """'add' on a pre-existing window replaces the value (must_exist=False
+        doesn't reject already-present keys — matches reporter's upsert usage)."""
+        spec = tmp_path / "spec.json"
+        _write_spec(spec, {"tests": [{
+            "model": "M",
+            "metrics": {"metric": "nrmse", "variable": "h",
+                        "window": {"start": 0.0, "end": 10.0}},
+        }]})
+        apply_patch(spec, "M", [
+            {"op": "add", "path": "/metrics/window", "value": {"start": 1.0, "end": 5.0}},
+        ])
+        assert _read_spec(spec)["tests"][0]["metrics"]["window"] == {
+            "start": 1.0, "end": 5.0,
+        }
+
+    def test_remove_window(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        _write_spec(spec, {"tests": [{
+            "model": "M",
+            "metrics": {"metric": "nrmse", "variable": "h",
+                        "window": {"start": 1.0, "end": 5.0}},
+        }]})
+        apply_patch(spec, "M", [
+            {"op": "remove", "path": "/metrics/window"},
+        ])
+        metrics = _read_spec(spec)["tests"][0]["metrics"]
+        assert "window" not in metrics
+        assert metrics["metric"] == "nrmse"
+
+
 class TestMissingModel:
     def test_creates_new_entry_when_model_not_found(self, tmp_path):
         spec = tmp_path / "spec.json"

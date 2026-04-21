@@ -1,15 +1,65 @@
-# Session handoff — post-Phase-6-MVP (reporter-as-IDE + baseline-role split + patch round-trip shipped)
+# Session handoff — reporter-as-recursive-tree refactor (Stages 1–5 shipped)
 
-**Date**: 2026-04-20
+**Date**: 2026-04-21
 
-The Phase 6 MVP committed in this session — all seven steps from the retired
-`docs/PHASE_6_PLAN.md` are in. Seven landing units across four commits
-(payload budget, baseline-role split, 6.1.1 + #46, 6.1.2/3/5 + 6.1.4, 6.4,
-and a snapshot-goldens fixup). Test count **404 → 531**. Authoritative
-as-built record: **D67** in `docs/decisions.md`. The reporter is now the
-primary authoring surface for acceptance criteria; the CLI is the execution
-surface; round-trip through `spec-update` preserves hand-authored
-`description` / `info` / `metadata` byte-compatibly.
+This session: **rebuilt the interactive reporter around a single recursive
+`SpecNodeView` component**. One plot per unique variable, recursive tree
+view below each plot, path-keyed JS state, +/− structural editing,
+RFC 6902 wholesale `/metrics` replacement on structure change. Test
+count **562 → 595** (+33). Static `comparison.html` + matplotlib PNG
+generation retired along the way. **Follow-up required**: the rich
+interactive tube editor (Shift+click/drag/right-click) was stripped and
+needs to come back — user-flagged as critical. See memory:
+`project_tube_editor_critical.md`.
+
+## This session's changes — five-stage refactor
+
+**Stage 1 — data helpers + registry shape** (pure Python, no UI yet):
+- `tree_spec.collect_variables(spec)` + `leaves_for_variable(spec, var)`.
+- `tree_spec.synthesize_implicit_tree(variables, *, variable_overrides)` — render-only synthesizer so flat-override tests feed the same recursive UI as tree-authored ones. Always wraps in AND to match `implicit_and_tree` path structure.
+- `tree_spec.spec_to_view(spec, *, evaluation_by_path)` + `tree_eval.flatten_evaluation(result)` — serializer pair producing JSON-safe path-keyed dicts.
+- `mode_controls.PlotContribution` dataclass + `plot_contribution` slot on `ModeUI`.
+- `mode_controls.emit_mode_schemas()` bulk export for JS consumption.
+
+**Stage 2 — recursive `SpecNodeView` + per-variable mounts**:
+- One plot per unique variable (not per leaf). Trajectories deduped.
+- Single recursive `renderNode(node, container, opts)` in JS; `renderLeaf` / `renderCombinator` dispatch. Per-variable views pass `variableFilter: varname`; combinator nodes whose descendants all filter out are skipped.
+- Path-keyed `leafState = {path: {params, window, visible, original_*}}` replaces the per-leaf-index JS arrays.
+- `MODE_PLOT_CONTRIBUTIONS` JS registry parallel to `MODE_SCORERS` of the old design — each mode returns `{traces, shapes, annotations, secondary_panel?}` consumed by the plot renderer. Current coverage: `range` (dashed lines), `tube` (polygon), `final-only` (vertical marker), window (x-band highlight). Stubs: `event-timing`, `dominant-frequency`, `nrmse`.
+- Tube's `custom_renderer` retired; auto-derived schema-driven inputs now edit tube config.
+- **Stripped** (per user's "reduce features" directive): rich Shift+click/drag tube editor, error-overlay dropdown (signed/abs/nrmse on plot), global tolerance slider, per-variable tolerance slider, mode-select dropdown (nrmse↔tube), per-plot error panels.
+
+**Stage 3 — full-tree mount**:
+- Top-of-report `<details>` collapsible mounts `SpecNodeView` with no variable filter — same component, different mount point.
+- Cross-mount input sync: edits in the full-tree view propagate to the per-variable view via `syncSiblingInputs` (queries `[data-path=...][data-field=...]`, skips the active input to not stomp on focus).
+- Retired `metric_tree_view` Jinja rendering.
+
+**Stage 4 — structural patch ops**:
+- `+` button on combinator nodes (opens a minimal prompt for metric + variable; adds a leaf child). `−` button on any non-root node. `WORKING_TREE` deep-cloned from `TREE_VIEW` at load; structural mutations set `structureDirty`.
+- `nodeToSpec(node)` strips render artifacts to produce a clean spec dict.
+- When `structureDirty`, `buildPatchData` emits a single `{op: "add", path: "/metrics", value: <new tree>}` rather than granular scalar ops. Unknown test-entry sibling keys (`description`, `metadata`) survive.
+- Move (drag / up-down) not implemented — stretch polish.
+
+**Stage 5 — cleanup**:
+- Deleted static `comparison.html` template + its renderer (nothing linked to it from the index).
+- Deleted matplotlib per-variable PNG generation loops and `_plot_variable` (~90 lines gone). Plotly inside interactive.html shows a superset of what the PNGs showed.
+- Deleted the flat `variables` list construction in `_build_template_context` (~90 lines gone; tree_view carries all per-leaf data now).
+- Deleted `diagnostic_plots` / `compared_plots` / `nobaseline_plots` context fields (PNG-path wrappers).
+- Deleted `html as html_mod` import (unused after tube-cell custom-renderer removal).
+
+Test count: **562 → 595** passing at HEAD.
+
+---
+
+The Phase 6 MVP committed in earlier sessions — all seven steps from
+the retired `docs/PHASE_6_PLAN.md` are in. As of this session, the two
+A-tier half-shipped follow-ons (window UI + overlay rendering) are
+now complete too. Authoritative as-built record for the MVP itself:
+**D67** in `docs/decisions.md` — add a short note for this session's
+close-out when time permits. The reporter is now the primary authoring
+surface for acceptance criteria and baseline-role context; the CLI is
+the execution surface; round-trip through `spec-update` preserves
+hand-authored `description` / `info` / `metadata` byte-compatibly.
 
 ---
 
@@ -58,12 +108,24 @@ surface; round-trip through `spec-update` preserves hand-authored
 
 Reorganized 2026-04-20 by **what's half-shipped vs. new features vs. optimization vs. distribution blocker**, rather than by tier-of-effort. Two pieces of the MVP are partially delivered (backend shipped, UI or rendering missing) — those come first.
 
-### A. Finish half-shipped features (A-tier — close real debt from the MVP)
+### A. Finish half-shipped features (A-tier — ✅ closed this session)
 
-Both small-to-medium; together they make the MVP honestly complete.
+Both shipped; kept the historical entries below for reference. What's
+still deferred from each:
 
-1. **Window UI on auto-derived panels** — idea **#46** backend (parse + slice + score) shipped in 6.1.1, but there's no browser field to author windows. Users hand-write `"window": {"start": t, "end": t}` JSON. Add two number inputs to `reporting/ui/mode_controls.py`'s auto-derived renderer (universal; not per-mode). Or, richer: a range-brush on the trajectory plot. ~½ day scalar, ~1 day brush.
-2. **Companion + soft_check overlay rendering (idea #50; 6.3 first slice)** — baseline-role data model shipped (companions + soft_checks on disk, CLI, validator), but the reporter only plots the primary. `companion add` is invisible to users today. Load CSV/JSON companion files (graceful degradation on missing), overlay them as Plotly traces, add a view-only multi-select picker in the plot-section header. Defaults: companions + soft_checks OFF; user toggles on. 1–2 days.
+1. **Window UI on auto-derived panels** — ✅ shipped as the
+   standalone `render_window_controls_html` fragment + JSON-Pointer
+   round-trip via `collect_leaf_paths` + `perVarWindows[]` + `add` /
+   `remove` on `<leaf_path>/window`. Still deferred (not blocking):
+   range-brush on the trajectory plot (visual window editing via Plotly
+   selection — was noted as the stretch option).
+2. **Companion + soft_check overlay rendering** — ✅ shipped as
+   `reporting/overlay_loader.py` + per-plot picker + test-level
+   summary. CSV + JSON overlay formats; graceful missing/invalid
+   degradation; LTTB decimation integrated. Still deferred (not
+   blocking): bulk toggle ("show all companions across all plots");
+   overlay-vs-primary error overlay panel (an overlay analogue of the
+   existing reference-error panels).
 
 ### B. User-facing new features (B-tier — each its own session)
 
@@ -113,12 +175,11 @@ Both small-to-medium; together they make the MVP honestly complete.
 | Reporter | 🟢 Interactive HTML has per-mode control panels, live pass/fail recompute for four simple modes, CLI-authoritative badge for two numerical modes, range reference-line overlay, tube rich editor, RFC 6902 patch download. 6.3 multi-baseline picker + companion-overlay rendering still pending. |
 | Recommender | ⚪ Not started. Phase 7, rule-based only. |
 
-Largest remaining gaps by impact (post Phase-6-MVP):
-1. **A-tier — half-shipped MVP pieces**: #46 window UI surfacing + #50 companion/soft_check overlay rendering. Closing these delivers what the MVP promised but didn't visually render.
-2. **B-tier — user-facing new features**: Phase 7 rule-based recommender (onboarding leverage); idea #45 python-driven tests + FMU-path semantic-gap closure (unlocks real FMU work).
-3. **C-tier — performance polish**: #47 dedup + #48 lazy-fetch (cap 1000 → 2000 + full-fidelity drill-down).
-4. **D-tier — external distribution**: tool rename, blocked on a name.
-5. **E-tier — foundational**: Phase 9 dataset types; unlocks new leaf families (Fréchet / ISO-18571 / KS-distribution / pyfunnel).
+Largest remaining gaps by impact (post A-tier close-out):
+1. **B-tier — user-facing new features**: Phase 7 rule-based recommender (onboarding leverage); idea #45 python-driven tests + FMU-path semantic-gap closure (unlocks real FMU work).
+2. **C-tier — performance polish**: #47 dedup + #48 lazy-fetch (cap 1000 → 2000 + full-fidelity drill-down).
+3. **D-tier — external distribution**: tool rename, blocked on a name.
+4. **E-tier — foundational**: Phase 9 dataset types; unlocks new leaf families (Fréchet / ISO-18571 / KS-distribution / pyfunnel).
 
 ---
 
@@ -179,14 +240,14 @@ If fmpy is missing: `uv pip install -e ".[dev,fmpy]"`.
 
 ## Starter prompt for the next session
 
-> Resuming ModelicaTesting post Phase-6-MVP. **Read D67 in `docs/decisions.md` first** for the as-built Phase 6 state; D66 is the design-intent record it realized. Test baseline: **531 passing** at HEAD. Two pieces of the MVP are half-shipped — backend done but UX missing — and closing them is this session's A-tier default.
+> Resuming ModelicaTesting post A-tier MVP close-out. **Read D67 in `docs/decisions.md` first** for the as-built Phase 6 state; D66 is the design-intent record it realized. The A-tier half-shipped pieces (window UI on auto-derived panels; companion + soft_check overlay rendering) both landed in the previous session — 6.1.1 idea #46 and idea #50 / 6.3-first-slice are now visually complete. Test baseline: **562 passing** at HEAD.
 >
-> **Default — A-tier, finish the half-shipped MVP pieces** (bundle both; they share the per-variable template + JS wiring):
-> 1. **Window UI on auto-derived panels (idea #46 UI surfacing)**. Backend already parses `LeafSpec.window_start/end` and `tree_eval._slice_window` applies before `mode.compare`, but the browser has no authoring field. Simplest version: extend `reporting/ui/mode_controls.py`'s renderer to append two number inputs (`window_start`, `window_end`) as a universal cross-mode suffix (not per-mode — window lives on `LeafSpec`, not on any `ModeConfig`). Stretch: a range-brush on the trajectory plot. Wire into `buildPatchData` so window edits round-trip through RFC 6902.
-> 2. **Companion + soft_check overlay rendering (idea #50; 6.3 first slice)**. Reporter currently stores companion pointers on disk (`companions/ref_NNNN/<name>.json`) but never loads or renders them. Build `reporting/overlay_loader.py` (graceful CSV + JSON load, tolerates missing files), attach overlays to the per-variable template context, render as Plotly traces with a view-only multi-select picker. Companions + soft_checks default OFF to avoid clutter; user toggles on. This delivers the D66 baseline-role visual distinction the MVP skipped.
+> **Default — B-tier, pick one user-facing feature for a dedicated session**:
+> 1. **Phase 7 — rule-based recommender** (~1–2 weeks). New `recommender/` package. Input: signal + optional baseline. Output: MetricTree proposals bounded by D66's complexity budget (≥1 primary leaf, ≤3 leaves, ≤1 combinator layer). Each `ComparisonMode` declares `requires_baseline` + shape requirements so candidate filtering is automatic. No ML (Phase 8 removed). Lowers onboarding barrier for new users.
+> 2. **Idea #45 python-driven tests + FMU-path semantic-gap closure** (~2 weeks). Pair them — they share a `SimulationResult` dataclass refactor. `FmpyRunner` gains input-schedule support (`input=`), `fmi_type` selection (CS vs ME), `start_values` override, python-driver test shape. `CustomPythonRunner` slots into the same return contract, unlocking pyomo / scipy / custom-solver tests. High leverage for real FMU work.
 >
-> **Alternatives if A-tier feels too small or too big**: Phase 7 rule-based recommender scaffolding (B-tier, ~1–2 weeks, new `recommender/` package); idea #45 python-driven tests + FMU-path closure (B-tier, ~2 weeks, shared `SimulationResult` dataclass); #47 time-array dedup (C-tier, ~1 day, payload optimization); drag-to-edit range handles (C-tier, ~½ day); tool rename (D-tier, small-but-touches-everything, **needs a name first**).
+> **Alternatives if a full B-tier session is too much**: #47 time-array dedup (C-tier, ~1 day, unlocks default cap 1000→2000); #48 lazy-fetch on zoom (C-tier, ~½ day, pure JS, compounds with existing Plotly handlers); drag-to-edit range handles (C-tier, ~½ day); tool rename (D-tier, small-but-touches-everything, **still needs a name first**).
 >
-> **Out of scope unless explicitly adopted**: Phase 9 dataset types, ML, drag-to-edit beyond range, any mid-stream refactor of the existing six modes. `docs/PHASE_6_PLAN.md` is retired — refer to D67 for what shipped.
+> **Out of scope unless explicitly adopted**: Phase 9 dataset types, ML, any mid-stream refactor of the existing six modes. `docs/PHASE_6_PLAN.md` is retired — refer to D67 for what shipped.
 
-**Context to hand the agent on day 1**: `CLAUDE.md`, `docs/vision.md`, `docs/decisions.md` (especially D66 + D67), `docs/architecture.md`, `docs/ideas.md` (especially the Recommended-order footer and the #46 / #50 entries). Reporter QA: `docs/qa/reporter_checklist.md`.
+**Context to hand the agent on day 1**: `CLAUDE.md`, `docs/vision.md`, `docs/decisions.md` (especially D66 + D67), `docs/architecture.md`, `docs/ideas.md` (especially the Recommended-order footer and the #45 / #47 / #48 entries). Reporter QA: `docs/qa/reporter_checklist.md`.

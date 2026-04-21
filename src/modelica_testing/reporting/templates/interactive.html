@@ -87,6 +87,47 @@ details summary:hover { color: #333; }
 .mode-controls select { padding: 0.1em 0.25em; }
 .mode-controls textarea { width: 12em; font-family: monospace; font-size: 0.85em; }
 .cli-authoritative { display: inline-block; margin-left: 0.5em; padding: 0.1em 0.45em; border-radius: 3px; background: #eef3ff; border: 1px solid #b5c5e8; color: #3a5ba0; font-size: 0.75em; }
+/* 6.1.1 — idea #46 UI surfacing: universal window inputs for tree leaves */
+.window-controls { display: flex; flex-wrap: wrap; gap: 0.3em 0.6em; align-items: center; margin-top: 0.3em; padding-top: 0.3em; border-top: 1px dashed #e0e0e0; font-size: 0.8em; }
+.window-controls .wc-label { color: #888; font-weight: 500; }
+.window-controls .wc-field { display: inline-flex; align-items: center; gap: 0.25em; }
+.window-controls .wc-field > span { color: #777; font-size: 0.85em; }
+.window-controls input[type=number] { width: 5.5em; padding: 0.1em 0.25em; }
+/* A2 / idea #50 — per-plot overlay picker (companions + soft_checks) */
+.overlay-picker { display: flex; flex-wrap: wrap; gap: 0.5em 1em; align-items: center; font-size: 0.8em; margin: 0.2em 0 0.5em 0; padding: 0.3em 0.6em; background: #f9f9f9; border: 1px dashed #e0e0e0; border-radius: 4px; }
+.overlay-picker .ov-label { color: #666; font-weight: 500; }
+.overlay-picker .ov-item { display: inline-flex; align-items: center; gap: 0.25em; cursor: pointer; }
+.overlay-picker .ov-role { display: inline-block; padding: 0 0.3em; border-radius: 3px; font-size: 0.72em; text-transform: uppercase; }
+.overlay-picker .ov-soft_check { background: #e8d8f3; color: #5e3a80; border: 1px solid #c4a8df; }
+.overlay-picker .ov-companion { background: #d8f3e4; color: #2b6b48; border: 1px solid #a8dfc0; }
+/* Stage 2 — recursive SpecNodeView */
+.variable-section { margin-bottom: 2em; padding: 1em; background: white; border: 1px solid #ddd; border-radius: 4px; }
+.variable-section h2 { margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+.variable-section .var-status { display: inline-block; padding: 0.1em 0.5em; border-radius: 3px; font-size: 0.7em; font-weight: 600; letter-spacing: 0.05em; margin-right: 0.5em; vertical-align: middle; }
+.variable-section .var-status.pass { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+.variable-section .var-status.fail { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
+.node-tree { margin-top: 0.8em; }
+.node { margin: 0.3em 0; padding: 0.4em 0.6em; border-left: 3px solid #ddd; background: #fafafa; border-radius: 0 3px 3px 0; }
+.node-leaf { border-left-color: #2196F3; }
+.node-combinator { border-left-color: #9C27B0; background: #f5f0fa; }
+.node-children { margin-left: 1.2em; margin-top: 0.3em; }
+.node-header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4em; font-size: 0.9em; }
+.node-label { font-weight: 500; color: #333; }
+.node-score { font-size: 0.85em; color: #666; font-family: monospace; }
+.node-status { display: inline-block; padding: 0.05em 0.4em; border-radius: 3px; font-size: 0.7em; font-weight: 600; letter-spacing: 0.05em; }
+.node-status.pass { background: #e8f5e9; color: #2e7d32; }
+.node-status.fail { background: #ffebee; color: #c62828; }
+.node-visible { margin-right: 0.2em; }
+.node-controls { margin-top: 0.4em; padding-left: 1.4em; }
+.node-btn { margin-left: 0.3em; padding: 0 0.45em; border: 1px solid #ccc; border-radius: 3px; background: white; cursor: pointer; font-size: 0.85em; line-height: 1.3; }
+.node-btn:hover { background: #f0f0f0; }
+.node-btn-add { color: #2e7d32; border-color: #a5d6a7; }
+.node-btn-add:hover { background: #e8f5e9; }
+.node-btn-remove { color: #c62828; border-color: #ef9a9a; }
+.node-btn-remove:hover { background: #ffebee; }
+.metric-tree-section { margin-bottom: 1.5em; padding: 1em; background: white; border: 1px solid #ddd; border-radius: 4px; }
+.metric-tree-section summary { font-weight: 600; cursor: pointer; }
+.node-tree-hint { font-weight: 400; color: #888; font-size: 0.85em; }
 </style>
 </head>
 <body>
@@ -169,6 +210,29 @@ details summary:hover { color: #333; }
 </details>
 {% endif %}
 
+{# === OVERLAYS SUMMARY — A2 / idea #50 === #}
+{% if overlay_rows %}
+<details class="artifacts">
+  <summary>Overlays ({{ overlay_rows | length }}) — companion + soft_check</summary>
+  <table class="meta-table">
+  <tr><th>Name</th><th>Role</th><th>Status</th><th>Variables</th><th>Note</th></tr>
+  {% for ov in overlay_rows %}
+  <tr{% if ov.status != 'loaded' %} style="background:#fff3cd"{% endif %}>
+    <td>{{ ov.name }}</td>
+    <td>{{ ov.role }}{% if ov.kind %} ({{ ov.kind }}){% endif %}</td>
+    <td>{{ ov.status }}</td>
+    <td>{% if ov.variables %}{{ ov.variables | join(", ") }}{% else %}&mdash;{% endif %}</td>
+    <td style="font-size:0.8em; color:#666">{{ ov.note }}</td>
+  </tr>
+  {% endfor %}
+  </table>
+  <p style="font-size:0.8em; color:#888; margin-top:0.5em;">
+    Toggle per-variable visibility with the <code>Overlays:</code> checkboxes above each plot.
+    Companions are visual-only; soft_checks are warn-wrapped scorable baselines.
+  </p>
+</details>
+{% endif %}
+
 {# === STATISTICS (collapsible, moved up) === #}
 {% if statistics_sections %}
 <details>
@@ -198,17 +262,20 @@ details summary:hover { color: #333; }
 </details>
 {% endif %}
 
-{# === TOLERANCE CONTROL + EXPORT === #}
-{% if variables %}
+{# === METRIC TREE (Stage 3 — full unfiltered SpecNodeView mount) === #}
+{% if tree_view %}
+<details class="metric-tree-section" open>
+  <summary>Metric Tree <span class="node-tree-hint">— every leaf + combinator; edits here round-trip with the per-variable panels below</span></summary>
+  <div class="node-tree" id="nodes-full"></div>
+</details>
+{% endif %}
+
+{# === EXPORT PANEL (Stage 2 — global tolerance slider retired; per-leaf tolerance lives in the tree node) === #}
+{% if variables_by_name %}
 <div class="tolerance-panel">
-  <div class="tolerance-row">
-    <label for="global-tolerance" title="NRMSE threshold — applies to NRMSE-mode variables only">Test Tolerance (NRMSE only):</label>
-    <input type="number" id="global-tolerance" step="0.001" min="0">
-    <span class="hint">NRMSE threshold for NRMSE-mode variables. Other modes (tube/range/event-timing/dominant-frequency) carry mode-specific thresholds in their per-variable params and aren't affected by this slider.</span>
-  </div>
   <div class="export-row">
     <details open>
-      <summary>Export Tolerance Config</summary>
+      <summary>Export Spec Patch</summary>
       <textarea id="export-json" readonly></textarea>
       <div class="export-buttons">
         <button class="btn btn-primary" onclick="copyExport()">Copy to Clipboard</button>
@@ -224,90 +291,28 @@ details summary:hover { color: #333; }
 </div>
 {% endif %}
 
-{# === VARIABLE TABLE === #}
-{% if variables %}
-<h2>Variables</h2>
-<table id="var-table">
-<tr><th>Status</th><th>Variable</th><th>Mode</th><th>Score</th><th>Tolerance</th><th>Pass/Fail Criterion</th></tr>
-{% for v in variables %}
-<tr data-idx="{{ loop.index0 }}">
-  <td class="var-status"><span class="{{ 'pass' if v.passed else 'fail' }}">{{ "PASS" if v.passed else "FAIL" }}</span></td>
-  <td>{{ v.name }}{% if v.is_constant %} (const){% endif %}</td>
-  <td>{{ v.mode | default("nrmse") }}</td>
-  <td class="var-score">{{ v.score_display | default("NRMSE %.4e" | format(v.nrmse)) }}</td>
-  {% if v.mode in ("nrmse", "final_only") or not v.mode %}
-  <td><input type="number" class="var-tol-input" data-idx="{{ loop.index0 }}" step="0.001" min="0" value="{{ v.tolerance_used }}" title="Tolerance for this variable (re-evaluates on change)"></td>
-  {% elif v.mode_controls_html %}
-  <td class="mode-controls-cell" data-idx="{{ loop.index0 }}" data-mode="{{ v.mode }}">{{ v.mode_controls_html | safe }}{% if v.cli_authoritative %}<span class="cli-authoritative" title="Edits reflected after running modelica-testing run">CLI-authoritative</span>{% endif %}</td>
-  {% else %}
-  <td><span class="hint">n/a</span></td>
-  {% endif %}
-  <td class="var-criterion">{{ v.criterion }}</td>
-</tr>
-{% endfor %}
-</table>
-{% endif %}
-
-{# === TRAJECTORY PLOTS === #}
-{% if trajectories %}
-<h2>Trajectory Comparisons</h2>
-{% for traj in trajectories %}
-<div class="plot-section" id="plot-section-{{ loop.index0 }}">
-  <h3>
-    <span class="var-plot-status" data-idx="{{ loop.index0 }}"></span> {{ traj.name }}
-    <select class="btn overlay-select" data-idx="{{ loop.index0 }}" onchange="setErrorOverlay({{ loop.index0 }}, this.value)">
-      <option value="none">No Overlay</option>
-      <option value="error">Error (signed)</option>
-      <option value="abs_error">Abs Error</option>
-      <option value="nrmse">NRMSE</option>
-    </select>
-    {% if not variables[loop.index0].is_constant %}
-    <select class="btn mode-select" data-idx="{{ loop.index0 }}" onchange="setVarMode({{ loop.index0 }}, this.value)">
-      <option value="nrmse"{% if variables[loop.index0].mode == 'nrmse' %} selected{% endif %}>NRMSE</option>
-      <option value="tube"{% if variables[loop.index0].mode == 'tube' %} selected{% endif %}>Tube</option>
-    </select>
-    {% endif %}
-  </h3>
-  <div class="plotly-chart" id="plot-{{ loop.index0 }}" style="height:300px"></div>
-  <div class="tube-editor" id="tube-editor-{{ loop.index0 }}" style="display:none">
-    <div class="tube-controls">
-      <button class="btn" onclick="addTubePoint({{ loop.index0 }})" title="Add a time control point to shape the tube">Add Point</button>
-      <label style="margin-left:1em; font-size:0.85em;" title="Synced: same width above and below reference. Unsynced: set upper and lower bounds independently, each with its own abs/rel mode">
-        Symmetry:
-        <select class="tube-sync" data-idx="{{ loop.index0 }}" onchange="tubeSyncChanged({{ loop.index0 }}, this.value === 'true')">
-          <option value="true">Synced (same above/below)</option>
-          <option value="false">Unsynced (independent upper/lower)</option>
-        </select>
-      </label>
-      <label style="margin-left:1em; font-size:0.85em;" title="Band: offset ± from reference in signal units. Relative: offset as fraction of |ref|. Absolute: literal y-axis bounds.">
-        Width mode:
-        <select class="tube-width-mode" data-idx="{{ loop.index0 }}" onchange="tubeWidthModeChanged({{ loop.index0 }}, this.value)">
-          <option value="band">Band (± offset)</option>
-          <option value="rel">Relative (fraction of |ref|)</option>
-          <option value="absolute">Absolute (y-value)</option>
-        </select>
-      </label>
-      <label style="margin-left:1em; font-size:0.85em;" title="Linear: smooth interpolation between points. Step: hold previous value until next point">
-        Interp:
-        <select class="tube-interp" data-idx="{{ loop.index0 }}" onchange="updateTube({{ loop.index0 }})">
-          <option value="linear">Linear</option>
-          <option value="constant">Step</option>
-        </select>
-      </label>
-    </div>
-    <div class="tube-controls" style="margin-top:0.3em;">
-      <label style="font-size:0.85em;" title="Minimum tube width in signal units. Prevents tube from collapsing when reference crosses zero (useful in relative mode)">
-        Min width floor:
-        <input type="number" class="tube-min-width" data-idx="{{ loop.index0 }}" step="any" min="0" value="0" style="width:8em" onchange="updateTube({{ loop.index0 }})">
-      </label>
-      <span class="tube-status" id="tube-status-{{ loop.index0 }}" style="margin-left:1em; font-size:0.85em;"></span>
-    </div>
-    <table class="tube-table" id="tube-table-{{ loop.index0 }}">
-    </table>
-    <p class="tube-hint">Signal must stay inside the tube at every time point to pass. On the plot: <b>Shift+click</b> to add a point, <b>Shift+drag</b> to move, <b>Shift+right-click</b> to delete. Scroll to zoom.</p>
+{# === VARIABLE SECTIONS — Stage 2 per-variable layout === #}
+{# One plot per unique variable; recursive SpecNodeView mounts below it. #}
+{# Leaf controls, window inputs, tube editing, visibility toggles all #}
+{# live inside the tree component (JS-driven) rather than a flat table. #}
+{% if variables_by_name %}
+{% for varname, vardata in variables_by_name.items() %}
+<div class="variable-section" data-variable="{{ varname }}" data-vidx="{{ loop.index0 }}" id="variable-section-{{ loop.index0 }}">
+  <h2>
+    <span class="var-status" data-vidx="{{ loop.index0 }}"></span>
+    {{ varname }}
+  </h2>
+  {% if vardata.overlays %}
+  <div class="overlay-picker" data-vidx="{{ loop.index0 }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
+    <span class="ov-label">Overlays:</span>
+    {% for ov in vardata.overlays %}
+    <label class="ov-item"><input type="checkbox" class="overlay-toggle" data-vidx="{{ loop.index0 }}" data-ov-name="{{ ov.name }}" data-ov-role="{{ ov.role }}"> <span class="ov-role ov-{{ ov.role }}">{{ ov.role }}</span> {{ ov.name }}</label>
+    {% endfor %}
   </div>
-  <div class="plotly-chart" id="plot-abserr-{{ loop.index0 }}" style="height:150px"></div>
-  <div class="plotly-chart" id="plot-nrmse-{{ loop.index0 }}" style="height:150px"></div>
+  {% endif %}
+  <div class="plotly-chart plot-main" id="plot-{{ loop.index0 }}" style="height:300px"></div>
+  <div class="plotly-chart plot-spectrum" id="plot-spectrum-{{ loop.index0 }}" style="height:150px; display:none"></div>
+  <div class="node-tree" id="nodes-{{ loop.index0 }}" data-variable="{{ varname }}"></div>
 </div>
 {% endfor %}
 {% endif %}
@@ -326,1275 +331,66 @@ details summary:hover { color: #333; }
 <script>
 // ---- Embedded data ----
 const MODEL_ID = {{ model_id | tojson }};
-const VARIABLES = {{ variables | tojson }};
-const TRAJECTORIES = {{ trajectories | tojson }};
+const TREE_VIEW = {{ tree_view | tojson }};
+const VARIABLES_BY_NAME = {{ variables_by_name | tojson }};
+const MODE_SCHEMAS = {{ mode_schemas | tojson }};
 const DIAG_TRAJECTORIES = {{ diag_trajectories | tojson }};
 const NB_TRAJECTORIES = {{ nobaseline_trajectories | tojson }};
 const SPEC_PATH = {{ spec_path | tojson }};
 
-// ---- State ----
-let globalTolerance = VARIABLES.length > 0 ? VARIABLES[0].tolerance_used : 1e-4;
-let perVarTolerances = VARIABLES.map(v => v.tolerance_used);
-// 6.1.2 — per-variable mode config dict, populated from the Python-rendered
-// panel. Edits in the auto-derived panel write back here via wireModeControls.
-let perVarModeConfigs = VARIABLES.map(v => Object.assign({}, v.mode_values || {}));
+// Variable name → index (element IDs). Order matches template iteration.
+const VARIABLE_ORDER = Object.keys(VARIABLES_BY_NAME || {});
+const VARIABLE_INDEX = {};
+VARIABLE_ORDER.forEach((name, i) => { VARIABLE_INDEX[name] = i; });
 
-// 6.1.2 — mode-to-scorer registry. Each scorer returns {passed, score, label}
-// from (variable, config, idx). Event-timing and dominant-frequency have no
-// entry: they fall back to the CLI-computed v.passed (D66 — honest no-preview).
-const MODE_SCORERS = {
-  nrmse: (v, cfg) => {
-    const tol = Number(cfg && cfg.tolerance);
-    const t = Number.isFinite(tol) && tol > 0 ? tol : v.tolerance_used;
-    return { passed: v.nrmse < t, score: v.nrmse, label: `NRMSE ${v.nrmse.toExponential(3)}` };
-  },
-  final_only: (v, cfg) => {
-    const tol = Number(cfg && cfg.tolerance);
-    const t = Number.isFinite(tol) && tol > 0 ? tol : v.tolerance_used;
-    return { passed: v.max_abs_error < t, score: v.max_abs_error, label: `|err| ${v.max_abs_error.toExponential(3)}` };
-  },
-  range: (v, cfg, idx) => {
-    const traj = TRAJECTORIES[idx];
-    if (!traj || !traj.act_values || !traj.act_values.length) {
-      return { passed: v.passed, score: null, label: '(no data)' };
-    }
-    const mn = (cfg && cfg.min_value !== null && cfg.min_value !== undefined && cfg.min_value !== '')
-      ? Number(cfg.min_value) : null;
-    const mx = (cfg && cfg.max_value !== null && cfg.max_value !== undefined && cfg.max_value !== '')
-      ? Number(cfg.max_value) : null;
-    let maxViol = 0;
-    for (const val of traj.act_values) {
-      if (mn !== null && val < mn) maxViol = Math.max(maxViol, mn - val);
-      if (mx !== null && val > mx) maxViol = Math.max(maxViol, val - mx);
-    }
-    return { passed: maxViol === 0, score: maxViol, label: `max_viol ${maxViol.toExponential(3)}` };
-  },
-  tube: (v, cfg, idx) => {
-    // Tube has a dedicated editor; trust its tubePassState (set by updateTube).
-    if (idx in tubePassState) {
-      return { passed: tubePassState[idx], score: null, label: '(tube editor)' };
-    }
-    return { passed: v.passed, score: null, label: '(tube editor)' };
-  },
-};
+// ---- Runtime state — keyed by JSON-Pointer leaf path ----
+// Single source of truth for edits: {params, window, visible, original_*}.
+// "params" captures every per-mode config field (tolerance, tube_rel, ...);
+// "window" is {start, end} (either may be absent). "visible" gates the leaf's
+// plot contribution (tube polygon, range lines, window band, ...).
+const leafState = {};
 
-// ---- Init ----
-document.addEventListener('DOMContentLoaded', () => {
-  const globalInput = document.getElementById('global-tolerance');
-  if (globalInput) {
-    globalInput.value = globalTolerance;
-    globalInput.addEventListener('input', onGlobalChange);
-  }
-  document.querySelectorAll('.var-tol-input').forEach(input => {
-    input.addEventListener('input', onVarTolChange);
-  });
-  wireModeControls();
-  renderPlots();
-  renderDiagPlots();
-  renderNBPlots();
-  updateAllStatus();
-});
+// Stage 4 — structural edit tracking. WORKING_TREE starts as a deep clone
+// of the rendered TREE_VIEW and mutates in place when the user adds/removes
+// nodes via +/−. On patch export, a dirty structure emits a single
+// wholesale ``replace`` at ``/metrics``; granular scalar ops continue to
+// flow for in-place leaf-config edits.
+let WORKING_TREE = null;
+let structureDirty = false;
 
-// ---- Tolerance changes ----
-function onGlobalChange(e) {
-  const val = parseFloat(e.target.value);
-  if (isNaN(val) || val <= 0) return;
-  globalTolerance = val;
-  document.querySelectorAll('.var-tol-input').forEach(input => {
-    const idx = parseInt(input.dataset.idx);
-    if (!input.classList.contains('modified')) {
-      perVarTolerances[idx] = val;
-      input.value = val;
-    }
-  });
-  updateAllStatus();
+function initWorkingTree() {
+  WORKING_TREE = TREE_VIEW ? JSON.parse(JSON.stringify(TREE_VIEW)) : null;
+  structureDirty = false;
 }
 
-// 6.1.2 — wire auto-derived mode control inputs (6.1.1 panel) to the scorer.
-function wireModeControls() {
-  document.querySelectorAll('.mode-controls-cell').forEach(cell => {
-    const idx = parseInt(cell.dataset.idx);
-    if (isNaN(idx)) return;
-    cell.querySelectorAll('[data-field]').forEach(input => {
-      const handler = (e) => onModeFieldChange(idx, e.target);
-      input.addEventListener('input', handler);
-      input.addEventListener('change', handler);
-    });
-  });
-}
-
-function onModeFieldChange(idx, input) {
-  const field = input.dataset.field;
-  let val;
-  if (input.type === 'checkbox') {
-    val = input.checked;
-  } else if (input.type === 'number') {
-    val = input.value === '' ? null : parseFloat(input.value);
-    if (input.value !== '' && isNaN(val)) return;
-  } else if (input.dataset.passthrough === 'true') {
-    // Passthrough textarea — round-trip raw JSON if parseable, else string.
-    try { val = input.value ? JSON.parse(input.value) : null; }
-    catch (_) { val = input.value; }
-  } else {
-    // empty select value → null (Optional[Literal] unset slot)
-    val = input.value === '' ? null : input.value;
-  }
-  perVarModeConfigs[idx][field] = val;
-  // 6.1.4 — range inputs also update the trajectory-plot overlay.
-  if ((varModes[idx] || VARIABLES[idx].mode) === 'range' &&
-      (field === 'min_value' || field === 'max_value')) {
-    applyRangeOverlay(idx);
-  }
-  updateVarStatus(idx);
-  updateSummary();
-  updateExport();
-}
-
-// 6.1.4 — draw min/max reference lines on a range variable's trajectory
-// plot. Input-driven only (v1) — drag-to-edit is a later stretch.
-function applyRangeOverlay(idx) {
-  const el = document.getElementById(`plot-${idx}`);
-  if (!el || !el.data) return;
-  const cfg = perVarModeConfigs[idx] || {};
-  const shapes = [];
-  const mk = (y, label) => ({
-    type: 'line', xref: 'paper', x0: 0, x1: 1,
-    yref: 'y', y0: y, y1: y,
-    line: { color: '#f44336', width: 1.5, dash: 'dash' },
-    name: label,
-  });
-  if (cfg.min_value !== null && cfg.min_value !== undefined && cfg.min_value !== '') {
-    const mn = Number(cfg.min_value);
-    if (Number.isFinite(mn)) shapes.push(mk(mn, 'min'));
-  }
-  if (cfg.max_value !== null && cfg.max_value !== undefined && cfg.max_value !== '') {
-    const mx = Number(cfg.max_value);
-    if (Number.isFinite(mx)) shapes.push(mk(mx, 'max'));
-  }
-  Plotly.relayout(el, { shapes });
-}
-
-function onVarTolChange(e) {
-  const idx = parseInt(e.target.dataset.idx);
-  const val = parseFloat(e.target.value);
-  if (isNaN(val) || val <= 0) return;
-  perVarTolerances[idx] = val;
-  if (Math.abs(val - globalTolerance) > 1e-15) {
-    e.target.classList.add('modified');
-  } else {
-    e.target.classList.remove('modified');
-  }
-  updateVarStatus(idx);
-  updateSummary();
-  updateExport();
-}
-
-// ---- Status updates ----
-// Tracks tube pass/fail per variable (set by updateTube)
-const tubePassState = {};
-
-function computePass(idx) {
-  const v = VARIABLES[idx];
-  const mode = varModes[idx] || v.mode || 'nrmse';
-  const scorer = MODE_SCORERS[mode];
-  if (!scorer) {
-    // event-timing / dominant-frequency — CLI-authoritative, no recompute.
-    return v.passed;
-  }
-  // NRMSE is the special historical case — the tolerance slider writes
-  // perVarTolerances[], so mirror that into the config before scoring so
-  // slider + panel stay in sync.
-  if (mode === 'nrmse') {
-    perVarModeConfigs[idx].tolerance = perVarTolerances[idx];
-  }
-  return scorer(v, perVarModeConfigs[idx], idx).passed;
-}
-
-function updateVarStatus(idx) {
-  const passed = computePass(idx);
-  const row = document.querySelector(`tr[data-idx="${idx}"]`);
-  if (row) {
-    row.querySelector('.var-status').innerHTML = passed
-      ? '<span class="pass">PASS</span>' : '<span class="fail">FAIL</span>';
-  }
-  const plotLabel = document.querySelector(`.var-plot-status[data-idx="${idx}"]`);
-  if (plotLabel) {
-    plotLabel.className = `var-plot-status ${passed ? 'pass' : 'fail'}`;
-    plotLabel.textContent = passed ? 'PASS' : 'FAIL';
-  }
-  // Update tolerance line + fail zone on NRMSE error plot
-  const nrmseEl = document.getElementById(`plot-nrmse-${idx}`);
-  if (nrmseEl && nrmseEl.data) {
-    const tol = perVarTolerances[idx];
-    Plotly.relayout(nrmseEl, {
-      'shapes[0].y0': tol,
-      'shapes[0].y1': tol,
-      'shapes[1].y0': tol,
-    });
-  }
-}
-
-function updateAllStatus() {
-  VARIABLES.forEach((_, idx) => updateVarStatus(idx));
-  updateSummary();
-  updateExport();
-}
-
-function updateSummary() {
-  const nPassed = VARIABLES.reduce((sum, _, idx) => sum + (computePass(idx) ? 1 : 0), 0);
-  const total = VARIABLES.length;
-  const el = document.getElementById('summary-text');
-  if (el) {
-    const cls = nPassed === total ? 'pass' : 'fail';
-    el.className = cls;
-    el.innerHTML = `<strong>${nPassed}</strong> / <strong>${total}</strong> variables passed`;
-  }
-  const nrmseCard = document.getElementById('key-stat-nrmse');
-  if (nrmseCard) {
-    const worst = Math.max(...VARIABLES.map(v => v.nrmse));
-    nrmseCard.querySelector('.value').textContent = worst.toExponential(4);
-  }
-}
-
-// ---- Plotly ----
-const PLOT_CFG = { responsive: true, displaylogo: false, scrollZoom: true };
-
-function makePlotLayout(title) {
-  // Deep-clone layout per plot — Plotly mutates the layout object internally,
-  // so sharing nested objects across plots causes cross-contamination.
-  return {
-    xaxis: { title: 'Time', hoverformat: '.6~g' },
-    yaxis: {
-      title: { text: 'Value', standoff: 10 },
-      tickformat: '.4g',
-      automargin: true,
-      nticks: 6,
-    },
-    margin: { t: 35, b: 45, l: 10, r: 20 },
-    legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)' },
-    hovermode: 'x unified',
-    title: title ? { text: title, font: { size: 13 } } : undefined,
-  };
-}
-
-function renderPlots() {
-  TRAJECTORIES.forEach((traj, idx) => {
-    const el = document.getElementById(`plot-${idx}`);
-    if (!el) return;
-
-    const hasRef = traj.ref_time.length > 0;
-
-    // Build a shared x-grid so all traces align for unified hover.
-    // Use the reference grid as the common basis (matches comparator).
-    // Interpolate actual onto it. Keep original actual data on the element
-    // for tube pass/fail checks that need the raw signal.
-    let commonTime, actOnCommon, refOnCommon;
-    if (hasRef) {
-      commonTime = traj.ref_time;
-      refOnCommon = traj.ref_values;
-      actOnCommon = commonTime.map(t => interpLinear(traj.act_time, traj.act_values, t));
-    } else {
-      commonTime = traj.act_time;
-      actOnCommon = traj.act_values;
-      refOnCommon = [];
-    }
-
-    // Store on element for reuse by error panels, overlays, and tube
-    el._commonTime = commonTime;
-    el._actOnCommon = actOnCommon;
-    el._refOnCommon = refOnCommon;
-
-    // Traces: Actual, Reference, Tube Upper (line), Tube Lower (line), Tube Fill (polygon)
-    const traces = [
-      {
-        x: commonTime, y: actOnCommon,
-        name: 'Actual', type: 'scatter', mode: 'lines',
-        line: { color: '#2196F3', width: 1.5 },
-      },
-    ];
-    if (hasRef) {
-      traces.push({
-        x: commonTime, y: refOnCommon,
-        name: 'Reference', type: 'scatter', mode: 'lines',
-        line: { color: '#FF9800', width: 1.5, dash: 'dash' },
-      });
-    }
-    // Tube upper bound line (for hover readout)
-    traces.push({
-      x: [], y: [],
-      name: 'Tube Upper', type: 'scatter', mode: 'lines',
-      line: { color: 'rgba(76,175,80,0.6)', width: 1 },
-      showlegend: false,
-      visible: false,
-    });
-    // Tube lower bound line (for hover readout)
-    traces.push({
-      x: [], y: [],
-      name: 'Tube Lower', type: 'scatter', mode: 'lines',
-      line: { color: 'rgba(76,175,80,0.6)', width: 1 },
-      showlegend: false,
-      visible: false,
-    });
-    // Tube fill polygon — single trace, fill:'toself', skipped from hover
-    traces.push({
-      x: [], y: [],
-      name: 'Tube Fill', type: 'scatter',
-      fill: 'toself',
-      fillcolor: 'rgba(76,175,80,0.15)',
-      line: { color: 'transparent' },
-      hoverinfo: 'skip',
-      showlegend: true,
-      visible: false,
-    });
-    // Control point markers (for interactive editing)
-    traces.push({
-      x: [], y: [],
-      name: 'CP Upper', type: 'scatter', mode: 'markers',
-      marker: { color: '#4CAF50', size: 10, symbol: 'triangle-up',
-                line: { color: 'white', width: 1 } },
-      hoverinfo: 'text', text: [],
-      showlegend: false, visible: false,
-    });
-    traces.push({
-      x: [], y: [],
-      name: 'CP Lower', type: 'scatter', mode: 'markers',
-      marker: { color: '#FF5722', size: 10, symbol: 'triangle-down',
-                line: { color: 'white', width: 1 } },
-      hoverinfo: 'text', text: [],
-      showlegend: false, visible: false,
-    });
-
-    Plotly.newPlot(el, traces, makePlotLayout(traj.name), PLOT_CFG);
-
-    // 6.1.4 — range mode: overlay horizontal reference lines at min/max.
-    if ((varModes[idx] || VARIABLES[idx].mode) === 'range') {
-      applyRangeOverlay(idx);
-    }
-
-    // --- Error panels (only if reference exists) ---
-    const absEl = document.getElementById(`plot-abserr-${idx}`);
-    const nrmseEl = document.getElementById(`plot-nrmse-${idx}`);
-
-    if (hasRef && absEl && nrmseEl) {
-      const signedError = actOnCommon.map((a, i) => a - refOnCommon[i]);
-      const absError = signedError.map(e => Math.abs(e));
-
-      const refMin = Math.min(...refOnCommon);
-      const refMax = Math.max(...refOnCommon);
-      const range = refMax - refMin;
-      const nrmseError = range > 1e-15
-        ? absError.map(e => e / range)
-        : absError;
-
-      let worstIdx = 0;
-      for (let i = 1; i < absError.length; i++) {
-        if (absError[i] > absError[worstIdx]) worstIdx = i;
-      }
-
-      const errYAxis = { tickformat: '.4g', automargin: true, nticks: 4 };
-
-      Plotly.newPlot(absEl, [{
-        x: commonTime, y: absError, name: 'Abs Error', type: 'scatter', mode: 'lines',
-        line: { color: '#2196F3', width: 1 },
-      }, {
-        x: [commonTime[worstIdx], commonTime[worstIdx]],
-        y: [0, absError[worstIdx]],
-        name: 'Max Error', type: 'scatter', mode: 'lines',
-        line: { color: '#2196F3', width: 1, dash: 'dot' },
-      }], {
-        yaxis: { ...errYAxis, title: { text: 'Abs Error', standoff: 10 } },
-        xaxis: { title: '' },
-        margin: { t: 5, b: 25, l: 10, r: 20 },
-        legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)', font: { size: 10 } },
-        hovermode: 'x unified',
-      }, PLOT_CFG);
-
-      const tol = perVarTolerances[idx];
-      const avgNrmse = nrmseError.reduce((s, v) => s + v, 0) / nrmseError.length;
-      const nrmseMax = Math.max(...nrmseError, tol);
-      const tStart = commonTime[0];
-      const tEnd = commonTime[commonTime.length - 1];
-      Plotly.newPlot(nrmseEl, [{
-        x: commonTime, y: nrmseError, name: 'NRMSE', type: 'scatter', mode: 'lines',
-        line: { color: '#2196F3', width: 1 },
-      }, {
-        x: [commonTime[worstIdx], commonTime[worstIdx]],
-        y: [0, nrmseError[worstIdx]],
-        name: 'Max', type: 'scatter', mode: 'lines',
-        line: { color: '#9C27B0', width: 1, dash: 'dot' },
-        showlegend: false,
-      }], {
-        yaxis: { ...errYAxis, title: { text: 'NRMSE', standoff: 10 } },
-        xaxis: { title: 'Time', hoverformat: '.6~g' },
-        margin: { t: 5, b: 35, l: 10, r: 20 },
-        legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)', font: { size: 10 } },
-        hovermode: 'x unified',
-        shapes: [{
-          type: 'line', x0: tStart, x1: tEnd,
-          y0: tol, y1: tol,
-          line: { color: 'gray', width: 1, dash: 'dash' },
-        }, {
-          type: 'rect', xref: 'x', yref: 'y',
-          x0: tStart, x1: tEnd, y0: tol, y1: nrmseMax * 1.1,
-          fillcolor: '#f44336', opacity: 0.08,
-          line: { width: 0 },
-          layer: 'below',
-        }, {
-          type: 'line', x0: tStart, x1: tEnd,
-          y0: avgNrmse, y1: avgNrmse,
-          line: { color: '#4CAF50', width: 1, dash: 'dashdot' },
-        }],
-        annotations: [{
-          x: tEnd, y: tol,
-          text: 'tolerance', showarrow: false,
-          font: { size: 9, color: 'gray' },
-          xanchor: 'right', yanchor: 'bottom',
-        }, {
-          x: tEnd, y: avgNrmse,
-          text: `avg ${avgNrmse.toExponential(2)}`, showarrow: false,
-          font: { size: 9, color: '#4CAF50' },
-          xanchor: 'right', yanchor: 'top',
-        }],
-      }, PLOT_CFG);
-
-      // Store for error overlay
-      el._signedError = signedError;
-      el._absError = absError;
-      el._nrmseError = nrmseError;
-    } else {
-      if (absEl) absEl.style.display = 'none';
-      if (nrmseEl) nrmseEl.style.display = 'none';
-    }
-
-    // Status label
-    const passed = computePass(idx);
-    const plotLabel = document.querySelector(`.var-plot-status[data-idx="${idx}"]`);
-    if (plotLabel) {
-      plotLabel.className = `var-plot-status ${passed ? 'pass' : 'fail'}`;
-      plotLabel.textContent = passed ? 'PASS' : 'FAIL';
-    }
-  });
-}
-
-// ---- Error overlay dropdown ----
-const overlayState = {};  // idx -> current mode ('none', 'error', 'abs_error', 'nrmse')
-
-function setErrorOverlay(idx, mode) {
-  const el = document.getElementById(`plot-${idx}`);
-  if (!el || !el._absError) return;
-
-  overlayState[idx] = mode;
-
-  // Remove any existing overlay trace by name
-  const overlayNames = ['Error', 'Abs Error', 'NRMSE'];
-  for (let i = el.data.length - 1; i >= 0; i--) {
-    if (overlayNames.includes(el.data[i].name)) {
-      Plotly.deleteTraces(el, i);
-    }
-  }
-
-  if (mode === 'none') {
-    Plotly.relayout(el, { yaxis2: null });
-    return;
-  }
-
-  let yData, label;
-  if (mode === 'error') { yData = el._signedError; label = 'Error'; }
-  else if (mode === 'abs_error') { yData = el._absError; label = 'Abs Error'; }
-  else if (mode === 'nrmse') { yData = el._nrmseError; label = 'NRMSE'; }
-
-  Plotly.addTraces(el, {
-    x: el._commonTime, y: yData,
-    name: label, type: 'scatter', mode: 'lines',
-    line: { color: '#f44336', width: 1 },
-    opacity: 0.5,
-    yaxis: 'y2',
-  });
-  Plotly.relayout(el, {
-    yaxis2: {
-      title: { text: label, font: { color: '#f44336', size: 11 } },
-      tickformat: '.4g', automargin: true, nticks: 4,
-      overlaying: 'y', side: 'right', showgrid: false,
-      tickfont: { color: '#f44336', size: 10 },
-    },
-  });
-}
-
-// ---- Tube editing ----
-// tubeData[idx] = { points: [{time, upper, lower, upperMode, lowerMode}],
-//                   interpolation, widthMode, synced, minWidth }
-// upperMode/lowerMode only used in unsynced mode — allows per-side abs/rel
-const tubeData = {};
-const varModes = VARIABLES.map(v => v.mode || 'nrmse');
-
-function setVarMode(idx, mode) {
-  varModes[idx] = mode;
-  const editor = document.getElementById(`tube-editor-${idx}`);
-  if (!editor) return;
-
-  if (mode === 'tube') {
-    editor.style.display = '';
-    if (!tubeData[idx]) {
-      const traj = TRAJECTORIES[idx];
-      const tStart = traj.ref_time.length > 0 ? traj.ref_time[0] : 0;
-      const tEnd = traj.ref_time.length > 0 ? traj.ref_time[traj.ref_time.length - 1] : 1;
-      tubeData[idx] = {
-        points: [
-          { time: tStart, upper: 0, lower: 0, upperMode: 'rel', lowerMode: 'rel' },
-          { time: tEnd, upper: 0, lower: 0, upperMode: 'rel', lowerMode: 'rel' },
-        ],
-        interpolation: 'linear',
-        widthMode: 'rel',
-        synced: true,
-        minWidth: 0,
-      };
-      seedTubeDefaults(idx);
-    }
-    renderTubeTable(idx);
-    updateTube(idx);
-    attachTubePlotEdit(idx);
-  } else {
-    editor.style.display = 'none';
-    delete tubePassState[idx];
-    removeTubeTraces(idx);
-    updateVarStatus(idx);
-    updateSummary();
-    updateExport();
-  }
-
-  // Disable tolerance input when in tube mode (tube has its own pass/fail)
-  const tolInput = document.querySelector(`.var-tol-input[data-idx="${idx}"]`);
-  if (tolInput) {
-    tolInput.disabled = (mode === 'tube');
-    tolInput.title = mode === 'tube'
-      ? 'Tolerance not used in tube mode — pass/fail is determined by tube bounds'
-      : 'NRMSE tolerance for this variable';
-  }
-
-  const row = document.querySelector(`tr[data-idx="${idx}"]`);
-  if (row) {
-    const cells = row.querySelectorAll('td');
-    if (cells[2]) cells[2].textContent = mode;
-  }
-}
-
-function refValueAt(idx, t) {
-  const traj = TRAJECTORIES[idx];
-  if (!traj || !traj.ref_time.length) return 0;
-  return interpLinear(traj.ref_time, traj.ref_values, t);
-}
-
-function roundSig(val, digits) {
-  if (val === 0) return 0;
-  const d = Math.ceil(Math.log10(Math.abs(val)));
-  const pow = Math.pow(10, digits - d);
-  return Math.round(val * pow) / pow;
-}
-
-function seedTubeDefaults(idx) {
-  const td = tubeData[idx];
-  const v = VARIABLES[idx];
-  const sigRange = v.signal_range || 1.0;
-  const fallbackBand = roundSig(sigRange * 0.05, 3);
-  td.points.forEach(pt => {
-    const rv = refValueAt(idx, pt.time);
-    const rvAbs = Math.abs(rv);
-    if (td.widthMode === 'rel') {
-      pt.upper = 0.05;
-      pt.lower = 0.05;
-    } else if (td.widthMode === 'absolute') {
-      // Literal y-values: ref ± 5%
-      const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
-      pt.upper = roundSig(rv + band, 4);
-      pt.lower = roundSig(rv - band, 4);
-    } else {
-      // band mode: offset in signal units
-      const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
-      pt.upper = band;
-      pt.lower = band;
-    }
-    pt.upperMode = td.widthMode;
-    pt.lowerMode = td.widthMode;
-  });
-}
-
-function tubeWidthModeChanged(idx, mode) {
-  const td = tubeData[idx];
-  const oldMode = td.widthMode;
-  td.widthMode = mode;
-
-  if (oldMode !== mode) {
-    seedTubeDefaults(idx);
-  }
-  renderTubeTable(idx);
-  updateTube(idx);
-}
-
-function tubeSyncChanged(idx, synced) {
-  const td = tubeData[idx];
-  td.synced = synced;
-
-  // Disable/enable global width mode selector
-  const widthSel = document.querySelector(`.tube-width-mode[data-idx="${idx}"]`);
-  if (widthSel) widthSel.disabled = !synced;
-
-  if (synced) {
-    // Sync lower to upper, reset per-side modes to global
-    td.points.forEach(pt => {
-      pt.lower = pt.upper;
-      pt.upperMode = td.widthMode;
-      pt.lowerMode = td.widthMode;
-    });
-  } else {
-    // Initialize per-side modes from global
-    td.points.forEach(pt => {
-      if (!pt.upperMode) pt.upperMode = td.widthMode;
-      if (!pt.lowerMode) pt.lowerMode = td.widthMode;
-    });
-  }
-  renderTubeTable(idx);
-  updateTube(idx);
-}
-
-function renderTubeTable(idx) {
-  const table = document.getElementById(`tube-table-${idx}`);
-  if (!table) return;
-  const td = tubeData[idx];
-  const unitLabel = td.widthMode === 'rel' ? 'fraction'
-    : td.widthMode === 'absolute' ? 'y-value' : 'signal units';
-  const step = td.widthMode === 'rel' ? '0.001' : 'any';
-
-  table.innerHTML = '';
-  const header = table.insertRow();
-  if (td.synced && td.widthMode !== 'absolute') {
-    header.innerHTML = `<th>Time</th><th>Width (${unitLabel})</th><th></th>`;
-  } else if (td.synced && td.widthMode === 'absolute') {
-    header.innerHTML = `<th>Time</th><th>Upper (${unitLabel})</th><th>Lower (${unitLabel})</th><th></th>`;
-  } else {
-    header.innerHTML = `<th>Time</th><th>Upper</th><th style="font-size:0.8em"></th><th>Lower</th><th style="font-size:0.8em"></th><th></th>`;
-  }
-
-  td.points.forEach((pt, ptIdx) => {
-    const row = table.insertRow();
-    if (td.synced && td.widthMode !== 'absolute') {
-      row.innerHTML = `
-        <td><input type="number" step="any" value="${pt.time}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'time', this.value)"></td>
-        <td><input type="number" step="${step}" min="0" value="${pt.upper}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'width', this.value)"></td>
-        <td><button class="btn btn-remove" onclick="removeTubePoint(${idx}, ${ptIdx})">x</button></td>
-      `;
-    } else if (td.synced && td.widthMode === 'absolute') {
-      row.innerHTML = `
-        <td><input type="number" step="any" value="${pt.time}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'time', this.value)"></td>
-        <td><input type="number" step="any" value="${pt.upper}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'upper', this.value)"></td>
-        <td><input type="number" step="any" value="${pt.lower}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'lower', this.value)"></td>
-        <td><button class="btn btn-remove" onclick="removeTubePoint(${idx}, ${ptIdx})">x</button></td>
-      `;
-    } else {
-      const uMode = pt.upperMode || td.widthMode;
-      const lMode = pt.lowerMode || td.widthMode;
-      const uStep = uMode === 'rel' ? '0.001' : 'any';
-      const lStep = lMode === 'rel' ? '0.001' : 'any';
-      row.innerHTML = `
-        <td><input type="number" step="any" value="${pt.time}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'time', this.value)"></td>
-        <td><input type="number" step="${uStep}" value="${pt.upper}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'upper', this.value)"></td>
-        <td><select class="tube-side-mode" style="font-size:0.8em; width:5.5em" onchange="tubeSideModeChanged(${idx}, ${ptIdx}, 'upper', this.value)">
-          <option value="band"${uMode === 'band' ? ' selected' : ''}>band</option>
-          <option value="rel"${uMode === 'rel' ? ' selected' : ''}>rel</option>
-          <option value="absolute"${uMode === 'absolute' ? ' selected' : ''}>abs</option>
-        </select></td>
-        <td><input type="number" step="${lStep}" value="${pt.lower}" oninput="tubePointChanged(${idx}, ${ptIdx}, 'lower', this.value)"></td>
-        <td><select class="tube-side-mode" style="font-size:0.8em; width:5.5em" onchange="tubeSideModeChanged(${idx}, ${ptIdx}, 'lower', this.value)">
-          <option value="band"${lMode === 'band' ? ' selected' : ''}>band</option>
-          <option value="rel"${lMode === 'rel' ? ' selected' : ''}>rel</option>
-          <option value="absolute"${lMode === 'absolute' ? ' selected' : ''}>abs</option>
-        </select></td>
-        <td><button class="btn btn-remove" onclick="removeTubePoint(${idx}, ${ptIdx})">x</button></td>
-      `;
-    }
-  });
-
-  // Sync UI controls
-  const widthSel = document.querySelector(`.tube-width-mode[data-idx="${idx}"]`);
-  if (widthSel) widthSel.value = td.widthMode;
-  const syncSel = document.querySelector(`.tube-sync[data-idx="${idx}"]`);
-  if (syncSel) syncSel.value = td.synced.toString();
-  const interpSel = document.querySelector(`.tube-interp[data-idx="${idx}"]`);
-  if (interpSel) interpSel.value = td.interpolation;
-  const minWInput = document.querySelector(`.tube-min-width[data-idx="${idx}"]`);
-  if (minWInput) minWInput.value = td.minWidth;
-}
-
-function addTubePoint(idx) {
-  const td = tubeData[idx];
-  const traj = TRAJECTORIES[idx];
-  let newTime;
-  if (td.points.length >= 2) {
-    const last = td.points[td.points.length - 1];
-    const prev = td.points[td.points.length - 2];
-    newTime = (prev.time + last.time) / 2;
-  } else {
-    newTime = traj.ref_time.length > 0 ? traj.ref_time[traj.ref_time.length - 1] : 1;
-  }
-  // Seed new point with sensible defaults based on current mode
-  const v = VARIABLES[idx];
-  const sigRange = v.signal_range || 1.0;
-  const fallbackBand = roundSig(sigRange * 0.05, 3);
-  const rv = refValueAt(idx, newTime);
-  const rvAbs = Math.abs(rv);
-  const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
-  let upper, lower;
-  if (td.widthMode === 'rel') {
-    upper = 0.05;
-    lower = 0.05;
-  } else if (td.widthMode === 'absolute') {
-    upper = roundSig(rv + band, 4);
-    lower = roundSig(rv - band, 4);
-  } else {
-    upper = band;
-    lower = band;
-  }
-  td.points.push({
-    time: newTime, upper, lower,
-    upperMode: td.widthMode, lowerMode: td.widthMode,
-  });
-  td.points.sort((a, b) => a.time - b.time);
-  renderTubeTable(idx);
-  updateTube(idx);
-}
-
-function removeTubePoint(idx, ptIdx) {
-  if (tubeData[idx].points.length <= 1) return;
-  tubeData[idx].points.splice(ptIdx, 1);
-  renderTubeTable(idx);
-  updateTube(idx);
-}
-
-function tubePointChanged(idx, ptIdx, field, value) {
-  const val = parseFloat(value);
-  if (isNaN(val)) return;
-  if (field !== 'time' && val < 0) return;
-  const td = tubeData[idx];
-  const pt = td.points[ptIdx];
-  if (!pt) return;
-  if (field === 'time') {
-    pt.time = val;
-  } else if (field === 'width') {
-    pt.upper = val;
-    pt.lower = val;
-  } else if (field === 'upper') {
-    pt.upper = val;
-  } else if (field === 'lower') {
-    pt.lower = val;
-  }
-  // Only re-sort and rebuild table on time changes (which shift indices)
-  if (field === 'time') {
-    td.points.sort((a, b) => a.time - b.time);
-    renderTubeTable(idx);
-  }
-  updateTube(idx);
-}
-
-function tubeSideModeChanged(idx, ptIdx, side, mode) {
-  const td = tubeData[idx];
-  const pt = td.points[ptIdx];
-  const field = side === 'upper' ? 'upper' : 'lower';
-  const modeField = side === 'upper' ? 'upperMode' : 'lowerMode';
-  const oldMode = pt[modeField] || td.widthMode;
-  const isUpper = side === 'upper';
-
-  if (oldMode !== mode) {
-    const rv = refValueAt(idx, pt.time);
-    const rvAbs = Math.abs(rv);
-    const v = VARIABLES[idx];
-    const scale = rvAbs > 1e-15 ? rvAbs : (v.signal_range || 1.0);
-
-    // Convert: old value → absolute y-value → new mode value
-    // Step 1: get the absolute y-bound from the old representation
-    let yBound;
-    if (oldMode === 'absolute') {
-      yBound = pt[field];
-    } else if (oldMode === 'rel') {
-      const offset = pt[field] * rvAbs;
-      yBound = isUpper ? rv + offset : rv - offset;
-    } else {
-      // band
-      yBound = isUpper ? rv + pt[field] : rv - pt[field];
-    }
-
-    // Step 2: convert absolute y-bound to new representation
-    if (mode === 'absolute') {
-      pt[field] = roundSig(yBound, 4);
-    } else if (mode === 'rel') {
-      const offset = isUpper ? yBound - rv : rv - yBound;
-      pt[field] = roundSig(scale > 1e-15 ? offset / scale : 0.05, 3);
-    } else {
-      // band
-      pt[field] = roundSig(isUpper ? yBound - rv : rv - yBound, 3);
-    }
-  }
-  pt[modeField] = mode;
-  renderTubeTable(idx);
-  updateTube(idx);
-}
-
-// Resolve a single control point to absolute y-bounds {upper, lower}.
-function resolvePoint(idx, pt) {
-  const td = tubeData[idx];
-  const globalMode = td.widthMode;
-  const rv = refValueAt(idx, pt.time);
-  const rvAbs = Math.abs(rv);
-  const uMode = td.synced ? globalMode : (pt.upperMode || globalMode);
-  const lMode = td.synced ? globalMode : (pt.lowerMode || globalMode);
-
-  let uBound, lBound;
-  if (uMode === 'absolute') {
-    uBound = pt.upper;
-  } else if (uMode === 'rel') {
-    let w = pt.upper * rvAbs;
-    if (td.minWidth > 0) w = Math.max(w, td.minWidth);
-    uBound = rv + w;
-  } else {
-    let w = pt.upper;
-    if (td.minWidth > 0) w = Math.max(w, td.minWidth);
-    uBound = rv + w;
-  }
-
-  if (lMode === 'absolute') {
-    lBound = pt.lower;
-  } else if (lMode === 'rel') {
-    let w = pt.lower * rvAbs;
-    if (td.minWidth > 0) w = Math.max(w, td.minWidth);
-    lBound = rv - w;
-  } else {
-    let w = pt.lower;
-    if (td.minWidth > 0) w = Math.max(w, td.minWidth);
-    lBound = rv - w;
-  }
-
-  return { upper: uBound, lower: lBound };
-}
-
-// Reverse-convert an absolute y-value back into the point's mode representation.
-function setPointFromAbsoluteY(idx, pt, bound, yAbs) {
-  const td = tubeData[idx];
-  const globalMode = td.widthMode;
-  const rv = refValueAt(idx, pt.time);
-  const rvAbs = Math.abs(rv);
-  const isUpper = bound === 'upper';
-  const modeField = isUpper ? 'upperMode' : 'lowerMode';
-  const mode = td.synced ? globalMode : (pt[modeField] || globalMode);
-
-  if (mode === 'absolute') {
-    pt[bound] = roundSig(yAbs, 4);
-  } else if (mode === 'rel') {
-    const offset = isUpper ? yAbs - rv : rv - yAbs;
-    pt[bound] = rvAbs > 1e-15 ? roundSig(Math.max(offset / rvAbs, 0), 3) : 0.05;
-  } else {
-    const offset = isUpper ? yAbs - rv : rv - yAbs;
-    pt[bound] = roundSig(Math.max(offset, 0), 3);
-  }
-  if (td.synced && bound === 'upper') pt.lower = pt.upper;
-  if (td.synced && bound === 'lower') pt.upper = pt.lower;
-}
-
-function updateTube(idx) {
-  const td = tubeData[idx];
-  const interpSel = document.querySelector(`.tube-interp[data-idx="${idx}"]`);
-  if (interpSel) td.interpolation = interpSel.value;
-  const minWInput = document.querySelector(`.tube-min-width[data-idx="${idx}"]`);
-  if (minWInput) td.minWidth = parseFloat(minWInput.value) || 0;
-
-  const traj = TRAJECTORIES[idx];
-  if (!traj.ref_time.length) return;
-
-  const refTime = traj.ref_time;
-  const pts = [...td.points].sort((a, b) => a.time - b.time);
-
-  // Resolve each control point to absolute y-bounds
-  const resolvedUpper = [];
-  const resolvedLower = [];
-  const ctrlTimes = [];
-  for (const pt of pts) {
-    const resolved = resolvePoint(idx, pt);
-    ctrlTimes.push(pt.time);
-    resolvedUpper.push(resolved.upper);
-    resolvedLower.push(resolved.lower);
-  }
-
-  // Helper: interpolate bounds onto a time grid
-  function interpBounds(grid) {
-    const upper = [], lower = [];
-    for (const t of grid) {
-      if (td.interpolation === 'constant') {
-        upper.push(interpStep(ctrlTimes, resolvedUpper, t));
-        lower.push(interpStep(ctrlTimes, resolvedLower, t));
-      } else {
-        upper.push(interpLinear(ctrlTimes, resolvedUpper, t));
-        lower.push(interpLinear(ctrlTimes, resolvedLower, t));
-      }
-    }
-    return { upper, lower };
-  }
-
-  // Pass/fail: check on the reference grid only (matches backend comparator)
-  const refBounds = interpBounds(refTime);
-  let nInside = 0, worstViolation = 0, worstTime = 0;
-  for (let i = 0; i < refTime.length; i++) {
-    const actVal = interpLinear(traj.act_time, traj.act_values, refTime[i]);
-    if (actVal >= refBounds.lower[i] && actVal <= refBounds.upper[i]) {
-      nInside++;
-    } else {
-      const violation = Math.max(actVal - refBounds.upper[i], refBounds.lower[i] - actVal);
-      if (violation > worstViolation) { worstViolation = violation; worstTime = refTime[i]; }
-    }
-  }
-
-  // Rendering: merge ref grid + control point times so tube lines pass through markers
-  const renderTimeSet = new Set(refTime);
-  for (const t of ctrlTimes) renderTimeSet.add(t);
-  const renderTime = Array.from(renderTimeSet).sort((a, b) => a - b);
-  const renderBounds = interpBounds(renderTime);
-  const tubeUpper = renderBounds.upper;
-  const tubeLower = renderBounds.lower;
-  const pctInside = (nInside / refTime.length * 100).toFixed(1);
-  const passed = nInside === refTime.length;
-  tubePassState[idx] = passed;
-
-  const statusEl = document.getElementById(`tube-status-${idx}`);
-  if (statusEl) {
-    statusEl.innerHTML = passed
-      ? `<span class="pass">PASS</span> (${pctInside}% inside)`
-      : `<span class="fail">FAIL</span> (${pctInside}% inside, worst: ${worstViolation.toExponential(2)} at t=${worstTime.toFixed(1)})`;
-  }
-
-  // Use the already-computed refTime arrays for rendering (correct for hover)
-  renderTubeOnPlot(idx, renderTime, tubeUpper, tubeLower);
-  renderCPMarkers(idx);
-
-  const row = document.querySelector(`tr[data-idx="${idx}"]`);
-  if (row) {
-    row.querySelector('.var-status').innerHTML = passed
-      ? '<span class="pass">PASS</span>' : '<span class="fail">FAIL</span>';
-    const cells = row.querySelectorAll('td');
-    if (cells[2]) cells[2].textContent = `tube (${pctInside}% in)`;
-  }
-  const plotLabel = document.querySelector(`.var-plot-status[data-idx="${idx}"]`);
-  if (plotLabel) {
-    plotLabel.className = `var-plot-status ${passed ? 'pass' : 'fail'}`;
-    plotLabel.textContent = passed ? 'PASS' : 'FAIL';
-  }
-
-  updateSummary();
-  updateExport();
-}
-
-function findTraceIndex(el, name) {
-  for (let i = 0; i < el.data.length; i++) {
-    if (el.data[i].name === name) return i;
-  }
-  return -1;
-}
-
-function renderTubeOnPlot(idx, timeArr, tubeUpper, tubeLower) {
-  const el = document.getElementById(`plot-${idx}`);
-  if (!el || !el.data) return;
-  const upperIdx = findTraceIndex(el, 'Tube Upper');
-  const lowerIdx = findTraceIndex(el, 'Tube Lower');
-  const fillIdx = findTraceIndex(el, 'Tube Fill');
-  if (upperIdx < 0 || lowerIdx < 0 || fillIdx < 0) return;
-
-  // Build closed polygon for the fill: upper forward, then lower reversed
-  const polyX = [...timeArr, ...timeArr.slice().reverse()];
-  const polyY = [...tubeUpper, ...tubeLower.slice().reverse()];
-
-  // Update all three tube traces in one call
-  Plotly.restyle(el, {
-    x: [timeArr, timeArr, polyX],
-    y: [tubeUpper, tubeLower, polyY],
-    visible: [true, true, true],
-  }, [upperIdx, lowerIdx, fillIdx]);
-}
-
-function removeTubeTraces(idx) {
-  const el = document.getElementById(`plot-${idx}`);
-  if (!el || !el.data) return;
-  const names = ['Tube Upper', 'Tube Lower', 'Tube Fill', 'CP Upper', 'CP Lower'];
-  const indices = names.map(n => findTraceIndex(el, n)).filter(i => i >= 0);
-  if (indices.length > 0) {
-    Plotly.restyle(el, {
-      x: indices.map(() => []),
-      y: indices.map(() => []),
-      visible: indices.map(() => false),
-    }, indices);
-  }
-  detachTubePlotEdit(idx);
-}
-
-function renderCPMarkers(idx) {
-  const el = document.getElementById(`plot-${idx}`);
-  if (!el || !el.data) return;
-  const td = tubeData[idx];
-  if (!td) return;
-  const cpUpperIdx = findTraceIndex(el, 'CP Upper');
-  const cpLowerIdx = findTraceIndex(el, 'CP Lower');
-  if (cpUpperIdx < 0 || cpLowerIdx < 0) return;
-
-  const pts = td.points;
-  const times = pts.map(p => p.time);
-  const upperY = [], lowerY = [], upperText = [], lowerText = [];
-  for (const pt of pts) {
-    const r = resolvePoint(idx, pt);
-    upperY.push(r.upper);
-    lowerY.push(r.lower);
-    const tFmt = Number(pt.time.toPrecision(6));
-    upperText.push(`t=${tFmt}, upper=${r.upper.toPrecision(4)}`);
-    lowerText.push(`t=${tFmt}, lower=${r.lower.toPrecision(4)}`);
-  }
-  Plotly.restyle(el, {
-    x: [times, times],
-    y: [upperY, lowerY],
-    text: [upperText, lowerText],
-    visible: [true, true],
-  }, [cpUpperIdx, cpLowerIdx]);
-}
-
-// ---- Interactive tube editing on plot (Shift+click/drag/right-click) ----
-const tubePlotEditState = {};
-let rafPending = {};
-
-function attachTubePlotEdit(idx) {
-  const el = document.getElementById(`plot-${idx}`);
-  if (!el || tubePlotEditState[idx]) return;
-
-  const state = { dragging: null, handlers: null };
-
-  function pxToData(evt) {
-    const xa = el._fullLayout.xaxis;
-    const ya = el._fullLayout.yaxis;
-    const plotArea = el.querySelector('.nsewdrag');
-    const rect = plotArea.getBoundingClientRect();
-    return {
-      x: xa.p2d(evt.clientX - rect.left),
-      y: ya.p2d(evt.clientY - rect.top),
+(function initLeafState() {
+  walkLeaves(TREE_VIEW, (leaf) => {
+    leafState[leaf.path] = {
+      params: Object.assign({}, leaf.params || {}, leaf.mode_values || {}),
+      window: Object.assign({}, leaf.window || {}),
+      visible: true,
+      original_params: Object.assign({}, leaf.params || {}),
+      original_window: Object.assign({}, leaf.window || {}),
     };
-  }
-
-  function findNearestCP(dataX, dataY) {
-    const xa = el._fullLayout.xaxis;
-    const ya = el._fullLayout.yaxis;
-    const td = tubeData[idx];
-    let best = null;
-    td.points.forEach((pt, i) => {
-      const r = resolvePoint(idx, pt);
-      for (const bound of ['upper', 'lower']) {
-        const yVal = r[bound];
-        const dxPx = xa.d2p(pt.time) - xa.d2p(dataX);
-        const dyPx = ya.d2p(yVal) - ya.d2p(dataY);
-        const dist = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
-        if (!best || dist < best.dist) {
-          best = { bound, ptIdx: i, pt, dist };
-        }
-      }
-    });
-    return best;
-  }
-
-  function onMouseDown(evt) {
-    if (!evt.shiftKey || evt.button !== 0) return;
-    // Block Plotly's drag/zoom for all Shift+left-mousedown
-    evt.stopPropagation();
-    evt.stopImmediatePropagation();
-    evt.preventDefault();
-    const d = pxToData(evt);
-    const nearest = findNearestCP(d.x, d.y);
-    if (nearest && nearest.dist < 15) {
-      state.dragging = { bound: nearest.bound, pt: nearest.pt };
-    } else {
-      // Remember click position for add-on-mouseup
-      state.clickStart = d;
-    }
-  }
-
-  function onMouseMove(evt) {
-    if (!state.dragging) {
-      // If mouse moves significantly, cancel the click-to-add
-      if (state.clickStart) {
-        const d = pxToData(evt);
-        const dx = Math.abs(d.x - state.clickStart.x);
-        const dy = Math.abs(d.y - state.clickStart.y);
-        if (dx > 1e-10 || dy > 1e-10) state.clickStart = null;
-      }
-      return;
-    }
-    evt.preventDefault();
-    const d = pxToData(evt);
-    const { bound, pt } = state.dragging;
-    const traj = TRAJECTORIES[idx];
-    const tMin = traj.ref_time[0];
-    const tMax = traj.ref_time[traj.ref_time.length - 1];
-    pt.time = roundSig(Math.max(tMin, Math.min(tMax, d.x)), 6);
-    setPointFromAbsoluteY(idx, pt, bound, d.y);
-    tubeData[idx].points.sort((a, b) => a.time - b.time);
-    if (!rafPending[idx]) {
-      rafPending[idx] = requestAnimationFrame(() => {
-        updateTube(idx);
-        renderTubeTable(idx);
-        delete rafPending[idx];
-      });
-    }
-  }
-
-  function onMouseUp(evt) {
-    if (state.dragging) {
-      state.dragging = null;
-      updateTube(idx);
-      renderTubeTable(idx);
-      return;
-    }
-    // Shift+click with no drag = add new point
-    if (state.clickStart) {
-      const clickX = state.clickStart.x, clickY = state.clickStart.y;
-      state.clickStart = null;
-      addTubePointFromClick(idx, clickX, clickY);
-    }
-  }
-
-  function addTubePointFromClick(varIdx, clickX, clickY) {
-    clickX = roundSig(clickX, 6);
-    const td = tubeData[varIdx];
-    const pts = [...td.points].sort((a, b) => a.time - b.time);
-    const ctrlTimes = pts.map(p => p.time);
-    const rU = pts.map(p => resolvePoint(varIdx, p).upper);
-    const rL = pts.map(p => resolvePoint(varIdx, p).lower);
-    const upperAtT = interpLinear(ctrlTimes, rU, clickX);
-    const lowerAtT = interpLinear(ctrlTimes, rL, clickX);
-    const targetBound = Math.abs(clickY - upperAtT) <= Math.abs(clickY - lowerAtT) ? 'upper' : 'lower';
-
-    const v = VARIABLES[varIdx];
-    const sigRange = v.signal_range || 1.0;
-    const fallbackBand = roundSig(sigRange * 0.05, 3);
-    const rv = refValueAt(varIdx, clickX);
-    const rvAbs = Math.abs(rv);
-    const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
-    let upper, lower;
-    if (td.widthMode === 'rel') { upper = 0.05; lower = 0.05; }
-    else if (td.widthMode === 'absolute') { upper = roundSig(rv + band, 4); lower = roundSig(rv - band, 4); }
-    else { upper = band; lower = band; }
-
-    const newPt = {
-      time: clickX, upper, lower,
-      upperMode: td.widthMode, lowerMode: td.widthMode,
-    };
-    setPointFromAbsoluteY(varIdx, newPt, targetBound, clickY);
-    td.points.push(newPt);
-    td.points.sort((a, b) => a.time - b.time);
-    renderTubeTable(varIdx);
-    updateTube(varIdx);
-  }
-
-  function onContextMenu(evt) {
-    if (!evt.shiftKey) return;
-    const d = pxToData(evt);
-    const nearest = findNearestCP(d.x, d.y);
-    if (nearest && nearest.dist < 15) {
-      evt.preventDefault();
-      const td = tubeData[idx];
-      if (td.points.length <= 1) return;
-      td.points.splice(nearest.ptIdx, 1);
-      renderTubeTable(idx);
-      updateTube(idx);
-    }
-  }
-
-  // Use capture phase on the plot element itself — fires before Plotly's
-  // handlers, so stopPropagation prevents Plotly from seeing Shift+mouse events.
-  el.addEventListener('mousedown', onMouseDown, true);
-  el.addEventListener('contextmenu', onContextMenu, true);
-  document.addEventListener('mousemove', onMouseMove);
-  document.addEventListener('mouseup', onMouseUp);
-
-  state.handlers = { onMouseDown, onMouseMove, onMouseUp, onContextMenu };
-  tubePlotEditState[idx] = state;
-}
-
-function detachTubePlotEdit(idx) {
-  const state = tubePlotEditState[idx];
-  if (!state) return;
-  const el = document.getElementById(`plot-${idx}`);
-
-  if (state.handlers) {
-    const h = state.handlers;
-    if (el) {
-      el.removeEventListener('mousedown', h.onMouseDown, true);
-      el.removeEventListener('contextmenu', h.onContextMenu, true);
-    }
-    document.removeEventListener('mousemove', h.onMouseMove);
-    document.removeEventListener('mouseup', h.onMouseUp);
-  }
-  delete tubePlotEditState[idx];
-}
-
-// Linear interpolation helper
-function interpLinear(xArr, yArr, x) {
-  if (x <= xArr[0]) return yArr[0];
-  if (x >= xArr[xArr.length - 1]) return yArr[yArr.length - 1];
-  // Binary search
-  let lo = 0, hi = xArr.length - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (xArr[mid] <= x) lo = mid; else hi = mid;
-  }
-  const t = (x - xArr[lo]) / (xArr[hi] - xArr[lo]);
-  return yArr[lo] + t * (yArr[hi] - yArr[lo]);
-}
-
-// Stepwise (hold-previous) interpolation helper
-function interpStep(xArr, yArr, x) {
-  if (xArr.length === 0) return 0;
-  if (x <= xArr[0]) return yArr[0];
-  let val = yArr[0];
-  for (let i = 0; i < xArr.length; i++) {
-    if (xArr[i] <= x) val = yArr[i]; else break;
-  }
-  return val;
-}
-
-function renderDiagPlots() {
-  DIAG_TRAJECTORIES.forEach((traj, idx) => {
-    const el = document.getElementById(`diag-plot-${idx}`);
-    if (!el) return;
-    const traces = [{
-      x: traj.act_time, y: traj.act_values,
-      name: 'Actual', type: 'scatter', mode: 'lines',
-      line: { color: '#2196F3', width: 1.5 },
-    }];
-    if (traj.ref_time.length > 0 && traj.ref_values.length > 0) {
-      traces.push({
-        x: traj.ref_time, y: traj.ref_values,
-        name: 'Reference', type: 'scatter', mode: 'lines',
-        line: { color: '#FF9800', width: 1.5, dash: 'dash' },
-      });
-    }
-    Plotly.newPlot(el, traces, makePlotLayout(`${traj.name} (diagnostic)`), PLOT_CFG);
   });
+  initWorkingTree();
+})();
+
+// ---- Helpers ----
+function walkLeaves(node, fn) {
+  if (!node) return;
+  if (node.kind === 'leaf') { fn(node); return; }
+  (node.children || []).forEach(c => walkLeaves(c, fn));
 }
 
-function renderNBPlots() {
-  NB_TRAJECTORIES.forEach((traj, idx) => {
-    const el = document.getElementById(`nb-plot-${idx}`);
-    if (!el) return;
-    Plotly.newPlot(el, [{
-      x: traj.time, y: traj.values,
-      name: 'Actual', type: 'scatter', mode: 'lines',
-      line: { color: '#2196F3', width: 1.5 },
-    }], makePlotLayout(`${traj.name} (new)`), PLOT_CFG);
+function leavesForVariable(varname) {
+  const out = [];
+  walkLeaves(TREE_VIEW, (leaf) => {
+    if (leaf.variable === varname) out.push(leaf);
   });
+  return out;
 }
 
-// ---- Export / Save ----
-// 6.4.2 — emit RFC 6902 JSON-Patch against the test entry (paths
-// relative, not /tests/N/...). cmd_spec_update applies via
-// read-modify-write, preserving unknown keys + description + metadata.
 function jsonPointerEscape(s) {
   return String(s).replace(/~/g, '~0').replace(/\//g, '~1');
 }
@@ -1606,61 +402,677 @@ function floatsDiffer(a, b) {
   return Math.abs(a - b) / scale > 1e-12;
 }
 
-function buildPatchData() {
-  const ops = [];
-  // Global-ish tolerance: only emit a top-level write if a known baseline
-  // existed. We don't track that here; the CLI ignores spurious identity
-  // writes (replace X=X on a value that's already X). Keep it simple:
-  // only emit global tolerance if the user actively changed it.
-  if (floatsDiffer(globalTolerance, VARIABLES.length ? VARIABLES[0].tolerance_used : null)) {
-    ops.push({
-      op: 'replace',
-      path: '/comparison/tolerance',
-      value: globalTolerance,
+function overlayTraceName(role, name) {
+  return `Overlay: ${role}/${name}`;
+}
+
+// ---- Plot contribution registry ----
+// Each entry: (leaf, trajectory) => {traces: [...], shapes: [...]}
+// Called when rendering a variable's plot, once per leaf targeting that
+// variable, if the leaf's visibility toggle is on.
+const MODE_PLOT_CONTRIBUTIONS = {
+  'nrmse': () => ({ traces: [], shapes: [] }),
+  'final-only': (leaf, traj) => {
+    const t = (traj.ref_time && traj.ref_time.length)
+      ? traj.ref_time[traj.ref_time.length - 1]
+      : ((traj.act_time && traj.act_time.length)
+         ? traj.act_time[traj.act_time.length - 1] : null);
+    if (t == null) return { traces: [], shapes: [] };
+    return { traces: [], shapes: [{
+      type: 'line', xref: 'x', yref: 'paper',
+      x0: t, x1: t, y0: 0, y1: 1,
+      line: { color: '#607D8B', width: 1, dash: 'dot' },
+    }] };
+  },
+  'range': (leaf) => {
+    const p = leafState[leaf.path] ? leafState[leaf.path].params : {};
+    const shapes = [];
+    if (p.min_value !== null && p.min_value !== undefined && p.min_value !== '') {
+      const mn = Number(p.min_value);
+      if (Number.isFinite(mn)) shapes.push({
+        type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y',
+        y0: mn, y1: mn,
+        line: { color: '#f44336', width: 1.5, dash: 'dash' },
+      });
+    }
+    if (p.max_value !== null && p.max_value !== undefined && p.max_value !== '') {
+      const mx = Number(p.max_value);
+      if (Number.isFinite(mx)) shapes.push({
+        type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y',
+        y0: mx, y1: mx,
+        line: { color: '#f44336', width: 1.5, dash: 'dash' },
+      });
+    }
+    return { traces: [], shapes };
+  },
+  'tube': (leaf, traj) => {
+    if (!traj.ref_time || !traj.ref_time.length) return { traces: [], shapes: [] };
+    const p = leafState[leaf.path] ? leafState[leaf.path].params : {};
+    const rel = Number(p.tube_rel || 0);
+    const abs = Number(p.tube_abs || 0);
+    const minW = Number(p.tube_min_width || 0);
+    const mode = p.tube_width_mode;
+    const widths = traj.ref_values.map(v => {
+      if (mode === 'rel') return Math.max(minW, rel * Math.abs(v));
+      if (mode === 'band') return Math.max(minW, abs);
+      return Math.max(minW, Math.max(abs, rel * Math.abs(v)));
+    });
+    const upper = traj.ref_values.map((v, i) => v + widths[i]);
+    const lower = traj.ref_values.map((v, i) => v - widths[i]);
+    return { traces: [{
+      x: traj.ref_time.concat([...traj.ref_time].reverse()),
+      y: upper.concat([...lower].reverse()),
+      fill: 'toself',
+      fillcolor: 'rgba(76,175,80,0.15)',
+      line: { color: 'transparent' },
+      name: `Tube ${leaf.path}`,
+      hoverinfo: 'skip',
+      showlegend: true,
+    }], shapes: [] };
+  },
+  'event-timing': () => ({ traces: [], shapes: [] }),
+  'dominant-frequency': () => ({ traces: [], shapes: [] }),
+};
+
+function windowShape(leaf) {
+  const state = leafState[leaf.path];
+  if (!state) return null;
+  const w = state.window || {};
+  if (w.start == null || w.end == null) return null;
+  return {
+    type: 'rect', xref: 'x', yref: 'paper',
+    x0: Number(w.start), x1: Number(w.end), y0: 0, y1: 1,
+    fillcolor: 'rgba(33,150,243,0.08)',
+    line: { color: 'rgba(33,150,243,0.4)', width: 1, dash: 'dot' },
+  };
+}
+
+// ---- Init ----
+document.addEventListener('DOMContentLoaded', () => {
+  renderAllPlots();
+  renderAllNodeTrees();
+  wireOverlayPickers();
+  updateSummary();
+  updateExport();
+});
+
+// ---- Plotly rendering ----
+const PLOT_CFG = { responsive: true, displaylogo: false, scrollZoom: true };
+
+function renderAllPlots() {
+  VARIABLE_ORDER.forEach((varname, idx) => renderVariablePlot(varname, idx));
+  renderDiagPlots();
+  renderNBPlots();
+}
+
+function renderVariablePlot(varname, idx) {
+  const vardata = VARIABLES_BY_NAME[varname];
+  if (!vardata) return;
+  const traj = vardata.trajectory || {};
+  const el = document.getElementById(`plot-${idx}`);
+  if (!el) return;
+
+  const actTime = traj.act_time || [];
+  const refTime = traj.ref_time || [];
+  const actValues = traj.act_values || [];
+  const refValues = traj.ref_values || [];
+  const hasRef = refTime.length > 0;
+
+  const traces = [{
+    x: actTime, y: actValues, name: 'Actual',
+    type: 'scatter', mode: 'lines',
+    line: { color: '#2196F3', width: 1.5 },
+  }];
+  if (hasRef) {
+    traces.push({
+      x: refTime, y: refValues, name: 'Reference',
+      type: 'scatter', mode: 'lines',
+      line: { color: '#FF9800', width: 1.5, dash: 'dash' },
     });
   }
 
-  VARIABLES.forEach((v, idx) => {
-    const orig = v.mode_values || {};
-    const cur = perVarModeConfigs[idx] || {};
-    const varKey = jsonPointerEscape(v.name);
-    const basePath = `/comparison/variable_overrides/${varKey}`;
+  // Overlay traces (companions / soft_checks) — default hidden; toggle
+  // visibility via the per-plot overlay picker.
+  for (const ov of (vardata.overlays || [])) {
+    const isSoft = ov.role === 'soft_check';
+    traces.push({
+      x: ov.time, y: ov.values,
+      name: overlayTraceName(ov.role, ov.name),
+      type: 'scatter', mode: 'lines',
+      line: {
+        color: isSoft ? '#7B1FA2' : '#388E3C',
+        width: 1.2,
+        dash: isSoft ? 'dot' : 'dashdot',
+      },
+      opacity: 0.85,
+      visible: 'legendonly',
+    });
+  }
 
-    // NRMSE / final-only share a scalar tolerance input separate from the
-    // auto-derived panel; mirror perVarTolerances into the patch.
-    const mode = varModes[idx] || v.mode || 'nrmse';
-    if (mode === 'nrmse' || mode === 'final_only') {
-      const newTol = perVarTolerances[idx];
-      if (floatsDiffer(newTol, v.tolerance_used)) {
-        ops.push({
-          op: 'replace',
-          path: `${basePath}/tolerance`,
-          value: newTol,
-        });
-      }
+  // Per-leaf plot contributions — each leaf's visual scored artifact
+  // (tube polygon, range lines, window band, final-time marker).
+  const shapes = [];
+  for (const leaf of leavesForVariable(varname)) {
+    const state = leafState[leaf.path];
+    if (!state || !state.visible) continue;
+    const fn = MODE_PLOT_CONTRIBUTIONS[leaf.metric] || (() => ({ traces: [], shapes: [] }));
+    const contrib = fn(leaf, traj);
+    for (const t of (contrib.traces || [])) traces.push(t);
+    for (const s of (contrib.shapes || [])) shapes.push(s);
+    const w = windowShape(leaf);
+    if (w) shapes.push(w);
+  }
+
+  Plotly.newPlot(el, traces, {
+    xaxis: { title: 'Time', hoverformat: '.6~g' },
+    yaxis: { title: { text: 'Value', standoff: 10 }, tickformat: '.4g', automargin: true, nticks: 6 },
+    margin: { t: 25, b: 45, l: 60, r: 20 },
+    legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)' },
+    hovermode: 'x unified',
+    shapes,
+  }, PLOT_CFG);
+}
+
+// ---- Recursive SpecNodeView ----
+// Same component renders the tree at every mount point. Per-variable
+// views pass ``variableFilter: varname``; the full-tree mount (Stage 3)
+// will omit the filter.
+
+function renderAllNodeTrees() {
+  // Full unfiltered mount — Stage 3. Same recursive component as the
+  // per-variable filtered mounts below. Edits in either view propagate
+  // via the shared path-keyed leafState.
+  const fullContainer = document.getElementById('nodes-full');
+  if (fullContainer) {
+    fullContainer.innerHTML = '';
+    renderNode(TREE_VIEW, fullContainer, {});
+  }
+  VARIABLE_ORDER.forEach((varname, idx) => {
+    const container = document.getElementById(`nodes-${idx}`);
+    if (!container) return;
+    container.innerHTML = '';
+    renderNode(TREE_VIEW, container, { variableFilter: varname });
+  });
+}
+
+function renderNode(node, container, opts) {
+  if (!node) return false;
+  if (node.kind === 'leaf') return renderLeaf(node, container, opts);
+  return renderCombinator(node, container, opts);
+}
+
+function renderCombinator(node, container, opts) {
+  // Recurse children first — skip combinators whose descendants are all
+  // filtered out (keeps per-variable view focused on that variable).
+  const childContainer = document.createElement('div');
+  childContainer.className = 'node-children';
+  let any = false;
+  (node.children || []).forEach((child, i) => {
+    const childOpts = Object.assign({}, opts, { parent: node, indexInParent: i });
+    any = renderNode(child, childContainer, childOpts) || any;
+  });
+  if (!any && opts.variableFilter) return false;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'node node-combinator';
+  wrapper.dataset.path = node.path;
+
+  const header = document.createElement('div');
+  header.className = 'node-header';
+  const pill = statusPill(node.passed);
+  if (pill) header.appendChild(pill);
+  const label = document.createElement('span');
+  label.className = 'node-label';
+  label.textContent = node.label || combinatorLabel(node);
+  header.appendChild(label);
+
+  // Structural controls — + adds a leaf child, − removes this node.
+  // Disabled on per-variable filtered views (structural edits only from
+  // the full-tree mount) and on the root of the working tree (no parent).
+  if (!opts.variableFilter) {
+    header.appendChild(addLeafButton(node));
+    if (opts.parent) header.appendChild(removeNodeButton(node, opts));
+  }
+
+  wrapper.appendChild(header);
+  wrapper.appendChild(childContainer);
+  container.appendChild(wrapper);
+  return true;
+}
+
+function combinatorLabel(node) {
+  const n = (node.children || []).length;
+  switch (node.combinator) {
+    case 'and': return `and[${n}]`;
+    case 'or': return `or[${n}]`;
+    case 'warn': return 'warn';
+    case 'k-of-n': return `k-of-n[${node.k}/${n}]`;
+    case 'weighted': return `weighted[${n}]`;
+    default: return node.combinator || '?';
+  }
+}
+
+function renderLeaf(leaf, container, opts) {
+  if (opts.variableFilter && leaf.variable !== opts.variableFilter) return false;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'node node-leaf';
+  wrapper.dataset.path = leaf.path;
+
+  const header = document.createElement('div');
+  header.className = 'node-header';
+
+  // Visibility toggle — gates the leaf's plot contribution.
+  const visToggle = document.createElement('input');
+  visToggle.type = 'checkbox';
+  visToggle.className = 'node-visible';
+  visToggle.checked = leafState[leaf.path] && leafState[leaf.path].visible !== false;
+  visToggle.title = "Show this leaf's plot contribution";
+  visToggle.addEventListener('change', () => {
+    if (leafState[leaf.path]) leafState[leaf.path].visible = visToggle.checked;
+    renderVariablePlot(leaf.variable, VARIABLE_INDEX[leaf.variable]);
+  });
+  header.appendChild(visToggle);
+
+  // Status + label + score
+  const pill = statusPill(leaf.passed);
+  if (pill) header.appendChild(pill);
+  const label = document.createElement('span');
+  label.className = 'node-label';
+  let lbl = `${leaf.metric} · ${leaf.variable}`;
+  if (leaf.against && leaf.against !== 'primary') lbl += ` [against=${leaf.against}]`;
+  label.textContent = lbl;
+  header.appendChild(label);
+
+  if (leaf.score_display) {
+    const score = document.createElement('span');
+    score.className = 'node-score';
+    score.textContent = leaf.score_display;
+    header.appendChild(score);
+  }
+  if (leaf.cli_authoritative) {
+    const badge = document.createElement('span');
+    badge.className = 'cli-authoritative';
+    badge.title = 'Edits reflected after running modelica-testing run';
+    badge.textContent = 'CLI-authoritative';
+    header.appendChild(badge);
+  }
+  // Structural control — − removes this leaf. Per-variable mount is
+  // read-only structurally; only the full-tree mount can add/remove.
+  if (!opts.variableFilter && opts.parent) {
+    header.appendChild(removeNodeButton(leaf, opts));
+  }
+  wrapper.appendChild(header);
+
+  // Controls — server-rendered HTML for mode fields + window inputs.
+  const innerHtml = (leaf.mode_controls_html || '') + (leaf.window_controls_html || '');
+  if (innerHtml) {
+    const controls = document.createElement('div');
+    controls.className = 'node-controls';
+    controls.innerHTML = innerHtml;
+    wrapper.appendChild(controls);
+    wireLeafInputs(controls, leaf);
+  }
+
+  container.appendChild(wrapper);
+  return true;
+}
+
+function statusPill(passed) {
+  if (passed === undefined || passed === null) return null;
+  const span = document.createElement('span');
+  span.className = `node-status ${passed ? 'pass' : 'fail'}`;
+  span.textContent = passed ? 'PASS' : 'FAIL';
+  return span;
+}
+
+// ---- Structural editing (+ / − buttons, Stage 4) ----
+// Adds/removes only; move (drag/up-down) is a later polish pass.
+// Mutations happen on WORKING_TREE; TREE_VIEW stays pristine so per-
+// leaf render artifacts (mode_controls_html, score_display) survive the
+// structural change. On export, a dirty WORKING_TREE is emitted whole.
+
+function addLeafButton(combinatorNode) {
+  const btn = document.createElement('button');
+  btn.className = 'node-btn node-btn-add';
+  btn.textContent = '+';
+  btn.title = 'Add a leaf child';
+  btn.addEventListener('click', () => promptAddLeaf(combinatorNode));
+  return btn;
+}
+
+function removeNodeButton(node, opts) {
+  const btn = document.createElement('button');
+  btn.className = 'node-btn node-btn-remove';
+  btn.textContent = '−';
+  btn.title = 'Remove this node';
+  btn.addEventListener('click', () => {
+    if (!confirm(`Remove ${node.kind === 'leaf' ? `leaf ${node.metric}·${node.variable}` : combinatorLabel(node)}?`)) return;
+    const parent = findWorkingNode(opts.parent.path);
+    if (!parent || !parent.children) return;
+    parent.children.splice(opts.indexInParent, 1);
+    markStructureDirty();
+  });
+  return btn;
+}
+
+function promptAddLeaf(combinatorNode) {
+  const metric = (prompt(
+    'Metric (nrmse / tube / final-only / range / event-timing / dominant-frequency):',
+    'nrmse',
+  ) || '').trim();
+  if (!metric) return;
+  const validMetrics = ['nrmse', 'tube', 'final-only', 'range', 'event-timing', 'dominant-frequency'];
+  if (!validMetrics.includes(metric)) {
+    alert(`Unknown metric ${JSON.stringify(metric)}. Valid: ${validMetrics.join(', ')}`);
+    return;
+  }
+  const varname = (prompt(
+    'Variable name (e.g. h, v):',
+    VARIABLE_ORDER[0] || '',
+  ) || '').trim();
+  if (!varname) return;
+
+  const node = findWorkingNode(combinatorNode.path);
+  if (!node || !Array.isArray(node.children)) return;
+  node.children.push({
+    kind: 'leaf',
+    metric, variable: varname,
+    params: {}, against: 'primary', window: {},
+    children: [],
+    // Render artifacts synthesized just-in-time — no server round-trip
+    // needed. pass/fail remains undefined (no evaluation yet).
+    name: varname, mode_effective: metric,
+    mode_values: {}, mode_controls_html: '', window_controls_html: '',
+    window_values: {}, cli_authoritative: ['event-timing', 'dominant-frequency'].includes(metric),
+  });
+  markStructureDirty();
+}
+
+function findWorkingNode(path) {
+  if (!WORKING_TREE) return null;
+  if (WORKING_TREE.path === path) return WORKING_TREE;
+  let found = null;
+  (function walk(n) {
+    if (found) return;
+    if (n.path === path) { found = n; return; }
+    (n.children || []).forEach(walk);
+  })(WORKING_TREE);
+  return found;
+}
+
+function rebuildPaths(node, root) {
+  node.path = root;
+  if (node.children) {
+    node.children.forEach((c, i) => rebuildPaths(c, `${root}/children/${i}`));
+  }
+}
+
+function markStructureDirty() {
+  structureDirty = true;
+  rebuildPaths(WORKING_TREE, '/metrics');
+  // Re-render every mount from WORKING_TREE. TREE_VIEW stays as the
+  // originally-rendered snapshot (for render artifacts on surviving
+  // leaves); new leaves render from their own synthesized fields.
+  renderAllNodeTreesFromWorking();
+  updateExport();
+}
+
+function renderAllNodeTreesFromWorking() {
+  // Swap TREE_VIEW to WORKING_TREE for the render pass only; any
+  // downstream code that walks TREE_VIEW (e.g., plot rendering) picks
+  // up the structural change naturally.
+  const original = TREE_VIEW;
+  window.TREE_VIEW = WORKING_TREE;  // shadow so leavesForVariable() sees it
+  try {
+    renderAllNodeTrees();
+    // Plots may gain or lose leaves — re-render affected variables.
+    VARIABLE_ORDER.forEach((v, i) => renderVariablePlot(v, i));
+  } finally {
+    window.TREE_VIEW = original;
+  }
+}
+
+// Spec-strip — convert a tree_view node into its pure spec form,
+// discarding render artifacts (mode_controls_html, score_display, ...).
+// Used on patch export when the structure has been edited.
+function nodeToSpec(node) {
+  if (!node) return null;
+  if (node.kind === 'leaf') {
+    // Merge authored params with live state (the user may have edited
+    // both structure AND scalar fields in one session).
+    const state = leafState[node.path] || {};
+    const mergedParams = Object.assign({}, node.params || {}, state.params || {});
+    // Drop any render-only stashes that leaked into params.
+    delete mergedParams.mode;
+    const out = {
+      metric: node.metric,
+      variable: node.variable,
+    };
+    for (const k of Object.keys(mergedParams)) {
+      if (mergedParams[k] !== undefined && mergedParams[k] !== null) out[k] = mergedParams[k];
     }
+    if (node.against && node.against !== 'primary') out.against = node.against;
+    const win = state.window && (state.window.start != null || state.window.end != null)
+      ? state.window
+      : (node.window && (node.window.start != null || node.window.end != null) ? node.window : null);
+    if (win) {
+      const w = {};
+      if (win.start != null) w.start = Number(win.start);
+      if (win.end != null) w.end = Number(win.end);
+      out.window = w;
+    }
+    return out;
+  }
+  const out = { combinator: node.combinator, children: (node.children || []).map(nodeToSpec) };
+  if (node.combinator === 'k-of-n') out.k = node.k;
+  if (node.combinator === 'weighted') {
+    out.weights = node.weights;
+    out.threshold = node.threshold;
+    if (node.direction && node.direction !== 'less') out.direction = node.direction;
+  }
+  return out;
+}
 
-    // Per-mode field diffs — everything in the current config that
-    // differs from the original (or is newly set).
-    Object.keys(cur).forEach(field => {
-      const curVal = cur[field];
-      const origVal = orig[field];
-      if (curVal === origVal) return;
-      if (typeof curVal === 'number' && typeof origVal === 'number'
-          && !floatsDiffer(curVal, origVal)) return;
-      ops.push({
-        op: 'replace',
-        path: `${basePath}/${jsonPointerEscape(field)}`,
-        value: curVal,
-      });
+function wireLeafInputs(controlsEl, leaf) {
+  controlsEl.querySelectorAll('[data-field]').forEach(input => {
+    const handler = (e) => onLeafFieldChange(leaf, e.target.dataset.field, e.target);
+    input.addEventListener('input', handler);
+    input.addEventListener('change', handler);
+  });
+}
+
+function onLeafFieldChange(leaf, field, input) {
+  let val;
+  if (input.type === 'checkbox') val = input.checked;
+  else if (input.type === 'number') {
+    val = input.value === '' ? null : parseFloat(input.value);
+    if (input.value !== '' && !Number.isFinite(val)) return;
+  } else if (input.dataset.passthrough === 'true') {
+    try { val = input.value ? JSON.parse(input.value) : null; }
+    catch (_) { val = input.value; }
+  } else {
+    val = input.value === '' ? null : input.value;
+  }
+  const state = leafState[leaf.path];
+  if (!state) return;
+  if (field === 'window_start' || field === 'window_end') {
+    const key = field === 'window_start' ? 'start' : 'end';
+    if (val == null) delete state.window[key];
+    else state.window[key] = val;
+  } else {
+    state.params[field] = val;
+  }
+  // The same leaf may render in multiple mount points (full tree + the
+  // per-variable subtree). Sync sibling inputs so both views stay coherent
+  // without re-rendering (which would break focus mid-edit).
+  syncSiblingInputs(leaf.path, field, val, input);
+  renderVariablePlot(leaf.variable, VARIABLE_INDEX[leaf.variable]);
+  updateExport();
+}
+
+function syncSiblingInputs(leafPath, field, val, sourceInput) {
+  const selector = `[data-path="${escapeSelector(leafPath)}"] [data-field="${escapeSelector(field)}"]`;
+  document.querySelectorAll(selector).forEach(inp => {
+    if (inp === sourceInput) return;
+    if (inp.type === 'checkbox') inp.checked = !!val;
+    else inp.value = (val == null ? '' : val);
+  });
+}
+
+function escapeSelector(s) {
+  // CSS.escape is supported everywhere Plotly runs (2015+). Fall back to
+  // a best-effort replacement for defensive builds without it.
+  if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(s);
+  return String(s).replace(/(["\\])/g, '\\$1');
+}
+
+// ---- Summary ----
+function updateSummary() {
+  const leaves = [];
+  walkLeaves(TREE_VIEW, l => leaves.push(l));
+  const n = leaves.length;
+  const nPassed = leaves.filter(l => l.passed).length;
+  const el = document.getElementById('summary-text');
+  if (el) {
+    const cls = nPassed === n ? 'pass' : 'fail';
+    el.className = cls;
+    el.innerHTML = `<strong>${nPassed}</strong> / <strong>${n}</strong> leaves passed`;
+  }
+  VARIABLE_ORDER.forEach((varname, idx) => {
+    const varLeaves = leaves.filter(l => l.variable === varname);
+    const varPassed = varLeaves.length > 0 && varLeaves.every(l => l.passed);
+    const sel = document.querySelector(`.var-status[data-vidx="${idx}"]`);
+    if (sel) {
+      sel.className = `var-status ${varPassed ? 'pass' : 'fail'}`;
+      sel.textContent = varPassed ? 'PASS' : 'FAIL';
+    }
+  });
+}
+
+// ---- Overlay picker ----
+function wireOverlayPickers() {
+  document.querySelectorAll('.overlay-picker .overlay-toggle').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const vidx = parseInt(e.target.dataset.vidx);
+      if (isNaN(vidx)) return;
+      const name = e.target.dataset.ovName;
+      const role = e.target.dataset.ovRole;
+      setOverlayVisible(vidx, role, name, e.target.checked);
     });
   });
+}
 
+function setOverlayVisible(vidx, role, name, visible) {
+  const el = document.getElementById(`plot-${vidx}`);
+  if (!el || !el.data) return;
+  const traceName = overlayTraceName(role, name);
+  for (let i = 0; i < el.data.length; i++) {
+    if (el.data[i].name === traceName) {
+      Plotly.restyle(el, { visible: visible ? true : 'legendonly' }, [i]);
+      return;
+    }
+  }
+}
+
+// ---- Diagnostic / no-baseline plots (unchanged from previous template) ----
+function renderDiagPlots() {
+  DIAG_TRAJECTORIES.forEach((traj, idx) => {
+    const el = document.getElementById(`diag-plot-${idx}`);
+    if (!el) return;
+    const traces = [{
+      x: traj.act_time, y: traj.act_values, name: 'Actual',
+      type: 'scatter', mode: 'lines', line: { color: '#2196F3', width: 1 },
+    }];
+    if (traj.ref_values && traj.ref_values.length) {
+      traces.push({
+        x: traj.ref_time, y: traj.ref_values, name: 'Reference',
+        type: 'scatter', mode: 'lines',
+        line: { color: '#FF9800', width: 1, dash: 'dash' },
+      });
+    }
+    Plotly.newPlot(el, traces, {
+      xaxis: { title: 'Time' },
+      yaxis: { title: 'Value' },
+      margin: { t: 10, b: 35, l: 60, r: 20 },
+    }, PLOT_CFG);
+  });
+}
+
+function renderNBPlots() {
+  NB_TRAJECTORIES.forEach((traj, idx) => {
+    const el = document.getElementById(`nb-plot-${idx}`);
+    if (!el) return;
+    Plotly.newPlot(el, [{
+      x: traj.time, y: traj.values, name: 'Actual',
+      type: 'scatter', mode: 'lines', line: { color: '#2196F3', width: 1 },
+    }], {
+      xaxis: { title: 'Time' },
+      yaxis: { title: 'Value' },
+      margin: { t: 25, b: 35, l: 60, r: 20 },
+    }, PLOT_CFG);
+  });
+}
+
+// ---- Export / Save (path-keyed patch emission) ----
+function buildPatchData() {
+  const ops = [];
+
+  // Stage 4 — structural edits (+ / − on nodes) emit a single wholesale
+  // replace at /metrics. The whitelist covers /metrics; unknown
+  // sibling keys on the test entry (description / metadata) survive
+  // intact. Structural changes skip per-leaf scalar diffing: the full
+  // tree is the new source of truth.
+  if (structureDirty && WORKING_TREE) {
+    const newSpec = nodeToSpec(WORKING_TREE);
+    // Use 'add' — patch_apply's add upserts on existing keys and creates
+    // when absent, so it works whether the test previously had /metrics
+    // or was flat-override.
+    ops.push({ op: 'add', path: '/metrics', value: newSpec });
+    return { model: MODEL_ID, patch: ops };
+  }
+
+  walkLeaves(TREE_VIEW, (leaf) => {
+    const state = leafState[leaf.path];
+    if (!state) return;
+
+    const orig = state.original_params || {};
+    Object.keys(state.params).forEach(field => {
+      const cur = state.params[field];
+      const o = orig[field];
+      if (cur === o) return;
+      if (typeof cur === 'number' && typeof o === 'number' && !floatsDiffer(cur, o)) return;
+      ops.push({
+        op: 'add',
+        path: `${leaf.path}/${jsonPointerEscape(field)}`,
+        value: cur,
+      });
+    });
+
+    const origW = state.original_window || {};
+    const curW = state.window;
+    const origHas = origW.start != null || origW.end != null;
+    const curHas = curW.start != null || curW.end != null;
+    if (!curHas && origHas) {
+      ops.push({ op: 'remove', path: `${leaf.path}/window` });
+    } else if (curHas) {
+      const startDiff =
+        (curW.start == null) !== (origW.start == null) ||
+        (curW.start != null && origW.start != null && floatsDiffer(curW.start, origW.start));
+      const endDiff =
+        (curW.end == null) !== (origW.end == null) ||
+        (curW.end != null && origW.end != null && floatsDiffer(curW.end, origW.end));
+      if (startDiff || endDiff || !origHas) {
+        const body = {};
+        if (curW.start != null) body.start = Number(curW.start);
+        if (curW.end != null) body.end = Number(curW.end);
+        ops.push({ op: 'add', path: `${leaf.path}/window`, value: body });
+      }
+    }
+  });
   return { model: MODEL_ID, patch: ops };
 }
 
-// Back-compat alias retained for any downstream that imported the old name
-// via window.buildExportData (vanishingly unlikely; remove next cycle).
 function buildExportData() { return buildPatchData(); }
 
 function updateExport() {

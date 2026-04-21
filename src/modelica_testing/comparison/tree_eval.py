@@ -103,6 +103,44 @@ def collect_leaf_variables(tree: MetricResult) -> list[VariableComparison]:
     return out
 
 
+def flatten_evaluation(
+    tree: MetricResult, *, root: str = "/metrics",
+) -> dict[str, dict]:
+    """Flatten an evaluated MetricResult tree into a ``{path: {...}}`` dict.
+
+    The returned mapping is keyed by the same JSON-Pointer paths that
+    :func:`tree_spec.collect_leaf_paths` / :func:`tree_spec.spec_to_view`
+    produce, so the reporter can merge evaluation results into a spec
+    view by path lookup.
+
+    Each entry carries ``passed``, ``score``, ``label``, plus any diagnostics
+    the evaluator stashed on that node (``mode``, ``tolerance``,
+    ``max_abs_error``, ``against``, ``window``, ``n_passed``, ``warned``, ...).
+    """
+    out: dict[str, dict] = {}
+    _flatten_evaluation(tree, root, out)
+    return out
+
+
+def _flatten_evaluation(
+    node: MetricResult, path: str, out: dict[str, dict],
+) -> None:
+    entry = {
+        "passed": bool(node.passed),
+        "score": node.score,
+        "label": node.label,
+    }
+    diag = node.diagnostics or {}
+    # Copy JSON-safe diagnostic keys (skip the stashed VariableComparison).
+    for key, val in diag.items():
+        if key == "variable":
+            continue
+        entry[key] = val
+    out[path] = entry
+    for i, child in enumerate(node.children):
+        _flatten_evaluation(child, f"{path}/children/{i}", out)
+
+
 def to_view(tree: MetricResult) -> dict:
     """Serialize a ``MetricResult`` tree into a JSON-safe nested dict
     for Jinja consumption. Shape is render-oriented — no simulation data,

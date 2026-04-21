@@ -18,49 +18,56 @@ in the Dymola variant.
 
 ## Index page
 
-- [ ] Test counts match the console output (`3 / 3 passed` on FMU
+- [x] Test counts match the console output (`3 / 3 passed` on FMU
   example, no "stale" indicators unless you've done a filtered rerun).
-- [ ] Last-run timestamps show in the right column.
-- [ ] Clicking a test row opens the per-test interactive report.
+- [x] Last-run timestamps show in the right column.
+- [x] Clicking a test row opens the per-test interactive report.
 
 ## Per-test interactive report — all variables
 
-- [ ] Page renders without JS console errors (`DevTools → Console`).
-- [ ] All trajectory plots appear; axes and legends readable.
-- [ ] Variable table shows one row per leaf/variable with a status pill,
+- [x] Page renders without JS console errors (`DevTools → Console`).
+- [x] All trajectory plots appear; axes and legends readable.
+- [x] Variable table shows one row per leaf/variable with a status pill,
   mode name, score, and the tolerance / control cell.
-- [ ] Summary card at the top reports the correct N-passed count.
+  - i see one who's "mode" = range. also, if changed to tube the tolerance option is still there though it is greyed out. 
+- [x] Summary card at the top reports the correct N-passed count.
 
 ## Mode — NRMSE (BouncingBall `h` and `v` — first two rows)
 
-- [ ] Tolerance cell contains a numeric input pre-filled with the
+- [x] Tolerance cell contains a numeric input pre-filled with the
   stored tolerance (e.g., `0.001`).
-- [ ] Changing the input to a smaller value (e.g., `1e-12`) flips the
+- [x] Changing the input to a smaller value (e.g., `1e-12`) flips the
   status pill + summary count + NRMSE plot's fail-zone band in
   real time.
 - [ ] The `.modified` class on the input renders visibly different.
+  - i don't know what you mean
 
 ## Mode — Range (BouncingBall `h` — third row)
 
-- [ ] Cell shows two number inputs labeled Min value / Max value,
+- [x] Cell shows two number inputs labeled Min value / Max value,
   pre-filled with `-0.01` and `1.1`.
-- [ ] Trajectory plot for this variable shows two dashed-red horizontal
+- [x] Trajectory plot for this variable shows two dashed-red horizontal
   reference lines at `-0.01` and `1.1`.
-- [ ] Dragging the Min input down to `-5` visibly lowers the reference
+    - though y scale was hiding the top. i had to zoom out slightly
+- [x] Dragging the Min input down to `-5` visibly lowers the reference
   line in real time. Same for Max.
-- [ ] Changing bounds so the trajectory violates them flips the status
+    - yes but couldn't zoom out when i sent negative value something large like -5
+- [x] Changing bounds so the trajectory violates them flips the status
   pill to FAIL with an updated `max_viol` score.
 
 ## Mode — Soft_check nrmse against `experiment` (BouncingBall `h` — fourth row)
 
-- [ ] Row shows `against=experiment` diagnostic somewhere in the score
+- [x] Row shows `against=experiment` diagnostic somewhere in the score
   display or alongside it.
-- [ ] Status pill is the test result (PASS by default with the current
+    - I see it in an "Overlay" section... don't understand it.
+    - i don't see it. also soft_check boolean only impacts first "h" plots (multiple toggle buttons but only impact first instance of h plots)
+- [x] Status pill is the test result (PASS by default with the current
   reference data).
 - [ ] Verify by tightening the tolerance: the warn-wrapped failure should
   NOT cascade into the test's overall PASS/FAIL — soft_checks are
   advisory. Use the warn-combinator rendering in the metric tree view
   (if present).
+    - don't see changes.
 
 ## Mode — Tube (ModelicaTestingLib — Dymola-side)
 
@@ -77,6 +84,8 @@ in the Dymola variant.
 - [ ] Tolerance cell behaves like NRMSE (numeric input + live recompute).
 - [ ] Score cell shows `|err| <value>`.
 
+  ** Only see NRMSE and Tube
+  
 ## Mode — Event-timing / Dominant-frequency
 
 *(Not exercised by the default examples; construct a fixture if needed.)*
@@ -139,12 +148,155 @@ in the Dymola variant.
   `against: soft_check` leaf outside `warn`) is rejected by the
   validator hook inside `cmd_spec_update` and the spec is NOT written.
 
+## Window UI round-trip (A1 / idea #46 UI surfacing)
+
+Tree-backed leaves only — BouncingBall is the canonical exerciser
+(`metrics` block with 4 leaves, paths `/metrics/children/{0,1,2,3/children/0}`).
+
+### Prep
+
+```bash
+# Save the spec so we can restore it after the manual test
+cp examples/fmu/test_spec.json /tmp/test_spec.baseline.json
+uv run modelica-testing --config examples/fmu/testing.json run --report
+# Open: testing_output/fmu/FMPy/linux/reports/ref_0001/interactive.html
+```
+
+### Render check
+
+- [ ] Every BouncingBall row (4 total: `h` nrmse, `v` nrmse, `h` range,
+  `h` warn) has a `Window:` row with two number inputs (`start`, `end`)
+  below the tolerance or mode cell.
+- [ ] Window inputs are blank initially (no window authored yet).
+- [ ] Non-tree tests (Dahlquist `ref_0002`, VanDerPol `ref_0003`) have
+  NO window inputs — they're flat-override and window only applies to
+  `LeafSpec`.
+
+### Edit + download
+
+- [ ] On the first row (`h` nrmse), enter `start=0.5`, `end=2.0`. The
+  Export Tolerance Config JSON updates live and includes:
+  ```json
+  {"op": "add", "path": "/metrics/children/0/window",
+   "value": {"start": 0.5, "end": 2.0}}
+  ```
+- [ ] "Download JSON" → `spec_patch.json` on disk.
+
+### Apply + verify
+
+```bash
+uv run modelica-testing --config examples/fmu/testing.json spec-update ~/Downloads/spec_patch.json
+```
+
+- [ ] CLI reports one op applied.
+- [ ] `examples/fmu/test_spec.json` now has `"window": {"start": 0.5,
+  "end": 2.0}` on the first child of `metrics.children`. Hand-authored
+  keys elsewhere in the file (if any) are byte-unchanged.
+- [ ] Re-run `run --report`; reopen `ref_0001/interactive.html`. The
+  first row's window inputs are pre-filled with `0.5` / `2.0`.
+- [ ] Score for that leaf reflects windowed NRMSE (typically very
+  small since BouncingBall passes trivially — window narrows the slice
+  but doesn't introduce error).
+
+### Remove path
+
+- [ ] Clear both window inputs on the first row. Export JSON updates to
+  include `{"op": "remove", "path": "/metrics/children/0/window"}`.
+- [ ] Download + apply; verify `window` key is gone from the spec.
+
+### Restore
+
+```bash
+cp /tmp/test_spec.baseline.json examples/fmu/test_spec.json
+```
+
+## Companion + soft_check overlay rendering (A2 / idea #50, 6.3 first slice)
+
+BouncingBall has an existing soft_check (`experiment`) and accepts
+ad-hoc companion registration for full exercise.
+
+### Prep — synthetic external companion
+
+```bash
+cat > /tmp/analytical.csv <<'EOF'
+time,h
+0.0,1.0
+1.0,0.6
+2.0,0.2
+3.0,0.0
+EOF
+uv run modelica-testing --config examples/fmu/testing.json companion add \
+    BouncingBall analytical /tmp/analytical.csv
+uv run modelica-testing --config examples/fmu/testing.json companion list
+uv run modelica-testing --config examples/fmu/testing.json run --report
+# Open: testing_output/fmu/FMPy/linux/reports/ref_0001/interactive.html
+```
+
+### Render check
+
+- [ ] Top of page (just above the Statistics details) shows an
+  `Overlays (2) — companion + soft_check` collapsible. Inside:
+    - `experiment` — role=soft_check, status=loaded, variables=`h`.
+    - `analytical` — role=companion (external), status=loaded,
+      variables=`h`.
+- [ ] Every `h` trajectory plot (rows 0, 2, 3 in BouncingBall) has an
+  `Overlays:` picker above it with two checkboxes:
+  `[soft_check] experiment` and `[companion] analytical`.
+- [ ] The `v` plot (row 1) has an `Overlays:` picker with ONLY
+  `[soft_check] experiment` (analytical's CSV has no `v` column, so
+  that entry is correctly suppressed).
+- [ ] Both checkboxes start unchecked — overlays are opt-in.
+
+### Toggle behavior
+
+- [ ] Check `experiment`: a purple dotted trace appears on the plot
+  labeled `Overlay: soft_check/experiment`. Uncheck: it goes back to
+  `legendonly` (the legend entry stays, no data is drawn).
+- [ ] Check `analytical`: a green dashdot trace appears labeled
+  `Overlay: companion/analytical`. Uncheck: returns to `legendonly`.
+- [ ] Both overlays can be on simultaneously without overlapping the
+  Actual / Reference traces' visual weight.
+- [ ] Non-`h` plots (the `v` row) show no `analytical` option — same
+  invariant as the render check, restated since toggle bugs sometimes
+  cross rows.
+
+### Graceful degradation — missing companion file
+
+```bash
+mv /tmp/analytical.csv /tmp/analytical.csv.moved
+uv run modelica-testing --config examples/fmu/testing.json run --report
+```
+
+- [ ] Console shows a warning line like `Failed to load companion
+  'analytical' ... no such file`. The run still exits 0 (overlays never
+  fail a test).
+- [ ] Reopen the report. `Overlays` summary now shows `analytical` with
+  `status=missing` and the row has a yellow background. The `note`
+  column says `file not found: /tmp/analytical.csv`.
+- [ ] Picker checkboxes above `h` plots no longer include `analytical`
+  (nothing to render — by design).
+
+### Cleanup
+
+```bash
+mv /tmp/analytical.csv.moved /tmp/analytical.csv  # restore so next run works
+uv run modelica-testing --config examples/fmu/testing.json companion remove \
+    BouncingBall analytical
+rm /tmp/analytical.csv
+```
+
+- [ ] After `companion remove` + `run --report`, the `Overlays`
+  summary shows only `experiment`. `analytical` is gone.
+
 ## Known gaps / deferred
 
 - Drag-to-edit the range reference lines (v2; today the inputs drive
   the lines one-way).
-- Time-window UI controls on every mode panel (auto-derive doesn't
-  yet surface `LeafSpec.window_start/end` — they parse from JSON but
-  there's no in-browser field for them). See idea #46 follow-up.
+- Range-brush on the trajectory plot as a visual window editor (stretch
+  noted in the A1 handoff; scalar inputs are v1).
+- Bulk toggle (single switch that flips every overlay across every
+  plot). Today each plot toggles independently.
+- Overlay-vs-primary error panel (an analogue of the existing
+  reference-error panels, but for overlays). Not scoped.
 - JS unit framework / Playwright E2E (D66 Q8 — deferred indefinitely
   unless the reporter becomes a regression source).

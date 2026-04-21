@@ -42,32 +42,67 @@ def _build_trajectory(idx: int, n: int) -> dict:
 
 
 def _build_minimal_context(trajectories: list[dict]) -> dict:
-    """Minimal Jinja context sufficient for interactive.html to render."""
-    variables = [
-        {
+    """Minimal Jinja context sufficient for interactive.html to render.
+
+    Synthesizes a Stage-2-shaped context: one entry per unique variable in
+    ``variables_by_name``, a flat AND tree with one leaf per variable.
+    """
+    variables_by_name = {
+        t["name"]: {
             "name": t["name"],
-            "passed": True,
-            "nrmse": 1.2e-4,
-            "rmse": 1.2e-4,
-            "signal_range": 2.0,
-            "max_abs_error": 0.02,
-            "max_abs_error_time": 5.0,
-            "reference_final": 0.0,
-            "actual_final": 0.0,
-            "is_constant": False,
-            "tolerance_used": 1e-3,
-            "mode": "nrmse",
-            "score_display": "NRMSE 1.2e-04",
-            "criterion": "NRMSE < tol",
-            "tube_points_inside": None,
-            "tube_worst_violation": None,
-            "tube_worst_violation_time": None,
+            "trajectory": t,
+            "overlays": [],
+            "leaf_paths": [f"/metrics/children/{i}"],
         }
-        for t in trajectories
-    ]
+        for i, t in enumerate(trajectories)
+    }
+    tree_view = {
+        "kind": "combinator",
+        "combinator": "and",
+        "path": "/metrics",
+        "passed": True,
+        "label": f"and[{len(trajectories)}]",
+        "children": [
+            {
+                "kind": "leaf",
+                "path": f"/metrics/children/{i}",
+                "metric": "nrmse",
+                "variable": t["name"],
+                "params": {"tolerance": 1e-3},
+                "against": "primary",
+                "window": {},
+                "children": [],
+                "passed": True,
+                "score": 1.2e-4,
+                "label": t["name"],
+                "mode_effective": "nrmse",
+                "name": t["name"],
+                "nrmse": 1.2e-4,
+                "rmse": 1.2e-4,
+                "signal_range": 2.0,
+                "max_abs_error": 0.02,
+                "max_abs_error_time": 5.0,
+                "reference_final": 0.0,
+                "actual_final": 0.0,
+                "is_constant": False,
+                "tolerance_used": 1e-3,
+                "score_display": "NRMSE 1.2e-04",
+                "criterion": "NRMSE < tol",
+                "tube_points_inside": None,
+                "tube_worst_violation": None,
+                "tube_worst_violation_time": None,
+                "mode_values": {"tolerance": 1e-3},
+                "mode_controls_html": "",
+                "window_controls_html": "",
+                "window_values": {},
+                "cli_authoritative": False,
+            }
+            for i, t in enumerate(trajectories)
+        ],
+    }
     return {
         "model_id": "TestLib.Wide.Fixture",
-        "n_passed": len(variables),
+        "n_passed": len(trajectories),
         "sim_failed": False,
         "last_run_at": 0,
         "last_run_str": "",
@@ -76,7 +111,6 @@ def _build_minimal_context(trajectories: list[dict]) -> dict:
         "ref_info": [],
         "sim_params": [],
         "statistics_sections": [],
-        "variables": variables,
         "diagnostic_plots": [],
         "diagnostic_summaries": [],
         "compared_plots": [],
@@ -87,6 +121,10 @@ def _build_minimal_context(trajectories: list[dict]) -> dict:
         "nobaseline_trajectories": [],
         "metric_tree_view": None,
         "spec_path": "",
+        "tree_view": tree_view,
+        "variables_by_name": variables_by_name,
+        "mode_schemas": {},
+        "overlay_rows": [],
     }
 
 
