@@ -128,6 +128,17 @@ details summary:hover { color: #333; }
 .metric-tree-section { margin-bottom: 1.5em; padding: 1em; background: white; border: 1px solid #ddd; border-radius: 4px; }
 .metric-tree-section summary { font-weight: 600; cursor: pointer; }
 .node-tree-hint { font-weight: 400; color: #888; font-size: 0.85em; }
+/* Active-leaf highlight (MODE_PLOT_EDITORS activation target) */
+.node.node-active { background: #e3f2fd; border-left-color: #1976D2; box-shadow: inset 2px 0 0 #1976D2; }
+.node-active .node-header { cursor: pointer; }
+.node-editor { margin-top: 0.5em; padding: 0.5em 0.8em; background: #f5faff; border: 1px dashed #bbd6f2; border-radius: 3px; font-size: 0.85em; }
+.node-editor:empty { display: none; }
+.editor-title { font-weight: 600; color: #1976D2; margin-bottom: 0.3em; }
+.editor-hint { font-size: 0.8em; color: #666; margin-bottom: 0.5em; }
+.tube-table { width: auto; margin-bottom: 0.4em; }
+.tube-table th { background: #f0f4f8; padding: 2px 6px; font-size: 0.75em; text-align: left; }
+.tube-table td { padding: 2px 4px; }
+.tube-table input { width: 5em; padding: 1px 4px; font-size: 0.82em; }
 </style>
 </head>
 <body>
@@ -358,6 +369,13 @@ const leafState = {};
 let WORKING_TREE = null;
 let structureDirty = false;
 
+// Tube-editor-era — the "active leaf" is whichever leaf the user most
+// recently clicked in either tree mount. Its mode's MODE_PLOT_EDITORS
+// entry (if any) gets wired to the variable's plot: Shift+click to add
+// a control point, − to remove, etc. One leaf at a time; clicking a
+// different leaf transfers editing to it.
+let activeLeafPath = null;
+
 function initWorkingTree() {
   WORKING_TREE = TREE_VIEW ? JSON.parse(JSON.stringify(TREE_VIEW)) : null;
   structureDirty = false;
@@ -452,14 +470,43 @@ const MODE_PLOT_CONTRIBUTIONS = {
     const abs = Number(p.tube_abs || 0);
     const minW = Number(p.tube_min_width || 0);
     const mode = p.tube_width_mode;
-    const widths = traj.ref_values.map(v => {
-      if (mode === 'rel') return Math.max(minW, rel * Math.abs(v));
-      if (mode === 'band') return Math.max(minW, abs);
-      return Math.max(minW, Math.max(abs, rel * Math.abs(v)));
-    });
-    const upper = traj.ref_values.map((v, i) => v + widths[i]);
-    const lower = traj.ref_values.map((v, i) => v - widths[i]);
-    return { traces: [{
+    const points = Array.isArray(p.tube_points) ? p.tube_points : [];
+
+    // Time-varying tube wins over the scalar widths when any control
+    // points are authored (matches _interpolate_tube_widths in the
+    // comparator; interp across the control grid, hold at the ends).
+    let widths_upper, widths_lower;
+    if (points.length > 0) {
+      const normalized = points.map(pt => ({
+        time: Number(pt.time ?? 0),
+        upper: Number(pt.upper ?? pt.abs ?? pt.rel ?? 0),
+        lower: Number(pt.lower ?? pt.abs ?? pt.rel ?? 0),
+      })).sort((a, b) => a.time - b.time);
+      const interp = (t, key) => {
+        if (t <= normalized[0].time) return normalized[0][key];
+        if (t >= normalized[normalized.length - 1].time) return normalized[normalized.length - 1][key];
+        for (let i = 1; i < normalized.length; i++) {
+          if (normalized[i].time >= t) {
+            const f = (t - normalized[i - 1].time) / (normalized[i].time - normalized[i - 1].time);
+            return normalized[i - 1][key] + f * (normalized[i][key] - normalized[i - 1][key]);
+          }
+        }
+        return normalized[normalized.length - 1][key];
+      };
+      widths_upper = traj.ref_time.map(t => Math.max(minW, interp(t, 'upper')));
+      widths_lower = traj.ref_time.map(t => Math.max(minW, interp(t, 'lower')));
+    } else {
+      const w = traj.ref_values.map(v => {
+        if (mode === 'rel') return Math.max(minW, rel * Math.abs(v));
+        if (mode === 'band') return Math.max(minW, abs);
+        return Math.max(minW, Math.max(abs, rel * Math.abs(v)));
+      });
+      widths_upper = w; widths_lower = w;
+    }
+
+    const upper = traj.ref_values.map((v, i) => v + widths_upper[i]);
+    const lower = traj.ref_values.map((v, i) => v - widths_lower[i]);
+    const traces = [{
       x: traj.ref_time.concat([...traj.ref_time].reverse()),
       y: upper.concat([...lower].reverse()),
       fill: 'toself',
@@ -468,11 +515,261 @@ const MODE_PLOT_CONTRIBUTIONS = {
       name: `Tube ${leaf.path}`,
       hoverinfo: 'skip',
       showlegend: true,
-    }], shapes: [] };
+    }];
+
+    // When this tube leaf is the active one, surface its control points
+    // as draggable-looking markers. Adds visual feedback that the
+    // interactive editor is wired to this plot.
+    if (activeLeafPath === leaf.path && points.length > 0) {
+      const pxt = points.map(pt => Number(pt.time ?? 0));
+      const pxu = points.map(pt => interpOnRef(traj, Number(pt.time ?? 0)) + Number(pt.upper ?? 0));
+      const pxl = points.map(pt => interpOnRef(traj, Number(pt.time ?? 0)) - Number(pt.lower ?? 0));
+      traces.push({
+        x: pxt, y: pxu, mode: 'markers', type: 'scatter',
+        marker: { color: '#2e7d32', size: 9, symbol: 'triangle-up', line: {color: 'white', width: 1} },
+        name: `Tube upper pts ${leaf.path}`, hoverinfo: 'x+y',
+      });
+      traces.push({
+        x: pxt, y: pxl, mode: 'markers', type: 'scatter',
+        marker: { color: '#c62828', size: 9, symbol: 'triangle-down', line: {color: 'white', width: 1} },
+        name: `Tube lower pts ${leaf.path}`, hoverinfo: 'x+y',
+      });
+    }
+    return { traces, shapes: [] };
   },
   'event-timing': () => ({ traces: [], shapes: [] }),
   'dominant-frequency': () => ({ traces: [], shapes: [] }),
 };
+
+// ---- Plot editor registry (MODE_PLOT_EDITORS) ----
+// Parallel to MODE_PLOT_CONTRIBUTIONS. Each entry describes an
+// interactive edit flow for a mode. Activated on leaf click, deactivated
+// on click-away / ESC / switch-to-different-leaf.
+//
+// Contract:
+//   activate(leaf, plotEl, commit) → void
+//     - leaf:   the TREE_VIEW leaf object.
+//     - plotEl: the Plotly DOM element for this leaf's variable.
+//     - commit(): flush leafState to re-render plot + export. Call on any
+//                 state mutation the editor makes.
+//     - Implementation owns: DOM injection into the leaf's .node-editor
+//       slot, plot event wiring (Plotly.on / addEventListener), and any
+//       interim feedback.
+//   deactivate(leaf, plotEl) → void
+//     - Implementation owns: DOM removal + event unwiring.
+//
+// Modes without an entry have no interactive editor — clicking their
+// leaf activates it (for visual consistency) but no plot events wire.
+const MODE_PLOT_EDITORS = {};
+
+// Tube editor — control-point table + Shift+click to add a point.
+// Points live at ``leafState[path].params.tube_points`` as a list of
+// ``{time, upper, lower}``. Polygon re-renders via plot_contribution.
+MODE_PLOT_EDITORS['tube'] = (function() {
+  const wired = new WeakMap();  // plotEl → cleanup fn
+
+  function getPoints(leaf) {
+    const p = leafState[leaf.path]?.params || {};
+    const pts = Array.isArray(p.tube_points) ? p.tube_points : [];
+    return pts.map(normalizePoint);
+  }
+
+  function normalizePoint(p) {
+    // Accept legacy {time, abs, rel} as symmetric upper=lower=abs||rel.
+    if (p.upper !== undefined || p.lower !== undefined) {
+      return { time: Number(p.time || 0),
+               upper: Number(p.upper ?? p.lower ?? 0),
+               lower: Number(p.lower ?? p.upper ?? 0) };
+    }
+    const w = Number(p.abs ?? p.rel ?? 0);
+    return { time: Number(p.time || 0), upper: w, lower: w };
+  }
+
+  function setPoints(leaf, pts) {
+    const state = leafState[leaf.path];
+    if (!state) return;
+    state.params.tube_points = pts.map(p => ({
+      time: Number(p.time), upper: Number(p.upper), lower: Number(p.lower),
+    }));
+  }
+
+  function renderTable(leaf, container, commit) {
+    container.innerHTML = '';
+    const title = document.createElement('div');
+    title.className = 'editor-title';
+    title.textContent = 'Tube control points (time / upper / lower width)';
+    container.appendChild(title);
+
+    const hint = document.createElement('div');
+    hint.className = 'editor-hint';
+    hint.innerHTML = 'Shift+click the plot to add a point at that (time, value). Widths are offsets from the reference trajectory.';
+    container.appendChild(hint);
+
+    const table = document.createElement('table');
+    table.className = 'tube-table';
+    const header = document.createElement('tr');
+    ['time', 'upper', 'lower', ''].forEach(h => {
+      const th = document.createElement('th'); th.textContent = h;
+      header.appendChild(th);
+    });
+    table.appendChild(header);
+
+    const points = getPoints(leaf);
+    points.forEach((pt, i) => {
+      const row = document.createElement('tr');
+      for (const key of ['time', 'upper', 'lower']) {
+        const td = document.createElement('td');
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.step = 'any'; inp.value = pt[key];
+        inp.addEventListener('input', () => {
+          points[i][key] = parseFloat(inp.value);
+          if (Number.isFinite(points[i][key])) {
+            setPoints(leaf, points);
+            commit();
+          }
+        });
+        td.appendChild(inp);
+        row.appendChild(td);
+      }
+      const rm = document.createElement('td');
+      const btn = document.createElement('button');
+      btn.className = 'node-btn node-btn-remove';
+      btn.textContent = '−'; btn.title = 'Remove point';
+      btn.addEventListener('click', () => {
+        points.splice(i, 1);
+        setPoints(leaf, points);
+        commit();
+        renderTable(leaf, container, commit);
+      });
+      rm.appendChild(btn);
+      row.appendChild(rm);
+      table.appendChild(row);
+    });
+    container.appendChild(table);
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'node-btn node-btn-add';
+    addBtn.textContent = '+ add point';
+    addBtn.addEventListener('click', () => {
+      const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+      const lastT = points.length ? points[points.length - 1].time
+                 : (traj.ref_time?.[0] ?? 0);
+      points.push({ time: lastT, upper: 0, lower: 0 });
+      setPoints(leaf, points);
+      commit();
+      renderTable(leaf, container, commit);
+    });
+    container.appendChild(addBtn);
+  }
+
+  return {
+    activate(leaf, plotEl, commit) {
+      // Inject editor UI inside the active leaf's dedicated slot.
+      document.querySelectorAll(`[data-path="${escapeSelector(leaf.path)}"] .node-editor`).forEach(slot => {
+        renderTable(leaf, slot, commit);
+      });
+
+      // Shift+click on the plot adds a control point at (x, ref-offset).
+      const handler = (e) => {
+        if (!e || !e.event || !e.event.shiftKey) return;
+        const pt = e.points?.[0];
+        const x = pt ? pt.x : (e.xvals?.[0]);
+        const y = pt ? pt.y : (e.yvals?.[0]);
+        if (x == null || y == null) return;
+        // Pick the reference value at x to compute width (y - ref).
+        const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+        const refY = interpOnRef(traj, x);
+        const width = Math.abs(y - refY);
+        const pts = getPoints(leaf);
+        pts.push({ time: Number(x), upper: width, lower: width });
+        pts.sort((a, b) => a.time - b.time);
+        setPoints(leaf, pts);
+        commit();
+        // Re-render table to reflect the new point.
+        document.querySelectorAll(`[data-path="${escapeSelector(leaf.path)}"] .node-editor`).forEach(slot => {
+          renderTable(leaf, slot, commit);
+        });
+      };
+      plotEl.on('plotly_click', handler);
+      wired.set(plotEl, () => {
+        plotEl.removeAllListeners && plotEl.removeAllListeners('plotly_click');
+      });
+    },
+    deactivate(leaf, plotEl) {
+      document.querySelectorAll(`[data-path="${escapeSelector(leaf.path)}"] .node-editor`).forEach(slot => {
+        slot.innerHTML = '';
+      });
+      const cleanup = wired.get(plotEl);
+      if (cleanup) { cleanup(); wired.delete(plotEl); }
+    },
+  };
+})();
+
+function interpOnRef(traj, x) {
+  const rt = traj.ref_time || [];
+  const rv = traj.ref_values || [];
+  if (!rt.length) return 0;
+  if (x <= rt[0]) return rv[0];
+  if (x >= rt[rt.length - 1]) return rv[rv.length - 1];
+  // Linear interp — good enough for placing a new control point.
+  for (let i = 1; i < rt.length; i++) {
+    if (rt[i] >= x) {
+      const f = (x - rt[i - 1]) / (rt[i] - rt[i - 1]);
+      return rv[i - 1] + f * (rv[i] - rv[i - 1]);
+    }
+  }
+  return rv[rv.length - 1];
+}
+
+// ---- Leaf activation (click a leaf to wire its editor) ----
+function activateLeaf(leaf) {
+  if (activeLeafPath === leaf.path) return;
+  deactivateLeaf();
+  activeLeafPath = leaf.path;
+
+  // Highlight the active leaf across all mounts.
+  document.querySelectorAll(`[data-path="${escapeSelector(leaf.path)}"]`).forEach(el => {
+    el.classList.add('node-active');
+  });
+
+  const editor = MODE_PLOT_EDITORS[leaf.metric];
+  if (editor) {
+    const idx = VARIABLE_INDEX[leaf.variable];
+    const plotEl = document.getElementById(`plot-${idx}`);
+    if (plotEl) {
+      const commit = () => {
+        renderVariablePlot(leaf.variable, idx);
+        updateExport();
+      };
+      editor.activate(leaf, plotEl, commit);
+    }
+  }
+  renderVariablePlot(leaf.variable, VARIABLE_INDEX[leaf.variable]);
+}
+
+function deactivateLeaf() {
+  if (!activeLeafPath) return;
+  const path = activeLeafPath;
+  const leaf = findLeaf(TREE_VIEW, path) || findLeaf(WORKING_TREE, path);
+  activeLeafPath = null;
+  document.querySelectorAll('.node-active').forEach(el => el.classList.remove('node-active'));
+  if (leaf) {
+    const editor = MODE_PLOT_EDITORS[leaf.metric];
+    if (editor && editor.deactivate) {
+      const idx = VARIABLE_INDEX[leaf.variable];
+      const plotEl = document.getElementById(`plot-${idx}`);
+      if (plotEl) editor.deactivate(leaf, plotEl);
+    }
+    renderVariablePlot(leaf.variable, VARIABLE_INDEX[leaf.variable]);
+  }
+}
+
+function findLeaf(tree, path) {
+  if (!tree) return null;
+  let found = null;
+  walkLeaves(tree, l => { if (l.path === path) found = l; });
+  return found;
+}
 
 function windowShape(leaf) {
   const state = leafState[leaf.path];
@@ -494,6 +791,10 @@ document.addEventListener('DOMContentLoaded', () => {
   wireOverlayPickers();
   updateSummary();
   updateExport();
+  // ESC deactivates the active leaf (escape hatch from edit mode).
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && activeLeafPath) deactivateLeaf();
+  });
 });
 
 // ---- Plotly rendering ----
@@ -713,6 +1014,25 @@ function renderLeaf(leaf, container, opts) {
     wrapper.appendChild(controls);
     wireLeafInputs(controls, leaf);
   }
+
+  // Editor slot — MODE_PLOT_EDITORS[metric].activate mounts its rich
+  // UI (tube control-point table, etc.) here when this leaf is active.
+  // Empty div ensures the mount point exists even for modes without an
+  // editor; activate() is a no-op for them.
+  const editorSlot = document.createElement('div');
+  editorSlot.className = 'node-editor';
+  wrapper.appendChild(editorSlot);
+
+  // Clicking the leaf's header (not inputs / buttons / toggles) makes
+  // it the active leaf. Per-variable and full-tree mounts share state.
+  header.addEventListener('click', (e) => {
+    const tag = e.target.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'BUTTON'
+        || tag === 'TEXTAREA' || tag === 'LABEL') return;
+    activateLeaf(leaf);
+  });
+
+  if (activeLeafPath === leaf.path) wrapper.classList.add('node-active');
 
   container.appendChild(wrapper);
   return true;

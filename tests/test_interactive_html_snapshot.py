@@ -282,3 +282,15 @@ def test_tree_view_and_variables_by_name_embedded():
     assert "const TREE_VIEW" in html
     assert "const VARIABLES_BY_NAME" in html
     assert "const MODE_SCHEMAS" in html
+
+
+def test_plot_editor_registry_wires_tube():
+    """Tube's interactive plot editor must be registered at template
+    render time so the JS can find it on leaf activation."""
+    ctx = _build_context("tube")
+    html = _render_interactive(ctx)
+    assert "MODE_PLOT_EDITORS" in html
+    assert "MODE_PLOT_EDITORS['tube']" in html
+    # Active-leaf plumbing hooks
+    assert "activateLeaf" in html
+    assert "deactivateLeaf" in html

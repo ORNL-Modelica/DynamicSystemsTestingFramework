@@ -294,6 +294,13 @@ class ModeUI:
     schema: Schema
     custom_renderer: Optional[CustomRenderer] = None
     plot_contribution: Optional[PlotContributionFn] = None
+    # Marker that the mode has a JS-side interactive plot editor
+    # registered under ``MODE_PLOT_EDITORS[name]``. Python-side is just
+    # the declaration; the editor itself lives in the template JS
+    # (Shift+click handlers, drag, control-point markers). Having the
+    # slot here keeps "what does this mode support" discoverable from
+    # the single Python registry (recommender, schema export, etc.).
+    has_plot_editor: bool = False
 
     def render(self, *, variable: Optional[str] = None,
                values: Optional[dict[str, Any]] = None) -> str:
@@ -325,6 +332,7 @@ def register_mode_ui(
     *,
     custom_renderer: Optional[CustomRenderer] = None,
     plot_contribution: Optional[PlotContributionFn] = None,
+    has_plot_editor: bool = False,
 ) -> ModeUI:
     """Register a mode's UI. Returns the :class:`ModeUI` for test/inspection."""
     schema = derive_schema(config_cls, mode=name)
@@ -334,6 +342,7 @@ def register_mode_ui(
         schema=schema,
         custom_renderer=custom_renderer,
         plot_contribution=plot_contribution,
+        has_plot_editor=has_plot_editor,
     )
     _REGISTRY[name] = entry
     return entry
@@ -417,12 +426,12 @@ def _register_bundled() -> None:
     )
 
     register_mode_ui("nrmse", NrmseConfig)
-    # Stage 2: tube uses the default auto-derived renderer. The rich
-    # Shift+click/drag editor was retired with the variable-table UI; tube
-    # config is edited via its schema-driven inputs (tube_width_mode,
-    # tube_rel, tube_abs, tube_min_width, tube_interpolation, and the
-    # passthrough tube_points textarea for time-varying tubes).
-    register_mode_ui("tube", TubeConfig)
+    # Tube has a JS-side interactive plot editor (MODE_PLOT_EDITORS.tube)
+    # for shaping time-varying control points. The schema-driven inputs
+    # (tube_width_mode, tube_rel, tube_abs, tube_min_width,
+    # tube_interpolation, passthrough tube_points) remain; the editor
+    # sits on top of them, activated by clicking the leaf node.
+    register_mode_ui("tube", TubeConfig, has_plot_editor=True)
     register_mode_ui("final_only", FinalOnlyConfig)
     # range auto-derived panel is the 6.1.5 default; 6.1.4 adds visual
     # reference lines on the trajectory plot via JS (no custom_renderer

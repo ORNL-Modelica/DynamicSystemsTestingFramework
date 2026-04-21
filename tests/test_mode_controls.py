@@ -296,6 +296,31 @@ class TestPlotContributionSlot:
         assert ui.contribute_to_plot({}).secondary_panel == "spectrum"
 
 
+class TestHasPlotEditor:
+    """Python-side marker that MODE_PLOT_EDITORS[name] is wired JS-side.
+    Used by the recommender / schema export for discoverability."""
+
+    def test_tube_has_plot_editor(self):
+        ui = get_mode_ui("tube")
+        assert ui is not None
+        assert ui.has_plot_editor is True
+
+    def test_nrmse_has_no_plot_editor(self):
+        ui = get_mode_ui("nrmse")
+        assert ui is not None
+        assert ui.has_plot_editor is False
+
+    def test_flag_exposed_on_register(self):
+        from dataclasses import dataclass as _dc
+
+        @_dc
+        class Cfg:
+            pass
+
+        ui = register_mode_ui("editor-test", Cfg, has_plot_editor=True)
+        assert ui.has_plot_editor is True
+
+
 class TestEmitModeSchemas:
     """Bulk export for embedding into interactive.html (Stage 2 JS renderer)."""
 
