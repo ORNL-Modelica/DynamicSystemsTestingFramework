@@ -1330,18 +1330,20 @@ function renderVariablePlot(varname, idx) {
   }
 
   // Overlay traces (companions / soft_checks) — default hidden; toggle
-  // visibility via the per-plot overlay picker.
+  // visibility via the per-plot overlay picker. Styles by role + kind:
+  //   soft_check             → purple dotted
+  //   companion (generic)    → green dashdot
+  //   companion sibling-backend → blue dashed (pre-accept cross-check)
   for (const ov of (vardata.overlays || [])) {
-    const isSoft = ov.role === 'soft_check';
+    let color, dash;
+    if (ov.role === 'soft_check') { color = '#7B1FA2'; dash = 'dot'; }
+    else if (ov.kind === 'sibling-backend') { color = '#1976D2'; dash = 'dash'; }
+    else { color = '#388E3C'; dash = 'dashdot'; }
     traces.push({
       x: ov.time, y: ov.values,
       name: overlayTraceName(ov.role, ov.name),
       type: 'scatter', mode: 'lines',
-      line: {
-        color: isSoft ? '#7B1FA2' : '#388E3C',
-        width: 1.2,
-        dash: isSoft ? 'dot' : 'dashdot',
-      },
+      line: { color, width: 1.2, dash },
       opacity: 0.85,
       visible: 'legendonly',
     });

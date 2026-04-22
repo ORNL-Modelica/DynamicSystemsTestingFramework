@@ -302,3 +302,118 @@ class TestStoreExceptionsSwallowed:
 
     def test_none_store_returns_empty(self, tmp_path):
         assert load_overlays(None, "M") == []
+
+
+# ---------------------------------------------------------------------------
+# Sibling-backend auto-companions
+# ---------------------------------------------------------------------------
+
+class _FakeConfigForSibling:
+    """Minimum surface load_sibling_backend_overlays touches."""
+    def __init__(self, reference_root, simulator_backend, os_name):
+        self.reference_root = reference_root
+        self.simulator_backend = simulator_backend
+        self.os_name = os_name
+
+
+def _write_ref(dir_path: Path, stem: str, model_id: str, varname: str = "h", status: str = "active"):
+    dir_path.mkdir(parents=True, exist_ok=True)
+    (dir_path / f"{stem}.json").write_text(json.dumps({
+        "model_id": model_id,
+        "status": status,
+        "time": [0.0, 0.5, 1.0],
+        "variables": [{"name": varname, "values": [1.0, 0.5, 0.0]}],
+    }))
+
+
+class TestSiblingBackendOverlays:
+    def setup_method(self):
+        # Clear the lru_cache between tests — it keys on the arg tuple so
+        # a fresh tmp_path already dodges collisions, but being explicit
+        # prevents surprises if a test reuses a path.
+        from modelica_testing.reporting.overlay_loader import (
+            _sibling_backend_index,
+        )
+        _sibling_backend_index.cache_clear()
+
+    def test_discovers_peer_backend_ref(self, tmp_path):
+        from modelica_testing.reporting.overlay_loader import (
+            load_sibling_backend_overlays,
+        )
+        # Dymola/windows has a ref for model M; current partition is
+        # OpenModelica/linux (which may or may not have its own).
+        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
+        _write_ref(tmp_path / "OpenModelica" / "linux", "ref_0001", "M")
+
+        cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
+        overlays = load_sibling_backend_overlays(cfg, "M")
+        assert len(overlays) == 1
+        assert overlays[0].name == "Dymola/windows"
+        assert overlays[0].kind == "sibling-backend"
+        assert overlays[0].role == "companion"
+        assert overlays[0].status == "loaded"
+        assert "h" in overlays[0].variables
+
+    def test_excludes_current_partition(self, tmp_path):
+        from modelica_testing.reporting.overlay_loader import (
+            load_sibling_backend_overlays,
+        )
+        # Only the current partition has a ref — nothing to overlay.
+        _write_ref(tmp_path / "OpenModelica" / "linux", "ref_0001", "M")
+        cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
+        assert load_sibling_backend_overlays(cfg, "M") == []
+
+    def test_skips_obsolete_refs(self, tmp_path):
+        from modelica_testing.reporting.overlay_loader import (
+            load_sibling_backend_overlays,
+        )
+        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M",
+                   status="obsolete")
+        cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
+        assert load_sibling_backend_overlays(cfg, "M") == []
+
+    def test_multiple_siblings_produce_multiple_overlays(self, tmp_path):
+        from modelica_testing.reporting.overlay_loader import (
+            load_sibling_backend_overlays,
+        )
+        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
+        _write_ref(tmp_path / "FMPy" / "linux", "ref_0001", "M")
+        cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
+        overlays = load_sibling_backend_overlays(cfg, "M")
+        names = {o.name for o in overlays}
+        assert names == {"Dymola/windows", "FMPy/linux"}
+
+    def test_no_config_means_no_sibling_overlays(self, tmp_path):
+        """load_overlays without a config must behave identically to the
+        old API — no auto-discovery."""
+        from modelica_testing.reporting.overlay_loader import load_overlays
+        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
+        store = _FakeStore(tmp_path / "OpenModelica" / "linux")
+        assert load_overlays(store, "M") == []
+
+    def test_load_overlays_integrates_sibling_when_config_passed(self, tmp_path):
+        from modelica_testing.reporting.overlay_loader import load_overlays
+        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
+        store = _FakeStore(tmp_path / "OpenModelica" / "linux")
+        cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
+        overlays = load_overlays(store, "M", config=cfg)
+        assert any(o.kind == "sibling-backend" for o in overlays)
+
+    def test_attach_threads_kind_through(self):
+        """attach_overlays_to_trajectories must propagate `kind` so the JS
+        can style sibling-backend overlays distinctly."""
+        trajectories = [{"name": "h"}]
+        overlays = [
+            Overlay(
+                name="Dymola/windows",
+                role="companion",
+                kind="sibling-backend",
+                status="loaded",
+                variables={"h": OverlayVariable(time=[0, 1], values=[1, 0])},
+            ),
+        ]
+        attach_overlays_to_trajectories(trajectories, overlays)
+        attached = trajectories[0]["overlays"]
+        assert len(attached) == 1
+        assert attached[0]["kind"] == "sibling-backend"
+        assert attached[0]["role"] == "companion"

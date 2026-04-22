@@ -886,7 +886,9 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
     # A2 — load every registered overlay for this model (soft_checks +
     # companions). Failures are absorbed into Overlay.status so the
     # report never breaks on a moved/renamed companion file.
-    overlays = load_overlays(store, model_id)
+    # Passing ``config`` also auto-discovers peer-backend refs as
+    # sibling-backend companions (visual-only pre-accept cross-check).
+    overlays = load_overlays(store, model_id, config=config)
 
     if not comp.sim_success:
         status_text, status_class = "SIM_FAIL", "sim-fail"

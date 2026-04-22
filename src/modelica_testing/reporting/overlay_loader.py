@@ -28,6 +28,18 @@ Two overlay formats supported today:
 
 Callers get a flat ``list[Overlay]`` — role-keyed dicts are the
 template's concern, not the loader's.
+
+**Cross-backend auto-companions.** In addition to user-registered
+overlays, the loader can auto-discover peer-backend references (same
+model_id, stored under a sibling ``<reference_root>/<backend>/<os>/``
+partition) and surface them as read-only companions with
+``kind="sibling-backend"``. Useful when a new simulator has simulated
+but not yet been baselined — the user can eyeball "does this new sim's
+trajectory match the old simulator's stored reference?" on the same
+plot. No persistence — purely a visual overlay at report time. Gated
+by passing a ``config`` (with ``reference_root`` + ``simulator_backend``
++ ``os_name``) into :func:`load_overlays`; omit the config and only
+user-registered overlays are returned (existing behavior).
 """
 from __future__ import annotations
 
@@ -35,6 +47,7 @@ import csv
 import json
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
@@ -64,7 +77,7 @@ class OverlayVariable:
     values: list[float]
 
 
-def load_overlays(store, model_id: str) -> list[Overlay]:
+def load_overlays(store, model_id: str, config=None) -> list[Overlay]:
     """Return every soft_check + companion available for this model.
 
     Pure read path — never mutates the store. Missing / unparseable
@@ -72,6 +85,13 @@ def load_overlays(store, model_id: str) -> list[Overlay]:
     or ``"invalid"`` rather than raising. Soft_checks come from the
     store's existing loader (which already tolerates bad files by
     skipping them — same semantics apply here).
+
+    When ``config`` is provided, also auto-discovers sibling-backend
+    references (same ``model_id``, stored under peer
+    ``<reference_root>/<backend>/<os>/`` partitions) and includes them
+    as read-only companions with ``kind="sibling-backend"`` — useful
+    for visually validating a new simulator against references from an
+    already-trusted one before accepting baselines.
     """
     overlays: list[Overlay] = []
     if store is None or not model_id:
@@ -106,7 +126,130 @@ def load_overlays(store, model_id: str) -> list[Overlay]:
     for name, companion in companions.items():
         overlays.append(_load_companion(store, model_id, companion))
 
+    # Auto-discovered sibling-backend companions (opt-in via config).
+    if config is not None:
+        overlays.extend(load_sibling_backend_overlays(config, model_id))
+
     return overlays
+
+
+def load_sibling_backend_overlays(config, model_id: str) -> list[Overlay]:
+    """Find peer-backend references for ``model_id`` and render them as overlays.
+
+    Scans ``<reference_root>/<backend>/<os>/`` directories, excluding the
+    current partition (``config.simulator_backend`` + ``config.os_name``),
+    for ``ref_*.json`` files whose ``model_id`` matches. Each match becomes
+    an :class:`Overlay` with ``role="companion"`` + ``kind="sibling-backend"``
+    and ``name`` like ``"Dymola/windows"``. Every failure mode
+    (missing root, unreadable ref, obsolete status) is silently skipped —
+    this path must never break a report.
+    """
+    if config is None:
+        return []
+    reference_root = getattr(config, "reference_root", None)
+    if reference_root is None:
+        return []
+    current_backend = getattr(config, "simulator_backend", None) or ""
+    current_os = getattr(config, "os_name", None) or ""
+    index = _sibling_backend_index(
+        str(reference_root), current_backend, current_os,
+    )
+    matches = index.get(model_id, ())
+    overlays: list[Overlay] = []
+    for ref in matches:
+        ov_vars = _ref_data_to_overlay_vars(ref.data)
+        overlays.append(Overlay(
+            name=f"{ref.backend}/{ref.os}",
+            role="companion",
+            kind="sibling-backend",
+            status="loaded" if ov_vars else "invalid",
+            note="" if ov_vars else "sibling ref has no variable trajectories",
+            variables=ov_vars,
+        ))
+    return overlays
+
+
+@dataclass(frozen=True)
+class _SiblingRef:
+    backend: str
+    os: str
+    path: Path
+    data: dict
+
+
+@lru_cache(maxsize=8)
+def _sibling_backend_index(
+    reference_root: str,
+    current_backend: str,
+    current_os: str,
+) -> dict[str, tuple[_SiblingRef, ...]]:
+    """Build ``model_id -> (SiblingRef, ...)`` once per (root, current).
+
+    ``lru_cache`` is safe here because the file tree is read-only during
+    a report run. Any later accept-and-rerender invalidates the cache by
+    using fresh args only on the partition the user *isn't* excluding —
+    the sibling partitions it scans don't change mid-run.
+    """
+    index: dict[str, list[_SiblingRef]] = {}
+    root = Path(reference_root)
+    if not root.exists():
+        return {}
+    for backend_dir in sorted(root.iterdir()):
+        if not backend_dir.is_dir():
+            continue
+        for os_dir in sorted(backend_dir.iterdir()):
+            if not os_dir.is_dir():
+                continue
+            # Skip the current partition — its refs are the primary
+            # baselines, not overlays.
+            if backend_dir.name == current_backend and os_dir.name == current_os:
+                continue
+            for ref_file in sorted(os_dir.glob("ref_*.json")):
+                try:
+                    data = json.loads(ref_file.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    continue
+                if data.get("status") == "obsolete":
+                    continue
+                mid = data.get("model_id")
+                if not mid:
+                    continue
+                index.setdefault(mid, []).append(_SiblingRef(
+                    backend=backend_dir.name,
+                    os=os_dir.name,
+                    path=ref_file,
+                    data=data,
+                ))
+    return {k: tuple(v) for k, v in index.items()}
+
+
+def _ref_data_to_overlay_vars(ref_data: dict) -> dict[str, OverlayVariable]:
+    """Flatten a raw ref-file dict (primary baseline shape) into overlay vars.
+
+    Ref files store ``{"simulation": {...}, "variables": [{"name":..., "values":[...]}, ...]}``
+    with the time vector either under ``time`` at top level or — for older
+    schemas — via :func:`storage.reference_store._extract_baselines`. We
+    go straight for the common shape and fall back to a safe no-op.
+    """
+    time = ref_data.get("time")
+    if not isinstance(time, list):
+        # Some schemas store time under a baseline entry. Try that.
+        baselines = ref_data.get("baselines") or {}
+        primary = baselines.get("primary") if isinstance(baselines, dict) else None
+        if isinstance(primary, dict):
+            time = primary.get("time")
+    if not isinstance(time, list):
+        return {}
+    out: dict[str, OverlayVariable] = {}
+    for entry in ref_data.get("variables") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name") or entry.get("expression")
+        values = entry.get("values")
+        if not name or not isinstance(values, list):
+            continue
+        out[name] = OverlayVariable(time=list(time), values=list(values))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +429,7 @@ def attach_overlays_to_trajectories(
             attached.append({
                 "name": ov.name,
                 "role": ov.role,
+                "kind": ov.kind,
                 "time": list(var.time),
                 "values": list(var.values),
             })
