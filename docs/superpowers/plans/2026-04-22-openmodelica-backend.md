@@ -408,7 +408,7 @@ Expected: `ModuleNotFoundError: No module named 'modelica_testing.simulators.ope
 
 - [ ] **Step 3: Create `openmodelica/__init__.py`**
 
-Create `src/modelica_testing/simulators/openmodelica/__init__.py`:
+Create `src/modelica_testing/simulators/openmodelica/__init__.py`. For this task it only contains the module docstring — the `from .runner import ...` re-export is added in **Task 4** once `runner.py` lands. Python runs a package's `__init__.py` on any submodule import, so an eager import of a not-yet-existing module would break the mos_generator tests' collection.
 
 ```python
 """OpenModelica simulator backend (omc subprocess + .mos scripts).
@@ -422,12 +422,10 @@ One-time bootstrap (per machine) to install the Modelica Standard Library:
     omc -e 'updatePackageIndex(); installPackage(Modelica); getErrorString();'
 """
 
-from .runner import OpenModelicaConfig, OpenModelicaRunner
-
-__all__ = ["OpenModelicaConfig", "OpenModelicaRunner"]
+# Public re-exports (populated by Task 4 once runner.py lands):
+#   from .runner import OpenModelicaConfig, OpenModelicaRunner
+# For now, submodules are imported directly by consumers.
 ```
-
-Note: `runner.py` doesn't exist yet — the import will fail until Task 4. That's expected. Tests for `mos_generator.py` import `from ...openmodelica.mos_generator import ...` which doesn't go through `__init__.py`, so they work in isolation.
 
 - [ ] **Step 4: Implement `mos_generator.py`**
 
@@ -1590,9 +1588,17 @@ def _extract_variables(
     return results, diagnostics
 ```
 
-- [ ] **Step 4: Wire the registry**
+- [ ] **Step 4: Populate `openmodelica/__init__.py` re-exports and wire the registry**
 
-In `src/modelica_testing/simulators/__init__.py`, line 77–80, extend the `builtins` dict from:
+First, append the runner re-exports to `src/modelica_testing/simulators/openmodelica/__init__.py` (Task 2 left it with only the docstring). Replace the "Public re-exports..." comment block at the bottom with:
+
+```python
+from .runner import OpenModelicaConfig, OpenModelicaRunner
+
+__all__ = ["OpenModelicaConfig", "OpenModelicaRunner"]
+```
+
+Then, in `src/modelica_testing/simulators/__init__.py`, line 77–80, extend the `builtins` dict from:
 
 ```python
     builtins = {
@@ -1636,7 +1642,8 @@ Expected: previous count + new tests (roughly 637 → 650). Exact count depends 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/modelica_testing/simulators/openmodelica/runner.py \
+git add src/modelica_testing/simulators/openmodelica/__init__.py \
+        src/modelica_testing/simulators/openmodelica/runner.py \
         src/modelica_testing/simulators/__init__.py \
         tests/test_openmodelica_runner.py
 git -c user.name="Scott Greenwood" -c user.email="greenwoodms@ornl.gov" commit -m "$(cat <<'EOF'
