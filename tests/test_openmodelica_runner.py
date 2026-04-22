@@ -1,9 +1,11 @@
 """OpenModelica runner tests.
 
 Unit tests here stub subprocess.run so they don't require an omc binary.
-Task 5 adds real-omc integration tests gated on shutil.which("omc").
+Integration tests at the bottom exercise real omc and are gated on
+``shutil.which("omc")`` so CI / machines without omc still pass.
 """
 
+import shutil
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -11,6 +13,8 @@ import pytest
 
 from modelica_testing.config import Config
 from modelica_testing.discovery.test_registry import TestModel
+
+FIXTURES = Path(__file__).parent / "fixtures" / "results_openmodelica"
 
 
 class TestOpenModelicaConfig:
@@ -201,3 +205,154 @@ class TestOpenModelicaRunnerUnit:
         assert result.error_message
         low = result.error_message.lower()
         assert "not found" in low or "does not exist" in low
+
+
+# ---------------------------------------------------------------------------
+# Integration tests (real omc; skipped if not installed)
+# ---------------------------------------------------------------------------
+
+omc_unavailable = pytest.mark.skipif(
+    shutil.which("omc") is None,
+    reason="omc not installed — integration tests skipped",
+)
+
+
+@omc_unavailable
+class TestOpenModelicaIntegration:
+    def test_msl_only_smoke(self, tmp_path):
+        """End-to-end: MSL-only model via loadModel, real omc."""
+        from modelica_testing.simulators.openmodelica.runner import (
+            OpenModelicaRunner,
+        )
+
+        (tmp_path / "package.mo").write_text("package EmptyLib end EmptyLib;")
+
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            simulator="OpenModelica",
+            work_dir=tmp_path / "work",
+            dependencies=["Modelica"],
+            timeout=120,
+        )
+        runner = OpenModelicaRunner(cfg)
+        test = TestModel(
+            model_id="Modelica.Blocks.Examples.PID_Controller",
+            source_file=Path(""),
+            source_package="Modelica.Blocks.Examples",
+            short_name="PID_Controller",
+            n_vars=0,
+            variable_patterns=["inertia1.phi"],
+            stop_time=1.0,
+            tolerance=1e-6,
+            number_of_intervals=50,
+            method="dassl",
+            source="spec",
+        )
+        run_result = runner.run_single_test(
+            test, test_key="test_0001", index=1, total=1,
+        )
+        assert run_result.success is True, run_result.error_message
+        assert run_result.translation_wall is not None
+        assert run_result.sim_wall is not None
+
+        test_result = runner.read_result(test, "test_0001", run_result)
+        assert test_result.success is True
+        var_names = [v.name for v in test_result.variables]
+        assert "inertia1.phi" in var_names
+
+    def test_variable_filter_shrinks_mat(self, tmp_path):
+        """variableFilter keeps the MAT small (one var request ⇒ few names)."""
+        from modelica_testing.simulators.openmodelica.runner import (
+            OpenModelicaRunner,
+        )
+        from modelica_testing.simulators.common.mat_reader import (
+            list_result_mat_variables,
+        )
+
+        (tmp_path / "package.mo").write_text("package EmptyLib end EmptyLib;")
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            simulator="OpenModelica",
+            work_dir=tmp_path / "work",
+            dependencies=["Modelica"],
+            timeout=120,
+        )
+        runner = OpenModelicaRunner(cfg)
+        test = TestModel(
+            model_id="Modelica.Blocks.Examples.PID_Controller",
+            source_file=Path(""),
+            source_package="Modelica.Blocks.Examples",
+            short_name="PID_Controller",
+            n_vars=0,
+            variable_patterns=["inertia1.phi"],
+            stop_time=0.5,
+            number_of_intervals=20,
+            source="spec",
+        )
+        rr = runner.run_single_test(test, test_key="t", index=1, total=1)
+        assert rr.success is True, rr.error_message
+
+        mat = cfg.work_dir / "t" / OpenModelicaRunner.RESULT_MAT_FILENAME
+        names = list_result_mat_variables(mat)
+        assert names is not None
+        # Without the filter, PID_Controller's MAT has 1000+ vars (derivatives,
+        # aliases, parameters). With the filter, should be tens at most.
+        assert len(names) < 200, f"variableFilter under-effective: {len(names)} vars"
+
+    def test_missing_model_surfaces_clear_error(self, tmp_path):
+        from modelica_testing.simulators.openmodelica.runner import (
+            OpenModelicaRunner,
+        )
+        (tmp_path / "package.mo").write_text("package EmptyLib end EmptyLib;")
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            simulator="OpenModelica",
+            work_dir=tmp_path / "work",
+            dependencies=[],
+            timeout=30,
+        )
+        runner = OpenModelicaRunner(cfg)
+        test = TestModel(
+            model_id="Definitely.Not.Here",
+            source_file=Path(""),
+            source_package="Definitely.Not",
+            short_name="Here",
+            n_vars=0,
+            variable_patterns=[],
+            stop_time=1.0,
+            source="spec",
+        )
+        rr = runner.run_single_test(test, test_key="t", index=1, total=1)
+        assert rr.success is False
+        assert rr.error_message
+        low = rr.error_message.lower()
+        assert "here" in low or "does not exist" in low or "not found" in low
+
+    def test_reading_captured_mat_fixture(self):
+        """Regression: common.mat_reader handles an OM-written MAT.
+
+        The reader embeds the time array as the first element of each
+        variable's ``(time, values)`` tuple, NOT as a standalone key named
+        ``time`` — same as Dymola's behavior. So we probe via a real
+        variable the fixture's variableFilter allowed through.
+        """
+        from modelica_testing.simulators.common.mat_reader import (
+            read_result_mat,
+            list_result_mat_variables,
+        )
+        fixture = FIXTURES / "pid_controller_res.mat"
+        names = list_result_mat_variables(fixture)
+        assert names is not None
+        # The fixture was captured with variableFilter = "^(time|inertia1.phi)$"
+        # Names exposed by the reader include 'time' + the requested variable.
+        assert "time" in names
+        assert "inertia1.phi" in names
+        data = read_result_mat(fixture)
+        assert data is not None
+        assert "inertia1.phi" in data
+        t_arr, v_arr = data["inertia1.phi"]
+        assert len(t_arr) > 2
+        assert len(t_arr) == len(v_arr)
