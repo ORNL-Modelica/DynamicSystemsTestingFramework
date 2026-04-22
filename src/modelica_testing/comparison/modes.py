@@ -275,11 +275,14 @@ def resolve_mode(
         return TubeMode(TubeConfig(**tube_kwargs))
 
     if mode_name == "range":
-        # Accept "min" / "max" from the user-facing spec and map to the
-        # internal min_value / max_value (which don't shadow Python builtins).
+        # Accept both the canonical ``min_value`` / ``max_value`` (matches
+        # the ``RangeConfig`` dataclass field, the auto-derive UI, and
+        # MetricTree leaf params) and the shorthand ``min`` / ``max`` kept
+        # for compatibility with early-phase specs. The canonical form wins
+        # if both are present.
         return RangeMode(RangeConfig(
-            min_value=var_override.get("min"),
-            max_value=var_override.get("max"),
+            min_value=var_override.get("min_value", var_override.get("min")),
+            max_value=var_override.get("max_value", var_override.get("max")),
         ))
 
     if mode_name == "event-timing":

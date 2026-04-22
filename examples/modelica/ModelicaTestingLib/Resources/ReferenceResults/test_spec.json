@@ -7,6 +7,56 @@
         "stop_time": 5,
         "tolerance": 1e-4
       }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.TubeToleranceTest",
+      "comparison": {
+        "variable_overrides": {
+          "x": {
+            "mode": "tube",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.05
+          }
+        }
+      }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.FrequencyTest",
+      "comparison": {
+        "variable_overrides": {
+          "x": {
+            "mode": "dominant-frequency",
+            "rel_tolerance": 0.01
+          }
+        }
+      }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.MetricTreeTest",
+      "metrics": {
+        "combinator": "and",
+        "children": [
+          {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+          {
+            "combinator": "warn",
+            "children": [
+              {"metric": "nrmse", "variable": "y", "tolerance": 1e-3}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.RangeCheckTest",
+      "comparison": {
+        "variable_overrides": {
+          "x": {
+            "mode": "range",
+            "min_value": -1.05,
+            "max_value": 1.05
+          }
+        }
+      }
     }
   ]
 }

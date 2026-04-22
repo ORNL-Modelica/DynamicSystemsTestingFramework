@@ -3,7 +3,7 @@
   "test_id": "0002",
   "status": "active",
   "date_added": "2026-04-22T14:39:43.203210+00:00",
-  "last_updated": "2026-04-22T14:39:43.203210+00:00",
+  "last_updated": "2026-04-22T18:58:16.927628+00:00",
   "simulation": {
     "stop_time": 10.0,
     "tolerance": 1e-06,
@@ -13,17 +13,17 @@
   },
   "statistics": {
     "timing": {
-      "frontend": 0.16373020000000002,
-      "backend": 0.0025842,
-      "simcode": 0.0006316000000000001,
-      "templates": 0.053863899999999965,
-      "compile": 1.9006599,
-      "simulation": 0.0348785,
-      "total": 2.1592261,
-      "translation_wall": 2.12,
-      "sim_wall": 0.03,
-      "other_wall": 1.75,
-      "total_wall": 3.9
+      "frontend": 0.1783016,
+      "backend": 0.0028203,
+      "simcode": 0.0006485,
+      "templates": 0.0032472,
+      "compile": 1.4040059999999999,
+      "simulation": 0.0170188,
+      "total": 1.6061496,
+      "translation_wall": 1.59,
+      "sim_wall": 0.02,
+      "other_wall": 0.14,
+      "total_wall": 1.74
     }
   },
   "n_vars": 2,

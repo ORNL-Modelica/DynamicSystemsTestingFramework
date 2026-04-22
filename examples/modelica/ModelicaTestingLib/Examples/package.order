@@ -4,3 +4,7 @@ ConstantTest
 IntervalTest
 NoUnitTest
 SimulateOnlyTest
+TubeToleranceTest
+FrequencyTest
+MetricTreeTest
+RangeCheckTest

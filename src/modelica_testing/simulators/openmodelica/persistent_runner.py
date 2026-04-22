@@ -45,12 +45,78 @@ from ..base import (
     assign_test_keys,
 )
 from ..common.mat_reader import read_mat_time_extents
-from .log_parser import ParsedOmcOutput, _TIMING_KEYS
+from .log_parser import ParsedOmcOutput, _TIMING_KEYS, parse_omc_stdout
 from .mos_generator import build_simulate_args, classify_dependency
 from .runner import OpenModelicaConfig, OpenModelicaRunner
 from .session_loader import load_omc_session
 
 logger = logging.getLogger(__name__)
+
+
+# OMPython's pyparsing grammar (OMTypedParser) is a module-level singleton
+# and is NOT thread-safe — concurrent ``sendExpression(parsed=True)`` calls
+# across workers corrupt parse state and raise ``TypeError: convertString()
+# missing 1 required positional argument``. We sidestep the issue entirely
+# by always calling ``sendExpression(expr, parsed=False)`` and parsing the
+# raw OMC wire format ourselves with thread-safe helpers. The ZMQ layer is
+# per-instance and safe; only the pyparsing step was the bottleneck.
+
+
+def _raw_exec_bool(session, expr: str) -> bool:
+    """Send an expression, parse raw OMC response as bool.
+
+    OMC returns ``"true\\n"`` / ``"false\\n"`` on the wire; anything else
+    (or an exception from the ZMQ layer) is treated as false.
+    """
+    try:
+        raw = session.sendExpression(expr, parsed=False)
+    except Exception:
+        return False
+    return (raw or "").strip() == "true"
+
+
+def _raw_get_error_string(session) -> str:
+    """Call ``getErrorString()`` and unwrap the quoted string.
+
+    OMC's wire format for a string is ``"<escaped>"\\n`` — we strip the
+    surrounding quotes and undo ``\\"`` / ``\\\\`` escapes.
+    """
+    try:
+        raw = session.sendExpression("getErrorString()", parsed=False)
+    except Exception:
+        return ""
+    s = (raw or "").strip()
+    if len(s) >= 2 and s.startswith('"') and s.endswith('"'):
+        s = s[1:-1]
+    return s.replace('\\"', '"').replace("\\\\", "\\")
+
+
+def _raw_send_simulate(session, expr: str) -> tuple[Optional[dict], str]:
+    """Run ``simulate(...)``, parse the echoed record via the regex parser.
+
+    Returns ``(record_dict_or_None, raw_string)``. Uses the existing
+    :func:`parse_omc_stdout` (pure ``re`` module — thread-safe) instead of
+    OMPython's pyparsing grammar. OMC's raw wire format for a record is
+    byte-identical to what omc REPL-echoes as stdout in batch mode.
+    """
+    raw = session.sendExpression(expr, parsed=False) or ""
+    parsed = parse_omc_stdout(raw)
+    if not parsed.result_file and not parsed.messages and not parsed.timings:
+        return None, raw
+    rec: dict = {
+        "resultFile": parsed.result_file,
+        "messages": parsed.messages,
+    }
+    # Back-translate our internal timing keys to OMC's field names so the
+    # rest of the pipeline (``_parsed_from_record``) can treat this dict
+    # identically to OMPython's parsed-mode output.
+    _reverse_timing = {v: k for k, v in _TIMING_KEYS.items()}
+    if parsed.timings is not None:
+        for our_key, val in parsed.timings.items():
+            om_key = _reverse_timing.get(our_key)
+            if om_key is not None:
+                rec[om_key] = val
+    return rec, raw
 
 
 def _parsed_from_record(
@@ -208,20 +274,17 @@ class OpenModelicaWorker:
                 )
 
     def _exec(self, expr: str) -> bool:
-        """Send an expression that returns bool (loadModel / loadFile / setOption)."""
+        """Send an expression that returns bool (loadModel / loadFile / setOption).
+
+        Uses :func:`_raw_exec_bool` so the response bypasses OMPython's
+        non-thread-safe pyparsing grammar.
+        """
         assert self.session is not None
-        try:
-            r = self.session.sendExpression(expr)
-        except Exception as exc:  # pragma: no cover — bad connection
-            logger.warning("Worker %s: %r raised %s", self.worker_id, expr, exc)
-            return False
-        return bool(r)
+        return _raw_exec_bool(self.session, expr)
 
     def _get_error_string(self) -> str:
-        try:
-            return str(self.session.sendExpression("getErrorString()")) or ""
-        except Exception:
-            return ""
+        assert self.session is not None
+        return _raw_get_error_string(self.session)
 
     def run_test(
         self,
@@ -258,15 +321,18 @@ class OpenModelicaWorker:
         start = time.monotonic()
         translation_wall: Optional[float] = None
         sim_wall: Optional[float] = None
-        record: object = None
+        record_dict: Optional[dict] = None
         try:
             test_dir_fwd = str(test_dir).replace("\\", "/")
-            self.session.sendExpression(f'cd("{test_dir_fwd}")')
+            # cd() returns the new cwd as a quoted string — raw mode is fine.
+            self.session.sendExpression(f'cd("{test_dir_fwd}")', parsed=False)
 
             if progress is not None:
                 progress.on_phase(test_key, "translating")
 
-            record = self.session.sendExpression(simulate_expr)
+            record_dict, _raw_simulate_response = _raw_send_simulate(
+                self.session, simulate_expr,
+            )
         except Exception as exc:
             elapsed = time.monotonic() - start
             self._n_tests_run += 1
@@ -284,7 +350,6 @@ class OpenModelicaWorker:
                 sim_wall=sim_wall,
             )
 
-        record_dict: Optional[dict] = record if isinstance(record, dict) else None
         error_string = self._get_error_string()
         error_notices = [
             line.strip()

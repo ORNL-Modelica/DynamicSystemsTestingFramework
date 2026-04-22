@@ -25,9 +25,17 @@ from modelica_testing.discovery.test_registry import TestModel
 class FakeSession:
     """Minimal OMCSessionZMQ stand-in for unit tests.
 
-    Records every ``sendExpression`` call. Caller can seed canned responses
-    via ``responses`` (expression prefix → value-or-callable). Default
-    return is ``True`` (so load/setOption sequences succeed).
+    The real worker always calls ``sendExpression(expr, parsed=False)`` so
+    it can sidestep OMPython's non-thread-safe pyparsing grammar. This fake
+    accepts a Python-native ``responses`` map (bool / str / dict / callable)
+    and converts to the raw OMC wire format on demand, so test code stays
+    ergonomic.
+
+    Default responses:
+      - Any ``loadModel`` / ``loadFile`` / ``setCommandLineOptions`` /
+        ``cd(...)`` call → ``"true\\n"``
+      - ``getErrorString()`` → ``'""\\n'`` (empty string)
+      - Everything else → ``"true\\n"``
     """
 
     def __init__(self, responses: dict | None = None, pid: int = 99999):
@@ -36,20 +44,59 @@ class FakeSession:
         self._pid = pid
         self.closed = False
 
-    def sendExpression(self, expr: str):
+    def sendExpression(self, expr: str, parsed: bool = True):
         self.calls.append(expr)
         # Longest-prefix match so `simulate(` beats `simu`
         matches = [k for k in self._responses if expr.startswith(k)]
+        val: object = True
         if matches:
             key = max(matches, key=len)
-            val = self._responses[key]
-            return val(expr) if callable(val) else val
-        if expr.startswith("getErrorString"):
+            raw_val = self._responses[key]
+            val = raw_val(expr) if callable(raw_val) else raw_val
+        elif expr.startswith("getErrorString"):
+            val = ""
+
+        if parsed:
+            # Legacy path — return Python-native. Tests don't use this
+            # because the real worker always passes parsed=False.
+            if isinstance(val, BaseException):
+                raise val
+            return val
+
+        # Raw-wire format: bool → "true\\n", str → quoted+escaped,
+        # dict → synthesized SimulationResult record.
+        if isinstance(val, BaseException):
+            raise val
+        if isinstance(val, bool):
+            return "true\n" if val else "false\n"
+        if isinstance(val, str):
+            escaped = val.replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{escaped}"\n'
+        if isinstance(val, dict):
+            return _synth_record_text(val)
+        if val is None:
             return ""
-        return True
+        return str(val)
 
     def getpid(self):
         return self._pid
+
+
+def _synth_record_text(rec: dict) -> str:
+    """Render a Python dict as OMC's raw ``record SimulationResult`` syntax.
+
+    Matches what omc REPL-echoes for the ``simulate()`` return value, so
+    it parses cleanly through :func:`parse_omc_stdout`.
+    """
+    lines = ["record SimulationResult"]
+    for k, v in rec.items():
+        if isinstance(v, str):
+            esc = v.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'    {k} = "{esc}",')
+        else:
+            lines.append(f"    {k} = {v},")
+    lines.append("end SimulationResult;\n")
+    return "\n".join(lines)
 
 
 def _make_test(**overrides) -> TestModel:

@@ -78,7 +78,9 @@
       "Read(//usr/bin/**)",
       "Bash(mkdir -p /tmp/transform_work)",
       "Bash(uv --directory /mnt/d/Modelica/ModelicaTesting run modelica-testing --config /mnt/d/Modelica/TRANSFORM-UnitTests/ReferenceResults/testing.json discover)",
-      "Bash(tee /tmp/transform_sweep.log)"
+      "Bash(tee /tmp/transform_sweep.log)",
+      "Bash(sed -n '108,125p' /tmp/mt-verify2/reports/ref_0008/interactive.js)",
+      "Bash(sed -n '265,292p' /tmp/mt-verify2/reports/ref_0008/interactive.js)"
     ]
   }
 }
