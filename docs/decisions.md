@@ -473,3 +473,56 @@
   - FMU-path semantic-gap closure (D65 deferred) + idea #45 python-driven tests user-code backend
 
 - **Retirement**: `docs/PHASE_6_PLAN.md` retired on this pass — D67 is the canonical as-built record; git history preserves the working plan for anyone curious.
+
+
+## D69 — OpenModelica batch backend (2026-04-22)
+
+- **Decision**: Add `OpenModelicaRunner` as the third `SimulatorRunner`, using `omc` as a subprocess driven by generated `.mos` scripts. Analogous to Dymola's batch fallback — no persistent workers, no FMU export (both deferred). First Modelica-source backend other than Dymola; validates the multi-backend abstraction at long last.
+
+- **Why**:
+  - `SimulatorRunner` has existed since Phase 1, but FMPy consumes prebuilt FMUs, not `.mo` files. The multi-backend claim had never been exercised from Modelica source until this session.
+  - Day-to-day dev against `ModelicaTestingLib` previously required Windows + Dymola. OpenModelica + `omc` on Linux removes that bottleneck for the primary dev machine.
+  - OM's `.mat` is DSresult-compatible with Dymola's — the existing MAT reader works unchanged after a mechanical hoist.
+  - `omc` is a self-contained standalone binary — zero new pip dependencies for the MVP path.
+
+- **Scope**:
+  - `Capability.BATCH_FALLBACK` only.
+  - Static artifact names via `fileNamePrefix="result"`: `result_res.mat`, `result.log`, `result_info.json`, plus `simulate.mos` + `omc_stdout.txt`.
+  - `Config.dependencies` entries classified: bare names ⇒ `loadModel(Name)` (uses OM's installed-packages store under `~/.openmodelica/libraries/`), path-like (POSIX-absolute or Windows-drive-rooted or ends-in-`.mo`) ⇒ `loadFile(path)`. MSL auto-injected if not present — empty-deps `testing.json` works for both backends.
+  - Phase timings lifted from the REPL-echoed `record SimulationResult … end SimulationResult;` block (parsed via `log_parser.parse_omc_stdout`). An earlier sentinel+`print()` design proved silently unreliable — `res` isn't in scope for follow-up prints in omc's non-interactive mode. The record echo is free and deterministic.
+  - `variableFilter` regex anchors `^(...)$` (OM's default is partial-match POSIX ERE, which would over-match unanchored); escapes per-name via `re.escape`; expands user globs via `_pattern_to_regex`; includes `unitTests.x[i]` + diagnostics explicitly. Without this, a modest test balloons to thousands of variables in the `.mat`.
+  - Validated end-to-end against `examples/modelica/ModelicaTestingLib/` on Linux: 5 primary baselines under `ReferenceResults/OpenModelica/linux/`, HTML report renders with per-phase timings.
+
+- **Unified `testing.json` via auto-detect**:
+  - Added `_auto_detect_simulator` + `_looks_like_path` in `config.py`. When `testing.json` omits the top-level `"simulator"` key and no `--simulator` CLI override is set, auto-pick iterates the `simulators` map in insertion order and returns the first entry whose binary resolves (either an explicit path in the list, or — only if none of the entries look like pinned paths — the backend's canonical binary on PATH via `BACKEND_BINARY_NAMES`).
+  - "Pinned path" detection uses an explicit regex for Windows drive letters (`^[A-Za-z]:[\\/]`) plus POSIX-absolute check — `PosixPath.is_absolute()` returns `False` for `C:\...` on Linux, so a naive check would fall through to `shutil.which("dymola")` and silently pick whatever's on PATH (often a WSL symlink).
+  - `BACKEND_BINARY_NAMES = {"Dymola": "dymola", "OpenModelica": "omc", "FMPy": ""}` replaces the old `shutil.which(backend.lower())` fallback. Dymola happened to match by accident; OpenModelica's binary is `omc`, and FMPy doesn't have a binary at all (simulator_path stays `None`).
+
+- **Bugs found during the sweep + fixed**:
+  - `outputInterval` kwarg doesn't exist on OM's `simulate()` — converted to `numberOfIntervals` in `mos_generator`.
+  - `unitTests.x[i]` weren't reaching either the variableFilter regex or the `_compute_needed_variables` set for unit_tests-sourced tests — threaded them through explicitly.
+  - **`common/mat_reader.py` transpose heuristic was wrong for MATs with ≤ 4 vars**. The `if data_info.shape[0] < data_info.shape[1]: transpose` rule only fired when `n_vars > 4`. All Dymola fixtures in the suite have > 4 vars, so this latent bug had never triggered. OM's tight `variableFilter` exposed it. Fix: always transpose when `shape[0] == 4` (the DSresult format invariant).
+  - `Config.__post_init__` previously did `shutil.which(backend.lower())` for PATH-fallback. Introduced `BACKEND_BINARY_NAMES`.
+
+- **Rejected / deferred**:
+  - `PERSISTENT_WORKERS` via OMPython / `OMCSessionZMQ` — follow-up.
+  - `FMU_EXPORT` via `buildModelFMU` — follow-up (cross-backend chain is already experimental even on Dymola).
+  - `check-openmodelica` CLI subcommand (peer of `check-dymola`) — nice-to-have.
+  - Auto-install of MSL — one-time manual step documented in the runner module docstring.
+  - Windows-side OpenModelica testing.
+  - Separate `testing.linux.json` — rejected in favor of auto-detect on a single unified `testing.json`. The framework's `simulators` map was already plural; just lacked the auto-pick rule.
+
+- **Files**:
+  - `src/modelica_testing/simulators/common/{__init__,mat_reader}.py` (hoisted)
+  - `src/modelica_testing/simulators/openmodelica/{__init__,runner,mos_generator,log_parser}.py` (new)
+  - `src/modelica_testing/simulators/__init__.py` — `"OpenModelica": ".openmodelica"` in builtins
+  - `src/modelica_testing/config.py` — `BACKEND_BINARY_NAMES`, `_auto_detect_simulator`, `_looks_like_path`
+  - `examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json` — unified config
+  - `examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/OpenModelica/linux/ref_{0001..0005}.json`
+  - Tests: `tests/test_openmodelica_{mos,log_parser,runner}.py`, `tests/fixtures/results_openmodelica/`, and a new `TestAutoDetectSimulator` class in `tests/test_config.py`.
+
+- **Commits**: `6895d43` (hoist) → `296f0c3` (mos_generator) → `5f99d91` (log_parser + fixture) → `e312e45` (runner + registry) → `d7875c3` (integration tests + MAT fixture) → `863c1e1` (sweep + unified config + baselines).
+
+- **Spec / plan**: `docs/superpowers/specs/2026-04-22-openmodelica-backend-design.md` (commit `101d0a8`); `docs/superpowers/plans/2026-04-22-openmodelica-backend.md` (commit `8d31e37`).
+
+- **Test count**: 637 → 679 (+42: 17 mos + 8 log_parser + 6 runner unit + 4 runner integration + 7 auto-detect).
