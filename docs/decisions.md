@@ -526,3 +526,139 @@
 - **Spec / plan**: `docs/superpowers/specs/2026-04-22-openmodelica-backend-design.md` (commit `101d0a8`); `docs/superpowers/plans/2026-04-22-openmodelica-backend.md` (commit `8d31e37`).
 
 - **Test count**: 637 → 679 (+42: 17 mos + 8 log_parser + 6 runner unit + 4 runner integration + 7 auto-detect).
+
+
+## D70 — Persistent-worker OpenModelica via OMPython (2026-04-22)
+
+Follow-up explicitly deferred in D69. Mirrors the Dymola persistent-runner
+pattern (`PersistentDymolaRunner` + `DymolaWorker`), with OM-specific
+adaptations.
+
+- **Scope**: `PersistentOpenModelicaRunner(OpenModelicaRunner)` + a new
+  `OpenModelicaWorker` class. Each worker holds one long-lived
+  `OMPython.OMCSessionZMQ` instance; MSL + library + dependencies load
+  once per worker rather than once per test. Shared `queue.Queue` +
+  one dispatch thread per worker (same shape as Dymola). Per-test
+  timeout watchdog with psutil hard-kill + disk-fallback + up-to-3
+  worker restarts (directly ported from the Dymola persistent runner).
+
+- **Out of scope**: FMU export via `buildModelFMU` (still D69-deferred —
+  wiring OM into the `Capability.FMU_EXPORT` cross-backend chain needs
+  its own pass); `check-openmodelica` CLI subcommand (trivial, deferred
+  as a separate ticket).
+
+- **Decisions**:
+  - **OMPython is an optional extra, not a hard dep.** Added as
+    `om = ["OMPython>=3.5"]`. Batch path still works without it. The
+    CLI's `_get_runner(persistent=True, backend="OpenModelica")`
+    probes via `load_omc_session()` (lazy import) — on ImportError
+    wrapped as RuntimeError, it prints a fallback notice and keeps
+    the batch runner. Same shape as the Dymola Python-interface
+    fallback.
+  - **Phase labels are cosmetic, not real-time.** OM's `simulate()`
+    bundles build + run in one call with no mid-call progress hook
+    (unlike Dymola's `translateModel` + `simulateModel` split).
+    Emitting `translating` → `simulating` → `finalizing` around the
+    single `sendExpression` call gives the dashboard something to
+    display but the label doesn't track actual internal state.
+    The **per-phase wall timings** in the final report remain accurate
+    because they come from the returned `SimulationResult` record
+    (`timeFrontend`, `timeBackend`, …, `timeSimulation`) — same
+    parsing as the batch path.
+  - **No stdout regex parsing in persistent mode.** OMPython converts
+    the `SimulationResult` record to a Python dict directly;
+    `_parsed_from_record(rec, notices)` bypasses `parse_omc_stdout`
+    and builds the same `ParsedOmcOutput` the batch path produces.
+    Shared internals (`_TIMING_KEYS`, `ParsedOmcOutput`) are imported
+    from `log_parser` — tight coupling across sibling modules in the
+    same backend subpackage is fine.
+  - **Synthetic `omc_stdout.txt` artifact.** Batch mode writes the
+    raw omc REPL output; persistent mode has no subprocess to capture
+    stdout from. The runner synthesizes a diagnostic text artifact
+    (`// PersistentOpenModelicaRunner worker=N` header + the simulate
+    expression + a pretty-printed `record SimulationResult …` +
+    `getErrorString()` output) so the report's artifact list stays at
+    parity with the batch runner.
+  - **`build_simulate_args` extracted from `build_simulate_mos`.**
+    DRY refactor — the kwarg-list assembly (`stopTime`, `tolerance`,
+    `method`, `numberOfIntervals`, `variableFilter`, …) is a pure
+    `list[str]` builder used both by the `.mos` generator (batch)
+    and the persistent runner's `sendExpression("simulate(…)")`.
+  - **Auto-inject MSL.** Same heuristic as batch: if `Modelica` isn't
+    in `config.dependencies`, the worker prepends it before
+    iterating. Lets a single `testing.json` with empty `dependencies`
+    work across Dymola + OM + FMPy.
+  - **PID tracking via `session.getpid()`.** OMPython exposes the
+    omc subprocess PID as a method on the session. Tracked for
+    psutil hard-kill on timeout, same pattern as Dymola's
+    `dymola._dymola_process.pid`.
+  - **Graceful close = `sendExpression("quit()")` with 5 s grace;
+    psutil kill as fallback.** No module-level startup lock to
+    patch, no HTTP-retry noise to suppress — OMPython is quieter
+    than Dymola's embedded Java process, so the Dymola
+    `_install_dymola_log_filter` / `_suppress_stderr_noise` /
+    `_patch_dymola_for_parallel_startup` scaffolding is intentionally
+    absent here.
+
+- **Rejected alternatives**:
+  - **Splitting `buildModel` + separate-exe simulate** to get real
+    translating/simulating phase transitions: would require parsing
+    OMPython's `buildModel` return tuple + platform-specific exe
+    invocation + its own error-recovery path. Cosmetic labels cost
+    nothing and retain accurate per-phase wall timings.
+  - **Hard-depending on OMPython (bumping from optional to required)**:
+    would break batch-only use cases (CI without network, users on
+    air-gapped workstations, OMPython-incompatible Python versions).
+    Optional + auto-fallback keeps the batch path first-class.
+  - **Worker pool via multiprocessing rather than threads**: same
+    reasoning as Dymola — workers spend most of their time blocked
+    on the remote omc subprocess, so threads suffice; multiprocessing
+    adds serialization + launcher complexity for no throughput gain.
+
+- **Validation** (2026-04-22, Linux / omc 1.26.3 / OMPython 4.0.1):
+  - 20 unit tests (mocked `FakeSession`) + 1 integration test (real
+    OMPython + real omc) + 4 CLI-wiring tests pass.
+  - End-to-end smoke against `examples/modelica/ModelicaTestingLib/`
+    (6 tests, parallel=2): **persistent = 12 s wall / 11 s total
+    work; batch = 16 s wall / 24 s total work**. Persistent simulation
+    phase alone: 8 s wall. The total-work ratio (11/24 ≈ 0.46×) is
+    the headline number — each persistent worker amortizes its ~2 s
+    library load across ~3 tests; batch pays it per test. TRANSFORM
+    (326 tests, ~50–100 s compile each) is the intended beneficiary;
+    not re-run this session.
+  - All 5 primary baselines on ModelicaTestingLib still compare
+    PASS against the committed `ref_0001…0005.json` (bit-for-bit
+    backend parity with batch — same `variableFilter`, same
+    `simulate()` args, same MAT writer in omc).
+  - Known OMPython noise: `Result of 'getErrorString()' cannot be
+    parsed!` printed by OMPython's pyparsing layer when the error
+    buffer is empty. Harmless — our wrapper catches the exception
+    and returns `""`. Not worth suppressing globally; if a future
+    pass wants to mute it, logging-config is the right spot.
+
+- **Files** (new):
+  - `src/modelica_testing/simulators/openmodelica/persistent_runner.py`
+    (OpenModelicaWorker + PersistentOpenModelicaRunner)
+  - `src/modelica_testing/simulators/openmodelica/session_loader.py`
+    (`load_omc_session()` + `describe_om_session()` diagnostic helper)
+  - `tests/test_openmodelica_persistent.py` (25 tests: 20 unit + 4
+    CLI-wiring + 1 integration + helpers)
+
+- **Files** (modified):
+  - `pyproject.toml` — `om = ["OMPython>=3.5"]` extra, `ompython`
+    pytest marker.
+  - `src/modelica_testing/simulators/openmodelica/runner.py` —
+    `capabilities` gained `PERSISTENT_WORKERS`; module docstring
+    updated.
+  - `src/modelica_testing/simulators/openmodelica/__init__.py` —
+    refreshed to describe both modes.
+  - `src/modelica_testing/simulators/openmodelica/mos_generator.py` —
+    extracted `build_simulate_args`; `build_simulate_mos` now calls it.
+  - `src/modelica_testing/cli.py` — `_get_runner` swaps to
+    `PersistentOpenModelicaRunner` when `persistent=True` and
+    backend=="OpenModelica", with RuntimeError fallback; `--batch`
+    help text mentions both backends.
+  - `tests/test_openmodelica_runner.py` — capability assertion
+    updated to expect both BATCH_FALLBACK + PERSISTENT_WORKERS.
+
+- **Test count**: 679 → 706 (+27).

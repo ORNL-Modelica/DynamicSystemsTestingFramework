@@ -1,8 +1,15 @@
-"""OpenModelica simulator backend (omc subprocess + .mos scripts).
+"""OpenModelica simulator backend.
 
-MVP scope: single-subprocess per test via batch-style .mos driven by the
-``omc`` binary. Persistent-worker mode (OMPython / OMCSessionZMQ) and FMU
-export (``buildModelFMU``) are deferred follow-ups.
+Two modes:
+
+- Persistent-worker (default CLI path): long-lived OMCSessionZMQ per worker
+  via OMPython (:mod:`.persistent_runner`). Cuts wall-time for repeated-test
+  runs since MSL and library loads are amortized across the whole batch.
+- Batch fallback (``--batch``): one ``omc`` subprocess per test driven by a
+  generated ``simulate.mos`` (:mod:`.runner`). Used automatically when
+  OMPython is unavailable.
+
+FMU export (``buildModelFMU``) is still a deferred follow-up.
 
 One-time bootstrap (per machine) to install the Modelica Standard Library:
 

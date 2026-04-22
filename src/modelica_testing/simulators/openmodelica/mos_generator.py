@@ -109,6 +109,41 @@ def _format_sim_kwarg(key: str, value) -> str:
     return f"{key}={value!r}"
 
 
+def build_simulate_args(
+    test: TestModel,
+    diagnostic_vars: Iterable[str],
+    extra_filter_names: Iterable[str] = (),
+) -> list[str]:
+    """Build the ``key=value`` strings for an OM ``simulate(...)`` call.
+
+    Pure string assembly; used both by :func:`build_simulate_mos` (batch
+    path) and by the persistent-worker runner, which passes the same args
+    to ``session.sendExpression("simulate(<model>, <args>)")``.
+
+    OM's ``simulate()`` has ``numberOfIntervals`` but not ``outputInterval``
+    (Dymola's ``simulateModel`` has the latter), so we convert
+    ``output_interval`` → ``numberOfIntervals`` when that's what the test
+    specified. Solver names are lowercased here so a framework-wide
+    Dymola-style ``"Dassl"`` survives the crossing.
+    """
+    args: list[str] = []
+    args.append(f"stopTime={float(test.stop_time)!r}")
+    if test.number_of_intervals is not None:
+        args.append(f"numberOfIntervals={int(test.number_of_intervals)}")
+    elif test.output_interval is not None and test.output_interval > 0:
+        n_intervals = max(1, int(round(float(test.stop_time) / float(test.output_interval))))
+        args.append(f"numberOfIntervals={n_intervals}")
+    args.append(f"tolerance={float(test.tolerance)!r}")
+    args.append(_format_sim_kwarg("method", (test.method or "dassl").lower()))
+    args.append('outputFormat="mat"')
+    args.append('fileNamePrefix="result"')
+    var_filter = build_variable_filter(
+        test.variable_patterns, diagnostic_vars, extra_names=extra_filter_names,
+    )
+    args.append(_format_sim_kwarg("variableFilter", var_filter))
+    return args
+
+
 def build_simulate_mos(
     *,
     test: TestModel,
@@ -153,33 +188,11 @@ def build_simulate_mos(
 
     lines.append(f'cd("{fwd(test_dir)}");')
 
-    # simulate(...) call.
-    # OM's simulate() has numberOfIntervals but NOT outputInterval (unlike
-    # Dymola's simulateModel). Convert output_interval → numberOfIntervals
-    # when that's what the test specified.
-    sim_kwargs: list[str] = []
-    sim_kwargs.append(f"stopTime={float(test.stop_time)!r}")
-    if test.number_of_intervals is not None:
-        sim_kwargs.append(f"numberOfIntervals={int(test.number_of_intervals)}")
-    elif test.output_interval is not None and test.output_interval > 0:
-        n_intervals = max(1, int(round(float(test.stop_time) / float(test.output_interval))))
-        sim_kwargs.append(f"numberOfIntervals={n_intervals}")
-    sim_kwargs.append(f"tolerance={float(test.tolerance)!r}")
-    # OM's solver names are lowercase ("dassl", "euler", "rungekutta") — the
-    # framework-wide default comes from Dymola conventions ("Dassl"), so we
-    # normalize here rather than push the awareness into TestModel.
-    sim_kwargs.append(_format_sim_kwarg("method", (test.method or "dassl").lower()))
-    sim_kwargs.append('outputFormat="mat"')
-    sim_kwargs.append('fileNamePrefix="result"')
-    var_filter = build_variable_filter(
-        test.variable_patterns, diagnostic_vars, extra_names=extra_filter_names,
-    )
-    sim_kwargs.append(_format_sim_kwarg("variableFilter", var_filter))
-
+    sim_args = build_simulate_args(test, diagnostic_vars, extra_filter_names)
     # Bare simulate(...) — omc REPL-echoes the SimulationResult record to
     # stdout, which log_parser parses. No ``res := ...`` assignment and no
     # follow-up prints (see module docstring).
-    lines.append(f"simulate({test.model_id}, {', '.join(sim_kwargs)});")
+    lines.append(f"simulate({test.model_id}, {', '.join(sim_args)});")
     lines.append("getErrorString();")
 
     return "\n".join(lines) + "\n"

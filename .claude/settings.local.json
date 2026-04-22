@@ -68,7 +68,17 @@
       "Bash(awk '{print \"  plotly_click handler refs:\", $1}')",
       "Bash(awk '{print $5 \" bytes \\(\" $5/1024 \" KB\\)\"}')",
       "Bash(sed -i '397,577d' /mnt/d/Modelica/ModelicaTesting/src/modelica_testing/reporting/templates/interactive.js)",
-      "Bash(sed -n '395,400p' /mnt/d/Modelica/ModelicaTesting/src/modelica_testing/reporting/templates/interactive.js)"
+      "Bash(sed -n '395,400p' /mnt/d/Modelica/ModelicaTesting/src/modelica_testing/reporting/templates/interactive.js)",
+      "Bash(omc --version)",
+      "Bash(cat)",
+      "Bash(omc /tmp/om_probe2.mos)",
+      "Bash(awk 'NR==684,NR==824' /mnt/d/Modelica/ModelicaTesting/docs/superpowers/plans/2026-04-22-openmodelica-backend.md)",
+      "Bash(awk 'NR==820,NR==826' /mnt/d/Modelica/ModelicaTesting/docs/superpowers/plans/2026-04-22-openmodelica-backend.md)",
+      "Bash(awk NR==878,NR==890 *)",
+      "Read(//usr/bin/**)",
+      "Bash(mkdir -p /tmp/transform_work)",
+      "Bash(uv --directory /mnt/d/Modelica/ModelicaTesting run modelica-testing --config /mnt/d/Modelica/TRANSFORM-UnitTests/ReferenceResults/testing.json discover)",
+      "Bash(tee /tmp/transform_sweep.log)"
     ]
   }
 }

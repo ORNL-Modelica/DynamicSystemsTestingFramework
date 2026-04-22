@@ -15,6 +15,11 @@ dev = ["pytest>=7.0"]
 # FMPy backend (Phase 2). Install with: uv pip install -e ".[fmpy]"
 # Or bundled with dev: uv pip install -e ".[dev,fmpy]"
 fmpy = ["fmpy>=0.3"]
+# Persistent-worker OpenModelica (D70). Drives omc via ZMQ through OMPython
+# instead of spawning a subprocess per test. Batch path still works without
+# it — the CLI falls back automatically if the import fails.
+# Install with: uv pip install -e ".[om]"
+om = ["OMPython>=3.5"]
 
 [project.scripts]
 modelica-testing = "modelica_testing.cli:main_entry"
@@ -31,6 +36,7 @@ testpaths = ["tests"]
 markers = [
     "dymola: requires Dymola installation",
     "fmpy: requires fmpy package",
+    "ompython: requires OMPython package (persistent-worker OpenModelica)",
     "reference_fmus: requires Reference-FMUs submodule at examples/fmu/reference-fmus",
 ]
 filterwarnings = [

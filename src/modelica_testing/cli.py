@@ -124,14 +124,35 @@ def cmd_discover(args: argparse.Namespace) -> int:
 def _get_runner(config, persistent: bool = False):
     """Get the appropriate simulator runner for the configured simulator.
 
-    When *persistent* is True and the backend is Dymola, swap to the
-    persistent-worker runner that drives Dymola via its Python interface.
+    When *persistent* is True, swap to the backend's persistent-worker runner
+    if the backend supports one:
+
+    - Dymola → :class:`PersistentDymolaRunner` (requires the Dymola Python
+      interface; falls back to batch on :class:`RuntimeError`).
+    - OpenModelica → :class:`PersistentOpenModelicaRunner` (requires OMPython;
+      falls back to batch on :class:`RuntimeError`).
     """
     from .simulators import get_runner
     runner = get_runner(config)
     if persistent and config.simulator_backend == "Dymola":
         from .simulators.dymola.persistent_runner import PersistentDymolaRunner
         runner = PersistentDymolaRunner(config)
+    elif persistent and config.simulator_backend == "OpenModelica":
+        try:
+            from .simulators.openmodelica.session_loader import load_omc_session
+            load_omc_session()  # raises if OMPython unavailable — fall back
+        except RuntimeError as exc:
+            import sys
+            print(
+                f"Persistent-worker OpenModelica unavailable — falling back to "
+                f"--batch mode.\n  {exc}",
+                file=sys.stderr,
+            )
+        else:
+            from .simulators.openmodelica.persistent_runner import (
+                PersistentOpenModelicaRunner,
+            )
+            runner = PersistentOpenModelicaRunner(config)
     return runner
 
 
@@ -1294,7 +1315,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_run.add_argument("--batch-size", type=int, dest="batch_size",
                        help="(--batch only) Tests per Dymola session (default: all-per-worker). Small values (3-5) give better load balancing and crash isolation but reload the library more often.")
     p_run.add_argument("--batch", action="store_true",
-                       help="Use the legacy batched .mos runner instead of the default persistent-worker mode. Falls back to this automatically if the Dymola Python interface can't be loaded.")
+                       help="Use the legacy batched script runner (Dymola .mos / OpenModelica subprocess) instead of the default persistent-worker mode. Falls back to this automatically if the backend's Python interface (Dymola DymolaInterface or OMPython) can't be loaded.")
     p_run.add_argument("--tolerance", type=float, help="Override comparison tolerance")
     p_run.add_argument("--final-only", action="store_true", help="Compare only final values")
     p_run.add_argument(

@@ -53,13 +53,13 @@ class TestOpenModelicaRunnerUnit:
         cls = get_runner_class(cfg)
         assert cls is OpenModelicaRunner
 
-    def test_capabilities_only_batch_fallback(self):
+    def test_capabilities_batch_and_persistent(self):
         from modelica_testing.simulators.base import Capability
         from modelica_testing.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
         assert OpenModelicaRunner.capabilities == frozenset(
-            {Capability.BATCH_FALLBACK},
+            {Capability.BATCH_FALLBACK, Capability.PERSISTENT_WORKERS},
         )
 
     def test_artifact_files_are_static(self):

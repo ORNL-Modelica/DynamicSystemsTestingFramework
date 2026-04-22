@@ -1,8 +1,10 @@
-"""OpenModelica runner: omc subprocess + .mos scripts.
+"""OpenModelica runner: omc subprocess + .mos scripts (batch fallback).
 
-MVP scope analogous to Dymola's batch fallback: one ``omc`` process per test
-driven by a generated ``simulate.mos``. Persistent workers (OMPython /
-OMCSessionZMQ) are a follow-up; FMU export (``buildModelFMU``) too.
+Per-test omc subprocess driven by a generated ``simulate.mos``. The
+persistent-worker counterpart lives in :mod:`.persistent_runner` and is the
+default CLI path; this one is kept as the fallback (``--batch`` CLI flag,
+or automatic on OMPython ImportError). FMU export (``buildModelFMU``) is
+still a follow-up.
 
 One-time per machine (bootstrap MSL):
 
@@ -74,7 +76,10 @@ class OpenModelicaConfig:
 class OpenModelicaRunner(SimulatorRunner):
     """OpenModelica backend using omc as a subprocess driver."""
 
-    capabilities = frozenset({Capability.BATCH_FALLBACK})
+    capabilities = frozenset({
+        Capability.BATCH_FALLBACK,
+        Capability.PERSISTENT_WORKERS,
+    })
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
     artifact_files = (
         ("simulate.mos", "Simulation script"),
