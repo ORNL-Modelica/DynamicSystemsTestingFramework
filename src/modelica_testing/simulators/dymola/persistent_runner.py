@@ -39,7 +39,7 @@ from ..base import (
     assign_test_keys,
 )
 from .log_parser import parse_dslog
-from .mat_reader import read_mat_time_extents
+from ..common.mat_reader import read_mat_time_extents
 from .runner import DymolaRunner, DymolaConfig
 from .interface_loader import load_dymola_interface
 

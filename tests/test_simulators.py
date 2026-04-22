@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from modelica_testing.simulators.dymola.log_parser import parse_dslog
-from modelica_testing.simulators.dymola.mat_reader import read_dymola_mat
+from modelica_testing.simulators.common.mat_reader import read_result_mat
 from modelica_testing.simulators.dymola.runner import _extract_variables
 from modelica_testing.simulators.base import resolve_variable_patterns, _pattern_to_regex
 from modelica_testing.discovery.test_registry import TestModel
@@ -149,15 +149,15 @@ class TestLogParser:
 
 class TestMatReader:
     def test_read_returns_dict(self):
-        """read_dymola_mat returns a dict of variable name -> (time, values)."""
-        data = read_dymola_mat(SAMPLE_MAT)
+        """read_result_mat returns a dict of variable name -> (time, values)."""
+        data = read_result_mat(SAMPLE_MAT)
         assert data is not None
         assert isinstance(data, dict)
         assert len(data) > 0
 
     def test_variables_present(self):
         """Expected variables exist in the parsed data."""
-        data = read_dymola_mat(SAMPLE_MAT)
+        data = read_result_mat(SAMPLE_MAT)
         assert "x" in data
         assert "y" in data
         assert "unitTests.x[1]" in data
@@ -165,7 +165,7 @@ class TestMatReader:
 
     def test_time_series_shape(self):
         """Time series variables have time and values with matching lengths."""
-        data = read_dymola_mat(SAMPLE_MAT)
+        data = read_result_mat(SAMPLE_MAT)
         # x and y are time series (from data_2), not parameters
         for name in ["x", "y", "unitTests.x[1]"]:
             time, values = data[name]
@@ -174,34 +174,34 @@ class TestMatReader:
 
     def test_parameter_is_constant(self):
         """Parameters (from data_1) have constant values across all time points."""
-        data = read_dymola_mat(SAMPLE_MAT)
+        data = read_result_mat(SAMPLE_MAT)
         _, values = data["unitTests.n"]
         # Parameter may have 2 points (data_1) or be broadcast — either way constant
         assert np.all(values == values[0])
 
     def test_time_monotonic(self):
         """Time array is monotonically non-decreasing (events may have duplicates)."""
-        data = read_dymola_mat(SAMPLE_MAT)
+        data = read_result_mat(SAMPLE_MAT)
         time, _ = data["x"]
         diffs = np.diff(time)
         assert np.all(diffs >= 0), "Time must be monotonically non-decreasing"
 
     def test_diagnostics_present(self):
         """CPUtime and EventCounter are available when OutputCPUtime was enabled."""
-        data = read_dymola_mat(SAMPLE_MAT)
+        data = read_result_mat(SAMPLE_MAT)
         assert "CPUtime" in data
         assert "EventCounter" in data
 
     def test_parameter_values(self):
         """Parameters (constant variables) have consistent values."""
-        data = read_dymola_mat(SAMPLE_MAT)
+        data = read_result_mat(SAMPLE_MAT)
         _, values = data["unitTests.n"]
         assert values[0] == 2.0  # n=2 in ConstantTest
         assert values[-1] == 2.0
 
     def test_nonexistent_file(self):
         """Nonexistent file returns None."""
-        result = read_dymola_mat(Path("/nonexistent/file.mat"))
+        result = read_result_mat(Path("/nonexistent/file.mat"))
         assert result is None
 
 
@@ -223,7 +223,7 @@ class TestDiagnosticExtraction:
 
     def test_extract_default_diagnostics(self):
         """CPUtime and EventCounter extracted as diagnostics."""
-        mat_data = read_dymola_mat(SAMPLE_MAT)
+        mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
         variables, diagnostics = _extract_variables(
             mat_data, test, ["CPUtime", "EventCounter"],
@@ -234,7 +234,7 @@ class TestDiagnosticExtraction:
 
     def test_diagnostics_not_in_variables(self):
         """Diagnostic variables don't appear in the regular variables list."""
-        mat_data = read_dymola_mat(SAMPLE_MAT)
+        mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
         variables, diagnostics = _extract_variables(
             mat_data, test, ["CPUtime", "EventCounter"],
@@ -245,7 +245,7 @@ class TestDiagnosticExtraction:
 
     def test_custom_diagnostic_variable(self):
         """Custom diagnostic variable name is extracted if present in mat data."""
-        mat_data = read_dymola_mat(SAMPLE_MAT)
+        mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
         # "x" exists in the mat data — treating it as diagnostic
         variables, diagnostics = _extract_variables(
@@ -256,7 +256,7 @@ class TestDiagnosticExtraction:
 
     def test_missing_diagnostic_skipped(self):
         """Diagnostic variable not in mat data is silently skipped."""
-        mat_data = read_dymola_mat(SAMPLE_MAT)
+        mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
         variables, diagnostics = _extract_variables(
             mat_data, test, ["NonExistentVar"],
@@ -265,7 +265,7 @@ class TestDiagnosticExtraction:
 
     def test_empty_diagnostic_list(self):
         """Empty diagnostic list produces no diagnostics."""
-        mat_data = read_dymola_mat(SAMPLE_MAT)
+        mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
         variables, diagnostics = _extract_variables(mat_data, test, [])
         assert len(diagnostics) == 0

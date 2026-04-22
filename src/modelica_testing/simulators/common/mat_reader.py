@@ -1,4 +1,4 @@
-"""Read Dymola .mat (MAT4) result files.
+"""Reader for DSresult-format MAT files (Dymola / OpenModelica shared output).
 
 Uses a custom MAT4 binary parser with numpy.memmap for selective variable
 reading. This avoids loading the entire data_2 matrix (which can be hundreds
@@ -72,7 +72,7 @@ def _read_mat4_block(f, info) -> np.ndarray:
     return np.frombuffer(raw, dtype=dtype).reshape((mrows, ncols), order='F')
 
 
-def list_dymola_mat_variables(mat_path: Path) -> Optional[list[str]]:
+def list_result_mat_variables(mat_path: Path) -> Optional[list[str]]:
     """Read only the variable names from a Dymola .mat file (no data loaded).
 
     This is fast even for large files — it reads headers and the name matrix only.
@@ -94,7 +94,7 @@ def list_dymola_mat_variables(mat_path: Path) -> Optional[list[str]]:
         return None
 
 
-def read_dymola_mat(
+def read_result_mat(
     mat_path: Path,
     variable_names: Optional[set[str]] = None,
 ) -> Optional[dict]:

@@ -25,7 +25,7 @@ from ..base import (
     resolve_variable_patterns,
 )
 from .log_parser import parse_dslog
-from .mat_reader import list_dymola_mat_variables, read_dymola_mat
+from ..common.mat_reader import list_result_mat_variables, read_result_mat
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +336,7 @@ class DymolaRunner(SimulatorRunner):
             sim_completed = False
             completion_msg: Optional[str] = None
             if not translation_failed and mat_path.exists() and dsfinal_path.exists():
-                from .mat_reader import read_mat_time_extents
+                from ..common.mat_reader import read_mat_time_extents
                 extents = read_mat_time_extents(mat_path)
                 stop_time = float(test.stop_time)
                 if extents is not None:
@@ -454,7 +454,7 @@ class DymolaRunner(SimulatorRunner):
         )
 
         # Phase 2: Load only needed variables from the .mat file
-        mat_data = read_dymola_mat(mat_path, variable_names=needed_vars)
+        mat_data = read_result_mat(mat_path, variable_names=needed_vars)
         if mat_data is None:
             return TestResult(
                 model_id=test.model_id,
@@ -625,7 +625,7 @@ def _compute_needed_variables(
 
     # Pattern-based variables — need the full name list to resolve globs
     if test.variable_patterns:
-        all_names = list_dymola_mat_variables(mat_path)
+        all_names = list_result_mat_variables(mat_path)
         if all_names is None:
             return None  # fallback: load everything
         resolved = resolve_variable_patterns(test.variable_patterns, all_names)
