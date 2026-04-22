@@ -30,6 +30,17 @@ SIMULATOR_BACKENDS = {
     "FMPy": "FMPy",
 }
 
+# Binary names by backend, used for PATH-lookup fallback when testing.json
+# doesn't list an explicit path. Backend-name lowercase happens to match for
+# Dymola; OpenModelica's binary is ``omc`` (not ``openmodelica``). An empty
+# string marks backends that don't ship a standalone binary (FMPy is a
+# Python library — simulator_path is unused for it).
+BACKEND_BINARY_NAMES = {
+    "Dymola": "dymola",
+    "OpenModelica": "omc",
+    "FMPy": "",
+}
+
 
 def _detect_backend(simulator_name: str) -> str:
     """Determine the simulator backend type from a named entry.
@@ -352,8 +363,10 @@ class Config:
                         self.simulator,
                     )
             if self.simulator_path is None:
-                backend = self.simulator_backend.lower()
-                self.simulator_path = shutil.which(backend) or backend
+                backend = self.simulator_backend
+                binary = BACKEND_BINARY_NAMES.get(backend, backend.lower())
+                if binary:
+                    self.simulator_path = shutil.which(binary) or binary
 
         # Reference root (may already be set from CLI arg)
         if self.reference_root is None:

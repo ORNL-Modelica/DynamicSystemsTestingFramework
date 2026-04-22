@@ -987,10 +987,14 @@ EOF
 
 **Goal:** Wire `OpenModelicaRunner` as the third backend. Implement `run_single_test` (subprocess) and `read_result` (shared MAT reader). Add unit tests that stub the subprocess call so the runner can be exercised without a real `omc`.
 
+**Pre-Task architectural fix bundled here** — `config.py::Config.__post_init__` previously did `shutil.which(backend.lower())` for the PATH-fallback binary lookup. That happens to work for Dymola (`dymola`) but not for OpenModelica (binary is `omc`, not `openmodelica`). Add a `BACKEND_BINARY_NAMES` map alongside `SIMULATOR_BACKENDS` and thread it through the fallback so `FMPy` gets an empty string (no binary; `simulator_path` stays None) and `OpenModelica` gets `omc`.
+
 **Files:**
+- Modify: `src/modelica_testing/config.py` — add `BACKEND_BINARY_NAMES` + update the fallback at `__post_init__`
 - Create: `src/modelica_testing/simulators/openmodelica/runner.py`
-- Modify: `src/modelica_testing/simulators/__init__.py` (line 77–80 area)
-- Modify: `tests/test_openmodelica_runner.py` (created in this task; integration tests come in Task 5)
+- Modify: `src/modelica_testing/simulators/openmodelica/__init__.py` — replace the placeholder comment with `from .runner import OpenModelicaConfig, OpenModelicaRunner` + `__all__`
+- Modify: `src/modelica_testing/simulators/__init__.py` (line 77–80 area) — add `"OpenModelica": ".openmodelica"` to builtins
+- Create: `tests/test_openmodelica_runner.py` (unit tests; integration tests come in Task 5)
 
 - [ ] **Step 1: Write failing unit tests (stubbed subprocess)**
 

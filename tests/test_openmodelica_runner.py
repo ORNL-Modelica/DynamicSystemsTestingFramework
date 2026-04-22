@@ -1,0 +1,203 @@
+"""OpenModelica runner tests.
+
+Unit tests here stub subprocess.run so they don't require an omc binary.
+Task 5 adds real-omc integration tests gated on shutil.which("omc").
+"""
+
+from pathlib import Path
+from subprocess import CompletedProcess
+
+import pytest
+
+from modelica_testing.config import Config
+from modelica_testing.discovery.test_registry import TestModel
+
+
+class TestOpenModelicaConfig:
+    def test_from_config_basic(self, tmp_path):
+        from modelica_testing.simulators.openmodelica.runner import (
+            OpenModelicaConfig,
+        )
+        (tmp_path / "package.mo").write_text('package Lib end Lib;')
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            simulator="OpenModelica",
+            work_dir=tmp_path / "work",
+        )
+        om = OpenModelicaConfig.from_config(cfg)
+        assert om.omc_path  # resolved via BACKEND_BINARY_NAMES or shutil.which
+        assert om.std_version == "latest"
+        assert "CPUtime" in om.diagnostic_variables
+        assert "EventCounter" in om.diagnostic_variables
+
+
+class TestOpenModelicaRunnerUnit:
+    def test_registered_as_OpenModelica(self, tmp_path):
+        from modelica_testing.simulators import get_runner_class
+        from modelica_testing.simulators.openmodelica.runner import (
+            OpenModelicaRunner,
+        )
+
+        (tmp_path / "package.mo").write_text('package Lib end Lib;')
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            simulator="OpenModelica",
+            work_dir=tmp_path / "work",
+        )
+        cls = get_runner_class(cfg)
+        assert cls is OpenModelicaRunner
+
+    def test_capabilities_only_batch_fallback(self):
+        from modelica_testing.simulators.base import Capability
+        from modelica_testing.simulators.openmodelica.runner import (
+            OpenModelicaRunner,
+        )
+        assert OpenModelicaRunner.capabilities == frozenset(
+            {Capability.BATCH_FALLBACK},
+        )
+
+    def test_artifact_files_are_static(self):
+        from modelica_testing.simulators.openmodelica.runner import (
+            OpenModelicaRunner,
+        )
+        names = [name for name, _ in OpenModelicaRunner.artifact_files]
+        assert "simulate.mos" in names
+        assert "result_res.mat" in names
+        assert "omc_stdout.txt" in names
+        # No template placeholders
+        for n in names:
+            assert "{" not in n and "}" not in n
+
+    def test_run_single_test_writes_mos_and_calls_omc(
+        self, tmp_path, monkeypatch,
+    ):
+        """Subprocess invoked with omc + simulate.mos in test_dir,
+        stdout captured to omc_stdout.txt, run_result reflects parsed output."""
+        from modelica_testing.simulators.openmodelica.runner import (
+            OpenModelicaRunner,
+        )
+
+        (tmp_path / "package.mo").write_text('package Lib end Lib;')
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            simulator="OpenModelica",
+            work_dir=tmp_path / "work",
+        )
+        runner = OpenModelicaRunner(cfg)
+        test = TestModel(
+            model_id="Lib.A",
+            source_file=Path(""),
+            source_package="Lib",
+            short_name="A",
+            n_vars=0,
+            variable_patterns=["x"],
+            stop_time=1.0,
+        )
+
+        # Synthetic omc stdout: a well-formed SimulationResult record.
+        stdout_synth = (
+            'record SimulationResult\n'
+            '    resultFile = "/tmp/somewhere/result_res.mat",\n'
+            '    simulationOptions = "...",\n'
+            '    messages = "The simulation finished successfully.",\n'
+            '    timeFrontend = 0.1,\n'
+            '    timeBackend = 0.05,\n'
+            '    timeSimCode = 0.01,\n'
+            '    timeTemplates = 0.02,\n'
+            '    timeCompile = 0.9,\n'
+            '    timeSimulation = 0.03,\n'
+            '    timeTotal = 1.11\n'
+            'end SimulationResult;\n'
+        )
+
+        # The runner checks that result_res.mat EXISTS in the test dir before
+        # declaring success, so create a placeholder.
+        def fake_run(cmd, cwd, capture_output, text, timeout):
+            (Path(cwd) / "result_res.mat").write_bytes(b"\x00")
+            captured_call["cmd"] = list(cmd)
+            captured_call["cwd"] = cwd
+            return CompletedProcess(args=cmd, returncode=0,
+                                    stdout=stdout_synth, stderr="")
+
+        captured_call: dict = {}
+        monkeypatch.setattr(
+            "modelica_testing.simulators.openmodelica.runner.subprocess.run",
+            fake_run,
+        )
+
+        result = runner.run_single_test(test, test_key="test_0001",
+                                        index=1, total=1)
+        # Subprocess invocation
+        assert captured_call["cmd"][0].endswith("omc") or captured_call["cmd"][0] == "omc"
+        assert captured_call["cmd"][1] == "simulate.mos"
+        # stdout file written
+        stdout_path = cfg.work_dir / "test_0001" / "omc_stdout.txt"
+        assert stdout_path.exists()
+        assert "record SimulationResult" in stdout_path.read_text()
+        # .mos written
+        mos_path = cfg.work_dir / "test_0001" / "simulate.mos"
+        assert mos_path.exists()
+        assert "simulate(Lib.A" in mos_path.read_text()
+        # run_result reflects parsed timing
+        assert result.success is True
+        assert result.translation_wall == pytest.approx(
+            0.1 + 0.05 + 0.01 + 0.02 + 0.9,
+        )
+        assert result.sim_wall == pytest.approx(0.03)
+        assert result.statistics["timing"]["total"] == pytest.approx(1.11)
+
+    def test_run_single_test_surfaces_failure(self, tmp_path, monkeypatch):
+        from modelica_testing.simulators.openmodelica.runner import (
+            OpenModelicaRunner,
+        )
+        (tmp_path / "package.mo").write_text('package Lib end Lib;')
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            simulator="OpenModelica",
+            work_dir=tmp_path / "work",
+        )
+        runner = OpenModelicaRunner(cfg)
+        test = TestModel(
+            model_id="Lib.DoesNotExist",
+            source_file=Path(""),
+            source_package="Lib",
+            short_name="DoesNotExist",
+            n_vars=0,
+            variable_patterns=[],
+            stop_time=1.0,
+        )
+        stdout_synth = (
+            'Error: Class Lib.DoesNotExist not found.\n'
+            'record SimulationResult\n'
+            '    resultFile = "",\n'
+            '    simulationOptions = "...",\n'
+            '    messages = "Simulation Failed. Model: Lib.DoesNotExist does not exist!",\n'
+            '    timeFrontend = 0.0,\n'
+            '    timeBackend = 0.0,\n'
+            '    timeSimCode = 0.0,\n'
+            '    timeTemplates = 0.0,\n'
+            '    timeCompile = 0.0,\n'
+            '    timeSimulation = 0.0,\n'
+            '    timeTotal = 0.0\n'
+            'end SimulationResult;\n'
+        )
+
+        def fake_run(cmd, cwd, capture_output, text, timeout):
+            return CompletedProcess(args=cmd, returncode=0,
+                                    stdout=stdout_synth, stderr="")
+
+        monkeypatch.setattr(
+            "modelica_testing.simulators.openmodelica.runner.subprocess.run",
+            fake_run,
+        )
+
+        result = runner.run_single_test(test, test_key="test_0001",
+                                        index=1, total=1)
+        assert result.success is False
+        assert result.error_message
+        low = result.error_message.lower()
+        assert "not found" in low or "does not exist" in low
