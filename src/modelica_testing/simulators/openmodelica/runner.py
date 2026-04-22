@@ -110,15 +110,34 @@ class OpenModelicaRunner(SimulatorRunner):
             self.progress.on_start(test_key)
             self.progress.on_phase(test_key, "translating")
 
+        # UnitTests component variable names (unitTests.x[1..n]) — unlike
+        # spec-sourced tests these don't appear in test.variable_patterns, so
+        # we must add them to the variableFilter explicitly or OM's regex
+        # will exclude them from the .mat.
+        extra_filter_names: list[str] = []
+        if test.source in ("unit_tests", "both") and test.n_vars > 0:
+            extra_filter_names = [f"unitTests.x[{i}]" for i in range(1, test.n_vars + 1)]
+
+        # MSL is always required for Modelica simulation. Dymola auto-loads
+        # it; OM needs an explicit loadModel(Modelica). Auto-inject if the
+        # user didn't already list it, so a single testing.json with an
+        # empty ``dependencies`` works across both backends.
+        deps = list(self.config.dependencies)
+        if "Modelica" not in deps and not any(
+            str(d).rstrip("/\\").endswith("Modelica") for d in deps
+        ):
+            deps = ["Modelica"] + deps
+
         # Build and write the .mos
         mos_text = build_simulate_mos(
             test=test,
             test_dir=test_dir,
             library_package_mo=self.config.library_dir / "package.mo",
-            dependencies=list(self.config.dependencies),
+            dependencies=deps,
             simulator_setup=list(self.om_config.simulator_setup),
             diagnostic_vars=list(self.om_config.diagnostic_variables),
             std_version=self.om_config.std_version,
+            extra_filter_names=extra_filter_names,
         )
         mos_path = test_dir / self.MOS_FILENAME
         mos_path.write_text(mos_text, encoding="utf-8")
@@ -318,6 +337,11 @@ def _compute_needed_variables(
     read the name matrix).
     """
     needed: set[str] = set()
+    # UnitTests component variables (same convention as Dymola runner)
+    if test.source in ("unit_tests", "both") and test.n_vars > 0:
+        for i in range(1, test.n_vars + 1):
+            needed.add(f"unitTests.x[{i}]")
+    # Pattern-based variables
     if test.variable_patterns:
         all_names = list_result_mat_variables(mat_path)
         if all_names is None:

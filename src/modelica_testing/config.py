@@ -151,6 +151,72 @@ def _resolve_simulator_path(
     return None
 
 
+def _auto_detect_simulator(
+    simulators_config: dict[str, list[str]],
+) -> Optional[tuple[str, str]]:
+    """Pick the first simulator in ``simulators_config`` whose binary resolves.
+
+    Resolution order per candidate entry:
+      1. Any path in its ``simulators`` list that exists on disk or resolves
+         on ``PATH`` (via :func:`_resolve_simulator_path`).
+      2. If the list contains no absolute paths (empty or bare-binary names
+         only), fall back to the backend's canonical binary
+         (``BACKEND_BINARY_NAMES``) on ``PATH``.
+
+    The fallback is gated on "no absolute paths given" because a list of
+    OS-specific absolute paths (e.g. ``C:\\Program Files\\...Dymola.exe``)
+    is a strong signal that the user wants *that* install — if none of the
+    absolute paths resolve, treating some same-named binary on PATH as
+    equivalent would silently run the wrong simulator on a mixed-OS setup
+    (Linux WSL often has a ``dymola`` symlink that points at a binary that
+    isn't usable the same way).
+
+    Iteration follows dict insertion order so users can express preference
+    (list Dymola first on Windows; list OpenModelica first on Linux) —
+    "first available wins" across both Windows and Linux machines with the
+    same ``testing.json``. Returns ``(simulator_name, resolved_path)`` or
+    ``None`` if no entry resolves.
+    """
+    for name, paths in simulators_config.items():
+        path = _resolve_simulator_path(simulators_config, name)
+        if path:
+            return name, path
+        # No explicit entry resolved. Only fall back to a generic PATH
+        # lookup when the user hasn't pinned this backend to platform-
+        # specific paths. An entirely-pinned list is a no-fallback
+        # instruction. We detect "looks like a path" via a Windows-drive
+        # regex OR POSIX-absolute — pathlib's ``is_absolute`` alone returns
+        # False for ``C:\...`` on Linux (PosixPath doesn't recognize
+        # Windows drive letters).
+        has_pinned_path = any(_looks_like_path(p) for p in paths)
+        if has_pinned_path:
+            continue
+        backend = _detect_backend(name)
+        binary = BACKEND_BINARY_NAMES.get(backend, backend.lower())
+        if binary:
+            found = shutil.which(binary)
+            if found:
+                return name, found
+    return None
+
+
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _looks_like_path(entry: str) -> bool:
+    """True if ``entry`` is an OS-specific path (not just a bare binary name).
+
+    POSIX-absolute (``/usr/bin/omc``) or Windows-drive-rooted
+    (``C:\\Program Files\\...``) count as pinned paths; bare names like
+    ``"omc"`` or ``"dymola.exe"`` do not.
+    """
+    if entry.startswith("/"):
+        return True
+    if _WINDOWS_DRIVE_RE.match(entry):
+        return True
+    return False
+
+
 @dataclass
 class Config:
     """Runtime configuration for the testing system.
@@ -318,9 +384,21 @@ class Config:
         if self.os_name is None:
             self.os_name = file_config.get("os", detect_os())
 
-        # Simulator selection
+        # Simulator selection. The dataclass default is "Dymola"; we treat
+        # that as "CLI didn't set one" for compatibility with existing usage.
+        # Resolution order:
+        #   1. CLI override  — self.simulator != "Dymola"          ⇒ keep
+        #   2. testing.json  — explicit "simulator" key            ⇒ use
+        #   3. testing.json  — auto-pick from "simulators" map     ⇒ first
+        #      entry whose binary resolves on the current machine / PATH
+        #   4. Fall through to the default ("Dymola")
         if "simulator" in file_config and self.simulator == "Dymola":
             self.simulator = file_config["simulator"]
+        elif "simulator" not in file_config and self.simulator == "Dymola":
+            simulators_config = file_config.get("simulators", {})
+            detected = _auto_detect_simulator(simulators_config)
+            if detected:
+                self.simulator, self.simulator_path = detected
 
         # Show IDE
         if not self.show_ide and "show_ide" in file_config:

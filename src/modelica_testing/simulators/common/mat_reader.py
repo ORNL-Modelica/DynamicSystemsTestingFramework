@@ -139,9 +139,15 @@ def read_result_mat(
 
         all_var_names = _parse_name_matrix(name_matrix)
 
-        # dataInfo can be (4, n_vars) or (n_vars, 4) depending on storage order.
-        # We need (n_vars, 4) so we can index by variable.
-        if data_info.ndim == 2 and data_info.shape[0] < data_info.shape[1]:
+        # MAT4 stores dataInfo column-major as (4, n_vars) — each column is one
+        # variable's {data_matrix, col, interp, protected} quad. We want to
+        # index by variable, so transpose to (n_vars, 4). The 4-row invariant
+        # is fixed by the DSresult format; an earlier shape[0]<shape[1]
+        # heuristic silently broke for MATs with n_vars <= 4 (only surfaced
+        # on OM where tight variableFilter often leaves a handful of vars).
+        if data_info.ndim == 2 and data_info.shape[0] == 4:
+            data_info = data_info.T
+        elif data_info.ndim == 2 and data_info.shape[0] < data_info.shape[1]:
             data_info = data_info.T
 
         # Memory-map data_2 for selective row access.

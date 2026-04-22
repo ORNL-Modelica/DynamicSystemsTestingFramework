@@ -51,13 +51,16 @@ def classify_dependency(entry: str) -> tuple[str, str]:
 def build_variable_filter(
     patterns: Iterable[str],
     diagnostic_vars: Iterable[str],
+    extra_names: Iterable[str] = (),
 ) -> str:
     """Build OM's ``variableFilter`` regex for the given tracked-variable set.
 
     OM's ``variableFilter`` is a regex over variable names. We escape each
     name literally and join with ``|``. ``time`` is always included; so are
-    the diagnostic variables. Returning a regex (not ``.*``) keeps the .mat
-    small — OM dumps all parameters/aliases/derivatives by default.
+    the diagnostic variables and any ``extra_names`` the runner passes
+    (e.g. ``unitTests.x[1]``, ..., ``unitTests.x[N]`` for unit_tests-sourced
+    tests). Returning a regex (not ``.*``) keeps the .mat small — OM dumps
+    all parameters/aliases/derivatives by default.
     """
     alternatives: list[str] = []
     # Always include time
@@ -69,6 +72,10 @@ def build_variable_filter(
     # the set for the pass/fail comparison).
     for pat in patterns:
         alternatives.append(_pattern_to_regex(pat).pattern)
+    # Extra literal names (no globs). Runner uses this for UnitTests
+    # component variables (``unitTests.x[i]``) that the spec doesn't list.
+    for n in extra_names:
+        alternatives.append(re.escape(n))
     # Diagnostic variables (literal names — no globs)
     for dv in diagnostic_vars:
         alternatives.append(re.escape(dv))
@@ -111,6 +118,7 @@ def build_simulate_mos(
     simulator_setup: list[str],
     diagnostic_vars: list[str],
     std_version: str = "latest",
+    extra_filter_names: Iterable[str] = (),
 ) -> str:
     """Assemble the full per-test .mos script.
 
@@ -145,13 +153,17 @@ def build_simulate_mos(
 
     lines.append(f'cd("{fwd(test_dir)}");')
 
-    # simulate(...) call
+    # simulate(...) call.
+    # OM's simulate() has numberOfIntervals but NOT outputInterval (unlike
+    # Dymola's simulateModel). Convert output_interval → numberOfIntervals
+    # when that's what the test specified.
     sim_kwargs: list[str] = []
     sim_kwargs.append(f"stopTime={float(test.stop_time)!r}")
     if test.number_of_intervals is not None:
         sim_kwargs.append(f"numberOfIntervals={int(test.number_of_intervals)}")
-    elif test.output_interval is not None:
-        sim_kwargs.append(f"outputInterval={float(test.output_interval)!r}")
+    elif test.output_interval is not None and test.output_interval > 0:
+        n_intervals = max(1, int(round(float(test.stop_time) / float(test.output_interval))))
+        sim_kwargs.append(f"numberOfIntervals={n_intervals}")
     sim_kwargs.append(f"tolerance={float(test.tolerance)!r}")
     # OM's solver names are lowercase ("dassl", "euler", "rungekutta") — the
     # framework-wide default comes from Dymola conventions ("Dassl"), so we
@@ -159,7 +171,9 @@ def build_simulate_mos(
     sim_kwargs.append(_format_sim_kwarg("method", (test.method or "dassl").lower()))
     sim_kwargs.append('outputFormat="mat"')
     sim_kwargs.append('fileNamePrefix="result"')
-    var_filter = build_variable_filter(test.variable_patterns, diagnostic_vars)
+    var_filter = build_variable_filter(
+        test.variable_patterns, diagnostic_vars, extra_names=extra_filter_names,
+    )
     sim_kwargs.append(_format_sim_kwarg("variableFilter", var_filter))
 
     # Bare simulate(...) — omc REPL-echoes the SimulationResult record to

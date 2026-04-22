@@ -196,3 +196,112 @@ class TestConfig:
 
         config = Config(config_file=str(config_dir / "testing.json"))
         assert config.diagnostic_variables == ["CPUtime", "EventCounter", "MyCustomVar"]
+
+
+class TestAutoDetectSimulator:
+    """Unit tests for the `_auto_detect_simulator` helper + integration
+    through Config.__post_init__ when testing.json omits the `simulator` key."""
+
+    def test_looks_like_path_linux(self):
+        from modelica_testing.config import _looks_like_path
+        assert _looks_like_path("/usr/bin/omc")
+        assert not _looks_like_path("omc")
+        assert not _looks_like_path("dymola.exe")
+
+    def test_looks_like_path_windows(self):
+        from modelica_testing.config import _looks_like_path
+        assert _looks_like_path("C:\\Program Files\\Dymola.exe")
+        assert _looks_like_path("D:/some/path")
+        assert not _looks_like_path("Dymola")
+
+    def test_auto_detect_picks_first_resolvable(self, tmp_path, monkeypatch):
+        """First entry whose binary resolves wins. If an earlier entry has
+        pinned absolute paths that don't exist, that entry is skipped (no
+        fallback to a same-named binary on PATH)."""
+        from modelica_testing.config import _auto_detect_simulator
+
+        # Create a fake "omc" binary on a temp PATH — simulate OM available.
+        fake_omc = tmp_path / "omc"
+        fake_omc.write_text("#!/bin/sh\n")
+        fake_omc.chmod(0o755)
+        monkeypatch.setenv("PATH", str(tmp_path))
+
+        simulators = {
+            "Dymola": [
+                "C:\\nope\\dymola.exe",  # pinned path, doesn't exist
+            ],
+            "OpenModelica": ["omc"],     # bare name → PATH lookup
+        }
+        name, path = _auto_detect_simulator(simulators)
+        assert name == "OpenModelica"
+        assert path == str(fake_omc)
+
+    def test_auto_detect_pinned_paths_block_fallback(self, tmp_path, monkeypatch):
+        """If a simulator's list is entirely pinned absolute paths and NONE
+        exist, we must NOT fall back to a same-named binary on PATH — the
+        pinned list expresses intent to use *that* install."""
+        from modelica_testing.config import _auto_detect_simulator
+
+        fake_dymola = tmp_path / "dymola"
+        fake_dymola.write_text("#!/bin/sh\n")
+        fake_dymola.chmod(0o755)
+        monkeypatch.setenv("PATH", str(tmp_path))
+
+        simulators = {
+            "Dymola": [
+                "C:\\Program Files\\Dymola\\Dymola.exe",  # pinned, missing
+            ],
+        }
+        # Fallback suppressed ⇒ nothing resolves despite `dymola` on PATH.
+        assert _auto_detect_simulator(simulators) is None
+
+    def test_auto_detect_none_if_nothing_resolves(self, tmp_path, monkeypatch):
+        from modelica_testing.config import _auto_detect_simulator
+        # Empty PATH and bogus paths — nothing resolves.
+        monkeypatch.setenv("PATH", str(tmp_path))
+        simulators = {
+            "Dymola": ["C:\\nope\\dymola.exe"],
+            "OpenModelica": ["/nope/omc"],
+        }
+        assert _auto_detect_simulator(simulators) is None
+
+    def test_config_autopicks_when_simulator_key_omitted(self, tmp_path, monkeypatch):
+        """Config.__post_init__ auto-picks when testing.json omits the
+        `simulator` key AND no --simulator CLI override was passed."""
+        fake_omc = tmp_path / "omc"
+        fake_omc.write_text("#!/bin/sh\n")
+        fake_omc.chmod(0o755)
+        monkeypatch.setenv("PATH", str(tmp_path))
+
+        lib_dir = tmp_path / "Lib"
+        lib_dir.mkdir()
+        (lib_dir / "package.mo").write_text("package Lib end Lib;")
+
+        cfg_dir = tmp_path / "Resources" / "ReferenceResults"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "testing.json").write_text(json.dumps({
+            "source_path": str(lib_dir),
+            "simulators": {
+                "Dymola": ["C:\\nope\\dymola.exe"],  # pinned, missing
+                "OpenModelica": ["omc"],             # PATH lookup → hits fake
+            },
+        }))
+        config = Config(config_file=str(cfg_dir / "testing.json"))
+        assert config.simulator == "OpenModelica"
+        assert config.simulator_path == str(fake_omc)
+
+    def test_config_preserves_explicit_simulator_in_file(self, tmp_path, monkeypatch):
+        """If testing.json has an explicit "simulator" key, auto-pick must
+        not override it — behavior change would be a breaking surprise."""
+        lib_dir = tmp_path / "Lib"
+        lib_dir.mkdir()
+        (lib_dir / "package.mo").write_text("package Lib end Lib;")
+        cfg_dir = tmp_path / "Resources" / "ReferenceResults"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "testing.json").write_text(json.dumps({
+            "source_path": str(lib_dir),
+            "simulator": "Dymola",
+            "simulators": {"Dymola": ["C:\\nope\\dymola.exe"]},
+        }))
+        config = Config(config_file=str(cfg_dir / "testing.json"))
+        assert config.simulator == "Dymola"

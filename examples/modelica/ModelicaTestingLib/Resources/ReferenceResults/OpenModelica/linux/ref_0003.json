@@ -1,0 +1,84 @@
+{
+  "model_id": "ModelicaTestingLib.Examples.IntervalTest",
+  "test_id": "0003",
+  "status": "active",
+  "date_added": "2026-04-22T14:39:43.223482+00:00",
+  "last_updated": "2026-04-22T14:39:43.223482+00:00",
+  "simulation": {
+    "stop_time": 10.0,
+    "tolerance": 1e-06,
+    "method": "Dassl",
+    "number_of_intervals": null,
+    "output_interval": 0.5
+  },
+  "statistics": {
+    "timing": {
+      "frontend": 0.1491285,
+      "backend": 0.0022077,
+      "simcode": 0.0006164,
+      "templates": 0.0601831,
+      "compile": 1.8655969,
+      "simulation": 0.0267707,
+      "total": 2.1066857,
+      "translation_wall": 2.08,
+      "sim_wall": 0.03,
+      "other_wall": 1.64,
+      "total_wall": 3.75
+    }
+  },
+  "n_vars": 1,
+  "time": [
+    0.0,
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+    3.5,
+    4.0,
+    4.5,
+    5.0,
+    5.5,
+    6.0,
+    6.5,
+    7.0,
+    7.5,
+    8.0,
+    8.5,
+    9.0,
+    9.5,
+    10.0,
+    10.0
+  ],
+  "variables": [
+    {
+      "index": 1,
+      "name": "x",
+      "values": [
+        0.0,
+        0.5,
+        1.0,
+        1.5,
+        2.0,
+        2.5,
+        3.0,
+        3.5,
+        4.0,
+        4.5,
+        5.0,
+        5.5,
+        6.0,
+        6.5,
+        7.0,
+        7.5,
+        8.0,
+        8.5,
+        9.0,
+        9.5,
+        10.0,
+        10.0
+      ]
+    }
+  ]
+}
