@@ -160,7 +160,10 @@ class TestBuildSimulateMos:
         assert 'fileNamePrefix="result"' in mos
         assert 'variableFilter="' in mos
 
-    def test_sentinel_timing_block_present(self):
+    def test_no_sentinel_or_print_block(self):
+        """The print+sentinel dance was removed — timings come from omc's
+        REPL-echoed SimulationResult record, not explicit prints. This test
+        guards against accidentally re-introducing them."""
         mos = build_simulate_mos(
             test=_make_test(),
             test_dir=Path("/tmp/test_0001"),
@@ -169,12 +172,11 @@ class TestBuildSimulateMos:
             simulator_setup=[],
             diagnostic_vars=[],
         )
-        assert "<<<MT_PHASE_TIMINGS>>>" in mos
-        assert "<<<MT_PHASE_TIMINGS_END>>>" in mos
-        for field in ("timeFrontend", "timeBackend", "timeSimCode",
-                      "timeTemplates", "timeCompile", "timeSimulation",
-                      "timeTotal", "resultFile", "messages"):
-            assert field in mos, f"missing timing field {field} in .mos"
+        assert "<<<" not in mos
+        assert "print(" not in mos
+        # Bare simulate(...) — no assignment to `res`.
+        assert "res :=" not in mos
+        assert "simulate(Demo.Example.A" in mos
 
     def test_test_dir_uses_forward_slashes(self):
         """Even on Windows paths, the emitted cd() should use forward slashes."""

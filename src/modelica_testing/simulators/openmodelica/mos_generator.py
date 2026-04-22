@@ -4,10 +4,14 @@ No I/O beyond string assembly — trivially unit-testable. The runner calls
 :func:`build_simulate_mos` per test, writes the result to
 ``<test_dir>/simulate.mos``, then invokes ``omc`` on it.
 
-The generated script prints phase timings inside a sentinel-bounded block
-(``<<<MT_PHASE_TIMINGS>>>`` / ``<<<MT_PHASE_TIMINGS_END>>>``) so the log
-parser can find them deterministically without scanning unbounded omc
-output.
+The .mos does NOT emit explicit timing output. When ``omc`` runs a script
+non-interactively it REPL-echoes the top-level ``simulate(...)`` call as a
+``record SimulationResult ... end SimulationResult;`` block that already
+contains ``resultFile``, ``messages``, and the ``timeFrontend / Backend /
+SimCode / Templates / Compile / Simulation / Total`` fields — everything we
+need. ``log_parser.parse_omc_stdout`` pulls them from that block, so the
+.mos stays small and the print/sentinel dance proved to be silently
+unreliable (``res`` isn't in scope for the follow-up prints).
 """
 
 from __future__ import annotations
@@ -18,11 +22,6 @@ from typing import Iterable
 
 from ...discovery.test_registry import TestModel
 from ..base import _pattern_to_regex
-
-# Markers bounding the phase-timing print block. Picked to be distinct
-# enough that no Modelica identifier or omc message contains them.
-SENTINEL_BEGIN = "<<<MT_PHASE_TIMINGS>>>"
-SENTINEL_END = "<<<MT_PHASE_TIMINGS_END>>>"
 
 
 def classify_dependency(entry: str) -> tuple[str, str]:
@@ -163,18 +162,10 @@ def build_simulate_mos(
     var_filter = build_variable_filter(test.variable_patterns, diagnostic_vars)
     sim_kwargs.append(_format_sim_kwarg("variableFilter", var_filter))
 
-    lines.append(f"res := simulate({test.model_id}, {', '.join(sim_kwargs)});")
+    # Bare simulate(...) — omc REPL-echoes the SimulationResult record to
+    # stdout, which log_parser parses. No ``res := ...`` assignment and no
+    # follow-up prints (see module docstring).
+    lines.append(f"simulate({test.model_id}, {', '.join(sim_kwargs)});")
     lines.append("getErrorString();")
-
-    # Sentinel-bounded phase-timing print block
-    lines.append(f'print("{SENTINEL_BEGIN}\\n");')
-    for field in (
-        "timeFrontend", "timeBackend", "timeSimCode",
-        "timeTemplates", "timeCompile", "timeSimulation", "timeTotal",
-    ):
-        lines.append(f'print("{field}=" + String(res.{field}) + "\\n");')
-    lines.append('print("resultFile=" + res.resultFile + "\\n");')
-    lines.append('print("messages=" + res.messages + "\\n");')
-    lines.append(f'print("{SENTINEL_END}\\n");')
 
     return "\n".join(lines) + "\n"

@@ -645,7 +645,9 @@ EOF
 
 ## Task 3: `log_parser.py` + unit tests + captured fixture
 
-**Goal:** Parse `omc` stdout to extract the `SimulationResult` record fields bounded by `<<<MT_PHASE_TIMINGS>>>` / `<<<MT_PHASE_TIMINGS_END>>>`. Graceful failure on truncated / missing blocks.
+**Goal:** Parse `omc` stdout to extract the `SimulationResult` record REPL-echoed by `omc` when it runs a `.mos` containing a top-level `simulate(...)` call. Graceful failure on truncated / missing records.
+
+**Context — why no sentinels / no `print()`:** Earlier drafts of this plan had the `.mos` emit `print("key=...")` statements bounded by `<<<MT_PHASE_TIMINGS>>>` sentinels. Empirically, `res := simulate(...); print("...")` doesn't work — after the record assignment, subsequent statements appear to be skipped in `omc`'s non-interactive mode (only the leading `print("<<<MT_PHASE_TIMINGS>>>\n")` survives; the rest emits blank lines). But omc already REPL-echoes the bare `simulate(...)` call as a `record SimulationResult … end SimulationResult;` block containing `resultFile`, `messages`, and all seven `time*` fields — exactly what we need. Parsing that is more reliable than fighting omc's scripting semantics. Task 2's `mos_generator` was amended to emit a bare `simulate(...)` and no sentinel/print block.
 
 **Files:**
 - Create: `src/modelica_testing/simulators/openmodelica/log_parser.py`
@@ -654,7 +656,7 @@ EOF
 
 - [ ] **Step 1: Capture a real stdout fixture**
 
-Run the same smoke test that was used during design and capture its stdout:
+Capture real omc stdout from a minimal .mos that matches what `mos_generator.build_simulate_mos` emits today (no sentinels, no prints). Run as a single Bash invocation so cwd semantics are preserved:
 
 ```bash
 mkdir -p tests/fixtures/results_openmodelica
@@ -664,30 +666,20 @@ setCommandLineOptions("--std=latest");
 loadModel(Modelica);
 getErrorString();
 cd("/tmp/om_fixture_capture");
-res := simulate(Modelica.Blocks.Examples.PID_Controller, stopTime=1.0, numberOfIntervals=50, tolerance=1e-6, method="dassl", outputFormat="mat", fileNamePrefix="result", variableFilter="time");
+simulate(Modelica.Blocks.Examples.PID_Controller, stopTime=1.0, numberOfIntervals=50, tolerance=1e-6, method="dassl", outputFormat="mat", fileNamePrefix="result", variableFilter="^(time)$");
 getErrorString();
-print("<<<MT_PHASE_TIMINGS>>>\n");
-print("timeFrontend=" + String(res.timeFrontend) + "\n");
-print("timeBackend=" + String(res.timeBackend) + "\n");
-print("timeSimCode=" + String(res.timeSimCode) + "\n");
-print("timeTemplates=" + String(res.timeTemplates) + "\n");
-print("timeCompile=" + String(res.timeCompile) + "\n");
-print("timeSimulation=" + String(res.timeSimulation) + "\n");
-print("timeTotal=" + String(res.timeTotal) + "\n");
-print("resultFile=" + res.resultFile + "\n");
-print("messages=" + res.messages + "\n");
-print("<<<MT_PHASE_TIMINGS_END>>>\n");
 EOF
 (cd /tmp/om_fixture_capture && omc capture.mos) > tests/fixtures/results_openmodelica/pid_controller_stdout.txt 2>&1
 ```
 
-Verify the sentinel block shows up:
+Verify the record block shows up:
 
 ```bash
-grep -c 'MT_PHASE_TIMINGS' tests/fixtures/results_openmodelica/pid_controller_stdout.txt
+grep -c 'record SimulationResult' tests/fixtures/results_openmodelica/pid_controller_stdout.txt
+grep -c 'end SimulationResult;' tests/fixtures/results_openmodelica/pid_controller_stdout.txt
 ```
 
-Expected: `2` (begin + end). If `0`, something failed in the capture. The runner tests (Task 5) will regenerate the `.mat` fixture — for Task 3 we only need the stdout.
+Both must return `1`. If `0`, something failed in the capture — inspect the file directly.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -708,124 +700,118 @@ from modelica_testing.simulators.openmodelica.log_parser import (
 FIXTURES = Path(__file__).parent / "fixtures" / "results_openmodelica"
 
 
+def _synth_record(**overrides) -> str:
+    """Build a fake SimulationResult record block for tests."""
+    defaults = dict(
+        resultFile='/tmp/test_0001/result_res.mat',
+        simulationOptions="stopTime = 1.0",
+        messages="LOG_SUCCESS | info | The simulation finished successfully.",
+        timeFrontend=0.1,
+        timeBackend=0.05,
+        timeSimCode=0.01,
+        timeTemplates=0.02,
+        timeCompile=0.9,
+        timeSimulation=0.03,
+        timeTotal=1.11,
+    )
+    defaults.update(overrides)
+    return (
+        "record SimulationResult\n"
+        f'    resultFile = "{defaults["resultFile"]}",\n'
+        f'    simulationOptions = "{defaults["simulationOptions"]}",\n'
+        f'    messages = "{defaults["messages"]}",\n'
+        f'    timeFrontend = {defaults["timeFrontend"]},\n'
+        f'    timeBackend = {defaults["timeBackend"]},\n'
+        f'    timeSimCode = {defaults["timeSimCode"]},\n'
+        f'    timeTemplates = {defaults["timeTemplates"]},\n'
+        f'    timeCompile = {defaults["timeCompile"]},\n'
+        f'    timeSimulation = {defaults["timeSimulation"]},\n'
+        f'    timeTotal = {defaults["timeTotal"]}\n'
+        "end SimulationResult;\n"
+    )
+
+
 class TestParseSuccess:
     def test_real_pid_controller_fixture(self):
         text = (FIXTURES / "pid_controller_stdout.txt").read_text()
         parsed = parse_omc_stdout(text)
-        assert parsed.success is True
+        assert parsed.success is True, (
+            f"parser should treat a successful omc run as success; got "
+            f"result_file={parsed.result_file!r} messages={parsed.messages!r}"
+        )
         assert parsed.result_file.endswith("result_res.mat")
         assert parsed.timings is not None
-        # Real values vary but these fields must exist and be non-negative
         for k in ("frontend", "backend", "simcode", "templates",
                   "compile", "simulation", "total"):
             assert k in parsed.timings
             assert parsed.timings[k] >= 0.0
 
     def test_synthetic_success(self):
-        text = (
-            "some preamble\n"
-            "<<<MT_PHASE_TIMINGS>>>\n"
-            "timeFrontend=0.1\n"
-            "timeBackend=0.05\n"
-            "timeSimCode=0.01\n"
-            "timeTemplates=0.02\n"
-            "timeCompile=0.9\n"
-            "timeSimulation=0.03\n"
-            "timeTotal=1.11\n"
-            "resultFile=/tmp/test_0001/result_res.mat\n"
-            "messages=The simulation finished successfully.\n"
-            "<<<MT_PHASE_TIMINGS_END>>>\n"
-        )
-        p = parse_omc_stdout(text)
+        p = parse_omc_stdout(_synth_record())
         assert p.success is True
         assert p.result_file == "/tmp/test_0001/result_res.mat"
         assert p.timings["frontend"] == 0.1
         assert p.timings["total"] == 1.11
         assert "finished successfully" in p.messages
 
+    def test_multiline_messages_preserved(self):
+        """messages is a multi-line Modelica string — parser must grab all of it."""
+        msg = "line1\nline2\nline3"
+        p = parse_omc_stdout(_synth_record(messages=msg))
+        assert "line1" in p.messages
+        assert "line2" in p.messages
+        assert "line3" in p.messages
+
 
 class TestParseFailure:
     def test_empty_result_file_means_failure(self):
-        text = (
-            "<<<MT_PHASE_TIMINGS>>>\n"
-            "timeFrontend=0.0\n"
-            "timeBackend=0.0\n"
-            "timeSimCode=0.0\n"
-            "timeTemplates=0.0\n"
-            "timeCompile=0.0\n"
-            "timeSimulation=0.0\n"
-            "timeTotal=0.0\n"
-            "resultFile=\n"
-            "messages=Simulation Failed. Model: X does not exist!\n"
-            "<<<MT_PHASE_TIMINGS_END>>>\n"
-        )
-        p = parse_omc_stdout(text)
+        p = parse_omc_stdout(_synth_record(
+            resultFile="",
+            messages="Simulation Failed. Model: X does not exist!",
+        ))
         assert p.success is False
         assert p.result_file == ""
         assert "does not exist" in p.messages
 
-    def test_error_string_before_sentinel(self):
-        text = (
-            "Error: Failed to load package Foo\n"
-            "<<<MT_PHASE_TIMINGS>>>\n"
-            "timeFrontend=0.0\n"
-            "timeBackend=0.0\n"
-            "timeSimCode=0.0\n"
-            "timeTemplates=0.0\n"
-            "timeCompile=0.0\n"
-            "timeSimulation=0.0\n"
-            "timeTotal=0.0\n"
-            "resultFile=\n"
-            "messages=\n"
-            "<<<MT_PHASE_TIMINGS_END>>>\n"
+    def test_error_string_before_record(self):
+        text = "Error: Failed to load package Foo\n" + _synth_record(
+            resultFile="", messages="",
         )
         p = parse_omc_stdout(text)
         assert p.success is False
-        # The pre-sentinel error text should be preserved somewhere — either
-        # in the .error_notices list or folded into the combined error msg.
+        # Pre-record error text is captured as a notice
         assert any("Failed to load package" in n for n in p.error_notices)
 
 
 class TestParseMalformed:
-    def test_missing_sentinel_end_returns_graceful_failure(self):
-        text = (
-            "some omc output\n"
-            "<<<MT_PHASE_TIMINGS>>>\n"
-            "timeFrontend=0.1\n"
-            # truncated — no END sentinel
-        )
-        p = parse_omc_stdout(text)
-        assert p.success is False
-        assert p.timings is None
-
-    def test_no_sentinels_at_all(self):
-        # Timeout / crash scenario — omc never got to the print block.
-        text = "omc crashed before the print block ran"
+    def test_no_record_at_all(self):
+        # Timeout / crash scenario — omc never got to emit a record.
+        text = "omc crashed before the simulate() call ran"
         p = parse_omc_stdout(text)
         assert p.success is False
         assert p.timings is None
         assert p.result_file == ""
 
-    def test_multiple_getErrorString_notices_stitched(self):
-        """Pre-sentinel Error/Warning/Notification notices are preserved."""
+    def test_truncated_record(self):
+        """Record start but no end: graceful failure, not an exception."""
+        text = (
+            "record SimulationResult\n"
+            '    resultFile = "/tmp/foo.mat",\n'
+            # truncated — no end SimulationResult;
+        )
+        p = parse_omc_stdout(text)
+        assert p.success is False
+        assert p.timings is None
+
+    def test_multiple_notices_stitched(self):
+        """Pre-record Error/Warning/Notification lines are preserved."""
         text = (
             "Error: thing1\n"
             "Notification: thing2\n"
             "Warning: thing3\n"
-            "<<<MT_PHASE_TIMINGS>>>\n"
-            "timeFrontend=0.0\n"
-            "timeBackend=0.0\n"
-            "timeSimCode=0.0\n"
-            "timeTemplates=0.0\n"
-            "timeCompile=0.0\n"
-            "timeSimulation=0.0\n"
-            "timeTotal=0.0\n"
-            "resultFile=/tmp/r.mat\n"
-            "messages=\n"
-            "<<<MT_PHASE_TIMINGS_END>>>\n"
+            + _synth_record(resultFile="/tmp/r_res.mat", messages="")
         )
         p = parse_omc_stdout(text)
-        # All three notices retained regardless of overall success.
         joined = "\n".join(p.error_notices)
         assert "thing1" in joined
         assert "thing3" in joined
@@ -846,12 +832,26 @@ Create `src/modelica_testing/simulators/openmodelica/log_parser.py`:
 ```python
 """Parse OpenModelica's ``omc`` stdout for per-test results.
 
-The runner prints a sentinel-bounded block containing the ``SimulationResult``
-record fields. This module extracts that block, classifies success/failure,
-and surfaces any Error/Warning/Notification notices that appeared before it.
+When ``omc`` runs a ``.mos`` that ends with a top-level ``simulate(...)`` call,
+it REPL-echoes the returned record to stdout:
 
-Output shape is a small ``ParsedOmcOutput`` dataclass. The runner consumes it
-to populate ``TestRunResult`` (success, timings, error_message).
+    record SimulationResult
+        resultFile = "/path/to/result_res.mat",
+        simulationOptions = "...",
+        messages = "...",
+        timeFrontend = 0.19,
+        timeBackend = 0.04,
+        ...
+        timeTotal = 1.25
+    end SimulationResult;
+
+This module extracts that block, classifies success/failure, and surfaces any
+Error/Warning/Notification lines that appeared BEFORE it. The return shape is
+a small ``ParsedOmcOutput`` dataclass the runner consumes to populate
+``TestRunResult``.
+
+The parser is total — any shape of input produces a ``ParsedOmcOutput``, with
+``success=False`` and ``timings=None`` on truncation / missing record.
 """
 
 from __future__ import annotations
@@ -859,8 +859,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Optional
-
-from .mos_generator import SENTINEL_BEGIN, SENTINEL_END
 
 
 @dataclass
@@ -873,7 +871,27 @@ class ParsedOmcOutput:
     error_notices: list[str] = field(default_factory=list)
 
 
-# Field name in the sentinel block -> key in ParsedOmcOutput.timings
+# Match 'record SimulationResult … end SimulationResult;' lazily across
+# however many lines the record spans.
+_RECORD_RE = re.compile(
+    r"record SimulationResult(?P<body>.*?)end SimulationResult;",
+    re.DOTALL,
+)
+
+# Match a quoted string-valued record field. The value may span multiple
+# lines (OM's 'messages' often does). Handles embedded \" and \\ escapes.
+_STR_FIELD_RE = re.compile(
+    r'\b(\w+)\s*=\s*"((?:\\.|[^"\\])*)"',
+    re.DOTALL,
+)
+
+# Match a numeric-valued record field. Run AFTER stripping string fields from
+# the body (digits in messages would otherwise get misread).
+_NUM_FIELD_RE = re.compile(
+    r'\b(\w+)\s*=\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)',
+)
+
+# OM field name -> our internal key
 _TIMING_KEYS = {
     "timeFrontend": "frontend",
     "timeBackend": "backend",
@@ -885,52 +903,44 @@ _TIMING_KEYS = {
 }
 
 # Lines like 'Error: ...' / 'Warning: ...' / 'Notification: ...'
-_NOTICE_RE = re.compile(r"^\s*(?:Error|Warning|Notification)\b[: ].*$", re.MULTILINE)
+_NOTICE_RE = re.compile(
+    r"^\s*(?:Error|Warning|Notification)\b[: ].*$",
+    re.MULTILINE,
+)
 
 
 def parse_omc_stdout(text: str) -> ParsedOmcOutput:
-    """Parse captured stdout into a ``ParsedOmcOutput``.
+    """Parse captured omc stdout into a ``ParsedOmcOutput``."""
+    m = _RECORD_RE.search(text)
+    preamble = text if not m else text[:m.start()]
+    error_notices = [
+        mo.group(0).strip() for mo in _NOTICE_RE.finditer(preamble)
+    ]
 
-    The parser is total: any shape of input produces a ``ParsedOmcOutput``,
-    with ``success=False`` and ``timings=None`` on truncation / missing
-    sentinels.
-    """
-    begin = text.find(SENTINEL_BEGIN)
-    end = text.find(SENTINEL_END)
+    if not m:
+        return ParsedOmcOutput(success=False, error_notices=error_notices)
 
-    # Pre-sentinel notices are collected regardless of whether the block is
-    # complete — they help explain what went wrong.
-    preamble = text if begin == -1 else text[:begin]
-    error_notices = [m.group(0).strip() for m in _NOTICE_RE.finditer(preamble)]
+    body = m.group("body")
 
-    if begin == -1 or end == -1 or end <= begin:
-        return ParsedOmcOutput(
-            success=False,
-            error_notices=error_notices,
-        )
+    # Extract string-valued fields first (they may contain digits we don't
+    # want to misinterpret as timings).
+    str_fields: dict[str, str] = {}
+    for fm in _STR_FIELD_RE.finditer(body):
+        str_fields[fm.group(1)] = fm.group(2)
 
-    block = text[begin + len(SENTINEL_BEGIN):end]
-    kv: dict[str, str] = {}
-    for line in block.splitlines():
-        if "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        k = k.strip()
-        v = v.rstrip("\r")
-        kv[k] = v
-
+    # Strip strings from the body before pulling numbers.
+    body_no_strings = _STR_FIELD_RE.sub("", body)
     timings: dict[str, float] = {}
-    for om_name, our_name in _TIMING_KEYS.items():
-        raw = kv.get(om_name)
-        if raw is None:
-            continue
-        try:
-            timings[our_name] = float(raw)
-        except ValueError:
-            pass
+    for fm in _NUM_FIELD_RE.finditer(body_no_strings):
+        name = fm.group(1)
+        if name in _TIMING_KEYS:
+            try:
+                timings[_TIMING_KEYS[name]] = float(fm.group(2))
+            except ValueError:
+                pass
 
-    result_file = kv.get("resultFile", "")
-    messages = kv.get("messages", "")
+    result_file = str_fields.get("resultFile", "")
+    messages = str_fields.get("messages", "")
 
     success = bool(result_file) and "Failed" not in messages
 
@@ -942,6 +952,7 @@ def parse_omc_stdout(text: str) -> ParsedOmcOutput:
         error_notices=error_notices,
     )
 ```
+
 
 - [ ] **Step 5: Run tests to verify they pass**
 
