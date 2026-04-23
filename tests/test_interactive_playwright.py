@@ -1425,6 +1425,119 @@ def test_reset_button_restores_original_window(rendered_page: Page):
     ) == []
 
 
+def test_detect_respects_leaf_window_and_source(tmp_path, playwright_browser):
+    """D76 — set a window on the leaf, click Detect, verify the detected
+    peaks come from the WINDOWED signal (not the full trajectory). Also
+    verify source dropdown [Reference | Actual] works. Each seeded peak
+    carries ``derived_from_window`` metadata."""
+    import shutil as _shutil
+    from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+    import math
+
+    # Ref: 2 Hz sine for t in [0, 2], silence for t in [2, 4].
+    # Actual: silence for t in [0, 2], 5 Hz sine for t in [2, 4].
+    # → Windowed ref [0, 2] has a 2 Hz peak; actual [0, 2] is near-zero.
+    # → Windowed ref [2, 4] is near-zero; actual [2, 4] has a 5 Hz peak.
+    _n = 512
+    _t_end = 4.0
+    _times = [i * _t_end / (_n - 1) for i in range(_n)]
+    _ref_vals = [
+        (math.sin(2 * math.pi * 2.0 * t) if t <= 2.0 else 0.0)
+        for t in _times
+    ]
+    _act_vals = [
+        (math.sin(2 * math.pi * 5.0 * t) if t > 2.0 else 0.0)
+        for t in _times
+    ]
+    leaf = _leaf(
+        path="/metrics/children/0", metric="dominant-frequency",
+        variable="osc",
+        params={"peaks": []},
+    )
+    leaf["spectrum"] = {
+        "ref_freq": [], "ref_mag": [],
+        "act_freq": [], "act_mag": [],
+        "peaks_declared": [], "paired_peaks": [],
+        "detected_reference_peaks_hz": [],
+    }
+    leaf["cli_authoritative"] = False
+    tree = {
+        "kind": "combinator", "combinator": "and", "path": "/metrics",
+        "passed": False, "label": "and[1]", "children": [leaf],
+    }
+    traj = {
+        "index": 1, "name": "osc",
+        "act_time": _times, "act_values": _act_vals,
+        "ref_time": _times, "ref_values": _ref_vals,
+    }
+    ctx = {
+        "model_id": "Fixture.WindowedDetect",
+        "n_passed": 0, "sim_failed": False,
+        "last_run_at": 0, "last_run_str": "",
+        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
+        "statistics_sections": [], "diagnostic_summaries": [], "artifacts": [],
+        "trajectories": [traj],
+        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "spec_path": "",
+        "tree_view": tree,
+        "variables_by_name": {
+            "osc": {"name": "osc", "trajectory": traj, "overlays": [],
+                    "leaf_paths": ["/metrics/children/0"]},
+        },
+        "mode_schemas": {},
+        "overlay_rows": [],
+    }
+    env = _Env(loader=_Loader(str(_TEMPLATE_DIR)), autoescape=True)
+    html = env.get_template("interactive.html").render(**ctx)
+    html_path = tmp_path / "interactive.html"
+    html_path.write_text(html, encoding="utf-8")
+    _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    context = playwright_browser.new_context()
+    page = context.new_page()
+    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.goto(html_path.as_uri())
+    page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
+    page.evaluate("activateLeaf(TREE_VIEW.children[0])")
+    page.wait_for_function("document.querySelector('.peak-editor-ui')")
+
+    # Set window to [0, 2] programmatically then Detect from Reference.
+    # Expect ~2 Hz (authored in the first half).
+    page.evaluate("""
+        leafState['/metrics/children/0'].window = {start: 0.0, end: 2.0};
+        // Trigger editor refresh so the live spectrum is recomputed.
+        activateLeaf(TREE_VIEW.children[0]);
+    """)
+    page.wait_for_function("document.querySelector('.peak-editor-ui')")
+    # Source: Reference (the default).
+    page.locator(".peak-editor-ui button", has_text="Detect").first.click()
+    pks = page.evaluate("leafState['/metrics/children/0'].params.peaks")
+    freqs = sorted([pk["freq"] for pk in pks])
+    assert any(abs(f - 2.0) < 0.8 for f in freqs), (
+        f"expected 2 Hz peak from windowed reference, got {freqs}"
+    )
+    # Each seeded peak carries derived_from_window = {start: 0, end: 2}.
+    assert all(pk.get("derived_from_window") == {"start": 0.0, "end": 2.0}
+               for pk in pks)
+
+    # Switch to Actual + window [2, 4] → expect ~5 Hz.
+    page.evaluate("""
+        leafState['/metrics/children/0'].params.peaks = [];
+        leafState['/metrics/children/0'].window = {start: 2.0, end: 4.0};
+        activateLeaf(TREE_VIEW.children[0]);
+    """)
+    page.wait_for_function("document.querySelector('.peak-editor-ui')")
+    page.locator(".detect-source-select").first.select_option("act")
+    page.locator(".peak-editor-ui button", has_text="Detect").first.click()
+    pks2 = page.evaluate("leafState['/metrics/children/0'].params.peaks")
+    freqs2 = sorted([pk["freq"] for pk in pks2])
+    assert any(abs(f - 5.0) < 0.8 for f in freqs2), (
+        f"expected 5 Hz peak from windowed actual, got {freqs2}"
+    )
+    assert all(pk.get("derived_from_window") == {"start": 2.0, "end": 4.0}
+               for pk in pks2)
+    context.close()
+
+
 def test_visibility_toggle_syncs_across_mounts(rendered_page: Page):
     """Clicking the visibility checkbox in the full-tree mount updates
     the matching checkbox in the per-variable mount (both read/write
@@ -1725,14 +1838,25 @@ def test_declared_peaks_detect_button_populates_table(tmp_path, playwright_brows
         variable="osc",
         params={"peaks": []},  # empty — user hasn't declared yet
     )
+    # Trajectory must be long enough for the live FFT (D76) to find real
+    # peaks. Use a 3-sinusoid sum at 1, 3, 5 Hz — Detect should find
+    # exactly these in order.
+    import math
+    _n = 512
+    _t_end = 4.0  # 4s window × 5 Hz max = 20 cycles (plenty)
+    _times = [i * _t_end / (_n - 1) for i in range(_n)]
+    _values = [
+        (3.0 * math.sin(2 * math.pi * 1.0 * t)
+         + 2.0 * math.sin(2 * math.pi * 3.0 * t)
+         + 1.0 * math.sin(2 * math.pi * 5.0 * t))
+        for t in _times
+    ]
     leaf["spectrum"] = {
-        "ref_freq": [0.0, 1.0, 2.0, 3.0, 4.0],
-        "ref_mag":  [0.1, 0.9, 0.2, 0.7, 0.15],
-        "act_freq": [0.0, 1.0, 2.0, 3.0, 4.0],
-        "act_mag":  [0.1, 0.9, 0.2, 0.7, 0.15],
+        "ref_freq": [], "ref_mag": [],
+        "act_freq": [], "act_mag": [],
         "peaks_declared": [],
         "paired_peaks": [],
-        "detected_reference_peaks_hz": [1.0, 3.0, 5.0],
+        "detected_reference_peaks_hz": [],
     }
     leaf["cli_authoritative"] = False
     tree = {
@@ -1741,8 +1865,8 @@ def test_declared_peaks_detect_button_populates_table(tmp_path, playwright_brows
     }
     traj = {
         "index": 1, "name": "osc",
-        "act_time": [0, 1], "act_values": [0, 1],
-        "ref_time": [0, 1], "ref_values": [0, 1],
+        "act_time": _times, "act_values": _values,
+        "ref_time": _times, "ref_values": _values,
     }
     ctx = {
         "model_id": "Fixture.DominantFreqEmpty",
@@ -1777,13 +1901,26 @@ def test_declared_peaks_detect_button_populates_table(tmp_path, playwright_brows
     page.wait_for_function("document.querySelector('.peak-editor-ui')")
     assert page.evaluate("leafState['/metrics/children/0'].params.peaks.length") == 0
     page.locator(".peak-editor-ui button", has_text="Detect").first.click()
-    # Should have populated with the top 3 detected peaks.
+    # Should have populated with the top 3 detected peaks (live FFT picks
+    # them within one bin of the authored 1, 3, 5 Hz).
     n = page.evaluate("leafState['/metrics/children/0'].params.peaks.length")
     assert n == 3
     freqs = page.evaluate(
         "leafState['/metrics/children/0'].params.peaks.map(p => p.freq)"
     )
-    assert sorted(freqs) == [1.0, 3.0, 5.0]
+    freqs_sorted = sorted(freqs)
+    # Tolerance of 0.5 Hz covers FFT bin resolution.
+    assert abs(freqs_sorted[0] - 1.0) < 0.5
+    assert abs(freqs_sorted[1] - 3.0) < 0.5
+    assert abs(freqs_sorted[2] - 5.0) < 0.5
+    # Each seeded peak carries derived_from_window metadata since this
+    # editor stamps it on detect; window was never set, so metadata is
+    # absent (null window = no provenance to record).
+    has_window_metadata = page.evaluate(
+        "leafState['/metrics/children/0'].params.peaks.some(p => p.derived_from_window)"
+    )
+    # No window set → no metadata.
+    assert has_window_metadata is False
     context.close()
 
 

@@ -1376,4 +1376,136 @@ populates the table from reference spectrum).
   −6 Python old multi-peak tests = +4 author-intended, plus
   refactor-adjacent noise).
 
+## D76 — Live JS FFT + window-scoped detection + per-peak provenance (2026-04-23)
+
+Closes the Q1 loop from the D75 user review: "does Detect respect the
+window? does it use ref or actual?" — both questions. The window is
+now a **detection-scoping tool** (interactive, live-recomputed in the
+browser) in addition to its existing scoring role. Detect source is
+user-selectable. Per-peak metadata records which window each peak was
+identified in.
+
+### Scope (single PR — Commit 2 of the Q1/Q2 split)
+
+- **Radix-2 FFT ported to JS** (`_fftRadix2` + `_computeFftSpectrum` +
+  `_findTopNPeaksJS` + `_findStrongestPeakInWindowJS` + helpers). ~190
+  lines. Algorithm pinned to zero-pad-to-next-pow-2 + iterative
+  Cooley-Tukey; mirrors Python's `_compute_fft_spectrum` +
+  `_find_top_n_peaks` + `_find_strongest_peak_in_window`. Peak
+  LOCATIONS match within one bin; magnitudes may differ slightly
+  (sinc interpolation from zero-padding vs numpy's arbitrary-N rfft).
+  Fine for visualization + detection; CLI stays authoritative for the
+  committed pass/fail.
+
+- **Live spectrum subplot**. `getLiveSpectrum(leaf, source)` reads
+  the trajectory (ref or actual) from
+  `VARIABLES_BY_NAME[leaf.variable].trajectory`, slices by
+  `leafState[path].window`, runs the JS FFT. Called on every
+  `refreshEditor` — edit the window, the subplot recomputes. Fallback
+  path to the CLI-embedded spectrum for edge cases with no trajectory
+  data (unusual report shapes).
+
+- **Detect source dropdown**: `Source: [Reference | Actual]` next to
+  the Detect button. In-memory per-leaf selection (not persisted;
+  default Reference). Detect uses `_findTopNPeaksJS` on the selected
+  source's live windowed spectrum, seeds top-3 peaks into the table.
+
+- **Per-peak `derived_from_window` metadata**. Each peak added via
+  Shift+click, `+ add peak`, or Detect gets a
+  `derived_from_window: {start, end}` stamp copied from the leaf's
+  current window (absent when window is unset). Round-trips through
+  `nodeToSpec` via the catch-all params-forwarding loop — no new
+  patch-apply whitelist entries needed. Table has a "Src window"
+  column showing `[start, end]` or `—`, with a hover tooltip
+  explaining that scoring uses the leaf-level window; the metadata
+  just records where the peak was originally identified.
+
+- **Live match column** replaces CLI-paired_peaks in the table.
+  `evaluateMatches(leaf, actSpec)` computes per-declared-peak match
+  status live via `_findStrongestPeakInWindowJS` on the current
+  windowed actual spectrum. "Match (live) → 4.0023 Hz (Δ 2.3e-3)"
+  or "no match" — updates on every state mutation.
+
+- **Live JS scorer** (`MODE_SCORERS['dominant-frequency']`) now uses
+  the live JS FFT instead of the CLI-embedded spectrum. Pass/fail
+  reflects window + tolerance edits in real time.
+
+- **"Multi-window scoring" handled by composition**. User's original
+  question: can I declare freq X in window [0,5] AND freq Y in
+  window [5,10] on the same leaf? Answer: use two
+  `dominant-frequency` leaves under an `and` combinator, each with
+  its own window. Grammar already supports this (D71 windowed
+  leaves + D72 combinator kind editing). No per-peak scoring-window
+  was added — keeps the per-leaf window invariant intact.
+
+### Decisions
+
+- **Detect source = dropdown, default Reference**. Reference is the
+  common case (seed table from the regression target); Actual covers
+  the "fresh test, no reference yet" workflow.
+- **Detect replaces the table** (not appends). Consistent with D75.
+  The source-dropdown + window make it a live operation; users
+  exploring can change source/window and re-Detect as many times as
+  they want before committing.
+- **Live match column** shows the current pass/fail per peak, not
+  CLI-frozen paired_peaks. Users editing tolerances/freqs/windows see
+  the effect immediately.
+- **Radix-2 zero-pad** over arbitrary-N via Bluestein's. Radix-2 is
+  ~60 lines in JS; Bluestein's is ~200. The peak-location accuracy
+  matches within 1 bin either way — we only care about detection, not
+  precise spectral density.
+- **Metadata on peaks, not a separate structure**. `derived_from
+  _window` lives on the peak dict itself (`{freq, tolerance,
+  tolerance_mode, derived_from_window}`). No new schema; survives the
+  patch round-trip automatically via the params-forwarding loop.
+- **Per-peak scoring window NOT introduced**. User's "check same freq
+  in multiple windows" use case is expressible via composition — one
+  leaf per window under AND. Avoids multiplying the leaf's state
+  model.
+
+### Rejected alternatives
+
+- **Naive O(n²) DFT** instead of radix-2. Simpler but ~50-100ms for
+  1024 samples — too slow for interactive window brushing on larger
+  signals.
+- **Server-side FFT recompute on window edit**. Would need a backend
+  server; standalone HTML / file:// URLs are a core invariant.
+- **Per-peak `scoring_window` field**. Over-complicates the leaf
+  state; composition handles it without new primitives.
+
+### Files
+
+**JS** (`src/modelica_testing/reporting/templates/interactive.js`):
+- `_fftRadix2`, `_computeFftSpectrum`, `_findTopNPeaksJS`,
+  `_findStrongestPeakInWindowJS`, `_dedupeMonotonicTimes`,
+  `_sliceToWindow` new helpers (~190 lines).
+- `MODE_PLOT_EDITORS['dominant-frequency']` rewritten:
+  `getLiveSpectrum(leaf, source)`, `evaluateMatches(leaf, actSpec)`,
+  source dropdown, `derived_from_window` stamping on add/detect,
+  "Src window" table column.
+- `MODE_SCORERS['dominant-frequency']` ports to live FFT.
+
+**Tests** (`tests/test_interactive_playwright.py`):
+- `test_detect_respects_leaf_window_and_source` — two-segment fixture
+  (ref: 2 Hz in [0,2]s, silence after; actual: silence in [0,2]s,
+  5 Hz after). Verifies window [0,2] + Reference → detects 2 Hz;
+  window [2,4] + Actual → detects 5 Hz. Both add
+  `derived_from_window` metadata.
+- Updated `test_declared_peaks_detect_button_populates_table` fixture
+  to use a long-enough trajectory so the live FFT runs.
+
+### Validation
+
+- Full regression clean (749 pass / 1 skip, 0 regressions).
+- End-to-end on the real `MultiFrequencyTest` report: window [1, 3]
+  + Detect-from-Actual → peaks at `[0.977, 2.930, 6.836]` Hz (close
+  to authored 1/3/7 given the 2-second window's 0.5 Hz bin
+  resolution); all 3 peaks carry
+  `derived_from_window={start: 1, end: 3}`; Source dropdown rendered
+  across both mounts (2 total).
+
+- **Test count**: 746 → 749 (+3: 2 new declared-peak FFT tests + 1
+  updated fixture rewrite).
+
+
 

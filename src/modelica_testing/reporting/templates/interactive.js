@@ -183,15 +183,33 @@ const MODE_SCORERS = {
   // event-timing intentionally absent — CLI-authoritative (event pairing
   // algorithm stays Python-side).
   'dominant-frequency': (leaf) => {
-    // Declared-peaks live scorer (D75). For each declared peak, check
-    // whether a local-maximum exists in the actual spectrum within the
-    // peak's tolerance window. Uses the CLI-embedded spectrum (no JS-side
-    // FFT). Matches the Python ``_find_strongest_peak_in_window`` contract.
-    const spec = leaf.spectrum || {};
+    // Declared-peaks live scorer (D75+D76). Computes the actual signal's
+    // spectrum LIVE via the ported FFT, scoped to the leaf's current
+    // window, then checks each declared peak has a local-max in its
+    // tolerance window. Live-recomputed on every state mutation — window
+    // edits, tolerance edits, and peak additions all flip the pill
+    // without waiting for a CLI rerun.
     const pks = ((leafState[leaf.path] || {}).params || {}).peaks || [];
     if (!pks.length) return false;
-    const actF = spec.act_freq || [], actM = spec.act_mag || [];
-    if (actF.length < 3) return !!leaf.passed;
+    const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+    const at = traj.act_time || [];
+    const av = traj.act_values || [];
+    let freqs, mags;
+    if (at.length >= 4) {
+      const st = leafState[leaf.path] || {};
+      const w = st.window || {};
+      const sliced = _sliceToWindow(at, av, w.start, w.end);
+      const spec = _computeFftSpectrum(sliced.time, sliced.values);
+      freqs = spec.freqs;
+      mags = spec.magnitudes;
+    } else {
+      // Fallback to CLI-embedded arrays (rare; e.g., spectrum-only tests
+      // with no trajectory embed).
+      const spec = leaf.spectrum || {};
+      freqs = spec.act_freq || [];
+      mags = spec.act_mag || [];
+    }
+    if (!freqs || freqs.length < 3) return !!leaf.passed;
     for (const pk of pks) {
       const f = Number(pk.freq);
       const tol = Number(pk.tolerance) || 0;
@@ -199,13 +217,7 @@ const MODE_SCORERS = {
       const [lo, hi] = pk.tolerance_mode === 'abs'
         ? [f - tol, f + tol]
         : [f * (1 - tol), f * (1 + tol)];
-      // Find any local max in [lo, hi].
-      let found = false;
-      for (let i = 1; i < actF.length - 1; i++) {
-        if (actF[i] < lo || actF[i] > hi) continue;
-        if (actM[i] > actM[i - 1] && actM[i] > actM[i + 1]) { found = true; break; }
-      }
-      if (!found) return false;
+      if (!_findStrongestPeakInWindowJS(freqs, mags, lo, hi)) return false;
     }
     return true;
   },
@@ -436,6 +448,182 @@ const MODE_PLOT_CONTRIBUTIONS = {
   },
   'dominant-frequency': () => ({ traces: [], shapes: [] }),
 };
+
+// ---- JS-side FFT + peak detection (D76) ----
+// Pure-JS port of _compute_fft_spectrum / _find_top_n_peaks /
+// _find_strongest_peak_in_window from comparator.py. Lets the reporter:
+//   * Recompute the spectrum subplot live when the leaf's window changes.
+//   * Offer "Detect peaks" over either reference OR actual, scoped to the
+//     current window, without a CLI round-trip.
+// Algorithm is radix-2 Cooley-Tukey with zero-padding to the next power
+// of 2. The Python side uses arbitrary-N numpy.fft.rfft — we zero-pad
+// instead to keep the implementation minimal. Peak LOCATIONS match
+// within one bin; magnitudes may differ in absolute scale (sinc
+// interpolation from padding).
+
+function _fftRadix2(real, imag) {
+  // In-place iterative Cooley-Tukey. Requires length to be a power of 2.
+  const n = real.length;
+  // Bit-reversal permutation.
+  let j = 0;
+  for (let i = 1; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      let tmp = real[i]; real[i] = real[j]; real[j] = tmp;
+      tmp = imag[i]; imag[i] = imag[j]; imag[j] = tmp;
+    }
+  }
+  // Butterfly.
+  for (let size = 2; size <= n; size <<= 1) {
+    const half = size >> 1;
+    const angleStep = -2 * Math.PI / size;
+    for (let start = 0; start < n; start += size) {
+      for (let k = 0; k < half; k++) {
+        const theta = k * angleStep;
+        const wr = Math.cos(theta);
+        const wi = Math.sin(theta);
+        const i1 = start + k;
+        const i2 = i1 + half;
+        const tr = wr * real[i2] - wi * imag[i2];
+        const ti = wr * imag[i2] + wi * real[i2];
+        real[i2] = real[i1] - tr;
+        imag[i2] = imag[i1] - ti;
+        real[i1] = real[i1] + tr;
+        imag[i1] = imag[i1] + ti;
+      }
+    }
+  }
+}
+
+function _dedupeMonotonicTimes(time, values) {
+  // Drop consecutive samples at identical t (Modelica events) — np.unique
+  // equivalent. Input assumed already monotonic-non-decreasing.
+  const uniqT = [], uniqV = [];
+  let last = NaN;
+  for (let i = 0; i < time.length; i++) {
+    if (time[i] !== last) {
+      uniqT.push(time[i]);
+      uniqV.push(values[i]);
+      last = time[i];
+    }
+  }
+  return { uniqT, uniqV };
+}
+
+function _sliceToWindow(time, values, winStart, winEnd) {
+  // Restrict the signal to [winStart, winEnd], both optional. Null / undef
+  // endpoints mean unbounded on that side.
+  if ((winStart == null || winStart === '') && (winEnd == null || winEnd === '')) {
+    return { time, values };
+  }
+  const lo = winStart == null || winStart === '' ? -Infinity : Number(winStart);
+  const hi = winEnd == null || winEnd === '' ? Infinity : Number(winEnd);
+  const outT = [], outV = [];
+  for (let i = 0; i < time.length; i++) {
+    if (time[i] >= lo && time[i] <= hi) {
+      outT.push(time[i]);
+      outV.push(values[i]);
+    }
+  }
+  return { time: outT, values: outV };
+}
+
+function _computeFftSpectrum(time, values) {
+  // Mirrors Python _compute_fft_spectrum: dedupe, uniform resample,
+  // detrend (remove mean), FFT. Returns {freqs, magnitudes} as plain
+  // arrays suitable for Plotly.
+  if (!time || time.length < 4 || !values || values.length < 4) {
+    return { freqs: [], magnitudes: [] };
+  }
+  const { uniqT, uniqV } = _dedupeMonotonicTimes(time, values);
+  if (uniqT.length < 4) return { freqs: [], magnitudes: [] };
+
+  const n = Math.max(time.length, 64);
+  // Zero-pad to next power of 2 for radix-2 FFT.
+  const nPad = 1 << Math.ceil(Math.log2(n));
+  const t0 = uniqT[0];
+  const tN = uniqT[uniqT.length - 1];
+  if (tN <= t0) return { freqs: [], magnitudes: [] };
+  const dt = (tN - t0) / (n - 1);
+  if (!(dt > 0)) return { freqs: [], magnitudes: [] };
+
+  const real = new Float64Array(nPad);
+  const imag = new Float64Array(nPad);
+
+  // Linear-interp resample to uniform grid over [t0, tN].
+  let j = 1;
+  let mean = 0;
+  for (let i = 0; i < n; i++) {
+    const t = t0 + i * dt;
+    while (j < uniqT.length && uniqT[j] < t) j++;
+    let v;
+    if (j <= 0) v = uniqV[0];
+    else if (j >= uniqT.length) v = uniqV[uniqV.length - 1];
+    else {
+      const t0s = uniqT[j - 1], t1s = uniqT[j];
+      if (t <= t0s) v = uniqV[j - 1];
+      else if (t >= t1s) v = uniqV[j];
+      else {
+        const f = (t - t0s) / (t1s - t0s);
+        v = uniqV[j - 1] + f * (uniqV[j] - uniqV[j - 1]);
+      }
+    }
+    real[i] = v;
+    mean += v;
+  }
+  mean /= n;
+  for (let i = 0; i < n; i++) real[i] -= mean;
+  // Beyond i=n, real/imag stay 0 (zero-pad).
+
+  _fftRadix2(real, imag);
+
+  const nHalf = (nPad >> 1) + 1;
+  const freqs = new Array(nHalf);
+  const magnitudes = new Array(nHalf);
+  const binHz = 1 / (nPad * dt);
+  for (let i = 0; i < nHalf; i++) {
+    freqs[i] = i * binHz;
+    magnitudes[i] = Math.hypot(real[i], imag[i]);
+  }
+  return { freqs, magnitudes };
+}
+
+function _findTopNPeaksJS(freqs, spectrum, nPeaks, minFrequency = 0) {
+  // Mirrors Python _find_top_n_peaks. Returns [{freq, amplitude}, ...]
+  // sorted by frequency ascending (not amplitude).
+  if (!freqs || freqs.length < 3 || nPeaks < 1) return [];
+  const floor = Math.max(minFrequency || 0, 0);
+  const peaks = [];
+  for (let i = 1; i < freqs.length - 1; i++) {
+    if (freqs[i] <= floor) continue;
+    if (spectrum[i] > spectrum[i - 1] && spectrum[i] > spectrum[i + 1]) {
+      peaks.push({ idx: i, freq: freqs[i], amp: spectrum[i] });
+    }
+  }
+  if (peaks.length === 0) return [];
+  peaks.sort((a, b) => b.amp - a.amp);
+  const top = peaks.slice(0, nPeaks);
+  top.sort((a, b) => a.freq - b.freq);
+  return top.map(p => ({ freq: p.freq, amplitude: p.amp }));
+}
+
+function _findStrongestPeakInWindowJS(freqs, spectrum, lo, hi) {
+  // Mirrors Python _find_strongest_peak_in_window. Returns {freq, amplitude}
+  // of the strongest local max in [lo, hi], or null if none.
+  if (!freqs || freqs.length < 3) return null;
+  let best = null;
+  for (let i = 1; i < freqs.length - 1; i++) {
+    if (freqs[i] < lo || freqs[i] > hi) continue;
+    if (spectrum[i] > spectrum[i - 1] && spectrum[i] > spectrum[i + 1]) {
+      if (best === null || spectrum[i] > best.amplitude) {
+        best = { freq: freqs[i], amplitude: spectrum[i] };
+      }
+    }
+  }
+  return best;
+}
 
 function _detectEvents(time) {
   // Modelica events manifest as consecutive samples at the same ``t`` — one
@@ -1303,17 +1491,23 @@ MODE_PLOT_EDITORS['range'] = (function() {
 })();
 
 MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
-  // Declared-peaks editor for dominant-frequency leaves (D75). Each
-  // editor slot gets:
-  //   * A spectrum subplot (ref + actual magnitude curves).
-  //   * Markers at each declared peak's frequency, draggable via
+  // Declared-peaks editor for dominant-frequency leaves (D75 + D76).
+  // Each editor slot gets:
+  //   * A spectrum subplot (reference + actual magnitude) computed LIVE
+  //     by _computeFftSpectrum over the leaf's current window. Updating
+  //     the window re-FFTs on the fly; no CLI round-trip needed for
+  //     visualization.
+  //   * Diamond markers at each declared peak's frequency, draggable via
   //     Shift+click/drag/right-click through the shared PointPlotEditor.
-  //   * Acceptance-band shapes around each declared peak showing the
-  //     tolerance window (rel: f*[1-tol, 1+tol]; abs: f±tol Hz).
-  //   * A table UI below the subplot: columns = freq, tolerance,
-  //     tolerance_mode, pass/fail, remove. Detect button populates
-  //     from the reference spectrum's top peaks.
+  //   * Acceptance-band shapes around each declared peak.
+  //   * Table: freq, tolerance, mode, match-live, remove.
+  //   * Detect dropdown: source = Reference | Actual. Uses the live
+  //     windowed spectrum, so "brush a window → Detect" works in one
+  //     interaction cycle. Populates derived_from_window metadata on
+  //     each added peak so provenance survives the patch round-trip.
   const mountedByLeaf = new WeakMap();
+  // Per-leaf selected detect source (in-memory; not persisted).
+  const detectSourceByPath = new Map();
 
   function getDeclaredPeaks(leaf) {
     const p = (leafState[leaf.path] || {}).params || {};
@@ -1322,15 +1516,61 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
   }
   function setDeclaredPeaks(leaf, peaks) {
     const p = (leafState[leaf.path] || {}).params || {};
-    p.peaks = peaks.map(pk => ({
-      freq: Number(pk.freq) || 0,
-      tolerance: Number(pk.tolerance) || 0,
-      tolerance_mode: pk.tolerance_mode === 'abs' ? 'abs' : 'rel',
-    }));
+    p.peaks = peaks.map(pk => {
+      const out = {
+        freq: Number(pk.freq) || 0,
+        tolerance: Number(pk.tolerance) || 0,
+        tolerance_mode: pk.tolerance_mode === 'abs' ? 'abs' : 'rel',
+      };
+      if (pk.derived_from_window) out.derived_from_window = pk.derived_from_window;
+      return out;
+    });
   }
   function sortDeclared(leaf) {
     const pks = getDeclaredPeaks(leaf);
     pks.sort((a, b) => Number(a.freq) - Number(b.freq));
+  }
+
+  function getLeafWindow(leaf) {
+    const w = (leafState[leaf.path] || {}).window || {};
+    const start = w.start != null && w.start !== '' ? Number(w.start) : null;
+    const end = w.end != null && w.end !== '' ? Number(w.end) : null;
+    return { start, end };
+  }
+
+  function _windowCopy(w) {
+    const out = {};
+    if (w.start != null) out.start = Number(w.start);
+    if (w.end != null) out.end = Number(w.end);
+    return Object.keys(out).length ? out : null;
+  }
+
+  // Compute the live spectrum for ``source`` ('ref' or 'act') scoped to
+  // the leaf's current window. Falls back to the CLI-embedded arrays in
+  // ``leaf.spectrum`` when the variable has no trajectory data (rare but
+  // possible for unusual report shapes).
+  function getLiveSpectrum(leaf, source) {
+    const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+    const time = (source === 'act' ? traj.act_time : traj.ref_time) || [];
+    const values = (source === 'act' ? traj.act_values : traj.ref_values) || [];
+    if (time.length < 4) {
+      // Fallback — use whatever the CLI embedded.
+      const spec = leaf.spectrum || {};
+      return {
+        freqs: (source === 'act' ? spec.act_freq : spec.ref_freq) || [],
+        magnitudes: (source === 'act' ? spec.act_mag : spec.ref_mag) || [],
+      };
+    }
+    const w = getLeafWindow(leaf);
+    const sliced = _sliceToWindow(time, values, w.start, w.end);
+    return _computeFftSpectrum(sliced.time, sliced.values);
+  }
+
+  function getDetectSource(leaf) {
+    return detectSourceByPath.get(leaf.path) || 'ref';
+  }
+  function setDetectSource(leaf, source) {
+    detectSourceByPath.set(leaf.path, source === 'act' ? 'act' : 'ref');
   }
 
   function magnitudeAt(hz, xs, ys) {
@@ -1343,25 +1583,50 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
     return ys[best];
   }
 
+  // Live match evaluation: does each declared peak have a local max in
+  // its tolerance window on the actual spectrum? Replaces CLI-stale
+  // paired_peaks in the table's match column. Returns [{declared_hz,
+  // matched_hz, delta, in_window_freqs_missing}].
+  function evaluateMatches(leaf, actSpectrum) {
+    const pks = getDeclaredPeaks(leaf);
+    return pks.map(pk => {
+      const f = Number(pk.freq);
+      const tol = Number(pk.tolerance) || 0;
+      const [lo, hi] = pk.tolerance_mode === 'abs'
+        ? [f - tol, f + tol]
+        : [f * (1 - tol), f * (1 + tol)];
+      const match = _findStrongestPeakInWindowJS(
+        actSpectrum.freqs, actSpectrum.magnitudes, lo, hi,
+      );
+      return {
+        declared_hz: f,
+        matched_hz: match ? match.freq : null,
+        delta: match ? Math.abs(match.freq - f) : null,
+      };
+    });
+  }
+
   const _peakEditor = createPointPlotEditor({
     getAnchors(leaf) {
-      const spec = leaf.spectrum || {};
-      const refF = spec.ref_freq || [], refM = spec.ref_mag || [];
+      const refSpec = getLiveSpectrum(leaf, 'ref');
       const pks = getDeclaredPeaks(leaf);
       return pks.map(pk => ({
         pt: pk,
         x: Number(pk.freq),
-        y: magnitudeAt(Number(pk.freq), refF, refM),
+        y: magnitudeAt(Number(pk.freq), refSpec.freqs, refSpec.magnitudes),
       }));
     },
     onClickAdd(leaf, _plotEl, x, _y, commit) {
       if (!(x > 0)) return;
       const pks = getDeclaredPeaks(leaf);
-      pks.push({
+      const newPk = {
         freq: Number(x),
         tolerance: 0.01,
         tolerance_mode: 'rel',
-      });
+      };
+      const w = _windowCopy(getLeafWindow(leaf));
+      if (w) newPk.derived_from_window = w;
+      pks.push(newPk);
       sortDeclared(leaf);
       refreshEditor(leaf, commit);
     },
@@ -1400,43 +1665,42 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
       div.innerHTML = '<div class="editor-hint">Plotly not loaded.</div>';
       return;
     }
-    const spec = leaf.spectrum || {};
-    const refF = spec.ref_freq || [];
-    const refM = spec.ref_mag || [];
-    const actF = spec.act_freq || [];
-    const actM = spec.act_mag || [];
-    if (refF.length === 0 && actF.length === 0) {
-      div.innerHTML = '<div class="editor-hint">No spectrum data — rerun '
-                    + 'the CLI to populate this subplot.</div>';
+    const refSpec = getLiveSpectrum(leaf, 'ref');
+    const actSpec = getLiveSpectrum(leaf, 'act');
+    if (refSpec.freqs.length === 0 && actSpec.freqs.length === 0) {
+      div.innerHTML = '<div class="editor-hint">No trajectory data — '
+                    + 'cannot compute spectrum.</div>';
       return;
     }
     const pks = getDeclaredPeaks(leaf);
-    const paired = spec.paired_peaks || [];
+    const liveMatches = evaluateMatches(leaf, actSpec);
+    const matchByIdx = Object.fromEntries(
+      liveMatches.map((m, i) => [i, m]),
+    );
+
     const traces = [];
-    if (refF.length) {
+    if (refSpec.freqs.length) {
       traces.push({
-        x: refF, y: refM, mode: 'lines', type: 'scatter',
+        x: refSpec.freqs, y: refSpec.magnitudes, mode: 'lines', type: 'scatter',
         name: 'Reference',
         line: { color: '#1976D2', width: 1.5 },
       });
     }
-    if (actF.length) {
+    if (actSpec.freqs.length) {
       traces.push({
-        x: actF, y: actM, mode: 'lines', type: 'scatter',
+        x: actSpec.freqs, y: actSpec.magnitudes, mode: 'lines', type: 'scatter',
         name: 'Actual',
         line: { color: '#D32F2F', width: 1.5, dash: 'dot' },
       });
     }
     // Declared-peak markers at the reference-spectrum amplitude (so the
-    // marker sits on the reference curve). Drag+click via PointPlotEditor.
-    const pairedByFreq = Object.fromEntries(paired.map(p => [p.declared_hz, p]));
+    // marker sits on the reference curve). Color reflects LIVE match
+    // status — green for matched, red for no-match.
     const declaredXs = pks.map(p => Number(p.freq));
-    const declaredYs = pks.map(p => magnitudeAt(Number(p.freq), refF, refM));
-    const declaredColors = pks.map(p => {
-      const pp = pairedByFreq[p.freq];
-      if (!pp) return '#757575';  // unknown yet (unpaired declared peak)
-      return pp.matched_hz != null ? '#2e7d32' : '#c62828';
-    });
+    const declaredYs = pks.map(p => magnitudeAt(Number(p.freq), refSpec.freqs, refSpec.magnitudes));
+    const declaredColors = pks.map((_, i) => (
+      matchByIdx[i]?.matched_hz != null ? '#2e7d32' : '#c62828'
+    ));
     if (pks.length) {
       traces.push({
         x: declaredXs, y: declaredYs,
@@ -1449,12 +1713,12 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
         hoverinfo: 'x+y',
       });
     }
-    // Matched-actual markers, if CLI evaluated.
-    const matchedXs = paired.filter(p => p.matched_hz != null).map(p => p.matched_hz);
+    // Matched-actual markers from LIVE evaluation.
+    const matchedXs = liveMatches.filter(m => m.matched_hz != null).map(m => m.matched_hz);
     if (matchedXs.length) {
       traces.push({
         x: matchedXs,
-        y: matchedXs.map(hz => magnitudeAt(hz, actF, actM)),
+        y: matchedXs.map(hz => magnitudeAt(hz, actSpec.freqs, actSpec.magnitudes)),
         mode: 'markers', type: 'scatter',
         name: 'Matched (actual)',
         marker: { color: '#D32F2F', size: 10, symbol: 'x', line: { width: 2 } },
@@ -1490,20 +1754,22 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
   function _renderTable(container, leaf, commit) {
     container.innerHTML = '';
     const pks = getDeclaredPeaks(leaf);
-    const paired = (leaf.spectrum || {}).paired_peaks || [];
-    const pairedByFreq = Object.fromEntries(paired.map(p => [p.declared_hz, p]));
+    const actSpec = getLiveSpectrum(leaf, 'act');
+    const liveMatches = evaluateMatches(leaf, actSpec);
 
     const hint = document.createElement('div');
     hint.className = 'editor-hint';
     hint.innerHTML = 'Shift+click on the spectrum to add a peak · '
-                   + 'Shift+drag to move · Shift+right-click to remove';
+                   + 'Shift+drag to move · Shift+right-click to remove · '
+                   + 'Edit the window to rescope the spectrum';
     container.appendChild(hint);
 
     const table = document.createElement('table');
-    table.className = 'tube-table';  // reuse tube's compact styling
+    table.className = 'tube-table';
     const header = table.insertRow();
     header.innerHTML = '<th>Freq (Hz)</th><th>Tolerance</th>'
-                     + '<th>Mode</th><th>Match</th><th></th>';
+                     + '<th>Mode</th><th>Match (live)</th>'
+                     + '<th>Src window</th><th></th>';
 
     pks.forEach((pk, i) => {
       const row = table.insertRow();
@@ -1550,19 +1816,33 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
         refreshEditor(leaf, commit);
       });
       modeTd.appendChild(modeSel); row.appendChild(modeTd);
-      // Match status (CLI-computed; may be stale after user edits)
+      // Live match status (JS scorer).
       const matchTd = document.createElement('td');
-      const pp = pairedByFreq[pk.freq];
-      if (!pp) {
-        matchTd.innerHTML = '<span class="editor-hint">pending rerun</span>';
-      } else if (pp.matched_hz == null) {
+      const m = liveMatches[i];
+      if (!m || m.matched_hz == null) {
         matchTd.innerHTML = '<span class="fail">no match</span>';
       } else {
-        const dhz = pp.delta != null ? pp.delta.toFixed(4) : '';
-        matchTd.innerHTML = `<span class="pass">${pp.matched_hz.toFixed(4)} Hz `
+        const dhz = m.delta != null ? m.delta.toExponential(2) : '';
+        matchTd.innerHTML = `<span class="pass">${m.matched_hz.toFixed(4)} Hz `
                           + `(Δ ${dhz})</span>`;
       }
       row.appendChild(matchTd);
+      // Source window (provenance metadata)
+      const winTd = document.createElement('td');
+      const w = pk.derived_from_window;
+      if (w && (w.start != null || w.end != null)) {
+        const s = w.start != null ? Number(w.start).toPrecision(3) : '−∞';
+        const e = w.end != null ? Number(w.end).toPrecision(3) : '+∞';
+        const span = document.createElement('span');
+        span.className = 'editor-hint';
+        span.textContent = `[${s}, ${e}]`;
+        span.title = `Detected in window [${s}, ${e}]. Scoring uses the `
+                   + `leaf-level window; this metadata records where you found it.`;
+        winTd.appendChild(span);
+      } else {
+        winTd.innerHTML = '<span class="editor-hint">—</span>';
+      }
+      row.appendChild(winTd);
       // Remove
       const rmTd = document.createElement('td');
       const rmBtn = document.createElement('button');
@@ -1577,37 +1857,76 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
     });
     container.appendChild(table);
 
-    // Buttons row: add + detect.
+    // Buttons row: add + detect (with source dropdown).
     const btnRow = document.createElement('div');
     btnRow.className = 'peak-editor-buttons';
+
     const addBtn = document.createElement('button');
     addBtn.className = 'node-btn node-btn-add';
     addBtn.textContent = '+ add peak';
     addBtn.addEventListener('click', () => {
-      const detected = (leaf.spectrum || {}).detected_reference_peaks_hz || [];
+      // Seed frequency from the first detected peak on the live ref
+      // spectrum, or 1.0 Hz as a last resort.
+      const live = getLiveSpectrum(leaf, 'ref');
+      const detected = _findTopNPeaksJS(live.freqs, live.magnitudes, 10, 0);
+      const freqs = detected.map(p => p.freq);
       const seedFreq = pks.length
-        ? (pks[pks.length - 1].freq + (detected[pks.length] || pks[pks.length - 1].freq * 2))
-        : (detected[0] || 1.0);
-      pks.push({ freq: Number(seedFreq), tolerance: 0.01, tolerance_mode: 'rel' });
+        ? (pks[pks.length - 1].freq + (freqs[pks.length] || pks[pks.length - 1].freq * 2))
+        : (freqs[0] || 1.0);
+      const newPk = {
+        freq: Number(seedFreq),
+        tolerance: 0.01,
+        tolerance_mode: 'rel',
+      };
+      const w = _windowCopy(getLeafWindow(leaf));
+      if (w) newPk.derived_from_window = w;
+      pks.push(newPk);
       sortDeclared(leaf);
       refreshEditor(leaf, commit);
     });
     btnRow.appendChild(addBtn);
 
+    // Detect dropdown — picks source for the Detect-from-spectrum action.
+    const sourceLabel = document.createElement('label');
+    sourceLabel.className = 'editor-hint';
+    sourceLabel.style.marginLeft = '1em';
+    sourceLabel.textContent = 'Source: ';
+    const sourceSel = document.createElement('select');
+    sourceSel.className = 'detect-source-select';
+    for (const [val, txt] of [['ref', 'Reference'], ['act', 'Actual']]) {
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = txt;
+      if (getDetectSource(leaf) === val) opt.selected = true;
+      sourceSel.appendChild(opt);
+    }
+    sourceSel.addEventListener('change', () => {
+      setDetectSource(leaf, sourceSel.value);
+    });
+    sourceLabel.appendChild(sourceSel);
+    btnRow.appendChild(sourceLabel);
+
     const detectBtn = document.createElement('button');
     detectBtn.className = 'node-btn';
-    detectBtn.textContent = '🔍 Detect peaks from reference';
-    detectBtn.title = 'Replace the table with peaks detected on the reference '
-                    + 'spectrum. Good starting point on a fresh test.';
+    detectBtn.textContent = '🔍 Detect peaks';
+    detectBtn.title = 'Replace the table with peaks detected on the '
+                    + 'selected source spectrum, scoped to the leaf\'s '
+                    + 'current window. Each new peak is stamped with '
+                    + '"derived_from_window" metadata for provenance.';
     detectBtn.addEventListener('click', () => {
-      const detected = (leaf.spectrum || {}).detected_reference_peaks_hz || [];
+      const source = getDetectSource(leaf);
+      const live = getLiveSpectrum(leaf, source);
+      const detected = _findTopNPeaksJS(live.freqs, live.magnitudes, 3, 0);
       if (detected.length === 0) return;
-      // Default: replace with top 3 (or all, if fewer).
-      const seed = detected.slice(0, 3).map(f => ({
-        freq: Number(f),
-        tolerance: 0.01,
-        tolerance_mode: 'rel',
-      }));
+      const w = _windowCopy(getLeafWindow(leaf));
+      const seed = detected.map(p => {
+        const pk = {
+          freq: Number(p.freq),
+          tolerance: 0.01,
+          tolerance_mode: 'rel',
+        };
+        if (w) pk.derived_from_window = w;
+        return pk;
+      });
       setDeclaredPeaks(leaf, seed);
       refreshEditor(leaf, commit);
     });
