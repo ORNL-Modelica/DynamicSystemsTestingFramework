@@ -28,6 +28,7 @@ SIMULATOR_BACKENDS = {
     "Dymola": "Dymola",
     "OpenModelica": "OpenModelica",
     "FMPy": "FMPy",
+    "Julia": "Julia",
 }
 
 # Binary names by backend, used for PATH-lookup fallback when testing.json
@@ -39,6 +40,7 @@ BACKEND_BINARY_NAMES = {
     "Dymola": "dymola",
     "OpenModelica": "omc",
     "FMPy": "",
+    "Julia": "julia",
 }
 
 
@@ -350,10 +352,17 @@ class Config:
             repo_root = self.source_path.parent
         else:
             # Non-modelica source: no package.mo to discover. The "library"
-            # is conceptually the FMU set / data set / etc. described by
-            # the config. repo_root falls back to the config dir or cwd.
+            # is conceptually the FMU set / data set / Julia project / etc.
+            # described by the config. Resolve source_path here too so
+            # backends that need it (JuliaRunner for --project=) find the
+            # right directory. CLI arg > config file > config dir > cwd.
             if self.source_path is not None:
                 self.source_path = Path(self.source_path).resolve()
+            elif "source_path" in file_config:
+                base_dir = config_found_dir or Path.cwd()
+                self.source_path = (base_dir / file_config["source_path"]).resolve()
+            elif config_found_dir is not None:
+                self.source_path = config_found_dir
             repo_root = config_found_dir or (
                 self.source_path if self.source_path else Path.cwd()
             )

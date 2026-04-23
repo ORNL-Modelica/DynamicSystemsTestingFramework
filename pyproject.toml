@@ -38,6 +38,7 @@ markers = [
     "fmpy: requires fmpy package",
     "ompython: requires OMPython package (persistent-worker OpenModelica)",
     "reference_fmus: requires Reference-FMUs submodule at examples/fmu/reference-fmus",
+    "julia: requires Julia 1.10+ with ModelingToolkit + OrdinaryDiffEq installed in examples/julia/Project.toml",
 ]
 filterwarnings = [
     "ignore::pytest.PytestCollectionWarning",

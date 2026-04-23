@@ -1,4 +1,4 @@
-"""Simulator backends. Concrete today: Dymola, FMPy, OpenModelica. Pluggable via ``@register``."""
+"""Simulator backends. Concrete today: Dymola, FMPy, OpenModelica, Julia. Pluggable via ``@register``."""
 
 from __future__ import annotations
 
@@ -78,6 +78,7 @@ def _import_builtin_backend(name: str) -> None:
         "Dymola": ".dymola",
         "FMPy": ".fmpy",
         "OpenModelica": ".openmodelica",
+        "Julia": ".julia",
     }
     module = builtins.get(name)
     if module:

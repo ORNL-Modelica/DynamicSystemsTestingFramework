@@ -1,0 +1,12 @@
+{
+  "source_type": "julia",
+  "source_path": ".",
+  "library_name": "JuliaMtkExamples",
+  "test_spec": "./test_spec.json",
+  "reference_root": "./ReferenceResults",
+  "simulators": {
+    "Julia": ["julia"]
+  },
+  "simulator": "Julia",
+  "tolerance": 0.15
+}
