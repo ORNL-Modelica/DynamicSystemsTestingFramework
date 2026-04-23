@@ -60,6 +60,8 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 52 | ~~Wrap-in-combinator + combinator-kind editing in reporter~~ | L | Medium | **DONE** (D72, 2026-04-23). Kind dropdown in combinator header (5 options); ⊕ wrap button on every node; ⊖ unwrap on single-child combinators. Seeded defaults for k-of-n / weighted. No new patch ops — wholesale `/metrics` replace envelope. +17 Playwright tests. Multi-select wrap + live validation halos deferred. |
 | 53 | `check-openmodelica` CLI subcommand | L | Low | Peer of `check-dymola`. Verifies omc on PATH + MSL installed + OMPython importable + omc version. Prints diagnostic table. Useful onboarding for new users, especially on machines where `installPackage(Modelica)` hasn't been run. ~½ day. D70 deferred. |
 | 54 | OM FMU export via `buildModelFMU` | M | Medium | Wire OpenModelica into the `Capability.FMU_EXPORT` cross-backend chain. Currently Dymola-only (and experimental per D65). Would let the D63 `produce_dymola_via_fmpy_baseline` chain reciprocate — `produce_openmodelica_via_fmpy_baseline` — for cross-backend regression on OM-authored models. ~1–2 days. D69 deferred. |
+| 55 | Julia ModelingToolkit (+ Dyad) backend | H | High | Fourth `SimulatorRunner` alongside Dymola + FMPy + OpenModelica. Julia-level .jl test scripts → subprocess invocation → result file → consumed via Python. Natural pairing with #45 (python-driven tests) — both want a typed `SimulationResult` dataclass as the subprocess return contract, refactoring the three existing runners to produce it internally. **Dyad support likely comes near-free** via MTK's code generation (Dyad is a DSL that compiles to MTK). Forces a clean `SimulationResult` abstraction as the common currency, which benefits the existing backends too. Test count: new sample Julia/MTK oscillator + multi-peak test. ~1 week MVP; ~2 weeks with Dyad round-trip. Proves the framework is genuinely simulator-neutral. |
+| 56 | Declared-peaks provenance UI polish | L | Low | D76 stamps `derived_from_window: {start, end}` on peaks added via Detect or Shift+click. Could extend: hover tooltip on the peak marker on the spectrum subplot (not just the table row); "Set window from provenance" button per peak row to snap the leaf's current window to that peak's derivation window. Small ergonomic wins; ship when someone asks. |
 
 **Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23):
 
@@ -90,7 +92,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   - Small HTML polish: #7 variable ordering, #9 open-in-Dymola, #14 link to ref JSON, #17 linked panel zoom, #18 worst-violation annotation, #19 zoom-dependent stats.
   - Larger: #11 test-discovery helper, #12 model-health analysis, #15 WebGL scattergl.
 
-**Immediate default** (post D72): A-tier is fully closed. Pick one of the **B** items for the next session — Phase 7 recommender, TRANSFORM portability PR, or #45 python-driven tests.
+**Immediate default** (post D76): A-tier fully closed, reporter-as-IDE feature-complete through dominant-frequency. **Recommended B-tier pick: #55 Julia MTK backend + #45 SimulationResult refactor** — single ~1-week effort that delivers structure polish (typed shared return across all runners), a new backend (Julia/MTK, with likely-free Dyad support), and lays the foundation for python-driven tests. Alternative: Phase 7 recommender (~2–3 days for a credible skeleton).
 
 ---
 

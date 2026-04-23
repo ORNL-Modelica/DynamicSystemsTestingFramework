@@ -256,19 +256,43 @@ Two manifest files are written to the work directory before simulation starts:
 
 ## Simulator Abstraction
 
-### Current
+### Current (as of D76, 2026-04-23)
 
 ```
 SimulatorRunner (ABC)
-  ├── run_tests(tests) → list[BatchManifest]      # override for batch execution
+  ├── capabilities: frozenset[Capability]           # PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT
+  ├── artifact_files: tuple[str, ...]              # backend-specific artifact filenames
+  ├── run_tests(tests) → list[BatchManifest]       # override for batch execution
   ├── run_single_test(test, ...) → TestRunResult   # override for per-process execution
   ├── read_result(test, ...) → TestResult          # abstract — must implement
   └── read_results(manifests, tests) → dict        # shared implementation
         │
-        └── DymolaRunner
-              ├── run_tests() — batch .mos scripts, parallel workers
-              └── read_result() — mat_reader + variable pattern resolution
+        ├── DymolaRunner (simulators/dymola/)
+        │     ├── Python interface (default) — persistent workers, live phase labels,
+        │     │     per-test timeout watchdog with disk-check rescue, worker restart
+        │     ├── Batch fallback (--batch) — .mos scripts, parallel workers, psutil kill
+        │     └── read_result() — mat_reader + variable pattern resolution
+        │
+        ├── FmpyRunner (simulators/fmpy/)
+        │     ├── fmpy.simulate_fmu on the prebuilt FMU, writes npz result
+        │     ├── concurrent.futures timeout per test
+        │     └── phase labels: loading / simulating
+        │
+        └── OpenModelicaRunner (simulators/openmodelica/)
+              ├── Persistent workers (default when OMPython available)
+              │     — OMCSessionZMQ per worker, library-load amortized across tests
+              │     — psutil kill on timeout, disk-fallback, 3× worker restart
+              ├── Batch fallback (--batch) — .mos + omc subprocess per test
+              └── read_result() — mat_reader (DSresult-compatible)
 ```
+
+Each runner declares its capabilities via `frozenset[Capability]`:
+
+- `PERSISTENT_WORKERS` — long-lived worker process; library loads once, amortized across N tests.
+- `BATCH_FALLBACK` — per-test subprocess; robust but slower per-test startup cost.
+- `FMU_EXPORT` — can export an FMU from the source (Dymola only today; OM deferred per D69).
+
+CLI's `_get_runner(persistent=True)` swaps to the persistent variant when the runner declares `PERSISTENT_WORKERS`; falls back to batch on `RuntimeError`.
 
 ### Forward
 
@@ -284,4 +308,4 @@ Backend (ABC)
   └── export_fmu(test) → Path                      # optional; present iff supports_fmu_export
 ```
 
-Concrete targets (roadmap): `DymolaBackend` (current, refactored), ``FmpyBackend`` **(Phase 2 — implemented; see ``simulators/fmpy/``)**, `OmcBackend`, `JuliaBackend`, `MatlabBackend`, `DataFileBackend` (experiments).
+Concrete targets (roadmap): `DymolaBackend` (current, refactored), `FmpyBackend` (Phase 2 — implemented), `OpenModelicaBackend` (D69–D70 — implemented), `JuliaBackend` (Julia MTK; candidate next), `MatlabBackend`, `DataFileBackend` (experiments).
