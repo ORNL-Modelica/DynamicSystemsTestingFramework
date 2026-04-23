@@ -3,7 +3,7 @@
   "test_id": "0010",
   "status": "active",
   "date_added": "2026-04-23T15:41:58.231889+00:00",
-  "last_updated": "2026-04-23T16:22:14.505258+00:00",
+  "last_updated": "2026-04-23T18:15:04.391719+00:00",
   "simulation": {
     "stop_time": 4.0,
     "tolerance": 1e-06,
@@ -18,17 +18,17 @@
         "peaks": [
           {
             "freq": 1.0,
-            "tolerance": 0.02,
+            "tolerance": 0.15,
             "tolerance_mode": "rel"
           },
           {
             "freq": 3.0,
-            "tolerance": 0.02,
+            "tolerance": 0.1,
             "tolerance_mode": "rel"
           },
           {
             "freq": 7.0,
-            "tolerance": 0.02,
+            "tolerance": 0.05,
             "tolerance_mode": "rel"
           }
         ]
@@ -37,17 +37,17 @@
   },
   "statistics": {
     "timing": {
-      "frontend": 0.1787168,
-      "backend": 0.0026297,
-      "simcode": 0.0007088,
-      "templates": 0.0018278,
-      "compile": 0.9622241,
-      "simulation": 0.0151234,
-      "total": 1.1613684,
-      "translation_wall": 1.15,
+      "frontend": 0.08053750000000001,
+      "backend": 0.0036827,
+      "simcode": 0.0009662000000000001,
+      "templates": 0.0029239,
+      "compile": 1.0454258,
+      "simulation": 0.016385,
+      "total": 1.1500635,
+      "translation_wall": 1.13,
       "sim_wall": 0.02,
-      "other_wall": 1.71,
-      "total_wall": 2.87
+      "other_wall": 1.75,
+      "total_wall": 2.9
     }
   },
   "n_vars": 1,

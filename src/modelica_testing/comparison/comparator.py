@@ -596,11 +596,18 @@ def _compute_fft_spectrum(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return (freqs, magnitude) for a time-series via uniform-grid FFT.
 
-    Resamples to a uniform grid, strips DC, takes the real-FFT. Returned
-    arrays are shared between the single-peak and multi-peak paths plus
-    the spectrum subplot in the interactive reporter.
+    Resamples to a uniform grid sized at the **next power of 2** above
+    ``max(len(t), 64)``, strips DC, takes the real-FFT. The pow-2 choice
+    matches the JS-side radix-2 implementation (D76) — both sides produce
+    bit-identical bin frequencies, so the CLI's `paired_peaks` agrees
+    with the browser's live scorer on a self-regression (no more
+    index-PASS vs per-test-FAIL disagreement).
     """
-    n = max(len(t), 64)
+    import math
+    if len(t) == 0:
+        return np.array([]), np.array([])
+    n0 = max(len(t), 64)
+    n = 1 << int(math.ceil(math.log2(n0))) if n0 > 1 else 64
     t_uniform = np.linspace(t[0], t[-1], n)
     unique_t, unique_idx = np.unique(t, return_index=True)
     v_uniform = np.interp(t_uniform, unique_t, v[unique_idx])

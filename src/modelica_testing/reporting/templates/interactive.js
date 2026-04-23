@@ -531,31 +531,34 @@ function _sliceToWindow(time, values, winStart, winEnd) {
 }
 
 function _computeFftSpectrum(time, values) {
-  // Mirrors Python _compute_fft_spectrum: dedupe, uniform resample,
-  // detrend (remove mean), FFT. Returns {freqs, magnitudes} as plain
-  // arrays suitable for Plotly.
+  // Mirrors Python _compute_fft_spectrum: dedupe, uniform resample to the
+  // next power of 2 above max(n, 64) points, detrend, radix-2 FFT.
+  // Resampling at nPad points (rather than sampling n then zero-padding
+  // to nPad) is what guarantees bit-identical bin frequencies across
+  // Python and JS — without that, Python computes paired_peaks on one
+  // bin grid and the JS live scorer on another, and the two disagree
+  // on self-regression when the declared tolerance is tight.
   if (!time || time.length < 4 || !values || values.length < 4) {
     return { freqs: [], magnitudes: [] };
   }
   const { uniqT, uniqV } = _dedupeMonotonicTimes(time, values);
   if (uniqT.length < 4) return { freqs: [], magnitudes: [] };
 
-  const n = Math.max(time.length, 64);
-  // Zero-pad to next power of 2 for radix-2 FFT.
-  const nPad = 1 << Math.ceil(Math.log2(n));
+  const n0 = Math.max(time.length, 64);
+  const nPad = 1 << Math.ceil(Math.log2(n0));
   const t0 = uniqT[0];
   const tN = uniqT[uniqT.length - 1];
   if (tN <= t0) return { freqs: [], magnitudes: [] };
-  const dt = (tN - t0) / (n - 1);
+  const dt = (tN - t0) / (nPad - 1);
   if (!(dt > 0)) return { freqs: [], magnitudes: [] };
 
   const real = new Float64Array(nPad);
   const imag = new Float64Array(nPad);
 
-  // Linear-interp resample to uniform grid over [t0, tN].
+  // Linear-interp resample to uniform grid of nPad points over [t0, tN].
   let j = 1;
   let mean = 0;
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < nPad; i++) {
     const t = t0 + i * dt;
     while (j < uniqT.length && uniqT[j] < t) j++;
     let v;
@@ -573,9 +576,8 @@ function _computeFftSpectrum(time, values) {
     real[i] = v;
     mean += v;
   }
-  mean /= n;
-  for (let i = 0; i < n; i++) real[i] -= mean;
-  // Beyond i=n, real/imag stay 0 (zero-pad).
+  mean /= nPad;
+  for (let i = 0; i < nPad; i++) real[i] -= mean;
 
   _fftRadix2(real, imag);
 
@@ -1660,6 +1662,21 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
     commit();
   }
 
+  // Lighter refresh — re-renders the Plotly subplot only, leaves the
+  // table DOM untouched. Used from `input` event handlers on the table's
+  // number inputs so mid-typing keystrokes don't destroy and recreate
+  // the input element (which would drop focus and eat decimal points).
+  // The full refresh (rebuilding the table with its sorted rows + live
+  // match column) happens on `change` (blur / Enter).
+  function refreshSubplotOnly(leaf, commit) {
+    const mounted = mountedByLeaf.get(leaf);
+    if (!mounted) return;
+    for (const { subplotDiv } of mounted) {
+      _renderSpectrumAndPeaks(subplotDiv, leaf);
+    }
+    commit();
+  }
+
   function _renderSpectrumAndPeaks(div, leaf) {
     if (typeof Plotly === 'undefined') {
       div.innerHTML = '<div class="editor-hint">Plotly not loaded.</div>';
@@ -1773,7 +1790,8 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
 
     pks.forEach((pk, i) => {
       const row = table.insertRow();
-      // Freq
+      // Freq — input event for live plot preview (subplot only, keeps
+      // focus alive), change event for full refresh + sort on blur.
       const freqTd = document.createElement('td');
       const freqInp = document.createElement('input');
       freqInp.type = 'number'; freqInp.step = 'any'; freqInp.min = '0';
@@ -1782,17 +1800,31 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
         const v = parseFloat(freqInp.value);
         if (Number.isFinite(v) && v > 0) {
           pk.freq = v;
+          refreshSubplotOnly(leaf, commit);
+        }
+      });
+      freqInp.addEventListener('change', () => {
+        const v = parseFloat(freqInp.value);
+        if (Number.isFinite(v) && v > 0) {
+          pk.freq = v;
           sortDeclared(leaf);
           refreshEditor(leaf, commit);
         }
       });
       freqTd.appendChild(freqInp); row.appendChild(freqTd);
-      // Tolerance
+      // Tolerance — same split.
       const tolTd = document.createElement('td');
       const tolInp = document.createElement('input');
       tolInp.type = 'number'; tolInp.step = 'any'; tolInp.min = '0';
       tolInp.value = String(pk.tolerance);
       tolInp.addEventListener('input', () => {
+        const v = parseFloat(tolInp.value);
+        if (Number.isFinite(v) && v >= 0) {
+          pk.tolerance = v;
+          refreshSubplotOnly(leaf, commit);
+        }
+      });
+      tolInp.addEventListener('change', () => {
         const v = parseFloat(tolInp.value);
         if (Number.isFinite(v) && v >= 0) {
           pk.tolerance = v;
@@ -1886,11 +1918,21 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
     });
     btnRow.appendChild(addBtn);
 
-    // Detect dropdown — picks source for the Detect-from-spectrum action.
+    // Detect source dropdown — picks WHICH signal the Detect button
+    // analyzes. Does not affect the subplot display (both reference
+    // and actual curves are always shown). Default: Reference (the
+    // regression target). Pick Actual for fresh tests where no
+    // baseline exists yet.
     const sourceLabel = document.createElement('label');
     sourceLabel.className = 'editor-hint';
     sourceLabel.style.marginLeft = '1em';
-    sourceLabel.textContent = 'Source: ';
+    sourceLabel.textContent = 'Detect from: ';
+    sourceLabel.title = 'Chooses which signal Detect analyzes for peaks. '
+                      + 'Does NOT change the subplot display (both curves '
+                      + 'are always shown). Reference = seed from the '
+                      + 'regression target; Actual = seed from the current '
+                      + 'run\'s output (useful on fresh tests without a '
+                      + 'baseline).';
     const sourceSel = document.createElement('select');
     sourceSel.className = 'detect-source-select';
     for (const [val, txt] of [['ref', 'Reference'], ['act', 'Actual']]) {
@@ -1910,12 +1952,20 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
     detectBtn.textContent = '🔍 Detect peaks';
     detectBtn.title = 'Replace the table with peaks detected on the '
                     + 'selected source spectrum, scoped to the leaf\'s '
-                    + 'current window. Each new peak is stamped with '
-                    + '"derived_from_window" metadata for provenance.';
+                    + 'current window. Low-freq noise (< ~2 cycles per '
+                    + 'window) is filtered out. Each new peak is stamped '
+                    + 'with "derived_from_window" metadata for provenance.';
     detectBtn.addEventListener('click', () => {
       const source = getDetectSource(leaf);
       const live = getLiveSpectrum(leaf, source);
-      const detected = _findTopNPeaksJS(live.freqs, live.magnitudes, 3, 0);
+      if (live.freqs.length < 3) return;
+      // Default min_frequency: require at least 2 full cycles within the
+      // windowed signal. Anything below that is low-freq leakage / trend
+      // residue, not a reliably-resolved peak. Matches the intuition
+      // "don't flag a peak whose period doesn't fit twice in my window."
+      const binSpacing = live.freqs[1] - live.freqs[0];
+      const minFreq = 2 * binSpacing;
+      const detected = _findTopNPeaksJS(live.freqs, live.magnitudes, 3, minFreq);
       if (detected.length === 0) return;
       const w = _windowCopy(getLeafWindow(leaf));
       const seed = detected.map(p => {
@@ -1931,7 +1981,26 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
       refreshEditor(leaf, commit);
     });
     btnRow.appendChild(detectBtn);
+
+    // Resolution hint — tells the user what the current window's FFT
+    // bin spacing is, so they can choose meaningful tolerances. If a
+    // 1-Hz declared peak has a 0.05 Hz tolerance on a signal whose bin
+    // spacing is 0.25 Hz, that's sub-bin and will fail for reasons
+    // unrelated to drift.
+    const resolutionHint = document.createElement('div');
+    resolutionHint.className = 'editor-hint';
+    resolutionHint.style.marginTop = '0.4em';
+    const refSpec = getLiveSpectrum(leaf, 'ref');
+    if (refSpec.freqs.length >= 2) {
+      const binSpacing = refSpec.freqs[1] - refSpec.freqs[0];
+      resolutionHint.textContent = (
+        `FFT bin resolution: ~${binSpacing.toExponential(2)} Hz. `
+        + `Tolerances tighter than this may fail regardless of actual drift; `
+        + `set at least 2× bin spacing for reliable matching.`
+      );
+    }
     container.appendChild(btnRow);
+    container.appendChild(resolutionHint);
   }
 
   return {

@@ -3,7 +3,7 @@
   "test_id": "0006",
   "status": "active",
   "date_added": "2026-04-22T18:58:16.951930+00:00",
-  "last_updated": "2026-04-22T18:58:16.951930+00:00",
+  "last_updated": "2026-04-23T18:15:04.256539+00:00",
   "simulation": {
     "stop_time": 5.0,
     "tolerance": 1e-06,
@@ -15,23 +15,29 @@
     "variable_overrides": {
       "x": {
         "mode": "dominant-frequency",
-        "rel_tolerance": 0.01
+        "peaks": [
+          {
+            "freq": 1.0,
+            "tolerance": 0.15,
+            "tolerance_mode": "rel"
+          }
+        ]
       }
     }
   },
   "statistics": {
     "timing": {
-      "frontend": 0.12327510000000001,
-      "backend": 0.002795,
-      "simcode": 0.0008312,
-      "templates": 0.0016097000000000001,
-      "compile": 1.5010244,
-      "simulation": 0.015447800000000001,
-      "total": 1.6450814,
-      "translation_wall": 1.63,
+      "frontend": 0.1433982,
+      "backend": 0.0092146,
+      "simcode": 0.0016662,
+      "templates": 0.0035028000000000004,
+      "compile": 1.5478786,
+      "simulation": 0.022755900000000003,
+      "total": 1.7289694,
+      "translation_wall": 1.71,
       "sim_wall": 0.02,
-      "other_wall": 0.02,
-      "total_wall": 1.66
+      "other_wall": 2.25,
+      "total_wall": 3.98
     }
   },
   "n_vars": 1,

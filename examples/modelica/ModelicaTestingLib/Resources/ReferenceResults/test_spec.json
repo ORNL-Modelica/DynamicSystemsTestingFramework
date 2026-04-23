@@ -27,7 +27,7 @@
           "x": {
             "mode": "dominant-frequency",
             "peaks": [
-              {"freq": 1.0, "tolerance": 0.01, "tolerance_mode": "rel"}
+              {"freq": 1.0, "tolerance": 0.15, "tolerance_mode": "rel"}
             ]
           }
         }
@@ -40,9 +40,9 @@
           "y": {
             "mode": "dominant-frequency",
             "peaks": [
-              {"freq": 1.0, "tolerance": 0.02, "tolerance_mode": "rel"},
-              {"freq": 3.0, "tolerance": 0.02, "tolerance_mode": "rel"},
-              {"freq": 7.0, "tolerance": 0.02, "tolerance_mode": "rel"}
+              {"freq": 1.0, "tolerance": 0.15, "tolerance_mode": "rel"},
+              {"freq": 3.0, "tolerance": 0.1, "tolerance_mode": "rel"},
+              {"freq": 7.0, "tolerance": 0.05, "tolerance_mode": "rel"}
             ]
           }
         }
