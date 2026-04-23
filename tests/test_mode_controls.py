@@ -85,11 +85,15 @@ class TestDeriveSchemaPerMode:
         assert by_name["count_must_match"].default is True
 
     def test_dominant_frequency(self):
+        """Schema reflects the declared-peaks config (D75) — a single
+        ``peaks`` field of passthrough type (list of dicts isn't a
+        scalar)."""
         s = derive_schema(DominantFrequencyConfig, mode="dominant-frequency")
         by_name = {f.name: f for f in s.fields}
-        assert by_name["rel_tolerance"].type == "float"
-        assert by_name["min_frequency"].type == "float"
-        assert by_name["min_frequency"].default == pytest.approx(0.0)
+        assert "peaks" in by_name
+        # list[dict] shape → passthrough fallback.
+        assert by_name["peaks"].type == "passthrough"
+        assert by_name["peaks"].optional is True
 
 
 class TestDeriveSchemaEdgeCases:

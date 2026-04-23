@@ -26,7 +26,24 @@
         "variable_overrides": {
           "x": {
             "mode": "dominant-frequency",
-            "rel_tolerance": 0.01
+            "peaks": [
+              {"freq": 1.0, "tolerance": 0.01, "tolerance_mode": "rel"}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.MultiFrequencyTest",
+      "comparison": {
+        "variable_overrides": {
+          "y": {
+            "mode": "dominant-frequency",
+            "peaks": [
+              {"freq": 1.0, "tolerance": 0.02, "tolerance_mode": "rel"},
+              {"freq": 3.0, "tolerance": 0.02, "tolerance_mode": "rel"},
+              {"freq": 7.0, "tolerance": 0.02, "tolerance_mode": "rel"}
+            ]
           }
         }
       }

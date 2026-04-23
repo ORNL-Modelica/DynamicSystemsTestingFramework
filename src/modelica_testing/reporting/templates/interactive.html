@@ -125,6 +125,26 @@ details summary:hover { color: #333; }
 .node-btn-add:hover { background: #e8f5e9; }
 .node-btn-remove { color: #c62828; border-color: #ef9a9a; }
 .node-btn-remove:hover { background: #ffebee; }
+.node-btn-reset { color: #546e7a; border-color: #b0bec5; }
+.node-btn-reset:hover { background: #eceff1; }
+.node-btn-wrap { color: #6a1b9a; border-color: #ce93d8; }
+.node-btn-wrap:hover { background: #f3e5f5; }
+.node-btn-unwrap { color: #6a1b9a; border-color: #ce93d8; }
+.node-btn-unwrap:hover { background: #f3e5f5; }
+.node-kind-select { font-size: 0.82em; padding: 0.05em 0.3em; font-weight: 500; color: #333; background: white; border: 1px solid #c5b0d0; border-radius: 3px; cursor: pointer; }
+.node-child-count { font-size: 0.8em; color: #888; font-family: monospace; }
+.node-combinator-params { display: inline-flex; gap: 0.4em; align-items: center; margin-left: 0.3em; padding-left: 0.4em; border-left: 1px dashed #cbb5d6; font-size: 0.82em; }
+.node-combinator-params label.mc-field { flex-direction: row; gap: 0.2em; margin: 0; }
+.node-combinator-params input.node-k-input, .node-combinator-params input.node-threshold-input { width: 4em; padding: 1px 4px; font-size: 0.82em; }
+.node-combinator-params .node-weight-input { width: 3.3em; padding: 1px 4px; font-size: 0.82em; margin-left: 0.15em; }
+.node-combinator-params .node-weights .mc-field-label { color: #555; margin-right: 0.2em; }
+.wrap-popup { display: inline-flex; align-items: center; gap: 0.3em; margin-left: 0.5em; padding: 0.2em 0.5em; background: #f3e5f5; border: 1px solid #ce93d8; border-radius: 4px; font-size: 0.8em; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
+.wrap-popup-label { color: #4a148c; }
+.wrap-popup-kind { font-size: 0.8em; padding: 0.05em 0.3em; }
+.node-btn.wrap-popup-yes { color: #333; font-weight: 600; }
+.node-btn.wrap-popup-yes:hover { background: #f0f0f0; }
+.node-btn.wrap-popup-no { color: #546e7a; }
+.node-btn.wrap-popup-no:hover { background: #eceff1; }
 .metric-tree-section { margin-bottom: 1.5em; padding: 1em; background: white; border: 1px solid #ddd; border-radius: 4px; }
 .metric-tree-section summary { font-weight: 600; cursor: pointer; }
 .node-tree-hint { font-weight: 400; color: #888; font-size: 0.85em; }
@@ -183,7 +203,9 @@ details summary:hover { color: #333; }
 
 {# === SUMMARY === #}
 <div class="summary" id="summary">
-{% if nobaseline_trajectories %}
+{% if is_simulate_only %}
+  <span class="pass"><strong>Simulate-only:</strong> simulation succeeded</span>
+{% elif nobaseline_trajectories %}
   <strong>{{ nobaseline_trajectories | length }}</strong> variables (no baseline)
 {% elif sim_failed %}
   <span class="fail"><strong>Simulation failed</strong></span>
@@ -360,10 +382,10 @@ details summary:hover { color: #333; }
     </label>
   </div>
   {% if vardata.overlays %}
-  <div class="overlay-picker" data-vidx="{{ loop.index0 }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
+  <div class="overlay-picker" data-plot-id="plot-{{ loop.index0 }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
     <span class="ov-label">Overlays:</span>
     {% for ov in vardata.overlays %}
-    <label class="ov-item"><input type="checkbox" class="overlay-toggle" data-vidx="{{ loop.index0 }}" data-ov-name="{{ ov.name }}" data-ov-role="{{ ov.role }}"> <span class="ov-role ov-{{ ov.role }}">{{ ov.role }}</span> {{ ov.name }}</label>
+    <label class="ov-item"><input type="checkbox" class="overlay-toggle" data-ov-name="{{ ov.name }}" data-ov-role="{{ ov.role }}"> <span class="ov-role ov-{{ ov.role }}">{{ ov.role }}</span> {{ ov.name }}</label>
     {% endfor %}
   </div>
   {% endif %}
@@ -380,6 +402,14 @@ details summary:hover { color: #333; }
 {% for traj in nobaseline_trajectories %}
 <div class="plot-section">
   <h3><span class="new">NEW</span> {{ traj.name }}</h3>
+  {% if traj.overlays %}
+  <div class="overlay-picker" data-plot-id="nb-plot-{{ loop.index0 }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
+    <span class="ov-label">Overlays:</span>
+    {% for ov in traj.overlays %}
+    <label class="ov-item"><input type="checkbox" class="overlay-toggle" data-ov-name="{{ ov.name }}" data-ov-role="{{ ov.role }}"> <span class="ov-role ov-{{ ov.role }}">{{ ov.role }}</span> {{ ov.name }}</label>
+    {% endfor %}
+  </div>
+  {% endif %}
   <div class="plotly-chart" id="nb-plot-{{ loop.index0 }}"></div>
 </div>
 {% endfor %}

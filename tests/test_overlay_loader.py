@@ -263,6 +263,36 @@ class TestAttachOverlaysToTrajectories:
         attach_overlays_to_trajectories(trajectories, overlays)
         assert trajectories[0]["overlays"] == []
 
+    def test_works_on_nobaseline_trajectory_shape(self):
+        """NO_REF plots use ``{index, name, time, values}`` instead of the
+        compare-path's ``{name, act_time, act_values, ref_time, ref_values}``.
+        The attach pass matches purely on ``name``, so the same helper
+        threads sibling-backend overlays onto no-baseline plots too — this
+        is the pre-accept cross-check path for a brand-new backend / OS.
+        """
+        nobaseline = [
+            {"index": 1, "name": "h", "time": [0, 1, 2], "values": [1, 0.5, 0]},
+            {"index": 2, "name": "v", "time": [0, 1, 2], "values": [0, -1, -2]},
+        ]
+        overlays = [
+            Overlay(
+                name="OpenModelica/linux", role="companion",
+                kind="sibling-backend", status="loaded",
+                variables={
+                    "h": OverlayVariable(time=[0, 1, 2], values=[1, 0.6, 0.1]),
+                },
+            ),
+        ]
+        attach_overlays_to_trajectories(nobaseline, overlays)
+        assert len(nobaseline[0]["overlays"]) == 1
+        attached = nobaseline[0]["overlays"][0]
+        assert attached["name"] == "OpenModelica/linux"
+        assert attached["role"] == "companion"
+        assert attached["kind"] == "sibling-backend"
+        assert attached["time"] == [0, 1, 2]
+        # 'v' didn't match any overlay variable
+        assert nobaseline[1]["overlays"] == []
+
 
 class TestOverlaySummary:
     def test_surfaces_missing_and_invalid(self):

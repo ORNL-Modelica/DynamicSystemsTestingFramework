@@ -56,33 +56,41 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 48 | Lazy-fetch full-res on zoom (6.0.2) | M | High | Tier-2 of the payload strategy: JS detects zoom events via `plotly_relayout`, fetches `comparison_data.json` (full-resolution, already on disk next to the HTML), slices to the visible x-window, rerenders the window at native fidelity. Works from `file://` URLs — no server needed. Restores full visual fidelity for users who actually need it without inflating the standalone-HTML payload. |
 | 49 | Per-test max_embedded_samples override (6.0.3) | L | Medium | Extend `test_spec.json` `comparison` block with an optional `max_embedded_samples` field — escape hatch for tests with pathological signals (stiff ringing, sharp events) that legitimately need higher embedded fidelity than the global cap. Per-test resolution order same as tolerance (variable_override → test → config → default). Small, additive; can land anytime. |
 | 50 | ~~Companion + soft_check overlay rendering (6.3 slice)~~ | M | High | **DONE** (A-tier close-out). `reporting/overlay_loader.py` loads JSON + wide-CSV companions (graceful degradation on missing/invalid), plus soft_checks. Per-plot picker defaults off; test-level summary lists unrendered overlays. Soft_checks render purple dotted, companions green dashdot; LTTB decimation integrated. |
-| 51 | Multi-simulator sibling-result overlays as companions | M | High | Generalize #50's companion machinery to reach into *other* simulators' reference stores for the same model and surface their results as visual overlays. Concrete scenario: user has `MyLib.TestA` regressions in Dymola, OpenModelica, an FMU, and a Python/Julia solver, each with committed baselines under different `<reference_root>/<backend>/<os>/` partitions. When viewing the Dymola report for `TestA`, they want `[companion] openmodelica/TestA`, `[companion] fmu/TestA`, `[companion] python/TestA` checkboxes above each plot — purely for human eyeball comparison, never scored. Today each backend/OS is isolated; the cross-simulator picture requires four separate report trees. **Proposal**: a new `"auto_companions"` entry in `testing.json` listing sibling reference roots (or simulator names) to auto-harvest. At report time, for each tracked variable, pull the matching trajectory from each sibling ref (if the model + variable names line up) and stamp as a companion overlay. No CLI `companion add` per model — the discovery is scan-based, same pattern as primary-baseline lookup. Naming: `sibling_dymola`, `sibling_fmu`, etc., or user-provided labels. **Graceful degradation**: if a sibling ref is missing for a given model, skip silently. **Scope boundary**: this is visual-only, same as companions proper; scoring against a sibling simulator belongs in a soft_check chain (cross-backend). **When**: post-Phase-7; small lift once #50 is in. |
+| 51 | ~~Multi-simulator sibling-result overlays as companions~~ | M | High | **DONE (partial)** — sibling-backend auto-companion overlays shipped in commit `d3d6cfb` (post-D69 follow-up). `load_overlays` auto-scans `<reference_root>/<other_backend>/<os>/ref_*.json` for the same `model_id` at report time; renders as `kind="sibling-backend"` blue-dashed overlays with per-plot picker. D71 (2026-04-23) extended picker UI to the no-baseline code path so fresh-backend workflows see the same toggle UX. **Still open**: (a) user-labelled overlay names (currently `sibling_dymola` / `sibling_fmu`); (b) opt-in `"auto_companions"` config knob to restrict which sibling roots are scanned (all sibling backends auto-discovered today). |
+| 52 | ~~Wrap-in-combinator + combinator-kind editing in reporter~~ | L | Medium | **DONE** (D72, 2026-04-23). Kind dropdown in combinator header (5 options); ⊕ wrap button on every node; ⊖ unwrap on single-child combinators. Seeded defaults for k-of-n / weighted. No new patch ops — wholesale `/metrics` replace envelope. +17 Playwright tests. Multi-select wrap + live validation halos deferred. |
+| 53 | `check-openmodelica` CLI subcommand | L | Low | Peer of `check-dymola`. Verifies omc on PATH + MSL installed + OMPython importable + omc version. Prints diagnostic table. Useful onboarding for new users, especially on machines where `installPackage(Modelica)` hasn't been run. ~½ day. D70 deferred. |
+| 54 | OM FMU export via `buildModelFMU` | M | Medium | Wire OpenModelica into the `Capability.FMU_EXPORT` cross-backend chain. Currently Dymola-only (and experimental per D65). Would let the D63 `produce_dymola_via_fmpy_baseline` chain reciprocate — `produce_openmodelica_via_fmpy_baseline` — for cross-backend regression on OM-authored models. ~1–2 days. D69 deferred. |
 
-**Recommended order** (post-Phase-6-MVP, reorganized 2026-04-20):
+**Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23):
 
-- **A. Finish half-shipped features** (close real debt from the MVP, small-to-medium):
-  - **#46 UI surfacing** — backend done; users hand-write JSON to use windows. Two number inputs on every auto-derived panel (or range-brush on plot).
-  - **#50 companion + soft_check overlay rendering** — baseline-role data model shipped; overlays don't render. `companion add` is invisible today.
+- **A. Finish half-shipped features** (fully closed out as of D72):
+  - ~~**#46 UI surfacing**~~ — DONE (A-tier close-out).
+  - ~~**#50 companion + soft_check overlay rendering**~~ — DONE (A-tier close-out).
+  - ~~**Sibling-backend overlays cross-path parity**~~ — DONE (D71, 2026-04-23). Picker UI now on NB code path too.
+  - ~~**#52 wrap-in-combinator + combinator-kind editing**~~ — DONE (D72, 2026-04-23). Reporter-as-IDE story complete.
 
-- **B. User-facing new features** (Phase 7 or FMU path — each 1–2+ weeks):
+- **B. User-facing new features** (pick one — each 1–2+ weeks):
   - **Phase 7 rule-based recommender** (signal → tree proposals; bounded vocabulary; see D66).
+  - **TRANSFORM upstream portability PR** — the 46 `each`-modifier fixes surfaced by the OM sweep. External PR, not a change to this repo. Lifts OM pass rate 72% → ~85%. ~1 day.
   - **#45 python-driven tests + FMU-path semantic-gap closure** (D65 follow-on) — share a `SimulationResult` dataclass refactor. Unlocks pyomo / scipy / custom solvers + real industrial FMU testing.
 
 - **C. Performance / fidelity follow-ups** (nobody's blocked yet; ship opportunistically):
   - **#47 time-array dedup (6.0.1)** — compounds on 6.0; lifts default cap 1000 → 2000.
   - **#48 lazy-fetch on zoom (6.0.2)** — full-fidelity drill-down from decimated base.
   - **#49 per-test override (6.0.3)** — escape hatch; ship when someone asks.
+  - **#53 `check-openmodelica` CLI subcommand** — trivial onboarding polish (~½ day).
+  - **#54 OM FMU export via `buildModelFMU`** — wire OM into the cross-backend chain (~1–2 days).
   - Drag-to-edit range handles (6.1.4 stretch).
 
 - **D. External-distribution blocker** (technical scope small; blocked on a name):
-  - **Tool rename** — `"ModelicaTesting"` → neutral name. Touches package, CLI prog, HTML titles, `pyproject.toml`, all imports.
+  - **Tool rename** — `"ModelicaTesting"` → neutral name. Touches package, CLI prog, HTML titles, `pyproject.toml`, all imports. More justified now: three backends, no Modelica coupling in the core pipeline.
 
 - **E. New leaves + foundational** (additive, slot in anytime):
   - **Phase 9 dataset types** unlock #23 Fréchet, #24 spectral coherence, #26 ISO 18571, #25 x-tolerance/pyfunnel.
   - Small HTML polish: #7 variable ordering, #9 open-in-Dymola, #14 link to ref JSON, #17 linked panel zoom, #18 worst-violation annotation, #19 zoom-dependent stats.
   - Larger: #11 test-discovery helper, #12 model-health analysis, #15 WebGL scattergl.
 
-**Immediate default** (post A-tier close-out): pick one of the **B** items for the next session — Phase 7 rule-based recommender or #45 python-driven tests + FMU-path closure.
+**Immediate default** (post D72): A-tier is fully closed. Pick one of the **B** items for the next session — Phase 7 recommender, TRANSFORM portability PR, or #45 python-driven tests.
 
 ---
 

@@ -662,3 +662,718 @@ adaptations.
     updated to expect both BATCH_FALLBACK + PERSISTENT_WORKERS.
 
 - **Test count**: 679 → 706 (+27).
+
+## D71 — Feature-showcase tests + NB overlay parity + simulate-only render fix (2026-04-23)
+
+Grab-bag session consolidating loose ends after D70 lands. Three
+independent items; no architectural change; pure fill-in.
+
+- **Four feature-showcase tests added to `ModelicaTestingLib`**:
+  `TubeToleranceTest` (exercises `mode: tube` with time-varying
+  `tube_points`), `FrequencyTest` (exercises `dominant-frequency`
+  leaf), `MetricTreeTest` (explicit `metrics` tree with
+  `warn`-wrapped NRMSE child), `RangeCheckTest` (exercises
+  `range` leaf with `min_value` / `max_value`). Each confirmed
+  both numerically and by inspecting the generated interactive
+  HTML — the per-variable panel renders its mode-specific UI in
+  every case. Baselines committed under
+  `ReferenceResults/OpenModelica/linux/ref_0006…0009.json`; Dymola
+  / FMPy / Windows baselines are fresh on each platform's first
+  run via the sibling-backend overlay pre-accept workflow. New
+  models and spec entries live in `examples/modelica/
+  ModelicaTestingLib/`; no framework code change.
+
+- **Range leaf now accepts `min` / `max` aliases** in addition to
+  the canonical `min_value` / `max_value`. `resolve_mode` in
+  `comparison/modes.py` falls through — long form wins when both
+  are present. Motivation: feature test author reached for the
+  shorter name and the mode silently rejected the spec. Additive,
+  non-breaking.
+
+- **Sibling-backend overlay parity across baseline and
+  no-baseline code paths**. Pre-fix, the overlay picker (check-
+  box toggles over each sibling reference) rendered only on the
+  *baseline* trajectory block of the per-test HTML. When a test
+  had no local baseline yet (the canonical "fresh backend/OS"
+  state), overlays were attached as legend entries on the NB
+  plot but there was no picker UI — users could only toggle via
+  Plotly's legend click, which was inconsistent with the baseline
+  flow. Fix: `_build_template_context` now calls
+  `attach_overlays_to_trajectories` on **both** the baseline and
+  `nobaseline_trajectories` lists; the NB template section gained
+  an `overlay-picker` block mirroring the baseline section;
+  `wireOverlayPickers` generalized to handle both plot-id prefixes
+  (`plot-{idx}` + `nb-plot-{idx}`) via a shared
+  `setOverlayVisible(plotId, role, name, visible)` helper. Same
+  styling (soft_check purple dotted, sibling-backend blue dashed,
+  companion green dashdot).
+
+- **`simulate_only` + no-baseline rendering fix** (triggered by
+  user report: `SimulateOnlyTest` showed "Simulation failed" in
+  the per-test HTML and `NO_REF` on the index, even though the
+  dslog confirmed the simulation succeeded). Three bugs on one
+  code path:
+  1. `comparator.compare_all` short-circuited to
+     `has_reference=False` when `store.get_reference()` returned
+     `None`, *skipping* `compare_test` entirely. So the
+     `simulate_only`-true short-circuit inside `compare_test` (which
+     sets `metric_tree.label = "simulate-only"` and `passed=True`)
+     never ran. Fix: call `compare_test` with `reference={}` for
+     simulate-only tests lacking a stored baseline; set
+     `has_reference=False` after so downstream renderers still know
+     the baseline wasn't loaded.
+  2. `plot_comparison._build_template_context` computed
+     `sim_failed = (len(comparisons)==0 and n_nobaseline==0)` —
+     true for any simulate-only test (no per-variable comparisons,
+     no NB trajectories), which then rendered the misleading
+     "Simulation failed" summary banner. Fix: skip the heuristic
+     when `test.simulate_only=True`; expose `is_simulate_only` to
+     the template; add a new summary branch emitting
+     "Simulate-only: simulation succeeded" (green PASS pill).
+  3. Index-page status classifier in `_build_per_test_args`
+     checked `has_reference` before `simulate_only`. Fix: test
+     for `simulate_only` first, emit PASS/FAIL based on
+     `comp.passed`, before the NO_REF fall-through.
+  All three fixes are in a single code path (the "no stored
+  reference + simulate-only test" case); the fix could live in
+  any one layer in isolation but hardens all three defensively.
+
+- **Regression tests** in `tests/test_simulate_only.py`:
+  - `test_compare_all_simulate_only_without_baseline_passes` —
+    uses a `_FakeStore` returning `None` for
+    `get_reference` / `get_soft_checks` / `get_companions`;
+    asserts `passed=True`, `sim_success=True`, `has_reference=False`,
+    `metric_tree.label == "simulate-only"`.
+  - `test_compare_all_simulate_only_sim_failure_still_fails` —
+    when the simulation itself fails, simulate-only follows the
+    regular sim-fail path (`passed=False`), not PASS.
+  `tests/test_overlay_loader.py` gained
+  `test_works_on_nobaseline_trajectory_shape` to lock in the NB
+  overlay attachment path.
+
+- **Validation**: end-to-end on the OpenModelica suite (10 tests
+  in `ModelicaTestingLib`, including `SimulateOnlyTest` with no
+  baseline by design): **all 10 show PASS on the index**;
+  `SimulateOnlyTest`'s per-test HTML renders the green
+  "Simulate-only: simulation succeeded" pill.
+
+- **Files** (modified):
+  - `src/modelica_testing/comparison/comparator.py` —
+    `compare_all` guard; `compare_test` passthrough for
+    simulate-only when reference absent.
+  - `src/modelica_testing/comparison/modes.py` — `resolve_mode`
+    for range accepts `min` / `max` aliases.
+  - `src/modelica_testing/reporting/plot_comparison.py` —
+    `_build_template_context` simulate-only guard + overlay
+    attachment on NB trajectories; `_build_per_test_args`
+    simulate-only status branch.
+  - `src/modelica_testing/reporting/templates/interactive.html`
+    — simulate-only summary branch; NB `overlay-picker` block.
+  - `src/modelica_testing/reporting/templates/interactive.js`
+    — `wireOverlayPickers` generalized to both plot-id prefixes;
+    `setOverlayVisible(plotId, role, name, visible)` helper.
+  - `tests/test_simulate_only.py` — +2 regression tests.
+  - `tests/test_overlay_loader.py` — +1 NB-shape test.
+
+- **Files** (new): feature-showcase models in
+  `examples/modelica/ModelicaTestingLib/Examples/` and matching
+  `Resources/ReferenceResults/OpenModelica/linux/ref_0006…0009.json`;
+  entries in `Resources/ReferenceResults/test_spec.json`.
+
+- **Test count**: 706 → 674+2 skip (environment-dependent)
+  after the `.venv` / miniforge pytest-env drift was reconciled.
+  Nominal count with the `ompython` + reference_fmus markers
+  enabled and dev env fully provisioned remains in the 700+
+  range; the two skips are the real-OMPython integration test
+  and a reference-FMUs-gated test.
+
+## D72 — Wrap-in-combinator + combinator-kind editing in reporter (#52, 2026-04-23)
+
+Closes the one remaining A-tier reporter-as-IDE debt. Every authoring
+operation on a MetricTree is now clickable from the browser; JSON
+editing becomes escape hatch only.
+
+- **Scope**: three structural-edit ops on the `WORKING_TREE`
+  (path-addressed via `_findPathContext`):
+  - **`wrapWorkingNode(path, kind)`** — always produces
+    `kind(target)`, a single-child parent regardless of target's
+    shape. Works uniformly on leaves and combinators. Root wrap
+    replaces `WORKING_TREE` with the new parent.
+  - **`unwrapWorkingNode(path)`** — replaces a combinator with its
+    single child. Refuses non-combinator targets or combinators
+    with != 1 child (user should trim siblings first).
+  - **`changeCombinatorKind(path, newKind)`** — flips the node's
+    `combinator` field; seeds kind-specific fields when switching
+    *into* k-of-n or weighted, strips them when switching *out*.
+    **Refuses change-to-warn on multi-child targets** — the grammar
+    won't validate. User should use wrap-in-warn (always legal, since
+    wrap always produces a single-child parent) for that intent.
+  All three call `markStructureDirty()` on success, which the existing
+  wholesale `/metrics` replace patch carries to disk on save.
+
+- **Decisions**:
+  - **All five combinator kinds editable**: `and` / `or` / `warn` /
+    `k-of-n` / `weighted`. Weighted + k-of-n get **sensible
+    seeded defaults** when a combinator switches into them:
+    k-of-n seeds `k = max(1, n-1)`; weighted seeds
+    `weights = [1.0]*n`, `threshold = 1.0`, `direction = "less"`.
+    Users can then tune the numbers inline without ever needing
+    a seed UI modal.
+  - **Single-select wrap only (v1)**. Multi-select (wrap leaves A+B+C
+    in an AND) is deferred — would require marquee selection or
+    Ctrl-click + group-parent inference. Two-click workflow still
+    available: wrap A in AND, then add/move siblings in.
+  - **Wrap always produces `kind(target)`** — no auto-insert AND
+    gymnastics. My first cut had special-case logic for
+    `warn`-wrapping multi-child combinators (auto-insert AND between
+    warn and children) but I'd conflated two cases: `wrap-in-warn`
+    on a multi-child AND just produces `warn(and(...))` which is
+    already valid (warn has 1 child: the AND). Auto-insert was only
+    needed for the *change-to-warn* case, which we now reject
+    outright.
+  - **Symmetric policy on warn**: change-to-warn rejects multi-child
+    (flip the `combinator` field would break grammar). Wrap-in-warn
+    always succeeds (it creates a new warn parent with a single
+    child — the existing target — regardless of target's shape).
+  - **UI placement**: kind dropdown in combinator header replaces the
+    static `combinatorLabel()` text; inline params (`k` input;
+    weighted's `threshold` / `direction` select + per-child `weights`
+    row) render alongside. Wrap (`⊕`) button on every node next to
+    `+` / `−`; unwrap (`⊖`) only when a combinator has exactly 1
+    child (otherwise the op would fail anyway). Child-count suffix
+    `[N]` still shown — it's a quick read without scrolling.
+  - **Wrap popup**: `⊕` opens an inline popup (same pattern as
+    remove-confirm) with a kind dropdown + Confirm / Cancel. ESC +
+    click-away dismiss. No full-screen modal — feels heavier than
+    the op warrants.
+  - **Internal grammar names** for kind labels (`and`, `or`, `warn`,
+    `k-of-n`, `weighted`) — matches the JSON spec exactly so users
+    authoring trees see what they'll emit. Friendly renames ("All
+    pass", "Any pass", ...) is a later UX pass.
+  - **No live validation halos.** D66 validator already runs at patch
+    apply time (D67); invalid states surface on save with a clear
+    error + the spec stays byte-preserved until the user fixes it.
+    Live halos would be reasonable but out of scope for v1.
+  - **No new patch op types.** Wrap / unwrap / kind-change all flow
+    through the existing wholesale `/metrics` replace envelope —
+    same machinery as add-leaf and remove-leaf.
+
+- **Rejected alternatives**:
+  - **Surgical JSON-Patch at `/metrics/<pointer>/combinator`** (vs.
+    wholesale replace). Would produce tighter patches (a 3-op
+    patch for a kind change with seed + strip), but the spec-update
+    pipeline validates the *whole tree* on apply anyway (D66
+    constraint: ≥ 1 primary leaf outside warn), so "tighter patches"
+    don't buy us atomicity we don't already have. Wholesale replace
+    is also what structural adds/removes use — one patch envelope
+    for all structural edits.
+  - **Drag-into-combinator for structural moves**. Moves are
+    implicit via remove + add for now; drag is a later polish pass.
+  - **Multi-select wrap**. See "Decisions" above.
+  - **Friendly combinator labels**. See "Decisions" above.
+
+- **Files** (modified):
+  - `src/modelica_testing/reporting/templates/interactive.js` —
+    `_seedCombinatorParams` / `_stripCombinatorParams` /
+    `_findPathContext` / `wrapWorkingNode` / `unwrapWorkingNode` /
+    `changeCombinatorKind` mutation helpers. `renderCombinator`
+    replaces the static label with `kindSelect` + `childCountLabel`
+    + `combinatorParamControls` (for k-of-n / weighted). `wrapButton` +
+    `unwrapButton` + `openWrapPopup` / `closeWrapPopup`. Wrap button
+    also rendered by `renderLeaf`.
+  - `src/modelica_testing/reporting/templates/interactive.html` —
+    CSS for `.node-btn-wrap`, `.node-btn-unwrap`,
+    `.node-kind-select`, `.node-child-count`,
+    `.node-combinator-params` (+ k/threshold/weight input sizing),
+    `.wrap-popup` (+ `-label` / `-kind` / `-yes` / `-no` variants).
+    Golden structural hashes refreshed.
+  - `tests/test_interactive_playwright.py` — +17 browser-driven
+    tests covering every flow: kind dropdown enumeration; change-kind
+    and→or / and→k-of-n (auto-seeds k) / and→weighted (auto-seeds
+    weights + threshold + direction) / k-of-n→and (strips k) /
+    change-to-warn refused on multi-child; wrap leaf in warn via
+    popup + popup cancel + popup ESC; wrap combinator (root) in
+    warn produces single-child warn; unwrap button hidden on >1-child
+    combinator / shown on 1-child / replaces combinator with lone
+    child / root-single-child unwrap promotes child to root; wrap
+    emits wholesale `/metrics` replace; per-variable mount re-renders
+    after full-tree kind edit; weighted weights edit updates only
+    the targeted index; wrap button rendered on leaves.
+
+- **Validation**: end-to-end smoke against
+  `examples/modelica/ModelicaTestingLib/` on Linux — all 10 tests
+  still PASS; new UI renders on every combinator in every generated
+  report (kind dropdown, child count, wrap/unwrap buttons, popup
+  styling). Existing 35 Playwright tests unchanged.
+
+- **Test count**: 674 → 726 (+52, includes +17 #52 tests + existing
+  Playwright count that was previously skipped without pytest-playwright
+  installed into the miniforge pytest). The raw `+17 new tests` figure
+  is the author-intended delta.
+
+## D73 — Leaf-state persistence across structural re-renders + reset button (2026-04-23)
+
+Hotfix surfaced by user immediately after D72: live-edited leaf values
+(tolerance, window bounds, range min/max, ...) reset to their authored
+defaults when any structural edit (+/− / wrap / unwrap / change-kind)
+triggers a re-render. Two bugs on one code path; a third affordance
+added while touching this area.
+
+- **Bug 1 — path migration**. `leafState` is path-keyed (`leafState[
+  '/metrics/children/0'] = {params, window, ...}`). Structural edits
+  call `rebuildPaths(WORKING_TREE, '/metrics')` which rewrites every
+  node's `.path`. A leaf whose path shifted (e.g., `/metrics/
+  children/1` → `/metrics/children/0` after an earlier sibling is
+  removed) loses its state — the old key is orphaned, the new key
+  is undefined, and `renderLeaf` falls back to server-rendered HTML
+  defaults. Pre-existing bug since path-keyed leafState was
+  introduced; exposed by #52 because wrap/unwrap shift paths across
+  nesting layers, amplifying the surface.
+  - **Fix**: new `migrateLeafStatePaths()` — snapshot `[{leaf,
+    oldPath}]` via `walkLeaves` *before* rebuild (captures each
+    leaf's current stale path), run `rebuildPaths`, then two-pass
+    migrate: first read + delete every old-path entry, then write
+    every new-path entry. Two passes avoid chain-shift clobber
+    (remove A from [A,B,C,D] shifts B/C/D leftward; iterating them
+    in new-index order is actually safe, but the explicit
+    read-then-write pattern removes the ordering coupling entirely).
+    Leaf object identity (the JS reference) is preserved across
+    structural edits, so a Map-by-reference isn't needed — the ref
+    is the thing that tells us "this is the same leaf with a new
+    path."
+  - `markStructureDirty` now calls `migrateLeafStatePaths()` instead
+    of `rebuildPaths` directly; migration handles the rebuild
+    internally.
+
+- **Bug 2 — DOM-vs-state drift on re-render**. Even when paths don't
+  shift (change-kind is the clearest case — tree shape stays the same,
+  only the combinator field changes), every re-render re-inserts the
+  server-rendered `leaf.mode_controls_html` string verbatim. The
+  string was generated once at report time with the *original* values
+  baked into `value="..."` attributes. Live edits in `leafState`
+  aren't pushed back onto the DOM — the input resets to the authored
+  value, even though `leafState[path].params.tolerance` still holds
+  the edit. Pre-existing; visible to users only when something
+  triggers a re-render, which was rare before #52.
+  - **Fix**: new `refreshLeafInputsFromState()` — post-render pass
+    that walks every `.node-leaf` in the DOM, and for each
+    `[data-field]` input under `.mode-controls` or `.window-controls`,
+    sets the input's value from `leafState[path].params[field]` or
+    `.window[key]` respectively. Handles checkboxes, passthrough
+    JSON textareas, and plain numeric/string inputs via
+    `_setInputValue`. Called at the tail of
+    `renderAllNodeTreesFromWorking`, so every structural edit
+    (and any future re-render trigger) benefits without explicit
+    opt-in.
+
+- **New affordance — `↻` reset button per leaf** (bundled per user
+  ask: "we could have a reset circle arrow button so help a user
+  reset though"). `resetButton(leaf)` placed in the leaf header next
+  to `⊕` wrap and `−` remove. Click → `resetLeafToOriginal(path)`
+  restores `leafState[path].params` / `.window` from `original_params`
+  / `original_window` (captured at init time in `initLeafState` and
+  at append time in `appendLeafToWorking`). **Does not flip
+  `structureDirty`** — reset is a value-revert, not a structural
+  edit; patch emission stays scalar-granular unless the user has
+  separately touched the tree shape. CSS: `.node-btn-reset` uses a
+  neutral slate-grey (distinct from the purple wrap/unwrap pair + the
+  green add + red remove).
+
+- **Decisions**:
+  - **Migration by object identity + stale path snapshot, not by
+    Map-by-reference**. JS object keys can't be references directly,
+    but walking a tree pre-rebuild to capture `{leaf, oldPath}` gives
+    us the exact same mapping in a form we can iterate. Simpler than
+    introducing node UUIDs or a parallel WeakMap.
+  - **Two-pass migration (read/delete, then write)**. The in-order
+    migration would work for the only two shift shapes we produce
+    (leftward sibling-shift on remove; deepening on wrap;
+    shallowing on unwrap). Formalizing as read-then-write kills the
+    ordering argument entirely and makes the helper robust to any
+    future shift shape.
+  - **Post-render value refresh, not re-generate HTML**. We could
+    instead regenerate `mode_controls_html` from leafState on every
+    re-render (as `renderModeControlsHtmlJs` already does for
+    freshly-added leaves). Rejected: the server-rendered HTML
+    carries labels, help text, and structure we'd have to re-emit
+    JS-side. Setting `input.value` on existing DOM is cheaper and
+    preserves focus/cursor position when the user happens to be
+    typing during a re-render.
+  - **Reset doesn't flip structureDirty.** Reset is a VALUE revert.
+    Structure, if already dirty, stays dirty; if clean, stays clean.
+    Rejecting the alternative ("reset clears structureDirty") —
+    structural edits and value edits are independent axes of state.
+
+- **Rejected alternatives**:
+  - **Node UUIDs** instead of path-keyed leafState. Cleaner
+    long-term, but requires touching every reader of leafState (~30
+    call sites) plus a migration path for persisted state. Two-pass
+    path migration is ~15 lines and fixes both bugs.
+  - **Regenerate mode_controls_html on every render**. See above.
+  - **Store leafState on the node object itself** (`leaf._state = {...}`).
+    Same structural risk as leaf.path if node identity is ever lost
+    (e.g., if someone adds deep-clone anywhere). Path-keyed with
+    migration is simpler to audit.
+
+- **Files** (modified):
+  - `src/modelica_testing/reporting/templates/interactive.js` —
+    `migrateLeafStatePaths`, `refreshLeafInputsFromState`,
+    `_setInputValue`, `resetLeafToOriginal`, `resetButton`.
+    `markStructureDirty` rewired through migration;
+    `renderAllNodeTreesFromWorking` now calls the refresh pass.
+    Leaf header gains `↻` button.
+  - `src/modelica_testing/reporting/templates/interactive.html` —
+    CSS for `.node-btn-reset`. Structural hashes refreshed.
+  - `tests/test_interactive_playwright.py` — +10 browser-driven
+    tests covering: edit survives sibling removal (no shift);
+    edit survives earlier-sibling removal (leftward shift + path
+    migration); edit survives wrap (deepening); edit survives
+    unwrap (shallowing, tube leaf via window_start since tube
+    suppresses mode-controls); edit survives change-kind (no shift
+    but re-render); window edit survives structural edit; reset
+    button renders per leaf; reset restores params to original;
+    reset restores window to original; reset doesn't dirty structure.
+
+- **Validation**: full regression clean; end-to-end `ModelicaTesting
+  Lib` smoke — all 10 tests still PASS; new `↻` button visible on
+  every leaf header in the generated report; `migrateLeafStatePaths`
+  + `refreshLeafInputsFromState` + `resetLeafToOriginal` present in
+  the emitted `interactive.js`.
+
+- **Test count**: 726 → 736 (+10).
+
+## D74 — Leaf-mode UX pass: visibility sync, labels/help, multi-peak frequency, event-timing + spectrum plots (2026-04-23)
+
+Follow-on from a user UX review of the six leaf modes. Five independent
+items in two PRs — **Phase 1** (labels/help/range/visibility sync) was
+a small clarity pass, **Phase 2** (multi-peak FFT + spectrum subplot +
+event-timing plot contribution) was the bigger lift.
+
+### Phase 1 — labels, help, visibility
+
+- **Visibility checkbox clarified + DOM-synced**. Existing behavior:
+  `leafState[path].visible` toggles plot contributions for the leaf
+  (tube polygon / range lines / final-time marker / window band); does
+  NOT affect scoring. Two fixes:
+  - **Tooltip**: "Show this leaf's plot overlay (does not affect
+    scoring)." — kills the "does it disable the leaf?" confusion.
+  - **Cross-mount DOM sync**: clicking the checkbox in the full-tree
+    mount now flips the matching checkbox in every per-variable
+    mount (and vice versa) via a new `syncSiblingVisToggles(leafPath,
+    checked, sourceInput)` helper. Pre-fix, state was shared via
+    `leafState` but the other mount's `input.checked` stayed stale
+    until the next full re-render.
+  - **Semantic choice**: kept as plot-only (user picked A). "Disable
+    leaf = remove from scoring AND plot" would need serialized state
+    + validator changes; deferred until there's a real use case. A
+    separate "disable" button alongside the visibility checkbox is
+    queued as a future affordance.
+
+- **Field metadata on every `ModeConfig`**. Every field of every
+  dataclass in `comparison/modes.py` now carries
+  `field(metadata={"label": ..., "help": ...})`. Flowthrough:
+  - `derive_schema` already reads `f.metadata.get("label" | "help")`
+    onto each `FieldSpec`.
+  - `Schema.to_dict` → `emit_mode_schemas()` → `MODE_SCHEMAS` embedded
+    in the report's JS.
+  - Both `render_schema_html` (server, for pre-render HTML) and
+    `renderSchemaFieldJs` (JS, for newly-added leaves) emit
+    `title="..."` from `f.help` on the label. Browser shows on hover.
+  - Verified end-to-end: NRMSE's tolerance tooltip ("Pass iff NRMSE =
+    RMSE / signal_range stays below this value…"), range's bounds
+    labels ("Lower bound (optional)" / "Upper bound (optional)"),
+    event-timing's "Time tolerance (s)", dominant-frequency's
+    "Relative tolerance" all render as tooltips in the browser.
+
+- **Combinator kind dropdown gets help + per-option tooltips**.
+  `COMBINATOR_HELP` map seeds the `<select>` title plus per-`<option>`
+  titles (best-effort — browser support for `<option title>` is
+  patchy but no worse than no tooltip). Disabled `warn` option (when
+  children.length != 1) carries a specific tooltip pointing users to
+  the ⊕ wrap button.
+
+- **Range left as absolute-only**. Time-varying / relative bounds
+  rejected as scope creep: time-varying is already expressible via
+  windowed leaves under an AND (`range[0..5]:[-1,1] AND
+  range[5..10]:[-0.5,0.5]`); relative bounds is what tube is for.
+  Range is the "static safety envelope" leaf, preserving the
+  semantic split. Label clarity ("Lower bound (optional)" /
+  "Upper bound (optional)") is all that was needed.
+
+### Phase 2 — multi-peak frequency + spectrum subplot + event-timing plot
+
+- **`DominantFrequencyConfig` gained `n_peaks: int = 1`**. Default
+  preserves single-peak behavior for existing specs. `resolve_mode`
+  reads `n_peaks` from the override dict; `DominantFrequencyMode.
+  compare` forwards it through.
+
+- **`_compare_dominant_frequency` rewritten for multi-peak**. New
+  `_compute_fft_spectrum(t, v)` helper (shared with the reporter's
+  diagnostics embed) + `_find_top_n_peaks(freqs, spectrum, n, floor)`
+  (pure-numpy local-maxima detection; sorts by amplitude first to
+  filter spectral noise, then by frequency for predictable pairing).
+  Algorithm: FFT both signals, detect local maxima above
+  `min_frequency`, keep top-N by amplitude, sort those N by frequency,
+  pair by index, `max(rel_err_i)` must be ≤ `rel_tolerance` or the
+  leaf fails. Fails-with-reason when either side has fewer than N
+  peaks ("expected N peaks, detected ref=…/act=…").
+
+- **Spectrum embedded in diagnostics**. Capped at
+  `_SPECTRUM_EMBED_CAP = 512` bins so the reporter's subplot has
+  source data without the payload ballooning. Keys:
+  `ref_spectrum_freq`, `ref_spectrum_mag`, `act_spectrum_freq`,
+  `act_spectrum_mag`, `ref_peaks_hz`, `act_peaks_hz`,
+  `paired_peaks: [{ref_hz, act_hz, delta, rel_error, passed}]`.
+
+- **Dominant-frequency plot editor — spectrum subplot on activate**.
+  `MODE_PLOT_EDITORS['dominant-frequency']` activates a Plotly subplot
+  inside the leaf's editor slot (both full-tree and per-variable
+  mounts, independently). Shows reference (solid blue) vs actual
+  (dotted red) spectra + peak markers + shaded ± relative-tolerance
+  bands around each reference peak. Per user's choice: activated-
+  only, not always-visible. `deactivate` purges the Plotly instance.
+
+- **Event-timing plot contribution on the main trajectory plot**.
+  `MODE_PLOT_CONTRIBUTIONS['event-timing']` emits vertical dashed
+  gray lines at every reference event, vertical solid blue lines at
+  every actual event, and a shaded tolerance band (±`time_tolerance`)
+  around each reference event. Event detection JS-side via
+  `_detectEvents(time)` using the Modelica duplicate-time-sample
+  convention. CLI remains authoritative for pass/fail (pairing
+  algorithm stays Python-side); the contribution is purely visual.
+
+- **`FieldSpec.ui_min` / `ui_max` soft caps**. New metadata keys
+  (`"ui_min"`, `"ui_max"`) threaded through `derive_schema` onto
+  `FieldSpec`. `_render_field` (Python) and `renderSchemaFieldJs`
+  (JS) both emit `min="..."` / `max="..."` attrs on number inputs.
+  **Soft cap**: if the current value exceeds `ui_max`, the rendered
+  `max` attr is raised to `max(ui_max, current_value)` — browser
+  spinner doesn't clamp down, and users who write `n_peaks: 15` in
+  the spec don't get silently trimmed to 10. `n_peaks` gets
+  `ui_min=1, ui_max=10`; everything else unaffected.
+
+### Decisions
+
+- **Peak pairing = amplitude-then-frequency**, matching user's mental
+  model: amplitude filters noise first, frequency-sort gives
+  predictable pairing for PRBS / known-frequency-set tests.
+- **Failure mode on under-detection**: hard fail ("expected N
+  detected M"). Alternative was "pair only the M we found and
+  score those" — rejected because the user declared N peaks
+  explicitly; silently narrowing the contract is a worse UX than
+  a loud fail.
+- **Spectrum subplot activated-only, not always-visible**: matches
+  tube editor pattern; keeps report lighter; subplot mounts in both
+  full-tree and per-variable mounts on activate.
+- **Event-timing overlays on main plot (no subplot)**: events are
+  intrinsically time-domain; co-rendering with the trajectory is
+  more useful than a separate subplot.
+- **JS detects events client-side**: duplicate-time convention is
+  universal, simple to implement (3 lines), and avoids bloating
+  the embedded diagnostics with per-event arrays. CLI stays
+  authoritative for the *pairing algorithm* which is trickier.
+
+### Rejected alternatives
+
+- **Semantic change to visibility = "disable leaf"**. Would need
+  serialized state and validator tweaks. Kept plot-only; disable
+  button deferred.
+- **Time-varying or relative range bounds**. Achievable via existing
+  composition (windowed range leaves under AND); keeping range
+  scalar-only preserves the tube-vs-range semantic split.
+- **Per-peak tolerance** (`rel_tolerance: [0.01, 0.02, 0.005]`).
+  Possible future enhancement; single uniform tolerance covers the
+  stated PRBS / multi-modal use cases.
+- **Click-on-spectrum-to-pin-peak** interactive authoring. Deferred
+  to E.vNext; current flow is "look at subplot, tune n_peaks +
+  tolerance, rerun CLI."
+- **Peak width / Q-factor comparison**. Different leaf type (damping
+  regression). Deferred.
+
+### Files
+
+**Python**:
+- `src/modelica_testing/comparison/modes.py` — every ModeConfig field
+  gained `metadata={"label": ..., "help": ...}`. `n_peaks` added to
+  `DominantFrequencyConfig`. `resolve_mode` reads `n_peaks`.
+- `src/modelica_testing/comparison/comparator.py` —
+  `_compute_fft_spectrum`, `_find_top_n_peaks` helpers;
+  `_compare_dominant_frequency` rewritten for multi-peak +
+  spectrum-in-diagnostics.
+- `src/modelica_testing/reporting/ui/mode_controls.py` —
+  `FieldSpec.ui_min` / `ui_max`. `derive_schema` reads them from
+  metadata. `_render_field` emits `min` / `max` attrs.
+- `src/modelica_testing/reporting/plot_comparison.py` —
+  `_extract_spectrum(vc)` helper; `_augment_tree_view` attaches
+  `spectrum` to dominant-frequency leaves; `_extract_mode_values`
+  includes `n_peaks`.
+
+**JS**:
+- `src/modelica_testing/reporting/templates/interactive.js` —
+  `syncSiblingVisToggles`, visibility tooltip update.
+  `COMBINATOR_HELP` + kind-select tooltips.
+  `_detectEvents` + event-timing plot contribution.
+  `MODE_PLOT_EDITORS['dominant-frequency']` + `_renderSpectrum`.
+  `renderSchemaFieldJs` honors `ui_min` / `ui_max` soft caps.
+
+**Template**:
+- `src/modelica_testing/reporting/templates/interactive.html` —
+  structural hashes refreshed.
+
+**Tests**:
+- `tests/test_event_and_freq_modes.py` — +6 tests for multi-peak
+  (match, shift, amplitude-filter, under-detection fail, factory,
+  spectrum embed).
+- `tests/test_interactive_playwright.py` — +2 tests for visibility
+  (cross-mount sync, scoring-unaffected).
+
+### Validation
+
+- Full regression clean (744 pass / 1 skip, 0 regressions).
+- End-to-end smoke against `ModelicaTestingLib` — all 10 tests still
+  PASS; browser-verified tooltips render, `_detectEvents([0,1,2,2,3])
+  = [2]`, FrequencyTest's dominant-frequency leaf carries
+  `spectrum: true`.
+
+- **Test count**: 736 → 744 (+8: 6 Python + 2 Playwright).
+
+### Follow-on — `MultiFrequencyTest` added to `ModelicaTestingLib`
+
+New showcase model for the multi-peak feature: composite signal summing
+1/3/7 Hz sinusoids with distinct amplitudes (3, 2, 1) over 4 seconds.
+Distinct amplitudes make the amplitude-rank → frequency-sort pairing
+unambiguous. Spec entry uses `n_peaks=3`, `rel_tolerance=0.02`. Browser-
+verified end-to-end: all 3 peaks detected at 0.998 / 2.994 / 6.986 Hz
+(FFT bin resolution), paired deltas zero on self-regression, spectrum
+subplot mounts with 4 Plotly traces per editor slot (ref spectrum + act
+spectrum + ref peaks + act peaks). Baseline committed as `ref_0010.json`
+under `Resources/ReferenceResults/OpenModelica/linux/`. Suite now 11
+tests, all PASS. Also fixes a flake in
+`test_remove_leaf_popup_closes_on_escape` (same `setTimeout(..., 0)` race
+with the ESC listener that `test_wrap_popup_closes_on_escape` hit in
+D72 — fix is the same `wait_for_function` on `_cleanup` handler
+attachment). No test-count change from the flake fix alone.
+
+## D75 — Declared-peaks dominant-frequency + PointPlotEditor abstraction (2026-04-23)
+
+Replaces D74's top-N-by-amplitude algorithm with a **declarative table
+of expected frequencies**: user authors `peaks: [{freq, tolerance,
+tolerance_mode}, ...]`; algorithm looks for the strongest local maximum
+in each peak's tolerance window on the actual spectrum. Leaf passes iff
+every declared peak has a match. Also extracts the shared Shift-modifier
+interaction from the tube editor into a reusable
+`createPointPlotEditor`.
+
+### Scope (single PR, per user)
+
+- **Algorithm rewrite**: `_compare_dominant_frequency(ref_t, ref_v,
+  act_t, act_v, peaks=None)` in `comparator.py`. New
+  `_find_strongest_peak_in_window` helper. Per-peak tolerance + mode
+  (`rel` = fractional, `abs` = Hz). Unmatched peaks fail with reason
+  `"no peak in tolerance window"`. Empty `peaks` list fails with a
+  pointer at the reporter's Detect button.
+- **Config simplification**: `DominantFrequencyConfig.peaks` replaces
+  `rel_tolerance` + `min_frequency` + `n_peaks`. Clean break — no
+  backward compat.
+- **`createPointPlotEditor` factory** (~140 lines new JS): Shift+click
+  /drag/right-click wiring extracted. Consumers supply `getAnchors`,
+  `onClickAdd`, `onDragStep`, `onDragEnd`, `onRemove` callbacks; the
+  factory owns mousedown/mousemove/mouseup/contextmenu, px→data
+  conversion, nearest-anchor hit testing, RAF-throttled commits, and
+  cleanup. Anchors are `{pt, x, y, ...metadata}` with `pt` as the
+  stable reference the consumer mutates — drag tracks the ref, not
+  an index, so sorts mid-drag don't lose the target.
+- **Tube editor migrated** to the factory (behavior-preserving;
+  ~90 lines of mouse plumbing deleted from tube IIFE, replaced with a
+  ~20-line hook translating tube's (pt, bound) anchors to the generic
+  shape). All 9 existing tube Playwright tests still green.
+- **Dominant-frequency editor v2** (~350 lines): spectrum subplot +
+  declared-peak diamond markers (colored by CLI pass/fail) + shaded
+  acceptance bands + Shift-interactivity via the factory + declared-
+  peaks table with `+ add peak` and `🔍 Detect peaks from reference`
+  buttons. Auto-derived mode panel suppressed (custom editor owns the
+  slot, same pattern as tube).
+- **Live JS scorer**: `MODE_SCORERS['dominant-frequency']` ports the
+  peak-in-window scan (mirrors Python's
+  `_find_strongest_peak_in_window`). Dominant-frequency is no longer
+  CLI-authoritative; event-timing still is.
+- **Spec + baseline updates**: `FrequencyTest` and `MultiFrequencyTest`
+  specs rewritten to the declared-peaks format (`peaks: [{freq: 1.0,
+  tolerance: 0.01, tolerance_mode: "rel"}, ...]`). Baselines re-
+  accepted.
+
+### Decisions
+
+- **Replace, not add**. Declared peaks is strictly better for
+  regression (the use case); the discovery case is covered by the
+  Detect button which wraps the old top-N algorithm as a bootstrap.
+- **Per-peak tolerance + mode**. `rel` default (1% is the common
+  ask); `abs` for Hz-specific bands. Per-row in the table.
+- **Hard fail on unmatched peak**. User declared a peak, we couldn't
+  find it — that's the regression signal. Partial-match-with-warn is
+  achievable via `warn`-wrapping the leaf.
+- **Detect button REPLACES the table**. Users on a fresh test want a
+  known-good starting set. If they've already authored peaks, they
+  re-run CLI, not re-detect.
+- **Clean break — no backward compat** (per user's standing
+  preference). Old specs with `n_peaks`/`rel_tolerance` silently fall
+  through to the "no peaks declared" fail-with-hint path, nudging
+  users to the new format.
+- **JS scorer ported**. Live feedback on tolerance edits matches the
+  workflow users have for tube/range/nrmse.
+- **PointPlotEditor stays inline in `interactive.js`**. Separating
+  into its own module would need a bundler; factory is ~140 lines
+  and self-contained.
+
+### Rejected alternatives
+
+- Keep top-N as an alternate mode alongside declared. Detect button
+  covers it; extra mode is surface area for no benefit.
+- Per-peak tolerance as a parallel array on the config rather than
+  per-row. Couples shape to `peaks`; per-row is cleaner and maps to
+  table rows directly.
+- Click-on-spectrum-to-declare without a table. Plot interaction is
+  convenience over the primary table UI, not a replacement.
+- `createPointPlotEditor` as a separate .js file. Repo ships
+  `interactive.js` as a single static file — adding a module would
+  require a bundler.
+
+### Files
+
+**Python**: `comparison/modes.py` (config simplified), `comparison/
+comparator.py` (algorithm + new helper), `reporting/plot_comparison.py`
+(`_extract_spectrum`, `_extract_mode_values`, `_leaf_score_display`
+updated; `cli_authoritative` drops dominant-frequency).
+
+**JS** (`reporting/templates/interactive.js`): new
+`createPointPlotEditor` factory; tube editor migrated; declared-peaks
+editor rewritten; `MODE_SCORERS['dominant-frequency']` live-scorer
+added; `skipModeControls` suppresses auto-derive panel for
+dominant-frequency leaves.
+
+**Spec**: `FrequencyTest` + `MultiFrequencyTest` rewritten in
+`test_spec.json`; baselines re-accepted under
+`Resources/ReferenceResults/OpenModelica/linux/`.
+
+**Tests**: `test_event_and_freq_modes.py` rewritten
+(`TestDominantFrequencyMode` class: 8 declared-peaks tests replacing 6
+old top-N tests). `test_mode_controls.py::test_dominant_frequency`
+updated for passthrough `peaks` field. `test_interactive_playwright.py`
++2 browser-driven tests (editor activates with table; Detect button
+populates the table from reference spectrum).
+
+### Validation
+
+- Full regression clean (746 pass / 1 skip, 0 regressions).
+- Tube behavior identical post-refactor (all 9 tube Playwright tests
+  green).
+- End-to-end smoke on `ModelicaTestingLib` — all 10 testable tests
+  PASS; browser-verified `MultiFrequencyTest` report shows 2 spectrum
+  subplots + 2 peak-editor tables + 3 declared peaks (`[1.0, 3.0,
+  7.0]` Hz) in leaf state + 2 Detect buttons across the two mounts.
+
+- **Test count**: 744 → 746 (+2; net: +8 Python + 2 Playwright new,
+  −6 Python old multi-peak tests = +4 author-intended, plus
+  refactor-adjacent noise).
+
+

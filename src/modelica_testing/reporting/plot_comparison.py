@@ -78,43 +78,73 @@ def _build_stats_section(
     return {"title": title, "rows": rows}
 
 
-def _extract_mode_values(vc: VariableComparison, mode: str) -> dict:
+def _extract_mode_values(
+    vc: VariableComparison, mode: str,
+    spec_params: Optional[dict] = None,
+) -> dict:
     """Produce the per-mode config-value dict for the UI panel + JS scorer.
 
     Mirrors the fields each :class:`ComparisonMode` Config dataclass exposes.
-    Values come from the already-computed VariableComparison (``tolerance_used``
-    is authoritative), falling back to diagnostic/config defaults where the
-    raw spec isn't reachable from here.
+    Source preference, in order:
+
+    1. **Spec params** (``spec_params``) — the authored config from the
+       LeafSpec, round-tripped through :func:`spec_to_view`. What the user
+       wrote. Always preferred for config-side fields (tube_rel, tube_abs,
+       count_must_match, ...) so the reporter's mode-values reflect the
+       spec, not mode-defaults.
+    2. **Diagnostics** (``vc.diagnostics``) — values stashed by the
+       comparator. Source of truth for derived fields that aren't in the
+       spec (range bounds re-emit + detected-reference-peaks for
+       dominant-frequency).
+    3. **Hard defaults** — only for fields the caller can't leave blank.
+
+    Fixes D75 regression where tube leaves' ``tube_rel``/``tube_abs``/
+    ``tube_min_width`` came back as mode-dataclass-default ``0.0`` from
+    diag (which never carries them), overwriting spec values in
+    ``leafState.params`` on the JS side and producing noisy ``add`` ops
+    in export patches.
     """
     diag = vc.diagnostics or {}
+    sp = spec_params or {}
+
+    def pick(*keys, default=None):
+        """First non-None value from (spec_params, diag)."""
+        for k in keys:
+            if k in sp and sp[k] is not None:
+                return sp[k]
+        for k in keys:
+            if k in diag and diag[k] is not None:
+                return diag[k]
+        return default
+
     if mode == "nrmse":
         return {"tolerance": float(vc.tolerance_used)}
     if mode == "final_only":
         return {"tolerance": float(vc.tolerance_used)}
     if mode == "tube":
-        # Tube has its own rich editor; the auto-derived panel is supplementary.
         return {
-            "tube_width_mode": diag.get("tube_width_mode"),
-            "tube_abs": float(diag.get("tube_abs", 0.0)),
-            "tube_rel": float(diag.get("tube_rel", 0.0)),
-            "tube_min_width": float(diag.get("tube_min_width", 0.0)),
-            "tube_interpolation": diag.get("tube_interpolation", "linear"),
+            "tube_width_mode": pick("tube_width_mode"),
+            "tube_abs": float(pick("tube_abs", default=0.0) or 0.0),
+            "tube_rel": float(pick("tube_rel", default=0.0) or 0.0),
+            "tube_min_width": float(pick("tube_min_width", default=0.0) or 0.0),
+            "tube_interpolation": pick("tube_interpolation", default="linear"),
         }
     if mode == "range":
-        # Range bounds round-trip via diagnostics (comparator stashes them).
+        # Range bounds live in diagnostics because _compare_range re-stashes
+        # them for consistent reporting; spec overrides if the user edited.
         return {
-            "min_value": diag.get("min_value"),
-            "max_value": diag.get("max_value"),
+            "min_value": pick("min_value", "min"),
+            "max_value": pick("max_value", "max"),
         }
     if mode == "event-timing":
         return {
-            "time_tolerance": float(diag.get("time_tolerance", 1e-3)),
-            "count_must_match": bool(diag.get("count_must_match", True)),
+            "time_tolerance": float(pick("time_tolerance", default=1e-3) or 1e-3),
+            "count_must_match": bool(pick("count_must_match", default=True)),
         }
     if mode == "dominant-frequency":
         return {
-            "rel_tolerance": float(diag.get("rel_tolerance", vc.tolerance_used)),
-            "min_frequency": float(diag.get("min_frequency", 0.0)),
+            "peaks": list(pick("peaks", default=None)
+                          or diag.get("peaks_declared") or []),
         }
     return {}
 
@@ -174,14 +204,20 @@ def _leaf_score_display(vc: VariableComparison) -> tuple[str, str]:
         )
     if mode == "dominant-frequency":
         diag = vc.diagnostics or {}
-        f_ref = diag.get("ref_dominant_hz", 0.0)
-        f_act = diag.get("act_dominant_hz", 0.0)
-        tol = diag.get("rel_tolerance", 0.0)
+        paired = diag.get("paired_peaks") or []
+        n_matched = sum(1 for p in paired if p.get("matched_hz") is not None)
+        n_declared = len(paired)
+        if n_declared == 0:
+            return (
+                "no peaks declared",
+                "No peaks declared — use 'Detect peaks from reference' "
+                "to seed the table from the reference spectrum",
+            )
         return (
-            f"|Δf|/f {vc.nrmse:.3e} ({f_act:.3g}/{f_ref:.3g} Hz)",
-            f"Relative freq error {vc.nrmse:.3e} vs {tol:.3e} "
-            f"(actual {f_act:.3g} Hz / reference {f_ref:.3g} Hz) "
-            f"→ {'PASS' if vc.passed else 'FAIL'}",
+            f"{n_matched}/{n_declared} peaks matched",
+            f"{n_matched} / {n_declared} declared peaks found in actual "
+            f"spectrum within tolerance → "
+            f"{'PASS' if vc.passed else 'FAIL'}",
         )
     return (
         f"NRMSE {vc.nrmse:.3e}",
@@ -215,7 +251,11 @@ def _augment_tree_view(
         if vc is None:
             return
         mode = vc.mode or "nrmse"
-        mode_values = _extract_mode_values(vc, mode)
+        # Spec params (from the authored LeafSpec, round-tripped via
+        # spec_to_view) are the source of truth for config-side fields;
+        # extract_mode_values prefers them over diagnostic fallbacks.
+        spec_params = view.get("params") or {}
+        mode_values = _extract_mode_values(vc, mode, spec_params=spec_params)
         window_values = _extract_window_values(vc)
         var_label = vc.name or view.get("variable", "")
         score_display, criterion = _leaf_score_display(vc)
@@ -251,7 +291,14 @@ def _augment_tree_view(
                 time_start=t_start, time_end=t_end,
             ),
             "window_values": window_values,
-            "cli_authoritative": mode in ("event-timing", "dominant-frequency"),
+            # Dominant-frequency now has a live JS scorer (D75) — only
+            # event-timing remains CLI-authoritative (event pairing stays
+            # Python-side).
+            "cli_authoritative": mode == "event-timing",
+            # Dominant-frequency leaves carry their spectrum arrays so the
+            # reporter's editor-slot subplot can render without recomputing.
+            # Empty dict for other modes; the JS editor short-circuits.
+            "spectrum": _extract_spectrum(vc) if mode == "dominant-frequency" else None,
         })
         return
     for child in view.get("children", []):
@@ -259,6 +306,32 @@ def _augment_tree_view(
             child, comparisons_by_path,
             time_bounds_by_variable=time_bounds_by_variable,
         )
+
+
+def _extract_spectrum(vc: VariableComparison) -> dict:
+    """Pull the FFT spectrum + declared/matched peaks from a dominant-
+    frequency leaf's diagnostics. Consumed by the reporter's editor-slot
+    subplot.
+
+    ``detected_reference_peaks_hz`` is the reference spectrum's top peaks,
+    always present — the reporter's "Detect peaks from reference" button
+    reads from it to bootstrap a declared-peaks table on a fresh test.
+
+    The comparator caps spectrum length at ``_SPECTRUM_EMBED_CAP`` (512
+    bins) precisely so this dict doesn't balloon the HTML payload.
+    """
+    diag = vc.diagnostics or {}
+    return {
+        "ref_freq": list(diag.get("ref_spectrum_freq") or []),
+        "ref_mag": list(diag.get("ref_spectrum_mag") or []),
+        "act_freq": list(diag.get("act_spectrum_freq") or []),
+        "act_mag": list(diag.get("act_spectrum_mag") or []),
+        "peaks_declared": list(diag.get("peaks_declared") or []),
+        "paired_peaks": list(diag.get("paired_peaks") or []),
+        "detected_reference_peaks_hz": list(
+            diag.get("detected_reference_peaks_hz") or []
+        ),
+    }
 
 
 def _extract_window_values(vc: VariableComparison) -> dict:
@@ -552,7 +625,14 @@ def _build_template_context(
     n_nobaseline = (
         len(result.variables) if (not comparisons and result and result.variables) else 0
     )
-    sim_failed = len(comparisons) == 0 and n_nobaseline == 0
+    # simulate_only tests legitimately have no comparisons and no
+    # variables — the pass signal is "the simulation ran". Don't flag
+    # them as sim_failed, which would otherwise render a misleading
+    # "Simulation failed" banner in the summary.
+    is_simulate_only = bool(test_model and getattr(test_model, "simulate_only", False))
+    sim_failed = (
+        len(comparisons) == 0 and n_nobaseline == 0 and not is_simulate_only
+    )
 
     # --- Key stats for top-level summary ---
     # Pull out the most important metrics from both current and reference
@@ -622,7 +702,11 @@ def _build_template_context(
     # Stamp overlays onto each trajectory by variable name. Missing /
     # invalid overlays drop off the per-plot path but stay in
     # overlay_summary so the report can surface them as "not rendered".
+    # The nobaseline list gets the same pass so NO_REF tests can still show
+    # sibling-backend / companion / soft_check overlays — useful for the
+    # pre-accept cross-check story on a brand-new backend / OS.
     attach_overlays_to_trajectories(trajectories, overlays)
+    attach_overlays_to_trajectories(nobaseline_trajectories, overlays)
     overlay_rows = overlay_summary(overlays)
 
     # --- Stage 2: recursive tree view + per-variable plot grouping ---
@@ -710,6 +794,7 @@ def _build_template_context(
         "model_id": model_id,
         "n_passed": n_passed,
         "sim_failed": sim_failed,
+        "is_simulate_only": is_simulate_only,
         "last_run_at": last_run_at,
         "last_run_str": last_run_str,
         "warnings": warning_rows,
@@ -892,6 +977,13 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
 
     if not comp.sim_success:
         status_text, status_class = "SIM_FAIL", "sim-fail"
+    elif test and getattr(test, "simulate_only", False):
+        # simulate_only tests pass iff the simulation ran — presence of a
+        # baseline is irrelevant. Keep the PASS/FAIL signal instead of
+        # falling through to NO_REF.
+        status_text, status_class = (
+            ("PASS", "pass") if comp.passed else ("FAIL", "fail")
+        )
     elif not comp.has_reference:
         status_text, status_class = "NO_REF", "no-ref"
     elif comp.passed:

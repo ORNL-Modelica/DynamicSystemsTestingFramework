@@ -6,5 +6,6 @@ NoUnitTest
 SimulateOnlyTest
 TubeToleranceTest
 FrequencyTest
+MultiFrequencyTest
 MetricTreeTest
 RangeCheckTest

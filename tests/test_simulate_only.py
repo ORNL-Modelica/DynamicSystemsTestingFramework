@@ -82,3 +82,59 @@ class TestSimulateOnly:
             n_vars=1,
         )
         assert t.simulate_only is False
+
+    def test_compare_all_simulate_only_without_baseline_passes(self):
+        """Regression: SimulateOnlyTest on a fresh backend/OS pair has no
+        stored reference, but it must still pass. Pre-fix, compare_all
+        short-circuited to NO_REF for any test without a baseline; that
+        collapsed simulate_only tests to NO_REF and later tripped the
+        per-test template's sim_failed heuristic.
+        """
+        from modelica_testing.comparison.comparator import compare_all
+
+        class _FakeStore:
+            def get_reference(self, _model_id):
+                return None  # no baseline exists yet
+
+            def get_soft_checks(self, _model_id):
+                return {}
+
+            def get_companions(self, _model_id):
+                return {}
+
+        test = _make_test(simulate_only=True)
+        results = {test.model_id: _make_successful_result()}
+        comps = compare_all([test], results, _FakeStore())
+
+        assert len(comps) == 1
+        c = comps[0]
+        assert c.passed is True
+        assert c.sim_success is True
+        # has_reference stays False (the baseline really is missing) —
+        # downstream renderers recognize simulate_only + passed and show
+        # PASS regardless.
+        assert c.has_reference is False
+        assert c.metric_tree is not None
+        assert c.metric_tree.label == "simulate-only"
+
+    def test_compare_all_simulate_only_sim_failure_still_fails(self):
+        """When sim itself fails, simulate_only follows the regular sim-fail
+        path — FAIL, not PASS.
+        """
+        from modelica_testing.comparison.comparator import compare_all
+
+        class _FakeStore:
+            def get_reference(self, _):
+                return None
+
+            def get_soft_checks(self, _):
+                return {}
+
+            def get_companions(self, _):
+                return {}
+
+        test = _make_test(simulate_only=True)
+        results = {test.model_id: _make_failed_result()}
+        comps = compare_all([test], results, _FakeStore())
+        assert comps[0].passed is False
+        assert comps[0].sim_success is False

@@ -46,11 +46,19 @@ function initWorkingTree() {
 
 (function initLeafState() {
   walkLeaves(TREE_VIEW, (leaf) => {
+    // ``original_params`` mirrors the INITIAL state the user is editing
+    // from (spec values merged with mode_values). buildPatchData diffs
+    // params-vs-original to decide which ops to emit — if original only
+    // held spec values and params had mode_values filled in, every
+    // mode-defaulted field would show as a diff even when the user
+    // hadn't touched anything. Pre-fix (D74/D75) this produced noisy
+    // 5-op patches on untouched tube leaves; now the diff is quiet.
+    const merged = Object.assign({}, leaf.params || {}, leaf.mode_values || {});
     leafState[leaf.path] = {
-      params: Object.assign({}, leaf.params || {}, leaf.mode_values || {}),
+      params: Object.assign({}, merged),
       window: Object.assign({}, leaf.window || {}),
       visible: true,
-      original_params: Object.assign({}, leaf.params || {}),
+      original_params: Object.assign({}, merged),
       original_window: Object.assign({}, leaf.window || {}),
     };
   });
@@ -172,7 +180,35 @@ const MODE_SCORERS = {
     }
     return true;
   },
-  // event-timing + dominant-frequency intentionally absent — CLI-authoritative.
+  // event-timing intentionally absent — CLI-authoritative (event pairing
+  // algorithm stays Python-side).
+  'dominant-frequency': (leaf) => {
+    // Declared-peaks live scorer (D75). For each declared peak, check
+    // whether a local-maximum exists in the actual spectrum within the
+    // peak's tolerance window. Uses the CLI-embedded spectrum (no JS-side
+    // FFT). Matches the Python ``_find_strongest_peak_in_window`` contract.
+    const spec = leaf.spectrum || {};
+    const pks = ((leafState[leaf.path] || {}).params || {}).peaks || [];
+    if (!pks.length) return false;
+    const actF = spec.act_freq || [], actM = spec.act_mag || [];
+    if (actF.length < 3) return !!leaf.passed;
+    for (const pk of pks) {
+      const f = Number(pk.freq);
+      const tol = Number(pk.tolerance) || 0;
+      if (!(f > 0)) return false;
+      const [lo, hi] = pk.tolerance_mode === 'abs'
+        ? [f - tol, f + tol]
+        : [f * (1 - tol), f * (1 + tol)];
+      // Find any local max in [lo, hi].
+      let found = false;
+      for (let i = 1; i < actF.length - 1; i++) {
+        if (actF[i] < lo || actF[i] > hi) continue;
+        if (actM[i] > actM[i - 1] && actM[i] > actM[i + 1]) { found = true; break; }
+      }
+      if (!found) return false;
+    }
+    return true;
+  },
 };
 
 function _paramNumber(leaf, field, fallback) {
@@ -360,9 +396,57 @@ const MODE_PLOT_CONTRIBUTIONS = {
     }
     return { traces, shapes: [] };
   },
-  'event-timing': () => ({ traces: [], shapes: [] }),
+  'event-timing': (leaf, traj) => {
+    // Overlay reference + actual event instants as vertical lines, with a
+    // tolerance band around each reference event. Event detection JS-side
+    // uses the Modelica duplicate-time-sample convention — two samples at
+    // the same t flag a solver event. CLI remains authoritative for pass/
+    // fail (event pairing is non-trivial and stays Python-side); this
+    // contribution is purely visual.
+    const refEvents = _detectEvents(traj.ref_time || []);
+    const actEvents = _detectEvents(traj.act_time || []);
+    const tol = Number(((leafState[leaf.path] || {}).params || {}).time_tolerance) || 0;
+    const shapes = [];
+    for (const t of refEvents) {
+      if (tol > 0) {
+        // Tolerance band first so the vertical line draws on top.
+        shapes.push({
+          type: 'rect', xref: 'x', yref: 'paper',
+          x0: t - tol, x1: t + tol, y0: 0, y1: 1,
+          line: { width: 0 },
+          fillcolor: 'rgba(117,117,117,0.09)',
+        });
+      }
+      shapes.push({
+        type: 'line', xref: 'x', yref: 'paper',
+        x0: t, x1: t, y0: 0, y1: 1,
+        line: { color: '#757575', width: 1, dash: 'dash' },
+        name: `ref_event:${leaf.path}`,
+      });
+    }
+    for (const t of actEvents) {
+      shapes.push({
+        type: 'line', xref: 'x', yref: 'paper',
+        x0: t, x1: t, y0: 0, y1: 1,
+        line: { color: '#1976D2', width: 1.5 },
+        name: `act_event:${leaf.path}`,
+      });
+    }
+    return { traces: [], shapes };
+  },
   'dominant-frequency': () => ({ traces: [], shapes: [] }),
 };
+
+function _detectEvents(time) {
+  // Modelica events manifest as consecutive samples at the same ``t`` — one
+  // pre-event, one post-event. Return a de-duplicated list of event times.
+  const out = [];
+  if (!time || time.length < 2) return out;
+  for (let i = 1; i < time.length; i++) {
+    if (time[i] === time[i - 1]) out.push(time[i]);
+  }
+  return out;
+}
 
 // ---- Plot editor registry (MODE_PLOT_EDITORS) ----
 // Parallel to MODE_PLOT_CONTRIBUTIONS. Each entry describes an
@@ -403,9 +487,155 @@ const MODE_PLOT_EDITORS = {};
 //   * Shift+drag on a control-point marker — moves it live.
 //   * Shift+right-click on a marker — removes (≥1 point must remain).
 //   * Live pass/fail + "% inside" + worst-violation readout.
+// ---- createPointPlotEditor — shared Shift-modifier interaction layer ----
+// Extracted from tube editor; also used by dominant-frequency's declared-
+// peaks spectrum editor. Any future mode that needs "user-draggable
+// points on a Plotly plot" should reuse this rather than duplicate the
+// mousedown/move/up/contextmenu wiring + px→data math + drag-reference
+// tracking. The consumer only has to describe the point model via
+// callbacks; the factory owns interaction plumbing.
+//
+// Design choices worth noting:
+//   * Anchors (not points) — the consumer returns ``[{pt, x, y}]`` from
+//     ``getAnchors``. A single point can contribute multiple anchors (tube
+//     has upper + lower bounds per point). ``pt`` is the stable reference
+//     the consumer mutates; ``x``/``y`` are the current resolved plot-
+//     space coordinates used for hit testing.
+//   * Drag by pt identity — the drag state tracks ``anchor.pt``, not an
+//     index. Consumers can re-order their internal arrays mid-drag
+//     (tube sorts by time on every frame) and the factory keeps working
+//     because it asks for anchors fresh each frame.
+//   * RAF throttling — onDragStep fires on every mousemove but the
+//     consumer's ``commit()`` is usually expensive (re-render plot +
+//     re-evaluate pass/fail). The factory batches into requestAnimation
+//     Frame so fast-dragging doesn't drown the main thread.
+function createPointPlotEditor(spec) {
+  const {
+    getAnchors,          // (leaf) => [{pt, x, y, bound?, label?}]
+    onClickAdd,          // (leaf, plotEl, x, y, commit) => void
+    onDragStep,          // (leaf, plotEl, anchor, x, y, commit) => void
+    onDragEnd,           // (leaf, plotEl, anchor, commit) => void
+    onRemove,            // (leaf, plotEl, anchor, commit) => void
+    hitRadiusPx = 15,    // max click-distance-in-pixels to count as "on" an anchor
+  } = spec;
+
+  const wired = new WeakMap();
+
+  function _pxToData(plotEl, evt) {
+    const xa = plotEl._fullLayout?.xaxis;
+    const ya = plotEl._fullLayout?.yaxis;
+    if (!xa || !ya) return null;
+    const area = plotEl.querySelector('.nsewdrag') || plotEl;
+    const rect = area.getBoundingClientRect();
+    return { x: xa.p2d(evt.clientX - rect.left), y: ya.p2d(evt.clientY - rect.top) };
+  }
+
+  function _findNearestAnchor(plotEl, leaf, dataX, dataY) {
+    const xa = plotEl._fullLayout?.xaxis;
+    const ya = plotEl._fullLayout?.yaxis;
+    if (!xa || !ya) return null;
+    const anchors = getAnchors(leaf) || [];
+    let best = null;
+    for (const a of anchors) {
+      const dx = xa.d2p(a.x) - xa.d2p(dataX);
+      const dy = ya.d2p(a.y) - ya.d2p(dataY);
+      const dist = Math.hypot(dx, dy);
+      if (!best || dist < best.dist) best = { anchor: a, dist };
+    }
+    return best;
+  }
+
+  return {
+    attach(leaf, plotEl, commit) {
+      const drag = { active: false, anchor: null, clickStart: null };
+      let rafPending = null;
+
+      function onMouseDown(evt) {
+        if (!evt.shiftKey || evt.button !== 0) return;
+        evt.stopPropagation();
+        evt.stopImmediatePropagation();
+        evt.preventDefault();
+        const d = _pxToData(plotEl, evt);
+        if (!d) return;
+        const nearest = _findNearestAnchor(plotEl, leaf, d.x, d.y);
+        if (nearest && nearest.dist < hitRadiusPx) {
+          drag.active = true;
+          drag.anchor = nearest.anchor;
+        } else {
+          drag.clickStart = d;
+        }
+      }
+
+      function onMouseMove(evt) {
+        if (drag.active) {
+          evt.preventDefault();
+          const d = _pxToData(plotEl, evt);
+          if (!d || !drag.anchor) return;
+          onDragStep(leaf, plotEl, drag.anchor, d.x, d.y, commit);
+          // Coalesce rapid mousemoves into one RAF so commit() (which
+          // re-renders Plotly) doesn't run per pixel.
+          if (!rafPending) {
+            rafPending = requestAnimationFrame(() => {
+              commit();
+              rafPending = null;
+            });
+          }
+        } else if (drag.clickStart) {
+          const d = _pxToData(plotEl, evt);
+          if (!d) return;
+          if (Math.abs(d.x - drag.clickStart.x) > 1e-10 ||
+              Math.abs(d.y - drag.clickStart.y) > 1e-10) drag.clickStart = null;
+        }
+      }
+
+      function onMouseUp() {
+        if (drag.active) {
+          const anchor = drag.anchor;
+          drag.active = false; drag.anchor = null;
+          if (onDragEnd) onDragEnd(leaf, plotEl, anchor, commit);
+          commit();
+          return;
+        }
+        if (drag.clickStart) {
+          const c = drag.clickStart;
+          drag.clickStart = null;
+          if (onClickAdd) onClickAdd(leaf, plotEl, c.x, c.y, commit);
+        }
+      }
+
+      function onContextMenu(evt) {
+        if (!evt.shiftKey) return;
+        const d = _pxToData(plotEl, evt);
+        if (!d) return;
+        const nearest = _findNearestAnchor(plotEl, leaf, d.x, d.y);
+        if (nearest && nearest.dist < hitRadiusPx) {
+          evt.preventDefault();
+          if (onRemove) onRemove(leaf, plotEl, nearest.anchor, commit);
+        }
+      }
+
+      plotEl.addEventListener('mousedown', onMouseDown, true);
+      plotEl.addEventListener('contextmenu', onContextMenu, true);
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+
+      wired.set(plotEl, () => {
+        plotEl.removeEventListener('mousedown', onMouseDown, true);
+        plotEl.removeEventListener('contextmenu', onContextMenu, true);
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      });
+    },
+
+    detach(plotEl) {
+      const cleanup = wired.get(plotEl);
+      if (cleanup) { cleanup(); wired.delete(plotEl); }
+    },
+  };
+}
+
 MODE_PLOT_EDITORS['tube'] = (function() {
   const editorState = {};   // leafPath → {synced, perPointModes}
-  const wired = new WeakMap();
 
   // ---- state accessors ------------------------------------------------
   function getParams(leaf) { return (leafState[leaf.path] || {}).params || {}; }
@@ -516,38 +746,36 @@ MODE_PLOT_EDITORS['tube'] = (function() {
   }
 
   // ---- resolve point to absolute y-bounds ----------------------------
-  function resolvePoint(leaf, pt, ptIdx) {
-    const globalMode = getWidthMode(leaf);
-    const es = ensureEditorState(leaf);
-    const pm = es.perPointModes[ptIdx] || { upperMode: null, lowerMode: null };
-    const uMode = es.synced ? globalMode : (pm.upperMode || globalMode);
-    const lMode = es.synced ? globalMode : (pm.lowerMode || globalMode);
+  // ``resolvePoint`` returns the absolute (y-axis) bounds AT A SINGLE
+  // CONTROL POINT'S time — useful for the draggable-marker visual. The
+  // CONTOUR of the tube envelope across the full grid is NOT this
+  // function's responsibility; see ``resolveAllBoundsOnGrid`` for that
+  // (it applies the width-then-combine-with-ref(t) semantic that matches
+  // Python's ``_compare_tube``).
+  function resolvePoint(leaf, pt, _ptIdx) {
+    const mode = getWidthMode(leaf);
     const rv = refValueAt(leaf, pt.time);
     const rvAbs = Math.abs(rv);
     const minW = getMinWidth(leaf);
 
     let upper, lower;
-    if (uMode === 'absolute') upper = Number(pt.upper);
-    else if (uMode === 'rel') {
-      let w = Number(pt.upper) * rvAbs;
-      if (minW > 0) w = Math.max(w, minW);
-      upper = rv + w;
+    if (mode === 'absolute') {
+      upper = Number(pt.upper);
+      lower = Number(pt.lower);
+    } else if (mode === 'rel') {
+      let uw = Number(pt.upper) * rvAbs;
+      let lw = Number(pt.lower) * rvAbs;
+      if (minW > 0) { uw = Math.max(uw, minW); lw = Math.max(lw, minW); }
+      upper = rv + uw;
+      lower = rv - lw;
     } else {
-      let w = Number(pt.upper);
-      if (minW > 0) w = Math.max(w, minW);
-      upper = rv + w;
+      let uw = Number(pt.upper);
+      let lw = Number(pt.lower);
+      if (minW > 0) { uw = Math.max(uw, minW); lw = Math.max(lw, minW); }
+      upper = rv + uw;
+      lower = rv - lw;
     }
-    if (lMode === 'absolute') lower = Number(pt.lower);
-    else if (lMode === 'rel') {
-      let w = Number(pt.lower) * rvAbs;
-      if (minW > 0) w = Math.max(w, minW);
-      lower = rv - w;
-    } else {
-      let w = Number(pt.lower);
-      if (minW > 0) w = Math.max(w, minW);
-      lower = rv - w;
-    }
-    return { upper, lower, uMode, lMode };
+    return { upper, lower, uMode: mode, lMode: mode };
   }
 
   function setBoundFromAbsoluteY(leaf, ptIdx, bound, yAbs) {
@@ -577,17 +805,60 @@ MODE_PLOT_EDITORS['tube'] = (function() {
   }
 
   // ---- pass/fail + rendering helpers ---------------------------------
+  // Mirrors Python's ``_compare_tube`` + ``_interpolate_tube_widths``:
+  // interpolate the RAW width values (what the user authored as
+  // ``pt.upper`` / ``pt.lower``) across the grid, THEN at each grid point
+  // combine with the ref(t) value there under the current width-mode.
+  // Previously this function resolved each control point to its absolute
+  // y-bound and then linearly interpolated those absolute bounds — which
+  // gave a straight-line envelope between endpoints even when the signal
+  // was curvy. CLI's tube scoring uses the width-first approach, so the
+  // polygon visual + control-point markers now match what the CLI scores.
   function resolveAllBoundsOnGrid(leaf, grid) {
     const pts = [...getPoints(leaf)].sort((a, b) => a.time - b.time);
+    if (pts.length === 0) {
+      return { upper: [], lower: [], ctrlTimes: [], resUpper: [], resLower: [] };
+    }
     const ctrlTimes = pts.map(p => p.time);
-    const resUpper = pts.map((p, i) => resolvePoint(leaf, p, i).upper);
-    const resLower = pts.map((p, i) => resolvePoint(leaf, p, i).lower);
+    const rawUpperCtrl = pts.map(p => Number(p.upper));
+    const rawLowerCtrl = pts.map(p => Number(p.lower));
     const fn = getInterpolation(leaf) === 'constant' ? _interpStep : _interpLinear;
-    return {
-      upper: grid.map(t => fn(ctrlTimes, resUpper, t)),
-      lower: grid.map(t => fn(ctrlTimes, resLower, t)),
-      ctrlTimes, resUpper, resLower,
-    };
+    // Interpolate RAW widths / bounds on the grid first.
+    const rawUpperGrid = grid.map(t => fn(ctrlTimes, rawUpperCtrl, t));
+    const rawLowerGrid = grid.map(t => fn(ctrlTimes, rawLowerCtrl, t));
+
+    const mode = getWidthMode(leaf);
+    const minW = getMinWidth(leaf);
+    const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+    const rt = traj.ref_time || traj.act_time || [];
+    const rv = traj.ref_values || traj.act_values || [];
+
+    // Per-grid-point ref value so rel mode tracks the curve.
+    const refAt = grid.map(t => (rt.length ? _interpLinear(rt, rv, t) : 0));
+
+    const upper = grid.map((t, i) => {
+      if (mode === 'absolute') return rawUpperGrid[i];
+      let w = mode === 'rel'
+        ? rawUpperGrid[i] * Math.abs(refAt[i])
+        : rawUpperGrid[i];  // 'band'
+      if (minW > 0) w = Math.max(w, minW);
+      return refAt[i] + w;
+    });
+    const lower = grid.map((t, i) => {
+      if (mode === 'absolute') return rawLowerGrid[i];
+      let w = mode === 'rel'
+        ? rawLowerGrid[i] * Math.abs(refAt[i])
+        : rawLowerGrid[i];
+      if (minW > 0) w = Math.max(w, minW);
+      return refAt[i] - w;
+    });
+
+    // Marker-placement bounds (same semantic, evaluated at each control
+    // point's time rather than on the render grid).
+    const resUpper = pts.map(p => resolvePoint(leaf, p, 0).upper);
+    const resLower = pts.map(p => resolvePoint(leaf, p, 0).lower);
+
+    return { upper, lower, ctrlTimes, resUpper, resLower };
   }
 
   function evaluatePass(leaf) {
@@ -914,131 +1185,52 @@ MODE_PLOT_EDITORS['tube'] = (function() {
       : `<span class="fail">FAIL</span> (${r.pctInside.toFixed(1)}% inside · worst ${r.worst.toExponential(2)} at t=${r.worstT.toPrecision(4)})`;
   }
 
-  // ---- plot interactions ---------------------------------------------
-  function attachPlotHandlers(leaf, plotEl, commit) {
-    // Drag tracks the pt reference, not an index. Sorting during drag
-    // reorders the array in place (sortPointsAndModes keeps the same pt
-    // objects); we re-derive the current index via indexOf each frame.
-    // This is what gives the "drag past another point" smooth-swap: the
-    // polygon re-draws on every frame with all points in time order,
-    // and the table row follows its pt object through the sort.
-    const drag = { active: false, pt: null, bound: null, clickStart: null };
-    let rafPending = null;
-
-    function pxToData(evt) {
-      const xa = plotEl._fullLayout?.xaxis;
-      const ya = plotEl._fullLayout?.yaxis;
-      if (!xa || !ya) return null;
-      const area = plotEl.querySelector('.nsewdrag') || plotEl;
-      const rect = area.getBoundingClientRect();
-      return { x: xa.p2d(evt.clientX - rect.left), y: ya.p2d(evt.clientY - rect.top) };
-    }
-
-    function findNearestCP(dataX, dataY) {
-      const xa = plotEl._fullLayout?.xaxis;
-      const ya = plotEl._fullLayout?.yaxis;
-      if (!xa || !ya) return null;
-      const pts = getPoints(leaf);
-      let best = null;
-      pts.forEach((pt, i) => {
+  // ---- plot interactions (delegated to shared PointPlotEditor) -------
+  // Tube-specific hooks translate the generic "anchor" model to
+  // (pt, bound) pairs. A point contributes two anchors (upper + lower);
+  // drag mutates pt.time (x) plus the side (y) via mode-aware projection.
+  const _pointEditor = createPointPlotEditor({
+    getAnchors(leaf) {
+      return getPoints(leaf).flatMap((pt, i) => {
         const r = resolvePoint(leaf, pt, i);
-        for (const bound of ['upper', 'lower']) {
-          const dx = xa.d2p(pt.time) - xa.d2p(dataX);
-          const dy = ya.d2p(r[bound]) - ya.d2p(dataY);
-          const dist = Math.hypot(dx, dy);
-          if (!best || dist < best.dist) best = { pt, ptIdx: i, bound, dist };
-        }
+        return [
+          { pt, bound: 'upper', x: pt.time, y: r.upper },
+          { pt, bound: 'lower', x: pt.time, y: r.lower },
+        ];
       });
-      return best;
-    }
+    },
+    onClickAdd(leaf, _plotEl, x, y, commit) {
+      addPointAt(leaf, x, y, commit);
+    },
+    onDragStep(leaf, _plotEl, anchor, x, y, _commit) {
+      // Mutate the tracked pt in place — no setPoints clone, so
+      // anchor.pt stays a live reference across the sort.
+      const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+      const rt = traj.ref_time || traj.act_time || [];
+      const tMin = rt[0], tMax = rt[rt.length - 1];
+      anchor.pt.time = roundSig(Math.max(tMin, Math.min(tMax, x)), 6);
+      const ptIdx = getPoints(leaf).indexOf(anchor.pt);
+      if (ptIdx >= 0) setBoundFromAbsoluteY(leaf, ptIdx, anchor.bound, y);
+      // Sort during drag so a crossing point smoothly swaps; the pt
+      // reference follows its new index.
+      sortPointsAndModes(leaf);
+      refreshTables(leaf, _commit);
+    },
+    onDragEnd(leaf, _plotEl, _anchor, commit) {
+      sortPointsAndModes(leaf);
+      refreshTables(leaf, commit);
+    },
+    onRemove(leaf, _plotEl, anchor, commit) {
+      const idx = getPoints(leaf).indexOf(anchor.pt);
+      if (idx >= 0) removePointAt(leaf, idx, commit);
+    },
+  });
 
-    function onMouseDown(evt) {
-      if (!evt.shiftKey || evt.button !== 0) return;
-      evt.stopPropagation();
-      evt.stopImmediatePropagation();
-      evt.preventDefault();
-      const d = pxToData(evt);
-      if (!d) return;
-      const nearest = findNearestCP(d.x, d.y);
-      if (nearest && nearest.dist < 15) {
-        drag.active = true;
-        drag.pt = nearest.pt;
-        drag.bound = nearest.bound;
-      } else {
-        drag.clickStart = d;
-      }
-    }
-
-    function onMouseMove(evt) {
-      if (drag.active) {
-        evt.preventDefault();
-        const d = pxToData(evt);
-        if (!d || !drag.pt) return;
-        // Mutate the tracked pt in place — no setPoints clone, so
-        // references stay alive across sort.
-        const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
-        const rt = traj.ref_time || traj.act_time || [];
-        const tMin = rt[0], tMax = rt[rt.length - 1];
-        drag.pt.time = roundSig(Math.max(tMin, Math.min(tMax, d.x)), 6);
-        const ptIdx = getPoints(leaf).indexOf(drag.pt);
-        if (ptIdx >= 0) setBoundFromAbsoluteY(leaf, ptIdx, drag.bound, d.y);
-        // Sort during the drag so a point crossing another smoothly
-        // swaps array positions — the pt reference follows it.
-        sortPointsAndModes(leaf);
-        if (!rafPending) {
-          rafPending = requestAnimationFrame(() => {
-            refreshTables(leaf, commit);
-            commit();
-            rafPending = null;
-          });
-        }
-      } else if (drag.clickStart) {
-        const d = pxToData(evt);
-        if (!d) return;
-        if (Math.abs(d.x - drag.clickStart.x) > 1e-10 ||
-            Math.abs(d.y - drag.clickStart.y) > 1e-10) drag.clickStart = null;
-      }
-    }
-
-    function onMouseUp() {
-      if (drag.active) {
-        drag.active = false; drag.pt = null;
-        // Final sort + render on drop (rafPending may have a pending
-        // mid-frame refresh — this settles the final state either way).
-        sortPointsAndModes(leaf);
-        refreshTables(leaf, commit);
-        commit();
-        return;
-      }
-      if (drag.clickStart) {
-        const c = drag.clickStart;
-        drag.clickStart = null;
-        addPointAt(leaf, c.x, c.y, commit);
-      }
-    }
-
-    function onContextMenu(evt) {
-      if (!evt.shiftKey) return;
-      const d = pxToData(evt);
-      if (!d) return;
-      const nearest = findNearestCP(d.x, d.y);
-      if (nearest && nearest.dist < 15) {
-        evt.preventDefault();
-        removePointAt(leaf, nearest.ptIdx, commit);
-      }
-    }
-
-    plotEl.addEventListener('mousedown', onMouseDown, true);
-    plotEl.addEventListener('contextmenu', onContextMenu, true);
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-
-    wired.set(plotEl, () => {
-      plotEl.removeEventListener('mousedown', onMouseDown, true);
-      plotEl.removeEventListener('contextmenu', onContextMenu, true);
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    });
+  function attachPlotHandlers(leaf, plotEl, commit) {
+    _pointEditor.attach(leaf, plotEl, commit);
+  }
+  function detachPlotHandlers(plotEl) {
+    _pointEditor.detach(plotEl);
   }
 
   return {
@@ -1052,9 +1244,8 @@ MODE_PLOT_EDITORS['tube'] = (function() {
       commit();
     },
     // Editor only owns event-handler cleanup. Slot DOM is core's.
-    deactivate(leaf, plotEl) {
-      const cleanup = wired.get(plotEl);
-      if (cleanup) { cleanup(); wired.delete(plotEl); }
+    deactivate(_leaf, plotEl) {
+      detachPlotHandlers(plotEl);
     },
     // Exposed for the plot contribution so the polygon matches editor state.
     _resolveAllBoundsOnGrid: resolveAllBoundsOnGrid,
@@ -1107,6 +1298,360 @@ MODE_PLOT_EDITORS['range'] = (function() {
       const h = wired.get(plotEl);
       if (h && plotEl.removeListener) plotEl.removeListener('plotly_relayout', h);
       wired.delete(plotEl);
+    },
+  };
+})();
+
+MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
+  // Declared-peaks editor for dominant-frequency leaves (D75). Each
+  // editor slot gets:
+  //   * A spectrum subplot (ref + actual magnitude curves).
+  //   * Markers at each declared peak's frequency, draggable via
+  //     Shift+click/drag/right-click through the shared PointPlotEditor.
+  //   * Acceptance-band shapes around each declared peak showing the
+  //     tolerance window (rel: f*[1-tol, 1+tol]; abs: f±tol Hz).
+  //   * A table UI below the subplot: columns = freq, tolerance,
+  //     tolerance_mode, pass/fail, remove. Detect button populates
+  //     from the reference spectrum's top peaks.
+  const mountedByLeaf = new WeakMap();
+
+  function getDeclaredPeaks(leaf) {
+    const p = (leafState[leaf.path] || {}).params || {};
+    if (!Array.isArray(p.peaks)) p.peaks = [];
+    return p.peaks;
+  }
+  function setDeclaredPeaks(leaf, peaks) {
+    const p = (leafState[leaf.path] || {}).params || {};
+    p.peaks = peaks.map(pk => ({
+      freq: Number(pk.freq) || 0,
+      tolerance: Number(pk.tolerance) || 0,
+      tolerance_mode: pk.tolerance_mode === 'abs' ? 'abs' : 'rel',
+    }));
+  }
+  function sortDeclared(leaf) {
+    const pks = getDeclaredPeaks(leaf);
+    pks.sort((a, b) => Number(a.freq) - Number(b.freq));
+  }
+
+  function magnitudeAt(hz, xs, ys) {
+    if (!xs || !xs.length) return 0;
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < xs.length; i++) {
+      const d = Math.abs(xs[i] - hz);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return ys[best];
+  }
+
+  const _peakEditor = createPointPlotEditor({
+    getAnchors(leaf) {
+      const spec = leaf.spectrum || {};
+      const refF = spec.ref_freq || [], refM = spec.ref_mag || [];
+      const pks = getDeclaredPeaks(leaf);
+      return pks.map(pk => ({
+        pt: pk,
+        x: Number(pk.freq),
+        y: magnitudeAt(Number(pk.freq), refF, refM),
+      }));
+    },
+    onClickAdd(leaf, _plotEl, x, _y, commit) {
+      if (!(x > 0)) return;
+      const pks = getDeclaredPeaks(leaf);
+      pks.push({
+        freq: Number(x),
+        tolerance: 0.01,
+        tolerance_mode: 'rel',
+      });
+      sortDeclared(leaf);
+      refreshEditor(leaf, commit);
+    },
+    onDragStep(leaf, _plotEl, anchor, x, _y, _commit) {
+      if (!(x > 0)) return;
+      anchor.pt.freq = Number(x);
+      sortDeclared(leaf);
+      refreshEditor(leaf, _commit);
+    },
+    onDragEnd(leaf, _plotEl, _anchor, commit) {
+      sortDeclared(leaf);
+      refreshEditor(leaf, commit);
+    },
+    onRemove(leaf, _plotEl, anchor, commit) {
+      const pks = getDeclaredPeaks(leaf);
+      const idx = pks.indexOf(anchor.pt);
+      if (idx >= 0) {
+        pks.splice(idx, 1);
+        refreshEditor(leaf, commit);
+      }
+    },
+  });
+
+  function refreshEditor(leaf, commit) {
+    const mounted = mountedByLeaf.get(leaf);
+    if (!mounted) return;
+    for (const { subplotDiv, tableDiv } of mounted) {
+      _renderSpectrumAndPeaks(subplotDiv, leaf);
+      _renderTable(tableDiv, leaf, commit);
+    }
+    commit();
+  }
+
+  function _renderSpectrumAndPeaks(div, leaf) {
+    if (typeof Plotly === 'undefined') {
+      div.innerHTML = '<div class="editor-hint">Plotly not loaded.</div>';
+      return;
+    }
+    const spec = leaf.spectrum || {};
+    const refF = spec.ref_freq || [];
+    const refM = spec.ref_mag || [];
+    const actF = spec.act_freq || [];
+    const actM = spec.act_mag || [];
+    if (refF.length === 0 && actF.length === 0) {
+      div.innerHTML = '<div class="editor-hint">No spectrum data — rerun '
+                    + 'the CLI to populate this subplot.</div>';
+      return;
+    }
+    const pks = getDeclaredPeaks(leaf);
+    const paired = spec.paired_peaks || [];
+    const traces = [];
+    if (refF.length) {
+      traces.push({
+        x: refF, y: refM, mode: 'lines', type: 'scatter',
+        name: 'Reference',
+        line: { color: '#1976D2', width: 1.5 },
+      });
+    }
+    if (actF.length) {
+      traces.push({
+        x: actF, y: actM, mode: 'lines', type: 'scatter',
+        name: 'Actual',
+        line: { color: '#D32F2F', width: 1.5, dash: 'dot' },
+      });
+    }
+    // Declared-peak markers at the reference-spectrum amplitude (so the
+    // marker sits on the reference curve). Drag+click via PointPlotEditor.
+    const pairedByFreq = Object.fromEntries(paired.map(p => [p.declared_hz, p]));
+    const declaredXs = pks.map(p => Number(p.freq));
+    const declaredYs = pks.map(p => magnitudeAt(Number(p.freq), refF, refM));
+    const declaredColors = pks.map(p => {
+      const pp = pairedByFreq[p.freq];
+      if (!pp) return '#757575';  // unknown yet (unpaired declared peak)
+      return pp.matched_hz != null ? '#2e7d32' : '#c62828';
+    });
+    if (pks.length) {
+      traces.push({
+        x: declaredXs, y: declaredYs,
+        mode: 'markers', type: 'scatter',
+        name: 'Declared peaks',
+        marker: {
+          color: declaredColors, size: 13, symbol: 'diamond',
+          line: { color: 'white', width: 1.5 },
+        },
+        hoverinfo: 'x+y',
+      });
+    }
+    // Matched-actual markers, if CLI evaluated.
+    const matchedXs = paired.filter(p => p.matched_hz != null).map(p => p.matched_hz);
+    if (matchedXs.length) {
+      traces.push({
+        x: matchedXs,
+        y: matchedXs.map(hz => magnitudeAt(hz, actF, actM)),
+        mode: 'markers', type: 'scatter',
+        name: 'Matched (actual)',
+        marker: { color: '#D32F2F', size: 10, symbol: 'x', line: { width: 2 } },
+        hoverinfo: 'x+y',
+      });
+    }
+    // Acceptance-band shapes around each declared peak.
+    const shapes = [];
+    for (const pk of pks) {
+      const f = Number(pk.freq);
+      const tol = Number(pk.tolerance) || 0;
+      if (tol <= 0 || f <= 0) continue;
+      const [lo, hi] = pk.tolerance_mode === 'abs'
+        ? [f - tol, f + tol]
+        : [f * (1 - tol), f * (1 + tol)];
+      shapes.push({
+        type: 'rect', xref: 'x', yref: 'paper',
+        x0: lo, x1: hi, y0: 0, y1: 1,
+        fillcolor: 'rgba(25,118,210,0.12)',
+        line: { width: 0 },
+      });
+    }
+    Plotly.newPlot(div, traces, {
+      xaxis: { title: 'Frequency (Hz)', hoverformat: '.4~g' },
+      yaxis: { title: 'Magnitude', tickformat: '.3~g' },
+      shapes,
+      margin: { t: 10, r: 10, b: 40, l: 55 },
+      legend: { orientation: 'h', y: 1.12, x: 0.02 },
+      uirevision: 'keep',
+    }, { displayModeBar: false, responsive: true });
+  }
+
+  function _renderTable(container, leaf, commit) {
+    container.innerHTML = '';
+    const pks = getDeclaredPeaks(leaf);
+    const paired = (leaf.spectrum || {}).paired_peaks || [];
+    const pairedByFreq = Object.fromEntries(paired.map(p => [p.declared_hz, p]));
+
+    const hint = document.createElement('div');
+    hint.className = 'editor-hint';
+    hint.innerHTML = 'Shift+click on the spectrum to add a peak · '
+                   + 'Shift+drag to move · Shift+right-click to remove';
+    container.appendChild(hint);
+
+    const table = document.createElement('table');
+    table.className = 'tube-table';  // reuse tube's compact styling
+    const header = table.insertRow();
+    header.innerHTML = '<th>Freq (Hz)</th><th>Tolerance</th>'
+                     + '<th>Mode</th><th>Match</th><th></th>';
+
+    pks.forEach((pk, i) => {
+      const row = table.insertRow();
+      // Freq
+      const freqTd = document.createElement('td');
+      const freqInp = document.createElement('input');
+      freqInp.type = 'number'; freqInp.step = 'any'; freqInp.min = '0';
+      freqInp.value = String(pk.freq);
+      freqInp.addEventListener('input', () => {
+        const v = parseFloat(freqInp.value);
+        if (Number.isFinite(v) && v > 0) {
+          pk.freq = v;
+          sortDeclared(leaf);
+          refreshEditor(leaf, commit);
+        }
+      });
+      freqTd.appendChild(freqInp); row.appendChild(freqTd);
+      // Tolerance
+      const tolTd = document.createElement('td');
+      const tolInp = document.createElement('input');
+      tolInp.type = 'number'; tolInp.step = 'any'; tolInp.min = '0';
+      tolInp.value = String(pk.tolerance);
+      tolInp.addEventListener('input', () => {
+        const v = parseFloat(tolInp.value);
+        if (Number.isFinite(v) && v >= 0) {
+          pk.tolerance = v;
+          refreshEditor(leaf, commit);
+        }
+      });
+      tolTd.appendChild(tolInp); row.appendChild(tolTd);
+      // Tolerance mode
+      const modeTd = document.createElement('td');
+      const modeSel = document.createElement('select');
+      for (const m of ['rel', 'abs']) {
+        const opt = document.createElement('option');
+        opt.value = m; opt.textContent = m;
+        if (pk.tolerance_mode === m) opt.selected = true;
+        modeSel.appendChild(opt);
+      }
+      modeSel.title = 'rel = fractional (e.g. 0.01 = 1% of declared freq); '
+                    + 'abs = Hz';
+      modeSel.addEventListener('change', () => {
+        pk.tolerance_mode = modeSel.value === 'abs' ? 'abs' : 'rel';
+        refreshEditor(leaf, commit);
+      });
+      modeTd.appendChild(modeSel); row.appendChild(modeTd);
+      // Match status (CLI-computed; may be stale after user edits)
+      const matchTd = document.createElement('td');
+      const pp = pairedByFreq[pk.freq];
+      if (!pp) {
+        matchTd.innerHTML = '<span class="editor-hint">pending rerun</span>';
+      } else if (pp.matched_hz == null) {
+        matchTd.innerHTML = '<span class="fail">no match</span>';
+      } else {
+        const dhz = pp.delta != null ? pp.delta.toFixed(4) : '';
+        matchTd.innerHTML = `<span class="pass">${pp.matched_hz.toFixed(4)} Hz `
+                          + `(Δ ${dhz})</span>`;
+      }
+      row.appendChild(matchTd);
+      // Remove
+      const rmTd = document.createElement('td');
+      const rmBtn = document.createElement('button');
+      rmBtn.className = 'node-btn node-btn-remove';
+      rmBtn.textContent = '✕';
+      rmBtn.title = 'Remove peak';
+      rmBtn.addEventListener('click', () => {
+        pks.splice(i, 1);
+        refreshEditor(leaf, commit);
+      });
+      rmTd.appendChild(rmBtn); row.appendChild(rmTd);
+    });
+    container.appendChild(table);
+
+    // Buttons row: add + detect.
+    const btnRow = document.createElement('div');
+    btnRow.className = 'peak-editor-buttons';
+    const addBtn = document.createElement('button');
+    addBtn.className = 'node-btn node-btn-add';
+    addBtn.textContent = '+ add peak';
+    addBtn.addEventListener('click', () => {
+      const detected = (leaf.spectrum || {}).detected_reference_peaks_hz || [];
+      const seedFreq = pks.length
+        ? (pks[pks.length - 1].freq + (detected[pks.length] || pks[pks.length - 1].freq * 2))
+        : (detected[0] || 1.0);
+      pks.push({ freq: Number(seedFreq), tolerance: 0.01, tolerance_mode: 'rel' });
+      sortDeclared(leaf);
+      refreshEditor(leaf, commit);
+    });
+    btnRow.appendChild(addBtn);
+
+    const detectBtn = document.createElement('button');
+    detectBtn.className = 'node-btn';
+    detectBtn.textContent = '🔍 Detect peaks from reference';
+    detectBtn.title = 'Replace the table with peaks detected on the reference '
+                    + 'spectrum. Good starting point on a fresh test.';
+    detectBtn.addEventListener('click', () => {
+      const detected = (leaf.spectrum || {}).detected_reference_peaks_hz || [];
+      if (detected.length === 0) return;
+      // Default: replace with top 3 (or all, if fewer).
+      const seed = detected.slice(0, 3).map(f => ({
+        freq: Number(f),
+        tolerance: 0.01,
+        tolerance_mode: 'rel',
+      }));
+      setDeclaredPeaks(leaf, seed);
+      refreshEditor(leaf, commit);
+    });
+    btnRow.appendChild(detectBtn);
+    container.appendChild(btnRow);
+  }
+
+  return {
+    activate(leaf, _plotEl, commit) {
+      const mounted = [];
+      getEditorSlots(leaf).forEach(slot => {
+        const title = document.createElement('div');
+        title.className = 'editor-title';
+        title.textContent = 'Declared frequency peaks';
+        slot.appendChild(title);
+
+        const subplotDiv = document.createElement('div');
+        subplotDiv.className = 'spectrum-subplot';
+        subplotDiv.style.width = '100%';
+        subplotDiv.style.height = '260px';
+        slot.appendChild(subplotDiv);
+
+        const tableDiv = document.createElement('div');
+        tableDiv.className = 'peak-editor-ui';
+        slot.appendChild(tableDiv);
+
+        mounted.push({ slot, subplotDiv, tableDiv });
+      });
+      mountedByLeaf.set(leaf, mounted);
+      // Initial render + attach shift-editor to each subplot.
+      for (const { subplotDiv, tableDiv } of mounted) {
+        _renderSpectrumAndPeaks(subplotDiv, leaf);
+        _renderTable(tableDiv, leaf, commit);
+        _peakEditor.attach(leaf, subplotDiv, commit);
+      }
+      commit();
+    },
+    deactivate(leaf, _plotEl) {
+      const mounted = mountedByLeaf.get(leaf) || [];
+      for (const { subplotDiv } of mounted) {
+        _peakEditor.detach(subplotDiv);
+        if (window.Plotly && subplotDiv.isConnected) Plotly.purge(subplotDiv);
+      }
+      mountedByLeaf.delete(leaf);
     },
   };
 })();
@@ -1451,22 +1996,261 @@ function renderCombinator(node, container, opts) {
   header.className = 'node-header';
   const pill = statusPill(node.passed);
   if (pill) header.appendChild(pill);
-  const label = document.createElement('span');
-  label.className = 'node-label';
-  label.textContent = node.label || combinatorLabel(node);
-  header.appendChild(label);
 
-  // Structural controls — + adds a leaf child, − removes this node.
-  // Available on both full-tree AND per-variable mounts; per-variable
-  // mounts prefill the + modal with the filtered variable so edits
-  // stay scoped to what the user is looking at.
+  // Kind dropdown — replaces the static label with a live editor. Inline
+  // params (k for k-of-n; weights/threshold/direction for weighted) render
+  // alongside so the entire combinator config is editable from the header.
+  header.appendChild(kindSelect(node));
+  header.appendChild(childCountLabel(node));
+  if (node.combinator === 'k-of-n' || node.combinator === 'weighted') {
+    header.appendChild(combinatorParamControls(node));
+  }
+
+  // Structural controls — + adds a leaf child, ⊕ wraps this node in a new
+  // combinator, ⊖ unwraps this node (single-child combinators only),
+  // − removes this node. Available on both full-tree and per-variable
+  // mounts; per-variable mounts prefill + with the filtered variable so
+  // edits stay scoped to the plot the user clicked from.
   header.appendChild(addLeafButton(node, opts.variableFilter));
+  header.appendChild(wrapButton(node));
+  if ((node.children || []).length === 1) header.appendChild(unwrapButton(node));
   if (opts.parent) header.appendChild(removeNodeButton(node, opts));
 
   wrapper.appendChild(header);
   wrapper.appendChild(childContainer);
   container.appendChild(wrapper);
   return true;
+}
+
+const COMBINATOR_HELP = {
+  'and':      'All children must pass.',
+  'or':       'At least one child must pass.',
+  'warn':     'Single-child wrapper; never fails its parent (advisory-only scoring).',
+  'k-of-n':   'At least k of N children must pass.',
+  'weighted': 'Weighted sum of child scores passes a threshold.',
+};
+
+function kindSelect(node) {
+  const sel = document.createElement('select');
+  sel.className = 'node-kind-select';
+  sel.title = 'Change combinator kind. ' + COMBINATOR_HELP[node.combinator || 'and'];
+  const children = node.children || [];
+  VALID_COMBINATORS.forEach(k => {
+    const opt = document.createElement('option');
+    opt.value = k;
+    opt.textContent = k;
+    opt.title = COMBINATOR_HELP[k] || '';
+    if (k === node.combinator) opt.selected = true;
+    // Disable warn when the node has != 1 child — use wrap-in-warn instead.
+    if (k === 'warn' && k !== node.combinator && children.length !== 1) {
+      opt.disabled = true;
+      opt.textContent = 'warn (wrap first)';
+      opt.title = 'warn requires exactly 1 child. Use the ⊕ wrap button to '
+                + 'put this node inside a new warn parent instead.';
+    }
+    sel.appendChild(opt);
+  });
+  sel.addEventListener('change', (e) => {
+    const ok = changeCombinatorKind(node.path, sel.value);
+    if (!ok) sel.value = node.combinator;  // revert on refusal
+    else sel.title = 'Change combinator kind. ' + COMBINATOR_HELP[sel.value];
+  });
+  return sel;
+}
+
+function childCountLabel(node) {
+  const span = document.createElement('span');
+  span.className = 'node-child-count';
+  const n = (node.children || []).length;
+  span.textContent = `[${n}]`;
+  return span;
+}
+
+function combinatorParamControls(node) {
+  // Inline header controls for k-of-n and weighted params. Scalar fields
+  // render as number/select inputs; weights[] renders as a compact
+  // per-child table. Same wholesale /metrics replace path on commit.
+  const container = document.createElement('span');
+  container.className = 'node-combinator-params';
+  const children = node.children || [];
+
+  if (node.combinator === 'k-of-n') {
+    const label = document.createElement('label');
+    label.className = 'mc-field mc-int';
+    label.innerHTML = '<span>k</span>';
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = '1';
+    inp.min = '1';
+    inp.max = String(Math.max(1, children.length));
+    inp.value = String(node.k || 1);
+    inp.className = 'node-k-input';
+    inp.addEventListener('change', () => {
+      const v = parseInt(inp.value, 10);
+      if (Number.isFinite(v) && v >= 1) {
+        node.k = v;
+        markStructureDirty();
+      } else {
+        inp.value = String(node.k || 1);
+      }
+    });
+    label.appendChild(inp);
+    container.appendChild(label);
+  }
+
+  if (node.combinator === 'weighted') {
+    const thrLabel = document.createElement('label');
+    thrLabel.className = 'mc-field mc-float';
+    thrLabel.innerHTML = '<span>threshold</span>';
+    const thrInp = document.createElement('input');
+    thrInp.type = 'number';
+    thrInp.step = 'any';
+    thrInp.value = String(node.threshold ?? 1.0);
+    thrInp.className = 'node-threshold-input';
+    thrInp.addEventListener('change', () => {
+      const v = parseFloat(thrInp.value);
+      if (Number.isFinite(v)) { node.threshold = v; markStructureDirty(); }
+      else thrInp.value = String(node.threshold ?? 1.0);
+    });
+    thrLabel.appendChild(thrInp);
+    container.appendChild(thrLabel);
+
+    const dirLabel = document.createElement('label');
+    dirLabel.className = 'mc-field mc-enum';
+    dirLabel.innerHTML = '<span>direction</span>';
+    const dirSel = document.createElement('select');
+    dirSel.className = 'node-direction-select';
+    ['less', 'greater'].forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d;
+      opt.textContent = d;
+      if (d === (node.direction || 'less')) opt.selected = true;
+      dirSel.appendChild(opt);
+    });
+    dirSel.addEventListener('change', () => {
+      node.direction = dirSel.value;
+      markStructureDirty();
+    });
+    dirLabel.appendChild(dirSel);
+    container.appendChild(dirLabel);
+
+    // Weights row — one number input per child; auto-resized when the
+    // child count changes (handled by the wholesale re-render in
+    // markStructureDirty, which calls this function again).
+    const weightsLabel = document.createElement('span');
+    weightsLabel.className = 'node-weights';
+    weightsLabel.innerHTML = '<span class="mc-field-label">weights</span>';
+    const weights = Array.isArray(node.weights) ? node.weights : [];
+    children.forEach((_, i) => {
+      const w = weights[i] ?? 1.0;
+      const wi = document.createElement('input');
+      wi.type = 'number';
+      wi.step = 'any';
+      wi.value = String(w);
+      wi.className = 'node-weight-input';
+      wi.dataset.index = String(i);
+      wi.addEventListener('change', () => {
+        const v = parseFloat(wi.value);
+        if (Number.isFinite(v)) {
+          const nextWeights = children.map((__, j) => (
+            j === i ? v : ((node.weights || [])[j] ?? 1.0)
+          ));
+          node.weights = nextWeights;
+          markStructureDirty();
+        } else {
+          wi.value = String((node.weights || [])[i] ?? 1.0);
+        }
+      });
+      weightsLabel.appendChild(wi);
+    });
+    container.appendChild(weightsLabel);
+  }
+
+  return container;
+}
+
+function resetButton(leaf) {
+  const btn = document.createElement('button');
+  btn.className = 'node-btn node-btn-reset';
+  btn.textContent = '↻';
+  btn.title = 'Reset this leaf to its CLI-evaluated values';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    resetLeafToOriginal(leaf.path);
+  });
+  return btn;
+}
+
+function wrapButton(node) {
+  const btn = document.createElement('button');
+  btn.className = 'node-btn node-btn-wrap';
+  btn.textContent = '⊕';
+  btn.title = 'Wrap this node in a new combinator';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openWrapPopup(btn, node);
+  });
+  return btn;
+}
+
+function unwrapButton(node) {
+  const btn = document.createElement('button');
+  btn.className = 'node-btn node-btn-unwrap';
+  btn.textContent = '⊖';
+  btn.title = 'Unwrap — replace this node with its single child';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    unwrapWorkingNode(node.path);
+  });
+  return btn;
+}
+
+let _activeWrapPopup = null;
+
+function openWrapPopup(anchor, node) {
+  closeWrapPopup();
+  const pop = document.createElement('span');
+  pop.className = 'wrap-popup';
+  const dropdownOpts = VALID_COMBINATORS
+    .map(k => `<option value="${k}">${k}</option>`)
+    .join('');
+  pop.innerHTML = `
+    <span class="wrap-popup-label">Wrap in</span>
+    <select class="wrap-popup-kind">${dropdownOpts}</select>
+    <button class="node-btn wrap-popup-yes">Confirm</button>
+    <button class="node-btn wrap-popup-no">Cancel</button>
+  `;
+  anchor.insertAdjacentElement('afterend', pop);
+  _activeWrapPopup = pop;
+  const onOutside = (ev) => {
+    if (!pop.contains(ev.target) && ev.target !== anchor) closeWrapPopup();
+  };
+  const onEsc = (ev) => { if (ev.key === 'Escape') closeWrapPopup(); };
+  pop._cleanup = () => {
+    document.removeEventListener('mousedown', onOutside, true);
+    document.removeEventListener('keydown', onEsc);
+  };
+  setTimeout(() => {
+    document.addEventListener('mousedown', onOutside, true);
+    document.addEventListener('keydown', onEsc);
+  }, 0);
+  pop.querySelector('.wrap-popup-yes').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const kind = pop.querySelector('.wrap-popup-kind').value;
+    closeWrapPopup();
+    wrapWorkingNode(node.path, kind);
+  });
+  pop.querySelector('.wrap-popup-no').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeWrapPopup();
+  });
+}
+
+function closeWrapPopup() {
+  if (!_activeWrapPopup) return;
+  if (_activeWrapPopup._cleanup) _activeWrapPopup._cleanup();
+  _activeWrapPopup.remove();
+  _activeWrapPopup = null;
 }
 
 function combinatorLabel(node) {
@@ -1491,14 +2275,19 @@ function renderLeaf(leaf, container, opts) {
   const header = document.createElement('div');
   header.className = 'node-header';
 
-  // Visibility toggle — gates the leaf's plot contribution.
+  // Visibility toggle — hides this leaf's plot overlay (tube polygon, range
+  // dashed lines, final-time marker, window band). Does NOT affect scoring —
+  // the pass pill stays whatever the scorer computed. Leaf appears in every
+  // mount (top-of-report tree + per-variable trees); all instances share the
+  // same leafState.visible, so we sync sibling checkboxes on toggle.
   const visToggle = document.createElement('input');
   visToggle.type = 'checkbox';
   visToggle.className = 'node-visible';
   visToggle.checked = leafState[leaf.path] && leafState[leaf.path].visible !== false;
-  visToggle.title = "Show this leaf's plot contribution";
+  visToggle.title = 'Show this leaf\'s plot overlay (does not affect scoring)';
   visToggle.addEventListener('change', () => {
     if (leafState[leaf.path]) leafState[leaf.path].visible = visToggle.checked;
+    syncSiblingVisToggles(leaf.path, visToggle.checked, visToggle);
     renderVariablePlot(leaf.variable, VARIABLE_INDEX[leaf.variable]);
   });
   header.appendChild(visToggle);
@@ -1526,9 +2315,12 @@ function renderLeaf(leaf, container, opts) {
     badge.textContent = 'CLI-authoritative';
     header.appendChild(badge);
   }
-  // Structural control — − removes this leaf. Available in every mount
-  // (full-tree + per-variable) so users can trim from wherever they're
-  // looking. The root of a working tree has no parent → no button.
+  // Structural controls — ⊕ wraps this leaf in a new combinator (always
+  // allowed), − removes this leaf (only when a parent exists). ↻ resets
+  // this leaf's params + window to the CLI-evaluated originals. Root leaf
+  // (legal but unusual: single-leaf tree) has no remove.
+  header.appendChild(resetButton(leaf));
+  header.appendChild(wrapButton(leaf));
   if (opts.parent) header.appendChild(removeNodeButton(leaf, opts));
   wrapper.appendChild(header);
 
@@ -1537,7 +2329,10 @@ function renderLeaf(leaf, container, opts) {
   // interactive editor (activated on click) owns that config surface
   // and would duplicate the same fields. Window inputs still show for
   // tube so the user can scope a tube to a time window.
-  const skipModeControls = (leaf.metric === 'tube');
+  // Tube + dominant-frequency both own their entire UI via the activated
+  // editor (rich table + shift-edit on plot). Suppressing the auto-derived
+  // header panel avoids a redundant empty passthrough box.
+  const skipModeControls = (leaf.metric === 'tube' || leaf.metric === 'dominant-frequency');
   const innerHtml =
     (skipModeControls ? '' : (leaf.mode_controls_html || ''))
     + (leaf.window_controls_html || '');
@@ -1805,6 +2600,112 @@ function appendLeafToWorking(parentPath, metric, varname) {
   markStructureDirty();
 }
 
+// ---- Structural editing: wrap / unwrap / change-kind (#52) ----
+// All three mutate WORKING_TREE → markStructureDirty; the existing wholesale
+// ``/metrics`` replace patch carries the result on save.
+
+const VALID_COMBINATORS = ['and', 'or', 'warn', 'k-of-n', 'weighted'];
+
+function _seedCombinatorParams(kind, children) {
+  // Fills in the kind-specific fields when a combinator switches INTO
+  // k-of-n or weighted. Other kinds stay bare (combinator + children).
+  const n = (children || []).length || 1;
+  if (kind === 'k-of-n') return { k: Math.max(1, n - 1) };
+  if (kind === 'weighted') {
+    return {
+      weights: Array(n).fill(1.0),
+      threshold: 1.0,
+      direction: 'less',
+    };
+  }
+  return {};
+}
+
+function _stripCombinatorParams(node) {
+  // Drop kind-specific fields when a combinator switches OUT of them.
+  // Idempotent — safe to call when the fields aren't present.
+  delete node.k;
+  delete node.weights;
+  delete node.threshold;
+  delete node.direction;
+}
+
+function _findPathContext(path) {
+  // Returns {node, parent, indexInParent} for the target path, or null.
+  if (!WORKING_TREE) return null;
+  if (WORKING_TREE.path === path) {
+    return { node: WORKING_TREE, parent: null, indexInParent: -1 };
+  }
+  let found = null;
+  (function walk(n, parent, idx) {
+    if (found) return;
+    if (n.path === path) { found = { node: n, parent, indexInParent: idx }; return; }
+    (n.children || []).forEach((c, i) => walk(c, n, i));
+  })(WORKING_TREE, null, -1);
+  return found;
+}
+
+function wrapWorkingNode(path, kind) {
+  // Wrap the node at ``path`` in a new combinator of the given kind.
+  // Always produces ``kind(target)`` — a single-child parent regardless
+  // of target's shape. Works uniformly for leaf + combinator targets.
+  if (!VALID_COMBINATORS.includes(kind)) return false;
+  const ctx = _findPathContext(path);
+  if (!ctx) return false;
+  const wrapper = {
+    kind: 'combinator',
+    combinator: kind,
+    children: [ctx.node],
+  };
+  Object.assign(wrapper, _seedCombinatorParams(kind, [ctx.node]));
+  if (ctx.parent) {
+    ctx.parent.children[ctx.indexInParent] = wrapper;
+  } else {
+    WORKING_TREE = wrapper;
+  }
+  markStructureDirty();
+  return true;
+}
+
+function unwrapWorkingNode(path) {
+  // Replace the combinator at ``path`` with its single child. Refuses
+  // to unwrap leaves or combinators with != 1 child (user should edit
+  // children first, or remove siblings, then unwrap).
+  const ctx = _findPathContext(path);
+  if (!ctx) return false;
+  const target = ctx.node;
+  if (target.kind !== 'combinator') return false;
+  const children = target.children || [];
+  if (children.length !== 1) return false;
+  const lone = children[0];
+  if (ctx.parent) {
+    ctx.parent.children[ctx.indexInParent] = lone;
+  } else {
+    WORKING_TREE = lone;
+  }
+  markStructureDirty();
+  return true;
+}
+
+function changeCombinatorKind(path, newKind) {
+  // Flip node.combinator = newKind. Seeds or strips kind-specific
+  // fields (k, weights, threshold, direction). Refuses change-to-warn
+  // on multi-child targets — the grammar won't validate, and the user
+  // should use wrap-in-warn (auto-inserts AND) for that intent.
+  if (!VALID_COMBINATORS.includes(newKind)) return false;
+  const ctx = _findPathContext(path);
+  if (!ctx || ctx.node.kind !== 'combinator') return false;
+  const node = ctx.node;
+  const children = node.children || [];
+  if (newKind === 'warn' && children.length !== 1) return false;
+  if (newKind === node.combinator) return true;  // no-op
+  node.combinator = newKind;
+  _stripCombinatorParams(node);
+  Object.assign(node, _seedCombinatorParams(newKind, children));
+  markStructureDirty();
+  return true;
+}
+
 function _timeBoundsFor(varname) {
   const traj = (VARIABLES_BY_NAME[varname] || {}).trajectory || {};
   const rt = traj.ref_time || traj.act_time || [];
@@ -1855,8 +2756,19 @@ function renderSchemaFieldJs(f, value) {
   if (f.type === 'float' || f.type === 'int') {
     const step = f.type === 'float' ? 'any' : '1';
     const val = value == null ? '' : ` value="${_escHtml(String(value))}"`;
+    let minAttr = '';
+    let maxAttr = '';
+    if (f.ui_min != null) minAttr = ` min="${_escHtml(String(f.ui_min))}"`;
+    if (f.ui_max != null) {
+      // Soft cap — raise to current value if user already exceeded it.
+      const cur = value == null ? -Infinity : Number(value);
+      const eff = Math.max(Number(f.ui_max), Number.isFinite(cur) ? cur : -Infinity);
+      maxAttr = f.type === 'int'
+        ? ` max="${Math.floor(eff)}"`
+        : ` max="${_escHtml(String(eff))}"`;
+    }
     return `<label class="mc-field mc-${f.type}"${title}><span>${label}</span>`
-         + `<input type="number" step="${step}" data-field="${name}"${val}></label>`;
+         + `<input type="number" step="${step}" data-field="${name}"${minAttr}${maxAttr}${val}></label>`;
   }
   if (f.type === 'str') {
     const val = value == null ? '' : ` value="${_escHtml(String(value))}"`;
@@ -1920,13 +2832,40 @@ function rebuildPaths(node, root) {
 
 function markStructureDirty() {
   structureDirty = true;
-  rebuildPaths(WORKING_TREE, '/metrics');
-  // Re-render every mount from WORKING_TREE. TREE_VIEW stays as the
-  // originally-rendered snapshot (for render artifacts on surviving
-  // leaves); new leaves render from their own synthesized fields.
+  // Snapshot leaf object→oldPath, rebuild, then migrate leafState entries
+  // so live-edited values survive a path shift (remove / wrap / unwrap).
+  // Without this, an edited tolerance vanishes when a sibling is removed.
+  migrateLeafStatePaths();
   renderAllNodeTreesFromWorking();
   refreshPassStates();
   updateExport();
+}
+
+function migrateLeafStatePaths() {
+  // Walk the tree, capture each leaf ref + its current (stale) path, then
+  // rebuildPaths, then move leafState entries from old → new paths. Two
+  // passes (read old + delete, then write new) avoid clobber when a chain
+  // of paths shifts through a common index.
+  if (!WORKING_TREE) {
+    rebuildPaths(WORKING_TREE, '/metrics');
+    return;
+  }
+  const snapshot = [];
+  walkLeaves(WORKING_TREE, (leaf) => {
+    snapshot.push({ leaf, oldPath: leaf.path });
+  });
+  rebuildPaths(WORKING_TREE, '/metrics');
+  const carried = [];
+  for (const { leaf, oldPath } of snapshot) {
+    if (leaf.path === oldPath) continue;
+    if (leafState[oldPath] !== undefined) {
+      carried.push({ newPath: leaf.path, state: leafState[oldPath] });
+      delete leafState[oldPath];
+    }
+  }
+  for (const { newPath, state } of carried) {
+    leafState[newPath] = state;
+  }
 }
 
 function renderAllNodeTreesFromWorking() {
@@ -1934,8 +2873,57 @@ function renderAllNodeTreesFromWorking() {
   // WORKING_TREE while structureDirty is set, so every reader picks up
   // the mutated tree transparently.
   renderAllNodeTrees();
+  // The template-embedded ``mode_controls_html`` is a static server-
+  // rendered string with the *original* values; after a re-render the
+  // DOM inputs drift back to those authored values even though the live
+  // edits live in leafState. Push leafState back onto the inputs so
+  // edits survive every re-render trigger (structural and otherwise).
+  refreshLeafInputsFromState();
   // Plots may gain or lose leaves — re-render affected variables.
   VARIABLE_ORDER.forEach((v, i) => renderVariablePlot(v, i));
+}
+
+function refreshLeafInputsFromState() {
+  document.querySelectorAll('.node-leaf').forEach(el => {
+    const path = el.dataset.path;
+    const state = leafState[path];
+    if (!state) return;
+    el.querySelectorAll('.mode-controls [data-field]').forEach(inp => {
+      const field = inp.dataset.field;
+      _setInputValue(inp, (state.params || {})[field]);
+    });
+    el.querySelectorAll('.window-controls [data-field]').forEach(inp => {
+      const field = inp.dataset.field;
+      const key = field === 'window_start' ? 'start'
+                : field === 'window_end'   ? 'end'
+                : null;
+      if (!key) return;
+      _setInputValue(inp, (state.window || {})[key]);
+    });
+  });
+}
+
+function _setInputValue(inp, val) {
+  if (inp.type === 'checkbox') { inp.checked = !!val; return; }
+  if (inp.dataset.passthrough === 'true') {
+    inp.value = val == null ? '' : JSON.stringify(val);
+    return;
+  }
+  inp.value = val == null ? '' : String(val);
+}
+
+function resetLeafToOriginal(path) {
+  // Revert leafState[path].params / .window to the original CLI-evaluated
+  // snapshot (captured at init / append time). Non-structural — doesn't
+  // flip structureDirty, just re-renders the current tree so DOM + plot
+  // pick up the reverted values. The input-refresh pass handles the DOM.
+  const state = leafState[path];
+  if (!state) return;
+  state.params = Object.assign({}, state.original_params || {});
+  state.window = Object.assign({}, state.original_window || {});
+  renderAllNodeTreesFromWorking();
+  refreshPassStates();
+  updateExport();
 }
 
 // Spec-strip — convert a tree_view node into its pure spec form,
@@ -2054,6 +3042,14 @@ function updateSummaryFromMap(passMap, tree) {
   });
 }
 
+function syncSiblingVisToggles(leafPath, checked, sourceInput) {
+  const selector = `[data-path="${escapeSelector(leafPath)}"] > .node-header > input.node-visible`;
+  document.querySelectorAll(selector).forEach(inp => {
+    if (inp === sourceInput) return;
+    inp.checked = checked;
+  });
+}
+
 function syncSiblingInputs(leafPath, field, val, sourceInput) {
   const selector = `[data-path="${escapeSelector(leafPath)}"] [data-field="${escapeSelector(field)}"]`;
   document.querySelectorAll(selector).forEach(inp => {
@@ -2098,20 +3094,25 @@ function updateSummary(passMap) {
 }
 
 // ---- Overlay picker ----
+// Each .overlay-picker div declares which Plotly chart it drives via its
+// data-plot-id attribute, so the single handler works for both the
+// comparison plots (plot-N) and the no-baseline plots (nb-plot-N).
 function wireOverlayPickers() {
   document.querySelectorAll('.overlay-picker .overlay-toggle').forEach(cb => {
     cb.addEventListener('change', (e) => {
-      const vidx = parseInt(e.target.dataset.vidx);
-      if (isNaN(vidx)) return;
+      const picker = e.target.closest('.overlay-picker');
+      if (!picker) return;
+      const plotId = picker.dataset.plotId;
+      if (!plotId) return;
       const name = e.target.dataset.ovName;
       const role = e.target.dataset.ovRole;
-      setOverlayVisible(vidx, role, name, e.target.checked);
+      setOverlayVisible(plotId, role, name, e.target.checked);
     });
   });
 }
 
-function setOverlayVisible(vidx, role, name, visible) {
-  const el = document.getElementById(`plot-${vidx}`);
+function setOverlayVisible(plotId, role, name, visible) {
+  const el = document.getElementById(plotId);
   if (!el || !el.data) return;
   const traceName = overlayTraceName(role, name);
   for (let i = 0; i < el.data.length; i++) {
@@ -2217,13 +3218,34 @@ function renderNBPlots() {
   NB_TRAJECTORIES.forEach((traj, idx) => {
     const el = document.getElementById(`nb-plot-${idx}`);
     if (!el) return;
-    Plotly.newPlot(el, [{
+    const traces = [{
       x: traj.time, y: traj.values, name: 'Actual',
       type: 'scatter', mode: 'lines', line: { color: '#2196F3', width: 1 },
-    }], {
+    }];
+    // Overlay traces — mirror the main-path styling so NO_REF plots can
+    // still surface sibling-backend references for pre-accept cross-check.
+    //   soft_check              → purple dotted
+    //   companion (generic)     → green dashdot
+    //   companion sibling-backend → blue dashed
+    for (const ov of (traj.overlays || [])) {
+      let color, dash;
+      if (ov.role === 'soft_check') { color = '#7B1FA2'; dash = 'dot'; }
+      else if (ov.kind === 'sibling-backend') { color = '#1976D2'; dash = 'dash'; }
+      else { color = '#388E3C'; dash = 'dashdot'; }
+      traces.push({
+        x: ov.time, y: ov.values,
+        name: overlayTraceName(ov.role, ov.name),
+        type: 'scatter', mode: 'lines',
+        line: { color, width: 1.2, dash },
+        opacity: 0.85,
+        visible: 'legendonly',
+      });
+    }
+    Plotly.newPlot(el, traces, {
       xaxis: { title: 'Time' },
       yaxis: { title: 'Value' },
       margin: { t: 25, b: 35, l: 60, r: 20 },
+      legend: { x: 0, y: 1, bgcolor: 'rgba(255,255,255,0.8)' },
     }, PLOT_CFG);
   });
 }

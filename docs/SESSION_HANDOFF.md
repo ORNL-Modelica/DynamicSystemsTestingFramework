@@ -1,323 +1,233 @@
-# Session handoff — OpenModelica backend + sibling-backend overlays
+# Session handoff — D71 polish pass + OM persistent workers
 
-**Date**: 2026-04-22
+**Date**: 2026-04-23
 
-This session shipped the first Modelica-source backend beyond Dymola
-and wired a cross-backend visual-check path into the reporter. The
-interactive reporter architecture described below is unchanged from
-the previous session's "reporter feature-complete" shipment
-(2026-04-21) — this handoff is primarily about the new backend and
-the production-library validation against TRANSFORM.
+D70 (persistent-worker OpenModelica via OMPython) shipped in the
+previous session. This session cleaned up four threads that opened
+during D70 smoke-testing: feature-showcase test coverage for
+ModelicaTestingLib, overlay picker parity across the baseline /
+no-baseline code paths, a `min`/`max` alias for the range leaf, and
+a three-layer fix for the simulate-only + no-baseline render path.
 
-**Current test count: 686 passing** (637 baseline → 679 after OM
-backend → 686 after sibling-backend overlays). Pytest ~90 s with
-Playwright, ~30 s without.
+**Current test count: 674 passing + 2 env-gated skips** on a
+properly-provisioned dev env (`uv pip install -e ".[dev,fmpy,om]"` +
+pytest-playwright + `playwright install chromium` + `pip install
+psutil` into whichever pytest the PATH resolves to — see the venv
+drift note at the bottom). Pytest ~28 s without Playwright; ~90 s
+with.
 
 ---
 
-## What shipped this session
+## What shipped this session (D71, 2026-04-23)
 
-1. **OpenModelica backend** (D69, commits `101d0a8` … `9d03752`).
-   Third `SimulatorRunner` alongside Dymola + FMPy, using `omc` as a
-   subprocess driven by generated `.mos` scripts (analogous to
-   Dymola's batch fallback; persistent-worker + FMU export deferred).
-   `mat_reader` hoisted from `simulators/dymola/` to
-   `simulators/common/` (OM's `.mat` is DSresult-compatible by
-   design). Phase timings parsed from the REPL-echoed
-   `record SimulationResult … end SimulationResult;` block — the
-   `.mos` emits a bare `simulate(...)` and lets the record echo ride.
-   `variableFilter` regex anchored `^(...)$`, escapes per-name,
-   expands globs, includes `unitTests.x[i]` + diagnostics. MSL is
-   auto-injected into dependencies so an empty-deps `testing.json`
-   works across both backends. Latent `mat_reader` transpose bug
-   fixed (wrong heuristic only surfaced for MATs with ≤ 4 vars; all
-   Dymola fixtures exceed that, OM's tight filter exposed it).
+1. **Four feature-showcase tests added to `ModelicaTestingLib`**.
+   `TubeToleranceTest` (time-varying tube), `FrequencyTest`
+   (dominant-frequency leaf), `MetricTreeTest` (explicit `metrics`
+   tree with `warn`-wrapped child), `RangeCheckTest` (range leaf
+   with `min_value`/`max_value`). Each verified numerically and by
+   inspecting the per-variable panel in the generated interactive
+   HTML. Baselines committed under `ReferenceResults/OpenModelica/
+   linux/ref_0006…0009.json`; Dymola / FMPy / Windows baselines
+   acquired per-platform on first run via the sibling-backend
+   overlay pre-accept workflow. Zero framework code change.
 
-2. **Unified `testing.json` with auto-detect**. New
-   `_auto_detect_simulator` + `_looks_like_path` in `config.py`
-   pick the first simulator whose binary resolves on the current
-   machine. Pinned OS-specific absolute paths (`C:\Program Files\…`
-   detected via regex — PosixPath.is_absolute() misses drive
-   letters on Linux) block the PATH-fallback to prevent a stray
-   `dymola` symlink on Linux being treated as equivalent to a
-   Windows install. `BACKEND_BINARY_NAMES` map replaces the old
-   `shutil.which(backend.lower())` fallback (OM's binary is `omc`,
-   not `openmodelica`; FMPy has no binary). CLI `--simulator` and
-   explicit `"simulator"` key still override.
+2. **Range leaf accepts `min` / `max` aliases** in addition to
+   canonical `min_value` / `max_value`. `resolve_mode` in
+   `comparison/modes.py` falls through; long form wins when both
+   are present. Triggered by the feature-test author reaching for
+   the shorter name.
 
-3. **Sibling-backend auto-companion overlays** (commit `d3d6cfb`).
-   When a new simulator has simulated but not been baselined,
-   `load_overlays(store, model_id, config=config)` auto-scans
-   `<reference_root>/<other_backend>/<os>/ref_*.json` for the same
-   `model_id` and surfaces each match as a
-   `kind="sibling-backend"` companion overlay (blue dashed line in
-   the plot, togglable via the per-plot overlay picker). Zero
-   persistence — discovery happens at report time. Lets the user
-   eyeball "does OM agree with Dymola for this test?" before
-   accepting baselines. `_sibling_backend_index` is `lru_cache`-d
-   so a 326-test report doesn't rescan per test.
+3. **Sibling-backend overlay picker UI parity**. Pre-fix, the
+   overlay picker (checkboxes over each sibling reference) rendered
+   only on the *baseline* trajectory block. Fresh-backend runs with
+   no local baseline yet saw overlays in the legend but had no
+   picker UI — inconsistent with the baseline flow.
+   - Python: `_build_template_context` now calls
+     `attach_overlays_to_trajectories` on **both** baseline and
+     `nobaseline_trajectories` lists.
+   - Template: NB section gained an `overlay-picker` block
+     mirroring the baseline section.
+   - JS: `wireOverlayPickers` generalized to handle both plot-id
+     prefixes (`plot-{idx}` + `nb-plot-{idx}`); shared
+     `setOverlayVisible(plotId, role, name, visible)` helper.
 
-4. **TRANSFORM validation sweep**. First real production-library
-   exercise of the post-refactor pipeline: 326 discovered tests →
-   **235 pass / 89 fail / 2 timeout** (72% pass rate) via
-   OpenModelica on Linux in ~2.3h wall-time at parallel=4. Failure
-   taxonomy (sorted by frequency):
+4. **`simulate_only` + no-baseline render fix** (triggered by user
+   bug report: `SimulateOnlyTest` showed "Simulation failed" in
+   per-test HTML **and** `NO_REF` on the index, despite the dslog
+   confirming a successful simulation). Three bugs on one path:
+   - `comparator.compare_all` short-circuited to `has_reference=
+     False` when the store returned `None`, skipping `compare_test`
+     entirely — so simulate-only's short-circuit (sets
+     `metric_tree.label="simulate-only"` and `passed=True`) never
+     ran. Fix: call `compare_test` with `reference={}` for
+     simulate-only tests lacking a baseline; set `has_reference=
+     False` after.
+   - `plot_comparison._build_template_context` computed
+     `sim_failed = (len(comparisons)==0 and n_nobaseline==0)` —
+     true for any simulate-only test. Fix: skip the heuristic when
+     `test.simulate_only=True`; expose `is_simulate_only` to the
+     template; new summary branch emitting "Simulate-only:
+     simulation succeeded" (green PASS pill).
+   - Index `_build_per_test_args` status classifier checked
+     `has_reference` before `simulate_only`. Fix: simulate-only
+     branch first, emit PASS/FAIL based on `comp.passed`.
+   Regression tests: `test_simulate_only.py` gained
+   `test_compare_all_simulate_only_without_baseline_passes` +
+   `test_compare_all_simulate_only_sim_failure_still_fails`;
+   `test_overlay_loader.py` gained
+   `test_works_on_nobaseline_trajectory_shape`.
 
-   | n | category | notes |
-   |---|---|---|
-   | 46 | missing `each` on array-param modifications | OM strict; Dymola permissive. Library-side portability fix, one-line each. |
-   | 15 | ASUB non-scalar codegen (interpolation tables) | OM codegen bug. |
-   |  7 | `SDF.NDTable not found` | needs `installPackage(SDF)`. |
-   |  3 | MSL-Fluid equation imbalance | OM's MSL-Fluid gaps. |
-   |  3 | equation-state count mismatch | OM index reduction on Fluid topologies. |
-   |  3 | `spatialDistribution` variability inference | OM stricter than Dymola. |
-   |  2 | C-compiler (clang) error | likely OM bug. |
-   |  2 | Pantelides structural singularity | OM bug or real model issue. |
-   | ~8 | single-case issues | composite-name lookup, NFScalarize, etc. |
+5. **Validation**: end-to-end on the OM suite
+   (`examples/modelica/ModelicaTestingLib/`, 10 tests including
+   `SimulateOnlyTest` with no baseline): **all 10 show PASS on the
+   index**; `SimulateOnlyTest`'s per-test HTML renders the green
+   "Simulate-only: simulation succeeded" pill.
 
-   All 91 failures are OM-vs-Dymola portability / OM limitations —
-   **zero framework bugs**. The 235 OM baselines + unified
-   `testing.json` were committed to the TRANSFORM repo by the user
-   after visual review of the sibling-backend overlays.
+### Files touched
 
-### Commits (chronological)
-
-| commit | subject |
+| file | change |
 |---|---|
-| `101d0a8` | docs: OpenModelica backend design spec |
-| `8d31e37` | docs: OpenModelica backend implementation plan |
-| `6895d43` | refactor: hoist mat_reader from dymola/ to simulators/common/ |
-| `296f0c3` | feat(openmodelica): .mos script generator + unit tests |
-| `5f99d91` | feat(openmodelica): stdout parser + captured fixture |
-| `e312e45` | feat(openmodelica): OpenModelicaRunner + OpenModelicaConfig |
-| `d7875c3` | test(openmodelica): real-omc integration tests + MAT fixture |
-| `863c1e1` | feat(examples): ModelicaTestingLib baselines for OpenModelica/linux |
-| `9d03752` | docs: record OpenModelica backend (D69) |
-| `d3d6cfb` | feat(reporter): auto-discover sibling-backend companions |
+| `src/modelica_testing/comparison/comparator.py` | `compare_all` simulate-only guard |
+| `src/modelica_testing/comparison/modes.py` | range `min`/`max` alias |
+| `src/modelica_testing/reporting/plot_comparison.py` | simulate-only guard + NB overlay attachment + index status |
+| `src/modelica_testing/reporting/templates/interactive.html` | simulate-only summary + NB overlay-picker |
+| `src/modelica_testing/reporting/templates/interactive.js` | `wireOverlayPickers` generalized + helper |
+| `tests/test_simulate_only.py` | +2 regression tests |
+| `tests/test_overlay_loader.py` | +1 NB-shape test |
+| `examples/modelica/ModelicaTestingLib/Examples/*.mo` | 4 new models |
+| `examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/test_spec.json` | 4 new entries |
+| `docs/decisions.md` | D71 |
+| `docs/ideas.md` | #51 marked partial, +#52 / #53 / #54; order block refreshed |
+| `CLAUDE.md` | D71 status paragraph |
 
 ---
 
-## Current architecture snapshot
+## Current architecture snapshot (unchanged from 2026-04-22)
 
-### Data model
+Refer to the previous handoff's architecture section — no data-model,
+UI-component, or capability changes in this session. The simulate-only
+fix hardened an existing code path; the overlay parity change ported
+an existing UI element across two code paths. No new abstractions.
 
-- `SpecNode` (tree_spec.py) — the authored tree. Leaves carry
-  `{metric, variable, params, against, window}`; combinators carry
-  `{combinator, children, k?, weights?, threshold?, direction?}`.
-- `MetricResult` (metric_tree.py) — the evaluated tree; result of
-  `evaluate_spec`. Carries pass/fail + score per node.
-- `leafState[path]` (JS runtime) — path-keyed `{params, window, visible,
-  original_*}`. Single source of truth for user edits; every handler
-  mutates here, every render reads here.
-- `WORKING_TREE` (JS runtime) — deep-cloned `SpecNode` tree mutated by
-  structural edits (+ / −). `structureDirty` flag gates wholesale
-  `/metrics` patch emission.
+**Key invariants confirmed this session**:
+- Simulate-only tests must pass through `compare_test` even when no
+  baseline is stored — the short-circuit to `NO_REF` on null
+  reference was premature. Render-side guards (template, index
+  classifier) belt-and-suspend the fix.
+- Overlay picker UI must render identically on both plot code paths
+  (baseline + no-baseline). Any future plot-section variant should
+  share the overlay block via a template partial or equivalent.
 
-### Serializers
+---
 
-- `tree_spec.spec_to_view(spec, *, evaluation_by_path)` → JSON-safe
-  nested dict with JSON-Pointer paths at every node, merged with
-  evaluation results.
-- `tree_eval.flatten_evaluation(result)` → `{path: {passed, score,
-  label, ...}}`, same pointer space as spec_to_view.
-- `mode_controls.emit_mode_schemas()` → per-mode schema dicts for JS
-  `renderModeControlsHtmlJs` to walk at runtime.
-
-### UI components (JS, in `interactive.js`)
-
-- **`SpecNodeView`** — recursive `renderNode` / `renderLeaf` /
-  `renderCombinator`. Mounts at top-of-report (full tree) and below
-  each per-variable plot (filtered by variable). Click a leaf header →
-  `activateLeaf`; ESC or click another leaf → deactivates.
-- **`activateLeaf` / `deactivateLeaf`** — unified lifecycle:
-  1. clear `.node-editor` slots,
-  2. inject universal `🔲 Set window from plot` button,
-  3. invoke the metric's `MODE_PLOT_EDITORS[metric].activate` if registered.
-  Editors only own event-handler cleanup; DOM clearing is core's job.
-- **`MODE_PLOT_EDITORS`** — registry keyed by metric name. Three
-  implementations:
-  - `tube` — control-point table + Shift+click add, Shift+drag move,
-    Shift+right-click remove; width-mode (rel/band/absolute), sync /
-    unsync with per-point per-side modes, interpolation (linear/step),
-    min-width floor, live pass/fail.
-  - `range` — min/max dashed lines draggable via Plotly's
-    `edits.shapePosition`; drop → `plotly_relayout` → state.
-  - Window brush (universal, not per-metric) — `🔲 Set window from plot`
-    button arms `dragmode: 'select', selectdirection: 'h'`.
-- **`MODE_PLOT_CONTRIBUTIONS`** — static plot artifacts per mode
-  (polygon, shapes, markers). For tube, delegates to the editor's
-  `_resolveAllBoundsOnGrid` so the polygon visual matches the editor's
-  computed bounds exactly.
-- **`MODE_SCORERS`** — live pass/fail recompute for nrmse, final-only,
-  range, tube. Event-timing + dominant-frequency stay
-  CLI-authoritative (FFT / event detection not reimplemented JS-side).
-- **Error overlay dropdown** — per-plot select (none / signed / abs /
-  NRMSE). Adds / removes a single right-axis error trace. State is the
-  DOM select's `.value` — no parallel JS state to desync.
-- **Add-leaf modal** — inline modal with metric dropdown + variable
-  `<input list>` + `<datalist>` of tracked variables. Browser
-  auto-filters as user types; glob chars (`*`, `?`) accepted; unknown
-  variable names emit a non-blocking warning. Preset variable (from
-  per-variable mount's `+`) makes the input `readonly`.
-- **Remove-confirm popup** — inline amber popup with "Confirm" / "Cancel"
-  buttons (not `window.confirm`). Click-away / ESC cancels.
-
-### Zoom preservation
-
-- `Plotly.react` replaces `Plotly.newPlot` after first paint
-  (`el._mt_plotted` marker).
-- `uirevision: 'keep'` on xaxis, yaxis, and top-level layout —
-  preserves user zoom/pan across re-renders (without it, Plotly
-  reapplies default `autorange: true` on every data change).
-- `edits.shapePosition` always-on in `PLOT_CFG` so range drag doesn't
-  require a config swap.
-
-### Dev-env prereqs (one-time per machine)
+## Dev-env prereqs (one-time per machine)
 
 ```bash
-uv pip install -e ".[dev,fmpy]"
+uv pip install -e ".[dev,fmpy,om]"
 uv pip install pytest-playwright
 uv run playwright install chromium
 ```
 
-Both reachable through the aliyun pypi mirror (`--index-url
-https://mirrors.aliyun.com/pypi/simple/`) when the user's network has
-the Fastly block active. Chromium downloads from `cdn.playwright.dev`
-(Azure, not Fastly).
+**Venv drift caveat**: `uv run pytest` resolves `pytest` on PATH,
+which on this machine points at `/home/fig/miniforge3/bin/pytest`,
+not the project's `.venv`. That means `uv pip install psutil` into
+the project venv doesn't actually fix test-time imports. Fix by
+either (a) running `pip install psutil` under the pytest that `uv
+run` resolves, or (b) ensuring the project venv's `bin` precedes
+miniforge on PATH. This session hit it and fixed it; watch for it
+if future test runs report `ModuleNotFoundError: No module named
+'psutil'` despite `psutil>=5.9` being in `[project.dependencies]`.
 
----
-
-## What's tested
-
-- **Python unit tests** — 561 (tree_spec, tree_eval, comparator,
-  overlay_loader, mode_controls, patch_apply, validator,
-  reference_store, discovery recognizers, etc.).
-- **HTML structural hash** — 6 golden hashes per mode + substring
-  presence checks on `interactive.js` + `interactive.html`.
-- **Playwright** — 35 browser-driven tests covering: per-variable
-  dedup, full-tree mount, per-variable filtering, leaf activation /
-  deactivation (ESC + click-away), cross-mount input sync, `+` modal
-  (select + datalist + cancel + glob), inline remove-confirm (Confirm
-  + Cancel + ESC), wholesale `/metrics` replace on structural edit,
-  live pass/fail recompute (AND combinator bubble-up, warn immunity),
-  tube editor (auto-seed, add-point, width-mode reprojection, sync /
-  unsync columns, Shift+click, Shift+right-click remove, cross-mount
-  refresh), range drag, window brush injection, error overlay add /
-  remove, tube markers not in legend, no brush-button stacking on
-  re-activation.
-
-Run with:
-
-```bash
-uv run pytest -q                       # full suite, ~90s
-uv run pytest --deselect tests/test_interactive_playwright.py -q   # fast, ~20s
-uv run pytest tests/test_interactive_playwright.py -q              # just browser, ~75s
-```
+Aliyun pypi mirror (`--index-url
+https://mirrors.aliyun.com/pypi/simple/`) when the user's network
+has the Fastly block active. Chromium downloads from
+`cdn.playwright.dev` (Azure, not Fastly).
 
 ---
 
 ## Known limitations (deferred by design; do not file as bugs)
 
-1. **Event-timing + dominant-frequency are CLI-authoritative.** Live
-   recompute not implemented for these two (no JS-side FFT / event
-   detection). Badge shows on those leaves so users know.
-2. **No wrap-in-combinator** from the `+` button. Click `+` on a
-   combinator only adds a leaf child; to wrap an existing leaf in
-   a new combinator (e.g., `warn`), edit the JSON directly.
-3. **No combinator-kind editing** from the UI. Change and↔or↔warn in
-   the JSON spec.
-4. **Window brush is one-shot per activation.** Click button, drag
-   once, brush exits. No "keep selecting" mode.
-5. **Range drag on extreme values** — if min/max is set outside the
-   plot's autoscale range the dashed line renders off-screen. Plotly
-   shape autoscale doesn't include layout shapes.
-6. **Visual regression** not automated. Playwright covers behavior;
-   color / layout regressions need an eyeball pass.
-
----
-
-## Reporter QA checklist
-
-`docs/qa/reporter_checklist.md` covers the ~20% that requires human
-judgment. Most of the old manual checklist is now Playwright-automated;
-what remains is visual quality, drag feel on real data, color
-consistency, and the structural-editing UX items noted above.
+1. **Event-timing + dominant-frequency are CLI-authoritative.**
+   Live recompute not implemented for these two. Badge shown.
+2. **No wrap-in-combinator** from the `+` button (idea #52). Edit
+   JSON directly.
+3. **No combinator-kind editing** from the UI (idea #52). Edit JSON.
+4. **Window brush is one-shot per activation.**
+5. **Range drag on extreme values** — off-screen if min/max outside
+   plot's autoscale. Plotly shape autoscale excludes layout shapes.
+6. **Visual regression** not automated. Playwright covers behavior.
 
 ---
 
 ## Pre-session sanity
 
 ```bash
-uv run pytest -q                                                    # expect 637 passed
-uv run modelica-testing --config examples/fmu/testing.json run --report  # BouncingBall smoke
-git status                                                          # confirm clean tree
+uv run pytest -q                                                    # expect 674 passed + 2 skipped
+uv run modelica-testing --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --report
+git status                                                          # uncommitted work: D71 fixes + docs
 ```
 
-If pytest-playwright or fmpy is missing, reinstall via aliyun mirror
-as noted above.
+If `uv run pytest` reports `ModuleNotFoundError: No module named
+'psutil'`: see the venv drift caveat above.
 
 ---
 
 ## Candidate next moves
 
+### A-tier (remaining half-shipped UX)
+
+- **#52 wrap-in-combinator + combinator-kind editing** (~1 day).
+  The only remaining reporter-as-IDE debt. The `+` modal currently
+  only adds leaf children to combinators; wrapping an existing leaf
+  in `warn` or changing and↔or↔warn requires editing JSON. Now that
+  structural edits emit a wholesale `/metrics` replace, both of
+  these fit the existing patch envelope without new plumbing.
+
 ### B-tier (user-facing features)
 
-- **Persistent-worker OpenModelica via OMPython / `OMCSessionZMQ`.**
-  Natural D69 follow-up. TRANSFORM sweep showed per-test compile
-  dominates at ~50–100s/test; a long-lived omc session per worker
-  would load MSL + TRANSFORM once, give fine-grained `translating`
-  /`simulating` phase labels, and cut wall-time 5–10×. Mirrors
-  Dymola's `persistent_runner` → batch-fallback split — the shape
-  is already proven in this repo. ~1–2 days.
+- **Phase 7 — rule-based recommender** (~1–2 weeks full, ~2–3 days
+  skeleton). New `recommender/` package. Input: signal + optional
+  baseline. Output: MetricTree proposals bounded by D66's complexity
+  budget (≥ 1 primary leaf, ≤ 3 leaves, ≤ 1 combinator layer). Each
+  `ComparisonMode` declares `requires_baseline` + shape requirements
+  so candidate filtering is automatic. No ML. Lowers onboarding
+  barrier.
 
-- **TRANSFORM upstream portability fixes.** The 2026-04-22 sweep
-  surfaced 46 `each`-modifier misuses that are legitimate TRANSFORM
-  portability bugs (Dymola silently accepts, OM rejects). Land them
-  as a PR to TRANSFORM-Library; would likely bump OM pass rate from
-  72% to ~85%. The taxonomy at the top of this handoff lists the
-  classification. Separate: `installPackage(SDF)` on the machine +
-  adding `SDF` to TRANSFORM's deps would recover another 7 tests.
-  Outside this repo's scope but low-effort + high-signal.
+- **TRANSFORM upstream portability PR** (~1 day, external repo).
+  46 `each`-modifier fixes surfaced by the 2026-04-22 OM sweep.
+  Dymola silently accepts; OM rejects. Legitimate library bugs.
+  Would bump OM pass rate from 72% → ~85%. `installPackage(SDF)` +
+  adding SDF to TRANSFORM's deps recovers another 7. Outside this
+  repo's scope but low-effort.
 
-- **Phase 7 — rule-based recommender.** New `recommender/` package.
-  Input: signal + optional baseline. Output: MetricTree proposals
-  bounded by D66's complexity budget (≥ 1 primary leaf, ≤ 3 leaves,
-  ≤ 1 combinator layer). Each `ComparisonMode` declares
-  `requires_baseline` + shape requirements so candidate filtering is
-  automatic. No ML (Phase 8 removed). Lowers onboarding barrier.
-  ~1–2 weeks for full, ~2–3 days for a credible skeleton.
-
-- **Idea #45 python-driven tests + FMU-path semantic-gap closure.**
-  Pair them — shared `SimulationResult` dataclass refactor.
-  `FmpyRunner` gains input-schedule support, `fmi_type` selection
-  (CS vs ME), `start_values` override, python-driver test shape.
-  `CustomPythonRunner` slots into the same return contract. ~2 weeks.
-
-- **Wrap-in-combinator + combinator-kind editing** (finishes the
-  structural-editing UX).
+- **Idea #45 python-driven tests + FMU-path semantic-gap closure**
+  (~2 weeks). Pair them — shared `SimulationResult` dataclass
+  refactor. `FmpyRunner` gains input-schedule / `fmi_type` / start-
+  value-override support; `CustomPythonRunner` slots in as a sibling
+  backend for pyomo / scipy / custom solvers / CSV loaders.
 
 ### C-tier (performance / polish, nobody's blocked)
 
-- `#47` time-array dedup (cap 1000 → 2000 at same budget). ~1 day.
-- `#48` lazy-fetch full-res on zoom. ~½ day.
-- `#49` per-test `max_embedded_samples` override. ~30 min.
-- Visual-regression Playwright screenshots.
-- **OM FMU export via `buildModelFMU`** — D69 deferred. Would wire
-  OM into the `Capability.FMU_EXPORT` cross-backend chain (currently
-  Dymola-only + experimental per D65). ~1–2 days.
-- **`check-openmodelica` CLI subcommand** (peer of `check-dymola`).
-  Trivial. Verifies omc + MSL + SDF(?) availability and prints
-  versions. ~½ day.
+- **#53 `check-openmodelica` CLI subcommand** (~½ day). Peer of
+  `check-dymola`. Verifies omc + MSL + OMPython. Onboarding polish.
+- **#54 OM FMU export via `buildModelFMU`** (~1–2 days). Wire OM
+  into the `Capability.FMU_EXPORT` cross-backend chain. Would let
+  the D63 chain reciprocate for OM-authored models. D69 deferred.
+- **#47 time-array dedup** (~1 day). Cap 1000 → 2000 at same budget.
+- **#48 lazy-fetch full-res on zoom** (~½ day).
+- **#49 per-test `max_embedded_samples` override** (~30 min).
+- **Sibling-backend overlay polish** (idea #51 remaining slice):
+  user-labelled overlay names, opt-in `auto_companions` config knob.
+- **Visual-regression Playwright screenshots**.
 
 ### D-tier (external distribution)
 
-- Tool rename to a simulator-neutral name. Technical scope small;
-  blocked on picking a name. Now more justified — three backends,
-  no Modelica coupling in the core pipeline.
+- **Tool rename** to a simulator-neutral name. Three backends, no
+  Modelica coupling in the core pipeline.
 
 ### E-tier (foundational)
 
-- Phase 9 dataset types (`Events`, `Spectrum`, `Distribution`,
+- **Phase 9 dataset types** (`Events`, `Spectrum`, `Distribution`,
   `Scalars`, `Field`) unlocking Fréchet / spectral coherence /
   pyfunnel x-tolerance / ISO 18571 leaf metrics.
 
@@ -325,55 +235,55 @@ as noted above.
 
 ## Starter prompt for the next session
 
-> Resuming ModelicaTesting. OpenModelica backend shipped
-> (D69, commits `101d0a8` … `9d03752`) — third `SimulatorRunner`
-> alongside Dymola + FMPy, omc subprocess + `.mos` analogous to
-> Dymola's batch fallback, unified `testing.json` with auto-detect
-> by current OS + binary availability (Dymola on Windows,
-> OpenModelica on Linux, same config file). Sibling-backend
-> auto-companion overlays (`d3d6cfb`) — at report time the reporter
-> auto-discovers peer-backend references and renders them as
-> visual-only blue-dashed overlays for pre-accept cross-check.
-> TRANSFORM validation sweep: 235/326 pass (72%), failures fully
-> classified (see `docs/SESSION_HANDOFF.md`), baselines committed
-> to TRANSFORM repo. **Test baseline: 686 passing at HEAD** (~90 s
-> with Playwright, ~30 s without).
+> Resuming ModelicaTesting. D71 polish pass shipped (2026-04-23) —
+> four feature-showcase tests added to `ModelicaTestingLib`
+> (`TubeToleranceTest`, `FrequencyTest`, `MetricTreeTest`,
+> `RangeCheckTest`), sibling-backend overlay picker UI now renders
+> on both baseline and no-baseline trajectory code paths, range
+> leaf accepts `min`/`max` aliases, and the `simulate_only + no
+> baseline` render path was fixed across `compare_all`,
+> `_build_template_context`, and the index status classifier. All
+> 10 ModelicaTestingLib OM tests show PASS. **Test baseline: 674
+> passing + 2 env-gated skips at HEAD** (~28 s without Playwright).
 >
-> **Read first**: `docs/SESSION_HANDOFF.md` (this file; top-of-file
-> "What shipped this session" is the current snapshot), D69 in
-> `docs/decisions.md` (OM backend scope + rationale + deferred).
+> **Read first**: `docs/SESSION_HANDOFF.md` (this file), D71 in
+> `docs/decisions.md`, top of `docs/ideas.md` for the refreshed
+> A-E tier ordering.
 >
 > **Default next move — pick one**:
 >
-> 1. **Persistent-worker OM via OMPython** (B-tier, ~1–2 days).
->    Follow-up explicitly deferred in D69. TRANSFORM sweep showed
->    compile dominates at ~50–100s/test; persistent omc sessions
->    cut wall-time 5–10× and enable fine-grained phase labels.
->    Same pattern as Dymola's `persistent_runner` → batch split.
+> 1. **#52 wrap-in-combinator + combinator-kind editing**
+>    (A-tier, ~1 day). The one remaining reporter-as-IDE debt.
+>    Both edits fit the existing wholesale `/metrics` replace
+>    patch envelope — no new plumbing.
 >
-> 2. **TRANSFORM upstream portability PR** (B-tier, ~1 day).
->    Land the 46 `each`-modifier fixes against TRANSFORM-Library
->    to raise OM pass rate from 72% → ~85%. Category list in this
->    handoff's failure taxonomy.
->
-> 3. **Phase 7 rule-based recommender** (B-tier, ~1–2 weeks full,
+> 2. **Phase 7 rule-based recommender** (B-tier, ~1–2 weeks full,
 >    ~2–3 days skeleton). New `recommender/` package. Lowers
->    onboarding barrier for new users. MetricTree proposals bounded
->    by D66's complexity budget.
+>    onboarding barrier. Bounded by D66's complexity budget.
 >
-> 4. **Wrap-in-combinator + combinator-kind editing** (~1 day).
->    Finishes the structural-editing UX in the reporter.
+> 3. **TRANSFORM upstream portability PR** (B-tier, ~1 day,
+>    external repo). Land the 46 `each`-modifier fixes against
+>    TRANSFORM-Library to lift OM pass rate 72% → ~85%.
 >
-> **Smaller alternatives**: `#47` time-array dedup (C-tier, ~1 day);
-> `check-openmodelica` CLI subcommand (C-tier, ~½ day); OM FMU
-> export via `buildModelFMU` (C-tier, ~1–2 days).
+> 4. **#45 python-driven tests + FMU-path semantic-gap closure**
+>    (B-tier, ~2 weeks). Shared `SimulationResult` dataclass
+>    refactor unlocks pyomo / scipy / custom solvers + industrial
+>    FMU testing.
+>
+> **Smaller alternatives**: `#53 check-openmodelica` subcommand
+> (C-tier, ~½ day); `#54 OM FMU export` (C-tier, ~1–2 days);
+> `#47` time-array dedup (C-tier, ~1 day).
 >
 > **Dev-env prereqs** (if venv was recreated): `uv pip install -e
-> ".[dev,fmpy]"` + `uv pip install pytest-playwright --index-url
+> ".[dev,fmpy,om]"` + `uv pip install pytest-playwright --index-url
 > https://mirrors.aliyun.com/pypi/simple/` + `uv run playwright
-> install chromium` (one-time). OpenModelica: `apt install
-> openmodelica` + `omc -e 'updatePackageIndex(); installPackage
-> (Modelica); getErrorString();'` once per machine.
+> install chromium`. OpenModelica: `apt install openmodelica` + `omc
+> -e 'updatePackageIndex(); installPackage(Modelica);
+> getErrorString();'` once per machine. If `uv run pytest` reports
+> missing `psutil` despite it being a hard dep: the pytest on PATH
+> may be pointing at a different Python than the project venv —
+> install `psutil` under whichever Python `uv run which pytest`
+> resolves.
 >
 > **Out of scope unless explicitly adopted**: Phase 9 dataset types,
 > ML, any mid-stream refactor of the existing six modes.

@@ -42,6 +42,11 @@ class FieldSpec:
     choices: Optional[list[str]] = None
     label: Optional[str] = None
     help: Optional[str] = None
+    # UI hints for number inputs. ``ui_max`` is a soft cap — if the
+    # current value exceeds it, the rendered input's max becomes
+    # ``max(ui_max, current_value)`` so edits aren't clamped down.
+    ui_min: Optional[float] = None
+    ui_max: Optional[float] = None
 
 
 @dataclass
@@ -91,6 +96,8 @@ def derive_schema(config_cls: type, *, mode: Optional[str] = None) -> Schema:
             choices=choices,
             label=meta.get("label") or _titleize(f.name),
             help=meta.get("help"),
+            ui_min=meta.get("ui_min"),
+            ui_max=meta.get("ui_max"),
         ))
     return Schema(mode=mode, fields=fields_out)
 
@@ -213,10 +220,28 @@ def _render_field(f: FieldSpec, value: Any) -> str:
     if f.type in ("float", "int"):
         step = 'any' if f.type == "float" else '1'
         val_attr = "" if value is None else f' value="{html.escape(str(value))}"'
+        min_attr = ""
+        max_attr = ""
+        if f.ui_min is not None:
+            min_attr = f' min="{html.escape(str(f.ui_min))}"'
+        if f.ui_max is not None:
+            # Soft cap: if the current value exceeds ui_max, bump the input's
+            # max so the browser's spinner doesn't clamp it down on edit.
+            try:
+                cur = float(value) if value is not None else float("-inf")
+            except (TypeError, ValueError):
+                cur = float("-inf")
+            effective_max = max(float(f.ui_max), cur)
+            # Keep integer inputs integer-typed in the max attribute.
+            if f.type == "int":
+                max_attr = f' max="{int(effective_max)}"'
+            else:
+                max_attr = f' max="{html.escape(str(effective_max))}"'
         return (
             f'<label class="mc-field mc-{f.type}"{help_attr}>'
             f'<span>{label}</span>'
-            f'<input type="number" step="{step}" data-field="{name_attr}"{val_attr}>'
+            f'<input type="number" step="{step}" data-field="{name_attr}"'
+            f'{min_attr}{max_attr}{val_attr}>'
             "</label>"
         )
 

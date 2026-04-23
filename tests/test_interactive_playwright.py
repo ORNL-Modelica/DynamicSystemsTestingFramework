@@ -469,6 +469,13 @@ def test_remove_leaf_popup_closes_on_escape(rendered_page: Page):
         '#nodes-full [data-path="/metrics/children/1"] .node-btn-remove'
     ).first.click()
     assert rendered_page.locator(".remove-confirm").count() == 1
+    # ``setTimeout(..., 0)`` inside openRemoveConfirm defers the ESC listener
+    # by a tick to avoid the opening click dismissing itself. Wait for
+    # attachment or the ESC press is a no-op.
+    rendered_page.wait_for_function(
+        "() => document.querySelector('.remove-confirm') && "
+        "document.querySelector('.remove-confirm')._cleanup"
+    )
     rendered_page.keyboard.press("Escape")
     assert rendered_page.locator(".remove-confirm").count() == 0
     assert rendered_page.evaluate("structureDirty") is False
@@ -962,3 +969,852 @@ def test_window_brush_button_injected_on_activation(rendered_page: Page):
     ).first
     assert brush_btn.is_visible()
     assert "window" in brush_btn.text_content().lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests — wrap / unwrap / change-kind (#52)
+# ---------------------------------------------------------------------------
+
+
+def test_kind_dropdown_renders_on_every_combinator(rendered_page: Page):
+    """Every combinator in the full-tree mount has a kind-select dropdown
+    with 5 options (and/or/warn/k-of-n/weighted)."""
+    selects = rendered_page.locator("#nodes-full .node-kind-select")
+    # The fixture has two combinators: root AND + inner warn.
+    assert selects.count() == 2
+    opts = selects.first.locator("option")
+    assert opts.count() == 5
+    # Order matches VALID_COMBINATORS.
+    values = rendered_page.evaluate(
+        "Array.from(document.querySelectorAll('#nodes-full .node-kind-select')[0].options)"
+        ".map(o => o.value)"
+    )
+    assert values == ["and", "or", "warn", "k-of-n", "weighted"]
+
+
+def test_change_kind_and_to_or_flips_combinator_field(rendered_page: Page):
+    """Selecting 'or' on the root AND mutates WORKING_TREE.combinator."""
+    sel = rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-kind-select'
+    ).first
+    sel.select_option("or")
+    assert rendered_page.evaluate("WORKING_TREE.combinator") == "or"
+    assert rendered_page.evaluate("structureDirty") is True
+
+
+def test_change_kind_to_warn_on_multi_child_is_refused(rendered_page: Page):
+    """The warn option is disabled when the combinator has != 1 child.
+    If the user bypasses the disabled flag, changeCombinatorKind returns
+    false and the tree stays unchanged."""
+    # The disabled <option> means Playwright's select_option would error;
+    # verify by calling the API directly (mimics a hypothetical alt path).
+    result = rendered_page.evaluate(
+        "changeCombinatorKind('/metrics', 'warn')"
+    )
+    assert result is False
+    assert rendered_page.evaluate("WORKING_TREE.combinator") == "and"
+
+
+def test_change_kind_to_k_of_n_seeds_k_default(rendered_page: Page):
+    """Switching a combinator into k-of-n auto-seeds k=max(1, n-1)."""
+    sel = rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-kind-select'
+    ).first
+    sel.select_option("k-of-n")
+    # Root has 3 children → k seeded to 2.
+    assert rendered_page.evaluate("WORKING_TREE.combinator") == "k-of-n"
+    assert rendered_page.evaluate("WORKING_TREE.k") == 2
+    # Header shows the live k input — editing it updates the model.
+    k_inp = rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-k-input'
+    ).first
+    assert k_inp.input_value() == "2"
+    k_inp.fill("3")
+    k_inp.dispatch_event("change")
+    assert rendered_page.evaluate("WORKING_TREE.k") == 3
+
+
+def test_change_kind_to_weighted_seeds_weights_and_threshold(rendered_page: Page):
+    sel = rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-kind-select'
+    ).first
+    sel.select_option("weighted")
+    assert rendered_page.evaluate("WORKING_TREE.combinator") == "weighted"
+    # Default seeding: unit weights for every child, threshold=1.0, direction=less.
+    assert rendered_page.evaluate("WORKING_TREE.weights") == [1.0, 1.0, 1.0]
+    assert rendered_page.evaluate("WORKING_TREE.threshold") == 1.0
+    assert rendered_page.evaluate("WORKING_TREE.direction") == "less"
+
+
+def test_change_kind_k_of_n_to_and_strips_k(rendered_page: Page):
+    """Switching a k-of-n back to AND removes the k field."""
+    sel = rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-kind-select'
+    ).first
+    sel.select_option("k-of-n")
+    assert rendered_page.evaluate("WORKING_TREE.k") == 2
+    sel.select_option("and")
+    assert rendered_page.evaluate("WORKING_TREE.combinator") == "and"
+    assert rendered_page.evaluate("'k' in WORKING_TREE") is False
+
+
+def test_wrap_leaf_in_warn_via_popup(rendered_page: Page):
+    """Click ⊕ on a leaf, pick warn in the popup, Confirm → leaf becomes
+    warn([leaf])."""
+    wrap_btn = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-wrap'
+    ).first
+    wrap_btn.click()
+    popup = rendered_page.locator(".wrap-popup").first
+    assert popup.is_visible()
+    popup.locator(".wrap-popup-kind").select_option("warn")
+    popup.locator(".wrap-popup-yes").click()
+    # Inspect the wholesale patch.
+    payload = rendered_page.evaluate("buildPatchData()")
+    new_tree = payload["patch"][0]["value"]
+    # Root AND still has 3 children, but children/0 is now a warn combinator.
+    assert new_tree["combinator"] == "and"
+    assert new_tree["children"][0]["combinator"] == "warn"
+    assert new_tree["children"][0]["children"][0]["metric"] == "nrmse"
+
+
+def test_wrap_popup_cancel_leaves_tree_untouched(rendered_page: Page):
+    wrap_btn = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-wrap'
+    ).first
+    wrap_btn.click()
+    rendered_page.locator(".wrap-popup-no").click()
+    assert rendered_page.locator(".wrap-popup").count() == 0
+    assert rendered_page.evaluate("structureDirty") is False
+
+
+def test_wrap_popup_closes_on_escape(rendered_page: Page):
+    wrap_btn = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-wrap'
+    ).first
+    wrap_btn.click()
+    assert rendered_page.locator(".wrap-popup").count() == 1
+    # ``setTimeout(..., 0)`` inside openWrapPopup defers the ESC listener
+    # registration by a tick to avoid the opening click dismissing itself.
+    # Give the event loop that tick before pressing ESC or it's a no-op.
+    rendered_page.wait_for_function(
+        "() => document.querySelector('.wrap-popup') && "
+        "document.querySelector('.wrap-popup')._cleanup"
+    )
+    rendered_page.keyboard.press("Escape")
+    assert rendered_page.locator(".wrap-popup").count() == 0
+    assert rendered_page.evaluate("structureDirty") is False
+
+
+def test_wrap_combinator_in_warn_produces_single_child(rendered_page: Page):
+    """Wrapping a multi-child AND in warn always yields warn(and(...)) —
+    warn has one child even when the wrapped thing has multiple children,
+    because the wrap creates a new parent above the existing node."""
+    # Wrap the root AND (path /metrics) in warn.
+    result = rendered_page.evaluate("wrapWorkingNode('/metrics', 'warn')")
+    assert result is True
+    # WORKING_TREE is now the new warn; root path rebuilt to /metrics.
+    assert rendered_page.evaluate("WORKING_TREE.combinator") == "warn"
+    assert rendered_page.evaluate("WORKING_TREE.children.length") == 1
+    assert rendered_page.evaluate("WORKING_TREE.children[0].combinator") == "and"
+    assert rendered_page.evaluate("WORKING_TREE.children[0].children.length") == 3
+
+
+def test_unwrap_button_renders_only_on_single_child_combinator(rendered_page: Page):
+    """The root AND has 3 children → no ⊖. The inner warn has 1 child → ⊖."""
+    # Root has no unwrap button.
+    root_unwrap = rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-btn-unwrap'
+    )
+    assert root_unwrap.count() == 0
+    # Inner warn (children/2) has 1 child → unwrap button present.
+    warn_unwrap = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/2"] > .node-header .node-btn-unwrap'
+    )
+    assert warn_unwrap.count() == 1
+
+
+def test_unwrap_replaces_combinator_with_its_single_child(rendered_page: Page):
+    """Clicking ⊖ on the inner warn replaces it with the tube leaf —
+    warn(tube) → tube. Live tree reflects the change."""
+    unwrap = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/2"] > .node-header .node-btn-unwrap'
+    ).first
+    unwrap.click()
+    # The root AND's children/2 is now the tube leaf directly.
+    payload = rendered_page.evaluate("buildPatchData()")
+    new_tree = payload["patch"][0]["value"]
+    assert new_tree["children"][2]["metric"] == "tube"
+    assert "combinator" not in new_tree["children"][2]
+
+
+def test_unwrap_root_single_child_makes_child_the_new_root(rendered_page: Page):
+    """wrap(root, 'warn') then unwrap → should restore the original root."""
+    rendered_page.evaluate("wrapWorkingNode('/metrics', 'warn')")
+    assert rendered_page.evaluate("WORKING_TREE.combinator") == "warn"
+    rendered_page.evaluate("unwrapWorkingNode('/metrics')")
+    assert rendered_page.evaluate("WORKING_TREE.combinator") == "and"
+    assert rendered_page.evaluate("WORKING_TREE.children.length") == 3
+
+
+def test_wrap_emits_wholesale_metrics_replace(rendered_page: Page):
+    """Any structural edit produces exactly one RFC 6902 add op at /metrics —
+    same envelope as the existing add-leaf / remove-leaf flows."""
+    rendered_page.evaluate("wrapWorkingNode('/metrics/children/0', 'warn')")
+    payload = rendered_page.evaluate("buildPatchData()")
+    assert len(payload["patch"]) == 1
+    assert payload["patch"][0]["op"] == "add"
+    assert payload["patch"][0]["path"] == "/metrics"
+
+
+def test_change_kind_in_per_variable_mount_sees_structural_edit(rendered_page: Page):
+    """Changing root kind from the full-tree mount re-renders the
+    per-variable mounts so they see the new dropdown value."""
+    full_sel = rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-kind-select'
+    ).first
+    full_sel.select_option("or")
+    # Per-variable mount's combinator header (if present) should agree.
+    var_select = rendered_page.locator(
+        '#nodes-0 [data-path="/metrics"] > .node-header .node-kind-select'
+    )
+    if var_select.count() > 0:
+        assert var_select.first.input_value() == "or"
+    # WORKING_TREE definitely agrees.
+    assert rendered_page.evaluate("WORKING_TREE.combinator") == "or"
+
+
+def test_weighted_weights_input_updates_weights_array(rendered_page: Page):
+    """Weighted mode exposes one weight input per child; editing one
+    updates only that index."""
+    sel = rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-kind-select'
+    ).first
+    sel.select_option("weighted")
+    # Root has 3 children → 3 weight inputs.
+    w_inputs = rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-weight-input'
+    )
+    assert w_inputs.count() == 3
+    # Edit the middle weight.
+    w_inputs.nth(1).fill("2.5")
+    w_inputs.nth(1).dispatch_event("change")
+    assert rendered_page.evaluate("WORKING_TREE.weights") == [1.0, 2.5, 1.0]
+
+
+def test_wrap_button_renders_on_leaves_too(rendered_page: Page):
+    """⊕ is available on every node, leaves included, so a user can
+    demote a single leaf to advisory with one click."""
+    leaf_wrap = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-wrap'
+    )
+    assert leaf_wrap.count() == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests — value persistence across re-renders + reset button
+# ---------------------------------------------------------------------------
+
+
+def test_edit_survives_sibling_removal(rendered_page: Page):
+    """Edit a tolerance, then remove an earlier sibling. The edit must
+    survive the path shift (old /metrics/children/0 edit reappears under
+    the new /metrics/children/0)."""
+    # Edit tolerance on children/0 (the first nrmse leaf on h).
+    inp = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    ).first
+    inp.fill("0.05")
+    inp.dispatch_event("input")
+    assert rendered_page.evaluate(
+        "leafState['/metrics/children/0'].params.tolerance"
+    ) == pytest.approx(0.05)
+
+    # The fixture has no earlier sibling for children/0, so instead
+    # remove children/1 (the range leaf on h). That shifts nothing at
+    # index 0 — verify the edit stays put.
+    remove_btn = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/1"] > .node-header .node-btn-remove'
+    ).first
+    remove_btn.click()
+    rendered_page.locator(".remove-confirm-yes").first.click()
+    # children/0 still holds the edit.
+    assert rendered_page.evaluate(
+        "leafState['/metrics/children/0'].params.tolerance"
+    ) == pytest.approx(0.05)
+    # The DOM input also reflects it after re-render (the bug we fixed).
+    inp_after = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    ).first
+    assert float(inp_after.input_value()) == pytest.approx(0.05)
+
+
+def test_edit_survives_path_shift_via_remove(rendered_page: Page):
+    """Edit a leaf whose path *will* shift due to an earlier-sibling
+    remove. The leaf moves from /metrics/children/1 to /metrics/children/0,
+    and its edited tolerance must travel with it."""
+    # Edit children/1 (range on h; uses min_value / max_value, but also
+    # carries tolerance from the fixture params via variable_overrides.
+    # Pick min_value for this test — it's range-specific).
+    inp = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/1"] input[data-field="min_value"]'
+    ).first
+    inp.fill("-0.99")
+    inp.dispatch_event("input")
+    assert rendered_page.evaluate(
+        "leafState['/metrics/children/1'].params.min_value"
+    ) == pytest.approx(-0.99)
+
+    # Now remove children/0 — children/1 shifts to children/0.
+    remove_btn = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-remove'
+    ).first
+    remove_btn.click()
+    rendered_page.locator(".remove-confirm-yes").first.click()
+
+    # State migrated to the new path.
+    assert rendered_page.evaluate(
+        "leafState['/metrics/children/0'].params.min_value"
+    ) == pytest.approx(-0.99)
+    # Old path cleared.
+    assert rendered_page.evaluate(
+        "'/metrics/children/1' in leafState"
+    ) is False
+    # DOM input shows the edit post-render.
+    inp_after = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="min_value"]'
+    ).first
+    assert float(inp_after.input_value()) == pytest.approx(-0.99)
+
+
+def test_edit_survives_wrap(rendered_page: Page):
+    """Edit a tolerance, then wrap the leaf in warn. Leaf path deepens
+    from /metrics/children/0 to /metrics/children/0/children/0; edit
+    migrates with it."""
+    inp = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    ).first
+    inp.fill("0.02")
+    inp.dispatch_event("input")
+    # Wrap in warn via API (popup tested separately).
+    rendered_page.evaluate(
+        "wrapWorkingNode('/metrics/children/0', 'warn')"
+    )
+    # State migrated to deeper path.
+    assert rendered_page.evaluate(
+        "leafState['/metrics/children/0/children/0'].params.tolerance"
+    ) == pytest.approx(0.02)
+    # DOM reflects it.
+    inp_after = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0/children/0"] input[data-field="tolerance"]'
+    ).first
+    assert float(inp_after.input_value()) == pytest.approx(0.02)
+
+
+def test_edit_survives_unwrap(rendered_page: Page):
+    """Edit a field inside the inner warn, then unwrap the warn. Leaf
+    moves from /metrics/children/2/children/0 → /metrics/children/2.
+    Tube leaves suppress mode-controls HTML (their fields live in the
+    activated editor), so edit window_start — universal across modes."""
+    inp = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/2/children/0"] input[data-field="window_start"]'
+    ).first
+    inp.fill("0.4")
+    inp.dispatch_event("input")
+    assert rendered_page.evaluate(
+        "leafState['/metrics/children/2/children/0'].window.start"
+    ) == pytest.approx(0.4)
+    rendered_page.evaluate("unwrapWorkingNode('/metrics/children/2')")
+    assert rendered_page.evaluate(
+        "leafState['/metrics/children/2'].window.start"
+    ) == pytest.approx(0.4)
+
+
+def test_edit_survives_change_kind(rendered_page: Page):
+    """Path doesn't shift on change-kind, but the DOM re-renders — input
+    values must be restored from leafState."""
+    inp = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    ).first
+    inp.fill("0.05")
+    inp.dispatch_event("input")
+    # Change root AND → OR (triggers full re-render).
+    rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-kind-select'
+    ).first.select_option("or")
+    # DOM input reflects the edit.
+    inp_after = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    ).first
+    assert float(inp_after.input_value()) == pytest.approx(0.05)
+
+
+def test_window_edit_survives_structural_edit(rendered_page: Page):
+    """Window inputs (start / end) are on every leaf regardless of mode.
+    Edit one, remove a sibling, verify it survives."""
+    inp = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/1"] input[data-field="window_start"]'
+    ).first
+    inp.fill("0.5")
+    inp.dispatch_event("input")
+    # Remove earlier sibling → children/1 shifts to children/0.
+    remove_btn = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-remove'
+    ).first
+    remove_btn.click()
+    rendered_page.locator(".remove-confirm-yes").first.click()
+    # State + DOM both reflect the window edit at the new path.
+    assert rendered_page.evaluate(
+        "leafState['/metrics/children/0'].window.start"
+    ) == pytest.approx(0.5)
+    inp_after = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="window_start"]'
+    ).first
+    assert float(inp_after.input_value()) == pytest.approx(0.5)
+
+
+def test_reset_button_renders_on_every_leaf(rendered_page: Page):
+    """↻ button shows up alongside +/⊕/−."""
+    resets = rendered_page.locator("#nodes-full .node-btn-reset")
+    # Three leaves in the fixture.
+    assert resets.count() == 3
+
+
+def test_reset_button_restores_original_params(rendered_page: Page):
+    """Edit tolerance, click ↻, tolerance reverts to original_params value."""
+    # Capture original.
+    original = rendered_page.evaluate(
+        "leafState['/metrics/children/0'].original_params.tolerance"
+    )
+    # Edit.
+    inp = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    ).first
+    inp.fill("0.05")
+    inp.dispatch_event("input")
+    assert rendered_page.evaluate(
+        "leafState['/metrics/children/0'].params.tolerance"
+    ) == pytest.approx(0.05)
+    # Click reset.
+    rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-reset'
+    ).first.click()
+    # leafState + DOM both reverted.
+    assert rendered_page.evaluate(
+        "leafState['/metrics/children/0'].params.tolerance"
+    ) == pytest.approx(original)
+    inp_after = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    ).first
+    assert float(inp_after.input_value()) == pytest.approx(original)
+
+
+def test_reset_button_restores_original_window(rendered_page: Page):
+    """Window edits also revert on ↻."""
+    inp = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="window_start"]'
+    ).first
+    inp.fill("0.7")
+    inp.dispatch_event("input")
+    rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-reset'
+    ).first.click()
+    # Window cleared (original was {}).
+    assert rendered_page.evaluate(
+        "Object.keys(leafState['/metrics/children/0'].window)"
+    ) == []
+
+
+def test_visibility_toggle_syncs_across_mounts(rendered_page: Page):
+    """Clicking the visibility checkbox in the full-tree mount updates
+    the matching checkbox in the per-variable mount (both read/write
+    the same leafState.visible, but pre-fix, sibling DOM drifted)."""
+    full_sel = (
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header '
+        '> input.node-visible'
+    )
+    var_sel = (
+        '#nodes-0 [data-path="/metrics/children/0"] > .node-header '
+        '> input.node-visible'
+    )
+    # Both start checked.
+    assert rendered_page.locator(full_sel).first.is_checked()
+    assert rendered_page.locator(var_sel).first.is_checked()
+    # Uncheck in the full-tree mount.
+    rendered_page.locator(full_sel).first.uncheck()
+    # Per-variable mount's checkbox follows.
+    assert rendered_page.locator(var_sel).first.is_checked() is False
+    # Re-check in the per-variable mount syncs back.
+    rendered_page.locator(var_sel).first.check()
+    assert rendered_page.locator(full_sel).first.is_checked()
+
+
+def test_tube_polygon_follows_reference_curve(tmp_path, playwright_browser):
+    """Regression for the straight-line tube bug. A two-point tube at
+    t=0 and t=10 with rel-mode width=0.05 on a curvy reference must
+    produce a polygon whose upper bound tracks ``ref(t) * 1.05`` at every
+    sample, not a straight line between the endpoint y-values."""
+    import shutil as _shutil
+    from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+    # Curvy ref — asymmetric so the bug would be obvious if present.
+    import math
+    ref_time = [i * 0.1 for i in range(101)]
+    ref_values = [1.0 + 0.5 * math.sin(t) for t in ref_time]
+    leaf = _leaf(
+        path="/metrics/children/0", metric="tube", variable="y",
+        params={
+            "tube_width_mode": "rel",
+            "tube_rel": 0.05,
+            "tube_points": [
+                {"time": 0.0, "upper": 0.05, "lower": 0.05},
+                {"time": 10.0, "upper": 0.05, "lower": 0.05},
+            ],
+        },
+    )
+    leaf["mode_values"] = {
+        "tube_width_mode": "rel",
+        "tube_rel": 0.05,
+        "tube_abs": 0.0,
+        "tube_min_width": 0.0,
+        "tube_interpolation": "linear",
+    }
+    tree = {
+        "kind": "combinator", "combinator": "and", "path": "/metrics",
+        "passed": True, "label": "and[1]", "children": [leaf],
+    }
+    traj = {
+        "index": 1, "name": "y",
+        "act_time": ref_time, "act_values": ref_values,
+        "ref_time": ref_time, "ref_values": ref_values,
+    }
+    ctx = {
+        "model_id": "Fixture.TubeCurve",
+        "n_passed": 1, "sim_failed": False,
+        "last_run_at": 0, "last_run_str": "",
+        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
+        "statistics_sections": [], "diagnostic_summaries": [], "artifacts": [],
+        "trajectories": [traj],
+        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "spec_path": "",
+        "tree_view": tree,
+        "variables_by_name": {
+            "y": {"name": "y", "trajectory": traj, "overlays": [],
+                  "leaf_paths": ["/metrics/children/0"]},
+        },
+        "mode_schemas": {},
+        "overlay_rows": [],
+    }
+    env = _Env(loader=_Loader(str(_TEMPLATE_DIR)), autoescape=True)
+    html = env.get_template("interactive.html").render(**ctx)
+    html_path = tmp_path / "interactive.html"
+    html_path.write_text(html, encoding="utf-8")
+    _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+
+    context = playwright_browser.new_context()
+    page = context.new_page()
+    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.goto(html_path.as_uri())
+    page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
+
+    # Call the resolver on a sample of grid times and compare to the
+    # curve-following expected values.
+    # Grid: t=0, 2, 5, 8, 10 — non-endpoint times must track ref(t)*1.05.
+    bounds = page.evaluate("""(() => {
+        const leaf = TREE_VIEW.children[0];
+        const editor = MODE_PLOT_EDITORS['tube'];
+        const grid = [0, 2, 5, 8, 10];
+        return editor._resolveAllBoundsOnGrid(leaf, grid);
+    })()""")
+    # Expected: for each grid point, upper = ref(t) + 0.05 * |ref(t)| and
+    # lower = ref(t) - 0.05 * |ref(t)|.
+    for i, t in enumerate([0, 2, 5, 8, 10]):
+        ref_t = 1.0 + 0.5 * math.sin(t)
+        expected_upper = ref_t + 0.05 * abs(ref_t)
+        expected_lower = ref_t - 0.05 * abs(ref_t)
+        assert bounds["upper"][i] == pytest.approx(expected_upper, rel=1e-6), (
+            f"upper at t={t}: got {bounds['upper'][i]} expected {expected_upper}"
+        )
+        assert bounds["lower"][i] == pytest.approx(expected_lower, rel=1e-6)
+    # Sanity: the midpoint bound is NOT on the straight line between
+    # endpoints (which would be the bug). Straight line at t=5 would be
+    # (ref(0)*1.05 + ref(10)*1.05) / 2; curve-following is ref(5) * 1.05.
+    ref0, ref5, ref10 = (
+        1.0 + 0.5 * math.sin(0),
+        1.0 + 0.5 * math.sin(5),
+        1.0 + 0.5 * math.sin(10),
+    )
+    straight_line_mid = (ref0 * 1.05 + ref10 * 1.05) / 2.0
+    curve_following_mid = ref5 * 1.05
+    # The true midpoint must be on the curve, NOT on the straight line.
+    assert abs(bounds["upper"][2] - curve_following_mid) < 1e-6
+    assert abs(bounds["upper"][2] - straight_line_mid) > 0.1  # clearly distinct
+    context.close()
+
+
+def test_buildPatchData_no_noise_when_tube_leaf_untouched(
+    tmp_path, playwright_browser,
+):
+    """Regression for D75-era patch noise. A tube leaf with spec values
+    for tube_rel/tube_width_mode should NOT emit redundant 'add' ops
+    when the user hasn't touched anything. Pre-fix, _extract_mode_values
+    read defaults from diagnostics and clobbered the spec values in
+    leafState.params, making buildPatchData think the user had changed
+    them back to defaults."""
+    import shutil as _shutil
+    from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+    leaf = _leaf(
+        path="/metrics/children/0", metric="tube", variable="y",
+        params={
+            "tube_width_mode": "rel",
+            "tube_rel": 0.05,
+        },
+    )
+    # Simulate what _extract_mode_values now produces (spec_params win).
+    leaf["mode_values"] = {
+        "tube_width_mode": "rel",
+        "tube_rel": 0.05,
+        "tube_abs": 0.0,
+        "tube_min_width": 0.0,
+        "tube_interpolation": "linear",
+    }
+    tree = {
+        "kind": "combinator", "combinator": "and", "path": "/metrics",
+        "passed": True, "label": "and[1]", "children": [leaf],
+    }
+    traj = {
+        "index": 1, "name": "y",
+        "act_time": [0, 1, 2], "act_values": [0, 1, 0],
+        "ref_time": [0, 1, 2], "ref_values": [0, 1, 0],
+    }
+    ctx = {
+        "model_id": "Fixture.TubeQuietPatch",
+        "n_passed": 1, "sim_failed": False,
+        "last_run_at": 0, "last_run_str": "",
+        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
+        "statistics_sections": [], "diagnostic_summaries": [], "artifacts": [],
+        "trajectories": [traj],
+        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "spec_path": "",
+        "tree_view": tree,
+        "variables_by_name": {
+            "y": {"name": "y", "trajectory": traj, "overlays": [],
+                  "leaf_paths": ["/metrics/children/0"]},
+        },
+        "mode_schemas": {},
+        "overlay_rows": [],
+    }
+    env = _Env(loader=_Loader(str(_TEMPLATE_DIR)), autoescape=True)
+    html = env.get_template("interactive.html").render(**ctx)
+    html_path = tmp_path / "interactive.html"
+    html_path.write_text(html, encoding="utf-8")
+    _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    context = playwright_browser.new_context()
+    page = context.new_page()
+    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.goto(html_path.as_uri())
+    page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
+
+    # Before any user interaction — patch must be empty. Pre-fix this
+    # produced five 'add' ops for mode-defaulted fields that weren't in
+    # the spec (tube_abs, tube_interpolation, tube_min_width, tube_rel,
+    # tube_width_mode) because init merged mode_values into params but
+    # not into original_params.
+    payload = page.evaluate("buildPatchData()")
+    assert payload.get("patch", []) == [], (
+        f"untouched tube leaf emitted spurious patch ops: {payload['patch']}"
+    )
+    # Explicit belt-and-suspenders: if a 'tube_rel' op did appear, its
+    # value must not be 0 (the pre-fix symptom).
+    for op in payload.get("patch", []):
+        if isinstance(op, dict) and "tube_rel" in str(op.get("path", "")):
+            assert op["value"] != 0, f"spurious tube_rel reset: {op}"
+    context.close()
+
+
+def test_declared_peaks_editor_activates_with_table(tmp_path, playwright_browser):
+    """Dominant-frequency leaf → activating it mounts a spectrum subplot
+    and a declared-peaks table. Peaks from leafState.params.peaks render
+    as rows; tolerance-mode select shows; Detect button visible."""
+    # Synthesize a fixture with a dominant-frequency leaf carrying a
+    # declared peak + embedded spectrum.
+    import shutil as _shutil
+    from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+    leaf = _leaf(
+        path="/metrics/children/0", metric="dominant-frequency",
+        variable="osc",
+        params={"peaks": [{"freq": 1.0, "tolerance": 0.01, "tolerance_mode": "rel"}]},
+    )
+    # Spectrum payload the editor reads from.
+    leaf["spectrum"] = {
+        "ref_freq": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+        "ref_mag":  [0.1, 0.2, 1.0, 0.3, 0.15, 0.1, 0.05],
+        "act_freq": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+        "act_mag":  [0.1, 0.2, 1.0, 0.3, 0.15, 0.1, 0.05],
+        "peaks_declared": [{"freq": 1.0, "tolerance": 0.01, "tolerance_mode": "rel"}],
+        "paired_peaks": [
+            {"declared_hz": 1.0, "matched_hz": 1.0, "delta": 0.0,
+             "passed": True, "tolerance": 0.01, "tolerance_mode": "rel"},
+        ],
+        "detected_reference_peaks_hz": [1.0, 2.0, 3.0],
+    }
+    leaf["cli_authoritative"] = False
+    # Wrap in a minimal tree.
+    tree = {
+        "kind": "combinator", "combinator": "and", "path": "/metrics",
+        "passed": True, "label": "and[1]",
+        "children": [leaf],
+    }
+    traj = {
+        "index": 1, "name": "osc",
+        "act_time": [0, 1, 2, 3], "act_values": [0, 1, 0, -1],
+        "ref_time": [0, 1, 2, 3], "ref_values": [0, 1, 0, -1],
+    }
+    ctx = {
+        "model_id": "Fixture.DominantFreq",
+        "n_passed": 1, "sim_failed": False,
+        "last_run_at": 0, "last_run_str": "",
+        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
+        "statistics_sections": [], "diagnostic_summaries": [], "artifacts": [],
+        "trajectories": [traj],
+        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "spec_path": "",
+        "tree_view": tree,
+        "variables_by_name": {
+            "osc": {"name": "osc", "trajectory": traj, "overlays": [],
+                    "leaf_paths": ["/metrics/children/0"]},
+        },
+        "mode_schemas": {},
+        "overlay_rows": [],
+    }
+    env = _Env(loader=_Loader(str(_TEMPLATE_DIR)), autoescape=True)
+    html = env.get_template("interactive.html").render(**ctx)
+    html_path = tmp_path / "interactive.html"
+    html_path.write_text(html, encoding="utf-8")
+    _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+
+    context = playwright_browser.new_context()
+    page = context.new_page()
+    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.goto(html_path.as_uri())
+    page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
+
+    # Activate the dominant-frequency leaf via direct call (avoids plot
+    # wait in this plot-less fixture).
+    page.evaluate("activateLeaf(TREE_VIEW.children[0])")
+    page.wait_for_function("document.querySelector('.peak-editor-ui')")
+
+    # Spectrum subplot mounted (each mount gets one).
+    assert page.locator(".spectrum-subplot").count() >= 1
+    # Each mount gets a table with 1 header + 1 data row. Two mounts
+    # (full-tree + per-variable) → 4 rows total.
+    rows_per_table = 2
+    n_tables = page.locator(".peak-editor-ui table").count()
+    assert page.locator(".peak-editor-ui tr").count() == n_tables * rows_per_table
+    # Detect button rendered (one per mount).
+    assert page.locator(".peak-editor-ui button", has_text="Detect").count() == n_tables
+    context.close()
+
+
+def test_declared_peaks_detect_button_populates_table(tmp_path, playwright_browser):
+    """Click 'Detect peaks from reference' → table fills with the top
+    detected peaks; leafState.params.peaks reflects the detected list."""
+    import shutil as _shutil
+    from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+    leaf = _leaf(
+        path="/metrics/children/0", metric="dominant-frequency",
+        variable="osc",
+        params={"peaks": []},  # empty — user hasn't declared yet
+    )
+    leaf["spectrum"] = {
+        "ref_freq": [0.0, 1.0, 2.0, 3.0, 4.0],
+        "ref_mag":  [0.1, 0.9, 0.2, 0.7, 0.15],
+        "act_freq": [0.0, 1.0, 2.0, 3.0, 4.0],
+        "act_mag":  [0.1, 0.9, 0.2, 0.7, 0.15],
+        "peaks_declared": [],
+        "paired_peaks": [],
+        "detected_reference_peaks_hz": [1.0, 3.0, 5.0],
+    }
+    leaf["cli_authoritative"] = False
+    tree = {
+        "kind": "combinator", "combinator": "and", "path": "/metrics",
+        "passed": False, "label": "and[1]", "children": [leaf],
+    }
+    traj = {
+        "index": 1, "name": "osc",
+        "act_time": [0, 1], "act_values": [0, 1],
+        "ref_time": [0, 1], "ref_values": [0, 1],
+    }
+    ctx = {
+        "model_id": "Fixture.DominantFreqEmpty",
+        "n_passed": 0, "sim_failed": False,
+        "last_run_at": 0, "last_run_str": "",
+        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
+        "statistics_sections": [], "diagnostic_summaries": [], "artifacts": [],
+        "trajectories": [traj],
+        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "spec_path": "",
+        "tree_view": tree,
+        "variables_by_name": {
+            "osc": {"name": "osc", "trajectory": traj, "overlays": [],
+                    "leaf_paths": ["/metrics/children/0"]},
+        },
+        "mode_schemas": {},
+        "overlay_rows": [],
+    }
+    env = _Env(loader=_Loader(str(_TEMPLATE_DIR)), autoescape=True)
+    html = env.get_template("interactive.html").render(**ctx)
+    html_path = tmp_path / "interactive.html"
+    html_path.write_text(html, encoding="utf-8")
+    _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    context = playwright_browser.new_context()
+    page = context.new_page()
+    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.goto(html_path.as_uri())
+    page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
+
+    # Activate + click Detect.
+    page.evaluate("activateLeaf(TREE_VIEW.children[0])")
+    page.wait_for_function("document.querySelector('.peak-editor-ui')")
+    assert page.evaluate("leafState['/metrics/children/0'].params.peaks.length") == 0
+    page.locator(".peak-editor-ui button", has_text="Detect").first.click()
+    # Should have populated with the top 3 detected peaks.
+    n = page.evaluate("leafState['/metrics/children/0'].params.peaks.length")
+    assert n == 3
+    freqs = page.evaluate(
+        "leafState['/metrics/children/0'].params.peaks.map(p => p.freq)"
+    )
+    assert sorted(freqs) == [1.0, 3.0, 5.0]
+    context.close()
+
+
+def test_visibility_toggle_does_not_affect_scoring(rendered_page: Page):
+    """The visibility toggle is plot-only — the pass pill stays whatever
+    the scorer computed regardless of the checkbox state."""
+    # Uncheck — pass pill still present + still showing 'pass' (nrmse
+    # on h was passing in the fixture).
+    rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header '
+        '> input.node-visible'
+    ).first.uncheck()
+    pill = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header '
+        '> .node-status'
+    ).first
+    assert pill.is_visible()
+    assert "pass" in (pill.get_attribute("class") or "").lower()
+
+
+def test_reset_does_not_dirty_structure(rendered_page: Page):
+    """Reset is a value-revert, not a structural edit — structureDirty
+    should stay false if it was false before."""
+    assert rendered_page.evaluate("structureDirty") is False
+    # Edit + reset.
+    inp = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    ).first
+    inp.fill("0.05")
+    inp.dispatch_event("input")
+    rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-reset'
+    ).first.click()
+    assert rendered_page.evaluate("structureDirty") is False

@@ -61,7 +61,17 @@ class ComparisonMode(ABC):
 @dataclass(frozen=True)
 class NrmseConfig:
     """Configuration for NRMSE comparison."""
-    tolerance: float = 1e-4
+    tolerance: float = field(
+        default=1e-4,
+        metadata={
+            "label": "Tolerance",
+            "help": (
+                "Pass iff NRMSE = RMSE / signal_range stays below this value. "
+                "Range-normalized so the same tolerance works across variables "
+                "with different magnitudes."
+            ),
+        },
+    )
 
 
 @dataclass(frozen=True)
@@ -73,12 +83,57 @@ class TubeConfig:
     `Literal[...]` choices feed the reporter's auto-derived UI
     (reporting/ui/mode_controls.py).
     """
-    tube_width_mode: Optional[Literal["band", "rel", "absolute"]] = None
-    tube_abs: float = 0.0
-    tube_rel: float = 0.0
-    tube_min_width: float = 0.0
-    tube_points: Optional[list[dict]] = None
-    tube_interpolation: Literal["linear", "constant"] = "linear"
+    tube_width_mode: Optional[Literal["band", "rel", "absolute"]] = field(
+        default=None,
+        metadata={
+            "label": "Width mode",
+            "help": (
+                "How the tube width is specified. "
+                "'rel' = fraction of |reference|; "
+                "'band' = offset in signal units (max(abs, rel*|ref|)); "
+                "'absolute' = literal y-axis bounds (not an offset). "
+                "Leave unset to use the rich tube editor's point-level config."
+            ),
+        },
+    )
+    tube_abs: float = field(
+        default=0.0,
+        metadata={
+            "label": "Tube abs",
+            "help": "Absolute offset from reference (used when width_mode='band').",
+        },
+    )
+    tube_rel: float = field(
+        default=0.0,
+        metadata={
+            "label": "Tube rel",
+            "help": "Fractional offset from |reference| (e.g. 0.02 = 2%).",
+        },
+    )
+    tube_min_width: float = field(
+        default=0.0,
+        metadata={
+            "label": "Min width",
+            "help": "Floor for the tube width — useful near zero-crossings.",
+        },
+    )
+    tube_points: Optional[list[dict]] = field(
+        default=None,
+        metadata={
+            "label": "Control points",
+            "help": (
+                "Time-varying tube defined by control points. Edit via the "
+                "rich tube editor below the plot."
+            ),
+        },
+    )
+    tube_interpolation: Literal["linear", "constant"] = field(
+        default="linear",
+        metadata={
+            "label": "Interpolation",
+            "help": "How tube bounds interpolate between control points.",
+        },
+    )
 
     def to_dict(self) -> dict:
         """Convert back to the flat dict format consumed by _compare_tube."""
@@ -100,7 +155,16 @@ class TubeConfig:
 @dataclass(frozen=True)
 class FinalOnlyConfig:
     """Configuration for final-value comparison."""
-    tolerance: float = 1e-4
+    tolerance: float = field(
+        default=1e-4,
+        metadata={
+            "label": "Tolerance",
+            "help": (
+                "Pass iff |actual_final - reference_final| is below this value. "
+                "Only the last sample is compared; trajectory shape is ignored."
+            ),
+        },
+    )
 
 
 @dataclass(frozen=True)
@@ -110,22 +174,81 @@ class RangeConfig:
     At least one of ``min_value`` or ``max_value`` must be set. Bounds
     are declared in the spec itself — reference data is not consulted.
     """
-    min_value: Optional[float] = None
-    max_value: Optional[float] = None
+    min_value: Optional[float] = field(
+        default=None,
+        metadata={
+            "label": "Lower bound (optional)",
+            "help": (
+                "Signal must never drop below this value. Leave blank to "
+                "skip — only the upper bound will apply."
+            ),
+        },
+    )
+    max_value: Optional[float] = field(
+        default=None,
+        metadata={
+            "label": "Upper bound (optional)",
+            "help": (
+                "Signal must never exceed this value. Leave blank to skip — "
+                "only the lower bound will apply."
+            ),
+        },
+    )
 
 
 @dataclass(frozen=True)
 class EventTimingConfig:
     """Configuration for event-timing comparison (4.C.1)."""
-    time_tolerance: float = 1e-3
-    count_must_match: bool = True
+    time_tolerance: float = field(
+        default=1e-3,
+        metadata={
+            "label": "Time tolerance (s)",
+            "help": (
+                "Max allowed time-shift between each paired reference/actual "
+                "event. Events are detected as duplicate-time samples (Modelica "
+                "convention for solver events)."
+            ),
+        },
+    )
+    count_must_match: bool = field(
+        default=True,
+        metadata={
+            "label": "Event counts must match",
+            "help": (
+                "If checked, reference and actual must fire the same number "
+                "of events. Unchecked allows pairs-that-exist comparisons "
+                "even when extra/missing events appear."
+            ),
+        },
+    )
 
 
 @dataclass(frozen=True)
 class DominantFrequencyConfig:
-    """Configuration for dominant-frequency-shift comparison (4.C.2)."""
-    rel_tolerance: float = 0.01
-    min_frequency: float = 0.0
+    """Configuration for dominant-frequency declared-peaks comparison (D75).
+
+    Each entry in ``peaks`` is a dict:
+        {"freq": float, "tolerance": float, "tolerance_mode": "rel"|"abs"}
+
+    The algorithm finds the strongest local maximum in the *actual*
+    spectrum within each declared peak's tolerance window; the leaf
+    passes iff every declared peak has such a match. The reporter
+    surfaces a table editor + a "Detect peaks from reference" button
+    that bootstraps the list from the reference spectrum's top-N peaks.
+    """
+    peaks: Optional[list[dict]] = field(
+        default=None,
+        metadata={
+            "label": "Peaks",
+            "help": (
+                "Declared peaks to track. Each entry has a frequency, a "
+                "tolerance, and a tolerance mode ('rel' = fractional, "
+                "'abs' = Hz). Authored via the table editor; use 'Detect "
+                "peaks from reference' on a fresh test to seed values from "
+                "the reference spectrum's top peaks."
+            ),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -211,8 +334,7 @@ class DominantFrequencyMode(ComparisonMode):
     def compare(self, ref_time, ref_values, act_time, act_values):
         return _compare_dominant_frequency(
             ref_time, ref_values, act_time, act_values,
-            rel_tolerance=self.config.rel_tolerance,
-            min_frequency=self.config.min_frequency,
+            peaks=self.config.peaks,
         )
 
 
@@ -293,8 +415,7 @@ def resolve_mode(
 
     if mode_name == "dominant-frequency":
         return DominantFrequencyMode(DominantFrequencyConfig(
-            rel_tolerance=var_override.get("rel_tolerance", tolerance),
-            min_frequency=var_override.get("min_frequency", 0.0),
+            peaks=var_override.get("peaks"),
         ))
 
     if mode_name == "final_only" or (not mode_name and default_final_only):

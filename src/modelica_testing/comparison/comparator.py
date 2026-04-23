@@ -591,22 +591,128 @@ def _compare_event_timing(
     )
 
 
+def _compute_fft_spectrum(
+    t: np.ndarray, v: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (freqs, magnitude) for a time-series via uniform-grid FFT.
+
+    Resamples to a uniform grid, strips DC, takes the real-FFT. Returned
+    arrays are shared between the single-peak and multi-peak paths plus
+    the spectrum subplot in the interactive reporter.
+    """
+    n = max(len(t), 64)
+    t_uniform = np.linspace(t[0], t[-1], n)
+    unique_t, unique_idx = np.unique(t, return_index=True)
+    v_uniform = np.interp(t_uniform, unique_t, v[unique_idx])
+    v_uniform = v_uniform - np.mean(v_uniform)
+    dt = (t_uniform[-1] - t_uniform[0]) / (n - 1)
+    if dt <= 0:
+        return np.array([]), np.array([])
+    spectrum = np.abs(np.fft.rfft(v_uniform))
+    freqs = np.fft.rfftfreq(n, d=dt)
+    return freqs, spectrum
+
+
+def _find_top_n_peaks(
+    freqs: np.ndarray,
+    spectrum: np.ndarray,
+    n_peaks: int,
+    min_frequency: float = 0.0,
+) -> list[tuple[float, float]]:
+    """Return the ``n_peaks`` largest local maxima as ``[(freq, amplitude), ...]``
+    sorted by **frequency** (ascending).
+
+    Local maxima are indices strictly greater than both immediate neighbors
+    above ``min_frequency``. The amplitude filter (pick top-N by magnitude)
+    runs first so spectral noise doesn't get counted; the frequency-sort
+    runs second so pairing between reference and actual is predictable for
+    tests with known frequencies (e.g., PRBS).
+
+    Used by the reporter's "Detect peaks from reference" button to
+    bootstrap a declared-peaks table; not consulted during pass/fail
+    evaluation (that path now uses declared peaks).
+    """
+    if len(freqs) < 3 or n_peaks < 1:
+        return []
+    interior = np.arange(1, len(spectrum) - 1)
+    is_peak = (
+        (spectrum[interior] > spectrum[interior - 1])
+        & (spectrum[interior] > spectrum[interior + 1])
+    )
+    peak_idx = interior[is_peak]
+    floor = max(min_frequency, 0.0)
+    peak_idx = peak_idx[freqs[peak_idx] > floor]
+    if len(peak_idx) == 0:
+        return []
+    sorted_by_amp = peak_idx[np.argsort(-spectrum[peak_idx])]
+    top_n = sorted_by_amp[: n_peaks]
+    top_n_sorted = top_n[np.argsort(freqs[top_n])]
+    return [(float(freqs[i]), float(spectrum[i])) for i in top_n_sorted]
+
+
+def _find_strongest_peak_in_window(
+    freqs: np.ndarray,
+    spectrum: np.ndarray,
+    lo: float,
+    hi: float,
+) -> Optional[tuple[float, float]]:
+    """Return the ``(freq, amplitude)`` of the strongest local maximum in
+    ``[lo, hi]``, or ``None`` if no local maximum exists in that window.
+
+    Used by the declared-peaks pass/fail path. A peak qualifies if it's a
+    local max (greater than both neighbors) AND its frequency sits in
+    ``[lo, hi]``. Returning ``None`` means the leaf fails that peak.
+    """
+    if len(freqs) < 3:
+        return None
+    interior = np.arange(1, len(spectrum) - 1)
+    in_window = (freqs[interior] >= lo) & (freqs[interior] <= hi)
+    is_local_max = (
+        (spectrum[interior] > spectrum[interior - 1])
+        & (spectrum[interior] > spectrum[interior + 1])
+    )
+    candidate_idx = interior[in_window & is_local_max]
+    if len(candidate_idx) == 0:
+        return None
+    best = candidate_idx[int(np.argmax(spectrum[candidate_idx]))]
+    return (float(freqs[best]), float(spectrum[best]))
+
+
+# Cap spectrum samples embedded into the HTML report's interactive.js —
+# fine enough to see peaks, small enough to not bloat the payload.
+_SPECTRUM_EMBED_CAP = 512
+
+
 def _compare_dominant_frequency(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
     act_time: np.ndarray,
     act_values: np.ndarray,
-    rel_tolerance: float = 0.01,
-    min_frequency: float = 0.0,
+    peaks: Optional[list[dict]] = None,
 ) -> VariableComparison:
-    """Compare the dominant frequency of two signals via FFT (4.C.2).
+    """Compare declared frequency peaks between reference and actual (4.C.2).
 
-    Resamples both signals to a uniform grid (the longer of the two), takes
-    the FFT, finds the peak above ``min_frequency`` Hz (defaults to all
-    non-DC), and compares ``|f_act - f_ref| / f_ref < rel_tolerance``.
+    Takes a list of user-declared peaks of the form::
 
-    Useful for oscillator regressions where the *frequency* is the regression
-    signal of interest, not the per-point trajectory.
+        [{"freq": 1.0, "tolerance": 0.02, "tolerance_mode": "rel"},
+         {"freq": 7.0, "tolerance": 0.5,  "tolerance_mode": "abs"}, ...]
+
+    For each declared peak the algorithm looks for the strongest local
+    maximum in ``act_spectrum`` within the peak's tolerance window
+    (rel: ``[f*(1-tol), f*(1+tol)]``; abs: ``[f-tol, f+tol]``). The
+    leaf passes iff every declared peak has a match in its window.
+    Unmatched declared peaks fail with ``matched_hz=None`` and a reason
+    of "no peak in tolerance window".
+
+    When ``peaks`` is empty (or omitted), the leaf fails with a hint
+    pointing users to the reporter's "Detect peaks from reference"
+    button — the declared-peaks contract is explicit by design.
+
+    The top-N-by-amplitude algorithm of the pre-D75 implementation is
+    retained as ``_find_top_n_peaks`` — the reporter uses it to
+    populate a declared-peaks table from the reference spectrum when
+    users don't yet know their peak frequencies. Pass/fail logic no
+    longer calls it.
     """
     if len(ref_values) < 4 or len(act_values) < 4:
         return VariableComparison(
@@ -618,54 +724,114 @@ def _compare_dominant_frequency(
             diagnostics={"reason": "signal too short for FFT (need >=4 samples)"},
         )
 
-    def _peak_freq(t: np.ndarray, v: np.ndarray) -> float:
-        # Resample to uniform grid for FFT.
-        n = max(len(t), 64)
-        t_uniform = np.linspace(t[0], t[-1], n)
-        # Strip duplicate times before interp.
-        unique_t, unique_idx = np.unique(t, return_index=True)
-        v_uniform = np.interp(t_uniform, unique_t, v[unique_idx])
-        # Detrend (remove DC).
-        v_uniform = v_uniform - np.mean(v_uniform)
-        dt = (t_uniform[-1] - t_uniform[0]) / (n - 1)
-        if dt <= 0:
-            return 0.0
-        spectrum = np.abs(np.fft.rfft(v_uniform))
-        freqs = np.fft.rfftfreq(n, d=dt)
-        # Mask DC + below min_frequency
-        mask = freqs > max(min_frequency, 0.0)
-        if not np.any(mask):
-            return 0.0
-        peak_idx = int(np.argmax(spectrum[mask]))
-        return float(freqs[mask][peak_idx])
+    ref_freqs, ref_spectrum = _compute_fft_spectrum(ref_time, ref_values)
+    act_freqs, act_spectrum = _compute_fft_spectrum(act_time, act_values)
 
-    f_ref = _peak_freq(ref_time, ref_values)
-    f_act = _peak_freq(act_time, act_values)
-    if f_ref <= 0:
-        # Reference has no detectable frequency; compare by absolute delta only.
-        passed = abs(f_act - f_ref) <= rel_tolerance
-        rel_err = abs(f_act - f_ref)
-    else:
-        rel_err = abs(f_act - f_ref) / f_ref
-        passed = rel_err <= rel_tolerance
+    # Reference peak detection — embedded so the reporter's "Detect"
+    # button can seed a fresh declared-peaks table without recomputing.
+    # N=10 gives room for up to 10 tracked modes without bloat.
+    detected_ref_peaks = _find_top_n_peaks(ref_freqs, ref_spectrum, 10)
+
+    # Downsample spectra for embedding. 512 bins is ample for visual
+    # inspection; full-resolution would inflate every dominant-frequency
+    # leaf's payload.
+    def _embed(freqs: np.ndarray, mag: np.ndarray) -> tuple[list[float], list[float]]:
+        if len(freqs) <= _SPECTRUM_EMBED_CAP:
+            return freqs.tolist(), mag.tolist()
+        idx = np.linspace(0, len(freqs) - 1, _SPECTRUM_EMBED_CAP).astype(int)
+        return freqs[idx].tolist(), mag[idx].tolist()
+
+    ref_f_embed, ref_m_embed = _embed(ref_freqs, ref_spectrum)
+    act_f_embed, act_m_embed = _embed(act_freqs, act_spectrum)
+
+    peaks = peaks or []
+    if not peaks:
+        return VariableComparison(
+            index=0, name="", passed=False,
+            nrmse=float("inf"), rmse=0.0, signal_range=0.0,
+            max_abs_error=0.0, max_abs_error_time=0.0,
+            reference_final=float("nan"), actual_final=float("nan"),
+            mode="dominant-frequency",
+            diagnostics={
+                "reason": (
+                    "no peaks declared — use the reporter's "
+                    "'Detect peaks from reference' button to seed a table "
+                    "from the reference spectrum, then commit the spec."
+                ),
+                "peaks_declared": [],
+                "paired_peaks": [],
+                "detected_reference_peaks_hz": [f for f, _ in detected_ref_peaks],
+                "ref_spectrum_freq": ref_f_embed,
+                "ref_spectrum_mag": ref_m_embed,
+                "act_spectrum_freq": act_f_embed,
+                "act_spectrum_mag": act_m_embed,
+            },
+        )
+
+    paired: list[dict] = []
+    all_passed = True
+    max_rel_err = 0.0
+    max_delta = 0.0
+    for declared in peaks:
+        f_decl = float(declared.get("freq", 0.0))
+        tol = float(declared.get("tolerance", 0.01))
+        mode = declared.get("tolerance_mode", "rel")
+        if mode == "rel":
+            lo, hi = f_decl * (1.0 - tol), f_decl * (1.0 + tol)
+        else:  # "abs"
+            lo, hi = f_decl - tol, f_decl + tol
+
+        match = _find_strongest_peak_in_window(act_freqs, act_spectrum, lo, hi)
+        if match is None:
+            paired.append({
+                "declared_hz": f_decl,
+                "matched_hz": None,
+                "delta": None,
+                "passed": False,
+                "tolerance": tol,
+                "tolerance_mode": mode,
+                "reason": "no peak in tolerance window",
+            })
+            all_passed = False
+            max_rel_err = float("inf")
+        else:
+            matched_hz, _amp = match
+            delta = abs(matched_hz - f_decl)
+            rel_err = delta / f_decl if f_decl > 0 else delta
+            if rel_err > max_rel_err:
+                max_rel_err = rel_err
+            if delta > max_delta:
+                max_delta = delta
+            paired.append({
+                "declared_hz": f_decl,
+                "matched_hz": matched_hz,
+                "delta": delta,
+                "passed": True,  # match-in-window guarantees pass for this peak
+                "tolerance": tol,
+                "tolerance_mode": mode,
+            })
 
     act_range = float(np.max(act_values) - np.min(act_values))
     return VariableComparison(
-        index=0, name="", passed=passed,
-        nrmse=rel_err,  # repurposed: relative frequency error
-        rmse=rel_err,
+        index=0, name="", passed=all_passed,
+        nrmse=max_rel_err,  # repurposed as "max relative error across declared peaks"
+        rmse=max_rel_err,
         signal_range=act_range,
-        max_abs_error=abs(f_act - f_ref),
+        max_abs_error=max_delta,
         max_abs_error_time=0.0,
         reference_final=float("nan"),
         actual_final=float("nan"),
         mode="dominant-frequency",
         diagnostics={
-            "ref_dominant_hz": f_ref,
-            "act_dominant_hz": f_act,
-            "rel_error": rel_err,
-            "rel_tolerance": rel_tolerance,
-            "min_frequency": min_frequency,
+            "peaks_declared": list(peaks),
+            "paired_peaks": paired,
+            "detected_reference_peaks_hz": [f for f, _ in detected_ref_peaks],
+            "max_rel_error": max_rel_err,
+            # Spectrum arrays for the reporter's subplot.
+            "ref_spectrum_freq": ref_f_embed,
+            "ref_spectrum_mag": ref_m_embed,
+            "act_spectrum_freq": act_f_embed,
+            "act_spectrum_mag": act_m_embed,
         },
     )
 
@@ -913,7 +1079,12 @@ def compare_all(
             continue
 
         reference = store.get_reference(test.model_id)
-        if reference is None:
+        # simulate_only tests don't need a baseline — their pass criterion
+        # is "did it simulate successfully?". Dispatch to compare_test with
+        # an empty dict reference so its simulate_only short-circuit runs
+        # (returning passed=True + metric_tree with label="simulate-only")
+        # instead of collapsing to the generic NO_REF state.
+        if reference is None and not test.simulate_only:
             comparisons.append(TestComparison(
                 model_id=test.model_id,
                 passed=True,
@@ -923,11 +1094,17 @@ def compare_all(
             continue
 
         comp = compare_test(
-            test, result, reference,
+            test, result, reference if reference is not None else {},
             default_tolerance=default_tolerance,
             final_only=final_only,
             store=store,
         )
+        if reference is None:
+            # Record that no baseline was stored even though the
+            # simulate_only path passed. Downstream renderers use this
+            # combined with test.simulate_only to still show PASS while
+            # surfacing "no baseline yet" as context.
+            comp.has_reference = False
         comparisons.append(comp)
 
     return comparisons
