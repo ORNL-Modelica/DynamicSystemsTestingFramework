@@ -39,3 +39,27 @@ def test_python_runner_registered():
         return
     cls = get_runner_class(cfg)
     assert cls.__name__ == "PythonRunner"
+
+
+def test_python_config_loads_without_package_mo(tmp_path):
+    """source_type='python' must not trigger Modelica package.mo lookup."""
+    lib = tmp_path / "MyPyLib"
+    (lib / "Examples").mkdir(parents=True)
+    (lib / "Examples" / "Foo.py").write_text(
+        "def simulate(stop_time, tolerance):\n"
+        "    return {'time': [0.0, 1.0], 'variables': {'x': [0.0, 1.0]}}\n"
+    )
+    ref_root = lib / "Resources" / "ReferenceResults"
+    ref_root.mkdir(parents=True)
+    cfg_path = ref_root / "testing.json"
+    cfg_path.write_text(
+        '{"source_type": "python", "source_path": "../..", '
+        '"library_name": "MyPyLib", "simulators": {"Python": ["python"]}, '
+        '"simulator": "Python"}'
+    )
+    from modelica_testing.config import Config
+    cfg = Config(config_file=cfg_path)
+    assert cfg.source_type == "python"
+    assert cfg.source_path.name == "MyPyLib"
+    assert cfg.simulator == "Python"
+    assert cfg.simulator_backend == "Python"

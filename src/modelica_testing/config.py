@@ -41,6 +41,7 @@ BACKEND_BINARY_NAMES = {
     "OpenModelica": "omc",
     "FMPy": "",
     "Julia": "julia",
+    "Python": "python",
 }
 
 
