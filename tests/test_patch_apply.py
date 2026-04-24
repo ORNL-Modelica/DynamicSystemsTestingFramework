@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from modelica_testing.discovery.patch_apply import PatchError, apply_patch
+from dstf.discovery.patch_apply import PatchError, apply_patch
 
 
 def _write_spec(path: Path, data: dict) -> None:

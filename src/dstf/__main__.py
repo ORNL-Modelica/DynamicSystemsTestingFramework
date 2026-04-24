@@ -1,6 +1,6 @@
-"""Entry point for `python -m modelica_testing`.
+"""Entry point for `python -m dstf`.
 
-Delegates to the same `main_entry` used by the `modelica-testing` console
+Delegates to the same `main_entry` used by the `dstf` console
 script so both invocation forms share one code path.
 """
 

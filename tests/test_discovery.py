@@ -5,19 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from modelica_testing.discovery.mo_parser import (
+from dstf.discovery.mo_parser import (
     parse_mo_file,
     _extract_within,
     _extract_model_name,
     _parse_unit_tests,
 )
-from modelica_testing.discovery.spec_parser import (
+from dstf.discovery.spec_parser import (
     parse_test_spec,
     add_to_test_spec,
     update_test_variables,
 )
-from modelica_testing.discovery.test_registry import discover_tests
-from modelica_testing.config import Config
+from dstf.discovery.test_registry import discover_tests
+from dstf.config import Config
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"

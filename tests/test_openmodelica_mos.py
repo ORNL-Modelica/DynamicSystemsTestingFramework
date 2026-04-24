@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from modelica_testing.discovery.test_registry import TestModel
-from modelica_testing.simulators.openmodelica.mos_generator import (
+from dstf.discovery.test_registry import TestModel
+from dstf.simulators.openmodelica.mos_generator import (
     build_simulate_mos,
     classify_dependency,
     build_variable_filter,

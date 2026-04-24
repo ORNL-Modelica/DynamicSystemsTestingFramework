@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from modelica_testing.simulators.openmodelica.log_parser import (
+from dstf.simulators.openmodelica.log_parser import (
     ParsedOmcOutput,
     parse_omc_stdout,
 )

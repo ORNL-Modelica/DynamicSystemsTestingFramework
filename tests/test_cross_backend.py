@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modelica_testing.discovery.test_registry import TestModel
+from dstf.discovery.test_registry import TestModel
 
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -78,12 +78,12 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
     then verify the FMPy result lands as a 'dymola-via-fmpy' baseline on
     the primary reference file.
     """
-    from modelica_testing.config import Config
-    from modelica_testing.simulators.cross_backend import (
+    from dstf.config import Config
+    from dstf.simulators.cross_backend import (
         CROSS_BACKEND_BASELINE_NAME,
         produce_dymola_via_fmpy_baseline,
     )
-    from modelica_testing.storage.reference_store import ReferenceStore
+    from dstf.storage.reference_store import ReferenceStore
 
     # Set up an FMU example directory + reference store
     fmu_examples_dir = tmp_path / "fmu_examples"
@@ -134,11 +134,11 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
 
 def test_chain_returns_false_when_export_fails(tmp_path):
     """When primary backend can't export FMU, chain logs + returns False."""
-    from modelica_testing.config import Config
-    from modelica_testing.simulators.cross_backend import (
+    from dstf.config import Config
+    from dstf.simulators.cross_backend import (
         produce_dymola_via_fmpy_baseline,
     )
-    from modelica_testing.storage.reference_store import ReferenceStore
+    from dstf.storage.reference_store import ReferenceStore
 
     fmu_examples_dir = tmp_path / "fmu_examples"
     fmu_examples_dir.mkdir()

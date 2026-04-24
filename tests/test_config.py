@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from modelica_testing.config import (
+from dstf.config import (
     Config,
     load_config_file,
     read_package_name,
@@ -203,13 +203,13 @@ class TestAutoDetectSimulator:
     through Config.__post_init__ when testing.json omits the `simulator` key."""
 
     def test_looks_like_path_linux(self):
-        from modelica_testing.config import _looks_like_path
+        from dstf.config import _looks_like_path
         assert _looks_like_path("/usr/bin/omc")
         assert not _looks_like_path("omc")
         assert not _looks_like_path("dymola.exe")
 
     def test_looks_like_path_windows(self):
-        from modelica_testing.config import _looks_like_path
+        from dstf.config import _looks_like_path
         assert _looks_like_path("C:\\Program Files\\Dymola.exe")
         assert _looks_like_path("D:/some/path")
         assert not _looks_like_path("Dymola")
@@ -218,7 +218,7 @@ class TestAutoDetectSimulator:
         """First entry whose binary resolves wins. If an earlier entry has
         pinned absolute paths that don't exist, that entry is skipped (no
         fallback to a same-named binary on PATH)."""
-        from modelica_testing.config import _auto_detect_simulator
+        from dstf.config import _auto_detect_simulator
 
         # Create a fake "omc" binary on a temp PATH — simulate OM available.
         fake_omc = tmp_path / "omc"
@@ -240,7 +240,7 @@ class TestAutoDetectSimulator:
         """If a simulator's list is entirely pinned absolute paths and NONE
         exist, we must NOT fall back to a same-named binary on PATH — the
         pinned list expresses intent to use *that* install."""
-        from modelica_testing.config import _auto_detect_simulator
+        from dstf.config import _auto_detect_simulator
 
         fake_dymola = tmp_path / "dymola"
         fake_dymola.write_text("#!/bin/sh\n")
@@ -256,7 +256,7 @@ class TestAutoDetectSimulator:
         assert _auto_detect_simulator(simulators) is None
 
     def test_auto_detect_none_if_nothing_resolves(self, tmp_path, monkeypatch):
-        from modelica_testing.config import _auto_detect_simulator
+        from dstf.config import _auto_detect_simulator
         # Empty PATH and bogus paths — nothing resolves.
         monkeypatch.setenv("PATH", str(tmp_path))
         simulators = {

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from modelica_testing.comparison.modes import (
+from dstf.comparison.modes import (
     DominantFrequencyConfig,
     DominantFrequencyMode,
     EventTimingConfig,
@@ -209,7 +209,7 @@ class TestMetricsAcceptedInTreeSpec:
     """Verify both new metrics are accepted in MetricTree leaf specs (4.C)."""
 
     def test_event_timing_leaf_parses(self):
-        from modelica_testing.comparison.tree_spec import parse_metric_tree
+        from dstf.comparison.tree_spec import parse_metric_tree
         spec = parse_metric_tree({
             "metric": "event-timing",
             "variable": "evt",
@@ -218,7 +218,7 @@ class TestMetricsAcceptedInTreeSpec:
         assert spec.metric == "event-timing"
 
     def test_dominant_frequency_leaf_parses(self):
-        from modelica_testing.comparison.tree_spec import parse_metric_tree
+        from dstf.comparison.tree_spec import parse_metric_tree
         spec = parse_metric_tree({
             "metric": "dominant-frequency",
             "variable": "osc",

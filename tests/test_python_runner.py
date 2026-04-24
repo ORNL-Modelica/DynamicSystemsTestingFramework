@@ -26,14 +26,14 @@ def _scipy_available() -> bool:
 
 def test_python_runner_registered():
     """The Python runner registers when its submodule is imported."""
-    from modelica_testing.simulators import get_runner_class
-    from modelica_testing.config import Config
+    from dstf.simulators import get_runner_class
+    from dstf.config import Config
     cfg = Config(config_file=_CONFIG) if _CONFIG.exists() else None
     if cfg is None:
         # Example config not written yet (earlier task ordering); fabricate.
         # Force-import to trigger registration, then check the registry.
-        import modelica_testing.simulators.python  # noqa: F401
-        from modelica_testing.simulators import _REGISTRY
+        import dstf.simulators.python  # noqa: F401
+        from dstf.simulators import _REGISTRY
         assert "Python" in _REGISTRY
         assert _REGISTRY["Python"].__name__ == "PythonRunner"
         return
@@ -57,7 +57,7 @@ def test_python_config_loads_without_package_mo(tmp_path):
         '"library_name": "MyPyLib", "simulators": {"Python": ["python"]}, '
         '"simulator": "Python"}'
     )
-    from modelica_testing.config import Config
+    from dstf.config import Config
     cfg = Config(config_file=cfg_path)
     assert cfg.source_type == "python"
     assert cfg.source_path.name == "MyPyLib"
@@ -67,7 +67,7 @@ def test_python_config_loads_without_package_mo(tmp_path):
 
 _DRIVER = (
     Path(__file__).resolve().parents[1]
-    / "src" / "modelica_testing" / "simulators" / "python" / "run_test.py"
+    / "src" / "dstf" / "simulators" / "python" / "run_test.py"
 )
 
 
@@ -162,7 +162,7 @@ def test_python_simple_ramp_smoke(tmp_path):
     read_result -> comparator).
     """
     result = subprocess.run(
-        ["uv", "run", "modelica-testing",
+        ["uv", "run", "dstf",
          "--config", str(_CONFIG),
          "run", "--filter", "*SimpleRamp",
          "--work-dir", str(tmp_path / "wd1")],
@@ -181,7 +181,7 @@ def test_python_simple_ramp_smoke(tmp_path):
 def test_python_constant_csv_passes_range_check(tmp_path):
     """ConstantCsv must PASS on a fresh run (baseline-free range check)."""
     result = subprocess.run(
-        ["uv", "run", "modelica-testing",
+        ["uv", "run", "dstf",
          "--config", str(_CONFIG),
          "run", "--filter", "*ConstantCsv",
          "--work-dir", str(tmp_path / "wd2")],
@@ -200,10 +200,10 @@ def test_python_simple_ramp_self_regression(tmp_path):
     if not any(baseline_dir.rglob("ref_*.json")):
         pytest.skip(
             "No Python baselines committed under PythonTestingLib/ReferenceResults; "
-            "run `modelica-testing --config ... run --accept` first"
+            "run `dstf --config ... run --accept` first"
         )
     result = subprocess.run(
-        ["uv", "run", "modelica-testing",
+        ["uv", "run", "dstf",
          "--config", str(_CONFIG),
          "run", "--filter", "*SimpleRamp",
          "--work-dir", str(tmp_path / "wd3")],

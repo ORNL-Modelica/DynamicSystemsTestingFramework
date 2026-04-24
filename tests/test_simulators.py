@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from modelica_testing.simulators.dymola.log_parser import parse_dslog
-from modelica_testing.simulators.common.mat_reader import read_result_mat
-from modelica_testing.simulators.dymola.runner import _extract_variables
-from modelica_testing.simulators.base import resolve_variable_patterns, _pattern_to_regex
-from modelica_testing.discovery.test_registry import TestModel
+from dstf.simulators.dymola.log_parser import parse_dslog
+from dstf.simulators.common.mat_reader import read_result_mat
+from dstf.simulators.dymola.runner import _extract_variables
+from dstf.simulators.base import resolve_variable_patterns, _pattern_to_regex
+from dstf.discovery.test_registry import TestModel
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -332,7 +332,7 @@ class TestVariablePatterns:
 # Simulator registry
 # ---------------------------------------------------------------------------
 
-from modelica_testing.simulators import (
+from dstf.simulators import (
     _REGISTRY,
     register,
     get_runner,
@@ -375,7 +375,7 @@ class TestSimulatorRegistry:
 # DymolaConfig
 # ---------------------------------------------------------------------------
 
-from modelica_testing.simulators.dymola.runner import DymolaConfig
+from dstf.simulators.dymola.runner import DymolaConfig
 
 
 class TestDymolaConfig:

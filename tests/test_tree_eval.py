@@ -7,16 +7,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from modelica_testing.comparison.comparator import compare_test
-from modelica_testing.comparison.tree_eval import (
+from dstf.comparison.comparator import compare_test
+from dstf.comparison.tree_eval import (
     BaselineView,
     PRIMARY_BASELINE,
     collect_leaf_variables,
     evaluate_spec,
 )
-from modelica_testing.comparison.tree_spec import parse_metric_tree
-from modelica_testing.discovery.test_registry import TestModel
-from modelica_testing.simulators.base import TestResult, VariableResult
+from dstf.comparison.tree_spec import parse_metric_tree
+from dstf.discovery.test_registry import TestModel
+from dstf.simulators.base import TestResult, VariableResult
 
 
 # ---------------------------------------------------------------------------

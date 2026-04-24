@@ -97,8 +97,8 @@ def test_fmpy_backend_registers_under_name():
     Proves the registry + config._detect_backend + lazy-import wiring is
     correct end-to-end. Does not attempt simulation (Phase 2.3).
     """
-    from modelica_testing.simulators import get_runner
-    from modelica_testing.simulators.fmpy import FmpyRunner
+    from dstf.simulators import get_runner
+    from dstf.simulators.fmpy import FmpyRunner
 
     # Minimal config that doesn't need a real library — we only test the factory
     class _FakeConfig:
@@ -112,7 +112,7 @@ def test_fmpy_backend_registers_under_name():
     runner = get_runner(_FakeConfig())
     assert isinstance(runner, FmpyRunner)
     # Capabilities declared as advertised in docs/extensibility.md §3
-    from modelica_testing.simulators.base import Capability, DatasetType
+    from dstf.simulators.base import Capability, DatasetType
     assert Capability.PERSISTENT_WORKERS in runner.capabilities
     assert Capability.BATCH_FALLBACK not in runner.capabilities
     assert Capability.FMU_EXPORT not in runner.capabilities

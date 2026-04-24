@@ -13,10 +13,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from modelica_testing.config import Config
-from modelica_testing.discovery.test_registry import TestModel
-from modelica_testing.simulators.base import TestResult, VariableResult
-from modelica_testing.storage.reference_store import (
+from dstf.config import Config
+from dstf.discovery.test_registry import TestModel
+from dstf.simulators.base import TestResult, VariableResult
+from dstf.storage.reference_store import (
     Companion,
     ReferenceStore,
 )

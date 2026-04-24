@@ -14,7 +14,7 @@ from typing import Optional
 
 import pytest
 
-from modelica_testing.reporting.overlay_loader import (
+from dstf.reporting.overlay_loader import (
     Overlay,
     OverlayVariable,
     attach_overlays_to_trajectories,
@@ -361,13 +361,13 @@ class TestSiblingBackendOverlays:
         # Clear the lru_cache between tests — it keys on the arg tuple so
         # a fresh tmp_path already dodges collisions, but being explicit
         # prevents surprises if a test reuses a path.
-        from modelica_testing.reporting.overlay_loader import (
+        from dstf.reporting.overlay_loader import (
             _sibling_backend_index,
         )
         _sibling_backend_index.cache_clear()
 
     def test_discovers_peer_backend_ref(self, tmp_path):
-        from modelica_testing.reporting.overlay_loader import (
+        from dstf.reporting.overlay_loader import (
             load_sibling_backend_overlays,
         )
         # Dymola/windows has a ref for model M; current partition is
@@ -385,7 +385,7 @@ class TestSiblingBackendOverlays:
         assert "h" in overlays[0].variables
 
     def test_excludes_current_partition(self, tmp_path):
-        from modelica_testing.reporting.overlay_loader import (
+        from dstf.reporting.overlay_loader import (
             load_sibling_backend_overlays,
         )
         # Only the current partition has a ref — nothing to overlay.
@@ -394,7 +394,7 @@ class TestSiblingBackendOverlays:
         assert load_sibling_backend_overlays(cfg, "M") == []
 
     def test_skips_obsolete_refs(self, tmp_path):
-        from modelica_testing.reporting.overlay_loader import (
+        from dstf.reporting.overlay_loader import (
             load_sibling_backend_overlays,
         )
         _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M",
@@ -403,7 +403,7 @@ class TestSiblingBackendOverlays:
         assert load_sibling_backend_overlays(cfg, "M") == []
 
     def test_multiple_siblings_produce_multiple_overlays(self, tmp_path):
-        from modelica_testing.reporting.overlay_loader import (
+        from dstf.reporting.overlay_loader import (
             load_sibling_backend_overlays,
         )
         _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
@@ -416,13 +416,13 @@ class TestSiblingBackendOverlays:
     def test_no_config_means_no_sibling_overlays(self, tmp_path):
         """load_overlays without a config must behave identically to the
         old API — no auto-discovery."""
-        from modelica_testing.reporting.overlay_loader import load_overlays
+        from dstf.reporting.overlay_loader import load_overlays
         _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
         store = _FakeStore(tmp_path / "OpenModelica" / "linux")
         assert load_overlays(store, "M") == []
 
     def test_load_overlays_integrates_sibling_when_config_passed(self, tmp_path):
-        from modelica_testing.reporting.overlay_loader import load_overlays
+        from dstf.reporting.overlay_loader import load_overlays
         _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
         store = _FakeStore(tmp_path / "OpenModelica" / "linux")
         cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")

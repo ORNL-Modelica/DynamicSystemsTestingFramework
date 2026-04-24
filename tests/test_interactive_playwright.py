@@ -38,7 +38,7 @@ from playwright.sync_api import Page, sync_playwright
 
 _JS_SRC = (
     Path(__file__).resolve().parents[1]
-    / "src" / "modelica_testing" / "reporting" / "templates" / "interactive.js"
+    / "src" / "dstf" / "reporting" / "templates" / "interactive.js"
 )
 _TEMPLATE_DIR = _JS_SRC.parent
 

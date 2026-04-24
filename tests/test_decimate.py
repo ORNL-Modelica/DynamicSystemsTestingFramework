@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from modelica_testing.reporting.decimate import decimate_pair, lttb
+from dstf.reporting.decimate import decimate_pair, lttb
 
 
 class TestLttbContract:

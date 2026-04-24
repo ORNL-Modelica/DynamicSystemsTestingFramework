@@ -10,7 +10,7 @@ import pytest
 
 def _run_spec_update(spec_path: Path, update_json_path: Path) -> int:
     """Invoke cmd_spec_update directly, bypassing arg parsing."""
-    from modelica_testing.cli import cmd_spec_update
+    from dstf.cli import cmd_spec_update
 
     # Use the spec's parent dir as reference_root so _build_config can
     # locate testing.json. Write a minimal one.

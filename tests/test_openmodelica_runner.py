@@ -11,15 +11,15 @@ from subprocess import CompletedProcess
 
 import pytest
 
-from modelica_testing.config import Config
-from modelica_testing.discovery.test_registry import TestModel
+from dstf.config import Config
+from dstf.discovery.test_registry import TestModel
 
 FIXTURES = Path(__file__).parent / "fixtures" / "results_openmodelica"
 
 
 class TestOpenModelicaConfig:
     def test_from_config_basic(self, tmp_path):
-        from modelica_testing.simulators.openmodelica.runner import (
+        from dstf.simulators.openmodelica.runner import (
             OpenModelicaConfig,
         )
         (tmp_path / "package.mo").write_text('package Lib end Lib;')
@@ -38,8 +38,8 @@ class TestOpenModelicaConfig:
 
 class TestOpenModelicaRunnerUnit:
     def test_registered_as_OpenModelica(self, tmp_path):
-        from modelica_testing.simulators import get_runner_class
-        from modelica_testing.simulators.openmodelica.runner import (
+        from dstf.simulators import get_runner_class
+        from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
 
@@ -54,8 +54,8 @@ class TestOpenModelicaRunnerUnit:
         assert cls is OpenModelicaRunner
 
     def test_capabilities_batch_and_persistent(self):
-        from modelica_testing.simulators.base import Capability
-        from modelica_testing.simulators.openmodelica.runner import (
+        from dstf.simulators.base import Capability
+        from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
         assert OpenModelicaRunner.capabilities == frozenset(
@@ -63,7 +63,7 @@ class TestOpenModelicaRunnerUnit:
         )
 
     def test_artifact_files_are_static(self):
-        from modelica_testing.simulators.openmodelica.runner import (
+        from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
         names = [name for name, _ in OpenModelicaRunner.artifact_files]
@@ -79,7 +79,7 @@ class TestOpenModelicaRunnerUnit:
     ):
         """Subprocess invoked with omc + simulate.mos in test_dir,
         stdout captured to omc_stdout.txt, run_result reflects parsed output."""
-        from modelica_testing.simulators.openmodelica.runner import (
+        from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
 
@@ -128,7 +128,7 @@ class TestOpenModelicaRunnerUnit:
 
         captured_call: dict = {}
         monkeypatch.setattr(
-            "modelica_testing.simulators.openmodelica.runner.subprocess.run",
+            "dstf.simulators.openmodelica.runner.subprocess.run",
             fake_run,
         )
 
@@ -154,7 +154,7 @@ class TestOpenModelicaRunnerUnit:
         assert result.statistics["timing"]["total"] == pytest.approx(1.11)
 
     def test_run_single_test_surfaces_failure(self, tmp_path, monkeypatch):
-        from modelica_testing.simulators.openmodelica.runner import (
+        from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
         (tmp_path / "package.mo").write_text('package Lib end Lib;')
@@ -195,7 +195,7 @@ class TestOpenModelicaRunnerUnit:
                                     stdout=stdout_synth, stderr="")
 
         monkeypatch.setattr(
-            "modelica_testing.simulators.openmodelica.runner.subprocess.run",
+            "dstf.simulators.openmodelica.runner.subprocess.run",
             fake_run,
         )
 
@@ -221,7 +221,7 @@ omc_unavailable = pytest.mark.skipif(
 class TestOpenModelicaIntegration:
     def test_msl_only_smoke(self, tmp_path):
         """End-to-end: MSL-only model via loadModel, real omc."""
-        from modelica_testing.simulators.openmodelica.runner import (
+        from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
 
@@ -263,10 +263,10 @@ class TestOpenModelicaIntegration:
 
     def test_variable_filter_shrinks_mat(self, tmp_path):
         """variableFilter keeps the MAT small (one var request ⇒ few names)."""
-        from modelica_testing.simulators.openmodelica.runner import (
+        from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
-        from modelica_testing.simulators.common.mat_reader import (
+        from dstf.simulators.common.mat_reader import (
             list_result_mat_variables,
         )
 
@@ -302,7 +302,7 @@ class TestOpenModelicaIntegration:
         assert len(names) < 200, f"variableFilter under-effective: {len(names)} vars"
 
     def test_missing_model_surfaces_clear_error(self, tmp_path):
-        from modelica_testing.simulators.openmodelica.runner import (
+        from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
         (tmp_path / "package.mo").write_text("package EmptyLib end EmptyLib;")
@@ -339,7 +339,7 @@ class TestOpenModelicaIntegration:
         ``time`` — same as Dymola's behavior. So we probe via a real
         variable the fixture's variableFilter allowed through.
         """
-        from modelica_testing.simulators.common.mat_reader import (
+        from dstf.simulators.common.mat_reader import (
             read_result_mat,
             list_result_mat_variables,
         )

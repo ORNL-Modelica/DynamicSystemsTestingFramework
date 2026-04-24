@@ -15,8 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modelica_testing.discovery.test_registry import TestModel
-from modelica_testing.simulators.dymola.persistent_runner import DymolaWorker
+from dstf.discovery.test_registry import TestModel
+from dstf.simulators.dymola.persistent_runner import DymolaWorker
 
 
 def _mock_test() -> TestModel:
@@ -119,7 +119,7 @@ class TestAbstractExportFmuDefault:
     """4.B.1 — base class default raises NotImplementedError."""
 
     def test_default_raises_with_helpful_message(self, tmp_path):
-        from modelica_testing.simulators.fmpy.runner import FmpyRunner
+        from dstf.simulators.fmpy.runner import FmpyRunner
         # FmpyRunner doesn't declare FMU_EXPORT — base default applies
         config = SimpleNamespace(
             source_type="fmu", simulator="FMPy", parallel=1, timeout=60,

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from modelica_testing.discovery.json_recognizer import (
+from dstf.discovery.json_recognizer import (
     JsonRecognizer,
     RecognizerSpecError,
     parse_recognizer_spec,

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from modelica_testing.comparison.metric_tree import (
+from dstf.comparison.metric_tree import (
     MetricResult,
     WeightedCombinator,
 )
-from modelica_testing.comparison.tree_spec import (
+from dstf.comparison.tree_spec import (
     MetricSpecError,
     parse_metric_tree,
 )

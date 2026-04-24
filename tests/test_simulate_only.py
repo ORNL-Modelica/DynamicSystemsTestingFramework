@@ -6,9 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
-from modelica_testing.comparison.comparator import compare_test
-from modelica_testing.discovery.test_registry import TestModel
-from modelica_testing.simulators.base import TestResult, VariableResult
+from dstf.comparison.comparator import compare_test
+from dstf.discovery.test_registry import TestModel
+from dstf.simulators.base import TestResult, VariableResult
 
 
 def _make_test(simulate_only: bool) -> TestModel:
@@ -90,7 +90,7 @@ class TestSimulateOnly:
         collapsed simulate_only tests to NO_REF and later tripped the
         per-test template's sim_failed heuristic.
         """
-        from modelica_testing.comparison.comparator import compare_all
+        from dstf.comparison.comparator import compare_all
 
         class _FakeStore:
             def get_reference(self, _model_id):
@@ -121,7 +121,7 @@ class TestSimulateOnly:
         """When sim itself fails, simulate_only follows the regular sim-fail
         path — FAIL, not PASS.
         """
-        from modelica_testing.comparison.comparator import compare_all
+        from dstf.comparison.comparator import compare_all
 
         class _FakeStore:
             def get_reference(self, _):

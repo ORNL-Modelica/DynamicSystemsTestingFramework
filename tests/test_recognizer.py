@@ -7,8 +7,8 @@ from typing import Optional
 
 import pytest
 
-from modelica_testing.discovery import recognizer as recognizer_module
-from modelica_testing.discovery.recognizer import (
+from dstf.discovery import recognizer as recognizer_module
+from dstf.discovery.recognizer import (
     Recognizer,
     RecognizerResult,
     get_recognizers,
@@ -34,14 +34,14 @@ class TestBundledRecognizer:
 
     def test_bundled_registers_on_mo_parser_import(self):
         # Import triggers registration
-        from modelica_testing.discovery import mo_parser  # noqa: F401
+        from dstf.discovery import mo_parser  # noqa: F401
 
         recs = get_recognizers("modelica")
         names = [r.name for r in recs]
         assert "modelica:bundled-unit-tests" in names
 
     def test_bundled_filters_by_source_type(self):
-        from modelica_testing.discovery import mo_parser  # noqa: F401
+        from dstf.discovery import mo_parser  # noqa: F401
 
         # Bundled recognizer applies only to "modelica"
         recs = get_recognizers("modelica")
@@ -52,7 +52,7 @@ class TestBundledRecognizer:
         assert not any(r.name == "modelica:bundled-unit-tests" for r in fmu_recs)
 
     def test_bundled_extracts_simple_test(self):
-        from modelica_testing.discovery import mo_parser  # noqa: F401
+        from dstf.discovery import mo_parser  # noqa: F401
 
         recs = [r for r in get_recognizers("modelica")
                 if r.name == "modelica:bundled-unit-tests"]
@@ -69,7 +69,7 @@ class TestBundledRecognizer:
         assert result.method == "Dassl"
 
     def test_bundled_returns_none_for_non_test_file(self):
-        from modelica_testing.discovery import mo_parser  # noqa: F401
+        from dstf.discovery import mo_parser  # noqa: F401
 
         recs = [r for r in get_recognizers("modelica")
                 if r.name == "modelica:bundled-unit-tests"]
@@ -105,8 +105,8 @@ class TestRegistryMerge:
     def test_user_recognizer_overrides_bundled_field(self, tmp_path):
         # Both recognizers see the same .mo file; user one sets stop_time=99,
         # bundled sets it from the experiment annotation. User wins.
-        from modelica_testing.discovery import mo_parser  # noqa: F401
-        from modelica_testing.discovery.test_registry import (
+        from dstf.discovery import mo_parser  # noqa: F401
+        from dstf.discovery.test_registry import (
             _build_test_model_from_recognizer_results,
         )
 
@@ -130,7 +130,7 @@ class TestRegistryMerge:
 
     def test_recognizer_only_sets_fields_it_knows(self):
         """A recognizer that only sets stop_time leaves other fields untouched."""
-        from modelica_testing.discovery.test_registry import (
+        from dstf.discovery.test_registry import (
             _build_test_model_from_recognizer_results,
         )
 

@@ -45,8 +45,8 @@ _CONFIG = _EXAMPLES_DIR / "Resources" / "ReferenceResults" / "testing.json"
 @pytest.mark.julia
 def test_julia_runner_registered():
     """The Julia runner registers when its submodule is imported."""
-    from modelica_testing.simulators import get_runner_class
-    from modelica_testing.config import Config
+    from dstf.simulators import get_runner_class
+    from dstf.config import Config
     cfg = Config(config_file=_CONFIG)
     cls = get_runner_class(cfg)
     assert cls.__name__ == "JuliaRunner"
@@ -59,7 +59,7 @@ def test_julia_simple_ramp_smoke(tmp_path):
     subprocess → read_result → comparator)."""
     # First run — no baseline yet, so test reports NO_REF but simulation succeeds.
     result = subprocess.run(
-        ["uv", "run", "modelica-testing",
+        ["uv", "run", "dstf",
          "--config", str(_CONFIG),
          "run", "--filter", "*SimpleRamp",
          "--work-dir", str(tmp_path / "wd1")],
@@ -82,10 +82,10 @@ def test_julia_frequency_declared_peak_matches(tmp_path):
     if not any(baseline_dir.glob("ref_*.json")):
         pytest.skip(
             "No Julia baselines committed under JuliaMtkTestingLib/ReferenceResults; "
-            "run `modelica-testing --config examples/julia/testing.json run --accept` first"
+            "run `dstf --config examples/julia/testing.json run --accept` first"
         )
     result = subprocess.run(
-        ["uv", "run", "modelica-testing",
+        ["uv", "run", "dstf",
          "--config", str(_CONFIG),
          "run", "--filter", "*Frequency",
          "--work-dir", str(tmp_path / "wd2")],

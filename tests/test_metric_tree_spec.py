@@ -4,7 +4,7 @@ typed spec form. No evaluation — just structural + validation behavior.
 
 import pytest
 
-from modelica_testing.comparison.tree_spec import (
+from dstf.comparison.tree_spec import (
     CombinatorSpec,
     LeafSpec,
     MetricSpecError,

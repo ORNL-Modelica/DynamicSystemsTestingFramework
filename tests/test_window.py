@@ -9,12 +9,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from modelica_testing.comparison.tree_eval import (
+from dstf.comparison.tree_eval import (
     BaselineView,
     evaluate_spec,
     flatten_evaluation,
 )
-from modelica_testing.comparison.tree_spec import (
+from dstf.comparison.tree_spec import (
     CombinatorSpec,
     LeafSpec,
     MetricSpecError,
@@ -25,7 +25,7 @@ from modelica_testing.comparison.tree_spec import (
     spec_to_view,
     synthesize_implicit_tree,
 )
-from modelica_testing.simulators import VariableResult
+from dstf.simulators import VariableResult
 
 
 def _var(time, values, index=1, name="x"):
@@ -266,7 +266,7 @@ class TestLeafPaths:
 
     def test_order_matches_evaluation(self):
         """Walk order matches collect_leaf_variables so zip aligns."""
-        from modelica_testing.comparison.tree_eval import collect_leaf_variables
+        from dstf.comparison.tree_eval import collect_leaf_variables
 
         t = np.linspace(0.0, 10.0, 101)
         ref = _baseline(t, np.sin(t))

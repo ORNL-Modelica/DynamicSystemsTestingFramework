@@ -56,7 +56,7 @@ def _make_config(tmp_path: Path) -> SimpleNamespace:
 
 def _make_test(fmu_path: Path, variables: list[str], stop_time: float = 3.0):
     """Build a TestModel pointing at an FMU with the given output variables."""
-    from modelica_testing.discovery.test_registry import TestModel
+    from dstf.discovery.test_registry import TestModel
 
     return TestModel(
         model_id=fmu_path.stem,
@@ -84,7 +84,7 @@ class TestFmpySimulation:
         energy is dissipated. We track `h` (height) — must start at ~1 and
         eventually settle near 0.
         """
-        from modelica_testing.simulators.fmpy import FmpyRunner
+        from dstf.simulators.fmpy import FmpyRunner
 
         fmu = REFERENCE_FMUS_DIR / "2.0" / "BouncingBall.fmu"
         test = _make_test(fmu, variables=["h"], stop_time=3.0)
@@ -112,7 +112,7 @@ class TestFmpySimulation:
 
     def test_wildcard_variables(self, tmp_path):
         """``variables=['*']`` records all FMU outputs."""
-        from modelica_testing.simulators.fmpy import FmpyRunner
+        from dstf.simulators.fmpy import FmpyRunner
 
         fmu = REFERENCE_FMUS_DIR / "2.0" / "VanDerPol.fmu"
         test = _make_test(fmu, variables=["*"], stop_time=5.0)
@@ -130,7 +130,7 @@ class TestFmpySimulation:
 
     def test_missing_fmu_reports_failure_gracefully(self, tmp_path):
         """A non-existent FMU produces a clean failure, not an exception."""
-        from modelica_testing.simulators.fmpy import FmpyRunner
+        from dstf.simulators.fmpy import FmpyRunner
 
         test = _make_test(Path("/nonexistent/fake.fmu"), variables=["h"])
         config = _make_config(tmp_path)
@@ -143,7 +143,7 @@ class TestFmpySimulation:
 
     def test_result_includes_time_column_matching_variables(self, tmp_path):
         """Time vector and per-variable values are the same length."""
-        from modelica_testing.simulators.fmpy import FmpyRunner
+        from dstf.simulators.fmpy import FmpyRunner
 
         fmu = REFERENCE_FMUS_DIR / "2.0" / "Dahlquist.fmu"
         test = _make_test(fmu, variables=["x"], stop_time=2.0)
@@ -169,7 +169,7 @@ class TestFmpySimulation:
 class TestFmpyHelpers:
     def test_save_load_roundtrip(self, tmp_path):
         """Structured-array persistence preserves column names + data."""
-        from modelica_testing.simulators.fmpy.runner import _load_result, _save_result
+        from dstf.simulators.fmpy.runner import _load_result, _save_result
 
         arr = np.zeros(5, dtype=[("time", "f8"), ("h", "f8"), ("v", "f8")])
         arr["time"] = [0.0, 0.1, 0.2, 0.3, 0.4]
@@ -186,7 +186,7 @@ class TestFmpyHelpers:
 
     def test_resolve_requested_outputs_wildcard(self):
         """``['*']`` expands to the full available list."""
-        from modelica_testing.simulators.fmpy.runner import _resolve_requested_outputs
+        from dstf.simulators.fmpy.runner import _resolve_requested_outputs
 
         test = _make_test(Path("x.fmu"), variables=["*"])
         available = ["h", "v", "m"]
@@ -194,7 +194,7 @@ class TestFmpyHelpers:
 
     def test_resolve_requested_outputs_empty(self):
         """No patterns means no comparison variables (simulate-only)."""
-        from modelica_testing.simulators.fmpy.runner import _resolve_requested_outputs
+        from dstf.simulators.fmpy.runner import _resolve_requested_outputs
 
         test = _make_test(Path("x.fmu"), variables=[])
         assert _resolve_requested_outputs(test, ["h", "v"]) == []

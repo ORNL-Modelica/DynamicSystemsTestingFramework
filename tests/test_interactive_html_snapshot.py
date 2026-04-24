@@ -23,8 +23,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from modelica_testing.reporting.plot_comparison import _decimate_context_for_html
-from modelica_testing.reporting.ui.mode_controls import emit_mode_schemas
+from dstf.reporting.plot_comparison import _decimate_context_for_html
+from dstf.reporting.ui.mode_controls import emit_mode_schemas
 
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
@@ -99,7 +99,7 @@ def _leaf(mode: str, mode_values: dict, *, path: str = "/metrics/children/0",
 
 
 def _build_context(mode: str) -> dict:
-    from modelica_testing.reporting.ui.mode_controls import (
+    from dstf.reporting.ui.mode_controls import (
         get_mode_ui, render_window_controls_html,
     )
 
@@ -170,7 +170,7 @@ def _build_context(mode: str) -> dict:
 def _render_interactive(context: dict) -> str:
     from jinja2 import Environment, FileSystemLoader
 
-    tpl_dir = Path(__file__).resolve().parents[1] / "src" / "modelica_testing" / "reporting" / "templates"
+    tpl_dir = Path(__file__).resolve().parents[1] / "src" / "dstf" / "reporting" / "templates"
     env = Environment(loader=FileSystemLoader(str(tpl_dir)), autoescape=True)
     return env.get_template("interactive.html").render(**context)
 
@@ -190,7 +190,7 @@ _NOISE_PATTERNS = [
 
 _JS_PATH = (
     Path(__file__).resolve().parents[1]
-    / "src" / "modelica_testing" / "reporting" / "templates" / "interactive.js"
+    / "src" / "dstf" / "reporting" / "templates" / "interactive.js"
 )
 
 

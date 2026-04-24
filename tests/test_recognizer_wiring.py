@@ -9,12 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from modelica_testing.config import Config
-from modelica_testing.discovery.json_recognizer import (
+from dstf.config import Config
+from dstf.discovery.json_recognizer import (
     JsonRecognizer,
     RecognizerSpecError,
 )
-from modelica_testing.discovery.test_registry import discover_tests
+from dstf.discovery.test_registry import discover_tests
 
 
 PROJECT_ROOT = Path(__file__).parent.parent

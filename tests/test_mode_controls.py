@@ -6,7 +6,7 @@ from typing import Literal, Optional
 
 import pytest
 
-from modelica_testing.comparison.modes import (
+from dstf.comparison.modes import (
     DominantFrequencyConfig,
     EventTimingConfig,
     FinalOnlyConfig,
@@ -14,7 +14,7 @@ from modelica_testing.comparison.modes import (
     RangeConfig,
     TubeConfig,
 )
-from modelica_testing.reporting.ui.mode_controls import (
+from dstf.reporting.ui.mode_controls import (
     PlotContribution,
     derive_schema,
     emit_mode_schemas,

@@ -2,8 +2,8 @@
 
 import pytest
 
-from modelica_testing.comparison.comparator import VariableComparison
-from modelica_testing.comparison.metric_tree import (
+from dstf.comparison.comparator import VariableComparison
+from dstf.comparison.metric_tree import (
     AndCombinator,
     KOfNCombinator,
     MetricResult,

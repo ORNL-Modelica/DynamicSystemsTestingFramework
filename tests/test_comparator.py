@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from modelica_testing.comparison.comparator import (
+from dstf.comparison.comparator import (
     VariableComparison,
     StructuralWarning,
     _find_event_boundaries,
@@ -13,7 +13,7 @@ from modelica_testing.comparison.comparator import (
     _compare_final_values,
     _check_structural_changes,
 )
-from modelica_testing.simulators.base import TestResult
+from dstf.simulators.base import TestResult
 
 
 # ---------------------------------------------------------------------------
@@ -375,13 +375,13 @@ class TestStructuralChanges:
 # Tolerance resolution
 # ---------------------------------------------------------------------------
 
-from modelica_testing.comparison.comparator import (
+from dstf.comparison.comparator import (
     compare_test,
     _compare_tube,
     _interpolate_tube_widths,
 )
-from modelica_testing.discovery.test_registry import TestModel
-from modelica_testing.simulators.base import VariableResult
+from dstf.discovery.test_registry import TestModel
+from dstf.simulators.base import VariableResult
 from pathlib import Path
 
 
@@ -756,7 +756,7 @@ class TestTubeComparison:
 # Comparison mode strategies (modes.py)
 # ---------------------------------------------------------------------------
 
-from modelica_testing.comparison.modes import (
+from dstf.comparison.modes import (
     resolve_mode,
     NrmseMode,
     TubeMode,

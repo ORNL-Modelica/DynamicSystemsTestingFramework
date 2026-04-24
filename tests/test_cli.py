@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from modelica_testing.cli import (
+from dstf.cli import (
     _parse_review_filter,
     _should_review,
     _VALID_REVIEW_FILTERS,

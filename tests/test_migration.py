@@ -12,10 +12,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from modelica_testing.config import Config
-from modelica_testing.discovery.test_registry import TestModel
-from modelica_testing.simulators.base import TestResult, VariableResult
-from modelica_testing.storage.reference_store import ReferenceStore
+from dstf.config import Config
+from dstf.discovery.test_registry import TestModel
+from dstf.simulators.base import TestResult, VariableResult
+from dstf.storage.reference_store import ReferenceStore
 
 
 def _write_legacy_ref(ref_dir: Path, test_id: str, model_id: str,
@@ -40,7 +40,7 @@ def _write_legacy_ref(ref_dir: Path, test_id: str, model_id: str,
 
 def _run_migrate(ref_root: Path, apply: bool = True) -> None:
     """Invoke the migration walk directly (bypass CLI config resolution)."""
-    from modelica_testing.cli import migrate_baselines_tree
+    from dstf.cli import migrate_baselines_tree
     migrate_baselines_tree(ref_root, apply)
 
 
