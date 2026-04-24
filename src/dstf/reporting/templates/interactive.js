@@ -1602,6 +1602,171 @@ MODE_PLOT_EDITORS['range'] = (function() {
   };
 })();
 
+// Event-timing editor — declared-events table in the leaf slot.
+// Event-timing is CLI-authoritative for pass/fail (event pairing is
+// non-trivial and lives in Python). The editor lets users AUTHOR the
+// declared-events list: add rows, edit time + tolerance, delete rows,
+// and (Task 4) auto-detect from the reference or actual signals.
+// The table UI mirrors dominant-frequency's declared-peaks editor
+// pattern; we don't share code with dom-frequency yet — if the overlap
+// ends up >=70% after both ship, a shared helper can be extracted as
+// a follow-up.
+MODE_PLOT_EDITORS['event-timing'] = (function() {
+
+  // --- state helpers -----------------------------------------------------
+  function getEvents(leaf) {
+    const st = leafState[leaf.path] || {};
+    const p = st.params || (st.params = {});
+    if (!Array.isArray(p.events)) p.events = [];
+    return p.events;
+  }
+
+  function getGlobalTolerance(leaf) {
+    const st = leafState[leaf.path] || {};
+    const v = Number((st.params || {}).time_tolerance);
+    return Number.isFinite(v) && v > 0 ? v : 1e-3;
+  }
+
+  function sortEvents(leaf) {
+    const evs = getEvents(leaf);
+    evs.sort((a, b) => Number(a.time) - Number(b.time));
+  }
+
+  // --- table rendering ---------------------------------------------------
+  const mountedByLeaf = new WeakMap();
+
+  function mount(container, leaf, commit) {
+    const root = document.createElement('div');
+    root.className = 'event-timing-editor';
+    container.appendChild(root);
+    mountedByLeaf.set(leaf, { root });
+    refreshEditor(leaf, commit);
+  }
+
+  function unmount(container) {
+    const el = container.querySelector('.event-timing-editor');
+    if (el) el.remove();
+  }
+
+  function refreshEditor(leaf, commit) {
+    const m = mountedByLeaf.get(leaf);
+    if (!m) return;
+    renderTable(m.root, leaf, commit);
+  }
+
+  function renderTable(root, leaf, commit) {
+    const evs = getEvents(leaf);
+    const globalTol = getGlobalTolerance(leaf);
+
+    root.innerHTML = '';
+
+    // Table.
+    const table = document.createElement('table');
+    table.className = 'event-table';
+    const thead = document.createElement('thead');
+    thead.innerHTML = (
+      '<tr>'
+      + '<th>Time (s)</th>'
+      + '<th>Tolerance (s)</th>'
+      + '<th></th>'
+      + '</tr>'
+    );
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    evs.forEach((ev, i) => {
+      const tr = document.createElement('tr');
+      // Time input.
+      const timeTd = document.createElement('td');
+      const timeInput = document.createElement('input');
+      timeInput.type = 'number';
+      timeInput.step = 'any';
+      timeInput.value = ev.time != null ? String(ev.time) : '';
+      timeInput.addEventListener('change', () => {
+        const n = Number(timeInput.value);
+        if (Number.isFinite(n)) ev.time = n;
+        sortEvents(leaf);
+        refreshEditor(leaf, commit);
+        commit();
+      });
+      timeTd.appendChild(timeInput);
+      tr.appendChild(timeTd);
+      // Tolerance input (placeholder shows the global fallback).
+      const tolTd = document.createElement('td');
+      const tolInput = document.createElement('input');
+      tolInput.type = 'number';
+      tolInput.step = 'any';
+      tolInput.placeholder = String(globalTol);
+      tolInput.value = ev.tolerance != null ? String(ev.tolerance) : '';
+      tolInput.addEventListener('change', () => {
+        const raw = tolInput.value.trim();
+        if (raw === '') {
+          delete ev.tolerance;
+        } else {
+          const n = Number(raw);
+          if (Number.isFinite(n) && n > 0) ev.tolerance = n;
+        }
+        commit();
+      });
+      tolTd.appendChild(tolInput);
+      tr.appendChild(tolTd);
+      // Delete button.
+      const delTd = document.createElement('td');
+      const delBtn = document.createElement('button');
+      delBtn.className = 'row-delete';
+      delBtn.textContent = '✕';
+      delBtn.title = 'Remove this event';
+      delBtn.addEventListener('click', () => {
+        evs.splice(i, 1);
+        refreshEditor(leaf, commit);
+        commit();
+      });
+      delTd.appendChild(delBtn);
+      tr.appendChild(delTd);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    root.appendChild(table);
+
+    // Button row — Task 3 only has the add button. Detect button
+    // arrives in Task 4.
+    const btnRow = document.createElement('div');
+    btnRow.className = 'event-editor-buttons';
+    const addBtn = document.createElement('button');
+    addBtn.className = 'node-btn node-btn-add';
+    addBtn.textContent = '+ add event';
+    addBtn.addEventListener('click', () => {
+      // Seed new event time from the last + 0.5s, or 0 if empty.
+      const seedTime = evs.length ? Number(evs[evs.length - 1].time) + 0.5 : 0;
+      evs.push({ time: seedTime });
+      sortEvents(leaf);
+      refreshEditor(leaf, commit);
+      commit();
+    });
+    btnRow.appendChild(addBtn);
+    root.appendChild(btnRow);
+  }
+
+  // --- editor lifecycle (MODE_PLOT_EDITORS contract) ---------------------
+  return {
+    activate(leaf, plotEl, commit) {
+      // The leaf's editor slot is a .node-editor <div> the core
+      // already cleared for us. Find it via the leaf's DOM anchor.
+      const anchor = document.querySelector(
+        `[data-path="${escapeSelector(leaf.path)}"] .node-editor`
+      );
+      if (!anchor) return;
+      mount(anchor, leaf, commit);
+    },
+    deactivate(leaf, _plotEl) {
+      const anchor = document.querySelector(
+        `[data-path="${escapeSelector(leaf.path)}"] .node-editor`
+      );
+      if (anchor) unmount(anchor);
+      mountedByLeaf.delete(leaf);
+    },
+  };
+})();
+
 MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
   // Declared-peaks editor for dominant-frequency leaves (D75 + D76).
   // Each editor slot gets:
