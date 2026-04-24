@@ -142,3 +142,72 @@ def test_driver_malformed_return(tmp_path):
     import json
     payload = json.loads(result.read_text())
     assert payload["success"] is False
+
+
+# ---------------------------------------------------------------------------
+# CLI-driven end-to-end tests (gated on scipy availability)
+# ---------------------------------------------------------------------------
+
+pytestmark_e2e = pytest.mark.skipif(
+    not _scipy_available(),
+    reason="scipy not available; SimpleRamp example needs it",
+)
+
+
+@pytestmark_e2e
+def test_python_simple_ramp_smoke(tmp_path):
+    """End-to-end: run SimpleRamp via the CLI. Simulation must succeed.
+
+    Exercises the whole pipeline (discovery -> Python subprocess ->
+    read_result -> comparator).
+    """
+    result = subprocess.run(
+        ["uv", "run", "modelica-testing",
+         "--config", str(_CONFIG),
+         "run", "--filter", "*SimpleRamp",
+         "--work-dir", str(tmp_path / "wd1")],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    result_json = tmp_path / "wd1" / "test_0001" / "result.json"
+    assert result_json.exists()
+    import json
+    payload = json.loads(result_json.read_text())
+    assert payload["success"] is True
+    assert "x" in payload["variables"]
+
+
+@pytestmark_e2e
+def test_python_constant_csv_passes_range_check(tmp_path):
+    """ConstantCsv must PASS on a fresh run (baseline-free range check)."""
+    result = subprocess.run(
+        ["uv", "run", "modelica-testing",
+         "--config", str(_CONFIG),
+         "run", "--filter", "*ConstantCsv",
+         "--work-dir", str(tmp_path / "wd2")],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "PASS" in result.stdout, result.stdout
+
+
+@pytestmark_e2e
+def test_python_simple_ramp_self_regression(tmp_path):
+    """With baselines committed, SimpleRamp rerun must PASS."""
+    baseline_dir = (
+        _EXAMPLES_DIR / "Resources" / "ReferenceResults" / "Python"
+    )
+    if not any(baseline_dir.rglob("ref_*.json")):
+        pytest.skip(
+            "No Python baselines committed under PythonTestingLib/ReferenceResults; "
+            "run `modelica-testing --config ... run --accept` first"
+        )
+    result = subprocess.run(
+        ["uv", "run", "modelica-testing",
+         "--config", str(_CONFIG),
+         "run", "--filter", "*SimpleRamp",
+         "--work-dir", str(tmp_path / "wd3")],
+        capture_output=True, text=True, timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "PASS" in result.stdout, result.stdout
