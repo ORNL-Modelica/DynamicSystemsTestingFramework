@@ -358,3 +358,74 @@ def test_nrmse_window_edits_rescore_in_browser(tmp_path, playwright_browser):
         "should PASS. If FAIL, scorer is still using the full-trajectory "
         "NRMSE."
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Range plot decorator respects window (dual-style gray/red)
+# ---------------------------------------------------------------------------
+
+def test_range_plot_dual_style_when_window_set(tmp_path, playwright_browser):
+    """When a range leaf has both window endpoints, the plot contribution
+    should emit SIX shapes per bound-pair (gray outside + red inside ×
+    min + max = 6), each with explicit x coordinates. Without a window,
+    it should emit TWO (one min line + one max line, full-width in
+    paper coords) — the pre-fix baseline.
+    """
+    ctx = _fixture_context()
+    # Unwindowed range leaf — baseline count check.
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    baseline = page.evaluate("""
+        () => {
+            const leaf = TREE_VIEW.children[1];  // the range leaf
+            const traj = (VARIABLES_BY_NAME['h'] || {}).trajectory || {};
+            const contrib = MODE_PLOT_CONTRIBUTIONS['range'](leaf, traj);
+            return {
+                shapes: contrib.shapes.length,
+                firstShapeXref: contrib.shapes[0] && contrib.shapes[0].xref,
+            };
+        }
+    """)
+    page.close()
+    assert baseline["shapes"] == 2, (
+        "Baseline (no window): range should emit 2 shapes (min line + "
+        "max line), full-width in paper coords."
+    )
+    assert baseline["firstShapeXref"] == "paper"
+
+    # Now with a window — expect 6 shapes (3 segments per bound × 2 bounds).
+    ctx["tree_view"]["children"][1]["window"] = {"start": 1.0, "end": 2.0}
+    ctx["tree_view"]["children"][1]["window_values"] = {"start": 1.0, "end": 2.0}
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    windowed = page.evaluate("""
+        () => {
+            const leaf = TREE_VIEW.children[1];
+            const traj = (VARIABLES_BY_NAME['h'] || {}).trajectory || {};
+            const contrib = MODE_PLOT_CONTRIBUTIONS['range'](leaf, traj);
+            // Group shapes by dashed-line color so the test can assert
+            // gray-outside / red-inside without being brittle about
+            // exact shape ordering.
+            const colors = contrib.shapes.map(s => (s.line || {}).color);
+            const xrefs = contrib.shapes.map(s => s.xref);
+            return {
+                total: contrib.shapes.length,
+                grayCount: colors.filter(c => c === '#9e9e9e').length,
+                redCount: colors.filter(c => c === '#f44336').length,
+                allXAxis: xrefs.every(xr => xr === 'x'),
+            };
+        }
+    """)
+    page.close()
+    assert windowed["total"] == 6, (
+        "Windowed range should emit 6 shapes: 3 segments per bound "
+        "(pre-window gray + in-window red + post-window gray) × 2 bounds."
+    )
+    assert windowed["grayCount"] == 4, "4 gray segments (2 per bound × 2)"
+    assert windowed["redCount"] == 2, "2 red in-window segments (1 per bound)"
+    assert windowed["allXAxis"], (
+        "All segments must use xref='x' with explicit time coords so "
+        "they actually land in window coordinates — not 'paper'."
+    )

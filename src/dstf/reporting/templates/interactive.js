@@ -359,29 +359,67 @@ const MODE_PLOT_CONTRIBUTIONS = {
       line: { color: '#607D8B', width: 1, dash: 'dot' },
     }] };
   },
-  'range': (leaf) => {
+  'range': (leaf, traj) => {
     const p = leafState[leaf.path] ? leafState[leaf.path].params : {};
-    // Named shapes let MODE_PLOT_EDITORS['range'] match plotly_relayout
-    // shape-drag events back to the right params field by path.
+    const state = leafState[leaf.path] || {};
+    const w = state.window || {};
+    const hasWindow = (w.start != null && w.start !== ''
+                     && w.end != null && w.end !== '');
+
+    // Build one bound's shapes — returns an array of 1 or 3 line shapes.
+    // When no window: a single full-width (paper-coord) red dashed line.
+    // When windowed: three segments in data coords — gray pre-window,
+    // red in-window, gray post-window. Named shapes let
+    // MODE_PLOT_EDITORS['range'] match plotly_relayout drag events back
+    // to the right params field by path — only the in-window RED segment
+    // is draggable (so users interact with the authoritative segment).
+    const buildBoundShapes = (yVal, nameSuffix) => {
+      if (!Number.isFinite(yVal)) return [];
+      if (!hasWindow) {
+        return [{
+          type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y',
+          y0: yVal, y1: yVal,
+          line: { color: '#f44336', width: 1.5, dash: 'dash' },
+          name: `range_${nameSuffix}:${leaf.path}`,
+        }];
+      }
+      // Window-aware: three segments, all in data coords so they sit
+      // under the right regions of the x axis.
+      const refTime = traj.ref_time || traj.act_time || [];
+      const tStart = refTime.length ? refTime[0] : 0;
+      const tEnd = refTime.length ? refTime[refTime.length - 1] : 1;
+      const wStart = Number(w.start);
+      const wEnd = Number(w.end);
+      return [
+        // Pre-window gray segment.
+        {
+          type: 'line', xref: 'x', x0: tStart, x1: wStart, yref: 'y',
+          y0: yVal, y1: yVal,
+          line: { color: '#9e9e9e', width: 1.5, dash: 'dash' },
+          name: `range_${nameSuffix}_pre:${leaf.path}`,
+        },
+        // In-window red segment — the authoritative one.
+        {
+          type: 'line', xref: 'x', x0: wStart, x1: wEnd, yref: 'y',
+          y0: yVal, y1: yVal,
+          line: { color: '#f44336', width: 1.5, dash: 'dash' },
+          name: `range_${nameSuffix}:${leaf.path}`,
+        },
+        // Post-window gray segment.
+        {
+          type: 'line', xref: 'x', x0: wEnd, x1: tEnd, yref: 'y',
+          y0: yVal, y1: yVal,
+          line: { color: '#9e9e9e', width: 1.5, dash: 'dash' },
+          name: `range_${nameSuffix}_post:${leaf.path}`,
+        },
+      ];
+    };
+
     const shapes = [];
-    if (p.min_value !== null && p.min_value !== undefined && p.min_value !== '') {
-      const mn = Number(p.min_value);
-      if (Number.isFinite(mn)) shapes.push({
-        type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y',
-        y0: mn, y1: mn,
-        line: { color: '#f44336', width: 1.5, dash: 'dash' },
-        name: `range_min:${leaf.path}`,
-      });
-    }
-    if (p.max_value !== null && p.max_value !== undefined && p.max_value !== '') {
-      const mx = Number(p.max_value);
-      if (Number.isFinite(mx)) shapes.push({
-        type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y',
-        y0: mx, y1: mx,
-        line: { color: '#f44336', width: 1.5, dash: 'dash' },
-        name: `range_max:${leaf.path}`,
-      });
-    }
+    const mn = _nullOrNumber(p.min_value);
+    const mx = _nullOrNumber(p.max_value);
+    if (mn !== null) shapes.push(...buildBoundShapes(mn, 'min'));
+    if (mx !== null) shapes.push(...buildBoundShapes(mx, 'max'));
     return { traces: [], shapes };
   },
   'tube': (leaf, traj) => {
