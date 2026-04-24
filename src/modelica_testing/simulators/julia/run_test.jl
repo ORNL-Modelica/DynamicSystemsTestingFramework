@@ -52,16 +52,34 @@ try
     prob = ModelingToolkit.ODEProblem(nt.sys, u0, (0.0, STOP_TIME), ps)
     sol = OrdinaryDiffEq.solve(prob, OrdinaryDiffEq.Tsit5(); reltol=TOLERANCE)
 
-    # Collect unknowns and their trajectories. Names are printable symbols
-    # (e.g. "x(t)"); we strip the trailing "(t)" for reporter parity with
-    # Modelica variable naming.
+    # Collect unknowns (state variables) AND observables (algebraic
+    # expressions like `y ~ a*x1 + b*x2` that structural_simplify
+    # promotes out of the unknowns list but are still materializable
+    # from the solution via sol[expr]). Users authoring MTK tests
+    # typically expect both to be accessible.
     unk = ModelingToolkit.unknowns(nt.sys)
+    obs_eqs = ModelingToolkit.observed(nt.sys)
     variables = Dict{String, Vector{Float64}}()
     for u in unk
         name = string(u)
-        # "x(t)" → "x"
         stripped = endswith(name, "(t)") ? name[1:end-3] : name
         variables[stripped] = Float64.(sol[u])
+    end
+    for eq in obs_eqs
+        lhs = eq.lhs
+        name = string(lhs)
+        stripped = endswith(name, "(t)") ? name[1:end-3] : name
+        # Skip if already captured as an unknown (shouldn't happen but
+        # defensive) or if the name is a helper symbol MTK introduced.
+        if haskey(variables, stripped) || startswith(stripped, "ˍ")
+            continue
+        end
+        try
+            variables[stripped] = Float64.(sol[lhs])
+        catch
+            # Some observables can't be evaluated (e.g., dependent on
+            # parameters only); skip silently rather than fail the test.
+        end
     end
 
     payload = Dict(

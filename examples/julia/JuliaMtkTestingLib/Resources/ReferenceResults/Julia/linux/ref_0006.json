@@ -1,20 +1,15 @@
 {
-  "model_id": "JuliaMtkExamples.SimpleRamp",
-  "test_id": "0002",
+  "model_id": "JuliaMtkTestingLib.Examples.SimpleRamp",
+  "test_id": "0006",
   "status": "active",
-  "date_added": "2026-04-23T19:55:55.294151+00:00",
-  "last_updated": "2026-04-23T19:55:55.294151+00:00",
+  "date_added": "2026-04-24T01:02:01.277761+00:00",
+  "last_updated": "2026-04-24T01:02:01.277761+00:00",
   "simulation": {
     "stop_time": 5.0,
     "tolerance": 1e-06,
     "method": "Dassl",
     "number_of_intervals": 5,
     "output_interval": null
-  },
-  "statistics": {
-    "simulation": {
-      "wall_time": 18.28525875699779
-    }
   },
   "n_vars": 1,
   "time": [

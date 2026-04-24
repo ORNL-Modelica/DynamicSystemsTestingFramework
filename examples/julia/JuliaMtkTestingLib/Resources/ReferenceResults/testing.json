@@ -1,9 +1,9 @@
 {
   "source_type": "julia",
-  "source_path": ".",
-  "library_name": "JuliaMtkExamples",
+  "source_path": "../..",
+  "library_name": "JuliaMtkTestingLib",
   "test_spec": "./test_spec.json",
-  "reference_root": "./ReferenceResults",
+  "reference_root": "./",
   "simulators": {
     "Julia": ["julia"]
   },

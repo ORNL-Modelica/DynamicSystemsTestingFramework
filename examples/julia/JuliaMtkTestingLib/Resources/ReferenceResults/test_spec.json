@@ -1,0 +1,116 @@
+{
+  "tests": [
+    {
+      "model": "JuliaMtkTestingLib.Examples.SimpleRamp",
+      "source": "../../Examples/SimpleRamp.jl",
+      "variables": ["x"],
+      "simulation": {
+        "stop_time": 5.0,
+        "tolerance": 1e-6
+      }
+    },
+    {
+      "model": "JuliaMtkTestingLib.Examples.Constant",
+      "source": "../../Examples/Constant.jl",
+      "variables": ["x"],
+      "simulation": {
+        "stop_time": 5.0,
+        "tolerance": 1e-6
+      }
+    },
+    {
+      "model": "JuliaMtkTestingLib.Examples.Frequency",
+      "source": "../../Examples/Frequency.jl",
+      "variables": ["x"],
+      "simulation": {
+        "stop_time": 4.0,
+        "tolerance": 1e-6
+      },
+      "comparison": {
+        "variable_overrides": {
+          "x": {
+            "mode": "dominant-frequency",
+            "peaks": [
+              {"freq": 1.0, "tolerance": 0.15, "tolerance_mode": "rel"}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "model": "JuliaMtkTestingLib.Examples.MultiFrequency",
+      "source": "../../Examples/MultiFrequency.jl",
+      "variables": ["y"],
+      "simulation": {
+        "stop_time": 4.0,
+        "tolerance": 1e-6
+      },
+      "comparison": {
+        "variable_overrides": {
+          "y": {
+            "mode": "dominant-frequency",
+            "peaks": [
+              {"freq": 1.0, "tolerance": 0.15, "tolerance_mode": "rel"},
+              {"freq": 3.0, "tolerance": 0.1, "tolerance_mode": "rel"},
+              {"freq": 7.0, "tolerance": 0.05, "tolerance_mode": "rel"}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "model": "JuliaMtkTestingLib.Examples.RangeCheck",
+      "source": "../../Examples/RangeCheck.jl",
+      "variables": ["x"],
+      "simulation": {
+        "stop_time": 4.0,
+        "tolerance": 1e-6
+      },
+      "comparison": {
+        "variable_overrides": {
+          "x": {
+            "mode": "range",
+            "min_value": -1.05,
+            "max_value": 1.05
+          }
+        }
+      }
+    },
+    {
+      "model": "JuliaMtkTestingLib.Examples.TubeTolerance",
+      "source": "../../Examples/TubeTolerance.jl",
+      "variables": ["x"],
+      "simulation": {
+        "stop_time": 4.0,
+        "tolerance": 1e-6
+      },
+      "comparison": {
+        "variable_overrides": {
+          "x": {
+            "mode": "tube",
+            "tube_width_mode": "rel",
+            "tube_rel": 0.05
+          }
+        }
+      }
+    },
+    {
+      "model": "JuliaMtkTestingLib.Examples.MetricTree",
+      "source": "../../Examples/MetricTree.jl",
+      "variables": ["x", "y"],
+      "simulation": {"stop_time": 5.0, "tolerance": 1e-6},
+      "metrics": {
+        "combinator": "and",
+        "children": [
+          {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+          {
+            "combinator": "warn",
+            "children": [
+              {"metric": "nrmse", "variable": "y", "tolerance": 1e-3}
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

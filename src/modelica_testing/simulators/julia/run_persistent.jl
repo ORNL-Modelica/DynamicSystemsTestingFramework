@@ -45,12 +45,26 @@ function handle_request(req)
         prob = ModelingToolkit.ODEProblem(nt.sys, nt.u0, (0.0, stop_time), nt.ps)
         sol = OrdinaryDiffEq.solve(prob, OrdinaryDiffEq.Tsit5(); reltol=tol)
 
+        # Collect unknowns AND observables — see run_test.jl for rationale.
         unk = ModelingToolkit.unknowns(nt.sys)
+        obs_eqs = ModelingToolkit.observed(nt.sys)
         variables = Dict{String, Vector{Float64}}()
         for u in unk
             name = string(u)
             stripped = endswith(name, "(t)") ? name[1:end-3] : name
             variables[stripped] = Float64.(sol[u])
+        end
+        for eq in obs_eqs
+            lhs = eq.lhs
+            name = string(lhs)
+            stripped = endswith(name, "(t)") ? name[1:end-3] : name
+            if haskey(variables, stripped) || startswith(stripped, "ˍ")
+                continue
+            end
+            try
+                variables[stripped] = Float64.(sol[lhs])
+            catch
+            end
         end
 
         payload = Dict(

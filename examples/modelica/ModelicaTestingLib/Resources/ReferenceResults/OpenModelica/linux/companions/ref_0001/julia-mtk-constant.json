@@ -1,0 +1,5 @@
+{
+  "kind": "external",
+  "format": "json",
+  "path": "../../../../../../julia/JuliaMtkTestingLib/Resources/ReferenceResults/Julia/linux/ref_0001.json"
+}

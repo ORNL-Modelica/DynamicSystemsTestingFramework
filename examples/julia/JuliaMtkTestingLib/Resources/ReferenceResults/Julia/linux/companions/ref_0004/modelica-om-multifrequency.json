@@ -1,0 +1,5 @@
+{
+  "kind": "external",
+  "format": "json",
+  "path": "../../../../../../modelica/ModelicaTestingLib/Resources/ReferenceResults/OpenModelica/linux/ref_0010.json"
+}

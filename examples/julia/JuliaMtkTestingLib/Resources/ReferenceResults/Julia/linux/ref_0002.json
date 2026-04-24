@@ -1,9 +1,9 @@
 {
-  "model_id": "JuliaMtkExamples.Frequency",
-  "test_id": "0001",
+  "model_id": "JuliaMtkTestingLib.Examples.Frequency",
+  "test_id": "0002",
   "status": "active",
-  "date_added": "2026-04-23T19:55:55.167035+00:00",
-  "last_updated": "2026-04-23T19:55:55.167035+00:00",
+  "date_added": "2026-04-24T01:02:01.200167+00:00",
+  "last_updated": "2026-04-24T01:02:01.200167+00:00",
   "simulation": {
     "stop_time": 4.0,
     "tolerance": 1e-06,
@@ -23,11 +23,6 @@
           }
         ]
       }
-    }
-  },
-  "statistics": {
-    "simulation": {
-      "wall_time": 19.02412757699858
     }
   },
   "n_vars": 1,

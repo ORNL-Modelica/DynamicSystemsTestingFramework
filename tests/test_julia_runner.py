@@ -22,21 +22,24 @@ import pytest
 def _julia_available() -> bool:
     if shutil.which("julia") is None:
         return False
-    # Confirm the examples/julia project has been instantiated (Manifest
-    # exists). We don't trigger instantiation automatically — the first
-    # precompile is multi-minute and shouldn't run as a test side effect.
-    project = Path(__file__).resolve().parents[1] / "examples" / "julia"
+    project = (
+        Path(__file__).resolve().parents[1]
+        / "examples" / "julia" / "JuliaMtkTestingLib"
+    )
     return (project / "Manifest.toml").exists()
 
 
 pytestmark = pytest.mark.skipif(
     not _julia_available(),
-    reason="Julia not on PATH, or examples/julia project not instantiated",
+    reason="Julia not on PATH, or JuliaMtkTestingLib project not instantiated",
 )
 
 
-_EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples" / "julia"
-_CONFIG = _EXAMPLES_DIR / "testing.json"
+_EXAMPLES_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "examples" / "julia" / "JuliaMtkTestingLib"
+)
+_CONFIG = _EXAMPLES_DIR / "Resources" / "ReferenceResults" / "testing.json"
 
 
 @pytest.mark.julia
@@ -73,10 +76,12 @@ def test_julia_frequency_declared_peak_matches(tmp_path):
     """The Frequency sample is a 1 Hz sinusoid; declared peak at 1 Hz with
     15% rel tolerance should match on self-regression."""
     # Need a baseline first.
-    baseline_dir = _EXAMPLES_DIR / "ReferenceResults" / "Julia" / "linux"
+    baseline_dir = (
+        _EXAMPLES_DIR / "Resources" / "ReferenceResults" / "Julia" / "linux"
+    )
     if not any(baseline_dir.glob("ref_*.json")):
         pytest.skip(
-            "No Julia baselines committed under examples/julia/ReferenceResults; "
+            "No Julia baselines committed under JuliaMtkTestingLib/ReferenceResults; "
             "run `modelica-testing --config examples/julia/testing.json run --accept` first"
         )
     result = subprocess.run(
