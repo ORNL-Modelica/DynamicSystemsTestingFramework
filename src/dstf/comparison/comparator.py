@@ -778,7 +778,12 @@ def _compare_dominant_frequency(
     users don't yet know their peak frequencies. Pass/fail logic no
     longer calls it.
     """
-    if len(ref_values) < 4 or len(act_values) < 4:
+    # The actual-side FFT is always required — without it we can't match
+    # any peaks. The reference-side FFT is only required when no peaks
+    # are declared (so the reporter can seed a table from the ref
+    # spectrum's top-N). With declared peaks, an empty reference is OK
+    # (baseline-free path, idea #59 / D83).
+    if len(act_values) < 4:
         return VariableComparison(
             index=0, name="", passed=False,
             nrmse=float("inf"), rmse=0.0, signal_range=0.0,
@@ -788,13 +793,29 @@ def _compare_dominant_frequency(
             diagnostics={"reason": "signal too short for FFT (need >=4 samples)"},
         )
 
-    ref_freqs, ref_spectrum = _compute_fft_spectrum(ref_time, ref_values)
-    act_freqs, act_spectrum = _compute_fft_spectrum(act_time, act_values)
+    has_ref = len(ref_values) >= 4
+    if not has_ref and not peaks:
+        return VariableComparison(
+            index=0, name="", passed=False,
+            nrmse=float("inf"), rmse=0.0, signal_range=0.0,
+            max_abs_error=0.0, max_abs_error_time=0.0,
+            reference_final=float("nan"), actual_final=float("nan"),
+            mode="dominant-frequency",
+            diagnostics={"reason": "signal too short for FFT (need >=4 samples)"},
+        )
 
-    # Reference peak detection — embedded so the reporter's "Detect"
-    # button can seed a fresh declared-peaks table without recomputing.
-    # N=10 gives room for up to 10 tracked modes without bloat.
-    detected_ref_peaks = _find_top_n_peaks(ref_freqs, ref_spectrum, 10)
+    if has_ref:
+        ref_freqs, ref_spectrum = _compute_fft_spectrum(ref_time, ref_values)
+        # Reference peak detection — embedded so the reporter's "Detect"
+        # button can seed a fresh declared-peaks table without recomputing.
+        # N=10 gives room for up to 10 tracked modes without bloat.
+        detected_ref_peaks = _find_top_n_peaks(ref_freqs, ref_spectrum, 10)
+    else:
+        ref_freqs = np.array([])
+        ref_spectrum = np.array([])
+        detected_ref_peaks = []
+
+    act_freqs, act_spectrum = _compute_fft_spectrum(act_time, act_values)
 
     # Downsample spectra for embedding. 512 bins is ample for visual
     # inspection; full-resolution would inflate every dominant-frequency
@@ -1065,7 +1086,33 @@ def compare_test(
 
     for var_result in result.variables:
         ref_var = ref_vars.get(var_result.index)
+
+        # Resolve the variable's display name BEFORE the ref-missing check
+        # so baseline-free modes can still use overrides keyed by the
+        # actual variable name.
+        ref_name = ref_var.get("name", ref_var.get("expression", "")) if ref_var else ""
+        name = var_result.name or ref_name
+        if not name or "\n" in name or name.startswith("cat("):
+            name = f"x[{var_result.index}]"
+
+        var_override = merged_overrides.get(name, {})
+        tolerance = var_override.get("tolerance", base_tolerance)
+        mode = resolve_mode(var_override, tolerance, default_final_only=final_only)
+
         if ref_var is None:
+            # Baseline-free modes (range; event-timing with declared events;
+            # dominant-frequency with declared peaks) don't consult the
+            # reference, so a missing ref_var is fine — run the comparison
+            # with empty ref arrays. Other modes still hard-fail here
+            # because they can't score without a baseline.
+            if mode.is_baseline_free():
+                empty = np.array([])
+                vc = mode.compare(empty, empty, var_result.time, var_result.values)
+                vc.index = var_result.index
+                vc.name = name
+                vc.tolerance_used = tolerance
+                comparisons.append(vc)
+                continue
             comparisons.append(VariableComparison(
                 index=var_result.index,
                 name=var_result.name,
@@ -1085,17 +1132,6 @@ def compare_test(
         else:
             ref_time = np.array(ref_var["time"])
         ref_values = np.array(ref_var["values"])
-        ref_name = ref_var.get("name", ref_var.get("expression", ""))
-        # Prefer current run's name; fall back to reference name if it's clean
-        # (not a raw Modelica expression like "cat(1, ...)")
-        name = var_result.name or ref_name
-        if not name or "\n" in name or name.startswith("cat("):
-            name = f"x[{var_result.index}]"
-
-        # Resolve per-variable settings and build the comparison strategy
-        var_override = merged_overrides.get(name, {})
-        tolerance = var_override.get("tolerance", base_tolerance)
-        mode = resolve_mode(var_override, tolerance, default_final_only=final_only)
 
         vc = mode.compare(ref_time, ref_values, var_result.time, var_result.values)
         vc.index = var_result.index
@@ -1117,6 +1153,71 @@ def compare_test(
         warnings=structural_warnings,
         metric_tree=tree,
     )
+
+
+def _test_is_baseline_free(
+    test: TestModel, default_tolerance: float,
+) -> bool:
+    """Does every leaf in ``test``'s metric tree score without a reference?
+
+    Baseline-free modes (``range``; ``event-timing`` with declared events;
+    ``dominant-frequency`` with declared peaks) compute pass/fail using
+    only the actual simulation data plus config declared in the leaf
+    itself. When every leaf is baseline-free, ``compare_all`` can skip
+    the NO_REF short-circuit and still produce meaningful pass/fail on a
+    fresh test with no saved baseline (idea #59 / D83).
+
+    Mixed trees — any leaf that consults a reference — fall back to the
+    legacy NO_REF behavior. There's no partial-run support.
+    """
+    from .modes import resolve_mode
+    from .tree_spec import CombinatorSpec, LeafSpec
+    from .tree_eval import _leaf_override_dict
+
+    # User-authored spec tree: walk every leaf and resolve its mode.
+    if test.metric_tree_spec is not None:
+        leaves: list[LeafSpec] = []
+
+        def _collect(node):
+            if isinstance(node, LeafSpec):
+                leaves.append(node)
+                return
+            for c in node.children:
+                _collect(c)
+
+        _collect(test.metric_tree_spec)
+        if not leaves:
+            return False
+        for leaf in leaves:
+            override = _leaf_override_dict(leaf)
+            tol = float(leaf.params.get("tolerance", default_tolerance))
+            try:
+                mode = resolve_mode(override, tol, default_final_only=False)
+            except Exception:
+                # A leaf whose config doesn't resolve to a valid mode can't
+                # be baseline-free by our check — fall back to NO_REF.
+                return False
+            if not mode.is_baseline_free():
+                return False
+        return True
+
+    # Implicit-AND path: every tracked variable becomes a leaf. A test
+    # without any per-variable override defaults to NRMSE, which needs a
+    # reference — only overrides that select a baseline-free mode
+    # qualify. An empty override dict means "no leaves that can qualify",
+    # so treat the test as not baseline-free (stay with NO_REF).
+    if not test.variable_overrides:
+        return False
+    base_tolerance = test.comparison_tolerance or default_tolerance
+    for override in test.variable_overrides.values():
+        tol = float(override.get("tolerance", base_tolerance))
+        try:
+            mode = resolve_mode(override, tol, default_final_only=False)
+        except Exception:
+            return False
+        if not mode.is_baseline_free():
+            return False
+    return True
 
 
 def compare_all(
@@ -1148,7 +1249,17 @@ def compare_all(
         # an empty dict reference so its simulate_only short-circuit runs
         # (returning passed=True + metric_tree with label="simulate-only")
         # instead of collapsing to the generic NO_REF state.
-        if reference is None and not test.simulate_only:
+        #
+        # Baseline-free tests (every leaf is range / declared-events /
+        # declared-peaks) follow the same pattern: skip the NO_REF guard
+        # so the scorers can produce real pass/fail from config alone.
+        # Mixed trees still short-circuit — partial runs aren't supported
+        # by this fix (idea #59 / D83).
+        if (
+            reference is None
+            and not test.simulate_only
+            and not _test_is_baseline_free(test, default_tolerance)
+        ):
             comparisons.append(TestComparison(
                 model_id=test.model_id,
                 passed=True,
@@ -1165,9 +1276,9 @@ def compare_all(
         )
         if reference is None:
             # Record that no baseline was stored even though the
-            # simulate_only path passed. Downstream renderers use this
-            # combined with test.simulate_only to still show PASS while
-            # surfacing "no baseline yet" as context.
+            # simulate_only / baseline-free path produced a result.
+            # Downstream renderers use this together with the metric
+            # tree's pass/fail to decide how to render the badge.
             comp.has_reference = False
         comparisons.append(comp)
 

@@ -1897,3 +1897,44 @@ renders `modelica-om-multifrequency` overlay (502 time points,
   Rejected per the plan's YAGNI guard — wrote both fresh, audited
   overlap afterward (see ideas.md follow-up).
 
+
+## D83: Baseline-free modes score without a reference (2026-04-24)
+
+- **What**: When a test has no reference baseline on disk AND every
+  leaf in its metric tree is baseline-free, the comparator now
+  proceeds to score the test instead of short-circuiting to the
+  NO_REF state. "Baseline-free" is a per-mode property exposed via a
+  new ``ComparisonMode.is_baseline_free()`` method:
+  - ``RangeMode``: always baseline-free (bounds declared in config).
+  - ``EventTimingMode``: baseline-free iff ``events`` is declared
+    (the declared-events path from D82).
+  - ``DominantFrequencyMode``: baseline-free iff ``peaks`` is
+    declared (the declared-peaks path from D75).
+  - Every other mode (NRMSE, tube, final-only): stays ``False``.
+- **Why**: Idea #59. Fresh tests using range / declared-events /
+  declared-peaks previously showed an unhelpful orange "NO_REF"
+  badge, misleading users into running ``--accept`` to create a
+  baseline that none of those metrics ever consult. The test's
+  pass/fail is entirely determined by the leaf config and the
+  actual simulation data — the reporter should say so.
+- **Scope: Small (polish)**. Mixed trees (any leaf that needs a
+  reference) keep the legacy NO_REF behavior — no partial-run
+  support in this fix. The default ``False`` on the base class
+  means all existing modes keep their semantics unchanged.
+- **Fallout**:
+  - ``compare_all`` now passes ``reference={}`` through to
+    ``compare_test`` for baseline-free tests, same pattern as
+    ``simulate_only``.
+  - ``compare_test`` (implicit-AND path) and ``tree_eval._evaluate_leaf``
+    both now tolerate ``ref_var is None`` for baseline-free leaves
+    and run them with empty reference arrays.
+  - ``_compare_dominant_frequency`` no longer unconditionally requires
+    ``len(ref_values) >= 4`` — the reference FFT is only computed
+    when actually needed (no declared peaks, or for reporter diagnostics).
+  - ``resolve_mode`` now forwards the ``events`` override key to
+    ``EventTimingConfig`` (was missing — a latent D82 gap that
+    would have prevented declared-events from flowing through the
+    implicit-AND path).
+- **Validation**: 5 new Python tests in
+  ``tests/test_comparator.py::TestBaselineFreeNoRef``. Full suite
+  goes from 791 → 796 passed. 0 regressions.

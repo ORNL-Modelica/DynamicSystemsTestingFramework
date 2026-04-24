@@ -220,42 +220,51 @@ def _evaluate_leaf(
     base_tolerance: float,
 ) -> MetricResult:
     var_result = var_results_by_name.get(leaf.variable)
-    # Phase 4.A.2: leaf.against picks the named baseline. Missing name →
-    # hard fail with a clear label (loud on user-facing reports).
-    baseline = baselines.get(leaf.against)
-    if baseline is None:
-        return leaf_from_variable(_missing_baseline_comparison(leaf))
-    ref_var = baseline.ref_vars_by_name.get(leaf.variable)
+    override = _leaf_override_dict(leaf)
+    tolerance = float(leaf.params.get("tolerance", base_tolerance))
+    mode = resolve_mode(override, tolerance, default_final_only=False)
 
-    if var_result is None or ref_var is None:
-        # A leaf referencing a variable that's missing from either side is
-        # a hard fail. Build a sentinel VariableComparison so reports can
-        # render it the same way they render other failures.
+    # Phase 4.A.2: leaf.against picks the named baseline. Missing name →
+    # hard fail with a clear label (loud on user-facing reports). Unless
+    # the leaf is baseline-free (range / declared-events / declared-peaks)
+    # — then we don't need any baseline at all (idea #59 / D83).
+    baseline = baselines.get(leaf.against)
+    if baseline is None and not mode.is_baseline_free():
+        return leaf_from_variable(_missing_baseline_comparison(leaf))
+    ref_var = baseline.ref_vars_by_name.get(leaf.variable) if baseline else None
+
+    if var_result is None:
+        # Missing actual result is always a hard fail — no mode can score
+        # without the actual trajectory.
         return leaf_from_variable(_missing_variable_comparison(leaf.variable, var_result))
 
-    if baseline.shared_ref_time is not None:
-        ref_time = baseline.shared_ref_time
+    if ref_var is None:
+        if not mode.is_baseline_free():
+            return leaf_from_variable(_missing_variable_comparison(leaf.variable, var_result))
+        ref_time = np.array([])
+        ref_values = np.array([])
     else:
-        ref_time = np.array(ref_var["time"])
-    ref_values = np.array(ref_var["values"])
+        if baseline is not None and baseline.shared_ref_time is not None:
+            ref_time = baseline.shared_ref_time
+        else:
+            ref_time = np.array(ref_var["time"])
+        ref_values = np.array(ref_var["values"])
 
     act_time = var_result.time
     act_values = var_result.values
 
     # Apply the leaf window (idea #46) — slice both sides uniformly before
     # handing to mode.compare. Mode configs stay untouched; slicing is a
-    # cross-cutting leaf property.
+    # cross-cutting leaf property. Skip the ref slice when there's no
+    # reference at all (baseline-free path).
     if leaf.window_start is not None or leaf.window_end is not None:
-        ref_time, ref_values = _slice_window(
-            ref_time, ref_values, leaf.window_start, leaf.window_end,
-        )
+        if len(ref_time) > 0:
+            ref_time, ref_values = _slice_window(
+                ref_time, ref_values, leaf.window_start, leaf.window_end,
+            )
         act_time, act_values = _slice_window(
             act_time, act_values, leaf.window_start, leaf.window_end,
         )
-
-    override = _leaf_override_dict(leaf)
-    tolerance = float(leaf.params.get("tolerance", base_tolerance))
-    mode = resolve_mode(override, tolerance, default_final_only=False)
 
     vc = mode.compare(ref_time, ref_values, act_time, act_values)
     vc.index = var_result.index

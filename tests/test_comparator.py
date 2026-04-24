@@ -953,3 +953,153 @@ class TestCompareTestWithModes:
         # relative error = 0.005/3.0 ≈ 0.00167, tolerance=0.01 → pass
         comp = compare_test(test, result, ref, default_tolerance=0.01, final_only=True)
         assert comp.passed
+
+
+# ---------------------------------------------------------------------------
+# Baseline-free short-circuit (idea #59 / D83)
+# ---------------------------------------------------------------------------
+
+class _NoBaselineStore:
+    """Minimal ReferenceStore stand-in: no references on disk."""
+
+    def get_reference(self, _model_id):
+        return None
+
+    def get_soft_checks(self, _model_id):
+        return {}
+
+    def get_companions(self, _model_id):
+        return {}
+
+
+def _result_only(values: np.ndarray) -> TestResult:
+    """Build a TestResult with a single variable 'x' on [0, 1]."""
+    time = np.linspace(0.0, 1.0, len(values))
+    return TestResult(
+        model_id="Test.Model",
+        success=True,
+        variables=[VariableResult(index=1, name="x", time=time, values=values)],
+    )
+
+
+class TestBaselineFreeNoRef:
+    """When every leaf is baseline-free, compare_all runs the scorer instead
+    of collapsing to NO_REF. Verifies idea #59 / D83: range, declared-events,
+    and declared-peaks leaves produce real pass/fail from config alone.
+    """
+
+    def test_range_only_test_passes_without_baseline(self):
+        """Range leaf, signal in bounds, no baseline → PASS (not NO_REF)."""
+        from dstf.comparison.comparator import compare_all
+
+        test = _make_test(variable_overrides={
+            "x": {"mode": "range", "min_value": 0.0, "max_value": 2.0},
+        })
+        result = _result_only(np.array([0.1, 0.5, 1.0, 1.5, 1.9]))
+        comps = compare_all([test], {test.model_id: result}, _NoBaselineStore())
+
+        assert len(comps) == 1
+        c = comps[0]
+        assert c.passed is True
+        # has_reference stays False — the badge still shows "no baseline"
+        # context, but the tree ran and produced pass.
+        assert c.has_reference is False
+        assert c.metric_tree is not None
+        assert c.variables, "baseline-free scorer should emit a VariableComparison"
+        assert c.variables[0].mode == "range"
+
+    def test_range_only_test_fails_when_bounds_violated(self):
+        """Range leaf, signal exceeds max, no baseline → FAIL."""
+        from dstf.comparison.comparator import compare_all
+
+        test = _make_test(variable_overrides={
+            "x": {"mode": "range", "min_value": 0.0, "max_value": 1.0},
+        })
+        result = _result_only(np.array([0.1, 0.5, 1.0, 1.5, 2.0]))  # exceeds 1.0
+        comps = compare_all([test], {test.model_id: result}, _NoBaselineStore())
+
+        assert len(comps) == 1
+        assert comps[0].passed is False
+        assert comps[0].has_reference is False
+
+    def test_mixed_tree_still_short_circuits_to_no_ref(self):
+        """Range + NRMSE leaves → NO_REF (no partial-run support in this fix).
+
+        Only when EVERY leaf is baseline-free do we bypass the guard. A
+        single NRMSE leaf drags the whole test into NO_REF — matches the
+        plan's "mixed trees keep current NO_REF behavior".
+        """
+        from dstf.comparison.comparator import compare_all
+
+        test = _make_test(variable_overrides={
+            "x": {"mode": "range", "min_value": 0.0, "max_value": 2.0},
+            "y": {"tolerance": 1e-4},  # default NRMSE — needs a reference
+        })
+        result = TestResult(
+            model_id="Test.Model",
+            success=True,
+            variables=[
+                VariableResult(index=1, name="x", time=np.linspace(0, 1, 5),
+                               values=np.array([0.1, 0.5, 1.0, 1.5, 1.9])),
+                VariableResult(index=2, name="y", time=np.linspace(0, 1, 5),
+                               values=np.array([0.0, 0.25, 0.5, 0.75, 1.0])),
+            ],
+        )
+        comps = compare_all([test], {test.model_id: result}, _NoBaselineStore())
+
+        assert len(comps) == 1
+        c = comps[0]
+        # Legacy NO_REF shape: passed=True, has_reference=False, no tree.
+        assert c.has_reference is False
+        assert c.metric_tree is None
+        assert c.error_message == "No reference baseline stored"
+
+    def test_event_timing_declared_events_runs_without_baseline(self):
+        """Event-timing with declared events → runs normally (no baseline)."""
+        from dstf.comparison.comparator import compare_all
+
+        # Build a signal with two events at t=0.3 and t=0.7 (duplicate-time
+        # samples, Modelica convention).
+        t = np.array([0.0, 0.1, 0.2, 0.3, 0.3, 0.5, 0.7, 0.7, 1.0])
+        v = np.array([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0])
+        test = _make_test(variable_overrides={
+            "x": {
+                "mode": "event-timing",
+                "events": [
+                    {"time": 0.3, "tolerance": 0.01},
+                    {"time": 0.7, "tolerance": 0.01},
+                ],
+                "count_must_match": True,
+            },
+        })
+        result = TestResult(
+            model_id="Test.Model", success=True,
+            variables=[VariableResult(index=1, name="x", time=t, values=v)],
+        )
+        comps = compare_all([test], {test.model_id: result}, _NoBaselineStore())
+
+        assert len(comps) == 1
+        c = comps[0]
+        assert c.passed is True
+        assert c.has_reference is False
+        assert c.metric_tree is not None
+        assert c.variables and c.variables[0].mode == "event-timing"
+
+    def test_event_timing_auto_detect_still_short_circuits(self):
+        """Event-timing WITHOUT declared events is not baseline-free — the
+        auto-detect path pairs reference events with actual events, so a
+        missing baseline collapses to NO_REF as before.
+        """
+        from dstf.comparison.comparator import compare_all
+
+        test = _make_test(variable_overrides={
+            "x": {"mode": "event-timing", "time_tolerance": 0.01},
+        })
+        result = _result_only(np.array([0.0, 0.1, 0.2, 0.3, 0.4]))
+        comps = compare_all([test], {test.model_id: result}, _NoBaselineStore())
+
+        assert len(comps) == 1
+        c = comps[0]
+        assert c.has_reference is False
+        assert c.metric_tree is None
+        assert c.error_message == "No reference baseline stored"

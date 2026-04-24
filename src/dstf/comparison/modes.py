@@ -53,6 +53,20 @@ class ComparisonMode(ABC):
         """Compare actual vs reference and return metrics."""
         ...
 
+    def is_baseline_free(self) -> bool:
+        """Does this mode + its current config score without a reference?
+
+        Default ``False`` — most modes (NRMSE, tube, final-only) compare
+        against a saved baseline. Subclasses that score purely against
+        config-declared bounds or structures (range; event-timing with a
+        declared ``events`` list; dominant-frequency with declared
+        ``peaks``) override this to return ``True``. Used by the
+        comparator to decide whether a test with no stored baseline can
+        still produce meaningful pass/fail — otherwise the whole test
+        collapses to the NO_REF state (idea #59 / D83).
+        """
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Mode configs
@@ -344,6 +358,12 @@ class EventTimingMode(ComparisonMode):
             declared_events=self.config.events,
         )
 
+    def is_baseline_free(self) -> bool:
+        # Declared-events path (D82): the user-authored list replaces the
+        # auto-detected reference event set, so the leaf scores using only
+        # ``act_time``. Auto-detect path still needs the reference.
+        return self.config.events is not None
+
 
 class DominantFrequencyMode(ComparisonMode):
     """Compare the dominant frequency of two signals (FFT peak)."""
@@ -360,6 +380,13 @@ class DominantFrequencyMode(ComparisonMode):
             ref_time, ref_values, act_time, act_values,
             peaks=self.config.peaks,
         )
+
+    def is_baseline_free(self) -> bool:
+        # Declared-peaks path (D75): pass/fail is decided by match-in-window
+        # against the actual spectrum; the reference spectrum is only used
+        # for the reporter's overlay. No declared peaks → the mode already
+        # fails loudly, and a reference would be needed anyway.
+        return self.config.peaks is not None
 
 
 class RangeMode(ComparisonMode):
@@ -386,6 +413,11 @@ class RangeMode(ComparisonMode):
             act_time, act_values,
             self.config.min_value, self.config.max_value,
         )
+
+    def is_baseline_free(self) -> bool:
+        # Bounds live in the leaf's own config; reference trajectories are
+        # never consulted.
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +467,7 @@ def resolve_mode(
         return EventTimingMode(EventTimingConfig(
             time_tolerance=var_override.get("time_tolerance", 1e-3),
             count_must_match=var_override.get("count_must_match", True),
+            events=var_override.get("events"),
         ))
 
     if mode_name == "dominant-frequency":
