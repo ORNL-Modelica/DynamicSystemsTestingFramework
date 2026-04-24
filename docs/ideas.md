@@ -62,6 +62,9 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 54 | OM FMU export via `buildModelFMU` | M | Medium | Wire OpenModelica into the `Capability.FMU_EXPORT` cross-backend chain. Currently Dymola-only (and experimental per D65). Would let the D63 `produce_dymola_via_fmpy_baseline` chain reciprocate — `produce_openmodelica_via_fmpy_baseline` — for cross-backend regression on OM-authored models. ~1–2 days. D69 deferred. |
 | 55 | ~~Julia ModelingToolkit backend~~ | H | High | **DONE** (D77 + D78 + D79). Fourth `SimulatorRunner` shipped. Subprocess-per-test batch path (D77) + persistent-worker stdin/stdout JSON protocol (D78) + JuliaMtkTestingLib with 7 tests (D79). `examples/julia/JuliaMtkTestingLib/Examples/*.jl` — each exports `build_mtk_system()` → `(sys, u0, ps)`. Framework driver (`run_test.jl` / `run_persistent.jl`) invokes `structural_simplify` + `ODEProblem` + `solve`, writes JSON result. Observables + unknowns both materialized. 14 cross-library companions wired (both directions) between JuliaMtkTestingLib and ModelicaTestingLib via portable relative paths. Dyad still untested — should work via the same MTK path (Dyad compiles to MTK). `SimulationResult` refactor never needed; `TestResult` in `simulators/base.py` was already the shared typed return.<br><br>**Still open follow-ons**: EventTest / IntervalTest / NoUnitTest / SimulateOnlyTest Julia ports; MTK FMU export via `ModelingToolkit.generate_fmu`; Dyad validation sample; JuliaCall-based embedded persistent path (probably not needed — subprocess is fast enough). |
 | 56 | Declared-peaks provenance UI polish | L | Low | D76 stamps `derived_from_window: {start, end}` on peaks added via Detect or Shift+click. Could extend: hover tooltip on the peak marker on the spectrum subplot (not just the table row); "Set window from provenance" button per peak row to snap the leaf's current window to that peak's derivation window. Small ergonomic wins; ship when someone asks. |
+| 57 | Experiment-data alignment preprocessing | M | Medium | Time-offset / amplitude-scale alignment for CSV baselines before scoring. Belongs in the comparison layer as a preprocessing wrapper or new ComparisonMode. Wait for concrete user demand — D66 says calibration-adjacent work belongs downstream. |
+| 58 | Persistent-worker Python (PythonCall / stdin-JSON) | M | Low | Long-lived Python subprocess with stdin-dispatch, like JuliaPersistentRunner. Per-test startup is ~30-100 ms today; pays off once a suite has hundreds of Python tests. Mirror the D77→D78 Julia progression. |
+| 59 | Baseline-free modes short-circuit NO_REF | L | Low | Baseline-free range/bounds-check tests currently report NO_REF until a dummy baseline exists; the comparator should short-circuit NO_REF for modes whose comparison needs no baseline (range, final-only absolute bounds). |
 
 **Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23):
 
@@ -573,3 +576,33 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **Graceful-degradation guarantee** (D66 invariant): if a companion's data file is moved, deleted, or unreadable, the plot still renders with everything else intact — only that companion's trace is absent, and the picker marks it unavailable.
 - **Tests**: `test_overlay_loader.py` — CSV parsing (happy path, malformed row, missing file); JSON parsing; reporter context includes overlay entries when companions/soft_checks exist on a model. Refresh goldens for the two affected template branches (variable-table cell unchanged, per-plot section gains the picker element).
 - **When**: A-tier next step alongside #46 UI surfacing. Naturally ships as a single PR with #46 — both extend `reporting/ui/mode_controls.py` and the per-variable template section; their golden-hash changes overlap.
+
+## D80 follow-ups (Python-driven tests)
+
+- **Experiment-data alignment** (ideas-matrix N+1): The current
+  ConstantCsv example requires the user's CSV to already be correctly
+  sampled and aligned. Real-world experiment data often needs
+  time-offset alignment (cross-correlation / min-NRMSE over shifts),
+  amplitude scaling, clock-drift re-sampling, or steady-state window
+  selection. Belongs in the comparison layer as either a new
+  `ComparisonMode` that wraps a base mode with preprocessing, or as
+  a generic preprocessing hook on the MetricTree. Explicit
+  non-goal: parameter estimation or calibration (D66 → downstream
+  tools). Wait for a concrete user demand with specific alignment
+  requirements before building — the generic machinery risks fitting
+  nobody.
+
+- **Dynamic data fetching** (no framework change needed): users
+  whose test data lives on a REST API, S3 bucket, time-series
+  database, etc. can already implement this in their `.py` file
+  today. The `simulate(stop_time, tolerance)` function can do
+  arbitrary I/O — fetch the data, filter it, return the trajectory.
+  Framework-level "data-source" plug-ins would be premature; revisit
+  only if multiple users converge on the same data-source pattern.
+
+- **Persistent-worker Python** (ideas-matrix N+2): the batch-only
+  MVP pays ~30-100 ms per test in subprocess + importlib startup.
+  For small suites this is invisible; for 100+ Python tests it
+  becomes the dominant cost. The Julia D77→D78 progression is the
+  template — long-lived subprocess + stdin-JSON dispatch, same
+  contract on the wire.

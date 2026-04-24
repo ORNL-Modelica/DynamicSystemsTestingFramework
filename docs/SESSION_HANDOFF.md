@@ -3,9 +3,9 @@
 **Date**: 2026-04-23
 **Covers**: D71 through D79 (nine-phase session)
 **State at HEAD** (commit `9cd5468`):
-- **752 tests passing, 1 skipped (reference_fmus), 0 regressions**
-- **4 simulator backends**: Dymola, FMPy, OpenModelica, Julia/MTK
-- **2 test libraries**: `ModelicaTestingLib` (10 tests), `JuliaMtkTestingLib` (7 tests)
+- **761 tests passing, 1 skipped (reference_fmus), 0 regressions**
+- **5 simulator backends**: Dymola, FMPy, OpenModelica, Julia/MTK, Python
+- **3 test libraries**: `ModelicaTestingLib` (10 tests), `JuliaMtkTestingLib` (7 tests), `PythonTestingLib` (2 tests)
 - **14 cross-library companion overlays** (both directions, portable paths)
 - Reporter-as-IDE feature-complete through declared-peaks frequency + live JS FFT
 
@@ -65,6 +65,7 @@ Playwright, psutil, pytest-playwright have all hit this.
 | **FMPy** | `FmpyRunner` | `fmpy.simulate_fmu` in-process | per-test thread | — | Pre-built FMUs (autonomous only; D65 scope) |
 | **OpenModelica** | `OpenModelicaRunner` | OMPython ZMQ (default) / `omc` batch | ✓ (OMPython) | — | Open-source Modelica |
 | **Julia / MTK** | `JuliaRunner` | subprocess (batch) / stdin-JSON pipe (D78 persistent) | ✓ (D78) | — | ModelingToolkit / Dyad (Dyad untested but should work) |
+| **Python** | `PythonRunner` | subprocess per test (batch) | ✗ (MVP) | — | Arbitrary Python: scipy, CSV, pandas, HTTP, ... |
 
 All four declare `capabilities: frozenset[Capability]` (`BATCH_FALLBACK`,
 `PERSISTENT_WORKERS`, `FMU_EXPORT`). CLI's `_get_runner(persistent=True)`
@@ -151,6 +152,23 @@ Dominant-frequency editor (D75+D76):
   shared `PointPlotEditor` factory (also powers tube editor).
 
 ---
+
+### D80 — Python-driven tests (this session)
+
+* New backend `PythonRunner` (`src/modelica_testing/simulators/python/`)
+  mirroring the Julia D77 pattern: framework-shipped `run_test.py`
+  driver loads the user's `.py` file via `importlib.util`, calls
+  `simulate(stop_time, tolerance) -> dict`, writes a JSON result.
+* New fixture library `examples/python/PythonTestingLib/` with two
+  tests: `SimpleRamp` (scipy-based ODE, counterpart to
+  ModelicaTestingLib/JuliaMtkTestingLib SimpleTest/SimpleRamp) and
+  `ConstantCsv` (CSV loader — *zero* ODE code, architectural proof
+  that the backend abstraction is not secretly simulator-shaped).
+* Minor refactor: `spec_parser.py`'s `julia_rel` → `source_rel`
+  variable rename to reflect that `"source"` is the generic
+  non-Modelica source-file field.
+* Batch-only MVP; persistent-worker Python deferred (same D77→D78
+  progression as Julia).
 
 ## Known limitations (deferred by design)
 

@@ -1741,6 +1741,65 @@ renders `modelica-om-multifrequency` overlay (502 time points,
 * Browser-verified cross-library overlay rendering.
 
 
+## D80: Python-driven tests — validating the backend abstraction
 
+- **What**: Added a fifth `SimulatorRunner` backend (`PythonRunner`) that
+  runs arbitrary Python scripts as test sources. User-facing contract:
+  a `.py` file exports `simulate(stop_time: float, tolerance: float) -> dict`
+  returning `{"time": [...], "variables": {name: [...]}}`. Batch-only
+  subprocess per test; no persistent variant yet.
+- **Why**: Primary motivation was validating that the backend
+  abstraction (`TestModel`, `TestResult`, `SimulatorRunner`,
+  `Recognizer`, `spec_parser`) is truly language/simulator-agnostic
+  rather than secretly Modelica-shaped. Secondary motivation:
+  unlocks pyomo / scipy / custom-solver / CSV-loader / HTTP-fetch use
+  cases that were impossible before.
+- **Architecture**: Copies the Julia D77 subprocess+JSON-over-disk
+  contract unchanged. New `src/modelica_testing/simulators/python/`
+  package with `runner.py` + `run_test.py` driver. New fixture library
+  `examples/python/PythonTestingLib/` with `SimpleRamp.py` (scipy ODE)
+  and `ConstantCsv.py` (CSV loader). The CSV-loader example is the key
+  architectural validation — it contains zero numerical-integration
+  code and still produces a passing test via a baseline-free range
+  check.
+- **Refactor pass** (minimal, per the plan's scope discipline):
+  `spec_parser.py`'s `julia_rel` variable renamed to `source_rel` to
+  reflect that the `"source"` JSON field is generic across non-Modelica
+  backends. No other renames — the remaining Modelica-flavored
+  `TestModel` fields (`x_expressions`, `x_raw`, `x_reference`,
+  `error_expected`, `number_of_intervals`, `output_interval`, `method`)
+  are left alone because the Python backend simply ignores them and
+  the D77 Julia backend already does the same. Renaming them would be
+  churn without improving generality.
+- **Deferred**: Persistent-worker Python (D77→D78 progression to
+  follow once a real perf ceiling hits). Alignment/fitting of
+  experiment data (see `docs/ideas.md` #49). Dynamic-data fetching is
+  not deferred — any user writes an HTTP client in their `.py` file
+  today.
+- **Validation**:
+  - `SimpleRamp` + `ConstantCsv` both PASS on self-regression.
+  - Full suite: 761 passing + 1 skipped, 0 regressions.
+  - Driver-in-isolation tests cover success, missing simulate(),
+    exception in simulate(), malformed return type.
 
+### Rejected alternatives
+
+- **Base class for subprocess+JSON runners** (factor out shared code
+  from JuliaRunner and PythonRunner). Tempting but premature per YAGNI:
+  two backends with ~30% shared code isn't enough to justify an
+  abstraction. If a third subprocess-JSON backend arrives (e.g., R,
+  Octave, Matlab), extract then. Note the `/simplify` skill would
+  flag this candidate on review.
+- **Support `importlib` over subprocess** (run user code in-process
+  for speed). Rejected: loses the process isolation that makes
+  framework-level timeouts reliable and prevents user-code crashes
+  from taking down the test runner.
+- **Built-in CSV/parquet loaders as capability-flag-gated first-class
+  sources**. Rejected: users with CSV data write one 5-line `.py`
+  file; framework complexity budget better spent elsewhere (D66
+  economy-of-tools).
+- **Alignment/fitting in-framework as part of #45**. Deferred to
+  ideas.md follow-up. Without a concrete user demand it's easy to
+  build generic alignment machinery that fits nobody; wait for real
+  use case.
 
