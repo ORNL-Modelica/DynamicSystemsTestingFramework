@@ -1262,8 +1262,8 @@ def _build_config(args: argparse.Namespace) -> Config:
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="modelica-testing",
-        description="Modelica Library Regression Testing System",
+        prog="dstf",
+        description="Dynamic Systems Testing Framework — regression & unit testing for time-dependent system behavior",
     )
     parser.add_argument(
         "--source-path", type=str, default=None,
