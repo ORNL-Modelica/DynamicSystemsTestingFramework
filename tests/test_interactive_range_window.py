@@ -114,3 +114,157 @@ def test_slice_leaf_trajectory_open_ended_window(tmp_path, playwright_browser):
     page.close()
     assert result["refT0"] >= 2.0
     assert result["refTN"] == 3.0  # unbounded on upper end → include trace end
+
+
+# ---------------------------------------------------------------------------
+# Task 2: range + tube JS scorers respect window
+# ---------------------------------------------------------------------------
+
+def _context_with_windowed_range(window_start, window_end, min_value, max_value):
+    """Custom fixture: range leaf on variable 'h' with a narrow window,
+    and a trajectory that VIOLATES bounds OUTSIDE the window but stays
+    WITHIN bounds inside. If the scorer respects window: PASS. If not: FAIL.
+    """
+    ctx = _fixture_context()
+    # Override the range leaf's params + window.
+    # Note: leafState initializes from mode_values merged over params, so we
+    # must override both or mode_values wins.
+    range_leaf = ctx["tree_view"]["children"][1]
+    range_leaf["params"] = {"min_value": min_value, "max_value": max_value}
+    range_leaf["mode_values"] = {"min_value": min_value, "max_value": max_value}
+    range_leaf["window"] = {"start": window_start, "end": window_end}
+    range_leaf["window_values"] = {"start": window_start, "end": window_end}
+    range_leaf["window_controls_html"] = (
+        '<div class="window-controls" data-variable="h">'
+        f'<input type="number" step="any" data-field="window_start" value="{window_start}">'
+        f'<input type="number" step="any" data-field="window_end" value="{window_end}">'
+        "</div>"
+    )
+    # Override h's trajectory: sine wave with amplitude 1 but narrow
+    # window at the zero-crossing where |x| < 0.1.
+    import numpy as np
+    t = np.linspace(0, 6.283, 100).tolist()  # [0, 2π]
+    vals = [float(np.sin(x)) for x in t]
+    ctx["variables_by_name"]["h"]["trajectory"] = {
+        "index": 1, "name": "h",
+        "act_time": t, "act_values": vals,
+        "ref_time": t, "ref_values": vals,
+    }
+    ctx["trajectories"] = [ctx["variables_by_name"][k]["trajectory"]
+                           for k in ctx["variables_by_name"]]
+    return ctx
+
+
+def _render_with_context(tmp_path, ctx):
+    """Like _render_report, but accepts a custom context."""
+    import shutil
+    from jinja2 import Environment, FileSystemLoader
+    from test_interactive_playwright import _JS_SRC, _TEMPLATE_DIR
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
+    html = env.get_template("interactive.html").render(**ctx)
+    html_path = tmp_path / "interactive.html"
+    html_path.write_text(html, encoding="utf-8")
+    shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    return html_path
+
+
+def test_range_scorer_respects_window_passes_when_bounds_ok_in_window(
+    tmp_path, playwright_browser,
+):
+    """Sine wave [0, 2π] has |x| up to 1.0 overall but |x| < 0.1 near π.
+    With bounds [-0.1, 0.1] and window around π: in-window ✓, out-of-
+    window ✗. Scorer must respect window → PASS.
+    """
+    ctx = _context_with_windowed_range(
+        window_start=3.04, window_end=3.24,  # ~π ± 0.1 rad
+        min_value=-0.1, max_value=0.1,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    result = page.evaluate("""
+        () => {
+            const passMap = recomputePassStates(TREE_VIEW);
+            return passMap['/metrics/children/1'];  // the range leaf
+        }
+    """)
+    page.close()
+    assert result is True, (
+        "Range scorer should PASS when bounds are satisfied within the "
+        "window, even though the full trace has |x| > bounds outside. "
+        "If this fails, MODE_SCORERS['range'] is still iterating the "
+        "full trajectory instead of the window-clipped subset."
+    )
+
+
+def test_range_scorer_fails_when_in_window_violates_bounds(
+    tmp_path, playwright_browser,
+):
+    """Regression guard: narrow window that crosses π/2 (where sin = 1).
+    With bounds [-0.1, 0.1] and window around π/2: in-window ✗.
+    Scorer must FAIL — ensures we didn't break the fail-path.
+    """
+    ctx = _context_with_windowed_range(
+        window_start=1.47, window_end=1.67,  # ~π/2 ± 0.1 rad (sin ≈ 1)
+        min_value=-0.1, max_value=0.1,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    result = page.evaluate("""
+        () => {
+            const passMap = recomputePassStates(TREE_VIEW);
+            return passMap['/metrics/children/1'];
+        }
+    """)
+    page.close()
+    assert result is False, (
+        "Range scorer should FAIL when the windowed portion of the "
+        "trajectory exceeds bounds. This test guards the fail-path so "
+        "we don't accidentally make the scorer too permissive."
+    )
+
+
+def test_tube_scorer_respects_window(tmp_path, playwright_browser):
+    """Tube leaf on variable 'v'. Custom trajectory: ref=1 outside window,
+    ref=2 inside window; act = ref + 0.008 everywhere. With tube_rel=0.005:
+    - Outside window: 0.005 * 1 = 0.005 < 0.008 → FAIL.
+    - Inside window: 0.005 * 2 = 0.010 > 0.008 → PASS.
+    Regression guard: scorer must distinguish these by respecting window.
+    """
+    ctx = _fixture_context()
+    # Tube leaf is at /metrics/children/2/children/0.
+    # Note: leafState initializes from mode_values merged over params, so we
+    # must override both or the default mode_values (tube_rel=0.05) wins.
+    tube_leaf = ctx["tree_view"]["children"][2]["children"][0]
+    tube_leaf["params"] = {"tube_rel": 0.005}
+    tube_leaf["mode_values"] = {"tube_rel": 0.005}
+    tube_leaf["window"] = {"start": 1.0, "end": 2.0}
+    tube_leaf["window_values"] = {"start": 1.0, "end": 2.0}
+    # Override v's trajectory: ref = 2 inside window [1.0, 2.0], 1 outside.
+    # act = ref + 0.008 everywhere. With tube_rel=0.005:
+    # outside (ref=1) → width=0.005 < 0.008 offset → FAIL;
+    # inside (ref=2) → width=0.010 > 0.008 offset → PASS.
+    import numpy as np
+    t = np.linspace(0, 3, 50).tolist()
+    ref = [2.0 if 1.0 <= x <= 2.0 else 1.0 for x in t]
+    act = [r + 0.008 for r in ref]
+    ctx["variables_by_name"]["v"]["trajectory"] = {
+        "index": 1, "name": "v",
+        "act_time": t, "act_values": act,
+        "ref_time": t, "ref_values": ref,
+    }
+    ctx["trajectories"] = [ctx["variables_by_name"][k]["trajectory"]
+                           for k in ctx["variables_by_name"]]
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    result_windowed = page.evaluate("""
+        () => recomputePassStates(TREE_VIEW)['/metrics/children/2/children/0']
+    """)
+    page.close()
+    assert result_windowed is True, (
+        "Tube scorer should PASS in the windowed region around π/2 where "
+        "ref ≈ 2 makes tube_rel*|ref| wide enough. If this fails, the "
+        "tube scorer is still iterating full ref_time."
+    )

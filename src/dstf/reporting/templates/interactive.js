@@ -122,10 +122,10 @@ const MODE_SCORERS = {
   'range': (leaf) => {
     const p = (leafState[leaf.path] || {}).params || {};
     const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
-    const values = traj.act_values || [];
+    const { actValues } = _sliceLeafTrajectory(leaf, traj);
     const mn = _nullOrNumber(p.min_value);
     const mx = _nullOrNumber(p.max_value);
-    for (const v of values) {
+    for (const v of actValues) {
       if (mn !== null && v < mn) return false;
       if (mx !== null && v > mx) return false;
     }
@@ -140,6 +140,14 @@ const MODE_SCORERS = {
     const minW = Number(p.tube_min_width || 0);
     const mode = p.tube_width_mode;
     const points = Array.isArray(p.tube_points) ? p.tube_points : [];
+
+    // Window-clip both ref and act before iterating. Act interp uses
+    // the full-trajectory act arrays (so we interpolate onto windowed
+    // refTime grid, but get correct values even if the nearest act
+    // samples are just outside the window).
+    const { refTime, refValues } = _sliceLeafTrajectory(leaf, traj);
+    const actTimeFull = traj.act_time || [];
+    const actValuesFull = traj.act_values || [];
 
     let widthsUpper, widthsLower;
     if (points.length > 0) {
@@ -159,10 +167,10 @@ const MODE_SCORERS = {
         }
         return normalized[normalized.length - 1][key];
       };
-      widthsUpper = traj.ref_time.map(t => Math.max(minW, interp(t, 'upper')));
-      widthsLower = traj.ref_time.map(t => Math.max(minW, interp(t, 'lower')));
+      widthsUpper = refTime.map(t => Math.max(minW, interp(t, 'upper')));
+      widthsLower = refTime.map(t => Math.max(minW, interp(t, 'lower')));
     } else {
-      const w = traj.ref_values.map(v => {
+      const w = refValues.map(v => {
         if (mode === 'rel') return Math.max(minW, rel * Math.abs(v));
         if (mode === 'band') return Math.max(minW, abs);
         return Math.max(minW, Math.max(abs, rel * Math.abs(v)));
@@ -171,10 +179,8 @@ const MODE_SCORERS = {
       widthsLower = w;
     }
 
-    const refTime = traj.ref_time;
-    const refValues = traj.ref_values;
     for (let i = 0; i < refTime.length; i++) {
-      const actV = _interpLinear(traj.act_time, traj.act_values, refTime[i]);
+      const actV = _interpLinear(actTimeFull, actValuesFull, refTime[i]);
       if (actV > refValues[i] + widthsUpper[i]) return false;
       if (actV < refValues[i] - widthsLower[i]) return false;
     }
