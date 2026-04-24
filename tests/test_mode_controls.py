@@ -361,3 +361,25 @@ class TestEmitModeSchemas:
         schemas = emit_mode_schemas()
         tube_fields = {f["name"]: f for f in schemas["tube"]["fields"]}
         assert tube_fields["tube_width_mode"]["choices"] == ["band", "rel", "absolute"]
+
+
+def test_event_timing_render_html_includes_passthrough_events():
+    """render_schema_html should emit a textarea for the events field
+    (standard passthrough fallback). The JS-side MODE_PLOT_EDITORS
+    table editor overlays this when the leaf is activated; the
+    textarea is the fallback when JS fails to load."""
+    from dstf.comparison.modes import EventTimingConfig
+    from dstf.reporting.ui.mode_controls import (
+        derive_schema, render_schema_html,
+    )
+    schema = derive_schema(EventTimingConfig, mode="event-timing")
+    html = render_schema_html(schema, values={
+        "time_tolerance": 1e-3,
+        "count_must_match": True,
+        "events": None,
+    })
+    assert 'data-field="time_tolerance"' in html
+    assert 'data-field="count_must_match"' in html
+    # Passthrough field emits a textarea; events should be there.
+    assert 'data-field="events"' in html
+    assert 'data-passthrough="true"' in html

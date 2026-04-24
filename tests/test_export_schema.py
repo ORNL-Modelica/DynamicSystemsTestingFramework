@@ -91,3 +91,21 @@ class TestCli:
         assert out.exists()
         schema = json.loads(out.read_text())
         assert schema["type"] == "object"
+
+
+def test_event_timing_schema_includes_events_as_passthrough():
+    """The declared-events field must export as a passthrough type so
+    the interactive HTML gets a raw-JSON fallback renderer *and* can be
+    overridden by the JS-side MODE_PLOT_EDITORS table UI."""
+    from dstf.reporting.ui.mode_controls import emit_mode_schemas
+    schemas = emit_mode_schemas()
+    event_timing = schemas.get("event-timing")
+    assert event_timing is not None, "event-timing schema missing"
+    fields = {f["name"]: f for f in event_timing.get("fields", [])}
+    assert "events" in fields, (
+        "event-timing should export an 'events' field (declared events "
+        "for the reporter's table editor)."
+    )
+    assert fields["events"]["type"] == "passthrough", (
+        f"events should be passthrough (list[dict]), got {fields['events']['type']}"
+    )
