@@ -1803,3 +1803,52 @@ renders `modelica-om-multifrequency` overlay (502 time points,
   build generic alignment machinery that fits nobody; wait for real
   use case.
 
+## D81: Rename ModelicaTesting → DSTF (Dynamic Systems Testing Framework)
+
+- **What**: Python package `modelica_testing` → `dstf`; CLI command
+  `modelica-testing` → `dstf`; pypi project name `modelica-testing`
+  → `dstf`; brand in docs "ModelicaTesting" → "Dynamic Systems
+  Testing Framework (DSTF)".
+- **Why**: After D80, the tool supports five simulator backends (only
+  one of which is Dymola-specific) plus arbitrary Python scripts and
+  CSV-loader test sources. The "ModelicaTesting" name was identified
+  at project inception as a working name pending multi-backend
+  stabilization (see CLAUDE.md's D44–D80 summary); that condition is
+  now met. "DSTF" was chosen for the short form because it's
+  trivially pronounceable and doesn't over-commit on any single
+  backend language.
+- **Scope**: Package, CLI, pypi name, docs brand, bash examples in
+  docs. Explicitly out of scope: GitHub repo rename (user's
+  decision), example library names (`ModelicaTestingLib` genuinely
+  is a Modelica library — keeping that name is accurate), config
+  filename `testing.json` (already tool-neutral), backward-compat
+  aliases (forbidden by standing "no backward compat" policy).
+- **Preserved history**: `docs/superpowers/plans/*` and
+  `docs/superpowers/specs/*` left as-written — they are frozen
+  snapshots of past planning and rewriting them would falsify the
+  record. Same rule for D1-D80 in `decisions.md` — each entry
+  reflects the state when written.
+- **Validation**: Full suite 761 + 1 skipped, same as pre-rename.
+  All five backend smokes PASS (Dymola skipped on Linux, Julia 7/7,
+  OpenModelica 10/11, FMPy skipped without reference-fmus-binaries,
+  Python 2/2).
+
+### Rejected alternatives
+
+- **Keep a `modelica-testing` CLI alias for one release**. Standard
+  deprecation ladder would normally apply, but the project's
+  standing "no backward compat during this development cycle"
+  policy (user preference, see memory) supersedes — clean break.
+- **Rename to `dynamic-systems-testing` (long form)**. Python
+  imports would be `from dynamic_systems_testing import ...`
+  — noisy. Short form `dstf` is clean and the user explicitly
+  asked for it.
+- **Rename example libraries too** (`ModelicaTestingLib` →
+  `DSTFModelicaLib` or similar). Rejected: `ModelicaTestingLib` is
+  genuinely a Modelica library authored to exercise DSTF; its name
+  accurately describes its content.
+- **Rename the on-disk repo directory `ModelicaTesting/`**.
+  Deferred to the user; it's a local checkout concern and git
+  doesn't care. Renaming the GitHub repo is a separate user
+  decision.
+

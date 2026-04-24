@@ -9,6 +9,12 @@
 - **14 cross-library companion overlays** (both directions, portable paths)
 - Reporter-as-IDE feature-complete through declared-peaks frequency + live JS FFT
 
+**Naming**: As of D81, the tool is **Dynamic Systems Testing Framework
+(DSTF)**; CLI is `dstf`; Python import root is `dstf`. Historical
+plans and specs under `docs/superpowers/` retain the old
+`modelica-testing` name — that's by design (they're snapshots of past
+state; see D81 in `docs/decisions.md` for the rationale).
+
 ---
 
 ## Session arc
