@@ -65,10 +65,11 @@ Per-point dict shape:
 
 ```python
 {
-    "time": float | None,        # Null sentinel = "the trace's final time"
-    "value": float | None,       # Optional; if omitted, read interpolated ref(time)
-    "tolerance": float | None,   # Optional; falls back to config.tolerance
+    "time": float | None,             # Null sentinel = "the trace's final time"
+    "value": float | None,            # Optional; if omitted, read interpolated ref(time)
+    "tolerance": float | None,        # Optional y-tolerance; falls back to config.tolerance
     "tolerance_mode": "abs" | "rel",  # Optional; default "abs"
+    "time_tolerance": float | None,   # Optional x-tolerance (symmetric); default 0 = strict-time check
 }
 ```
 
@@ -76,12 +77,14 @@ Semantics:
 - `time: null` means "whatever the trace's final time is" — decouples the spec from simulation `stop_time`.
 - `value: null` and missing-`value` key are treated identically. Both mean "target is `ref(time)`" (interpolated linearly). Baseline-dependent.
 - `value` set to a number → the target is the literal number. Baseline-free for this point.
-- `tolerance_mode: "abs"` → check `|act(time) - target| <= tolerance`.
-- `tolerance_mode: "rel"` → check `|act(time) - target| <= tolerance * |target|`.
+- `tolerance_mode: "abs"` → y-tolerance is a literal absolute delta: `y_limit = tolerance`.
+- `tolerance_mode: "rel"` → y-tolerance scales with target: `y_limit = tolerance * |target|`.
+- `time_tolerance: 0` (default) → strict-time check at `t = time`. `time_tolerance > 0` → relaxed-time check: "act curve must enter the tolerance box `[time - time_tolerance, time + time_tolerance] × [target - y_limit, target + y_limit]` at least once." Covers solver-timing drift (e.g., "temperature hits 30°C at t ≈ 3" where different solvers may hit it at 2.97 or 3.02 — both pass).
+- Target resolves at `time` (the box center). `time_tolerance` only expands *where in time* the act curve has to satisfy the y-check; it does not re-evaluate `ref(t)` across the time window.
 
 ### 4.3 Window semantics
 
-Points whose `time` falls outside the leaf's `[window.start, window.end]` are ignored by the scorer. Matches NRMSE / range / tube / event-timing behavior. The null-time sentinel resolves against the windowed trace's final time, not the full trace's — so "final" means "end of the window" when a window is set.
+Points whose `time` falls outside the leaf's `[window.start, window.end]` are ignored by the scorer. Matches NRMSE / range / tube / event-timing behavior. The null-time sentinel resolves against the windowed trace's final time, not the full trace's — so "final" means "end of the window" when a window is set. When `time_tolerance > 0`, the box is clipped to the leaf's window: `[max(time - time_tolerance, window.start), min(time + time_tolerance, window.end)]`. Fully-clipped (window excludes the box entirely) → point is ignored same as if `time` itself were outside.
 
 ### 4.4 Baseline-free trigger
 
@@ -99,19 +102,25 @@ def compare(ref_time, ref_values, act_time, act_values, config):
         delta = abs(act_values[-1] - target)
         return pass if delta < config.tolerance else fail
     for point in config.points:
-        t = resolve_time(point, trace_end=ref_time[-1] or act_time[-1])
-        if t outside window: continue
-        target = point["value"] if "value" in point else interp(ref_time, ref_values, t)
+        t_center = resolve_time(point, trace_end=ref_time[-1] or act_time[-1])
+        x_tol = point.get("time_tolerance", 0)
+        t_lo = max(t_center - x_tol, window.start_or_-inf)
+        t_hi = min(t_center + x_tol, window.end_or_+inf)
+        if t_hi < t_lo: continue                 # fully-clipped by window
+        target = point["value"] if "value" in point else interp(ref_time, ref_values, t_center)
         tol = point.get("tolerance", config.tolerance)
         mode = point.get("tolerance_mode", "abs")
-        actual = interp(act_time, act_values, t)
-        delta = abs(actual - target)
-        limit = tol * abs(target) if mode == "rel" else tol
-        if delta > limit: mark point as failed
-    pass if all points matched else fail
+        y_limit = tol * abs(target) if mode == "rel" else tol
+        # Find the smallest |act(t) - target| for t in [t_lo, t_hi].
+        # When x_tol == 0 this degenerates to a single-point check.
+        best_delta = min_over_window(act_time, act_values, t_lo, t_hi, target)
+        if best_delta > y_limit: mark point as failed
+    pass if all scored points matched else fail
 ```
 
-Reported scalar (`nrmse` field, reused for reporting uniformity): max `delta` across all scored points. `max_abs_error` / `max_abs_error_time` track the worst point.
+`min_over_window` computes `min |act(t_i) - target|` for samples `t_i` inside `[t_lo, t_hi]`, plus the interpolated endpoints `act(t_lo)` and `act(t_hi)` to catch cases where the act curve enters the box between samples. When `x_tol == 0`, `t_lo == t_hi` and the window has only the interpolated value at `t_center` → reduces to the current strict-time check.
+
+Reported scalar (`nrmse` field, reused for reporting uniformity): max `best_delta` across all scored points. `max_abs_error` / `max_abs_error_time` track the worst point (with `time` = the `t` inside the box that minimized delta — not necessarily the point's center `t_center`).
 
 ### 4.6 JS live scorer
 
@@ -119,24 +128,25 @@ Mirrors the CLI algorithm using the existing `_sliceLeafTrajectory` helper (D83)
 
 ### 4.7 Plot decoration
 
-For each point whose `time` is inside the window (or all points if no window), emit:
+For each point whose box intersects the leaf's window, emit:
 
-- A diamond marker at `(time, resolved_value)` where `resolved_value = point["value"]` if set, else `ref(time)`. Color: green if live-match passes, red otherwise. Matches dom-frequency's peak-marker visual.
-- A vertical tolerance-band line segment from `(time, resolved_value - limit)` to `(time, resolved_value + limit)`. Styled as a thin vertical error bar. Color: light gray (same as event-timing tolerance band).
+- A diamond marker at `(t_center, resolved_value)` where `resolved_value = point["value"]` if set, else `ref(t_center)`. Signals the user's declared target. Color: green if live-match passes, red otherwise. Matches dom-frequency's peak-marker visual.
+- A translucent tolerance box at `[t_center - time_tolerance, t_center + time_tolerance] × [resolved_value - y_limit, resolved_value + y_limit]`. Fill color matches the marker (light green on match, light red on fail) at low opacity. When `time_tolerance == 0` the box degenerates to a vertical line segment — same as a zero-width rectangle, visually identical to the "vertical tolerance bar" pattern.
 
-**Key principle**: plot always shows resolved absolute values, table always shows raw config. A point configured as `{tolerance_mode: "rel", tolerance: 0.05}` with `ref(time) = 2.0` renders as a marker at y=2.0 with a band of ±0.1 in data coords. The config stays `tolerance: 0.05, tolerance_mode: "rel"`. Mirror of tube's approach (`_resolvePoint` computes absolute upper/lower for rendering).
+**Key principle**: plot always shows resolved absolute values, table always shows raw config. A point configured as `{tolerance_mode: "rel", tolerance: 0.05, time_tolerance: 0.1}` with `ref(t_center) = 2.0` renders as a marker at y=2.0 inside a box spanning `[t_center ± 0.1] × [2.0 ± 0.1]` in data coords. The config stays `tolerance: 0.05, tolerance_mode: "rel", time_tolerance: 0.1`. Mirror of tube's approach (`_resolvePoint` computes absolute upper/lower for rendering).
 
 ### 4.8 Editor UI
 
 **Location**: leaf's `.node-editor` slot (same slot event-timing and dom-frequency use).
 
 **Components**:
-1. **Table** — columns `Time | Value | Mode | Tolerance | Match (live) | ×`.
+1. **Table** — columns `Time | x-tol | Value | Mode | Tolerance | Match (live) | ×`.
    - `Time`: number input. Renders the word `final` as a placeholder when `time: null`. Typing a number sets `time` to that number; clearing the input (empty string on blur) resets to `time: null`.
+   - `x-tol`: number input for `time_tolerance`; empty or `0` → strict-time check. Placeholder shows `0`.
    - `Value`: number input; empty → ref-relative.
    - `Mode`: `abs / rel` dropdown, default `abs`.
    - `Tolerance`: number input; placeholder shows the leaf's global `tolerance`.
-   - `Match (live)`: `✓ matched (Δ=0.002)` or `✕ unmatched (|Δ|=0.5 > 0.1)`, same live-evaluation pattern as event-timing.
+   - `Match (live)`: `✓ matched (Δ=0.002 at t=2.97)` — delta + the time inside the box where the match occurred. Fail form: `✕ unmatched (best Δ=0.5 at t=3.0 > 0.1)`.
    - `×`: per-row delete button.
 2. **Buttons row**:
    - `+ add point` — seed time from the previous point + 0.5s, or 0 if empty.
@@ -178,6 +188,17 @@ Three checks: strict ref-match at t=1.0, looser ref-match at t=5.0, final value 
 ```
 No reference needed; runs via D83's short-circuit. Users express "the peak reaches 10 at t=2, system returns to 0 at end" purely from spec.
 
+**Timing-uncertainty test**:
+```json
+{
+  "mode": "points",
+  "points": [
+    {"time": 3.0, "value": 30.0, "tolerance": 0.5, "time_tolerance": 0.2}
+  ]
+}
+```
+"Temperature reaches 30 °C somewhere between t=2.8 and t=3.2, within ±0.5 °C of the target." Covers solver-timing drift without forcing the act curve to hit exactly at t=3.0.
+
 ## 5. Migration plan
 
 ### 5.1 User-facing migration
@@ -208,6 +229,9 @@ Planned test coverage (specified in the implementation plan):
 - Null-time sentinel resolves to trace end.
 - Window clipping: points outside window ignored.
 - Baseline-free trigger: `is_baseline_free()` True only when all points have explicit `value`.
+- `time_tolerance > 0` passes when the act curve enters the box somewhere inside; fails when the act curve stays entirely outside the box.
+- `time_tolerance = 0` behaves identically to current strict-time check (regression guard for the default case).
+- `time_tolerance` box clipped by leaf window: point with center inside window but box partially outside → clipped box still scores; point with box fully outside window → ignored.
 
 **Reporter JS / Playwright**:
 - Table renders existing points on leaf activation.
@@ -216,6 +240,7 @@ Planned test coverage (specified in the implementation plan):
 - Per-row delete removes from `leafState` + refreshes plot.
 - Live-match column flips on tolerance edit.
 - Plot markers at resolved absolute y; tolerance-mode `rel` renders band as fraction of |target|.
+- `time_tolerance > 0` renders the 2D tolerance box with correct width; `time_tolerance = 0` degenerates to vertical line segment.
 - Window edit triggers rescore (cross-metric consistency lock from range-fix Task 6).
 
 ## 7. Rejected alternatives
