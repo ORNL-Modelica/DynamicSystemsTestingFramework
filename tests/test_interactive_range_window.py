@@ -429,3 +429,76 @@ def test_range_plot_dual_style_when_window_set(tmp_path, playwright_browser):
         "All segments must use xref='x' with explicit time coords so "
         "they actually land in window coordinates — not 'paper'."
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Bug 3 — plot y-range resets after bound-edit sequence
+# ---------------------------------------------------------------------------
+
+def test_range_yaxis_resets_after_bound_contract(tmp_path, playwright_browser):
+    """Sequence: render with max_value=0.5 -> edit to 5.0 -> edit back
+    to 0.5. The y-axis range after the final edit should reflect the
+    trajectory extent (~[-0.01, 1.1] per fixture bounds), NOT the
+    historical max_value=5.0 extent.
+
+    Note: ``commit()`` in interactive.js is a local closure inside
+    ``activateLeaf``; it isn't globally reachable. Drive the same
+    re-render path by calling ``renderVariablePlot`` directly (plus
+    ``refreshPassStates`` + ``updateExport`` for parity with commit()).
+    """
+    ctx = _fixture_context()
+    # Set a narrow max_value so the initial plot range is tight.
+    # Override both params and mode_values — mode_values wins on init.
+    ctx["tree_view"]["children"][1]["params"] = {
+        "min_value": -0.01, "max_value": 0.5,
+    }
+    ctx["tree_view"]["children"][1]["mode_values"] = {
+        "min_value": -0.01, "max_value": 0.5,
+    }
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    # Wait for the initial plot render driven by DOMContentLoaded.
+    page.wait_for_function(
+        "() => { const el = document.getElementById('plot-0');"
+        "        return el && el._mt_plotted === true; }"
+    )
+    final_range = page.evaluate("""
+        () => {
+            const leaf = TREE_VIEW.children[1];  // range leaf on 'h'
+            const idx = VARIABLE_INDEX[leaf.variable];
+            const el = document.getElementById(`plot-${idx}`);
+            // Step 1 (starting): max_value=0.5 (already set).
+            // Step 2: push to 5.0 and re-render (mirrors commit()).
+            leafState[leaf.path].params.max_value = 5.0;
+            renderVariablePlot(leaf.variable, idx);
+            refreshPassStates();
+            updateExport();
+            // Step 3: contract back to 0.5 and re-render.
+            leafState[leaf.path].params.max_value = 0.5;
+            renderVariablePlot(leaf.variable, idx);
+            refreshPassStates();
+            updateExport();
+            // Prefer _fullLayout.yaxis.range — Plotly populates it even
+            // when autorange is true, while el.layout.yaxis.range may be
+            // undefined for autoranged plots.
+            const fullY = el && el._fullLayout && el._fullLayout.yaxis;
+            if (fullY && Array.isArray(fullY.range)) return fullY.range.slice();
+            if (el && el.layout && el.layout.yaxis && Array.isArray(el.layout.yaxis.range))
+                return el.layout.yaxis.range.slice();
+            return null;
+        }
+    """)
+    page.close()
+    assert final_range is not None, "Plot did not render"
+    upper = final_range[1]
+    # After contracting bounds back to 0.5, the yaxis upper should NOT
+    # still be stuck at ~5 (or even 1.5+). Trace max is 1.0; bound at
+    # 0.5. A reasonable autorange is <= 1.5 (trace + breathing room).
+    assert upper <= 1.5, (
+        f"yaxis upper stuck at {upper} after contracting max_value from "
+        f"5.0 back to 0.5. Expected <= 1.5 (trace extent + small "
+        f"Plotly padding). Likely root cause: uirevision='keep' on "
+        f"yaxis preserving the extended range from when max_value=5 was "
+        f"a shape that pushed autorange."
+    )
