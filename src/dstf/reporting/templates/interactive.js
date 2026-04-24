@@ -113,11 +113,49 @@ function overlayTraceName(role, name) {
 const MODE_SCORERS = {
   'nrmse': (leaf) => {
     const tol = _paramNumber(leaf, 'tolerance', leaf.tolerance_used);
-    return leaf.nrmse < tol;
+    const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+    const { refTime, refValues, actTime, actValues } =
+        _sliceLeafTrajectory(leaf, traj);
+    if (refTime.length < 2) {
+      // Not enough windowed points to compute a meaningful NRMSE —
+      // fall through to the CLI value. Covers the case where the
+      // user narrows the window below the sampling rate.
+      return leaf.nrmse < tol;
+    }
+    // NRMSE = sqrt(mean((act - ref)^2)) / (max(ref) - min(ref)).
+    // Interpolate act onto ref's time grid so we score on a shared
+    // time axis (matches the CLI's signal-range normalization).
+    let sq = 0;
+    for (let i = 0; i < refTime.length; i++) {
+      const aV = _interpLinear(actTime, actValues, refTime[i]);
+      const d = aV - refValues[i];
+      sq += d * d;
+    }
+    const rmse = Math.sqrt(sq / refTime.length);
+    let refMin = refValues[0], refMax = refValues[0];
+    for (const v of refValues) {
+      if (v < refMin) refMin = v;
+      if (v > refMax) refMax = v;
+    }
+    const range = refMax - refMin;
+    // Zero-range (flat reference) → use RMSE directly, same convention
+    // as the CLI's _compare_trajectories degenerate-signal handling.
+    const nrmse = range > 0 ? rmse / range : rmse;
+    return nrmse < tol;
   },
   'final-only': (leaf) => {
     const tol = _paramNumber(leaf, 'tolerance', leaf.tolerance_used);
-    return leaf.max_abs_error < tol;
+    const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+    const { refTime, refValues, actTime, actValues } =
+        _sliceLeafTrajectory(leaf, traj);
+    if (!refTime.length || !actTime.length) {
+      // No samples in window → no final value to compare. Match CLI's
+      // behavior (falls through to the cached max_abs_error).
+      return leaf.max_abs_error < tol;
+    }
+    const refFinal = refValues[refValues.length - 1];
+    const actFinal = actValues[actValues.length - 1];
+    return Math.abs(actFinal - refFinal) < tol;
   },
   'range': (leaf) => {
     const p = (leafState[leaf.path] || {}).params || {};

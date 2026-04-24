@@ -268,3 +268,93 @@ def test_tube_scorer_respects_window(tmp_path, playwright_browser):
         "ref ≈ 2 makes tube_rel*|ref| wide enough. If this fails, the "
         "tube scorer is still iterating full ref_time."
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 3: nrmse + final-only live scorers respect window
+# ---------------------------------------------------------------------------
+
+def test_final_only_window_edits_rescore_in_browser(tmp_path, playwright_browser):
+    """Final-only scorer should use the windowed final value, not the
+    full-trace final. With a +0.1 offset on act and tolerance 0.05, the
+    windowed scorer should FAIL (delta = 0.1 > 0.05). Before the live-port
+    it would PASS because it used CLI-precomputed leaf.max_abs_error.
+    """
+    ctx = _fixture_context()
+    # Rewire the nrmse leaf on 'h' to final-only for this test.
+    ctx["tree_view"]["children"][0]["metric"] = "final-only"
+    ctx["tree_view"]["children"][0]["mode_effective"] = "final-only"
+    ctx["tree_view"]["children"][0]["params"] = {"tolerance": 0.05}
+    ctx["tree_view"]["children"][0]["mode_values"] = {"tolerance": 0.05}
+    ctx["tree_view"]["children"][0]["window"] = {"start": 0.0, "end": 1.0}
+    ctx["tree_view"]["children"][0]["window_values"] = {"start": 0.0, "end": 1.0}
+    # Offset act by +0.1 — makes the windowed final-value delta 0.1.
+    traj = ctx["variables_by_name"]["h"]["trajectory"]
+    traj["act_values"] = [v + 0.1 for v in traj["ref_values"]]
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    result = page.evaluate("""
+        () => recomputePassStates(TREE_VIEW)['/metrics/children/0']
+    """)
+    page.close()
+    assert result is False, (
+        "Final-only live scorer with a 0.1 offset should FAIL at "
+        "tolerance 0.05. If PASS, the scorer is still using the "
+        "CLI-precomputed leaf.max_abs_error instead of re-deriving "
+        "from the windowed arrays."
+    )
+
+
+def test_nrmse_window_edits_rescore_in_browser(tmp_path, playwright_browser):
+    """NRMSE live scorer should recompute over the windowed arrays.
+    Fixture: variable 'h' with a large act-offset only in [0, 1] (the
+    narrow window), zero offset in [1, 3] (the rest).
+    - Window [0, 1]: in-window NRMSE ≈ large → FAIL.
+    - Window [1, 3]: in-window NRMSE ≈ 0 → PASS.
+    Same leaf config, different window → opposite pill states.
+    """
+    ctx = _fixture_context()
+    # NRMSE leaf is /metrics/children/0 on variable 'h'.
+    ctx["tree_view"]["children"][0]["params"] = {"tolerance": 0.02}
+    ctx["tree_view"]["children"][0]["mode_values"] = {"tolerance": 0.02}
+    # Tailor the trajectory: ref and act identical in [1, 3], very
+    # different in [0, 1].
+    import numpy as np
+    t = np.linspace(0, 3, 50).tolist()
+    ref = [1 - 0.3 * x for x in t]
+    act = [(r + 0.5) if x < 1.0 else r for x, r in zip(t, ref)]
+    ctx["variables_by_name"]["h"]["trajectory"] = {
+        "index": 1, "name": "h",
+        "act_time": t, "act_values": act,
+        "ref_time": t, "ref_values": ref,
+    }
+    ctx["trajectories"] = [ctx["variables_by_name"][k]["trajectory"]
+                           for k in ctx["variables_by_name"]]
+    # First render with window [0, 1] — expect FAIL.
+    ctx["tree_view"]["children"][0]["window"] = {"start": 0.0, "end": 1.0}
+    ctx["tree_view"]["children"][0]["window_values"] = {"start": 0.0, "end": 1.0}
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    # Scorer should FAIL with the high-offset region included.
+    result_fail = page.evaluate(
+        "() => recomputePassStates(TREE_VIEW)['/metrics/children/0']"
+    )
+    # Now move the window to [1, 3] by direct leafState mutation + rescore.
+    result_pass = page.evaluate("""
+        () => {
+            leafState['/metrics/children/0'].window = {start: 1.0, end: 3.0};
+            return recomputePassStates(TREE_VIEW)['/metrics/children/0'];
+        }
+    """)
+    page.close()
+    assert result_fail is False, (
+        "NRMSE scorer with window [0,1] covering the 0.5 offset region "
+        "should FAIL. If PASS, scorer is still using leaf.nrmse."
+    )
+    assert result_pass is True, (
+        "NRMSE scorer with window [1,3] covering the zero-offset region "
+        "should PASS. If FAIL, scorer is still using the full-trajectory "
+        "NRMSE."
+    )

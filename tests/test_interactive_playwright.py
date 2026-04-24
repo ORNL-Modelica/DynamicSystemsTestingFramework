@@ -166,7 +166,12 @@ def _fixture_context() -> dict:
             act = [v + 0.01 for v in ref]
         else:
             ref = [1 - 0.3 * x for x in t]
-            act = ref[:]
+            # Tiny constant offset so the live-port NRMSE scorer measures
+            # a non-zero value matching leaf.nrmse=1e-5. Ref range=0.9,
+            # RMSE=9e-6 → NRMSE=1e-5. Tests that tighten tolerance below
+            # 1e-5 (e.g. to 1e-12) expect the live scorer to register the
+            # real error, not compute 0 from identical arrays.
+            act = [v + 9e-6 for v in ref]
         return {
             "index": 1, "name": name,
             "act_time": t, "act_values": act,
