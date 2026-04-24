@@ -131,6 +131,9 @@ def _get_runner(config, persistent: bool = False):
       interface; falls back to batch on :class:`RuntimeError`).
     - OpenModelica → :class:`PersistentOpenModelicaRunner` (requires OMPython;
       falls back to batch on :class:`RuntimeError`).
+    - Julia → :class:`PersistentJuliaRunner` (D78; stdin/stdout pipe to a
+      long-lived ``julia --project=... run_persistent.jl``; falls back to
+      batch on :class:`RuntimeError`).
     """
     from .simulators import get_runner
     runner = get_runner(config)
@@ -153,6 +156,9 @@ def _get_runner(config, persistent: bool = False):
                 PersistentOpenModelicaRunner,
             )
             runner = PersistentOpenModelicaRunner(config)
+    elif persistent and config.simulator_backend == "Julia":
+        from .simulators.julia.persistent_runner import PersistentJuliaRunner
+        runner = PersistentJuliaRunner(config)
     return runner
 
 

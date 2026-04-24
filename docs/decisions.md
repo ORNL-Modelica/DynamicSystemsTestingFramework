@@ -1507,5 +1507,136 @@ identified in.
 - **Test count**: 746 → 749 (+3: 2 new declared-peak FFT tests + 1
   updated fixture rewrite).
 
+## D77 — Julia / ModelingToolkit backend (2026-04-23)
+
+Fourth `SimulatorRunner` alongside Dymola, FMPy, OpenModelica. First
+non-Modelica-syntax source — proves the framework's simulator-neutral
+abstraction on a genuinely different runtime.
+
+See commit `d6c43f8` for the full story. Summary:
+
+- User writes `.jl` files exporting `build_mtk_system()` → `(sys, u0, ps)`.
+- Framework's `run_test.jl` driver invokes one Julia subprocess per test;
+  captures result as JSON (`{time, variables: {name: [...]}}`).
+- `JuliaRunner` reads it back into `TestResult`. `capabilities =
+  {BATCH_FALLBACK}`.
+- `examples/julia/` self-contained demo with pinned `ModelingToolkit`,
+  `OrdinaryDiffEq`, `JSON3`. Two sample tests: `SimpleRamp` (D(x)~2)
+  and `Frequency` (second-order oscillator producing 1 Hz sine).
+- End-to-end: `modelica-testing run --config examples/julia/testing.json`
+  produces 2/2 PASS; CLI-computed passed == live JS scorer passed
+  (D76's bin-aligned FFT works unchanged on Julia output).
+- `julia` pytest marker gates 3 integration tests; auto-skipped when
+  Julia / `Manifest.toml` missing.
+- Dyad deferred (compiles to MTK; likely works via same path, untested).
+- MTK FMU export deferred.
+
+Companion (not sibling): Julia tests aren't siblings of Modelica tests
+— same model, different source language is a different code, not the
+same code on a different simulator. Cross-library visual overlays
+should use the companion mechanism (D78 wires this).
+
+Test count: 749 → 752 (+3 gated integration).
+
+## D78 — Persistent-worker Julia + cross-library companions (2026-04-23)
+
+Two related follow-ons to D77:
+
+### Persistent Julia workers
+
+Mirrors the Dymola / OpenModelica persistent-worker pattern. Long-lived
+`julia --project=... run_persistent.jl` subprocess reads JSON-per-line
+test requests from stdin, writes JSON responses to stdout. Package load
+(`using ModelingToolkit, OrdinaryDiffEq, JSON3`) happens **once per
+worker** at startup; per-test cost reduces to `include + structural
+_simplify + solve` — typically seconds per test after the first.
+
+**Why it matters**: batch-mode Julia pays its `using` cost (~15-40s of
+cache reads, not full recompile) on every test. For an N-test suite
+that's ~NX the cost that could be amortized. The user's insight was
+exactly right — persistent workers reclaim both the `using` cost AND
+per-model JIT codegen (cached within the long-lived session).
+
+**Warmup phase**: workers emit a `{"event": "ready", "pid": ...}`
+pulse on stdout once `using` completes. The dispatcher waits for this
+pulse before accepting test requests, so the first test's wall-clock
+reflects just model-specific compile/solve — not the one-time package
+load that would have happened regardless. A one-line warmup message
+prints before the ready-wait: "first run may take 2-3 min while MTK +
+OrdinaryDiffEq load from cache."
+
+**Decisions**:
+- **stdin/stdout pipe over JuliaCall**: simpler than embedding Julia in
+  Python. No extra deps, no C++ build step. Slight cost in latency
+  (JSON serialize/deserialize per test) — negligible next to compile+solve.
+- **`Base.invokelatest(build_mtk_system)` after `include`**: forces the
+  freshly-redefined function generation, avoiding stale compiled
+  `build_mtk_system` from a prior test in the same worker.
+- **Warmup pulse as a discrete event**, not a side effect: the dispatcher
+  blocks on the pulse so first-test timing isn't contaminated by
+  startup. Matches OpenModelica's pattern (sendExpression handshake).
+- **Worker restart cap of 3**: identical to Dymola / OpenModelica.
+- **`psutil` hard-kill on timeout**: subprocess groups cleaned on
+  worker death — Julia doesn't spawn children in our driver but
+  defensive.
+
+**Rejected alternatives**:
+- **JuliaCall (in-process)**: requires libjulia + .NET-style embedding.
+  Heavier. No value given our latency profile.
+- **One persistent worker per test**: defeats the purpose — amortizing
+  `using` requires REUSING the worker across tests.
+- **Shared on-disk precompile cache via `PackageCompiler.jl`**: generates
+  a custom sysimage that includes MTK pre-baked. ~30-60 min one-time
+  build, saves the 15-40s per-worker-startup. Deferred until real
+  multi-suite use demands it.
+
+**Validation**: `examples/julia/` 2-test suite:
+- Batch mode: 39s wall (pays `using` on both tests).
+- Persistent mode: 24s wall (11.5s labeled "warmup", 12.5s for both
+  tests inside the session).
+- Per-test sim time inside the session: ~3s for Frequency, ~9s for
+  SimpleRamp (first test eats per-model JIT, second is ~1s).
+- Scales to N tests: `using` overhead stays constant; per-model JIT
+  dominates from test 1 onward.
+
+### Cross-library companions (ModelicaTestingLib ↔ examples/julia)
+
+Wired four cross-implementation companion overlays via the existing
+companion-path machinery. No new plumbing needed — `add_companion`
+already stores path strings verbatim, and the loader already resolves
+relative paths against the ref_dir. Portable commits without absolute
+paths.
+
+- `JuliaMtkExamples.Frequency` ← modelica-om-frequency
+  (points at ModelicaTestingLib FrequencyTest's OM baseline)
+- `JuliaMtkExamples.SimpleRamp` ← modelica-om-simple
+  (points at ModelicaTestingLib SimpleTest's OM baseline)
+- `ModelicaTestingLib.Examples.FrequencyTest` ← julia-mtk-frequency
+  (points at Julia/MTK Frequency's Julia baseline)
+- `ModelicaTestingLib.Examples.SimpleTest` ← julia-mtk-simple
+  (points at Julia/MTK SimpleRamp's Julia baseline)
+
+**Sibling vs companion** (per user clarification from this session):
+- **Sibling** = same code, different simulator (Dymola OM FMPy auto-
+  discovered at `<reference_root>/<OtherBackend>/<os>/ref_*.json`).
+- **Companion** = different implementation, visual-only overlay
+  (manually wired via `companion add` as a portable-relative-path
+  pointer). Never scored; gracefully degrades if the target file
+  disappears.
+
+Julia tests are NOT siblings of Modelica tests (different source
+language = different code). The companion mechanism is the right
+venue, and it works via `add_companion` + relative paths today.
+
+End-to-end verified: activating the Modelica `FrequencyTest` report
+shows the Julia-MTK baseline as a toggleable overlay (119 time points
+spanning [0, 4]s, role=companion, name=julia-mtk-frequency) alongside
+the existing Dymola/windows sibling-backend auto-companion.
+
+### Test count: 752 → 752 (no new Python tests; the four companion
+references are checked into example data and exercised by the existing
+`examples/julia/testing.json` smoke flow).
+
+
 
 
