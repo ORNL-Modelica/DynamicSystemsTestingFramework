@@ -544,46 +544,103 @@ def _compare_event_timing(
     act_time: np.ndarray,
     time_tolerance: float = 1e-3,
     count_must_match: bool = True,
+    declared_events: Optional[list[dict]] = None,
 ) -> VariableComparison:
     """Compare event instants between reference and actual signals (4.C.1).
 
-    Events are detected as duplicate-time-point markers (the existing Modelica
-    convention). Pass when (a) ``count_must_match`` and the event counts agree,
-    (b) each pairwise event time differs by at most ``time_tolerance``.
+    Two paths:
 
-    The score (``nrmse`` field — repurposed for reporting uniformity) is the
-    max event-time delta. ``diagnostics`` carries the count + delta.
+    * ``declared_events is None`` (default): events are auto-detected
+      from duplicate-time samples in BOTH arrays, then paired by index.
+      Pass when ``count_must_match`` is satisfied and every pair's time-
+      delta is within ``time_tolerance``.
+
+    * ``declared_events is not None``: the declared list IS the reference
+      event set. The actual signal is still auto-detected; each declared
+      event claims the nearest actual event within its own tolerance
+      (``event["tolerance"]`` if set, else ``time_tolerance``). An
+      unclaimed declared event fails. Unclaimed actual events only fail
+      if ``count_must_match`` is set (and declared count != actual count).
+
+    The score (``nrmse`` field — repurposed for reporting uniformity) is
+    the max event-time delta across matched pairs.
     """
-    ref_boundaries = _find_event_boundaries(ref_time)
     act_boundaries = _find_event_boundaries(act_time)
-    ref_events = [float(ref_time[b[0]]) for b in ref_boundaries]
     act_events = [float(act_time[b[0]]) for b in act_boundaries]
 
-    n = min(len(ref_events), len(act_events))
+    if declared_events is None:
+        # Legacy auto-detect path — unchanged behavior.
+        ref_boundaries = _find_event_boundaries(ref_time)
+        ref_events = [float(ref_time[b[0]]) for b in ref_boundaries]
+
+        n = min(len(ref_events), len(act_events))
+        max_delta = 0.0
+        delta_at = 0.0
+        for i in range(n):
+            d = abs(ref_events[i] - act_events[i])
+            if d > max_delta:
+                max_delta = d
+                delta_at = ref_events[i]
+
+        counts_match = len(ref_events) == len(act_events)
+        passed = max_delta <= time_tolerance and (counts_match or not count_must_match)
+
+        return VariableComparison(
+            index=0, name="", passed=passed,
+            nrmse=max_delta, rmse=max_delta, signal_range=0.0,
+            max_abs_error=max_delta, max_abs_error_time=delta_at,
+            reference_final=float("nan"), actual_final=float("nan"),
+            mode="event-timing",
+            diagnostics={
+                "ref_event_count": len(ref_events),
+                "act_event_count": len(act_events),
+                "max_time_delta": max_delta,
+                "time_tolerance": time_tolerance,
+                "counts_match": counts_match,
+            },
+        )
+
+    # Declared-events path.
+    declared_count = len(declared_events)
+    actual_count = len(act_events)
+    counts_match = declared_count == actual_count
     max_delta = 0.0
     delta_at = 0.0
-    for i in range(n):
-        d = abs(ref_events[i] - act_events[i])
-        if d > max_delta:
-            max_delta = d
-            delta_at = ref_events[i]
+    # Track which actual events have been claimed so we don't double-match.
+    claimed = [False] * actual_count
+    all_matched = True
+    for e in declared_events:
+        target = float(e["time"])
+        tol = float(e.get("tolerance") if e.get("tolerance") is not None else time_tolerance)
+        # Find nearest unclaimed actual event within tolerance.
+        best_idx = -1
+        best_d = float("inf")
+        for j, at in enumerate(act_events):
+            if claimed[j]:
+                continue
+            d = abs(at - target)
+            if d <= tol and d < best_d:
+                best_d = d
+                best_idx = j
+        if best_idx < 0:
+            all_matched = False
+            continue
+        claimed[best_idx] = True
+        if best_d > max_delta:
+            max_delta = best_d
+            delta_at = target
 
-    counts_match = len(ref_events) == len(act_events)
-    passed = max_delta <= time_tolerance and (counts_match or not count_must_match)
+    passed = all_matched and (counts_match or not count_must_match)
 
     return VariableComparison(
         index=0, name="", passed=passed,
-        nrmse=max_delta,
-        rmse=max_delta,
-        signal_range=0.0,
-        max_abs_error=max_delta,
-        max_abs_error_time=delta_at,
-        reference_final=float("nan"),
-        actual_final=float("nan"),
+        nrmse=max_delta, rmse=max_delta, signal_range=0.0,
+        max_abs_error=max_delta, max_abs_error_time=delta_at,
+        reference_final=float("nan"), actual_final=float("nan"),
         mode="event-timing",
         diagnostics={
-            "ref_event_count": len(ref_events),
-            "act_event_count": len(act_events),
+            "ref_event_count": declared_count,
+            "act_event_count": actual_count,
             "max_time_delta": max_delta,
             "time_tolerance": time_tolerance,
             "counts_match": counts_match,

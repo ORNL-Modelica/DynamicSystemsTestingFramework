@@ -198,15 +198,24 @@ class RangeConfig:
 
 @dataclass(frozen=True)
 class EventTimingConfig:
-    """Configuration for event-timing comparison (4.C.1)."""
+    """Configuration for event-timing comparison (4.C.1).
+
+    When ``events`` is None (default), both reference and actual event
+    instants are auto-detected from duplicate-time samples (Modelica
+    convention) and paired by index. When ``events`` is provided, the
+    declared list becomes the authoritative reference-side event set —
+    the actual signal is still auto-detected, but each declared event
+    must find a nearest actual event within its own tolerance window.
+    Mirrors the dominant-frequency declared-peaks semantics (D75).
+    """
     time_tolerance: float = field(
         default=1e-3,
         metadata={
             "label": "Time tolerance (s)",
             "help": (
-                "Max allowed time-shift between each paired reference/actual "
-                "event. Events are detected as duplicate-time samples (Modelica "
-                "convention for solver events)."
+                "Default max time-shift between paired reference/actual "
+                "events. Per-event overrides in the declared ``events`` "
+                "list take precedence when present."
             ),
         },
     )
@@ -218,6 +227,20 @@ class EventTimingConfig:
                 "If checked, reference and actual must fire the same number "
                 "of events. Unchecked allows pairs-that-exist comparisons "
                 "even when extra/missing events appear."
+            ),
+        },
+    )
+    events: Optional[list[dict]] = field(
+        default=None,
+        metadata={
+            "label": "Declared events",
+            "help": (
+                "Declared reference-side events. Each entry has a ``time`` "
+                "(seconds) and an optional ``tolerance`` (seconds; falls "
+                "back to the leaf's ``time_tolerance`` if omitted). When "
+                "None, events are auto-detected from duplicate-time samples "
+                "in ``ref_time``. Authored via the table editor in the "
+                "interactive HTML reporter."
             ),
         },
     )
@@ -318,6 +341,7 @@ class EventTimingMode(ComparisonMode):
             ref_time, act_time,
             time_tolerance=self.config.time_tolerance,
             count_must_match=self.config.count_must_match,
+            declared_events=self.config.events,
         )
 
 

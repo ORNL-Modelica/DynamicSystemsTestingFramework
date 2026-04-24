@@ -225,3 +225,83 @@ class TestMetricsAcceptedInTreeSpec:
             "peaks": [{"freq": 1.0, "tolerance": 0.01, "tolerance_mode": "rel"}],
         })
         assert spec.metric == "dominant-frequency"
+
+
+class TestEventTimingDeclaredEvents:
+    """Declared-events semantics: user supplies the reference-side event
+    list explicitly; each declared event matches against the nearest
+    actual-side auto-detected event within its own tolerance.
+    """
+
+    def test_declared_events_match_when_actual_within_tolerance(self):
+        # Two declared events at t=1.0 and t=2.0. Actual has events at
+        # t=1.005 and t=1.998 (both within 0.01 tolerance). PASS.
+        ref_t = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5])  # no events in ref
+        act_t = np.array([0.0, 0.5, 1.005, 1.005, 1.5, 1.998, 1.998, 2.5])
+        ref_v = np.zeros_like(ref_t)
+        act_v = np.zeros_like(act_t)
+        mode = EventTimingMode(EventTimingConfig(
+            time_tolerance=0.01,
+            events=[{"time": 1.0}, {"time": 2.0}],
+        ))
+        result = mode.compare(ref_t, ref_v, act_t, act_v)
+        assert result.passed
+        assert result.diagnostics["ref_event_count"] == 2  # from declared
+        assert result.diagnostics["act_event_count"] == 2
+        assert result.diagnostics["max_time_delta"] < 0.01
+
+    def test_declared_events_fail_when_actual_missing(self):
+        # Two declared events; actual has only one matching event.
+        ref_t = np.array([0.0, 1.0, 2.0])
+        act_t = np.array([0.0, 0.999, 0.999, 2.5])  # event at ~1.0 matches; no event at ~2.0
+        ref_v = np.zeros_like(ref_t)
+        act_v = np.zeros_like(act_t)
+        mode = EventTimingMode(EventTimingConfig(
+            time_tolerance=0.01,
+            events=[{"time": 1.0}, {"time": 2.0}],
+        ))
+        result = mode.compare(ref_t, ref_v, act_t, act_v)
+        assert not result.passed
+        assert result.diagnostics["ref_event_count"] == 2
+        assert result.diagnostics["act_event_count"] == 1
+
+    def test_declared_events_per_event_tolerance_overrides_global(self):
+        # Declared event at t=1.0 with a wide per-event tolerance (0.5)
+        # wins over the global strict tolerance (0.01). Actual event at
+        # t=1.3 matches only with the per-event override.
+        ref_t = np.array([0.0, 1.0, 2.0])
+        act_t = np.array([0.0, 1.3, 1.3, 2.0])
+        ref_v = np.zeros_like(ref_t)
+        act_v = np.zeros_like(act_t)
+        mode = EventTimingMode(EventTimingConfig(
+            time_tolerance=0.01,
+            events=[{"time": 1.0, "tolerance": 0.5}],
+            count_must_match=False,  # actual has one event, declared has one
+        ))
+        result = mode.compare(ref_t, ref_v, act_t, act_v)
+        assert result.passed
+        assert result.diagnostics["max_time_delta"] == pytest.approx(0.3, abs=1e-9)
+
+    def test_declared_events_empty_list_passes_with_empty_actual(self):
+        # Degenerate: declared = [] (user says "no events expected"),
+        # actual also has no events → PASS.
+        ref_t = np.array([0.0, 0.5, 1.0])
+        act_t = np.array([0.0, 0.5, 1.0])
+        ref_v = np.zeros_like(ref_t)
+        act_v = np.zeros_like(act_t)
+        mode = EventTimingMode(EventTimingConfig(events=[]))
+        result = mode.compare(ref_t, ref_v, act_t, act_v)
+        assert result.passed
+        assert result.diagnostics["ref_event_count"] == 0
+        assert result.diagnostics["act_event_count"] == 0
+
+    def test_declared_events_empty_list_fails_with_events_in_actual(self):
+        # Declared = [] but actual has events → FAIL (unexpected events).
+        ref_t = np.array([0.0, 0.5, 1.0])
+        act_t = np.array([0.0, 0.5, 0.5, 1.0])  # event at 0.5
+        ref_v = np.zeros_like(ref_t)
+        act_v = np.zeros_like(act_t)
+        mode = EventTimingMode(EventTimingConfig(events=[]))
+        result = mode.compare(ref_t, ref_v, act_t, act_v)
+        assert not result.passed
+        assert result.diagnostics["act_event_count"] == 1
