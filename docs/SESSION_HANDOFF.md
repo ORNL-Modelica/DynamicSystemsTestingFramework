@@ -3,7 +3,7 @@
 **Date**: 2026-04-23
 **Covers**: D71 through D79 (nine-phase session)
 **State at HEAD** (commit `9cd5468`):
-- **761 tests passing, 1 skipped (reference_fmus), 0 regressions**
+- **791 tests passing + 0 skipped, 0 regressions**
 - **5 simulator backends**: Dymola, FMPy, OpenModelica, Julia/MTK, Python
 - **3 test libraries**: `ModelicaTestingLib` (10 tests), `JuliaMtkTestingLib` (7 tests), `PythonTestingLib` (2 tests)
 - **14 cross-library companion overlays** (both directions, portable paths)
@@ -135,8 +135,13 @@ Recursive `SpecNodeView` JS component. Every leaf mode has:
 
 * Auto-derived control panel (`render_schema_html` from each
   `ModeConfig` dataclass), optional custom panel.
-* Live JS scorer (nrmse, tube, range, final-only, dominant-frequency —
-  event-timing stays CLI-authoritative).
+* Live JS scorer (nrmse, tube, range, final-only, dominant-frequency).
+* **event-timing**: CLI-authoritative for pass/fail (event pairing
+  stays Python-side). D82 added a declared-events table editor in
+  the leaf slot — table + add + delete + "🔍 Detect events" with
+  Reference/Actual source dropdown + live "Match" column showing
+  nearest actual-side auto-detected event and its tolerance status.
+  No draggable plot markers (Full-scope, deferred).
 * Plot contribution (on trajectory plot: range lines, tube polygon
   with curve-following bounds, event instants + tolerance bands,
   window highlight).

@@ -65,6 +65,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 57 | Experiment-data alignment preprocessing | M | Medium | Time-offset / amplitude-scale alignment for CSV baselines before scoring. Belongs in the comparison layer as a preprocessing wrapper or new ComparisonMode. Wait for concrete user demand — D66 says calibration-adjacent work belongs downstream. |
 | 58 | Persistent-worker Python (PythonCall / stdin-JSON) | M | Low | Long-lived Python subprocess with stdin-dispatch, like JuliaPersistentRunner. Per-test startup is ~30-100 ms today; pays off once a suite has hundreds of Python tests. Mirror the D77→D78 Julia progression. |
 | 59 | Baseline-free modes short-circuit NO_REF | L | Low | Baseline-free range/bounds-check tests currently report NO_REF until a dummy baseline exists; the comparator should short-circuit NO_REF for modes whose comparison needs no baseline (range, final-only absolute bounds). |
+| 60 | Extract shared "declared-items table editor" helper | L | Low | Dom-frequency's declared-peaks editor and event-timing's declared-events editor (D82) share ~74% of structure (table render, source dropdown, detect button, add/delete). Extract a factory: `createDeclaredItemsEditor({getItems, itemToRow, onAdd, onDetect, renderMatch})` — both editors become ~30-line call sites. Follow-up; YAGNI-deferred until the second editor shipped so the factory shape is concrete. |
 
 **Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23):
 

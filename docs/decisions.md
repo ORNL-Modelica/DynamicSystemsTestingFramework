@@ -1852,3 +1852,48 @@ renders `modelica-om-multifrequency` overlay (502 time points,
   doesn't care. Renaming the GitHub repo is a separate user
   decision.
 
+## D82: Event-timing HTML editor (Medium scope)
+
+- **What**: Added a declared-events editor for the ``event-timing``
+  comparison mode to the interactive HTML reporter. Users can author
+  a list of expected event instants with per-event tolerances via a
+  table UI in the leaf's editor slot, including a "🔍 Detect events"
+  button that scans the chosen signal (Reference or Actual) for
+  duplicate-time samples and populates the table. The Python scorer
+  gained an ``events: Optional[list[dict]]`` field on
+  ``EventTimingConfig`` — when set, declared events become the
+  authoritative reference-side event set; each one claims the nearest
+  actual-side auto-detected event within its own tolerance.
+- **Why**: Event-timing was the last remaining mode without a
+  dedicated UI surface. The user's roadmap item #3 asked for parity
+  with the dominant-frequency declared-peaks editor (D75/D76).
+- **Scope: Medium** — table + add + delete + detect + live match
+  column. Deliberately NOT included: draggable diamond markers on
+  the trajectory plot (Full scope; deferred until someone heavily
+  uses it) and a live JS pass/fail rescorer (stays CLI-authoritative
+  because event pairing is non-trivial).
+- **Semantic change (declared-events path)**: When ``events`` is
+  None (default), the existing auto-detect + pair-by-index path is
+  unchanged — no regression for existing event-timing tests. When
+  set, the algorithm switches to "each declared event claims the
+  nearest actual event within its own tolerance", matching
+  dominant-frequency's declared-peaks semantics.
+- **Validation**: 5 new Python tests + 8 new Playwright tests.
+  Full suite goes from 776 → 791 passed. 0 regressions.
+
+### Rejected alternatives
+
+- **Live JS pass/fail rescorer**. Rejected: event-pairing is complex
+  enough (nearest-neighbor + tolerance-per-event + count_must_match)
+  that porting it would add latent bugs and require keeping two
+  implementations in sync. Current UX: users edit events in the
+  browser, export the patch, rerun CLI for authoritative results.
+- **Draggable diamond markers via PointPlotEditor**. Deferred.
+  Could fit cleanly since ``_pointEditor`` already handles tube's
+  two-axis drags; events would only need one-axis (time) drags. Skip
+  until a user hits a concrete workflow where the numeric inputs feel
+  slow.
+- **Shared helper with dom-frequency peaks editor upfront**.
+  Rejected per the plan's YAGNI guard — wrote both fresh, audited
+  overlap afterward (see ideas.md follow-up).
+
