@@ -256,7 +256,7 @@ Two manifest files are written to the work directory before simulation starts:
 
 ## Simulator Abstraction
 
-### Current (as of D76, 2026-04-23)
+### Current (as of D79, 2026-04-23)
 
 ```
 SimulatorRunner (ABC)
@@ -278,12 +278,23 @@ SimulatorRunner (ABC)
         │     ├── concurrent.futures timeout per test
         │     └── phase labels: loading / simulating
         │
-        └── OpenModelicaRunner (simulators/openmodelica/)
-              ├── Persistent workers (default when OMPython available)
-              │     — OMCSessionZMQ per worker, library-load amortized across tests
-              │     — psutil kill on timeout, disk-fallback, 3× worker restart
-              ├── Batch fallback (--batch) — .mos + omc subprocess per test
-              └── read_result() — mat_reader (DSresult-compatible)
+        ├── OpenModelicaRunner (simulators/openmodelica/)
+        │     ├── Persistent workers (default when OMPython available)
+        │     │     — OMCSessionZMQ per worker, library-load amortized across tests
+        │     │     — psutil kill on timeout, disk-fallback, 3× worker restart
+        │     ├── Batch fallback (--batch) — .mos + omc subprocess per test
+        │     └── read_result() — mat_reader (DSresult-compatible)
+        │
+        └── JuliaRunner (simulators/julia/)          ← D77/D78/D79
+              ├── Persistent workers (default)        ← D78
+              │     — long-lived julia --project=... subprocess reading JSON-per-line
+              │       requests from stdin, writes JSON responses to stdout
+              │     — `using MTK, OrdinaryDiffEq, JSON3` paid ONCE per worker
+              │     — ready-pulse handshake front-loads warmup cost
+              │     — Base.invokelatest(build_mtk_system) after include for fresh gen
+              │     — psutil kill on timeout, 3× worker restart
+              ├── Batch fallback (--batch) — `julia run_test.jl ...` per test
+              └── read_result() — JSON parser; materializes unknowns + observables
 ```
 
 Each runner declares its capabilities via `frozenset[Capability]`:
@@ -308,4 +319,4 @@ Backend (ABC)
   └── export_fmu(test) → Path                      # optional; present iff supports_fmu_export
 ```
 
-Concrete targets (roadmap): `DymolaBackend` (current, refactored), `FmpyBackend` (Phase 2 — implemented), `OpenModelicaBackend` (D69–D70 — implemented), `JuliaBackend` (Julia MTK; candidate next), `MatlabBackend`, `DataFileBackend` (experiments).
+Concrete targets (roadmap): `DymolaBackend` (implemented), `FmpyBackend` (Phase 2 — implemented), `OpenModelicaBackend` (D69–D70 — implemented), `JuliaBackend` (D77–D79 — implemented; Dyad untested but should work via same path), `MatlabBackend` (future), `DataFileBackend` (experiments — future).

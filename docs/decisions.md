@@ -1637,6 +1637,110 @@ the existing Dymola/windows sibling-backend auto-companion.
 references are checked into example data and exercised by the existing
 `examples/julia/testing.json` smoke flow).
 
+## D79 — JuliaMtkTestingLib full library structure + 5 new ports + observables fix (2026-04-23)
+
+Follow-on to D77 / D78. Promoted `examples/julia/` from a flat two-test
+demo into a proper library directory mirroring `ModelicaTestingLib/`,
+ported five additional tests, fixed a driver bug discovered along the
+way.
+
+### Scope
+
+**Structural reorganization**. New layout mirrors Modelica's:
+
+```
+examples/julia/JuliaMtkTestingLib/
+├── Project.toml, Manifest.toml        (Julia package root)
+├── Examples/
+│   ├── SimpleRamp.jl
+│   ├── Constant.jl                    (new)
+│   ├── Frequency.jl
+│   ├── MultiFrequency.jl              (new)
+│   ├── RangeCheck.jl                  (new)
+│   ├── TubeTolerance.jl               (new)
+│   └── MetricTree.jl                  (new)
+└── Resources/ReferenceResults/
+    ├── testing.json, test_spec.json
+    └── Julia/linux/ref_0001..0007.json
+```
+
+Per user's scope-(a) pick: **test-fixture demo, NOT publishable Julia
+package**. No `src/JuliaMtkTestingLib.jl` module file — framework only
+needs `include + build_mtk_system` per file, and module ceremony would
+buy nothing. Additive later if external consumption emerges.
+
+**Test count**: 2 → 7. Covers 5 of the 10 ModelicaTestingLib tests.
+
+### Driver fix — observables are not unknowns in MTK
+
+`structural_simplify` classifies algebraic outputs — e.g., `y ~ a1 *
+x1 + a2 * x2 + a3 * x3` in MultiFrequency — as **observables**, not
+unknowns. The original driver (D77) collected only `unknowns(sys)`.
+Observables were silently missing from the result JSON, so framework-
+side `read_result` saw no variable named `y` and the comparator fell
+to a no-data path.
+
+Both `run_test.jl` (batch) and `run_persistent.jl` now collect both:
+
+```julia
+unk = ModelingToolkit.unknowns(nt.sys)      # differential states
+obs = ModelingToolkit.observed(nt.sys)      # algebraic `lhs ~ rhs`
+```
+
+and materialize via `sol[u]` / `sol[eq.lhs]`. Defensive: skips
+already-captured names, MTK-internal helper symbols (`ˍ`-prefixed),
+and `sol[...]` exceptions (parameter-only expressions).
+
+### Spec nit — metric tree without variables
+
+MetricTree-style entries (only `metrics` field, no top-level
+`variables`) were treated as simulate-only since `variable_patterns`
+resolved empty. Added explicit `"variables": ["x", "y"]` to the
+MetricTree entry. Longer-term candidate: auto-derive
+`variable_patterns` from leaf variables in the metric tree. Deferred.
+
+### Cross-library companions re-wired (14 total)
+
+D78's 4-companion set pointed at pre-move paths. Removed stale
+pointers; registered fresh companions both directions for every
+matched pair:
+
+* Every Julia test → ModelicaTestingLib OM companion (7).
+* Every matching Modelica test → JuliaMtkTestingLib companion (7).
+
+Portable relative paths (6 `..` segments either direction; resolve
+against ref_dir). Browser-verified: Julia MultiFrequency report
+renders `modelica-om-multifrequency` overlay (502 time points,
+`role=companion`).
+
+### Deferred (consciously)
+
+* **EventTest** — MTK uses `@discrete_events` / callbacks vs Modelica
+  `when...then`; syntactically different. Port when needed.
+* **IntervalTest** — Modelica-specific output-interval semantics.
+* **NoUnitTest** — Modelica discovery-fixture only.
+* **SimulateOnlyTest** — spec_parser doesn't parse `simulate_only`
+  from test_spec.json; ~20 lines to wire for Julia source path.
+
+### Rejected alternatives
+
+* **Full publishable Julia package** with `src/` module. No value
+  for the fixture use case; additive later.
+* **Auto-derive variable_patterns from metric tree**. One-line spec
+  fix was cheaper; auto-derive has edge cases (globs,
+  against-baseline refs) that aren't trivial.
+* **Observables as promoted states** (user workaround via `D(y) ~
+  ...`). Unnatural; fix the driver once.
+
+### Validation
+
+* `run --config .../testing.json` → **7/7 PASS** on self-regression.
+* Full suite: **752 passing, 1 skipped, 0 regressions** (unchanged
+  count since D78 — 3 integration tests cover the expanded library
+  via the existing smoke flow).
+* Browser-verified cross-library overlay rendering.
+
+
 
 
 

@@ -1,258 +1,282 @@
-# Session handoff — D71–D76 reporter-as-IDE expansion + dominant-frequency overhaul
+# Session handoff — Julia/MTK backend + reporter expansion + tool growth
 
 **Date**: 2026-04-23
-
-Covers a six-phase session rolled into three commits on `main`:
-`ae7dabc` (D71–D75 + tube polygon fix), `6595228` (D76 live JS FFT +
-window-scoped detection), `06cc096` (five dominant-frequency editor
-hotfixes from Windows testing). Test count: 637 → **749 passing, 1
-skipped, 0 regressions**.
-
----
-
-## What shipped this session
-
-### D71 — feature-showcase tests + NB overlay parity + simulate-only render fix
-- Four new showcase models in `ModelicaTestingLib`: `TubeToleranceTest`,
-  `FrequencyTest`, `MetricTreeTest`, `RangeCheckTest`.
-- Sibling-backend overlay picker UI now renders on both baseline and
-  no-baseline code paths.
-- Three-layer fix for `simulate_only` + no-baseline render path.
-
-### D72 — wrap-in-combinator + combinator-kind editing
-- Kind `<select>` dropdown in every combinator header (5 options).
-- `⊕` wrap button on every node (root supported); `⊖` unwrap on
-  single-child combinators.
-- Inline `k` / `weights` / `threshold` / `direction` controls for
-  k-of-n and weighted.
-- Wrap popup (same pattern as remove-confirm) with ESC + click-away
-  dismiss. Wholesale `/metrics` replace patch envelope.
-
-### D73 — leaf-state persistence + reset button
-- `migrateLeafStatePaths` snapshots leaf refs before `rebuildPaths`,
-  two-pass migrates `leafState` entries to new paths.
-- `refreshLeafInputsFromState` pushes `leafState` → DOM after every
-  re-render so live edits survive structural ops.
-- `↻` reset button on every leaf; restores `params`/`window` from
-  `original_*`; does not flip `structureDirty`.
-
-### D74 — leaf-mode UX pass
-- Every `ModeConfig` field has `label` + `help` metadata → `title`
-  tooltips on inputs (server- AND JS-rendered).
-- Combinator kind dropdown gets `COMBINATOR_HELP` tooltips + per-
-  option tooltips.
-- Visibility checkbox cross-mount DOM-synced via `syncSiblingVisToggles`
-  with clarified "does not affect scoring" tooltip.
-- Range bounds labeled "Lower/Upper bound (optional)".
-- Event-timing overlay on trajectory plot (ref + actual event instants
-  with tolerance bands; `_detectEvents` client-side via Modelica
-  duplicate-time convention).
-- `FieldSpec.ui_min` / `ui_max` soft caps.
-
-### D75 — declared-peaks dominant-frequency + PointPlotEditor abstraction
-- Algorithm: `peaks: [{freq, tolerance, tolerance_mode}, ...]`. For
-  each declared peak, find strongest local max in the actual spectrum
-  within the peak's tolerance window. Leaf passes iff every declared
-  peak matches; unmatched → fail with reason.
-- Empty `peaks` list → fail-with-hint pointing at Detect button.
-- `createPointPlotEditor` factory (~140 lines) extracts Shift+click/
-  drag/right-click from the tube editor. Tube migrated (behavior-
-  preserving); same abstraction powers the new peaks editor.
-- New `MultiFrequencyTest` showcase (1/3/7 Hz composite).
-
-### D76 — live JS FFT + window-scoped detection + per-peak provenance
-- Ported `_compute_fft_spectrum`, `_find_top_n_peaks`,
-  `_find_strongest_peak_in_window` to JS (~190 lines — radix-2
-  Cooley-Tukey).
-- Both Python and JS now resample to next-pow-2 points; bins align
-  bit-for-bit, so CLI `paired_peaks` agrees with the browser's live
-  scorer (fixes D76's initial index-PASS-vs-per-test-FAIL disagreement).
-- Spectrum subplot recomputes live on window edit
-  (`getLiveSpectrum(leaf, source)` slices by `leafState.window` and
-  FFTs).
-- `Detect from: [Reference | Actual]` dropdown — lets user seed table
-  from either signal.
-- Per-peak `derived_from_window: {start, end}` provenance metadata.
-- Live JS scorer uses live FFT.
-- Multi-window scoring kept outside the leaf — achievable via metric-
-  tree composition (two dominant-frequency leaves under AND with
-  different windows).
-
-### Post-D76 hotfixes (commit `06cc096`)
-- **Input focus**: split `input` (lightweight subplot-only refresh) vs
-  `change` (full table rebuild). Typing decimals works.
-- **Spurious low-freq peaks in Detect**: default `min_frequency =
-  2 × bin_spacing` — "at least 2 full cycles per window" heuristic.
-- **Bin-resolution hint**: editor shows current window's FFT bin
-  spacing so users pick meaningful tolerances.
-- **Source dropdown tooltip**: clarifies it picks Detect's input, not
-  the subplot display.
-- **Aligned tolerances**: MultiFrequencyTest widened to 0.15/0.1/0.05
-  at 1/3/7 Hz; FrequencyTest to 0.15 at 1 Hz. Covers FFT bin resolution.
+**Covers**: D71 through D79 (nine-phase session)
+**State at HEAD** (commit `9cd5468`):
+- **752 tests passing, 1 skipped (reference_fmus), 0 regressions**
+- **4 simulator backends**: Dymola, FMPy, OpenModelica, Julia/MTK
+- **2 test libraries**: `ModelicaTestingLib` (10 tests), `JuliaMtkTestingLib` (7 tests)
+- **14 cross-library companion overlays** (both directions, portable paths)
+- Reporter-as-IDE feature-complete through declared-peaks frequency + live JS FFT
 
 ---
 
-## Current architecture snapshot
+## Session arc
 
-### Three backends
+Nine interconnected phases over one long session. Each is a
+single-commit unit on `main`:
 
-| Backend | Runner | Transport | Persistent | Status |
-|---|---|---|---|---|
-| Dymola | `DymolaRunner` | Python interface (default) / `.mos` batch (fallback) | yes | production |
-| FMPy | `FmpyRunner` | `fmpy.simulate_fmu` in-process | no (per-test thread) | production |
-| OpenModelica | `OpenModelicaRunner` | OMPython ZMQ (default) / `omc` batch (fallback) | yes | production (D70) |
+| # | Commit | Theme |
+|---|---|---|
+| D71 | part of `ae7dabc` | Feature-showcase tests + NB overlay parity + simulate-only fix |
+| D72 | part of `ae7dabc` | Wrap/unwrap + combinator-kind editing |
+| D73 | part of `ae7dabc` | Leaf-state persistence + reset button |
+| D74 | part of `ae7dabc` | Labels/help/tooltips + visibility sync + event-timing plot + multi-peak freq + spectrum subplot |
+| D75 | part of `ae7dabc` | Declared-peaks dominant-frequency + PointPlotEditor abstraction |
+| Q2 fixes | part of `ae7dabc` | Tube polygon curve-following + quiet patch export |
+| D76 | `6595228` | Live JS FFT + window-scoped detection + per-peak provenance |
+| post-D76 | `06cc096` | Five dominant-frequency Windows-found bugs |
+| D77 | `d6c43f8` | Julia/MTK backend (batch subprocess) |
+| D78 | `813463e` | Persistent-worker Julia + cross-library companions (first 4) |
+| D79 | `9cd5468` | JuliaMtkTestingLib structure + 5 new ports + observables fix |
 
-Unified `testing.json` with auto-detect: `_auto_detect_simulator`
-picks the first backend whose binary resolves. Reference baselines
-partition by `<simulator>/<os>/`.
-
-### Reporter-as-IDE (complete)
-
-- Recursive `SpecNodeView` JS component for MetricTree.
-- Tube editor (v2 from post-D67 refactor): rich control-point table,
-  Shift+click/drag/right-click interactions, width-mode projection,
-  live pass/fail.
-- Dominant-frequency editor (D75+D76): spectrum subplot + declared-
-  peaks table + Shift-interactivity + Detect button + source dropdown.
-- Range drag handles (Plotly `edits.shapePosition`).
-- Window brush (universal, any mode) — operates on trajectory plot.
-- Structural editing: `+ −` buttons per node; kind dropdown in every
-  combinator; `⊕` wrap / `⊖` unwrap; `↻` reset leaf params.
-- Patch export: RFC 6902, wholesale `/metrics` replace for structural
-  edits, per-field `add` ops for scalar tweaks.
-- Live JS scorers: nrmse, tube, range, final-only, dominant-frequency.
-  Event-timing stays CLI-authoritative.
-
-### Shared abstractions
-
-- `PointPlotEditor` factory for Shift-interaction on Plotly subplots.
-  Used by tube + dominant-frequency; any future point-draggable mode
-  uses it.
-- `MODE_SCORERS` registry for live pass/fail.
-- `MODE_PLOT_CONTRIBUTIONS` registry for per-mode shape overlays on
-  trajectory plots (range lines, tube polygon, window band, event
-  instants, final-time marker).
-- `MODE_PLOT_EDITORS` registry for mode-specific editor slots.
-- `FieldSpec` with `label`/`help`/`ui_min`/`ui_max` metadata derived
-  from dataclass fields.
+Plus docs: `6962770` refreshed SESSION_HANDOFF + architecture + ideas
+mid-session. This file is the post-D79 replacement.
 
 ---
 
-## Dev-env prereqs
+## Dev env (required)
 
 ```bash
+# Core
 uv pip install -e ".[dev,fmpy,om]"
 uv pip install pytest-playwright
 uv run playwright install chromium
+
+# Julia (NEW this session)
+curl -fsSL https://install.julialang.org | sh -s -- -y --default-channel 1.11
+# Then (first-time only — multi-minute precompile of MTK + OrdinaryDiffEq):
+cd examples/julia/JuliaMtkTestingLib && julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
-**Venv drift caveat**: `uv run pytest` hits miniforge3's pytest on
-PATH, NOT the project venv. Install missing deps via
-`/home/fig/miniforge3/bin/pip install X` when a hard dep reports as
-missing despite being in `pyproject.toml`.
+**Venv drift caveat** (persisted from prior sessions): `uv run pytest`
+on this machine resolves miniforge3's pytest, NOT the project venv.
+If a hard dep errors as missing, install into whichever Python
+`uv run which pytest` points at — typically `/home/fig/miniforge3/bin/pip install X`.
+Playwright, psutil, pytest-playwright have all hit this.
+
+---
+
+## Backends (four of them, all production)
+
+| Backend | Runner | Transport | Persistent? | Library | Typical use |
+|---|---|---|---|---|---|
+| **Dymola** | `DymolaRunner` | Python interface (default) / `.mos` batch | ✓ (default) | — | Proprietary Modelica |
+| **FMPy** | `FmpyRunner` | `fmpy.simulate_fmu` in-process | per-test thread | — | Pre-built FMUs (autonomous only; D65 scope) |
+| **OpenModelica** | `OpenModelicaRunner` | OMPython ZMQ (default) / `omc` batch | ✓ (OMPython) | — | Open-source Modelica |
+| **Julia / MTK** | `JuliaRunner` | subprocess (batch) / stdin-JSON pipe (D78 persistent) | ✓ (D78) | — | ModelingToolkit / Dyad (Dyad untested but should work) |
+
+All four declare `capabilities: frozenset[Capability]` (`BATCH_FALLBACK`,
+`PERSISTENT_WORKERS`, `FMU_EXPORT`). CLI's `_get_runner(persistent=True)`
+swaps to the persistent variant when available; falls back to batch on
+`RuntimeError`.
+
+Reference baselines partition by `<reference_root>/<Backend>/<os>/ref_NNNN.json`.
+
+---
+
+## Current architecture (post-D79)
+
+### Test libraries
+
+```
+examples/
+├── modelica/
+│   └── ModelicaTestingLib/           (10 tests, Modelica source)
+│       ├── Components/UnitTests.mo
+│       ├── Examples/*.mo
+│       ├── Resources/ReferenceResults/
+│       │   ├── testing.json, test_spec.json
+│       │   ├── Dymola/windows/ref_0001..0010.json
+│       │   └── OpenModelica/linux/ref_0001..0010.json
+│       │       └── companions/ref_*/julia-mtk-*.json  ← cross-lib
+│       ├── package.mo, package.order
+│
+├── julia/
+│   └── JuliaMtkTestingLib/           (7 tests, MTK source, NEW D79)
+│       ├── Project.toml, Manifest.toml
+│       ├── Examples/
+│       │   ├── SimpleRamp.jl   (↔ SimpleTest)
+│       │   ├── Constant.jl     (↔ ConstantTest)
+│       │   ├── Frequency.jl    (↔ FrequencyTest)
+│       │   ├── MultiFrequency.jl (↔ MultiFrequencyTest)
+│       │   ├── RangeCheck.jl   (↔ RangeCheckTest)
+│       │   ├── TubeTolerance.jl (↔ TubeToleranceTest)
+│       │   └── MetricTree.jl   (↔ MetricTreeTest)
+│       └── Resources/ReferenceResults/
+│           ├── testing.json, test_spec.json
+│           └── Julia/linux/ref_0001..0007.json
+│               └── companions/ref_*/modelica-om-*.json ← cross-lib
+│
+└── fmu/
+    └── reference-fmus-binaries/      (3 tests, prebuilt FMUs)
+```
+
+### Sibling vs companion (locked this session, D78/D79)
+
+* **Sibling** = same code, different simulator. Auto-discovered via
+  `<reference_root>/<OtherBackend>/<os>/ref_*.json` scan. E.g.,
+  ModelicaTestingLib tests on Dymola vs OM vs FMPy.
+* **Companion** = different implementation, visual-only overlay.
+  Manually wired via `companion add` with path string (absolute or
+  repo-relative). JuliaMtkTestingLib ↔ ModelicaTestingLib uses this
+  venue. Never scored.
+
+### Reporter-as-IDE (feature-complete for six modes)
+
+Recursive `SpecNodeView` JS component. Every leaf mode has:
+
+* Auto-derived control panel (`render_schema_html` from each
+  `ModeConfig` dataclass), optional custom panel.
+* Live JS scorer (nrmse, tube, range, final-only, dominant-frequency —
+  event-timing stays CLI-authoritative).
+* Plot contribution (on trajectory plot: range lines, tube polygon
+  with curve-following bounds, event instants + tolerance bands,
+  window highlight).
+
+Structural editing (D72/D73):
+* `+ −` buttons (add/remove child leaves).
+* Kind `<select>` in every combinator header (5 options: and/or/warn/
+  k-of-n/weighted).
+* `⊕` wrap / `⊖` unwrap buttons.
+* `↻` reset leaf params to CLI-evaluated originals.
+* All edits emit wholesale `/metrics` RFC-6902 replace.
+
+Dominant-frequency editor (D75+D76):
+* Spectrum subplot with live JS FFT (recomputes on window edit).
+* Declared-peaks table (`Freq | Tolerance | Mode | Match (live) | Src window | ✕`).
+* `Detect from: [Reference | Actual]` dropdown scoped to current window.
+* Per-peak `derived_from_window` provenance metadata.
+* Diamond markers draggable via Shift+click/drag/right-click via the
+  shared `PointPlotEditor` factory (also powers tube editor).
 
 ---
 
 ## Known limitations (deferred by design)
 
-1. Event-timing remains CLI-authoritative (pairing algorithm stays
-   Python-side; not worth reimplementing JS).
-2. Tube per-point-per-side width modes — stored in state but ignored
-   in polygon rendering; matches CLI (which doesn't support
-   per-point modes).
-3. Window brush one-shot per activation.
-4. Multi-select wrap deferred (single-select only).
-5. No live validation halos on trees (patch-apply-time validation
-   catches the invalid cases).
-6. Visual regression not automated (Playwright covers behavior).
+| Item | Why | Workaround |
+|---|---|---|
+| Event-timing live JS scorer | Event-pairing algorithm non-trivial; CLI stays authoritative | CLI pass/fail is correct; browser pill shows CLI result |
+| Tube per-point-per-side width modes | JS UI stores them but polygon uses global mode (matches CLI) | Use synced mode |
+| Window brush one-shot per activation | UX choice | Click brush again to redo |
+| Multi-select wrap in tree editor | Deferred | Wrap single node, then add/move siblings |
+| JuliaRunner FMU export | `MTK.generate_fmu` not wired | Run directly via Julia runner |
+| Julia persistent workers + crash recovery | 3× restart on catastrophic failure | Same pattern as Dymola/OM |
+| Dyad tests | Untested (should work — compiles to MTK) | Port a Dyad sample when concrete use case arises |
+| EventTest / IntervalTest / NoUnitTest / SimulateOnlyTest on Julia | Deferred (see D79) | — |
 
 ---
 
 ## Pre-session sanity
 
 ```bash
-uv run pytest -q                                                     # expect 749 passed + 1 skipped
-uv run modelica-testing --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --report
-git status                                                           # clean tree after ae7dabc + 6595228 + 06cc096
-git log --oneline -4                                                 # confirms the three session commits
+git log --oneline -8                                          # confirms D71..D79 + docs commits
+
+uv run pytest -q                                              # expect 749-752 passed + 1-4 skipped
+export PATH="$HOME/.juliaup/bin:$PATH" && uv run pytest -q    # with Julia: 752 + 1 skipped
+
+# Smoke tests (each should produce PASS):
+uv run modelica-testing --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run
+uv run modelica-testing --config examples/julia/JuliaMtkTestingLib/Resources/ReferenceResults/testing.json run
+uv run modelica-testing --config examples/fmu/testing.json run   # requires reference-fmus-binaries/
 ```
 
 ---
 
 ## Candidate next moves
 
-### B-tier (user-facing, pick one for the big feature of the next session)
+### B-tier (user-facing features)
 
-- **Julia ModelingToolkit backend + SimulationResult refactor**
-  — Add `JuliaRunner` as a third-party-style subprocess backend
-  consuming a shared `SimulationResult` dataclass. Refactors existing
-  runners (Dymola, FMPy, OpenModelica) to emit `SimulationResult`
-  internally. Proves the abstraction (fourth consumer) AND delivers a
-  new backend. Pairs with idea #45 (python-driven tests).
-  Dyad likely comes nearly-free via MTK (Dyad compiles to MTK). ~1
-  week credible MVP.
+* **Phase 7 rule-based recommender** — signal → MetricTree proposals
+  bounded by D66's complexity budget. Lowers onboarding barrier for
+  new users. ~2-3 days skeleton, ~1-2 weeks full.
 
-- **Phase 7 rule-based recommender** — signal → MetricTree proposals
-  bounded by D66's complexity budget. Lowers onboarding barrier. No
-  ML (Phase 8 removed). ~1–2 weeks full, ~2–3 days skeleton.
+* **TRANSFORM upstream portability PR** — 46 `each`-modifier fixes
+  from the D69 OM sweep. External repo. Lifts OM pass rate 72% → ~85%.
+  ~1 day. **Still the fastest real-world-impact move** if TRANSFORM
+  adoption matters.
 
-- **TRANSFORM upstream portability PR** — 46 `each`-modifier fixes
-  from D69 sweep. External repo. Lifts OM pass rate 72% → ~85%.
-  ~1 day.
+* **#45 Python-driven tests** — pairs naturally with the now-proven
+  subprocess+`TestResult` contract (Julia subprocess path is basically
+  exactly what #45 needs, just substituting `python` for `julia`).
+  ~2-3 days for a credible MVP. Would unlock pyomo/scipy/custom solver
+  use cases.
 
-- **#45 python-driven tests + FMU-path semantic gap closure** —
-  pair with the Julia backend via shared `SimulationResult`
-  refactor. Unlocks pyomo / scipy / custom solvers + industrial FMU
-  workflows.
+### Julia follow-ups (C-tier — ship opportunistically)
 
-### C-tier (polish / performance, shippable anytime)
+* **MTK FMU export** via `ModelingToolkit.generate_fmu`. Wires Julia
+  into the `Capability.FMU_EXPORT` cross-backend chain. ~1 day.
+* **Dyad validation** — port one Dyad sample test and prove the
+  "Dyad compiles to MTK → our runner handles it" claim. ~½ day.
+* **Port the 4 deferred Modelica tests** (EventTest, IntervalTest,
+  NoUnitTest, SimulateOnlyTest) — each has its own small wrinkle.
+  ~1-2 days total.
+* **JuliaCall persistent path** (embed Julia in Python process).
+  Faster than subprocess + stdin. Probably not worth it — the
+  persistent subprocess path is fast enough and has zero build
+  complexity. Defer unless someone hits a real perf ceiling.
 
-- `#53` `check-openmodelica` CLI subcommand (~½ day).
-- `#54` OM FMU export via `buildModelFMU` (~1–2 days).
-- `#47` time-array dedup (cap 1000 → 2000 at same budget).
-- `#48` lazy-fetch full-res on zoom.
-- `#49` per-test `max_embedded_samples` override.
-- Drag-to-edit range handles (stretch goal).
-- Visual-regression Playwright screenshots.
+### D-tier (polish / smaller)
 
-### D-tier — external distribution blocker
+* **Tool rename** — `"ModelicaTesting"` → neutral name. Three
+  Modelica-adjacent backends + one Julia backend = the name is
+  misleading now.
+* **#53 `check-openmodelica` / `check-julia`** CLI subcommands.
+* **#54 OM FMU export** via `buildModelFMU` — pairs with MTK FMU
+  export for symmetric cross-backend chains.
+* **#47 time-array dedup** — bump embedded-sample cap 1000 → 2000.
+* **Visual-regression Playwright screenshots**.
 
-- **Tool rename** — blocked on picking a neutral name. Three backends
-  now; Modelica-neutral identity is more justified.
+### E-tier (foundational)
 
-### E-tier — foundational / additive
-
-- Phase 9 dataset types (`Events`, `Spectrum`, `Distribution`,
-  `Scalars`, `Field`) — unlocks Fréchet (#23), spectral coherence
-  (#24), pyfunnel x-tolerance (#25), ISO 18571 (#26).
-- Small HTML polish: #7, #9, #14, #17, #18, #19.
-- Larger: #11 test-discovery helper, #12 model-health analysis.
+* **Phase 9 dataset types** — `Events`, `Spectrum`, `Distribution`,
+  `Scalars`, `Field`. Unlocks Fréchet (#23), spectral coherence (#24),
+  pyfunnel x-tolerance (#25), ISO 18571 (#26).
 
 ---
 
 ## Starter prompt for the next session
 
-> Resuming ModelicaTesting at commit `06cc096`. Three session commits
-> on `main`: `ae7dabc` (D71–D75 + tube polygon fix), `6595228` (D76
-> live JS FFT), `06cc096` (post-D76 hotfixes from Windows testing —
-> bin alignment, input focus, Detect min_frequency, source dropdown
-> tooltip, spec tolerance widening).
+> Resuming ModelicaTesting at commit `9cd5468` on `main`. This session
+> was a 9-phase marathon (D71 through D79) adding Julia/MTK as the
+> fourth simulator backend, building `JuliaMtkTestingLib` as a second
+> test-fixture library, refactoring the reporter-as-IDE to feature
+> completeness through dominant-frequency declared-peaks with live JS
+> FFT, wiring 14 cross-library companion overlays, and fixing a
+> sequence of small bugs surfaced along the way.
 >
-> **Test baseline: 749 passing + 1 skipped. Dev env:
-> `uv pip install -e ".[dev,fmpy,om]"` + pytest-playwright + chromium;
-> watch venv drift (miniforge pytest vs project .venv).**
+> **State at HEAD**: 752 tests passing + 1 skipped (reference_fmus) +
+> 0 regressions. Four production backends (Dymola, FMPy, OpenModelica,
+> Julia/MTK). Two test libraries (ModelicaTestingLib × 10, JuliaMtk
+> TestingLib × 7). Reporter-as-IDE feature-complete through
+> dominant-frequency editor.
 >
-> **Read first**: `docs/SESSION_HANDOFF.md` (this file), D76 + D75 in
-> `docs/decisions.md`, top of `docs/ideas.md` for the refreshed A–E
-> tier ordering.
+> **Read first**: `docs/SESSION_HANDOFF.md` (this file), D79 → D77 in
+> `docs/decisions.md` (the Julia story), and the A-E tier ordering at
+> the top of `docs/ideas.md`.
 >
-> **Default next move — discussion-first**. User leaned toward
-> (a) structure/pattern finalization, (b) Julia MTK / Dyad as the
-> third backend path, or (c) other high-value new capabilities. The
-> big recommendation is **Julia MTK backend + SimulationResult
-> dataclass refactor** — delivers structure polish (shared typed
-> result across runners), a new backend (~1 week MVP), and paves the
-> way for idea #45 (python-driven tests).
+> **Default next move — pick one**:
 >
-> **Out of scope unless explicitly adopted**: ML / Phase 8, mid-stream
-> refactor of the six modes.
+> 1. **Phase 7 rule-based recommender** (B-tier, ~2-3 days skeleton).
+>    Lowers onboarding. Bounded by D66's complexity budget. No ML.
+>
+> 2. **TRANSFORM upstream portability PR** (B-tier external, ~1 day).
+>    46 `each`-modifier fixes. Lifts OM pass rate 72% → 85%.
+>
+> 3. **#45 Python-driven tests** (B-tier, ~2-3 days MVP). Natural
+>    pairing with D77's subprocess+TestResult contract — Julia path is
+>    basically #45's template with `julia` swapped for `python`.
+>
+> **Smaller alternatives**:
+> * MTK FMU export (~1 day) — cross-backend chain symmetry.
+> * Dyad validation (~½ day) — prove Dyad→MTK→runner path.
+> * Tool rename (~½ day, naming-blocked).
+>
+> **Dev env prereqs** (if venv was recreated): `uv pip install -e
+> ".[dev,fmpy,om]"` + pytest-playwright + chromium. Julia:
+> https://julialang.org/downloads/ + `cd examples/julia/JuliaMtk
+> TestingLib && julia --project=. -e 'using Pkg; Pkg.instantiate()'`.
+> Watch venv drift (miniforge vs project .venv).
+>
+> **Out of scope unless explicitly adopted**: Phase 9 dataset types,
+> ML, mid-stream refactor of the existing six modes or four backends.
