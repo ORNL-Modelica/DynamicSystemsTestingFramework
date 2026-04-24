@@ -63,3 +63,82 @@ def test_python_config_loads_without_package_mo(tmp_path):
     assert cfg.source_path.name == "MyPyLib"
     assert cfg.simulator == "Python"
     assert cfg.simulator_backend == "Python"
+
+
+_DRIVER = (
+    Path(__file__).resolve().parents[1]
+    / "src" / "modelica_testing" / "simulators" / "python" / "run_test.py"
+)
+
+
+def _run_driver(user_file: Path, result_path: Path, stop_time=1.0, tolerance=1e-6):
+    """Invoke run_test.py as a subprocess and return (returncode, stdout, stderr)."""
+    proc = subprocess.run(
+        [shutil.which("python") or "python3", str(_DRIVER),
+         str(user_file), str(stop_time), str(tolerance), str(result_path)],
+        capture_output=True, text=True, timeout=30,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def test_driver_success_path(tmp_path):
+    user = tmp_path / "ramp.py"
+    user.write_text(
+        "def simulate(stop_time, tolerance):\n"
+        "    n = 11\n"
+        "    return {\n"
+        "        'time': [i * stop_time / (n - 1) for i in range(n)],\n"
+        "        'variables': {'x': [i * 2.0 * stop_time / (n - 1) for i in range(n)]},\n"
+        "    }\n"
+    )
+    result = tmp_path / "result.json"
+    rc, out, err = _run_driver(user, result)
+    assert rc == 0, err
+    assert result.exists()
+    import json
+    payload = json.loads(result.read_text())
+    assert payload["success"] is True
+    assert len(payload["time"]) == 11
+    assert payload["variables"]["x"][-1] == pytest.approx(2.0)
+
+
+def test_driver_missing_simulate_function(tmp_path):
+    user = tmp_path / "bad.py"
+    user.write_text("# Empty file — no simulate() defined.\n")
+    result = tmp_path / "result.json"
+    rc, out, err = _run_driver(user, result)
+    assert rc != 0
+    assert result.exists()  # structured failure, not a crash
+    import json
+    payload = json.loads(result.read_text())
+    assert payload["success"] is False
+    assert "simulate" in payload["error"].lower()
+
+
+def test_driver_simulate_raises(tmp_path):
+    user = tmp_path / "raises.py"
+    user.write_text(
+        "def simulate(stop_time, tolerance):\n"
+        "    raise ValueError('boom')\n"
+    )
+    result = tmp_path / "result.json"
+    rc, out, err = _run_driver(user, result)
+    assert rc != 0
+    import json
+    payload = json.loads(result.read_text())
+    assert payload["success"] is False
+    assert "boom" in payload["error"]
+
+
+def test_driver_malformed_return(tmp_path):
+    user = tmp_path / "bad_return.py"
+    user.write_text(
+        "def simulate(stop_time, tolerance):\n"
+        "    return 'not a dict'\n"
+    )
+    result = tmp_path / "result.json"
+    rc, out, err = _run_driver(user, result)
+    assert rc != 0
+    import json
+    payload = json.loads(result.read_text())
+    assert payload["success"] is False
