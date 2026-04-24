@@ -530,6 +530,34 @@ function _sliceToWindow(time, values, winStart, winEnd) {
   return { time: outT, values: outV };
 }
 
+function _sliceLeafTrajectory(leaf, traj) {
+  // Read the leaf's current window (from leafState) and clip every
+  // trajectory array to it. Returns {refTime, refValues, actTime,
+  // actValues} — same shape as the raw trajectory, just windowed.
+  //
+  // Used by every MODE_SCORERS / MODE_PLOT_CONTRIBUTIONS entry that
+  // needs window-awareness. Centralizing here so bugs in window
+  // handling get fixed in ONE place, not six.
+  //
+  // If no window is set (both endpoints null/unset), returns the
+  // trajectory unchanged — zero-cost fast path.
+  const state = leafState[leaf.path] || {};
+  const w = state.window || {};
+  const s = w.start, e = w.end;
+  const refTime = traj.ref_time || [];
+  const refValues = traj.ref_values || [];
+  const actTime = traj.act_time || [];
+  const actValues = traj.act_values || [];
+  const refSliced = _sliceToWindow(refTime, refValues, s, e);
+  const actSliced = _sliceToWindow(actTime, actValues, s, e);
+  return {
+    refTime: refSliced.time,
+    refValues: refSliced.values,
+    actTime: actSliced.time,
+    actValues: actSliced.values,
+  };
+}
+
 function _computeFftSpectrum(time, values) {
   // Mirrors Python _compute_fft_spectrum: dedupe, uniform resample to the
   // next power of 2 above max(n, 64) points, detrend, radix-2 FFT.
