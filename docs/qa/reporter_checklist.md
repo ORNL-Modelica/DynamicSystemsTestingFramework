@@ -24,7 +24,7 @@ plot interactions, and UX feel on real reports.
 ## Prep
 
 ```bash
-uv run modelica-testing --config examples/fmu/testing.json run --report
+uv run dstf --config examples/fmu/testing.json run --report
 # Open the report in your browser:
 # testing_output/fmu/FMPy/linux/reports/ref_0001/interactive.html
 ```
@@ -43,7 +43,7 @@ time,h
 2.0,0.2
 3.0,0.0
 EOF
-uv run modelica-testing --config examples/fmu/testing.json companion add \
+uv run dstf --config examples/fmu/testing.json companion add \
   BouncingBall analytical /tmp/analytical.csv
 # ...then `run --report` again to exercise the overlay picker.
 # Cleanup when done: companion remove BouncingBall analytical
@@ -127,7 +127,7 @@ Playwright covers correctness. These check the UX:
       replace op when structure has changed, not dozens of scalar ops.
 - [ ] Applying the downloaded patch:
   ```bash
-  uv run modelica-testing --config examples/fmu/testing.json \
+  uv run dstf --config examples/fmu/testing.json \
     spec-update ~/Downloads/spec_patch.json
   ```
   - CLI exits 0 with the op applied.
@@ -137,7 +137,7 @@ Playwright covers correctness. These check the UX:
 
 ## Schema export (one-off sanity)
 
-- [ ] `uv run modelica-testing export-schema` emits valid JSON-Schema
+- [ ] `uv run dstf export-schema` emits valid JSON-Schema
       2020-12 to stdout.
 - [ ] `$defs` contains entries for all six modes.
 - [ ] Pass it to any JSON-Schema validator; parses without errors.
@@ -146,7 +146,7 @@ Playwright covers correctness. These check the UX:
 
 - Pass/fail pills are CLI-authoritative across ALL modes — live recompute
   was retired in Stage 2 along with `MODE_SCORERS`. Edits in the browser
-  don't flip pills until `modelica-testing run` is re-invoked. The
+  don't flip pills until `dstf run` is re-invoked. The
   `cli_authoritative` badge only appears on `event-timing` and
   `dominant-frequency`, but the semantics apply everywhere now. Expected.
 - Shift+drag / Shift+right-click on existing tube control points (move /

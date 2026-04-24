@@ -11,16 +11,16 @@ The framework's promise: **every layer is a plug-in point**. Adding a new simula
 Every layer uses the same `@register("name")` decorator pattern already established for simulators:
 
 ```python
-from modelica_testing.backends import register, Backend
+from dstf.backends import register, Backend
 
 @register("Dymola")
 class DymolaBackend(Backend):
     ...
 ```
 
-Resolution: config specifies a name (`"backend": "Dymola"` or `"metric": "nrmse"`), a factory looks it up. Unknown names produce a clear error listing available plug-ins. Backends, metrics, combinators, dataset types, discovery strategies all use independent registries under `modelica_testing.{backends,metrics,combinators,datasets,discovery}`.
+Resolution: config specifies a name (`"backend": "Dymola"` or `"metric": "nrmse"`), a factory looks it up. Unknown names produce a clear error listing available plug-ins. Backends, metrics, combinators, dataset types, discovery strategies all use independent registries under `dstf.{backends,metrics,combinators,datasets,discovery}`.
 
-Third-party plug-ins register via Python entry points (`[project.entry-points."modelica_testing.backends"]`) so users can ship a backend in a separate package without patching ours.
+Third-party plug-ins register via Python entry points (`[project.entry-points."dstf.backends"]`) so users can ship a backend in a separate package without patching ours.
 
 ---
 
@@ -254,7 +254,7 @@ class Combinator(Protocol):
     def combine(self, children: list[MetricResult]) -> MetricResult: ...
 ```
 
-Pure function. Diagnostics must preserve enough of the children's diagnostics that a failing branch can be rendered in the report. Combinators are registered via `modelica_testing.combinators`.
+Pure function. Diagnostics must preserve enough of the children's diagnostics that a failing branch can be rendered in the report. Combinators are registered via `dstf.combinators`.
 
 ### Schema in test_spec.json
 
@@ -312,7 +312,7 @@ Every plug-in, regardless of layer, must honor:
 ## Where to put new code
 
 ```
-src/modelica_testing/
+src/dstf/
   backends/
     <name>/           # all tool-specific code for backend <name>
   metrics/

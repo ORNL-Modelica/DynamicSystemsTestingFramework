@@ -1,6 +1,8 @@
-# Evaluation Report: ModelicaTesting
+# Evaluation Report: ModelicaTesting (now DSTF)
 
 ## Executive Summary
+
+> Note: This evaluation was written when the tool was named ModelicaTesting. It has since been renamed to **Dynamic Systems Testing Framework (DSTF)** (see D81). The body below is preserved as-written for historical accuracy.
 
 ModelicaTesting is a **Dymola-native, interactive regression harness for Modelica libraries** — roughly 7,900 LoC Python with a 2,400-LoC test suite. It is substantially more sophisticated than a prototype: persistent Dymola workers with per-test timeout watchdogs, a custom memmap MAT4 reader that beats `scipy.io.loadmat` by ~400× on large result files, piecewise event-boundary NRMSE, a tolerance-tube mode with time-varying control points, a live auto-refreshing dashboard, and an interactive Plotly report with drag-and-drop tube editing and live tolerance overrides exportable back to `test_spec.json`. The most direct overlap is **LBNL's BuildingsPy `regressiontest.Tester`**, not FMPy or MoPyRegtest — the target niche is "native Modelica libraries tested via Dymola," not FMU workflows. The tool's biggest liabilities are that it is **single-backend (Dymola only)**, has **no FMU or cross-simulator story**, and is **not packaged or distributed** beyond source. Verdict: **B — continue**, but scope decisions and a published backend story (OpenModelica or explicit "Dymola-only forever") are required before v0.1.
 
@@ -88,7 +90,7 @@ What already exists that's relevant:
 
 **Testability** — 2,400 LoC of pytest covering comparator (955 lines — the bulk), storage round-trips, simulator mocks, config resolution, discovery, CLI, with a `@pytest.mark.dymola` marker for Dymola-dependent tests. Real Dymola artifacts (`dsres.mat`, `dslog.txt`) are checked into `tests/fixtures/` — lets the MAT4 reader and log parser be tested without Dymola. This is appropriate and non-trivial.
 
-**Packaging** — `pyproject.toml` with hatchling, console script `modelica-testing = modelica_testing.cli:main_entry`, `uv tool install modelica-testing` instructions. **But: not on PyPI, not tagged, version `0.1.0` with no releases.** The README assumes `uv run`; a PyPI release would dramatically lower adoption friction.
+**Packaging** — `pyproject.toml` with hatchling, console script `dstf = dstf.cli:main_entry`, `uv tool install dstf` instructions. **But: not on PyPI, not tagged, version `0.1.0` with no releases.** The README assumes `uv run`; a PyPI release would dramatically lower adoption friction.
 
 **Performance** — the MAT4 memmap reader is the standout (D18). Parallelism via persistent workers + queue-dispatched batches (D35, D41). HTML reports get scattergl/LTTB items on the ideas list (#15-16) for >10k-point traces — currently all-SVG, will struggle at scale. Plotly via CDN means reports need internet to render.
 
@@ -113,7 +115,7 @@ What already exists that's relevant:
 ```
 P0 (Blocking — fix before any external use):
 
-  [ ] Ship a PyPI release (v0.1.0). `uv tool install modelica-testing` is the advertised install path;
+  [ ] Ship a PyPI release (v0.1.0). `uv tool install dstf` is the advertised install path;
       today it only works from a local checkout. Without PyPI, "continue development" has no users.
   [ ] Write an explicit scope statement: "Dymola-only in v0.x; OpenModelica under consideration for
       v0.y" OR commit to an OM backend for v0.2. The tool's simulator registry implies multi-backend

@@ -80,7 +80,7 @@ jobs:
         run: uv run pytest -q
 
       - name: FMPy end-to-end
-        run: uv run modelica-testing --config examples/fmu/testing.json run
+        run: uv run dstf --config examples/fmu/testing.json run
 
       - name: Upload report on failure
         if: failure()

@@ -155,7 +155,7 @@ Dominant-frequency editor (D75+D76):
 
 ### D80 — Python-driven tests (this session)
 
-* New backend `PythonRunner` (`src/modelica_testing/simulators/python/`)
+* New backend `PythonRunner` (`src/dstf/simulators/python/`)
   mirroring the Julia D77 pattern: framework-shipped `run_test.py`
   driver loads the user's `.py` file via `importlib.util`, calls
   `simulate(stop_time, tolerance) -> dict`, writes a JSON result.
@@ -194,9 +194,9 @@ uv run pytest -q                                              # expect 749-752 p
 export PATH="$HOME/.juliaup/bin:$PATH" && uv run pytest -q    # with Julia: 752 + 1 skipped
 
 # Smoke tests (each should produce PASS):
-uv run modelica-testing --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run
-uv run modelica-testing --config examples/julia/JuliaMtkTestingLib/Resources/ReferenceResults/testing.json run
-uv run modelica-testing --config examples/fmu/testing.json run   # requires reference-fmus-binaries/
+uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run
+uv run dstf --config examples/julia/JuliaMtkTestingLib/Resources/ReferenceResults/testing.json run
+uv run dstf --config examples/fmu/testing.json run   # requires reference-fmus-binaries/
 ```
 
 ---
@@ -238,7 +238,8 @@ uv run modelica-testing --config examples/fmu/testing.json run   # requires refe
 
 * **Tool rename** — `"ModelicaTesting"` → neutral name. Three
   Modelica-adjacent backends + one Julia backend = the name is
-  misleading now.
+  misleading now. (Resolved in D81: now DSTF / Dynamic Systems Testing
+  Framework.)
 * **#53 `check-openmodelica` / `check-julia`** CLI subcommands.
 * **#54 OM FMU export** via `buildModelFMU` — pairs with MTK FMU
   export for symmetric cross-backend chains.
@@ -255,7 +256,7 @@ uv run modelica-testing --config examples/fmu/testing.json run   # requires refe
 
 ## Starter prompt for the next session
 
-> Resuming ModelicaTesting at commit `9cd5468` on `main`. This session
+> Resuming DSTF (then ModelicaTesting) at commit `9cd5468` on `main`. This session
 > was a 9-phase marathon (D71 through D79) adding Julia/MTK as the
 > fourth simulator backend, building `JuliaMtkTestingLib` as a second
 > test-fixture library, refactoring the reporter-as-IDE to feature

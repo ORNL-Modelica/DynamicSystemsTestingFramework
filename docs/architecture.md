@@ -64,7 +64,7 @@ ModelicaTesting/
 ## Package Layout
 
 ```
-src/modelica_testing/
+src/dstf/
 ├── cli.py                    # argparse CLI: discover, run, compare, export, manifest (cleanup/dump), add
 ├── config.py                 # Config dataclass, path resolution, testing.json loading
 ├── discovery/
@@ -246,7 +246,7 @@ Subsumes three distinct workflows in one schema:
 * **Cross-simulator / cross-backend verification** — multiple simulator
   baselines under different names; a metric compares them.
 
-See ``src/modelica_testing/storage/reference_store.py`` for the ``Baseline``
+See ``src/dstf/storage/reference_store.py`` for the ``Baseline``
 dataclass and adapter logic. Comparator / reporter support for consuming
 non-primary baselines is deferred to a later phase and driven by real use cases.
 

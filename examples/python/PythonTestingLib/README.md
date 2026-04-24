@@ -1,6 +1,6 @@
 # PythonTestingLib
 
-Example Python-source test library for the `modelica-testing` framework.
+Example Python-source test library for the `dstf` framework.
 
 ## Setup
 
@@ -16,7 +16,7 @@ uv pip install -e .
 ## Run
 
 ```bash
-uv run modelica-testing \
+uv run dstf \
     --config examples/python/PythonTestingLib/Resources/ReferenceResults/testing.json \
     run
 ```

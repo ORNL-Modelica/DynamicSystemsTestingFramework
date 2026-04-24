@@ -150,7 +150,7 @@
 - Three-panel layout per variable: trajectory (actual vs reference), absolute error, and NRMSE — the NRMSE panel shows a tolerance line that updates live
 - Error overlay dropdown on each variable plot: overlay signed error, absolute error, or NRMSE on the trajectory chart (right y-axis)
 - Live tolerance editing: global test tolerance input at the top recomputes all pass/fail; per-variable tolerance inputs in the variable table override the global value when modified (highlighted orange); summary stats and key cards update live
-- Export tolerance config panel (expanded by default): shows a JSON snippet that updates live as tolerances are edited; "Copy to Clipboard" and "Download JSON" buttons for saving the config; the downloaded JSON can be applied via `modelica-testing spec-update`
+- Export tolerance config panel (expanded by default): shows a JSON snippet that updates live as tolerances are edited; "Copy to Clipboard" and "Download JSON" buttons for saving the config; the downloaded JSON can be applied via `dstf spec-update`
 
 ## Anti-Patterns
 
@@ -183,7 +183,7 @@
 - Lenient timeout: the watchdog kills but then checks disk; a sim that completed just past the deadline gets credit rather than being wasted
 
 ### Persistent Dymola workers via Python interface
-- `simulators/dymola/interface_loader.py` auto-discovers the `dymola` archive (`.whl` for ≥2025, `.egg` for older) under platform install roots (`C:\Program Files\Dymola *\Modelica\Library\python_interface/`). Wheels are extracted once into a user cache dir; eggs are added to `sys.path` directly (zipimport). Override via `--dymola-interface` / `dymola_interface_path` / `DYMOLA_INTERFACE_PATH`. Diagnose with `modelica-testing check-dymola`
+- `simulators/dymola/interface_loader.py` auto-discovers the `dymola` archive (`.whl` for ≥2025, `.egg` for older) under platform install roots (`C:\Program Files\Dymola *\Modelica\Library\python_interface/`). Wheels are extracted once into a user cache dir; eggs are added to `sys.path` directly (zipimport). Override via `--dymola-interface` / `dymola_interface_path` / `DYMOLA_INTERFACE_PATH`. Diagnose with `dstf check-dymola`
 - `PersistentDymolaRunner` subclasses `DymolaRunner` and overrides only `run_tests`; inherits `read_result` and config extraction. Each worker is a `DymolaWorker` wrapping one `DymolaInterface` instance
 - Reliable per-worker PID tracking: pulled directly from `DymolaInterface._dymola_process.pid` (the internal `subprocess.Popen` handle), so we own the kill target without snapshot diffs
 - Parallel startup: monkey-patch Dymola's `dymola_interface_internal.dymola_lock` to a no-op (broad lock that holds for the whole `__init__` including `_check_dymola`'s ~7s ping wait), and add a narrow lock around `_find_available_port` so two workers can't pick the same random port. Without this patch, N workers serialize on Dymola's lock and startup is N×7s

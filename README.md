@@ -1,6 +1,6 @@
-# ModelicaTesting
+# Dynamic Systems Testing Framework (DSTF)
 
-Standalone regression testing for Modelica libraries. Discovers test models, runs simulations, compares results against stored references, and reports pass/fail.
+Formerly ModelicaTesting. Standalone regression testing for Modelica libraries (and more — DSTF now supports FMU, Julia/ModelingToolkit, and arbitrary-Python backends as well). Discovers test models, runs simulations, compares results against stored references, and reports pass/fail.
 
 Library-agnostic — works with any Modelica library. Tests can be defined in-model (via `UnitTests` components) or externally (via `test_spec.json`), or both.
 
@@ -12,40 +12,40 @@ Library-agnostic — works with any Modelica library. Tests can be defined in-mo
 
 ## Installation & Invocation
 
-The package ships a console script named `modelica-testing`.
+The package ships a console script named `dstf`.
 
 ```bash
 # End users: install as an isolated tool
-uv tool install modelica-testing     # then run plain: modelica-testing ...
+uv tool install dstf     # then run plain: dstf ...
 
 # Developers: editable install inside the project
 uv pip install -e ".[dev]"
-uv run modelica-testing ...          # canonical dev form
-python -m modelica_testing ...       # equivalent fallback
+uv run dstf ...          # canonical dev form
+python -m dstf ...                   # equivalent fallback
 ```
 
-All examples below use `uv run modelica-testing`. Drop the `uv run` prefix if you installed via `uv tool install` / `pipx`.
+All examples below use `uv run dstf`. Drop the `uv run` prefix if you installed via `uv tool install` / `pipx`.
 
 ## Quick Start
 
 ```bash
 # Discover tests in a library
-uv run modelica-testing --package-path /path/to/MyLibrary/MyLib discover
+uv run dstf --package-path /path/to/MyLibrary/MyLib discover
 
 # Run tests and compare against stored references
-uv run modelica-testing --package-path /path/to/MyLibrary/MyLib run
+uv run dstf --package-path /path/to/MyLibrary/MyLib run
 
 # Run with explicit reference location
-uv run modelica-testing \
+uv run dstf \
   --package-path /path/to/MyLibrary/MyLib \
   --reference-root /path/to/my-refs \
   run
 
 # Accept results as new baselines
-uv run modelica-testing --package-path /path/to/MyLibrary/MyLib run --accept
+uv run dstf --package-path /path/to/MyLibrary/MyLib run --accept
 
 # Run a subset
-uv run modelica-testing run --filter "*_Test" --package MyLib.Blocks
+uv run dstf run --filter "*_Test" --package MyLib.Blocks
 ```
 
 `--package-path` points at the directory containing `package.mo`. If omitted, the tool auto-detects from the current working directory.
@@ -110,7 +110,7 @@ Variable patterns:
 Point the tool at your spec file:
 
 ```bash
-uv run modelica-testing --test-spec test_spec.json discover
+uv run dstf --test-spec test_spec.json discover
 ```
 
 Or reference it from `testing.json`:
@@ -180,7 +180,7 @@ The `simulators` map supports multiple versions and platforms. The tool picks th
 ### CLI flags override config
 
 ```bash
-uv run modelica-testing run \
+uv run dstf run \
   --package-path /path/to/MyLib \
   --reference-root /path/to/my-refs \
   --simulator "Dymola 2024x" \
@@ -192,42 +192,42 @@ uv run modelica-testing run \
 ### discover — Find tests
 
 ```bash
-uv run modelica-testing discover
-uv run modelica-testing discover --filter "MyLib.Fluid.*"
-uv run modelica-testing discover --package MyLib.Fluid
+uv run dstf discover
+uv run dstf discover --filter "MyLib.Fluid.*"
+uv run dstf discover --package MyLib.Fluid
 ```
 
 ### run — Simulate and compare
 
 ```bash
 # Run and compare against stored references
-uv run modelica-testing run
+uv run dstf run
 
 # Accept results as new baselines
-uv run modelica-testing run --accept
+uv run dstf run --accept
 
 # Parallel with timeout
-uv run modelica-testing run --parallel 4 --timeout 300
+uv run dstf run --parallel 4 --timeout 300
 
 # Compare only final values
-uv run modelica-testing run --final-only --tolerance 1e-3
+uv run dstf run --final-only --tolerance 1e-3
 
 # Show Dymola GUI for debugging
-uv run modelica-testing run --show-ide --filter "MyLib.SomeTest"
+uv run dstf run --show-ide --filter "MyLib.SomeTest"
 ```
 
 ### compare — Compare without re-running
 
 ```bash
-uv run modelica-testing compare
+uv run dstf compare
 ```
 
 ### Report formats
 
 ```bash
-uv run modelica-testing run --report-format console  # Default
-uv run modelica-testing run --report-format junit    # JUnit XML for CI
-uv run modelica-testing run --report-format html     # HTML report
+uv run dstf run --report-format console  # Default
+uv run dstf run --report-format junit    # JUnit XML for CI
+uv run dstf run --report-format html     # HTML report
 ```
 
 ### manifest — Manage test IDs
@@ -236,36 +236,36 @@ Tests are assigned stable numeric IDs stored in `test_manifest.json`. IDs are ne
 
 ```bash
 # Show all registered tests
-uv run modelica-testing manifest show
+uv run dstf manifest show
 
 # Rebuild manifest from discovered tests
-uv run modelica-testing manifest rebuild
+uv run dstf manifest rebuild
 
 # Remove reference files for obsolete tests
-uv run modelica-testing manifest cleanup
+uv run dstf manifest cleanup
 ```
 
 ### export — Export reference data
 
 ```bash
-uv run modelica-testing export --format json
-uv run modelica-testing export --format csv
+uv run dstf export --format json
+uv run dstf export --format csv
 ```
 
 ### convert — Change reference file format
 
 ```bash
 # Old abbreviated filenames -> numeric IDs + manifest
-uv run modelica-testing convert to-manifest
+uv run dstf convert to-manifest
 
 # Numeric IDs -> human-readable filenames
-uv run modelica-testing convert from-manifest
+uv run dstf convert from-manifest
 ```
 
 ### migrate — Import from buildingspy
 
 ```bash
-uv run modelica-testing migrate /path/to/old/ReferenceResults
+uv run dstf migrate /path/to/old/ReferenceResults
 ```
 
 ## Reference Results
@@ -341,7 +341,7 @@ Mirrors the `AbsRelRMS.mo` logic: absolute and relative errors with machine-epsi
 
 ```yaml
 - run: |
-    uv run modelica-testing \
+    uv run dstf \
       --package-path ./MyLibrary \
       --reference-root ./references \
       run --report-format junit

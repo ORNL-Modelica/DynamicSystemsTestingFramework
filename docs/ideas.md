@@ -88,7 +88,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   - Drag-to-edit range handles (6.1.4 stretch).
 
 - **D. External-distribution blocker** (technical scope small; blocked on a name):
-  - **Tool rename** — `"ModelicaTesting"` → neutral name. Touches package, CLI prog, HTML titles, `pyproject.toml`, all imports. More justified now: three backends, no Modelica coupling in the core pipeline.
+  - **Tool rename** — `"ModelicaTesting"` → neutral name. Touches package, CLI prog, HTML titles, `pyproject.toml`, all imports. More justified now: three backends, no Modelica coupling in the core pipeline. (Resolved in D81: now DSTF.)
 
 - **E. New leaves + foundational** (additive, slot in anytime):
   - **Phase 9 dataset types** unlock #23 Fréchet, #24 spectral coherence, #26 ISO 18571, #25 x-tolerance/pyfunnel.
@@ -116,7 +116,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - Find candidate test models by scanning for classes that extend a specific base (e.g., `extends Modelica.Icons.Example` or a custom test icon)
 - Alternatively, discover all models within a specific package/folder (e.g., everything under `MyLib.Examples.*`)
 - Complements UnitTests and test_spec: UnitTests requires in-model instrumentation, test_spec requires manual enumeration, extends-based discovery is automatic
-- Could be a CLI command like `modelica-testing find-tests --extends Modelica.Icons.Example --package MyLib.Fluid`
+- Could be a CLI command like `dstf find-tests --extends Modelica.Icons.Example --package MyLib.Fluid`
 - **Interactive selection mode**: present discovered candidates in a checklist, user selects which to add to `test_spec.json` — avoids manually writing JSON for dozens of models
 - Could show which candidates already have UnitTests or test_spec entries (skip those)
 - Variable selection: offer `["*"]` (track all), `[]` (simulate only), or prompt for specific patterns per model
@@ -213,7 +213,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **Simulation cost outliers**: rank by CPUtime, identify models where cost is disproportionate to complexity (e.g., simple model but high CPU)
 - **Trajectory anomalies**: detect variables with extreme dynamic range (values spanning many orders of magnitude), sudden jumps to +/- infinity and back, or values that collapse to zero mid-simulation — often indicates numerical issues or missing limiters
 - **Trend analysis**: compare statistics across reference updates (date_added vs last_updated) to detect regressions — did a model get slower, gain events, or grow more nonlinear systems over time?
-- Could be a CLI command like `modelica-testing analyze` or `modelica-testing health` that produces a summary table sorted by severity
+- Could be a CLI command like `dstf analyze` or `dstf health` that produces a summary table sorted by severity
 - Output as console table, CSV for spreadsheet analysis, or HTML dashboard
 - Useful for library maintainers to prioritize optimization work across hundreds of models
 
@@ -382,7 +382,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 
 - Add checkboxes next to each test in the index page for multi-select
 - Action buttons: "Rerun selected", "Accept selected", "Mark obsolete", "Disable"
-- Output: generate a ready-to-paste CLI command (e.g., `modelica-testing run --filter Model1,Model2,Model3`) or a JSON payload
+- Output: generate a ready-to-paste CLI command (e.g., `dstf run --filter Model1,Model2,Model3`) or a JSON payload
 - Lighter than the full server approach (#29) — purely client-side JS that builds command strings
 - Could also generate a filter file compatible with `--filter @tests.txt` (#35)
 - "Mark obsolete/disable" would need a status field in test_spec or reference JSON — design this carefully to avoid scope creep
@@ -450,8 +450,8 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 ## Quick-save selected results to reference (#42)
 
 - **Motivation**: Current accept workflow requires either `-i` (one-at-a-time review) or `--accept` (all at once). Neither is ideal when the user has already reviewed the HTML report and knows which subset of results to accept. Forcing a resim via `run --filter X --accept` is wasteful when the results are already on disk from the previous run.
-- **Proposed CLI**: `modelica-testing accept --filter X` — reads `work_dir` artefacts and writes to reference, no simulation. Mirrors the `run --filter` UX exactly. Accepts `@file` and glob syntax.
-- **HTML report**: add a "Copy accept command" button next to "Copy rerun command" on the index page. Uses the same row-selection UI. Generated command shape: `modelica-testing [--config ...] accept --filter "Model1,Model2"` (or `@selected.txt` for >3).
+- **Proposed CLI**: `dstf accept --filter X` — reads `work_dir` artefacts and writes to reference, no simulation. Mirrors the `run --filter` UX exactly. Accepts `@file` and glob syntax.
+- **HTML report**: add a "Copy accept command" button next to "Copy rerun command" on the index page. Uses the same row-selection UI. Generated command shape: `dstf [--config ...] accept --filter "Model1,Model2"` (or `@selected.txt` for >3).
 - **Phase 1.7 interaction**: once named baselines land, `accept` needs a `--baseline <name>` flag (defaults to `primary`). Accepting against `experiment` would require the user to have supplied experiment data separately — probably out of scope for the HTML-button flow; CLI-only.
 - **Edge cases**: what if the work_dir is from a different filter-run than the one the user selected? Need to verify each selected test has actual results before writing. Silent skip vs. error is a UX call.
 

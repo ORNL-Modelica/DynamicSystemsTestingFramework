@@ -2,19 +2,19 @@
 
 ## Project Overview
 
-**ModelicaTesting** (working name — expected to be renamed once the multi-backend abstraction stabilizes) is a Python framework for regression and unit testing of time-dependent system behavior.
+**Dynamic Systems Testing Framework (DSTF)** — formerly **ModelicaTesting** — is a Python framework for regression and unit testing of time-dependent system behavior across simulated and pre-recorded trajectories.
 
 **Current state**: a multi-backend regression harness. Discovers tests by scanning `.mo`/`.jl` files and/or reading `test_spec.json`; simulates via **Dymola** (Python interface default, batch `.mos` fallback), **FMPy** (prebuilt FMUs), **OpenModelica** (OMPython persistent-worker default, `omc` batch fallback), **Julia/ModelingToolkit** (persistent `julia` worker), or **Python** (subprocess-per-test; any `simulate(stop_time, tolerance) -> dict` — scipy, pandas, CSV, HTTP, etc.); scores via a composable **MetricTree** (leaves: `nrmse` / `tube` / `final-only` / `range` / `event-timing` / `dominant-frequency`; combinators: `and` / `or` / `k-of-n` / `warn` / `weighted`; multi-baseline via `"against"`; time-windowed leaves via `"window"`). Reports via live dashboard + **interactive Plotly HTML** (Phase 6 reporter-as-IDE: per-leaf live scoring, structural tree editing, Shift+click/drag tube/range/peak editors, RFC 6902 JSON-Patch export round-tripped by `spec-update`) + JUnit XML. References partitioned under `<reference_root>/<Backend>/<os>/` with three baseline roles: **primary** (regression anchor, hard-fail), **soft_checks** (warn-wrapped cross-regression imports), **companions** (plot-only overlays, including cross-library).
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 reporter-as-IDE MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 reporter-as-IDE MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
 ```
 ModelicaTesting/
-├── src/modelica_testing/         # Python package (src layout)
+├── src/dstf/                     # Python package (src layout)
 │   ├── cli.py                    # CLI: run, compare, discover, manifest, spec-update,
 │   │                             #      companion, soft-check, import-baseline, migrate-baselines, export-schema
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect simulator
@@ -40,60 +40,60 @@ ModelicaTesting/
 
 ## Running the Tool
 
-The package ships a console script (`[project.scripts]` in `pyproject.toml`). The canonical dev invocation is `uv run modelica-testing ...`. `python -m modelica_testing ...` is supported as a fallback (both call `cli.main_entry`). End users install via `uv tool install modelica-testing` (or `pipx install`) and run plain `modelica-testing`.
+The package ships a console script (`[project.scripts]` in `pyproject.toml`). The canonical dev invocation is `uv run dstf ...`. `python -m dstf ...` is supported as a fallback (both call `cli.main_entry`). End users install via `uv tool install dstf` (or `pipx install`) and run plain `dstf`.
 
 ```bash
 # With testing.json containing source_path — single entry point
-uv run modelica-testing --config path/to/testing.json run
+uv run dstf --config path/to/testing.json run
 
 # Or with explicit flags
-uv run modelica-testing --source-path /path/to/MyLib --reference-root /path/to/refs run
+uv run dstf --source-path /path/to/MyLib --reference-root /path/to/refs run
 
 # Interactive review (accept/skip/plot per test)
-uv run modelica-testing --config testing.json run -i
-uv run modelica-testing --config testing.json run -i failed
+uv run dstf --config testing.json run -i
+uv run dstf --config testing.json run -i failed
 # Categories: failed, no-baseline, warnings, sim-failed, passed, all
 
 # Accept all results as new baselines
-uv run modelica-testing --config testing.json run --accept
+uv run dstf --config testing.json run --accept
 
 # Generate HTML report with per-test plots (interactive Plotly)
-uv run modelica-testing --config testing.json run --report ./reports
+uv run dstf --config testing.json run --report ./reports
 
 # Parallel run with small-batch queue dispatch
-uv run modelica-testing --config testing.json run --parallel 4 --batch-size 3
+uv run dstf --config testing.json run --parallel 4 --batch-size 3
 # Live progress: open work_dir/dashboard.html (auto-refreshes every 2s; URL printed on start)
 
 # Filter accepts: glob, comma-separated list, or @file (one pattern per line, # comments)
-uv run modelica-testing --config testing.json run --filter "Foo.A,Foo.B"
-uv run modelica-testing --config testing.json run --filter @rerun.txt
+uv run dstf --config testing.json run --filter "Foo.A,Foo.B"
+uv run dstf --config testing.json run --filter @rerun.txt
 
 # Incremental rerun + full merged report
-uv run modelica-testing --config testing.json run --filter @failed.txt --merge --report
-uv run modelica-testing --config testing.json run --rerun failed,sim-failed --report
+uv run dstf --config testing.json run --filter @failed.txt --merge --report
+uv run dstf --config testing.json run --rerun failed,sim-failed --report
 
 # Compare without re-running simulations (uses last results)
-uv run modelica-testing --config testing.json compare
+uv run dstf --config testing.json compare
 
 # Apply a JSON-Patch (or legacy tolerance dict) exported from the interactive report
-uv run modelica-testing --config testing.json spec-update spec_patch.json
+uv run dstf --config testing.json spec-update spec_patch.json
 
 # Baseline-role CLIs
-uv run modelica-testing --config testing.json companion add <model> <name> <path>
-uv run modelica-testing --config testing.json soft-check list <model>
-uv run modelica-testing --config testing.json import-baseline <model> <role> <name> <source>
+uv run dstf --config testing.json companion add <model> <name> <path>
+uv run dstf --config testing.json soft-check list <model>
+uv run dstf --config testing.json import-baseline <model> <role> <name> <source>
 
 # Manifest / schema
-uv run modelica-testing --config testing.json manifest dump
-uv run modelica-testing --config testing.json manifest cleanup --orphans [--apply]
-uv run modelica-testing --config testing.json export-schema --output schema.json
+uv run dstf --config testing.json manifest dump
+uv run dstf --config testing.json manifest cleanup --orphans [--apply]
+uv run dstf --config testing.json export-schema --output schema.json
 
 # Persistent workers are the DEFAULT for Dymola and OpenModelica and Julia.
 # Force legacy batched runner (.mos / omc -s / per-test julia subprocess)
-uv run modelica-testing --config testing.json run --batch --parallel 4 --report
+uv run dstf --config testing.json run --batch --parallel 4 --report
 
 # Diagnose Dymola Python interface discovery
-uv run modelica-testing check-dymola
+uv run dstf check-dymola
 ```
 
 ## Running Tests
