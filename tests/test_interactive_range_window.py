@@ -502,3 +502,135 @@ def test_range_yaxis_resets_after_bound_contract(tmp_path, playwright_browser):
         f"yaxis preserving the extended range from when max_value=5 was "
         f"a shape that pushed autorange."
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 6: cross-metric window-edit sweep (regression matrix)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("metric,initial_pass,after_narrow_pass", [
+    # (metric_name, pass_with_no_window, pass_with_narrow_window_at_pi/2)
+    # Each fixture is shaped so the full trace and the narrow window
+    # [1.47, 1.67] give DIFFERENT pass states (except final-only, where
+    # the point is that toggling the window does NOT flip a passing
+    # scorer — guards against false failures leaking in).
+    ("nrmse", False, True),      # full-range NRMSE big; in-window NRMSE = 0
+    ("final-only", True, True),  # final values agree; both pass
+    ("range", False, True),      # out-of-window violates; in-window ok
+    ("tube", False, True),       # tight tube fails full trace; ok in window
+])
+def test_window_edit_rescores_every_mode(
+    tmp_path, playwright_browser, metric, initial_pass, after_narrow_pass,
+):
+    """Matrix test: for each window-aware mode, toggling the window must
+    update the pass pill. Guards against a future contributor adding a
+    new metric that reads pre-computed CLI values instead of re-scoring
+    on the windowed arrays.
+
+    Event-timing and dominant-frequency are excluded: event-timing is
+    CLI-authoritative by design; dominant-frequency has dedicated
+    live-port tests from D75/D76.
+
+    Fixture shapes are piecewise (not pure sine) so each metric gets
+    clean pass/fail margins without sampling-grid float noise. The
+    plan's pure-sine fixtures land marginal tube-width values on the
+    same order as the offset (0.01 ≥ 0.01), which flips the narrow
+    tube pill on a strict > comparison; piecewise ref = 1 vs 2 gives
+    the scorer a clear 2× margin to decide on.
+    """
+    import numpy as np
+    ctx = _fixture_context()
+    # Rewire the primary leaf to the parameterized metric on variable 'h'.
+    leaf = ctx["tree_view"]["children"][0]
+    leaf["metric"] = metric
+    leaf["mode_effective"] = metric
+    leaf["variable"] = "h"
+    # Per-metric params. Override both `params` and `mode_values` —
+    # leafState initializes from mode_values merged over params, so if
+    # we only set params the default mode_values wins.
+    if metric == "nrmse":
+        p = {"tolerance": 0.02}
+    elif metric == "final-only":
+        p = {"tolerance": 0.02}
+    elif metric == "range":
+        p = {"min_value": -0.1, "max_value": 0.1}
+    else:  # tube
+        p = {"tube_rel": 0.005}
+    leaf["params"] = dict(p)
+    leaf["mode_values"] = dict(p)
+    # No window initially; applied via leafState mutation after load.
+    leaf["window"] = {}
+    leaf["window_values"] = {}
+
+    # Piecewise trajectories — the window [1.47, 1.67] covers indices
+    # 24/25/26 on linspace(0, 6.283, 100). "In-window" means x in that
+    # band; "out-of-window" means everywhere else. Each metric gets a
+    # fixture where the narrow window makes the decision flip cleanly,
+    # with a 2×+ margin to absorb any sampling-grid float noise.
+    t = np.linspace(0, 6.283, 100).tolist()
+    in_window = lambda x: 1.47 < x < 1.67
+    if metric == "nrmse":
+        # Ref = sin; act = ref in window, ref+0.3 outside. Full NRMSE
+        # ~0.15 > 0.02 (fail); windowed NRMSE = 0 (pass).
+        ref = [float(np.sin(x)) for x in t]
+        act = [r if in_window(x) else r + 0.3 for x, r in zip(t, ref)]
+    elif metric == "final-only":
+        # Ref = act = sin — symmetric match; final delta = 0 < 0.02
+        # both windowed and full. This param exists to guard against
+        # a regression that makes final-only FAIL under any window
+        # change (false negatives are as harmful as false positives).
+        ref = [float(np.sin(x)) for x in t]
+        act = ref[:]
+    elif metric == "range":
+        # Act = 0 in window, 1 outside. Bounds [-0.1, 0.1]:
+        # full trace has act=1 > 0.1 (fail); windowed act=0 ok (pass).
+        # Set ref = act so the trajectory is consistent (range doesn't
+        # consult ref for bounds, but overlays use it).
+        act = [0.0 if in_window(x) else 1.0 for x in t]
+        ref = act[:]
+    else:  # tube
+        # Ref = 2 in window, 1 outside. Act = ref + 0.008 everywhere.
+        # With tube_rel=0.005:
+        #   outside window: width = 0.005*1 = 0.005 < offset 0.008 → FAIL.
+        #   inside window:  width = 0.005*2 = 0.010 > offset 0.008 → PASS.
+        # 25% margin both ways — float-noise robust.
+        ref = [2.0 if in_window(x) else 1.0 for x in t]
+        act = [r + 0.008 for r in ref]
+    ctx["variables_by_name"]["h"]["trajectory"] = {
+        "index": 1, "name": "h",
+        "act_time": t, "act_values": act,
+        "ref_time": t, "ref_values": ref,
+    }
+    ctx["trajectories"] = [ctx["variables_by_name"][k]["trajectory"]
+                           for k in ctx["variables_by_name"]]
+
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    # Evaluate pass with no window, then apply the narrow window and
+    # re-score. Both scores must execute the JS-side scorer.
+    # Uses TREE_VIEW (script-scope global, not SPEC_TREE) and
+    # leafState (script-scope const, not window.leafState) per the
+    # actual JS module shape.
+    results = page.evaluate("""
+        () => {
+            const leaf = TREE_VIEW.children[0];
+            const initial = recomputePassStates(TREE_VIEW)[leaf.path];
+            leafState[leaf.path].window = {start: 1.47, end: 1.67};
+            const narrow = recomputePassStates(TREE_VIEW)[leaf.path];
+            return {initial, narrow};
+        }
+    """)
+    page.close()
+    assert results["initial"] is initial_pass, (
+        f"[{metric}] Full-trace pass expected={initial_pass}, "
+        f"got={results['initial']}. Scorer may not be reading params "
+        f"from the expected location."
+    )
+    assert results["narrow"] is after_narrow_pass, (
+        f"[{metric}] Narrow-window pass expected={after_narrow_pass}, "
+        f"got={results['narrow']}. Scorer is not respecting window — "
+        f"either _sliceLeafTrajectory isn't wired into this metric's "
+        f"scorer, or the scorer falls back to CLI value before "
+        f"consulting the helper."
+    )
