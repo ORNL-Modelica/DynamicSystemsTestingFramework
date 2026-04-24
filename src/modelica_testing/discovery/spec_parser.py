@@ -80,14 +80,16 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
         short_name = parts[-1]
 
         # Optional source-file field: path (relative to spec file) to a
-        # simulation source. Backend-specific:
-        #   "fmu"    → FMU binary for the FMPy backend.
-        #   "source" → .jl file for the Julia/MTK backend (D77).
+        # simulation source. Generic across non-Modelica backends:
+        #   "source" → the source file (.jl for Julia, .py for Python,
+        #              .fmu also accepted here for symmetry).
+        #   "fmu"    → legacy FMPy-specific alias (pre-D77); still
+        #              supported but "source" is preferred for new tests.
         # Modelica tests omit this and source_file stays empty (the .mo
         # lives in the package discovered via source_package).
         source_file = Path("")
         fmu_rel = entry.get("fmu")
-        julia_rel = entry.get("source")
+        source_rel = entry.get("source")
         if fmu_rel:
             fmu_path = (spec_path.parent / fmu_rel).resolve()
             if not fmu_path.exists():
@@ -95,14 +97,14 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
                     "Test '%s' references missing FMU: %s", model_id, fmu_path
                 )
             source_file = fmu_path
-        elif julia_rel:
-            julia_path = (spec_path.parent / julia_rel).resolve()
-            if not julia_path.exists():
+        elif source_rel:
+            source_path_resolved = (spec_path.parent / source_rel).resolve()
+            if not source_path_resolved.exists():
                 logger.warning(
                     "Test '%s' references missing source file: %s",
-                    model_id, julia_path,
+                    model_id, source_path_resolved,
                 )
-            source_file = julia_path
+            source_file = source_path_resolved
 
         test = TestModel(
             model_id=model_id,
