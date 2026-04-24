@@ -1,0 +1,81 @@
+{
+  "model_id": "PythonTestingLib.Examples.ConstantCsv",
+  "test_id": "0001",
+  "status": "active",
+  "date_added": "2026-04-24T13:09:57.548299+00:00",
+  "last_updated": "2026-04-24T13:09:57.548299+00:00",
+  "simulation": {
+    "stop_time": 5.0,
+    "tolerance": 1e-06,
+    "method": "Dassl",
+    "number_of_intervals": 20,
+    "output_interval": null
+  },
+  "comparison": {
+    "variable_overrides": {
+      "x": {
+        "mode": "range",
+        "min_value": 0.99,
+        "max_value": 1.01
+      }
+    }
+  },
+  "statistics": {
+    "simulation": {
+      "wall_time": 0.2495301170001767
+    }
+  },
+  "n_vars": 1,
+  "time": [
+    0.0,
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    1.75,
+    2.0,
+    2.25,
+    2.5,
+    2.75,
+    3.0,
+    3.25,
+    3.5,
+    3.75,
+    4.0,
+    4.25,
+    4.5,
+    4.75,
+    5.0
+  ],
+  "variables": [
+    {
+      "index": 1,
+      "name": "x",
+      "values": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    }
+  ]
+}
