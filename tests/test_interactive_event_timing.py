@@ -203,3 +203,117 @@ def test_event_timing_editor_delete_button_removes_row(
     assert remaining_time == 2.0, (
         "Delete removed the wrong row (or didn't update leafState)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: detect button + source dropdown + live match column
+# ---------------------------------------------------------------------------
+
+def test_event_timing_detect_populates_from_reference(tmp_path, playwright_browser):
+    """With source='ref' and the fixture's ref events at t=1.0 & t=2.0,
+    clicking Detect should populate the table with 2 rows at those times."""
+    ctx = _context_with_event_timing_leaf(declared_events=[])
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    # Source dropdown defaults to Reference. Click Detect.
+    page.locator(
+        '[data-path="/metrics/children/0"] .event-timing-editor '
+        'button.detect-events-btn'
+    ).first.click()
+    events = page.evaluate("""
+        () => leafState['/metrics/children/0'].params.events.map(e => Number(e.time))
+    """)
+    page.close()
+    assert events == [1.0, 2.0], f"Expected detected events [1.0, 2.0], got {events}"
+
+
+def test_event_timing_detect_source_actual_uses_act_time(
+    tmp_path, playwright_browser,
+):
+    """With source='act' and act_time holding different event times than
+    ref_time, Detect should pick up the actual-side values."""
+    ctx = _context_with_event_timing_leaf(declared_events=[])
+    # Override actual-side to have different events than reference.
+    traj = ctx["variables_by_name"]["h"]["trajectory"]
+    traj["act_time"] = [0.0, 0.5, 0.8, 0.8, 1.5, 1.7, 1.7, 2.5]
+    traj["act_values"] = [0.0] * len(traj["act_time"])
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    # Select Actual in the dropdown, then Detect.
+    page.locator(
+        '[data-path="/metrics/children/0"] .event-timing-editor '
+        'select.detect-source-select'
+    ).select_option('act')
+    page.locator(
+        '[data-path="/metrics/children/0"] .event-timing-editor '
+        'button.detect-events-btn'
+    ).first.click()
+    events = page.evaluate("""
+        () => leafState['/metrics/children/0'].params.events.map(e => Number(e.time))
+    """)
+    page.close()
+    assert events == [0.8, 1.7], f"Expected detected events [0.8, 1.7], got {events}"
+
+
+def test_event_timing_match_column_shows_delta_when_matched(
+    tmp_path, playwright_browser,
+):
+    """Declared event at t=1.0 with tolerance=0.05; actual has event at
+    t=1.02. Match column should show something containing 'matched' or
+    the delta 0.02."""
+    ctx = _context_with_event_timing_leaf(declared_events=[
+        {"time": 1.0, "tolerance": 0.05},
+    ])
+    traj = ctx["variables_by_name"]["h"]["trajectory"]
+    traj["act_time"] = [0.0, 0.5, 1.02, 1.02, 1.5, 2.0, 2.0, 2.5]
+    traj["act_values"] = [0.0] * len(traj["act_time"])
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    match_text = page.locator(
+        '[data-path="/metrics/children/0"] .event-timing-editor '
+        'tbody tr .match-cell'
+    ).first.inner_text()
+    page.close()
+    # Match cell should indicate matched + delta around 0.02.
+    assert "✓" in match_text or "matched" in match_text.lower(), (
+        f"Match cell should show matched indicator; got: {match_text!r}"
+    )
+
+
+def test_event_timing_match_column_shows_unmatched_when_out_of_tolerance(
+    tmp_path, playwright_browser,
+):
+    """Declared t=1.0 with tolerance=0.001; actual at t=1.5 (too far).
+    Match cell should show unmatched indicator."""
+    ctx = _context_with_event_timing_leaf(declared_events=[
+        {"time": 1.0, "tolerance": 0.001},
+    ])
+    traj = ctx["variables_by_name"]["h"]["trajectory"]
+    traj["act_time"] = [0.0, 0.5, 1.5, 1.5, 2.5]
+    traj["act_values"] = [0.0] * len(traj["act_time"])
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    match_text = page.locator(
+        '[data-path="/metrics/children/0"] .event-timing-editor '
+        'tbody tr .match-cell'
+    ).first.inner_text()
+    page.close()
+    assert "✕" in match_text or "unmatched" in match_text.lower(), (
+        f"Match cell should show unmatched indicator; got: {match_text!r}"
+    )

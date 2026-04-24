@@ -1627,6 +1627,50 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
     return Number.isFinite(v) && v > 0 ? v : 1e-3;
   }
 
+  function getDetectSource(leaf) {
+    const st = leafState[leaf.path] || {};
+    return st.event_detect_source === 'act' ? 'act' : 'ref';
+  }
+
+  function setDetectSource(leaf, src) {
+    const st = leafState[leaf.path] || (leafState[leaf.path] = {});
+    st.event_detect_source = src === 'act' ? 'act' : 'ref';
+  }
+
+  function getTrajectory(leaf) {
+    return (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+  }
+
+  // Evaluate live match status for each declared event against the
+  // ACTUAL signal's auto-detected events. Does NOT substitute for CLI
+  // pass/fail — this is live feedback only. Same pairing rule as the
+  // Python scorer: nearest unclaimed actual event within the declared
+  // tolerance wins.
+  function evaluateLiveMatches(leaf) {
+    const traj = getTrajectory(leaf);
+    const actEvents = _detectEvents(traj.act_time || []);
+    const evs = getEvents(leaf);
+    const globalTol = getGlobalTolerance(leaf);
+    const claimed = new Array(actEvents.length).fill(false);
+    return evs.map(ev => {
+      const target = Number(ev.time);
+      const tol = ev.tolerance != null ? Number(ev.tolerance) : globalTol;
+      let bestIdx = -1;
+      let bestD = Infinity;
+      for (let j = 0; j < actEvents.length; j++) {
+        if (claimed[j]) continue;
+        const d = Math.abs(actEvents[j] - target);
+        if (d <= tol && d < bestD) {
+          bestD = d;
+          bestIdx = j;
+        }
+      }
+      if (bestIdx < 0) return { matched: false, delta: null, at: null };
+      claimed[bestIdx] = true;
+      return { matched: true, delta: bestD, at: actEvents[bestIdx] };
+    });
+  }
+
   function sortEvents(leaf) {
     const evs = getEvents(leaf);
     evs.sort((a, b) => Number(a.time) - Number(b.time));
@@ -1657,6 +1701,7 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
   function renderTable(root, leaf, commit) {
     const evs = getEvents(leaf);
     const globalTol = getGlobalTolerance(leaf);
+    const matches = evaluateLiveMatches(leaf);
 
     root.innerHTML = '';
 
@@ -1668,6 +1713,7 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
       '<tr>'
       + '<th>Time (s)</th>'
       + '<th>Tolerance (s)</th>'
+      + '<th>Match (live)</th>'
       + '<th></th>'
       + '</tr>'
     );
@@ -1690,7 +1736,7 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
       });
       timeTd.appendChild(timeInput);
       tr.appendChild(timeTd);
-      // Tolerance input (placeholder shows the global fallback).
+      // Tolerance input.
       const tolTd = document.createElement('td');
       const tolInput = document.createElement('input');
       tolInput.type = 'number';
@@ -1705,10 +1751,26 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
           const n = Number(raw);
           if (Number.isFinite(n) && n > 0) ev.tolerance = n;
         }
+        refreshEditor(leaf, commit);
         commit();
       });
       tolTd.appendChild(tolInput);
       tr.appendChild(tolTd);
+      // Match column (live).
+      const matchTd = document.createElement('td');
+      matchTd.className = 'match-cell';
+      const m = matches[i];
+      if (m.matched) {
+        matchTd.innerHTML = (
+          '<span style="color:#2e7d32">✓ matched</span> '
+          + `@ t=${m.at.toPrecision(4)} (Δ=${m.delta.toPrecision(2)})`
+        );
+      } else {
+        matchTd.innerHTML = (
+          '<span style="color:#c62828">✕ unmatched</span>'
+        );
+      }
+      tr.appendChild(matchTd);
       // Delete button.
       const delTd = document.createElement('td');
       const delBtn = document.createElement('button');
@@ -1727,15 +1789,14 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
     table.appendChild(tbody);
     root.appendChild(table);
 
-    // Button row — Task 3 only has the add button. Detect button
-    // arrives in Task 4.
+    // Button row: add + (new) detect with source dropdown.
     const btnRow = document.createElement('div');
     btnRow.className = 'event-editor-buttons';
+
     const addBtn = document.createElement('button');
     addBtn.className = 'node-btn node-btn-add';
     addBtn.textContent = '+ add event';
     addBtn.addEventListener('click', () => {
-      // Seed new event time from the last + 0.5s, or 0 if empty.
       const seedTime = evs.length ? Number(evs[evs.length - 1].time) + 0.5 : 0;
       evs.push({ time: seedTime });
       sortEvents(leaf);
@@ -1743,6 +1804,54 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
       commit();
     });
     btnRow.appendChild(addBtn);
+
+    // Source dropdown — which signal to scan for auto-detected events.
+    const sourceLabel = document.createElement('label');
+    sourceLabel.className = 'editor-hint';
+    sourceLabel.style.marginLeft = '1em';
+    sourceLabel.textContent = 'Detect from: ';
+    sourceLabel.title = (
+      'Which signal to scan for duplicate-time samples when you click '
+      + 'Detect. Reference = pick up events from the saved baseline; '
+      + 'Actual = pick up events from this run (useful on a fresh test '
+      + 'with no baseline).'
+    );
+    const sourceSel = document.createElement('select');
+    sourceSel.className = 'detect-source-select';
+    for (const [val, txt] of [['ref', 'Reference'], ['act', 'Actual']]) {
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = txt;
+      if (getDetectSource(leaf) === val) opt.selected = true;
+      sourceSel.appendChild(opt);
+    }
+    sourceSel.addEventListener('change', () => {
+      setDetectSource(leaf, sourceSel.value);
+    });
+    sourceLabel.appendChild(sourceSel);
+    btnRow.appendChild(sourceLabel);
+
+    const detectBtn = document.createElement('button');
+    detectBtn.className = 'node-btn detect-events-btn';
+    detectBtn.textContent = '🔍 Detect events';
+    detectBtn.title = (
+      'Replace the declared-events list with duplicate-time samples '
+      + "auto-detected on the selected source signal. Uses Modelica's "
+      + 'convention: two consecutive samples at the same t flag a '
+      + 'solver event.'
+    );
+    detectBtn.addEventListener('click', () => {
+      const traj = getTrajectory(leaf);
+      const source = getDetectSource(leaf);
+      const times = source === 'act' ? (traj.act_time || []) : (traj.ref_time || []);
+      const detected = _detectEvents(times);
+      const globalTol = getGlobalTolerance(leaf);
+      const seed = detected.map(t => ({ time: Number(t), tolerance: globalTol }));
+      leafState[leaf.path].params.events = seed;
+      refreshEditor(leaf, commit);
+      commit();
+    });
+    btnRow.appendChild(detectBtn);
+
     root.appendChild(btnRow);
   }
 
