@@ -1,0 +1,12 @@
+{
+  "source_type": "python",
+  "source_path": "../..",
+  "library_name": "PythonTestingLib",
+  "test_spec": "./test_spec.json",
+  "reference_root": "./",
+  "simulators": {
+    "Python": ["python", "python3"]
+  },
+  "simulator": "Python",
+  "tolerance": 0.01
+}

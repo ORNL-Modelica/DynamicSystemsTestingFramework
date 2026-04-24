@@ -1,0 +1,31 @@
+{
+  "tests": [
+    {
+      "model": "PythonTestingLib.Examples.SimpleRamp",
+      "source": "../../Examples/SimpleRamp.py",
+      "variables": ["x"],
+      "simulation": {
+        "stop_time": 5.0,
+        "tolerance": 1e-6
+      }
+    },
+    {
+      "model": "PythonTestingLib.Examples.ConstantCsv",
+      "source": "../../Examples/ConstantCsv.py",
+      "variables": ["x"],
+      "simulation": {
+        "stop_time": 5.0,
+        "tolerance": 1e-6
+      },
+      "comparison": {
+        "variable_overrides": {
+          "x": {
+            "mode": "range",
+            "min_value": 0.99,
+            "max_value": 1.01
+          }
+        }
+      }
+    }
+  ]
+}
