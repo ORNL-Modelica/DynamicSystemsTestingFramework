@@ -272,14 +272,20 @@ def _compare_points(
     """Compare actual vs reference at declared time points.
 
     When ``points`` is None or empty, falls back to the legacy final-
-    value check (act[-1] vs ref[-1] with ``tolerance`` as absolute
-    delta). When ``points`` is a non-empty list, declared-points
-    handling lands in Task 3 of the points-mode plan; for now, this
-    branch raises NotImplementedError so downstream callers see a
-    clear error if they hit the unimplemented path.
+    value check (act[-1] vs ref[-1] with ``tolerance``). When ``points``
+    is a non-empty list, each entry is a checkpoint:
+
+      ``time`` — absolute time, or None for "trace's final time".
+      ``value`` — absolute target. If absent, target = ref(time).
+      ``tolerance`` — per-point y-tolerance (defaults to ``tolerance``).
+      ``tolerance_mode`` — "abs" (default) | "rel" (scale by |target|).
+      ``time_tolerance`` — x-tolerance for the box check (Task 4 of
+        the points-mode plan; defaults to 0 = strict-time).
+
+    Pass iff every scored point's delta is within its y-limit.
     """
     if not points:
-        # Implicit final-only — preserved behavior.
+        # Implicit final-only — legacy behavior.
         if len(ref_values) == 0 or len(act_values) == 0:
             return VariableComparison(
                 index=0, name="", passed=False,
@@ -305,8 +311,65 @@ def _compare_points(
             mode="points",
             diagnostics={"tolerance": tolerance, "delta": delta},
         )
-    raise NotImplementedError(
-        "Declared-points scoring lands in Task 3 of the points-mode plan."
+
+    # Declared-points path.
+    trace_end = (
+        float(ref_time[-1]) if len(ref_time)
+        else float(act_time[-1]) if len(act_time)
+        else 0.0
+    )
+    scored = 0
+    failed = 0
+    worst_delta = 0.0
+    worst_t = 0.0
+    for point in points:
+        t = point.get("time")
+        if t is None:
+            t = trace_end
+        else:
+            t = float(t)
+        # Resolve target.
+        explicit_value = point.get("value")
+        if explicit_value is not None:
+            target = float(explicit_value)
+        else:
+            if len(ref_time) == 0:
+                # Ref-relative point with no reference data is skipped.
+                # The ``is_baseline_free`` invariant should prevent us
+                # from getting here, but we guard anyway.
+                continue
+            target = float(np.interp(t, ref_time, ref_values))
+        # Resolve tolerance + mode.
+        per_tol = point.get("tolerance")
+        per_tol = float(per_tol) if per_tol is not None else float(tolerance)
+        mode = point.get("tolerance_mode", "abs")
+        y_limit = per_tol * abs(target) if mode == "rel" else per_tol
+        # Single-point evaluation (Task 4 will replace this with a box).
+        if len(act_time) == 0:
+            continue
+        act_at_t = float(np.interp(t, act_time, act_values))
+        delta = abs(act_at_t - target)
+        scored += 1
+        if delta > worst_delta:
+            worst_delta = delta
+            worst_t = t
+        if delta > y_limit:
+            failed += 1
+
+    passed = scored > 0 and failed == 0
+    return VariableComparison(
+        index=0, name="", passed=passed,
+        nrmse=worst_delta, rmse=worst_delta, signal_range=0.0,
+        max_abs_error=worst_delta, max_abs_error_time=worst_t,
+        reference_final=float(ref_values[-1]) if len(ref_values) else float("nan"),
+        actual_final=float(act_values[-1]) if len(act_values) else float("nan"),
+        mode="points",
+        diagnostics={
+            "scored_points": scored,
+            "failed_points": failed,
+            "worst_delta": worst_delta,
+            "worst_time": worst_t,
+        },
     )
 
 

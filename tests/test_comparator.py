@@ -1115,3 +1115,131 @@ class TestBaselineFreeNoRef:
         assert c.has_reference is False
         assert c.metric_tree is None
         assert c.error_message == "No reference baseline stored"
+
+
+class TestPointsDeclaredPath:
+    """Declared-points semantics: per-point target, tolerance, and mode."""
+
+    def _make_traj(self):
+        # Piecewise trajectory: ref(0)=0, ref(1)=1, ref(2)=2, ref(3)=3,
+        # ref(4)=4, ref(5)=5. Linear ramp y = t. Act has small offset
+        # around t=2 to test pass/fail at a specific point.
+        import numpy as np
+        ref_t = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+        ref_v = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+        act_t = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+        act_v = np.array([0.0, 1.001, 2.05, 3.001, 4.001, 5.001])
+        return ref_t, ref_v, act_t, act_v
+
+    def test_implicit_final_check_unchanged(self):
+        """Empty points list → behaves identically to legacy final-only."""
+        from dstf.comparison.comparator import _compare_points
+        ref_t, ref_v, act_t, act_v = self._make_traj()
+        result = _compare_points(ref_t, ref_v, act_t, act_v,
+                                 points=None, tolerance=0.01)
+        # act[-1] = 5.001, ref[-1] = 5.0, delta = 0.001 < 0.01 → PASS.
+        assert result.passed
+        assert result.diagnostics["delta"] == pytest.approx(0.001)
+
+    def test_single_ref_relative_point_passes(self):
+        from dstf.comparison.comparator import _compare_points
+        ref_t, ref_v, act_t, act_v = self._make_traj()
+        # Point at t=3: target = ref(3) = 3.0; act(3) = 3.001; delta = 0.001.
+        # Tolerance 0.01 → PASS.
+        result = _compare_points(ref_t, ref_v, act_t, act_v,
+                                 points=[{"time": 3.0}], tolerance=0.01)
+        assert result.passed
+        assert result.diagnostics["scored_points"] == 1
+        assert result.diagnostics["worst_delta"] == pytest.approx(0.001)
+
+    def test_single_ref_relative_point_fails(self):
+        """Point at t=2 hits the 0.05 act offset → exceeds 0.01 tolerance."""
+        from dstf.comparison.comparator import _compare_points
+        ref_t, ref_v, act_t, act_v = self._make_traj()
+        result = _compare_points(ref_t, ref_v, act_t, act_v,
+                                 points=[{"time": 2.0}], tolerance=0.01)
+        assert not result.passed
+        assert result.diagnostics["worst_delta"] == pytest.approx(0.05, abs=1e-9)
+
+    def test_explicit_value_point_baseline_free(self):
+        """Point with explicit ``value`` is baseline-free — passes any
+        ref. Use a synthetic empty ref array to prove the scorer never
+        reads it for absolute-value points.
+        """
+        import numpy as np
+        from dstf.comparison.comparator import _compare_points
+        # Empty ref arrays: an absolute-value point should still score.
+        ref_t = np.array([])
+        ref_v = np.array([])
+        act_t = np.array([0.0, 1.0, 2.0, 3.0])
+        act_v = np.array([0.0, 1.0, 2.0, 3.0])
+        result = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": 2.0, "value": 2.0, "tolerance": 0.01}],
+            tolerance=1.0,
+        )
+        assert result.passed
+        assert result.diagnostics["worst_delta"] == pytest.approx(0.0, abs=1e-9)
+
+    def test_per_point_tolerance_overrides_global(self):
+        """A wider per-point tolerance lets a point pass that the
+        global tolerance would fail."""
+        from dstf.comparison.comparator import _compare_points
+        ref_t, ref_v, act_t, act_v = self._make_traj()
+        # Point at t=2: delta=0.05. Global tolerance=0.01 (would fail);
+        # per-point tolerance=0.1 (passes).
+        result = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": 2.0, "tolerance": 0.1}],
+            tolerance=0.01,
+        )
+        assert result.passed
+
+    def test_relative_tolerance_mode(self):
+        """tolerance_mode='rel' scales tol by |target|."""
+        from dstf.comparison.comparator import _compare_points
+        ref_t, ref_v, act_t, act_v = self._make_traj()
+        # Point at t=4: target=ref(4)=4.0; act(4)=4.001; delta=0.001.
+        # rel-tolerance 0.001 → limit = 0.001 * 4 = 0.004 → PASS.
+        # rel-tolerance 0.0001 → limit = 0.0001 * 4 = 0.0004 → FAIL.
+        passing = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": 4.0, "tolerance": 0.001, "tolerance_mode": "rel"}],
+            tolerance=0.01,
+        )
+        failing = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": 4.0, "tolerance": 0.0001, "tolerance_mode": "rel"}],
+            tolerance=0.01,
+        )
+        assert passing.passed
+        assert not failing.passed
+
+    def test_null_time_resolves_to_trace_end(self):
+        """time: null sentinel = the trace's final time (act_time[-1]
+        when ref_time is empty, else ref_time[-1])."""
+        from dstf.comparison.comparator import _compare_points
+        ref_t, ref_v, act_t, act_v = self._make_traj()
+        # Point at time=null: target = ref(5) = 5.0; act(5) = 5.001; delta=0.001.
+        result = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": None, "tolerance": 0.01}],
+            tolerance=0.01,
+        )
+        assert result.passed
+        assert result.diagnostics["worst_delta"] == pytest.approx(0.001)
+
+    def test_multiple_points_all_must_match(self):
+        """A leaf with 3 points fails if any one fails."""
+        from dstf.comparison.comparator import _compare_points
+        ref_t, ref_v, act_t, act_v = self._make_traj()
+        # t=1 (delta=0.001 ✓), t=2 (delta=0.05 ✗), t=3 (delta=0.001 ✓).
+        # Tolerance 0.01 → overall FAIL.
+        result = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": 1.0}, {"time": 2.0}, {"time": 3.0}],
+            tolerance=0.01,
+        )
+        assert not result.passed
+        assert result.diagnostics["scored_points"] == 3
+        assert result.diagnostics["failed_points"] == 1
