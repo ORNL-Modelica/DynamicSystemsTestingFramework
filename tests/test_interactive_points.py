@@ -610,6 +610,66 @@ def test_points_box_relayout_corner_drag_resizes_symmetrically(
     assert float(pt["tolerance"]) == pytest.approx(1.0)
 
 
+def test_points_box_edge_drag_detected_when_plotly_emits_full_snapshot(
+    tmp_path, playwright_browser,
+):
+    """Plotly emits all four bounds in plotly_relayout(ing) events
+    even when only one edge actually moved — the unchanged edges fire
+    with their same values. Edge-vs-translation detection must look at
+    deltas from the canonical (pt.time + pt.time_tolerance) bounds,
+    NOT at which keys are present in evt. Without this, an edge drag
+    looks identical to a translation, the half-extent is preserved,
+    and the box snaps back to its original position with no change to
+    the table cells (the user-observed bug)."""
+    ctx = _context_with_points_leaf(
+        # Canonical box: cx=2.5, halfX=1.0, cy=2.5, halfY=0.5
+        # → bounds [1.5, 3.5] × [2.0, 3.0].
+        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
+                 "tolerance_mode": "abs", "time_tolerance": 1.0}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    if not _has_plotly(page):
+        page.close()
+        pytest.skip("Plotly CDN not reachable; relayout test skipped")
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    # Simulate Plotly's verbose payload: ALL four bounds are present
+    # in the event, but only x1 actually changed value (the user
+    # dragged the right edge from 3.5 to 4.0). x0/y0/y1 are at their
+    # canonical values, so deltas are 0.
+    page.evaluate("""
+        () => {
+            const idx = VARIABLE_INDEX['h'];
+            const el = document.getElementById(`plot-${idx}`);
+            const shapes = el.layout.shapes || [];
+            const boxIdx = shapes.findIndex(s =>
+                s.name && s.name.startsWith('points_box:'));
+            shapes[boxIdx].x0 = 1.5;
+            shapes[boxIdx].x1 = 4.0;
+            shapes[boxIdx].y0 = 2.0;
+            shapes[boxIdx].y1 = 3.0;
+            el.emit('plotly_relayout', {
+                [`shapes[${boxIdx}].x0`]: 1.5,
+                [`shapes[${boxIdx}].x1`]: 4.0,
+                [`shapes[${boxIdx}].y0`]: 2.0,
+                [`shapes[${boxIdx}].y1`]: 3.0,
+            });
+        }
+    """)
+    pt = page.evaluate(
+        "leafState['/metrics/children/0'].params.points[0]"
+    )
+    page.close()
+    # Right edge moved: dx0=0, dx1=0.5 → x1 was dragged →
+    # halfX = |4.0 - 2.5| = 1.5. y unchanged → halfY = 0.5 (canonical).
+    assert float(pt["time_tolerance"]) == pytest.approx(1.5)
+    assert float(pt["tolerance"]) == pytest.approx(0.5)
+
+
 def test_points_box_live_relayouting_event_also_triggers_resize(
     tmp_path, playwright_browser,
 ):

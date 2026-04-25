@@ -2187,15 +2187,24 @@ MODE_PLOT_EDITORS['points'] = (function() {
   // (Plotly skips it on rapid clicks / drag-cancel) and showed the box
   // lopsided during the drag.
   //
-  // Per-axis the dragged edge is detected from which keys fire in evt:
-  //   * both .x0 and .x1 fire with same delta → translation in x → keep
-  //     half-extent unchanged (snap-back behavior)
-  //   * only .x0 (or only .x1) fires           → edge resize → new
-  //     half-extent = |dragged_edge - center|
+  // Edge-vs-translation detection looks at DELTAS from the canonical
+  // previous bounds (derived from ``pt.time + pt.time_tolerance``),
+  // NOT at which keys are present in evt. Plotly emits all four bounds
+  // on every shape event regardless of which edge actually moved — so
+  // checking key presence falsely flagged every edge drag as a
+  // translation, which preserved the half-extent and snapped the box
+  // back to its original position.
+  //
+  // Per-axis:
+  //   * both deltas non-zero with same magnitude → translation → preserve
+  //     half-extent (snap-back: dragging the box body doesn't grow it)
+  //   * only one delta non-zero                  → that edge was dragged →
+  //     new half-extent = |dragged_edge - point_center|
+  //   * both zero                                → no change
   // Mirror the opposite edge via Plotly.relayout (recursion-guarded) so
   // the user sees the box grow/shrink symmetrically as they drag — the
-  // edge they're dragging stays exactly where their cursor is, the
-  // opposite edge moves in lock step. Same for the y-axis.
+  // edge they're dragging stays where their cursor is, the opposite
+  // edge moves in lock step.
   let _updatingBox = false;
   function applyBoxRelayout(leaf, plotEl, evt, commit, isFinal) {
     if (_updatingBox) return false;
@@ -2209,6 +2218,7 @@ MODE_PLOT_EDITORS['points'] = (function() {
     const points = getPoints(leaf);
     let mutated = false;
     const layoutUpdates = {};
+    const eps = 1e-9;
     for (const shapeIdx of updatedShapes) {
       const shape = plotEl.layout.shapes?.[shapeIdx];
       if (!shape || !shape.name) continue;
@@ -2218,25 +2228,60 @@ MODE_PLOT_EDITORS['points'] = (function() {
       const pt = points[ptIdx];
       if (!pt) continue;
       const { x: cx, y: cy } = _resolvedXY(leaf, pt);
-      // Which edges did this evt change?
-      const has_x0 = `shapes[${shapeIdx}].x0` in evt;
-      const has_x1 = `shapes[${shapeIdx}].x1` in evt;
-      const has_y0 = `shapes[${shapeIdx}].y0` in evt;
-      const has_y1 = `shapes[${shapeIdx}].y1` in evt;
-      // Per-axis: translation if both edges changed, edge-resize if only
-      // one. Default (no change) preserves current half-extent.
-      const curHalfX = pt.time_tolerance != null
+      const prevHalfX = pt.time_tolerance != null
         ? Number(pt.time_tolerance) : 0;
-      const curHalfY = _resolvedYLimit(leaf, pt);
-      let halfX, halfY;
-      if (has_x0 && has_x1) halfX = curHalfX;          // translation in x
-      else if (has_x0) halfX = Math.abs(Number(shape.x0) - cx);
-      else if (has_x1) halfX = Math.abs(Number(shape.x1) - cx);
-      else halfX = curHalfX;
-      if (has_y0 && has_y1) halfY = curHalfY;          // translation in y
-      else if (has_y0) halfY = Math.abs(Number(shape.y0) - cy);
-      else if (has_y1) halfY = Math.abs(Number(shape.y1) - cy);
-      else halfY = curHalfY;
+      const prevHalfY = _resolvedYLimit(leaf, pt);
+      // Canonical previous bounds — what the box looked like before
+      // the drag, derived from pt's authoritative state.
+      const prevX0 = cx - prevHalfX;
+      const prevX1 = cx + prevHalfX;
+      const prevY0 = cy - prevHalfY;
+      const prevY1 = cy + prevHalfY;
+      const newX0 = Number(shape.x0);
+      const newX1 = Number(shape.x1);
+      const newY0 = Number(shape.y0);
+      const newY1 = Number(shape.y1);
+      const dx0 = newX0 - prevX0;
+      const dx1 = newX1 - prevX1;
+      const dy0 = newY0 - prevY0;
+      const dy1 = newY1 - prevY1;
+      const x0Moved = Math.abs(dx0) > eps;
+      const x1Moved = Math.abs(dx1) > eps;
+      const y0Moved = Math.abs(dy0) > eps;
+      const y1Moved = Math.abs(dy1) > eps;
+      // x-axis classification
+      let halfX;
+      if (x0Moved && x1Moved && Math.abs(dx0 - dx1) < eps) {
+        halfX = prevHalfX;                 // translation
+      } else if (x0Moved && !x1Moved) {
+        halfX = Math.abs(newX0 - cx);      // left edge dragged
+      } else if (x1Moved && !x0Moved) {
+        halfX = Math.abs(newX1 - cx);      // right edge dragged
+      } else if (x0Moved && x1Moved) {
+        // Both edges moved by different amounts — pick the one that moved
+        // further as the dragged edge. Rare in practice (Plotly's edge
+        // drag only moves one edge); kept as a defensive fallback.
+        halfX = Math.abs(dx0) > Math.abs(dx1)
+          ? Math.abs(newX0 - cx)
+          : Math.abs(newX1 - cx);
+      } else {
+        halfX = prevHalfX;
+      }
+      // y-axis classification (symmetric)
+      let halfY;
+      if (y0Moved && y1Moved && Math.abs(dy0 - dy1) < eps) {
+        halfY = prevHalfY;
+      } else if (y0Moved && !y1Moved) {
+        halfY = Math.abs(newY0 - cy);
+      } else if (y1Moved && !y0Moved) {
+        halfY = Math.abs(newY1 - cy);
+      } else if (y0Moved && y1Moved) {
+        halfY = Math.abs(dy0) > Math.abs(dy1)
+          ? Math.abs(newY0 - cy)
+          : Math.abs(newY1 - cy);
+      } else {
+        halfY = prevHalfY;
+      }
       pt.time_tolerance = halfX;
       const mode = pt.tolerance_mode || 'abs';
       if (mode === 'rel') {
@@ -2246,19 +2291,18 @@ MODE_PLOT_EDITORS['points'] = (function() {
       }
       mutated = true;
       // Mirror — stage the symmetric bounds for a single Plotly.relayout.
-      const newX0 = cx - halfX;
-      const newX1 = cx + halfX;
-      const newY0 = cy - halfY;
-      const newY1 = cy + halfY;
-      const eps = 1e-9;
-      if (Math.abs(Number(shape.x0) - newX0) > eps)
-        layoutUpdates[`shapes[${shapeIdx}].x0`] = newX0;
-      if (Math.abs(Number(shape.x1) - newX1) > eps)
-        layoutUpdates[`shapes[${shapeIdx}].x1`] = newX1;
-      if (Math.abs(Number(shape.y0) - newY0) > eps)
-        layoutUpdates[`shapes[${shapeIdx}].y0`] = newY0;
-      if (Math.abs(Number(shape.y1) - newY1) > eps)
-        layoutUpdates[`shapes[${shapeIdx}].y1`] = newY1;
+      const mirrorX0 = cx - halfX;
+      const mirrorX1 = cx + halfX;
+      const mirrorY0 = cy - halfY;
+      const mirrorY1 = cy + halfY;
+      if (Math.abs(newX0 - mirrorX0) > eps)
+        layoutUpdates[`shapes[${shapeIdx}].x0`] = mirrorX0;
+      if (Math.abs(newX1 - mirrorX1) > eps)
+        layoutUpdates[`shapes[${shapeIdx}].x1`] = mirrorX1;
+      if (Math.abs(newY0 - mirrorY0) > eps)
+        layoutUpdates[`shapes[${shapeIdx}].y0`] = mirrorY0;
+      if (Math.abs(newY1 - mirrorY1) > eps)
+        layoutUpdates[`shapes[${shapeIdx}].y1`] = mirrorY1;
     }
     if (!mutated) return false;
     refreshEditor(leaf, commit);
