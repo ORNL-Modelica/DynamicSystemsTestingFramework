@@ -719,6 +719,154 @@ def test_points_box_live_relayouting_event_also_triggers_resize(
     assert float(pt["time_tolerance"]) == pytest.approx(1.5)
 
 
+def test_points_box_translation_with_floating_point_noise_preserves_tolerance(
+    tmp_path, playwright_browser,
+):
+    """Plotly's pixel-to-data conversion can produce per-edge deltas
+    that differ by tiny floating-point noise (~1e-7) on a translation.
+    A naive ``Math.abs(dx0 - dx1) < 1e-9`` check then misclassifies
+    the event as an edge drag, and the half-extent gets corrupted.
+    The size-based detection (was the box's WIDTH preserved?) is
+    robust to that noise."""
+    ctx = _context_with_points_leaf(
+        # Canonical: cx=2.5, halfX=1.0; box [1.5, 3.5] × [2.0, 3.0].
+        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
+                 "tolerance_mode": "abs", "time_tolerance": 1.0}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    if not _has_plotly(page):
+        page.close()
+        pytest.skip("Plotly CDN not reachable; relayout test skipped")
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    # Translation +0.5 in x with sub-microsecond noise on each edge —
+    # not a real drag pattern, but exercises the FP-robust detection.
+    # Also translate y by +0.5 with noise.
+    page.evaluate("""
+        () => {
+            const idx = VARIABLE_INDEX['h'];
+            const el = document.getElementById(`plot-${idx}`);
+            const shapes = el.layout.shapes || [];
+            const boxIdx = shapes.findIndex(s =>
+                s.name && s.name.startsWith('points_box:'));
+            shapes[boxIdx].x0 = 2.00000001;
+            shapes[boxIdx].x1 = 4.00000003;
+            shapes[boxIdx].y0 = 2.50000002;
+            shapes[boxIdx].y1 = 3.50000001;
+            el.emit('plotly_relayout', {
+                [`shapes[${boxIdx}].x0`]: 2.00000001,
+                [`shapes[${boxIdx}].x1`]: 4.00000003,
+                [`shapes[${boxIdx}].y0`]: 2.50000002,
+                [`shapes[${boxIdx}].y1`]: 3.50000001,
+            });
+        }
+    """)
+    pt = page.evaluate(
+        "leafState['/metrics/children/0'].params.points[0]"
+    )
+    page.close()
+    # Width and height unchanged (within noise tolerance) → translation
+    # → halfX and halfY preserved at canonical values.
+    assert float(pt["time_tolerance"]) == pytest.approx(1.0, abs=1e-5)
+    assert float(pt["tolerance"]) == pytest.approx(0.5, abs=1e-5)
+
+
+def test_points_mode_switch_abs_to_rel_preserves_visible_box_size(
+    tmp_path, playwright_browser,
+):
+    """Switching tolerance_mode from abs to rel must convert the
+    stored value so the visible box size stays the same. Otherwise
+    the abs value would be reinterpreted as a fraction of |target|,
+    making the box much smaller or larger (or vanishing entirely if
+    target=0). The conversion: rel_tol = abs_tol / |target|."""
+    ctx = _context_with_points_leaf(
+        # target = 2.5 (explicit). abs tolerance 0.5 → ±0.5 box.
+        # After switch, rel tolerance should be 0.5/2.5 = 0.2 → still ±0.5.
+        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
+                 "tolerance_mode": "abs"}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    page.locator(
+        '[data-path="/metrics/children/0"] .points-editor select'
+    ).first.select_option('rel')
+    pt = page.evaluate(
+        "leafState['/metrics/children/0'].params.points[0]"
+    )
+    page.close()
+    assert pt["tolerance_mode"] == "rel"
+    assert float(pt["tolerance"]) == pytest.approx(0.2)
+
+
+def test_points_mode_switch_rel_to_abs_preserves_visible_box_size(
+    tmp_path, playwright_browser,
+):
+    """Reverse direction: rel → abs converts via abs_tol = rel_tol *
+    |target|. Same goal — keep the visible box size constant when the
+    user toggles the mode."""
+    ctx = _context_with_points_leaf(
+        # target = 2.5. rel tolerance 0.2 → ±0.5 box.
+        # After switch to abs, value should be 0.2 * 2.5 = 0.5.
+        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.2,
+                 "tolerance_mode": "rel"}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    page.locator(
+        '[data-path="/metrics/children/0"] .points-editor select'
+    ).first.select_option('abs')
+    pt = page.evaluate(
+        "leafState['/metrics/children/0'].params.points[0]"
+    )
+    page.close()
+    assert pt["tolerance_mode"] == "abs"
+    assert float(pt["tolerance"]) == pytest.approx(0.5)
+
+
+def test_points_mode_switch_abs_to_rel_blocked_when_target_is_zero(
+    tmp_path, playwright_browser,
+):
+    """When target ≈ 0 (e.g., sin(0)=0 — which the user actually hit),
+    abs→rel conversion is undefined: rel_tol would be abs_tol/0. The
+    switch is rejected; mode stays abs and the value is unchanged."""
+    ctx = _context_with_points_leaf(
+        # target = 0 → conversion undefined.
+        points=[{"time": 0.0, "value": 0.0, "tolerance": 0.5,
+                 "tolerance_mode": "abs"}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    page.locator(
+        '[data-path="/metrics/children/0"] .points-editor select'
+    ).first.select_option('rel')
+    pt = page.evaluate(
+        "leafState['/metrics/children/0'].params.points[0]"
+    )
+    page.close()
+    # Mode reverted, tolerance untouched — box doesn't disappear.
+    assert pt["tolerance_mode"] == "abs"
+    assert float(pt["tolerance"]) == pytest.approx(0.5)
+
+
 def test_points_box_relayout_translation_snaps_back(
     tmp_path, playwright_browser,
 ):

@@ -2231,56 +2231,50 @@ MODE_PLOT_EDITORS['points'] = (function() {
       const prevHalfX = pt.time_tolerance != null
         ? Number(pt.time_tolerance) : 0;
       const prevHalfY = _resolvedYLimit(leaf, pt);
-      // Canonical previous bounds — what the box looked like before
-      // the drag, derived from pt's authoritative state.
-      const prevX0 = cx - prevHalfX;
-      const prevX1 = cx + prevHalfX;
-      const prevY0 = cy - prevHalfY;
-      const prevY1 = cy + prevHalfY;
+      const prevSizeX = 2 * prevHalfX;
+      const prevSizeY = 2 * prevHalfY;
       const newX0 = Number(shape.x0);
       const newX1 = Number(shape.x1);
       const newY0 = Number(shape.y0);
       const newY1 = Number(shape.y1);
-      const dx0 = newX0 - prevX0;
-      const dx1 = newX1 - prevX1;
-      const dy0 = newY0 - prevY0;
-      const dy1 = newY1 - prevY1;
-      const x0Moved = Math.abs(dx0) > eps;
-      const x1Moved = Math.abs(dx1) > eps;
-      const y0Moved = Math.abs(dy0) > eps;
-      const y1Moved = Math.abs(dy1) > eps;
-      // x-axis classification
+      const newSizeX = newX1 - newX0;
+      const newSizeY = newY1 - newY0;
+      // Per-axis: did the SIZE change? If size is unchanged but the
+      // box has translated (centers don't match), it's a pure
+      // translation → preserve half-extent. If size DID change, the
+      // user dragged an edge — half-extent comes from whichever edge
+      // moved further from canonical. The size-based check is robust
+      // to floating-point noise from Plotly's pixel-to-data
+      // conversion (per-edge delta comparison wasn't — Plotly's
+      // translation can produce dx0 ≠ dx1 by 1e-7 or so, which
+      // fooled the previous edge-delta comparison into thinking the
+      // user dragged an edge).
+      const sizeRelEps = Math.max(prevSizeX, 1) * 1e-6;
+      const sizeXChanged = Math.abs(newSizeX - prevSizeX) > sizeRelEps;
+      const sizeYChanged =
+        Math.abs(newSizeY - prevSizeY)
+        > Math.max(prevSizeY, 1) * 1e-6;
       let halfX;
-      if (x0Moved && x1Moved && Math.abs(dx0 - dx1) < eps) {
-        halfX = prevHalfX;                 // translation
-      } else if (x0Moved && !x1Moved) {
-        halfX = Math.abs(newX0 - cx);      // left edge dragged
-      } else if (x1Moved && !x0Moved) {
-        halfX = Math.abs(newX1 - cx);      // right edge dragged
-      } else if (x0Moved && x1Moved) {
-        // Both edges moved by different amounts — pick the one that moved
-        // further as the dragged edge. Rare in practice (Plotly's edge
-        // drag only moves one edge); kept as a defensive fallback.
-        halfX = Math.abs(dx0) > Math.abs(dx1)
+      if (!sizeXChanged) {
+        halfX = prevHalfX;       // translation in x (or no x change)
+      } else {
+        // Resize in x. Use whichever edge moved further from canonical
+        // as the user's "intent" — that's the dragged edge.
+        const dx0 = Math.abs(newX0 - (cx - prevHalfX));
+        const dx1 = Math.abs(newX1 - (cx + prevHalfX));
+        halfX = dx0 > dx1
           ? Math.abs(newX0 - cx)
           : Math.abs(newX1 - cx);
-      } else {
-        halfX = prevHalfX;
       }
-      // y-axis classification (symmetric)
       let halfY;
-      if (y0Moved && y1Moved && Math.abs(dy0 - dy1) < eps) {
+      if (!sizeYChanged) {
         halfY = prevHalfY;
-      } else if (y0Moved && !y1Moved) {
-        halfY = Math.abs(newY0 - cy);
-      } else if (y1Moved && !y0Moved) {
-        halfY = Math.abs(newY1 - cy);
-      } else if (y0Moved && y1Moved) {
-        halfY = Math.abs(dy0) > Math.abs(dy1)
+      } else {
+        const dy0 = Math.abs(newY0 - (cy - prevHalfY));
+        const dy1 = Math.abs(newY1 - (cy + prevHalfY));
+        halfY = dy0 > dy1
           ? Math.abs(newY0 - cy)
           : Math.abs(newY1 - cy);
-      } else {
-        halfY = prevHalfY;
       }
       pt.time_tolerance = halfX;
       const mode = pt.tolerance_mode || 'abs';
@@ -2472,7 +2466,38 @@ MODE_PLOT_EDITORS['points'] = (function() {
           modeSel.appendChild(opt);
         }
         modeSel.addEventListener('change', () => {
-          pt.tolerance_mode = modeSel.value;
+          // Convert the stored tolerance value when switching modes so
+          // the VISIBLE box size stays the same. abs stores the half-
+          // height directly in y-units; rel stores it as a fraction of
+          // |target|. Without conversion, switching abs→rel would
+          // reinterpret the abs value as a fraction (often making the
+          // box huge or — when target ≈ 0 — making it vanish, which is
+          // exactly the user-reported "box disappeared" bug at
+          // sin(0)=0). Protection for target≈0 in abs→rel: revert the
+          // mode change since the conversion is undefined; user can
+          // shift the point or edit value first.
+          const oldMode = pt.tolerance_mode || 'abs';
+          const newMode = modeSel.value;
+          if (oldMode !== newMode) {
+            const tolDef = getDefaultTolerance(leaf);
+            const oldTol = pt.tolerance != null
+              ? Number(pt.tolerance) : tolDef;
+            const { y } = _resolvedXY(leaf, pt);
+            const targetAbs = Math.abs(y);
+            if (oldMode === 'abs' && newMode === 'rel') {
+              if (targetAbs > 1e-12) {
+                pt.tolerance = oldTol / targetAbs;
+              } else {
+                // Can't convert — target is zero. Revert.
+                modeSel.value = 'abs';
+                refreshEditor(leaf, commit);
+                return;
+              }
+            } else if (oldMode === 'rel' && newMode === 'abs') {
+              pt.tolerance = oldTol * targetAbs;
+            }
+          }
+          pt.tolerance_mode = newMode;
           refreshEditor(leaf, commit);
           commit();
         });
