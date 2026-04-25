@@ -74,6 +74,23 @@
           }
         }
       }
+    },
+    {
+      "model": "ModelicaTestingLib.Examples.PointsCheckTest",
+      "comparison": {
+        "variable_overrides": {
+          "x": {
+            "mode": "points",
+            "points": [
+              {"time": 0.0, "tolerance": 0.001, "tolerance_mode": "abs"},
+              {"time": 1.5707963267948966, "value": 1.0, "tolerance": 0.05, "tolerance_mode": "rel"},
+              {"time": 3.141592653589793, "tolerance": 0.02, "tolerance_mode": "abs", "time_tolerance": 0.05},
+              {"time": 4.71238898038469, "value": -1.0, "tolerance": 0.05, "tolerance_mode": "rel"},
+              {"time": 10.0, "tolerance": 0.01, "tolerance_mode": "abs"}
+            ]
+          }
+        }
+      }
     }
   ]
 }
