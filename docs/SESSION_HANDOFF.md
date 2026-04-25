@@ -1,14 +1,15 @@
-# Session handoff — DSTF rename + reporter-as-IDE feature-complete
+# Session handoff — DSTF tube taxonomy + tech-debt sweep
 
 **Date**: 2026-04-25
-**Covers**: D80 through D85 (seven-arc session)
-**State at HEAD** (commit `a05b829`):
+**Covers**: D80 through D87 (nine-arc session)
+**State at HEAD** (commit `d494d7f`):
 - **837 tests passing + 0 skipped, 0 regressions**
 - **5 simulator backends**: Dymola, FMPy, OpenModelica, Julia/MTK, Python
-- **3 test libraries**: `ModelicaTestingLib` (11 tests), `JuliaMtkTestingLib` (8 tests), `PythonTestingLib` (3 tests) — points-mode parity test added everywhere
+- **3 test libraries**: `ModelicaTestingLib` (11 tests), `JuliaMtkTestingLib` (8 tests), `PythonTestingLib` (3 tests) — points-mode parity test in each
 - **All 6 comparison modes window-aware end-to-end in JS** (NRMSE, tube, points, range, event-timing CLI-authoritative, dominant-frequency)
-- **All declared-list modes have editor surfaces** (event-timing, dominant-frequency, points — table + add/delete + detect/snapshot)
-- **Points editor is feature-complete in the browser**: multi-slot mount, shift+click/drag/right-click parity with tube + dom-freq via `createPointPlotEditor`, native Plotly shape-drag for box resize with relayout-listener mirror, mode-switch tolerance conversion with near-zero protection, table updates live on every state change.
+- **All three declared-list editors share `createDeclaredItemsTable` scaffold** — event-timing, points, dominant-frequency. Mode-specific bits (column accessors, match algorithms, plot integration) stay per-IIFE; the helper handles slot mounting, table shell, +add / ✕, refresh lifecycle.
+- **Tube modes finalized at three names** — `band` (constant offset around ref), `rel` (fraction of |ref|), `abs` (literal y-bounds — was `absolute`). Hard-validated, no aliases, no fallbacks.
+- **Points editor is feature-complete in the browser**: multi-slot mount, shift+click/drag/right-click parity with tube + dom-freq via `createPointPlotEditor`, native Plotly shape-drag for box resize with relayout-listener mirror, mode-switch tolerance conversion with near-zero protection.
 
 **Naming**: As of D81, the tool is **Dynamic Systems Testing Framework (DSTF)**; CLI is `dstf`; Python import root is `dstf`. Historical plans/specs under `docs/superpowers/` and D1–D79 entries in `docs/decisions.md` retain the old `modelica-testing` / `final-only` names — that's by design (snapshots of past state).
 
@@ -16,7 +17,7 @@
 
 ## Session arc
 
-Six conceptually distinct arcs over one long session. Each is a multi-commit unit on `main`:
+Nine conceptually distinct arcs over one long session. Each is a multi-commit unit on `main`:
 
 | Arc | Range | Theme |
 |---|---|---|
@@ -24,11 +25,13 @@ Six conceptually distinct arcs over one long session. Each is a multi-commit uni
 | **D81** | `37e7056` → `78bd4da` (4 commits) | Full tool rename: `modelica_testing` → `dstf`, `--final-only`-style flag aliases swept too, brand throughout docs + memory + settings. Clean break, no back-compat alias. |
 | **Range fixes + cross-metric consistency** | `821b3c2` → `959a92d` (6 commits) | systematic-debugging surfaced 4 cross-cutting issues: range JS scorer ignored window (Bug 1), bound lines drew full-width (Bug 2), tube scorer had latent same-class bug, nrmse/final-only used CLI-cached values (silent no-op on window edits). Extracted `_sliceLeafTrajectory` helper, applied to every JS scorer + plot decorator. Bug 3 (Plotly autorange-stuck-after-shape-edit) characterized as non-reproducing via state-mutation path; left a regression test as guard. Cross-metric matrix locked in as parameterized regression. |
 | **D82** | `4647ee4` → `38ff4a3` (5 commits) | Event-timing declared-events editor. CLI gained `events: Optional[list[dict]]` field; declared list claims nearest auto-detected actual within per-event tolerance. JS editor: table + detect-from-{ref,actual} + live match column. Stays CLI-authoritative for pass/fail. |
-| **D83** | `bd626a9` (1 commit, run in background) | Baseline-free NO_REF short-circuit. `ComparisonMode.is_baseline_free()` overridable per mode; comparator skips NO_REF when every leaf scorer can run without ref. Surfaced + fixed two adjacent bugs: `resolve_mode` wasn't forwarding `events` to EventTimingConfig (D82 oversight) and `_compare_dominant_frequency` unconditionally required ref FFT. |
+| **D83** | `bd626a9` (1 commit) | Baseline-free NO_REF short-circuit. `ComparisonMode.is_baseline_free()` overridable per mode; comparator skips NO_REF when every leaf scorer can run without ref. Surfaced + fixed two adjacent bugs: `resolve_mode` wasn't forwarding `events` to EventTimingConfig (D82 oversight) and `_compare_dominant_frequency` unconditionally required ref FFT. |
 | **D84** | `e975aae` → `0b8d0b2` (9 commits) | Final-only → **points** mode rename + capability expansion. Per-point ref-relative or absolute targets, abs/rel y-tolerance modes, **x-axis tolerance (`time_tolerance`)** for solver-timing-drift cases. New JS editor with table, "📸 Snapshot from ref" button, zero-point fast-path placeholder. Plot: diamond marker + translucent tolerance box per point. |
-| **D85** | `5a02d9f` → `a05b829` (8 commits, 2026-04-25) | Range autorange fix (transparent-marker scatter trace per declared bound, so double-click reset includes the bound) + cross-library points parity tests + points editor polish. Editor polish: multi-slot mount via `querySelectorAll`, shift+click/drag/right-click via `createPointPlotEditor`, Plotly-native box resize wired through a `plotly_relayout` listener that re-derives `pt.time_tolerance` and `pt.tolerance` from new bounds and snaps back centered. Mode-switch tolerance conversion (abs↔rel) preserves visible box size; near-zero target protection rejects abs→rel switches that would produce > 1000% rel fractions. Closes ideas.md #61 (points draggable plot markers, full scope). |
+| **D85** | `5a02d9f` → `a05b829` (8 commits) | Range autorange fix (transparent-marker scatter trace per declared bound, so double-click reset includes the bound) + cross-library points parity tests + points editor polish. Editor polish: multi-slot mount via `querySelectorAll`, shift+click/drag/right-click via `createPointPlotEditor`, Plotly-native box resize wired through a `plotly_relayout` listener that re-derives `pt.time_tolerance` and `pt.tolerance` from new bounds and snaps back centered. Mode-switch tolerance conversion (abs↔rel) preserves visible box size; near-zero target protection rejects abs→rel switches that would produce > 1000% rel fractions. Closes ideas.md #61 (points draggable plot markers, full scope). |
+| **D86** | `ec3fa8f` (1 commit) | Tube-mode taxonomy clean-up. Three named modes — `band` (constant offset, was also called `abs`), `rel`, `abs` (literal y-bounds, was `absolute`). Removed legacy `"abs"→"band"` alias and the unset-mode + both-abs+rel max() fallback. Hard-validated at the comparator entry. Silent-flip risk for `"abs"` (band → literal y-bounds) handled by hard-raise on any unrecognized mode. Verified zero pre-rename `"abs"`/`"absolute"` usage in repo + TRANSFORM-UnitTests before shipping. 10 test call sites updated to declare explicit modes; `test_max_of_abs_and_rel` rewritten as `test_min_width_floors_rel_at_zero_crossing` using the modern `tube_min_width` API. |
+| **D87** | `12d9195` + `d494d7f` (2 commits) | Tech-debt sweep. Arc 1: dead code (-46 LOC across 4 files) — orphan `interpOnRef` / `updateSummary` / 4-file `SPEC_PATH` dangling pipeline / cli.py redundant `import sys`. Arc 2: extracted `createDeclaredItemsTable` helper (-108 LOC net) — three declared-list editors (event-timing, points, dom-freq) now share slot-mounting + table-shell + +add/✕ scaffolding via column-spec pattern. Honest re-estimate: handoff implied 600-1000 LOC; actual recovery ~108. Mode-specific bits genuinely diverge. Real value is uniformity for future declared-list modes. |
 
-Total: 44 commits.
+Total: 47 commits.
 
 Each arc has a corresponding plan + spec under `docs/superpowers/`:
 - `plans/2026-04-24-python-driven-tests.md` — D80
@@ -130,7 +133,7 @@ Worth carrying forward to future plans:
 ## Pre-session sanity
 
 ```bash
-git log --oneline -15                                         # confirms D80..D85 + bug-fix arcs
+git log --oneline -15                                         # confirms D80..D87
 uv run pytest -q                                              # expect 837 passed + 0 skipped, 0 failures
 export PATH="$HOME/.juliaup/bin:$PATH" && uv run pytest -q    # same on Julia-installed envs
 
@@ -140,6 +143,8 @@ uv run dstf --config examples/julia/JuliaMtkTestingLib/Resources/ReferenceResult
 uv run dstf --config examples/python/PythonTestingLib/Resources/ReferenceResults/testing.json run
 uv run dstf --config examples/fmu/testing.json run   # requires reference-fmus-binaries/
 ```
+
+**Working-tree noise** as of session end: ~33 files (LICENSE, docs/llm_responses, ref JSONs, fixture text) had pre-existing line-ending or whitespace deltas sitting unstaged from an earlier session. Same pattern as commit `174d19f` ("no message"). Not from D80–D87 work. Decide whether to commit / revert / investigate at session start.
 
 ---
 
@@ -154,15 +159,13 @@ User's explicit roadmap from start of session, with status at HEAD:
 | 3 | Event-timing HTML editor | ✓ D82 |
 | 4 | Final-only → point-based | ✓ D84 |
 | 5 | Baseline-free NO_REF short-circuit | ✓ D83 |
-| 6 | Code review / tech-debt review | **pending** |
+| 6 | Code review / tech-debt review | ✓ D86 + D87 |
 | 7 | New capabilities (experiment alignment, Dyad, Julia recognizer, FMU export matrix) | **pending** |
 | 8 | Docs cleanup throughout (user guides, technical manual) | **pending** |
 
 ### Next session — top-of-stack candidates
 
 **B-tier (recommended starts)**
-
-* **#6 Code review + tech-debt sweep** (the natural consolidation point after D80–D85 added substantial code surface; particularly attractive now that points editor is settled and the abstraction line between range / points / tube box editing is visible). Likely outputs: extract shared "declared-items table editor" between dom-frequency, event-timing, and points (overlap audit in D82 said 74% against the smaller editor; points adds another instance). Audit `interactive.js` line count (~2400 LOC, growing) and consider splitting into modules. Inspect for dead code (3 dead branches in `plot_comparison.py` were swept in D84 Task 9; there may be more). Optional sub-arc: disable global `edits.shapePosition`, reimplement range + points box drag through custom mousedown/move/up — would unlock true live mirror during the drag (currently snap-on-release per D85 limitation). ~1-3 days depending on appetite.
 
 * **#7 capabilities**: pick one to start with —
   - **Experiment-data alignment preprocessing** (ideas.md #57). Preprocessing `ComparisonMode` wrapper that does time-offset/amplitude-scale alignment before scoring. The `points` mode with `time_tolerance` already covers the discrete-checkpoint case; this would be the continuous-trajectory variant (pyfunnel-style). Needs a concrete user use case before building (D66 economy-of-tools guard). ~3-5 days.
@@ -176,7 +179,7 @@ User's explicit roadmap from start of session, with status at HEAD:
 
 * **Persistent-worker Python** (ideas.md #58). Mirrors Julia D77→D78. Pays off for suites with hundreds of Python tests. Defer until perf ceiling hits.
 * ~~**Points mode draggable markers** (ideas.md #61).~~ Done in D85.
-* **Shared declared-items editor extraction** (D82 follow-up; ideas.md #60). 74% overlap measured; D85 added points as the third instance, strengthening the case. Would shrink event-timing editor dramatically.
+* ~~**Shared declared-items editor extraction** (D82 follow-up; ideas.md #60).~~ Done in D87. Net -108 LOC; the helper is `createDeclaredItemsTable`. A 4th declared-list mode would now cost ~80-100 LOC of column specs.
 * **Live edge mirror for box-resize drag** (D85 follow-up). Requires disabling global `edits.shapePosition` and reimplementing range + points box drag as custom mousedown/move/up handlers. Snap-on-release UX is acceptable today; revisit if any user actually misses live mirror.
 * **#53 `check-openmodelica` / `check-julia` CLI subcommands**. Symmetric with `check-dymola`.
 * **#54 OM FMU export** via `buildModelFMU`.
@@ -188,28 +191,28 @@ User's explicit roadmap from start of session, with status at HEAD:
 
 ## Starter prompt for the next session
 
-> Resuming DSTF (Dynamic Systems Testing Framework) at commit `a05b829` on `main`. The previous session was a 7-arc marathon (D80 → D85) that:
-> - Added Python as a 5th backend with the architectural-proof CSV-loader test (`ConstantCsv`).
-> - Renamed the tool from ModelicaTesting to DSTF (D81).
-> - Fixed three range-metric bugs and locked in cross-metric window-edit consistency for every mode (extracted `_sliceLeafTrajectory` helper).
-> - Added the event-timing declared-events editor (D82) and the points-mode rename + capability expansion (D84) including x-axis tolerance.
-> - Added baseline-free NO_REF short-circuit (D83).
-> - Polished the points editor to feature-complete in the browser (D85): multi-slot mount, shift-modifier parity, native shape-drag for box resize via `plotly_relayout` listener, mode-switch tolerance conversion, near-zero protection. Plus range double-click autorange fix and cross-library points parity tests.
+> Resuming DSTF (Dynamic Systems Testing Framework) at commit `d494d7f` on `main`. The previous session was a 9-arc marathon (D80 → D87) that closed out the user's whole roadmap items #1-#6. Highlights:
+> - Added Python as a 5th backend with the architectural-proof CSV-loader test (D80).
+> - Renamed the tool from ModelicaTesting to DSTF (D81), no back-compat alias.
+> - Fixed three range-metric bugs and extracted `_sliceLeafTrajectory` for cross-metric window-edit consistency.
+> - Added event-timing declared-events editor (D82), points-mode rename + x-axis tolerance (D84), baseline-free NO_REF short-circuit (D83), points editor polish to feature-complete (D85).
+> - Tube-mode taxonomy clean-up (D86): three names — `band` (constant offset around ref), `rel` (fraction of |ref|), `abs` (literal y-bounds, was `absolute`). Hard-validated, no aliases, no fallbacks. `"abs"` flipped meaning, mitigated by hard-raise on unrecognized modes.
+> - Tech-debt sweep (D87): -46 LOC dead code (orphan JS functions, dangling SPEC_PATH pipeline, redundant import); extracted `createDeclaredItemsTable` shared scaffold across event-timing/points/dom-frequency editors (-108 LOC net on `interactive.js`).
 >
-> **State at HEAD**: 837 passing, 0 skipped, 0 regressions. 5 backends, 3 fixture libraries (each now has a points-mode example). Reporter-as-IDE is feature-complete and has been validated by real-browser testing across the points editor surface.
+> **State at HEAD**: 837 passing, 0 skipped, 0 regressions. 5 backends, 3 fixture libraries. Reporter-as-IDE is feature-complete; declared-list editors share a single column-spec scaffold. `interactive.js` is 4762 LOC.
 >
-> **Read first**: `docs/SESSION_HANDOFF.md` (this file), D80–D85 in `docs/decisions.md`, and the candidate next moves at the bottom of this file.
+> **Read first**: `docs/SESSION_HANDOFF.md` (this file), D80–D87 in `docs/decisions.md`, and the candidate next moves at the bottom of this file.
 >
 > **Default next move — pick one**:
 >
-> 1. **#6 Code review + tech-debt sweep** (~1-3 days). Natural consolidation after D80–D85 added substantial code surface. Likely outputs: extract shared declared-items editor (74% overlap measured, with points now the third instance), audit `interactive.js` line count (~2400 LOC), sweep for more dead branches. Optional sub-arc: disable Plotly's global `edits.shapePosition` and reimplement range + points box drag as custom handlers (would unlock live mirror during drag — D85's standing limitation).
+> 1. **#7 New capability — pick one**: experiment-data alignment preprocessing (~3-5 days, needs concrete use case; the continuous-trajectory complement to points-mode `time_tolerance`), MTK FMU export (~1 day), Dyad validation (~½ day), or Julia source recognizer (~1 day).
 >
-> 2. **#7 New capability — pick one**: experiment-data alignment preprocessing (~3-5 days, needs concrete use case), MTK FMU export (~1 day), Dyad validation (~½ day), or Julia source recognizer (~1 day). Funnel mode (#25) — pyfunnel-style continuous x+y tolerance — is also tracked here; the points-mode `time_tolerance` covers the discrete case but the continuous version is a separate ComparisonMode.
+> 2. **#8 Docs cleanup** (~1-2 days). README.md is substantially out of date — still describes only Dymola. Add a "first 5 minutes" walkthrough that uses one of each backend.
 >
-> 3. **#8 Docs cleanup** (~1-2 days). README.md is substantially out of date — still describes only Dymola. Add a "first 5 minutes" walkthrough.
->
-> **Smaller alternatives**: persistent-worker Python, shared declared-items editor extraction (D82 follow-up, now stronger after D85 added points as a 3rd instance), live edge mirror via custom drag handlers (D85 limitation).
+> **Smaller alternatives**: persistent-worker Python (mirrors Julia D77→D78 if perf ceiling hits), live edge mirror via custom drag handlers (D85 limitation), `check-openmodelica` / `check-julia` CLI subcommands (#53), OM FMU export via `buildModelFMU` (#54).
 >
 > **Dev env prereqs** (if venv was recreated): `uv pip install -e ".[dev,fmpy,om]"` + pytest-playwright + chromium. Julia: `cd examples/julia/JuliaMtkTestingLib && julia --project=. -e 'using Pkg; Pkg.instantiate()'`. Python scipy for SimpleRamp + PointsCheck examples. Watch venv drift (miniforge vs project .venv).
+>
+> **Working-tree noise as of session end**: ~33 files (LICENSE, llm_responses, ref JSONs, fixture text) had pre-existing line-ending or whitespace deltas unstaged from an earlier session — same pattern as commit `174d19f`. Decide whether to commit / revert / investigate before starting new work.
 >
 > **Out of scope unless explicitly adopted**: Phase 9 dataset types, ML-driven anything, mid-stream refactor of stable abstractions (ComparisonMode / SimulatorRunner / MetricTree).
