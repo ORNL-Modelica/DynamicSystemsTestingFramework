@@ -281,9 +281,11 @@ def test_default_points_window_edits_rescore_in_browser(tmp_path, playwright_bro
     it would PASS because it used CLI-precomputed leaf.max_abs_error.
     """
     ctx = _fixture_context()
-    # Rewire the nrmse leaf on 'h' to final-only for this test.
-    ctx["tree_view"]["children"][0]["metric"] = "final-only"
-    ctx["tree_view"]["children"][0]["mode_effective"] = "final-only"
+    # Rewire the nrmse leaf on 'h' to points (implicit-final mode) for
+    # this test — empty/null points list triggers the points scorer's
+    # final-value fallback, which is the behavior we want to exercise.
+    ctx["tree_view"]["children"][0]["metric"] = "points"
+    ctx["tree_view"]["children"][0]["mode_effective"] = "points"
     ctx["tree_view"]["children"][0]["params"] = {"tolerance": 0.05}
     ctx["tree_view"]["children"][0]["mode_values"] = {"tolerance": 0.05}
     ctx["tree_view"]["children"][0]["window"] = {"start": 0.0, "end": 1.0}
@@ -515,7 +517,7 @@ def test_range_yaxis_resets_after_bound_contract(tmp_path, playwright_browser):
     # the point is that toggling the window does NOT flip a passing
     # scorer — guards against false failures leaking in).
     ("nrmse", False, True),      # full-range NRMSE big; in-window NRMSE = 0
-    ("final-only", True, True),  # final values agree; both pass
+    ("points", True, True),      # final values agree; both pass
     ("range", False, True),      # out-of-window violates; in-window ok
     ("tube", False, True),       # tight tube fails full trace; ok in window
 ])
@@ -550,7 +552,7 @@ def test_window_edit_rescores_every_mode(
     # we only set params the default mode_values wins.
     if metric == "nrmse":
         p = {"tolerance": 0.02}
-    elif metric == "final-only":
+    elif metric == "points":
         p = {"tolerance": 0.02}
     elif metric == "range":
         p = {"min_value": -0.1, "max_value": 0.1}
@@ -574,11 +576,12 @@ def test_window_edit_rescores_every_mode(
         # ~0.15 > 0.02 (fail); windowed NRMSE = 0 (pass).
         ref = [float(np.sin(x)) for x in t]
         act = [r if in_window(x) else r + 0.3 for x, r in zip(t, ref)]
-    elif metric == "final-only":
+    elif metric == "points":
         # Ref = act = sin — symmetric match; final delta = 0 < 0.02
         # both windowed and full. This param exists to guard against
-        # a regression that makes final-only FAIL under any window
-        # change (false negatives are as harmful as false positives).
+        # a regression that makes points (implicit final-only) FAIL
+        # under any window change (false negatives are as harmful as
+        # false positives).
         ref = [float(np.sin(x)) for x in t]
         act = ref[:]
     elif metric == "range":

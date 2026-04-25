@@ -143,19 +143,58 @@ const MODE_SCORERS = {
     const nrmse = range > 0 ? rmse / range : rmse;
     return nrmse < tol;
   },
-  'final-only': (leaf) => {
+  'points': (leaf) => {
     const tol = _paramNumber(leaf, 'tolerance', leaf.tolerance_used);
     const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
     const { refTime, refValues, actTime, actValues } =
         _sliceLeafTrajectory(leaf, traj);
-    if (!refTime.length || !actTime.length) {
-      // No samples in window → no final value to compare. Match CLI's
-      // behavior (falls through to the cached max_abs_error).
-      return leaf.max_abs_error < tol;
+    const params = (leafState[leaf.path] || {}).params || {};
+    const points = Array.isArray(params.points) ? params.points : null;
+
+    // Implicit final-only path: empty / null points → check act[-1] vs
+    // ref[-1] with tolerance. Matches CLI's _compare_points fallback.
+    if (!points || points.length === 0) {
+      if (!refTime.length || !actTime.length) return !!leaf.passed;
+      const refFinal = refValues[refValues.length - 1];
+      const actFinal = actValues[actValues.length - 1];
+      return Math.abs(actFinal - refFinal) < tol;
     }
-    const refFinal = refValues[refValues.length - 1];
-    const actFinal = actValues[actValues.length - 1];
-    return Math.abs(actFinal - refFinal) < tol;
+
+    // Declared-points path. Same algorithm as _compare_points + box check.
+    if (!actTime.length) return !!leaf.passed;
+    const traceEnd = refTime.length ? refTime[refTime.length - 1]
+                   : actTime[actTime.length - 1];
+    let allMatched = true;
+    for (const point of points) {
+      let t = point.time;
+      if (t == null) t = traceEnd;
+      else t = Number(t);
+      // Resolve target.
+      let target;
+      if (point.value != null) {
+        target = Number(point.value);
+      } else if (refTime.length) {
+        target = _interpLinear(refTime, refValues, t);
+      } else {
+        // Ref-relative point with no ref data — skip.
+        continue;
+      }
+      // Resolve y-tolerance + mode.
+      const perTol = point.tolerance != null ? Number(point.tolerance) : tol;
+      const mode = point.tolerance_mode || 'abs';
+      const yLimit = mode === 'rel' ? perTol * Math.abs(target) : perTol;
+      // Box check.
+      const xTol = point.time_tolerance != null
+        ? Number(point.time_tolerance) : 0;
+      const tLo = Math.max(t - xTol, actTime[0]);
+      const tHi = Math.min(t + xTol, actTime[actTime.length - 1]);
+      if (tHi < tLo) continue;          // fully clipped
+      const delta = _minDeltaInBox(actTime, actValues, tLo, tHi, target);
+      if (delta > yLimit) {
+        allMatched = false;
+      }
+    }
+    return allMatched;
   },
   'range': (leaf) => {
     const p = (leafState[leaf.path] || {}).params || {};
@@ -291,6 +330,52 @@ function _interpLinear(xs, ys, x) {
     }
   }
   return ys[ys.length - 1];
+}
+
+function _minDeltaInBox(times, values, tLo, tHi, target) {
+  // Mirrors comparator._min_delta_in_box: evaluates every sample inside
+  // [tLo, tHi] plus the interpolated endpoints, AND scans adjacent pairs
+  // for sign-flips of (v - target) — a piecewise-linear curve that
+  // crosses target between two samples must register delta = 0 there
+  // (matches Python comparator.py:307-322). Returns +Infinity when the
+  // box is empty / outside the trajectory.
+  if (!times.length || tHi < tLo) return Infinity;
+  const n = times.length;
+  const t0 = times[0];
+  const tN = times[n - 1];
+  // Build ordered (t, v) candidate list: interpolated endpoints (if
+  // inside trajectory) + interior samples.
+  const candidates = [];
+  if (t0 <= tLo && tLo <= tN) {
+    candidates.push([tLo, _interpLinear(times, values, tLo)]);
+  }
+  for (let i = 0; i < n; i++) {
+    if (times[i] >= tLo && times[i] <= tHi) {
+      candidates.push([times[i], values[i]]);
+    }
+  }
+  if (t0 <= tHi && tHi <= tN) {
+    candidates.push([tHi, _interpLinear(times, values, tHi)]);
+  }
+  if (!candidates.length) return Infinity;
+  candidates.sort((a, b) => a[0] - b[0]);
+  let best = Infinity;
+  for (const [, v] of candidates) {
+    const d = Math.abs(v - target);
+    if (d < best) best = d;
+  }
+  // Zero-crossing scan on adjacent linear segments.
+  for (let i = 0; i < candidates.length - 1; i++) {
+    const d1 = candidates[i][1] - target;
+    const d2 = candidates[i + 1][1] - target;
+    if (d1 === 0 || d2 === 0) continue;  // endpoint already captured
+    if ((d1 > 0) !== (d2 > 0)) {
+      // Sign flip → curve passes through target → delta = 0 somewhere
+      // inside the segment.
+      return 0;
+    }
+  }
+  return best;
 }
 
 // Walk the tree, recompute pass at every node, return {path: bool}.
@@ -3247,7 +3332,7 @@ function closeRemoveConfirm() {
 }
 
 const VALID_METRICS = [
-  'nrmse', 'tube', 'final-only', 'range', 'event-timing', 'dominant-frequency',
+  'nrmse', 'tube', 'points', 'range', 'event-timing', 'dominant-frequency',
 ];
 
 function promptAddLeaf(combinatorNode, presetVariable) {
