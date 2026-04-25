@@ -554,16 +554,16 @@ def test_points_editor_shift_click_on_plot_adds_point(
     assert after == before + 1
 
 
-def test_points_box_relayout_resizes_symmetrically_around_point(
+def test_points_box_relayout_corner_drag_resizes_symmetrically(
     tmp_path, playwright_browser,
 ):
-    """Plotly's native shape-drag emits plotly_relayout with the new
-    box bounds. The points editor listens for these and re-derives
-    pt.time_tolerance + pt.tolerance from half the new bounds — the
-    point center stays fixed, so a re-render snaps the box back
-    centered on the point with the new size. This is the user-
-    requested behavior: 'I can resize the box, but it stays centered
-    on the point.'"""
+    """Plotly's native shape-drag emits plotly_relayout(ing) with only
+    the dragged edges. A corner-drag of the NE corner outward fires
+    just ``x1`` and ``y1`` keys. The points editor reads each as the
+    new half-extent (distance from dragged edge to point center) and
+    mirrors the OPPOSITE edge so the box stays centered on the point.
+    User-perceived behavior: as you drag a corner outward, the
+    opposite corner moves outward in lock step."""
     ctx = _context_with_points_leaf(
         points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
                  "tolerance_mode": "abs", "time_tolerance": 1.0}],
@@ -578,28 +578,22 @@ def test_points_box_relayout_resizes_symmetrically_around_point(
     page.locator(
         '[data-path="/metrics/children/0"] > .node-header'
     ).first.click()
-    # Synthesize a relayout event mimicking what Plotly emits when
-    # the user drags a corner outward. New bounds: x∈[1, 4] (was
-    # [1.5, 3.5]) and y∈[1, 4] (was [2, 3]). Half-extents become 1.5
-    # on each axis → tolerance=1.5, time_tolerance=1.5.
+    # User drags the NE corner from (3.5, 3.0) to (4.0, 3.5). Plotly
+    # mutates only ``x1`` and ``y1`` — not x0/y0 (those edges weren't
+    # grabbed). Expected: half-extents become |4.0-2.5|=1.5 in x and
+    # |3.5-2.5|=1.0 in y; pt.time_tolerance=1.5, pt.tolerance=1.0.
     page.evaluate("""
         () => {
             const idx = VARIABLE_INDEX['h'];
             const el = document.getElementById(`plot-${idx}`);
-            // Mutate the shape's bounds in plotEl.layout (mirrors what
-            // Plotly does internally before emitting plotly_relayout).
             const shapes = el.layout.shapes || [];
             const boxIdx = shapes.findIndex(s =>
                 s.name && s.name.startsWith('points_box:'));
-            shapes[boxIdx].x0 = 1.0;
             shapes[boxIdx].x1 = 4.0;
-            shapes[boxIdx].y0 = 1.0;
-            shapes[boxIdx].y1 = 4.0;
+            shapes[boxIdx].y1 = 3.5;
             el.emit('plotly_relayout', {
-                [`shapes[${boxIdx}].x0`]: 1.0,
                 [`shapes[${boxIdx}].x1`]: 4.0,
-                [`shapes[${boxIdx}].y0`]: 1.0,
-                [`shapes[${boxIdx}].y1`]: 4.0,
+                [`shapes[${boxIdx}].y1`]: 3.5,
             });
         }
     """)
@@ -610,9 +604,59 @@ def test_points_box_relayout_resizes_symmetrically_around_point(
     # Point center unchanged.
     assert float(pt["time"]) == pytest.approx(2.5)
     assert float(pt["value"]) == pytest.approx(2.5)
-    # Tolerances picked up from half-extents of the new bounds.
+    # Tolerances picked up from the dragged edges' distance to the
+    # point center.
     assert float(pt["time_tolerance"]) == pytest.approx(1.5)
-    assert float(pt["tolerance"]) == pytest.approx(1.5)
+    assert float(pt["tolerance"]) == pytest.approx(1.0)
+
+
+def test_points_box_live_relayouting_event_also_triggers_resize(
+    tmp_path, playwright_browser,
+):
+    """The editor listens to BOTH ``plotly_relayouting`` (live, every
+    drag step) and ``plotly_relayout`` (release). The live event is
+    what makes the opposite edge mirror in lock step during the drag,
+    and is also a robustness guard — Plotly sometimes skips the final
+    ``plotly_relayout`` event (rapid clicks, drag-cancel, escape), and
+    listening to the live event ensures the box still snaps to
+    symmetric. Without it the user saw "sometimes doesn't bounce
+    back."""
+    ctx = _context_with_points_leaf(
+        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
+                 "tolerance_mode": "abs", "time_tolerance": 1.0}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    if not _has_plotly(page):
+        page.close()
+        pytest.skip("Plotly CDN not reachable; relayouting test skipped")
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    # Fire only the LIVE event — final never comes (simulates a drag
+    # that Plotly dropped the release for).
+    page.evaluate("""
+        () => {
+            const idx = VARIABLE_INDEX['h'];
+            const el = document.getElementById(`plot-${idx}`);
+            const shapes = el.layout.shapes || [];
+            const boxIdx = shapes.findIndex(s =>
+                s.name && s.name.startsWith('points_box:'));
+            shapes[boxIdx].x1 = 4.0;
+            el.emit('plotly_relayouting', {
+                [`shapes[${boxIdx}].x1`]: 4.0,
+            });
+        }
+    """)
+    pt = page.evaluate(
+        "leafState['/metrics/children/0'].params.points[0]"
+    )
+    page.close()
+    # Right edge dragged out → time_tolerance picks up from the live
+    # event even though plotly_relayout (final) never fired.
+    assert float(pt["time_tolerance"]) == pytest.approx(1.5)
 
 
 def test_points_box_relayout_translation_snaps_back(

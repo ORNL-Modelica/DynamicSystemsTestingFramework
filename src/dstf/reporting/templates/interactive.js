@@ -2180,16 +2180,25 @@ MODE_PLOT_EDITORS['points'] = (function() {
   });
 
   // Box-resize via Plotly's native shape-drag. PLOT_CFG sets
-  // edits.shapePosition=true globally, so the user can drag any box
-  // edge / corner / center. We listen for the resulting plotly_relayout
-  // events and re-derive tolerances from the new x0/x1/y0/y1 — half of
-  // each new dimension becomes the new tolerance. The point center is
-  // never touched, and the next render re-draws the box centered on
-  // pt.time + pt.value. Effective behavior:
-  //   * drag a corner / edge → symmetric resize; tolerances grow
-  //   * drag the center      → no half-extent change → snap back
-  //                            (size unchanged, center fixed on point)
-  function applyBoxRelayout(leaf, plotEl, evt, commit) {
+  // ``edits.shapePosition`` globally, so the user can drag any box
+  // edge / corner / center. We listen for both ``plotly_relayouting``
+  // (live, fires every drag step) and ``plotly_relayout`` (final,
+  // fires on release) — relying only on the final event was unreliable
+  // (Plotly skips it on rapid clicks / drag-cancel) and showed the box
+  // lopsided during the drag.
+  //
+  // Per-axis the dragged edge is detected from which keys fire in evt:
+  //   * both .x0 and .x1 fire with same delta → translation in x → keep
+  //     half-extent unchanged (snap-back behavior)
+  //   * only .x0 (or only .x1) fires           → edge resize → new
+  //     half-extent = |dragged_edge - center|
+  // Mirror the opposite edge via Plotly.relayout (recursion-guarded) so
+  // the user sees the box grow/shrink symmetrically as they drag — the
+  // edge they're dragging stays exactly where their cursor is, the
+  // opposite edge moves in lock step. Same for the y-axis.
+  let _updatingBox = false;
+  function applyBoxRelayout(leaf, plotEl, evt, commit, isFinal) {
+    if (_updatingBox) return false;
     if (!evt || !plotEl.layout) return false;
     const updatedShapes = new Set();
     for (const key of Object.keys(evt)) {
@@ -2197,8 +2206,9 @@ MODE_PLOT_EDITORS['points'] = (function() {
       if (m) updatedShapes.add(parseInt(m[1]));
     }
     if (updatedShapes.size === 0) return false;
-    let mutated = false;
     const points = getPoints(leaf);
+    let mutated = false;
+    const layoutUpdates = {};
     for (const shapeIdx of updatedShapes) {
       const shape = plotEl.layout.shapes?.[shapeIdx];
       if (!shape || !shape.name) continue;
@@ -2207,27 +2217,77 @@ MODE_PLOT_EDITORS['points'] = (function() {
       const ptIdx = parseInt(m[2]);
       const pt = points[ptIdx];
       if (!pt) continue;
-      const halfX = Math.abs((Number(shape.x1) - Number(shape.x0)) / 2);
-      const halfY = Math.abs((Number(shape.y1) - Number(shape.y0)) / 2);
+      const { x: cx, y: cy } = _resolvedXY(leaf, pt);
+      // Which edges did this evt change?
+      const has_x0 = `shapes[${shapeIdx}].x0` in evt;
+      const has_x1 = `shapes[${shapeIdx}].x1` in evt;
+      const has_y0 = `shapes[${shapeIdx}].y0` in evt;
+      const has_y1 = `shapes[${shapeIdx}].y1` in evt;
+      // Per-axis: translation if both edges changed, edge-resize if only
+      // one. Default (no change) preserves current half-extent.
+      const curHalfX = pt.time_tolerance != null
+        ? Number(pt.time_tolerance) : 0;
+      const curHalfY = _resolvedYLimit(leaf, pt);
+      let halfX, halfY;
+      if (has_x0 && has_x1) halfX = curHalfX;          // translation in x
+      else if (has_x0) halfX = Math.abs(Number(shape.x0) - cx);
+      else if (has_x1) halfX = Math.abs(Number(shape.x1) - cx);
+      else halfX = curHalfX;
+      if (has_y0 && has_y1) halfY = curHalfY;          // translation in y
+      else if (has_y0) halfY = Math.abs(Number(shape.y0) - cy);
+      else if (has_y1) halfY = Math.abs(Number(shape.y1) - cy);
+      else halfY = curHalfY;
       pt.time_tolerance = halfX;
       const mode = pt.tolerance_mode || 'abs';
       if (mode === 'rel') {
-        const { y: cy } = _resolvedXY(leaf, pt);
-        const denom = Math.abs(cy);
-        pt.tolerance = denom > 0 ? halfY / denom : 0;
+        pt.tolerance = Math.abs(cy) > 0 ? halfY / Math.abs(cy) : 0;
       } else {
         pt.tolerance = halfY;
       }
       mutated = true;
+      // Mirror — stage the symmetric bounds for a single Plotly.relayout.
+      const newX0 = cx - halfX;
+      const newX1 = cx + halfX;
+      const newY0 = cy - halfY;
+      const newY1 = cy + halfY;
+      const eps = 1e-9;
+      if (Math.abs(Number(shape.x0) - newX0) > eps)
+        layoutUpdates[`shapes[${shapeIdx}].x0`] = newX0;
+      if (Math.abs(Number(shape.x1) - newX1) > eps)
+        layoutUpdates[`shapes[${shapeIdx}].x1`] = newX1;
+      if (Math.abs(Number(shape.y0) - newY0) > eps)
+        layoutUpdates[`shapes[${shapeIdx}].y0`] = newY0;
+      if (Math.abs(Number(shape.y1) - newY1) > eps)
+        layoutUpdates[`shapes[${shapeIdx}].y1`] = newY1;
     }
-    if (mutated) {
-      refreshEditor(leaf, commit);
+    if (!mutated) return false;
+    refreshEditor(leaf, commit);
+    if (Object.keys(layoutUpdates).length > 0
+        && typeof Plotly !== 'undefined') {
+      _updatingBox = true;
+      try {
+        const r = Plotly.relayout(plotEl, layoutUpdates);
+        if (r && typeof r.finally === 'function') {
+          r.finally(() => { _updatingBox = false; });
+        } else {
+          _updatingBox = false;
+        }
+      } catch (_e) {
+        _updatingBox = false;
+      }
+    }
+    if (isFinal) {
+      // Full re-render on release — refreshes diamond marker position,
+      // pass states, export. Live events skip this to avoid fighting
+      // Plotly's mid-drag state.
       commit();
     }
-    return mutated;
+    return true;
   }
 
-  // Per-plotEl listener bookkeeping so deactivate can clean up.
+  // Per-plotEl listener bookkeeping so deactivate can clean up. Two
+  // listeners are registered per activate: one each for relayouting +
+  // relayout. The map stores both so detach can iterate.
   const boxListenerByPlot = new WeakMap();
 
   // Render lifecycle.
@@ -2266,7 +2326,7 @@ MODE_PLOT_EDITORS['points'] = (function() {
     thead.innerHTML = (
       '<tr>'
       + '<th>Time</th>'
-      + '<th>x-tol</th>'
+      + '<th>X-Tolerance</th>'
       + '<th>Value</th>'
       + '<th>Mode</th>'
       + '<th>Tolerance</th>'
@@ -2487,17 +2547,26 @@ MODE_PLOT_EDITORS['points'] = (function() {
       refreshEditor(leaf, commit);
       if (plotEl) {
         _pointEditor.attach(leaf, plotEl, commit);
-        const handler = (evt) => applyBoxRelayout(leaf, plotEl, evt, commit);
-        plotEl.on('plotly_relayout', handler);
-        boxListenerByPlot.set(plotEl, handler);
+        const liveHandler = (evt) =>
+          applyBoxRelayout(leaf, plotEl, evt, commit, false);
+        const finalHandler = (evt) =>
+          applyBoxRelayout(leaf, plotEl, evt, commit, true);
+        plotEl.on('plotly_relayouting', liveHandler);
+        plotEl.on('plotly_relayout', finalHandler);
+        boxListenerByPlot.set(plotEl, [
+          ['plotly_relayouting', liveHandler],
+          ['plotly_relayout', finalHandler],
+        ]);
       }
     },
     deactivate(leaf, plotEl) {
       if (plotEl) {
         _pointEditor.detach(plotEl);
-        const handler = boxListenerByPlot.get(plotEl);
-        if (handler && plotEl.removeListener) {
-          plotEl.removeListener('plotly_relayout', handler);
+        const handlers = boxListenerByPlot.get(plotEl);
+        if (handlers && plotEl.removeListener) {
+          for (const [evtName, handler] of handlers) {
+            plotEl.removeListener(evtName, handler);
+          }
           boxListenerByPlot.delete(plotEl);
         }
       }
