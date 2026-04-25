@@ -307,9 +307,12 @@ def test_points_editor_renders_existing_points(tmp_path, playwright_browser):
     page.locator(
         '[data-path="/metrics/children/0"] > .node-header'
     ).first.click()
+    # Editor renders into every .node-editor slot for the leaf
+    # (full-tree + per-variable mounts both have one); scope row count
+    # to the first .points-editor to assert per-slot fidelity.
     rows = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor tbody tr'
-    ).count()
+        '[data-path="/metrics/children/0"] .points-editor'
+    ).first.locator('tbody tr').count()
     page.close()
     assert rows == 2
 
@@ -329,8 +332,8 @@ def test_points_editor_add_button_appends_row(tmp_path, playwright_browser):
         '[data-path="/metrics/children/0"] .points-editor button.node-btn-add'
     ).first.click()
     rows = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor tbody tr'
-    ).count()
+        '[data-path="/metrics/children/0"] .points-editor'
+    ).first.locator('tbody tr').count()
     state_len = page.evaluate("""
         () => (leafState['/metrics/children/0'].params.points || []).length
     """)
@@ -359,8 +362,8 @@ def test_points_editor_delete_removes_row(tmp_path, playwright_browser):
         'tbody tr button.row-delete'
     ).first.click()
     rows = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor tbody tr'
-    ).count()
+        '[data-path="/metrics/children/0"] .points-editor'
+    ).first.locator('tbody tr').count()
     remaining_time = page.evaluate("""
         () => {
             const pts = leafState['/metrics/children/0'].params.points || [];
@@ -389,9 +392,8 @@ def test_points_editor_zero_point_placeholder_renders(
         '[data-path="/metrics/children/0"] > .node-header'
     ).first.click()
     placeholder_count = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor '
-        '.points-implicit-row'
-    ).count()
+        '[data-path="/metrics/children/0"] .points-editor'
+    ).first.locator('.points-implicit-row').count()
     placeholder_text = page.locator(
         '[data-path="/metrics/children/0"] .points-editor '
         '.points-implicit-row'
@@ -418,12 +420,11 @@ def test_points_editor_first_add_replaces_placeholder(
         '[data-path="/metrics/children/0"] .points-editor button.node-btn-add'
     ).first.click()
     placeholder_count = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor '
-        '.points-implicit-row'
-    ).count()
+        '[data-path="/metrics/children/0"] .points-editor'
+    ).first.locator('.points-implicit-row').count()
     rows = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor tbody tr'
-    ).count()
+        '[data-path="/metrics/children/0"] .points-editor'
+    ).first.locator('tbody tr').count()
     page.close()
     assert placeholder_count == 0
     assert rows == 1
@@ -487,3 +488,117 @@ def test_points_editor_snapshot_idempotent_on_no_empty_rows(
     """)
     page.close()
     assert values == [2.5, 4.5]
+
+
+# ---------------------------------------------------------------------------
+# Shift-modifier plot interactivity (parity with tube + dom-frequency)
+# ---------------------------------------------------------------------------
+
+def _has_plotly(page) -> bool:
+    """Match the gating used by the tube + dom-freq shift-modifier tests
+    — Plotly CDN may be unreachable in some environments and the synth
+    MouseEvent path requires the chart to be fully laid out."""
+    return page.evaluate("typeof Plotly !== 'undefined'")
+
+
+def test_points_editor_shift_click_on_plot_adds_point(
+    tmp_path, playwright_browser,
+):
+    """Shift+click on the plot background adds a new declared point at
+    (clicked_x, clicked_y) with explicit value. Mirrors tube + dom-
+    frequency interaction via the shared createPointPlotEditor."""
+    ctx = _context_with_points_leaf(
+        points=[{"time": 0.0, "value": 0.0, "tolerance": 0.01}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    if not _has_plotly(page):
+        page.close()
+        pytest.skip("Plotly CDN not reachable; shift-click test skipped")
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    before = page.evaluate(
+        "(leafState['/metrics/children/0'].params.points || []).length"
+    )
+    # Synthesize shift+mousedown then mouseup at plot center.
+    ok = page.evaluate("""
+        () => {
+            const idx = VARIABLE_INDEX['h'];
+            const el = document.getElementById(`plot-${idx}`);
+            if (!el || !el._fullLayout) return false;
+            const fl = el._fullLayout;
+            const rect = el.getBoundingClientRect();
+            const cx = rect.left + fl._size.l + fl._size.w / 2;
+            const cy = rect.top + fl._size.t + fl._size.h / 2;
+            el.dispatchEvent(new MouseEvent('mousedown', {
+                button: 0, shiftKey: true,
+                clientX: cx, clientY: cy,
+                bubbles: true, cancelable: true,
+            }));
+            document.dispatchEvent(new MouseEvent('mouseup', {
+                button: 0, shiftKey: true,
+                clientX: cx, clientY: cy,
+                bubbles: true, cancelable: true,
+            }));
+            return true;
+        }
+    """)
+    after = page.evaluate(
+        "(leafState['/metrics/children/0'].params.points || []).length"
+    )
+    page.close()
+    assert ok
+    assert after == before + 1
+
+
+def test_points_editor_shift_right_click_removes_point(
+    tmp_path, playwright_browser,
+):
+    """Shift+right-click on a declared point's diamond marker removes
+    it. Identifies the target by its resolved (t, y) and dispatches
+    contextmenu at those plot coords."""
+    ctx = _context_with_points_leaf(
+        points=[
+            {"time": 1.0, "value": 1.0, "tolerance": 0.01},
+            {"time": 4.0, "value": 4.0, "tolerance": 0.01},
+        ],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    if not _has_plotly(page):
+        page.close()
+        pytest.skip("Plotly CDN not reachable; shift-click test skipped")
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    ok = page.evaluate("""
+        () => {
+            const idx = VARIABLE_INDEX['h'];
+            const el = document.getElementById(`plot-${idx}`);
+            if (!el || !el._fullLayout) return false;
+            const fl = el._fullLayout;
+            // Target the t=1.0 point — resolved y is 1.0 (explicit value).
+            const rect = el.getBoundingClientRect();
+            const clientX = rect.left + (fl._size?.l || 0) + fl.xaxis.d2p(1.0);
+            const clientY = rect.top + (fl._size?.t || 0) + fl.yaxis.d2p(1.0);
+            el.dispatchEvent(new MouseEvent('contextmenu', {
+                shiftKey: true,
+                clientX, clientY,
+                bubbles: true, cancelable: true,
+            }));
+            return true;
+        }
+    """)
+    remaining = page.evaluate(
+        "leafState['/metrics/children/0'].params.points || []"
+    )
+    page.close()
+    assert ok
+    assert len(remaining) == 1
+    # The surviving point is the t=4.0 one — we removed t=1.0.
+    assert float(remaining[0].get("time")) == 4.0

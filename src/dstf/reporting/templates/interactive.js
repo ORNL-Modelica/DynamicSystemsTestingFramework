@@ -2090,26 +2090,98 @@ MODE_PLOT_EDITORS['points'] = (function() {
     });
   }
 
-  // Render lifecycle.
-  const mountedByLeaf = new WeakMap();
-
-  function mount(container, leaf, commit) {
-    const root = document.createElement('div');
-    root.className = 'points-editor';
-    container.appendChild(root);
-    mountedByLeaf.set(leaf, { root });
-    refreshEditor(leaf, commit);
+  // Resolved (target_x, target_y) for a point. Mirrors the box-drawing
+  // and live-scoring math: ref-relative if ``value`` is null, else the
+  // explicit value.
+  function _resolvedXY(leaf, pt) {
+    const traj = getTrajectory(leaf);
+    const refTime = traj.ref_time || [];
+    const refValues = traj.ref_values || [];
+    const traceEnd = refTime.length ? refTime[refTime.length - 1] : 0;
+    const t = pt.time != null ? Number(pt.time) : traceEnd;
+    let y;
+    if (pt.value != null) y = Number(pt.value);
+    else if (refTime.length) y = _interpLinear(refTime, refValues, t);
+    else y = 0;
+    return { x: t, y };
   }
 
-  function unmount(container) {
-    const el = container.querySelector('.points-editor');
-    if (el) el.remove();
+  function _sortByTime(leaf) {
+    getPoints(leaf).sort((a, b) => {
+      const ta = a.time != null ? Number(a.time) : Infinity;
+      const tb = b.time != null ? Number(b.time) : Infinity;
+      return ta - tb;
+    });
+  }
+
+  // Shared shift-modifier interaction layer — mirrors tube + dom-freq.
+  // Anchors are one-per-point at the resolved (t, target_y).
+  //   * shift+click on empty plot     → add point (explicit value at click)
+  //   * shift+drag on diamond marker  → move time + value (becomes explicit
+  //                                     value if it was ref-relative)
+  //   * shift+right-click on diamond  → delete point
+  const _pointEditor = createPointPlotEditor({
+    getAnchors(leaf) {
+      return getPoints(leaf).map(pt => {
+        const { x, y } = _resolvedXY(leaf, pt);
+        return { pt, x, y };
+      });
+    },
+    onClickAdd(leaf, _plotEl, x, y, commit) {
+      const tDefault = getDefaultTolerance(leaf);
+      getPoints(leaf).push({
+        time: Number(x),
+        value: Number(y),
+        tolerance: tDefault,
+        tolerance_mode: 'abs',
+      });
+      _sortByTime(leaf);
+      refreshEditor(leaf, commit);
+    },
+    onDragStep(leaf, _plotEl, anchor, x, y, commit) {
+      // Update in-place. If point was ref-relative (no explicit value),
+      // the drag promotes it to explicit-value at the dragged y. This
+      // mirrors how the tube editor treats drag — direct manipulation
+      // means "I want it here" regardless of prior linkage.
+      anchor.pt.time = Number(x);
+      anchor.pt.value = Number(y);
+      refreshEditor(leaf, commit);
+    },
+    onDragEnd(leaf, _plotEl, _anchor, commit) {
+      _sortByTime(leaf);
+      refreshEditor(leaf, commit);
+    },
+    onRemove(leaf, _plotEl, anchor, commit) {
+      const points = getPoints(leaf);
+      const idx = points.indexOf(anchor.pt);
+      if (idx >= 0) {
+        points.splice(idx, 1);
+        refreshEditor(leaf, commit);
+      }
+    },
+  });
+
+  // Render lifecycle.
+  // A leaf can be mounted in multiple ``.node-editor`` slots — one per
+  // per-variable plot section plus the full-tree mount. We render into
+  // every slot so the table stays in lock step regardless of which one
+  // the user is looking at. Mirrors the tube editor's slot model.
+  function getSlots(leaf) {
+    return Array.from(document.querySelectorAll(
+      `[data-path="${escapeSelector(leaf.path)}"] .node-editor`,
+    ));
   }
 
   function refreshEditor(leaf, commit) {
-    const m = mountedByLeaf.get(leaf);
-    if (!m) return;
-    renderTable(m.root, leaf, commit);
+    getSlots(leaf).forEach(slot => {
+      let root = slot.querySelector(':scope > .points-editor');
+      if (!root) {
+        root = document.createElement('div');
+        root.className = 'points-editor';
+        slot.appendChild(root);
+      }
+      renderTable(root, leaf, commit);
+    });
   }
 
   function renderTable(root, leaf, commit) {
@@ -2343,18 +2415,15 @@ MODE_PLOT_EDITORS['points'] = (function() {
 
   return {
     activate(leaf, plotEl, commit) {
-      const anchor = document.querySelector(
-        `[data-path="${escapeSelector(leaf.path)}"] .node-editor`
-      );
-      if (!anchor) return;
-      mount(anchor, leaf, commit);
+      refreshEditor(leaf, commit);
+      if (plotEl) _pointEditor.attach(leaf, plotEl, commit);
     },
-    deactivate(leaf, _plotEl) {
-      const anchor = document.querySelector(
-        `[data-path="${escapeSelector(leaf.path)}"] .node-editor`
-      );
-      if (anchor) unmount(anchor);
-      mountedByLeaf.delete(leaf);
+    deactivate(leaf, plotEl) {
+      if (plotEl) _pointEditor.detach(plotEl);
+      getSlots(leaf).forEach(slot => {
+        const root = slot.querySelector(':scope > .points-editor');
+        if (root) root.remove();
+      });
     },
   };
 })();
@@ -3584,10 +3653,15 @@ function renderLeaf(leaf, container, opts) {
   // interactive editor (activated on click) owns that config surface
   // and would duplicate the same fields. Window inputs still show for
   // tube so the user can scope a tube to a time window.
-  // Tube + dominant-frequency both own their entire UI via the activated
-  // editor (rich table + shift-edit on plot). Suppressing the auto-derived
-  // header panel avoids a redundant empty passthrough box.
-  const skipModeControls = (leaf.metric === 'tube' || leaf.metric === 'dominant-frequency');
+  // Tube, dominant-frequency, and points all own their entire UI via
+  // the activated editor (rich table + shift-edit on plot). Suppressing
+  // the auto-derived header panel avoids a redundant duplicate of the
+  // declared-list config.
+  const skipModeControls = (
+    leaf.metric === 'tube'
+    || leaf.metric === 'dominant-frequency'
+    || leaf.metric === 'points'
+  );
   const innerHtml =
     (skipModeControls ? '' : (leaf.mode_controls_html || ''))
     + (leaf.window_controls_html || '');
