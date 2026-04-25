@@ -3,7 +3,7 @@
   "test_id": "0006",
   "status": "active",
   "date_added": "2026-04-23T15:56:16.513502+00:00",
-  "last_updated": "2026-04-23T18:44:25.432747+00:00",
+  "last_updated": "2026-04-25T16:37:59.473784+00:00",
   "simulation": {
     "stop_time": 5.0,
     "tolerance": 1e-06,
@@ -57,10 +57,10 @@
       "linear_after_manipulation": []
     },
     "timing": {
-      "translation_wall": 4.31,
-      "sim_wall": 0.14,
+      "translation_wall": 4.22,
+      "sim_wall": 0.13,
       "other_wall": 0.02,
-      "total_wall": 4.46
+      "total_wall": 4.37
     },
     "CPUtime": 0.002,
     "EventCounter": 3.0
