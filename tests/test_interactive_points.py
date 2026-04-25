@@ -269,3 +269,104 @@ def test_points_plot_box_has_width_when_xtol_set(tmp_path, playwright_browser):
     assert contrib["x1"] == pytest.approx(3.2)
     assert contrib["y0"] == pytest.approx(29.5)
     assert contrib["y1"] == pytest.approx(30.5)
+
+
+# ---------------------------------------------------------------------------
+# Task 7: editor scaffold (table + add + delete)
+# ---------------------------------------------------------------------------
+
+def test_points_editor_mounts_on_leaf_click(tmp_path, playwright_browser):
+    """Clicking the points leaf header mounts the editor in the
+    .node-editor slot."""
+    ctx = _context_with_points_leaf(points=[], tolerance=0.01)
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    mounted = page.locator(
+        '[data-path="/metrics/children/0"] .points-editor'
+    ).count()
+    page.close()
+    assert mounted >= 1
+
+
+def test_points_editor_renders_existing_points(tmp_path, playwright_browser):
+    """Two declared points → two table rows."""
+    ctx = _context_with_points_leaf(
+        points=[
+            {"time": 2.0, "tolerance": 0.01},
+            {"time": 4.0, "value": 4.0},
+        ],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    rows = page.locator(
+        '[data-path="/metrics/children/0"] .points-editor tbody tr'
+    ).count()
+    page.close()
+    assert rows == 2
+
+
+def test_points_editor_add_button_appends_row(tmp_path, playwright_browser):
+    """+ add point appends to the table AND to leafState.params.points."""
+    ctx = _context_with_points_leaf(
+        points=[{"time": 2.0}], tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    page.locator(
+        '[data-path="/metrics/children/0"] .points-editor button.node-btn-add'
+    ).first.click()
+    rows = page.locator(
+        '[data-path="/metrics/children/0"] .points-editor tbody tr'
+    ).count()
+    state_len = page.evaluate("""
+        () => (leafState['/metrics/children/0'].params.points || []).length
+    """)
+    page.close()
+    assert rows == 2
+    assert state_len == 2
+
+
+def test_points_editor_delete_removes_row(tmp_path, playwright_browser):
+    """Per-row × button removes from DOM and leafState."""
+    ctx = _context_with_points_leaf(
+        points=[
+            {"time": 1.0, "tolerance": 0.01},
+            {"time": 3.0, "tolerance": 0.01},
+        ],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    page.locator(
+        '[data-path="/metrics/children/0"] .points-editor '
+        'tbody tr button.row-delete'
+    ).first.click()
+    rows = page.locator(
+        '[data-path="/metrics/children/0"] .points-editor tbody tr'
+    ).count()
+    remaining_time = page.evaluate("""
+        () => {
+            const pts = leafState['/metrics/children/0'].params.points || [];
+            return pts.length === 1 ? Number(pts[0].time) : null;
+        }
+    """)
+    page.close()
+    assert rows == 1
+    assert remaining_time == 3.0

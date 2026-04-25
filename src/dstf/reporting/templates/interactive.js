@@ -2013,6 +2013,292 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
   };
 })();
 
+// Points editor — declared-points table in the leaf slot.
+// Each row authors one (time, value?, tolerance?, tolerance_mode,
+// time_tolerance?) checkpoint. Pass/fail is computed live by
+// MODE_SCORERS['points']; this editor just mutates leafState.
+MODE_PLOT_EDITORS['points'] = (function() {
+
+  function getPoints(leaf) {
+    const st = leafState[leaf.path] || {};
+    const p = st.params || (st.params = {});
+    if (!Array.isArray(p.points)) p.points = [];
+    return p.points;
+  }
+
+  function getDefaultTolerance(leaf) {
+    const st = leafState[leaf.path] || {};
+    const v = Number((st.params || {}).tolerance);
+    return Number.isFinite(v) && v > 0 ? v : 1e-4;
+  }
+
+  function getTrajectory(leaf) {
+    return (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+  }
+
+  // Live match info per point: nearest delta inside the box, plus
+  // the t at which it occurred. Used by the Match column.
+  function evaluateLiveMatches(leaf) {
+    const traj = getTrajectory(leaf);
+    const sliced = _sliceLeafTrajectory(leaf, traj);
+    const refTime = sliced.refTime;
+    const refValues = sliced.refValues;
+    const actTime = sliced.actTime;
+    const actValues = sliced.actValues;
+    const tol = getDefaultTolerance(leaf);
+    const traceEnd = refTime.length ? refTime[refTime.length - 1]
+                    : (actTime.length ? actTime[actTime.length - 1] : 0);
+    return getPoints(leaf).map(pt => {
+      let t = pt.time != null ? Number(pt.time) : traceEnd;
+      let target;
+      if (pt.value != null) target = Number(pt.value);
+      else if (refTime.length) target = _interpLinear(refTime, refValues, t);
+      else return { ok: null, delta: null, at: null };
+      const perTol = pt.tolerance != null ? Number(pt.tolerance) : tol;
+      const mode = pt.tolerance_mode || 'abs';
+      const yLimit = mode === 'rel' ? perTol * Math.abs(target) : perTol;
+      const xTol = pt.time_tolerance != null ? Number(pt.time_tolerance) : 0;
+      if (!actTime.length) return { ok: null, delta: null, at: null };
+      const tLo = Math.max(t - xTol, actTime[0]);
+      const tHi = Math.min(t + xTol, actTime[actTime.length - 1]);
+      if (tHi < tLo) return { ok: null, delta: null, at: null };
+      const delta = _minDeltaInBox(actTime, actValues, tLo, tHi, target);
+      // Best-t — use the canonical center for now (full search would
+      // require returning t along with the min from _minDeltaInBox).
+      // CLI-side reports the actual best_t; JS keeps it simple — Match
+      // column shows delta only for points with x_tol = 0, plus the
+      // box label "in box" for x_tol > 0.
+      return { ok: delta <= yLimit, delta, at: t };
+    });
+  }
+
+  // Render lifecycle.
+  const mountedByLeaf = new WeakMap();
+
+  function mount(container, leaf, commit) {
+    const root = document.createElement('div');
+    root.className = 'points-editor';
+    container.appendChild(root);
+    mountedByLeaf.set(leaf, { root });
+    refreshEditor(leaf, commit);
+  }
+
+  function unmount(container) {
+    const el = container.querySelector('.points-editor');
+    if (el) el.remove();
+  }
+
+  function refreshEditor(leaf, commit) {
+    const m = mountedByLeaf.get(leaf);
+    if (!m) return;
+    renderTable(m.root, leaf, commit);
+  }
+
+  function renderTable(root, leaf, commit) {
+    const points = getPoints(leaf);
+    const tolDefault = getDefaultTolerance(leaf);
+    const matches = evaluateLiveMatches(leaf);
+
+    root.innerHTML = '';
+
+    const table = document.createElement('table');
+    table.className = 'points-table';
+    const thead = document.createElement('thead');
+    thead.innerHTML = (
+      '<tr>'
+      + '<th>Time</th>'
+      + '<th>x-tol</th>'
+      + '<th>Value</th>'
+      + '<th>Mode</th>'
+      + '<th>Tolerance</th>'
+      + '<th>Match (live)</th>'
+      + '<th></th>'
+      + '</tr>'
+    );
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    points.forEach((pt, i) => {
+      const tr = document.createElement('tr');
+
+      // Time input — placeholder "final" when null.
+      const timeTd = document.createElement('td');
+      const timeInput = document.createElement('input');
+      timeInput.type = 'number';
+      timeInput.step = 'any';
+      timeInput.placeholder = 'final';
+      timeInput.value = pt.time != null ? String(pt.time) : '';
+      timeInput.addEventListener('change', () => {
+        const raw = timeInput.value.trim();
+        if (raw === '') pt.time = null;
+        else {
+          const n = Number(raw);
+          if (Number.isFinite(n)) pt.time = n;
+        }
+        refreshEditor(leaf, commit);
+        commit();
+      });
+      timeTd.appendChild(timeInput);
+      tr.appendChild(timeTd);
+
+      // x-tol input.
+      const xtolTd = document.createElement('td');
+      const xtolInput = document.createElement('input');
+      xtolInput.type = 'number';
+      xtolInput.step = 'any';
+      xtolInput.placeholder = '0';
+      xtolInput.value = pt.time_tolerance != null
+        ? String(pt.time_tolerance) : '';
+      xtolInput.addEventListener('change', () => {
+        const raw = xtolInput.value.trim();
+        if (raw === '') delete pt.time_tolerance;
+        else {
+          const n = Number(raw);
+          if (Number.isFinite(n) && n >= 0) pt.time_tolerance = n;
+        }
+        refreshEditor(leaf, commit);
+        commit();
+      });
+      xtolTd.appendChild(xtolInput);
+      tr.appendChild(xtolTd);
+
+      // Value input — empty = ref-relative.
+      const valTd = document.createElement('td');
+      const valInput = document.createElement('input');
+      valInput.type = 'number';
+      valInput.step = 'any';
+      valInput.placeholder = 'ref(t)';
+      valInput.value = pt.value != null ? String(pt.value) : '';
+      valInput.addEventListener('change', () => {
+        const raw = valInput.value.trim();
+        if (raw === '') delete pt.value;
+        else {
+          const n = Number(raw);
+          if (Number.isFinite(n)) pt.value = n;
+        }
+        refreshEditor(leaf, commit);
+        commit();
+      });
+      valTd.appendChild(valInput);
+      tr.appendChild(valTd);
+
+      // Mode dropdown.
+      const modeTd = document.createElement('td');
+      const modeSel = document.createElement('select');
+      for (const m of ['abs', 'rel']) {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        if ((pt.tolerance_mode || 'abs') === m) opt.selected = true;
+        modeSel.appendChild(opt);
+      }
+      modeSel.addEventListener('change', () => {
+        pt.tolerance_mode = modeSel.value;
+        refreshEditor(leaf, commit);
+        commit();
+      });
+      modeTd.appendChild(modeSel);
+      tr.appendChild(modeTd);
+
+      // Tolerance input.
+      const tolTd = document.createElement('td');
+      const tolInput = document.createElement('input');
+      tolInput.type = 'number';
+      tolInput.step = 'any';
+      tolInput.placeholder = String(tolDefault);
+      tolInput.value = pt.tolerance != null ? String(pt.tolerance) : '';
+      tolInput.addEventListener('change', () => {
+        const raw = tolInput.value.trim();
+        if (raw === '') delete pt.tolerance;
+        else {
+          const n = Number(raw);
+          if (Number.isFinite(n) && n > 0) pt.tolerance = n;
+        }
+        refreshEditor(leaf, commit);
+        commit();
+      });
+      tolTd.appendChild(tolInput);
+      tr.appendChild(tolTd);
+
+      // Match column.
+      const matchTd = document.createElement('td');
+      matchTd.className = 'match-cell';
+      const m = matches[i] || {};
+      if (m.ok === null) {
+        matchTd.innerHTML = '<span style="color:#9e9e9e">·</span>';
+      } else if (m.ok) {
+        matchTd.innerHTML = (
+          `<span style="color:#2e7d32">✓ matched</span> `
+          + `(Δ=${m.delta.toExponential(2)})`
+        );
+      } else {
+        matchTd.innerHTML = (
+          `<span style="color:#c62828">✕ unmatched</span> `
+          + `(Δ=${m.delta.toExponential(2)})`
+        );
+      }
+      tr.appendChild(matchTd);
+
+      // Delete.
+      const delTd = document.createElement('td');
+      const delBtn = document.createElement('button');
+      delBtn.className = 'row-delete';
+      delBtn.textContent = '✕';
+      delBtn.title = 'Remove this point';
+      delBtn.addEventListener('click', () => {
+        points.splice(i, 1);
+        refreshEditor(leaf, commit);
+        commit();
+      });
+      delTd.appendChild(delBtn);
+      tr.appendChild(delTd);
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    root.appendChild(table);
+
+    // Buttons row — Task 7 only has "+ add point". Snapshot button
+    // arrives in Task 8.
+    const btnRow = document.createElement('div');
+    btnRow.className = 'points-editor-buttons';
+    const addBtn = document.createElement('button');
+    addBtn.className = 'node-btn node-btn-add';
+    addBtn.textContent = '+ add point';
+    addBtn.addEventListener('click', () => {
+      // Seed time from previous point + 0.5s, or null (= "final") on
+      // an empty list.
+      let seedTime = null;
+      if (points.length) {
+        const prev = points[points.length - 1];
+        const prevT = prev.time != null ? Number(prev.time) : null;
+        seedTime = prevT != null ? prevT + 0.5 : null;
+      }
+      points.push({ time: seedTime });
+      refreshEditor(leaf, commit);
+      commit();
+    });
+    btnRow.appendChild(addBtn);
+    root.appendChild(btnRow);
+  }
+
+  return {
+    activate(leaf, plotEl, commit) {
+      const anchor = document.querySelector(
+        `[data-path="${escapeSelector(leaf.path)}"] .node-editor`
+      );
+      if (!anchor) return;
+      mount(anchor, leaf, commit);
+    },
+    deactivate(leaf, _plotEl) {
+      const anchor = document.querySelector(
+        `[data-path="${escapeSelector(leaf.path)}"] .node-editor`
+      );
+      if (anchor) unmount(anchor);
+      mountedByLeaf.delete(leaf);
+    },
+  };
+})();
+
 MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
   // Declared-peaks editor for dominant-frequency leaves (D75 + D76).
   // Each editor slot gets:
