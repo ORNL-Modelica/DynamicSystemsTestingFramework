@@ -1,0 +1,37 @@
+{
+  "total": 2,
+  "elapsed": 4.502766847999737,
+  "eta_seconds": null,
+  "counts": {
+    "queued": 0,
+    "running": 0,
+    "passed": 2,
+    "failed": 0,
+    "timed_out": 0
+  },
+  "tests": [
+    {
+      "test_key": "test_0001",
+      "model_id": "PythonTestingLib.Examples.ConstantCsv",
+      "status": "passed",
+      "started_at": 7408.121477795,
+      "elapsed": 0.21843586799968762,
+      "detail": null,
+      "worker_id": null,
+      "report_dir": "ref_0001",
+      "phase": "simulating"
+    },
+    {
+      "test_key": "test_0002",
+      "model_id": "PythonTestingLib.Examples.SimpleRamp",
+      "status": "passed",
+      "started_at": 7408.3965242,
+      "elapsed": 4.13644689100056,
+      "detail": null,
+      "worker_id": null,
+      "report_dir": "ref_0002",
+      "phase": "simulating"
+    }
+  ],
+  "updated_at": 1777038048.2357616
+}
