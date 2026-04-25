@@ -66,11 +66,11 @@
 - When accepting results, the active comparison settings (tolerance + variable overrides) are saved in the reference JSON's `comparison` section so tolerances travel with the baseline
 
 ### Comparison mode resolution via strategy pattern
-- Per-variable comparison mode is resolved via `resolve_mode(var_override, tolerance, default_final_only)` in `comparison/modes.py`
-- Three modes: `NrmseMode` (default, piecewise NRMSE), `TubeMode` (envelope), `FinalOnlyMode` (final value only)
-- Each mode has a typed frozen config dataclass: `NrmseConfig`, `TubeConfig`, `FinalOnlyConfig`
-- Resolution: explicit `mode` key in override → that mode; no explicit mode + `default_final_only=True` → FinalOnlyMode; otherwise → NrmseMode
-- Explicit `mode: "tube"` is never overridden by the `final_only` flag — per-variable mode always wins
+- Per-variable comparison mode is resolved via `resolve_mode(var_override, tolerance, default_points)` in `comparison/modes.py`
+- Three modes: `NrmseMode` (default, piecewise NRMSE), `TubeMode` (envelope), `PointsMode` (declared checkpoints; empty list ⇒ final value only)
+- Each mode has a typed frozen config dataclass: `NrmseConfig`, `TubeConfig`, `PointsConfig`
+- Resolution: explicit `mode` key in override → that mode; no explicit mode + `default_points=True` → PointsMode; otherwise → NrmseMode
+- Explicit `mode: "tube"` is never overridden by the `default_points` flag — per-variable mode always wins
 
 ### Constant signal NRMSE: normalize by magnitude
 - When signal range < epsilon (constant signals), NRMSE normalizes by `max(|ref_values|)` instead of signal range

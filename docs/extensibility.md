@@ -204,7 +204,7 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
 
 - **`nrmse`** — piecewise NRMSE with event-boundary handling. `NrmseMode`.
 - **`tube`** — envelope comparison, three width modes. `TubeMode`.
-- **`final-only`** — compare only final values. `FinalOnlyMode`.
+- **`points`** — declared-checkpoint comparison; empty list ⇒ final-value-only, non-empty ⇒ multi-point with abs/rel y-tolerance + x-tolerance box. `PointsMode`. D84.
 - **`range`** — signal-only bounds check (no baseline needed). `RangeMode`. D53.
 - **`event-timing`** — compare event instants via duplicate-time detection. `EventTimingMode`. D62.
 - **`dominant-frequency`** — FFT peak comparison. `DominantFrequencyMode`. D62.
@@ -278,7 +278,7 @@ Composed case (landed in Phase 3 — schema lives under the `metrics` key):
 }
 ```
 
-Leaf metrics available today: `nrmse`, `tube`, `final-only`, `range`. Leaf params (tolerance, tube_*, min/max) live flat on the leaf node — same field names as the legacy `variable_overrides`. Combinators: `and`, `or`, `k-of-n` (requires `k`), `warn` (exactly one child).
+Leaf metrics available today: `nrmse`, `tube`, `points`, `range`. Leaf params (tolerance, tube_*, min/max) live flat on the leaf node — same field names as the legacy `variable_overrides`. Combinators: `and`, `or`, `k-of-n` (requires `k`), `warn` (exactly one child).
 
 When `metrics` is set, the tree fully controls scoring on that test — legacy `comparison.variable_overrides` is ignored (the same fields move into each leaf's params).
 
@@ -291,7 +291,7 @@ Phase 3 wired MetricTree end-to-end:
 - `compare_test()` derives `TestComparison.passed` from the tree root. Users authoring a `metrics` block get their tree; others get the implicit flat-AND (behavior-preserving for all pre-Phase-3 specs).
 - Per-test HTML report renders the tree when user-authored (`comparison.html`).
 
-Leaf contract is validated across four metrics spanning two shapes: three reference-consuming (`nrmse`, `tube`, `final-only`) and one signal-only (`range` — bounds come from the spec, not a baseline).
+Leaf contract is validated across four metrics spanning two shapes: three reference-consuming (`nrmse`, `tube`, `points`) and one signal-only (`range` — bounds come from the spec, not a baseline).
 
 Deferred (Phase 4+): multi-baseline leaves (`"against": "experiment"`), cross-backend verification, additional leaf types (event-timing, spectral, Fréchet, KS), `weighted` combinator.
 

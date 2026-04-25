@@ -41,13 +41,13 @@ The framework is structured around six layers. Each is a plug-in point; each has
   Dataset         — typed result (TimeSeries, Scalars, Events, Spectrum, Distribution; Field in future)
     │
     ▼
-  Metric          — a scoring function on a Dataset vs. baseline (NRMSE, tube, final-only, event-timing, spectral, Fréchet, KS)
+  Metric          — a scoring function on a Dataset vs. baseline (NRMSE, tube, points, event-timing, spectral, Fréchet, KS)
     │
     ▼
   MetricTree      — composition: AND / OR / weighted / K-of-N combinators over Metrics → overall pass/fail + diagnostics
 ```
 
-Most layers are explicit: Source selects via `source_type` (Modelica or FMU today), Discovery scans `.mo` and/or reads `test_spec.json`, Backend registry carries Dymola + FMPy, Dataset is still time-series only, Metric offers four built-ins (NRMSE, tube, final-only, range), MetricTree accepts user-authored trees from `test_spec.json` with AND / OR / k-of-n / warn combinators. What remains implicit: datasets beyond time-series, additional discovery strategies, more leaf types, weighted combinator.
+Most layers are explicit: Source selects via `source_type` (Modelica or FMU today), Discovery scans `.mo` and/or reads `test_spec.json`, Backend registry carries Dymola + FMPy, Dataset is still time-series only, Metric offers four built-ins (NRMSE, tube, points, range), MetricTree accepts user-authored trees from `test_spec.json` with AND / OR / k-of-n / warn combinators. What remains implicit: datasets beyond time-series, additional discovery strategies, more leaf types, weighted combinator.
 
 ---
 
@@ -103,7 +103,7 @@ The interactive HTML report is the **primary authoring surface** for acceptance 
 
 **Per-leaf modularity**: `ComparisonMode` stays pure compute (no UI coupling). UI controls are **auto-derived from each mode's typed Config dataclass** (NrmseConfig, TubeConfig, …) with override slots where richer UI makes sense (tube conditional fields, range visual handles). Tightening Config types to use `Literal[...]` for enum-like fields buys JSON-Schema export as a first-class handoff artifact.
 
-**Live preview policy**: modes with simple math (nrmse, tube, range, final-only) ship an in-browser JS recompute function so users see pass/fail update as they drag. Modes with numerical subtlety (event-timing, dominant-frequency) omit live preview — user edits values, runs CLI for authoritative pass/fail. This is a deliberate split: live preview where accuracy is cheap, CLI-authoritative where accuracy requires the real comparator.
+**Live preview policy**: modes with simple math (nrmse, tube, range, points) ship an in-browser JS recompute function so users see pass/fail update as they drag. Modes with numerical subtlety (event-timing, dominant-frequency) omit live preview — user edits values, runs CLI for authoritative pass/fail. This is a deliberate split: live preview where accuracy is cheap, CLI-authoritative where accuracy requires the real comparator.
 
 **Testing asymmetry**: the Python data contract (patch schema, spec-update round-trip, JSON-Schema export, validator rules) is exhaustively tested. The JS layer is covered by golden-file HTML structure snapshots and a human QA checklist (`docs/qa/reporter_checklist.md`) — no JS unit test framework, no E2E harness unless the reporter becomes a regression source.
 
@@ -121,7 +121,7 @@ A lightweight heuristic layer that looks at a signal (and optional baseline) and
 2. **Output contract**: one or more proposed metric subtrees in the same JSON shape users author. Nothing else — no model change suggestions, no parameter hints, no simulator recommendations.
 3. **Feature vocabulary is bounded and declared**: each signal feature (mean, std, range, monotonicity, event count, FFT peak ratio, step-like score, SNR, …) lives as a named function in `recommender/features.py`. New features require a decision entry.
 4. **Rule-based only, not model-based**: proposals come from an auditable `(feature-predicate → leaf-spec)` table. Each `ComparisonMode` declares its **baseline compatibility** (`requires_baseline` flag + shape requirements) so the recommender filters candidates automatically — e.g., `event-timing` only proposed when events are detectable; `range` proposed for no-baseline signals.
-5. **Complexity budget per proposal**: at minimum one leaf targeting primary (when a baseline exists). At most three leaves total. At most one combinator layer. Prefer simpler leaves (`range`/`final-only`/`tube` before `event-timing`/`dominant-frequency`). A recommender that proposes complex trees is a recommender users can't trust.
+5. **Complexity budget per proposal**: at minimum one leaf targeting primary (when a baseline exists). At most three leaves total. At most one combinator layer. Prefer simpler leaves (`range`/`points`/`tube` before `event-timing`/`dominant-frequency`). A recommender that proposes complex trees is a recommender users can't trust.
 6. **Not runtime-load-bearing**: if `recommender/` disappears, tests still run. The recommender is a tooling convenience, not a load-bearing part of the comparator.
 
 **No ML in repo**. ML-backed ranking, clustering, or prediction belong in a separate tool that consumes our handoff artifacts. The framework emits artifacts cleanly shaped for such tools; it does not host them.

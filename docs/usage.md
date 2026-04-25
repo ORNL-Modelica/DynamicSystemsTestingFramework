@@ -223,7 +223,7 @@ uv run dstf --config testing.json run -i
 | `--simulator-path PATH` | Override simulator executable path |
 | `--show-ide` | Show Dymola GUI instead of headless |
 | `--tolerance FLOAT` | Override NRMSE comparison tolerance |
-| `--final-only` | Compare only final values (not full trajectories) |
+| `--default-points` | Use PointsMode by default (empty list ⇒ final-value-only check) |
 | `--timeout SECS` | Per-test timeout in seconds (default: 600) |
 | `--work-dir PATH` | Override output directory |
 | `--report-format` | `console` (default), `junit`, or `html` |
@@ -249,8 +249,8 @@ uv run dstf --config testing.json compare
 # With different tolerance
 uv run dstf --config testing.json compare --tolerance 0.001
 
-# Only check final values
-uv run dstf --config testing.json compare --final-only
+# Only check final values (default mode = PointsMode with empty list)
+uv run dstf --config testing.json compare --default-points
 
 # Output as JUnit XML (for CI)
 uv run dstf --config testing.json compare --report-format junit

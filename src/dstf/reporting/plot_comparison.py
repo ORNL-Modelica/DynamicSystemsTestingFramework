@@ -119,7 +119,7 @@ def _extract_mode_values(
 
     if mode == "nrmse":
         return {"tolerance": float(vc.tolerance_used)}
-    if mode == "final_only":
+    if mode == "points":
         return {"tolerance": float(vc.tolerance_used)}
     if mode == "tube":
         return {
@@ -185,7 +185,7 @@ def _leaf_score_display(vc: VariableComparison) -> tuple[str, str]:
             f"max violation {vc.tube_worst_violation:.3e} "
             f"→ {'PASS' if vc.passed else 'FAIL'} (requires 0)",
         )
-    if mode == "final_only":
+    if mode == "points":
         return (
             f"|err| {vc.max_abs_error:.3e}",
             f"Final value error {vc.max_abs_error:.3e} vs tolerance "
@@ -262,7 +262,7 @@ def _augment_tree_view(
         bounds = (time_bounds_by_variable or {}).get(var_label)
         t_start, t_end = (bounds if bounds else (None, None))
         view.update({
-            "mode_effective": mode,  # runtime mode (e.g., "final_only"); not the spec metric
+            "mode_effective": mode,  # runtime mode (e.g., "points"); not the spec metric
             "name": var_label,
             "nrmse": float(vc.nrmse),
             "rmse": float(vc.rmse),

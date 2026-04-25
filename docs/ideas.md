@@ -66,6 +66,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 58 | Persistent-worker Python (PythonCall / stdin-JSON) | M | Low | Long-lived Python subprocess with stdin-dispatch, like JuliaPersistentRunner. Per-test startup is ~30-100 ms today; pays off once a suite has hundreds of Python tests. Mirror the D77→D78 Julia progression. |
 | 59 | ~~Baseline-free modes short-circuit NO_REF~~ | L | Low | **DONE** (D83, 2026-04-24). New `ComparisonMode.is_baseline_free()` on the base (default False); overridden True on `RangeMode`, `EventTimingMode` (iff `events` declared), `DominantFrequencyMode` (iff `peaks` declared). When every leaf in a test's tree is baseline-free AND the baseline is missing, `compare_all` now proceeds to `compare_test` (reference={}) instead of collapsing to NO_REF. Mixed trees stay NO_REF. +5 tests (791 → 796). |
 | 60 | Extract shared "declared-items table editor" helper | L | Low | Dom-frequency's declared-peaks editor and event-timing's declared-events editor (D82) share ~74% of structure (table render, source dropdown, detect button, add/delete). Extract a factory: `createDeclaredItemsEditor({getItems, itemToRow, onAdd, onDetect, renderMatch})` — both editors become ~30-line call sites. Follow-up; YAGNI-deferred until the second editor shipped so the factory shape is concrete. |
+| 61 | Points editor — draggable plot markers (Full scope) | M | Low | Diamond markers from MODE_PLOT_CONTRIBUTIONS['points'] become draggable via PointPlotEditor. Shift+click on plot adds a point at (clicked_x, clicked_y) as absolute-value; drag updates time + value (abs mode) or just time (ref-relative); right-click deletes. Mirrors tube and dom-frequency interaction. Defer until usage shows the numeric table is too slow. |
 
 **Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23):
 
@@ -395,7 +396,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   - Horizontal line for average NRMSE across the trajectory
   - Horizontal line at the tolerance threshold (data already in `tolerance_used`)
   - Shaded region above tolerance to visually show "fail zone"
-- **Metric clarity**: clearly label which metric drives pass/fail — currently NRMSE for trajectory mode, fraction-inside for tube mode, relative error for final-only
+- **Metric clarity**: clearly label which metric drives pass/fail — currently NRMSE for trajectory mode, fraction-inside for tube mode, relative error for points
   - Add a "Pass/Fail Criterion" label in the variable detail: e.g., "NRMSE 2.3e-4 < tolerance 1e-3 → PASS"
   - For tube mode: "98/100 points inside tube → FAIL (requires 100%)"
   - Consider whether users should be able to select alternative pass/fail metrics (e.g., max error instead of NRMSE) — this would tie into the strategy pattern refactoring
@@ -505,14 +506,14 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 
 ## Time-windowed leaf metrics (#46)
 
-- **Motivation**: Many regression criteria are naturally piecewise — NRMSE matters during the steady-state tail, tube matters during the transient, final-only is window-irrelevant. Today users either accept a single global score or hand-author overlapping leaves that each recompute on the full trajectory. A time window is the missing axis.
+- **Motivation**: Many regression criteria are naturally piecewise — NRMSE matters during the steady-state tail, tube matters during the transient, points is window-irrelevant. Today users either accept a single global score or hand-author overlapping leaves that each recompute on the full trajectory. A time window is the missing axis.
 - **Proposal**: A uniform `"window": {"start": <t>, "end": <t>}` field on every leaf (optional; defaults to full trajectory). Evaluated by slicing the actual + reference trajectories to the window before handing off to the existing `ComparisonMode`. Both endpoints optional — open-ended on either side supported.
 - **Architecture fit**: One change in `comparison/tree_eval.py` — slice inputs before the `ComparisonMode.compare(...)` call. No change to the six compute modes. Leaves that already don't use time (range) treat the field as a no-op.
 - **Not a combinator**: deliberately *not* a new AND-with-time-bounds combinator — that would explode the grammar. The window is a leaf property, scoped narrowly; AND/OR above still compose as today.
 - **Composition**: NRMSE-on-[0,10] + NRMSE-on-[10,100] + tube-on-[10,50] under a root AND gives a piecewise regression contract. Same grammar, richer expressiveness.
 - **Integration with Phase 6**:
   - **6.1 ripple**: every auto-derived UI panel gains two number inputs (`start`, `end`). Cheap — two fields, one new validator (`end > start`, both in trajectory range). Adds maybe ½ day to 6.1.1/6.1.2.
-  - **Live preview**: the JS port slices the already-cached arrays; trivial for nrmse/tube/range/final-only. No new recompute logic.
+  - **Live preview**: the JS port slices the already-cached arrays; trivial for nrmse/tube/range/points. No new recompute logic.
   - **Custom override candidate**: a range-brush on the trajectory plot to visually pick window bounds (shaded region) — defer to post-MVP or batch with 6.1.4's range-plot-handles work (same UI primitive).
   - **6.4 patch shape**: patch paths like `/tests/<id>/metrics/<ptr>/window/start` fit the whitelist trivially. Round-trip fidelity applies as-is.
 - **Recommendation for Phase 6**: the scalar-field version (two inputs, no brush) fits inside the MVP budget if bundled into 6.1.1. Flag as a candidate for inclusion at the **6.1.1 auto-derive machinery** checkpoint — if the config-to-UI generator can absorb window as a shared cross-mode subschema without leaking into each mode's Config, include it; if it forces mode-specific coupling, defer to post-MVP.

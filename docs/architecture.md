@@ -20,7 +20,7 @@ The framework is a pipeline of six typed, plug-in layers:
     │               (TimeSeries, Scalars, Events, Spectrum, Distribution; Field reserved)
     ▼
   Metric          → scoring function on Dataset vs. baseline
-    │               (NRMSE, tube, final-only, event-timing, spectral, Fréchet, KS, user-defined)
+    │               (NRMSE, tube, points, event-timing, spectral, Fréchet, KS, user-defined)
     ▼
   MetricTree      → composition: AND / OR / weighted / K-of-N → overall pass/fail + diagnostics
 ```
@@ -38,7 +38,7 @@ Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` �
 | Discovery | Pluggable `Recognizer` registry (`discovery/recognizer.py`). Bundled: `BundledModelicaUnitTestsRecognizer` (UnitTests + experiment) in `mo_parser.py`. User-provided: `JsonRecognizer` (`discovery/json_recognizer.py`) — declarative JSON in `testing.json`'s `"recognizers"` list, no Python. Plus `spec_parser.py` for `test_spec.json` (universal fallback). Merged by `model_id`. | Phase 5 / PTA: registry + bundled + JSON-driven all live; cross-source recognizers (FMU vendor-ext, Julia macros) unimplemented |
 | Backend | `simulators/` registry with two concrete backends: `DymolaRunner` (native Modelica via Dymola Python interface / batch `.mos`) and `FmpyRunner` (FMU via FMPy Python API). Both declare `capabilities` + `produced_datasets`. `DymolaRunner` implements `export_fmu` via `translateModelFMU`. | Cross-backend chain (`simulators/cross_backend.py`) wires Dymola export → FMPy simulate → named baseline. Validation caveat: export step requires Windows + Dymola FMI license (D63). |
 | Dataset | Implicit `TimeSeries` returned by `read_result()`; `DatasetType` enum declared on backends | one concrete type materialized; additional types reserved for Phase 3 metrics |
-| Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `FinalOnlyMode`, `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`; `VariableComparison.diagnostics` carries structured extras | 6 concrete leaf types spanning trajectory-comparison, signal-only bounds, event-timing, and spectral shapes |
+| Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `PointsMode`, `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`; `VariableComparison.diagnostics` carries structured extras | 6 concrete leaf types spanning trajectory-comparison, signal-only bounds, event-timing, and spectral shapes |
 | MetricTree | `comparison/metric_tree.py` (`And`/`Or`/`KOfN`/`Warn`/`Weighted` + `MetricResult`), `comparison/tree_spec.py`, `comparison/tree_eval.py`. `compare_test` derives `passed` from the tree root; users author trees via `test_spec.json` `"metrics"` block | 5 combinators (weighted is direction-aware); `simulate_only` leaf short-circuits comparison entirely |
 | Reference | Hybrid-schema storage; `Baseline` view presents named baselines uniformly | primary baseline flat-at-top-level; additional baselines under optional `baselines` key |
 
@@ -81,7 +81,7 @@ src/dstf/
 │       └── log_parser.py      # Parses dslog.txt + translation_log.txt for statistics
 ├── comparison/
 │   ├── comparator.py         # compare_test/compare_all orchestration, piecewise NRMSE, tube, final-value
-│   └── modes.py              # ComparisonMode ABC, NrmseMode/TubeMode/FinalOnlyMode, typed configs, resolve_mode()
+│   └── modes.py              # ComparisonMode ABC, NrmseMode/TubeMode/PointsMode, typed configs, resolve_mode()
 ├── storage/
 │   └── reference_store.py    # RefIndex + ReferenceStore (per-test JSON files)
 └── reporting/
@@ -121,13 +121,14 @@ runner.read_results(manifests, tests)
     → auto-captures diagnostic variables (configurable, default: CPUtime, EventCounter)
     → returns dict[model_id → TestResult]
 
-compare_all(tests, results, store, default_tolerance, final_only)
+compare_all(tests, results, store, default_tolerance, default_points)
     → loads reference JSON per test from ReferenceStore
-    → per-variable: resolve_mode(override, tolerance, final_only) → ComparisonMode
+    → per-variable: resolve_mode(override, tolerance, default_points) → ComparisonMode
     → mode.compare(ref_time, ref_values, act_time, act_values) → VariableComparison
     → NrmseMode: piecewise NRMSE with event boundary handling
     → TubeMode: envelope check with three width modes (rel, band, absolute)
-    → FinalOnlyMode: compare only final values
+    → PointsMode: declared-checkpoint comparison (empty list ⇒ final value only;
+                  non-empty ⇒ multi-point with abs/rel y-tolerance + x-tolerance box)
     → returns list[TestComparison]
 
 reporters render TestComparison → console / JUnit / HTML / plots

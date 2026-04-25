@@ -1938,3 +1938,82 @@ renders `modelica-om-multifrequency` overlay (502 time points,
 - **Validation**: 5 new Python tests in
   ``tests/test_comparator.py::TestBaselineFreeNoRef``. Full suite
   goes from 791 → 796 passed. 0 regressions.
+
+## D84: `points` mode (final-only → points + multi-point + abs values + x-tolerance)
+
+- **What**: Rename `final-only` to `points` and extend to a fully-
+  capable point-based comparison mode. New schema accepts a list of
+  declared checkpoints; each can have an explicit absolute target
+  (baseline-free) or fall back to `ref(time)`, an absolute or
+  relative y-tolerance, and a symmetric x-tolerance (`time_tolerance`)
+  that turns the strict-time check into a 2D box check.
+- **Why**: Three needs that the legacy final-only didn't serve —
+  multi-point checking ("at t=1 the transient settles, at t=5 steady
+  state matches, final value also OK"), absolute-value checking
+  ("temperature reaches 350 K at t=3.2 ± 0.5"), and timing-uncertainty
+  ("temperature reaches 30 °C at t≈3 — different solvers may hit at
+  2.97 or 3.02"). Also closes the cross-metric consistency gap left
+  by event-timing (D82) and dominant-frequency (D75) both having
+  declared-list editors while final-only didn't.
+- **Empty-list compatibility**: `points = None` or `[]` behaves
+  identically to legacy final-only (act[-1] vs ref[-1] within
+  tolerance). Existing tests continue to work without per-point
+  authoring.
+- **Clean break**: `"mode": "final-only"` and `"mode": "final_only"`
+  in test specs no longer resolve — they fall through to NrmseMode
+  (the no-mode default), which is wrong-but-different. Per the
+  standing "no backward compat" policy. Verified: zero example test
+  specs in this repo used `final-only`, so user-facing migration cost
+  is zero. CLI flag `--final-only` and `config.final_only` likewise
+  renamed to `--default-points` and `config.default_points`.
+- **Editor surface (Medium scope)**: declared-points table in the
+  leaf's .node-editor slot — Time | x-tol | Value | Mode | Tolerance |
+  Match (live) | ×. Buttons: `+ add point`, `📸 Snapshot from ref`.
+  Zero-point fast path shows an italic "final · uses ref[-1] ·
+  tolerance N" placeholder row.
+- **Plot decoration**: diamond markers at `(t_center, resolved_value)`
+  + a translucent rectangle covering the box. When `time_tolerance=0`
+  the rectangle degenerates to a vertical line segment.
+- **Baseline-free integration (D83)**: `PointsMode.is_baseline_free()`
+  returns True iff `points` is non-empty AND every point has an
+  explicit `value`. Tests configured this way run via D83's
+  short-circuit — no baseline file needed on disk.
+
+### Rejected alternatives
+
+- **Keep `final-only` and ship `points` as a separate mode** — adds
+  a redundant editor, redundant docs, two overlapping mental models.
+  The user explicitly preferred unification ("avoid method bloat in
+  the HTML"). Empty `points` list IS final-only; renaming + extending
+  collapses cleanly.
+- **No null-time sentinel; require explicit numeric `time`** — couples
+  spec to simulation `stop_time`. Any change to stop_time silently
+  invalidates "final value" checks. `time: null` decouples cleanly.
+- **Per-point partial scoring for mixed-baseline leaves** — score
+  absolute points even when ref is missing, skip ref-relative ones
+  with a warning. Creates PASS/FAIL ambiguity ("test passed when half
+  the checks didn't run"). All-or-nothing baseline-free trigger
+  preferred — users who want fully baseline-free commit to setting
+  `value` everywhere.
+- **Draggable plot markers as MVP** — same call as event-timing D82.
+  Numeric table editing covers essentials; markers are polish that
+  layers on later if usage shows demand. Logged as a follow-up in
+  `ideas.md`.
+- **Pyfunnel-style continuous x-tolerance integration** — separate
+  tool for a separate problem (continuous-trajectory bounds vs
+  discrete-checkpoint bounds). Tracked as ideas.md #25; can coexist
+  with points-mode x-tolerance.
+
+### Validation
+
+- 20+ new CLI tests in `TestPointsDeclaredPath`: implicit-final
+  preserved, single-point pass/fail, baseline-free absolute, per-point
+  tolerance, abs/rel mode, null-time sentinel, multi-point, x-tolerance
+  box pass/fail, x-tolerance=0 degenerate, interpolated endpoints.
+- 17 new Playwright tests in `tests/test_interactive_points.py`:
+  scorer (window-aware, declared paths, box check, window clipping),
+  plot decoration (no-points + per-point markers + box dimensions),
+  editor (mount, render, add, delete, placeholder, Snapshot button).
+- Cross-metric matrix from range-fix Task 6 still passes after
+  `'final-only'` → `'points'` rename.
+- Full suite at +29 tests, 0 regressions.
