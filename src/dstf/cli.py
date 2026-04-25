@@ -187,7 +187,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             print("--rerun requires prior results in the work directory. Run a full pass first.")
             return 1
         prior_comps = compare_all(
-            all_tests, prior_results, store, config.tolerance, config.final_only,
+            all_tests, prior_results, store, config.tolerance, config.default_points,
         )
         rerun_models = {c.model_id for c in prior_comps if _should_review(c, rerun_categories)}
         tests = [t for t in tests if t.model_id in rerun_models]
@@ -239,7 +239,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     elif args.interactive is not None:
         from .comparison.comparator import compare_all
 
-        comparisons = compare_all(scope_tests, results, store, config.tolerance, config.final_only)
+        comparisons = compare_all(scope_tests, results, store, config.tolerance, config.default_points)
         return _interactive_review(
             scope_tests, results, comparisons, store, config,
             review_filter=args.interactive,
@@ -247,7 +247,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         from .comparison.comparator import compare_all
 
-        comparisons = compare_all(scope_tests, results, store, config.tolerance, config.final_only)
+        comparisons = compare_all(scope_tests, results, store, config.tolerance, config.default_points)
 
         if args.report:
             return _generate_report_suite(comparisons, results, scope_tests, store, config)
@@ -308,7 +308,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     store = ReferenceStore(config)
     _write_id_mapping(store, config)
     results = runner.read_last_results(tests)
-    comparisons = compare_all(tests, results, store, config.tolerance, config.final_only)
+    comparisons = compare_all(tests, results, store, config.tolerance, config.default_points)
 
     if getattr(args, "report", False):
         return _generate_report_suite(comparisons, results, tests, store, config)
@@ -1251,8 +1251,8 @@ def _build_config(args: argparse.Namespace) -> Config:
         kwargs["dymola_interface_path"] = Path(args.dymola_interface)
     if hasattr(args, "tolerance") and args.tolerance:
         kwargs["tolerance"] = args.tolerance
-    if hasattr(args, "final_only") and args.final_only:
-        kwargs["final_only"] = args.final_only
+    if hasattr(args, "default_points") and args.default_points:
+        kwargs["default_points"] = args.default_points
     if hasattr(args, "timeout") and args.timeout:
         kwargs["timeout"] = args.timeout
     if hasattr(args, "test_spec") and args.test_spec:
@@ -1323,7 +1323,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_run.add_argument("--batch", action="store_true",
                        help="Use the legacy batched script runner (Dymola .mos / OpenModelica subprocess) instead of the default persistent-worker mode. Falls back to this automatically if the backend's Python interface (Dymola DymolaInterface or OMPython) can't be loaded.")
     p_run.add_argument("--tolerance", type=float, help="Override comparison tolerance")
-    p_run.add_argument("--final-only", action="store_true", help="Compare only final values")
+    p_run.add_argument("--default-points", action="store_true", help="Use points mode (with empty points list) as the default for variables without an explicit ``mode`` override.")
     p_run.add_argument(
         "--timeout", type=int, default=None,
         help="Per-test timeout in seconds (default: 60)",
@@ -1357,7 +1357,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_compare.add_argument("--filter", type=str, help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id")
     p_compare.add_argument("--package", type=str, help="Filter by package prefix")
     p_compare.add_argument("--tolerance", type=float, help="Override comparison tolerance")
-    p_compare.add_argument("--final-only", action="store_true", help="Compare only final values")
+    p_compare.add_argument("--default-points", action="store_true", help="Use points mode (with empty points list) as the default for variables without an explicit ``mode`` override.")
     p_compare.add_argument(
         "--report-format", choices=["console", "junit", "html"],
         default="console",

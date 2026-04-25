@@ -811,20 +811,20 @@ class TestResolveMode:
         assert mode.config.tube_rel == 0.02
         assert mode.config.tube_width_mode == "band"
 
-    def test_explicit_final_only(self):
-        """mode='final_only' → PointsMode."""
+    def test_explicit_default_points(self):
+        """mode='default_points' → PointsMode."""
         mode = resolve_mode({"mode": "points"}, tolerance=0.05)
         assert isinstance(mode, PointsMode)
         assert mode.name == "points"
         assert mode.config.tolerance == 0.05
 
-    def test_default_final_only_flag(self):
+    def test_default_default_points_flag(self):
         """default_points=True with no explicit mode → PointsMode."""
         mode = resolve_mode({}, tolerance=1e-4, default_points=True)
         assert isinstance(mode, PointsMode)
 
-    def test_tube_not_overridden_by_final_only(self):
-        """Bug fix: explicit tube mode must NOT be overridden by final_only flag."""
+    def test_tube_not_overridden_by_default_points(self):
+        """Bug fix: explicit tube mode must NOT be overridden by default_points flag."""
         mode = resolve_mode(
             {"mode": "tube", "tube_abs": 1.0},
             tolerance=1e-4,
@@ -833,8 +833,8 @@ class TestResolveMode:
         assert isinstance(mode, TubeMode)
         assert mode.name == "tube"
 
-    def test_explicit_nrmse_not_overridden_by_final_only(self):
-        """Explicit mode='nrmse' is respected even when final_only is True."""
+    def test_explicit_nrmse_not_overridden_by_default_points(self):
+        """Explicit mode='nrmse' is respected even when default_points is True."""
         mode = resolve_mode(
             {"mode": "nrmse"},
             tolerance=1e-4,
@@ -930,14 +930,14 @@ class TestModeCompare:
         assert not vc.passed
         assert vc.tube_points_inside < 1.0
 
-    def test_final_only_mode_pass(self):
+    def test_default_points_mode_pass(self):
         mode = PointsMode(PointsConfig(tolerance=0.01))
         vc = mode.compare(self.ref_time, self.ref_values,
                           self.ref_time, self.act_values_close)
         assert vc.passed
         assert vc.mode == "points"
 
-    def test_final_only_mode_fail(self):
+    def test_default_points_mode_fail(self):
         mode = PointsMode(PointsConfig(tolerance=1e-6))
         vc = mode.compare(self.ref_time, self.ref_values,
                           self.ref_time, self.act_values_far)
@@ -947,23 +947,23 @@ class TestModeCompare:
 class TestCompareTestWithModes:
     """End-to-end: compare_test dispatches via resolve_mode correctly."""
 
-    def test_final_only_flag_does_not_override_tube(self):
-        """Bug fix: final_only=True must not override mode='tube'."""
+    def test_default_points_flag_does_not_override_tube(self):
+        """Bug fix: default_points=True must not override mode='tube'."""
         test = _make_test(variable_overrides={
             "x": {"mode": "tube", "tube_abs": 0.01},
         })
         result, ref = _make_result_and_ref(offset=0.005)
-        comp = compare_test(test, result, ref, default_tolerance=1e-4, final_only=True)
+        comp = compare_test(test, result, ref, default_tolerance=1e-4, default_points=True)
         assert comp.passed
         assert comp.variables[0].mode == "tube"
 
-    def test_final_only_flag_applies_when_no_explicit_mode(self):
-        """final_only=True applies to variables without explicit mode."""
+    def test_default_points_flag_applies_when_no_explicit_mode(self):
+        """default_points=True applies to variables without explicit mode."""
         test = _make_test()
         result, ref = _make_result_and_ref(offset=0.005)
-        # final_only compares only last values: ref=3.0, act=3.005
+        # default_points compares only last values: ref=3.0, act=3.005
         # relative error = 0.005/3.0 ≈ 0.00167, tolerance=0.01 → pass
-        comp = compare_test(test, result, ref, default_tolerance=0.01, final_only=True)
+        comp = compare_test(test, result, ref, default_tolerance=0.01, default_points=True)
         assert comp.passed
 
 

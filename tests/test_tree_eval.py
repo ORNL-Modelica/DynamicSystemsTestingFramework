@@ -241,7 +241,7 @@ class TestLeafEval:
         )
         assert tree.passed
 
-    def test_final_only_leaf(self):
+    def test_default_points_leaf(self):
         spec = parse_metric_tree({
             "metric": "points", "variable": "x", "tolerance": 0.01,
         })

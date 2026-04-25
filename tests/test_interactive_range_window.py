@@ -274,7 +274,7 @@ def test_tube_scorer_respects_window(tmp_path, playwright_browser):
 # Task 3: nrmse + final-only live scorers respect window
 # ---------------------------------------------------------------------------
 
-def test_final_only_window_edits_rescore_in_browser(tmp_path, playwright_browser):
+def test_default_points_window_edits_rescore_in_browser(tmp_path, playwright_browser):
     """Final-only scorer should use the windowed final value, not the
     full-trace final. With a +0.1 offset on act and tolerance 0.05, the
     windowed scorer should FAIL (delta = 0.1 > 0.05). Before the live-port

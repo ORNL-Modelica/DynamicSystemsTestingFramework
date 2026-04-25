@@ -983,7 +983,7 @@ def compare_test(
     result: TestResult,
     reference: dict,
     default_tolerance: float = DEFAULT_TOLERANCE,
-    final_only: bool = False,
+    default_points: bool = False,
     store=None,  # Optional[ReferenceStore] — if provided, soft_checks from the new subdir layout are merged in
 ) -> TestComparison:
     """Compare a test's simulation results against its reference.
@@ -994,9 +994,10 @@ def compare_test(
         reference: Stored reference data dict.
         default_tolerance: Fallback tolerance when no per-test or per-ref
             tolerance is set.
-        final_only: When True, variables without an explicit ``mode``
-            override use final-value comparison instead of full NRMSE.
-            Variables with ``mode: "tube"`` are *not* affected.
+        default_points: When True, variables without an explicit ``mode``
+            override use points-mode (with empty points list = final-value
+            comparison) instead of full NRMSE. Variables with
+            ``mode: "tube"`` are *not* affected.
     """
     from .modes import resolve_mode
     from .metric_tree import implicit_and_tree
@@ -1110,7 +1111,7 @@ def compare_test(
 
         var_override = merged_overrides.get(name, {})
         tolerance = var_override.get("tolerance", base_tolerance)
-        mode = resolve_mode(var_override, tolerance, default_points=final_only)
+        mode = resolve_mode(var_override, tolerance, default_points=default_points)
 
         if ref_var is None:
             # Baseline-free modes (range; event-timing with declared events;
@@ -1238,7 +1239,7 @@ def compare_all(
     results: dict[str, TestResult],
     store: ReferenceStore,
     default_tolerance: float = DEFAULT_TOLERANCE,
-    final_only: bool = False,
+    default_points: bool = False,
 ) -> list[TestComparison]:
     """Compare all test results against stored references."""
     import sys as _sys
@@ -1284,7 +1285,7 @@ def compare_all(
         comp = compare_test(
             test, result, reference if reference is not None else {},
             default_tolerance=default_tolerance,
-            final_only=final_only,
+            default_points=default_points,
             store=store,
         )
         if reference is None:

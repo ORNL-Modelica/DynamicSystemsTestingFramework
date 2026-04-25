@@ -62,7 +62,7 @@ class TestDeriveSchemaPerMode:
         assert pts.type == "passthrough"
         assert pts.optional is True
 
-    def test_final_only(self):
+    def test_default_points(self):
         s = derive_schema(PointsConfig, mode="points")
         names = [f.name for f in s.fields]
         assert set(names) == {"points", "tolerance"}

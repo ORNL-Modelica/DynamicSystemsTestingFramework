@@ -40,7 +40,7 @@ class TestLeafSpec:
         assert node.metric == "tube"
         assert node.params == {"tube_rel": 0.05, "tube_width_mode": "rel"}
 
-    def test_final_only_leaf(self):
+    def test_default_points_leaf(self):
         node = parse_metric_tree({"metric": "points", "variable": "x"})
         assert isinstance(node, LeafSpec)
         assert node.metric == "points"
