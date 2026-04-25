@@ -1380,7 +1380,7 @@ MODE_PLOT_EDITORS['tube'] = (function() {
         <select data-tube-field="widthMode" ${!es.synced ? 'disabled' : ''}>
           <option value="rel">rel (fraction of |ref|)</option>
           <option value="band">band (± offset)</option>
-          <option value="absolute">absolute (y-value)</option>
+          <option value="abs">abs (literal y-bounds)</option>
         </select>
       </label>
       <label>Symmetry

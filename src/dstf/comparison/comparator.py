@@ -494,26 +494,26 @@ def _compare_tube(
     """Compare using a tolerance tube around the reference trajectory.
 
     Tube width modes:
-    - "band" (or legacy "abs"): widths are offsets in signal units (ref ± width)
-    - "rel": widths are fractions of |reference| (ref ± frac * |ref|)
-    - "absolute": upper/lower are literal y-axis bounds (not offsets)
-    - Legacy (both abs and rel): width = max(abs, rel * |ref|)
+    - "band": widths are constant offsets in signal units (ref ± width)
+    - "rel":  widths are fractions of |reference| (ref ± frac * |ref|)
+    - "abs":  upper/lower are literal y-axis bounds (not offsets) —
+              requires tube_points with explicit upper/lower
 
     Supports symmetric (upper == lower) and asymmetric tubes.
-    Supports constant tube (tube_abs/tube_rel) or time-varying
-    (tube_points with interpolation).
+    Constant-tube shorthand (tube_abs / tube_rel) supports only
+    'band' and 'rel'; 'abs' must use tube_points.
 
     A point passes if: tube_lower <= actual <= tube_upper.
     The test passes if ALL points are inside the tube (strict).
     """
     act_interp = np.interp(ref_time, act_time, act_values)
 
-    # tube_width_mode: "band" (offset in signal units), "rel" (fraction of |ref|),
-    # "absolute" (literal y-values), "abs" (legacy alias for "band"), or None (legacy)
     tube_width_mode = tube_config.get("tube_width_mode")
-    # Normalize legacy "abs" to "band"
-    if tube_width_mode == "abs":
-        tube_width_mode = "band"
+    if tube_width_mode not in ("band", "rel", "abs"):
+        raise ValueError(
+            f"tube_width_mode must be 'band', 'rel', or 'abs'; "
+            f"got {tube_width_mode!r}"
+        )
     min_width = tube_config.get("tube_min_width", 0.0)
 
     tube_points = tube_config.get("tube_points")
@@ -523,7 +523,9 @@ def _compare_tube(
             ref_time, tube_points, interpolation,
         )
     else:
-        # Constant tube (shorthand)
+        # Constant-tube shorthand — only 'band' and 'rel' supported.
+        # 'abs' (literal y-bounds) needs both bounds explicitly, so it
+        # must use tube_points.
         const_abs = tube_config.get("tube_abs", 0.0)
         const_rel = tube_config.get("tube_rel", 0.0)
         if tube_width_mode == "band":
@@ -532,31 +534,22 @@ def _compare_tube(
         elif tube_width_mode == "rel":
             raw_upper = np.full_like(ref_time, const_rel)
             raw_lower = raw_upper.copy()
-        else:
-            # Legacy: both abs and rel
-            raw_upper = np.maximum(
-                np.full_like(ref_time, const_abs),
-                np.full_like(ref_time, const_rel) * np.abs(ref_values),
+        else:  # abs
+            raise ValueError(
+                "tube_width_mode='abs' requires tube_points; "
+                "constant-tube shorthand supports only 'band' and 'rel'."
             )
-            raw_lower = raw_upper.copy()
 
-    if tube_width_mode == "absolute":
-        # Absolute mode: raw values are literal y-axis bounds
+    if tube_width_mode == "abs":
+        # Literal y-axis bounds.
         tube_upper = raw_upper
         tube_lower = raw_lower
     else:
-        # Band/rel modes: raw values are offsets from reference
+        # 'rel' or 'band' — raw values are offsets from reference.
         if tube_width_mode == "rel":
             upper_width = raw_upper * np.abs(ref_values)
             lower_width = raw_lower * np.abs(ref_values)
-        elif tube_width_mode == "band":
-            upper_width = raw_upper
-            lower_width = raw_lower
-        elif tube_points and ("upper" in tube_points[0] or "lower" in tube_points[0]):
-            upper_width = raw_upper
-            lower_width = raw_lower
-        else:
-            # Legacy format: already computed as max(abs, rel * |ref|)
+        else:  # band
             upper_width = raw_upper
             lower_width = raw_lower
 

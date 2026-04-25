@@ -45,7 +45,7 @@ class TestDeriveSchemaPerMode:
 
         wm = by_name["tube_width_mode"]
         assert wm.type == "enum"
-        assert wm.choices == ["band", "rel", "absolute"]
+        assert wm.choices == ["band", "rel", "abs"]
         assert wm.optional is True  # Optional[Literal[...]]
 
         interp = by_name["tube_interpolation"]
@@ -362,7 +362,7 @@ class TestEmitModeSchemas:
     def test_tube_enum_choices_survive_serialization(self):
         schemas = emit_mode_schemas()
         tube_fields = {f["name"]: f for f in schemas["tube"]["fields"]}
-        assert tube_fields["tube_width_mode"]["choices"] == ["band", "rel", "absolute"]
+        assert tube_fields["tube_width_mode"]["choices"] == ["band", "rel", "abs"]
 
 
 def test_event_timing_render_html_includes_passthrough_events():

@@ -37,7 +37,7 @@ class TestSchemaBuilder:
         # Optional[Literal[...]] emits oneOf with enum + null
         assert "oneOf" in width
         enum_branch = next(b for b in width["oneOf"] if "enum" in b)
-        assert set(enum_branch["enum"]) == {"band", "rel", "absolute"}
+        assert set(enum_branch["enum"]) == {"band", "rel", "abs"}
 
     def test_nrmse_mode_tolerance_field(self):
         from dstf.reporting.schema_export import build_schema

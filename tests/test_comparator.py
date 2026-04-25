@@ -568,7 +568,7 @@ class TestTubeComparison:
 
         vc = _compare_tube(
             ref_time, ref_values, ref_time, act_values,
-            {"tube_abs": 5.0, "tube_rel": 0.0},
+            {"tube_width_mode": "band", "tube_abs": 5.0},
         )
         assert vc.passed
         assert vc.mode == "tube"
@@ -582,7 +582,7 @@ class TestTubeComparison:
 
         vc = _compare_tube(
             ref_time, ref_values, ref_time, act_values,
-            {"tube_abs": 5.0, "tube_rel": 0.0},
+            {"tube_width_mode": "band", "tube_abs": 5.0},
         )
         assert not vc.passed
         assert vc.tube_points_inside < 1.0
@@ -599,20 +599,20 @@ class TestTubeComparison:
 
         vc = _compare_tube(
             ref_time, ref_values, ref_time, act_values,
-            {"tube_abs": 0.0, "tube_rel": 0.05},
+            {"tube_width_mode": "rel", "tube_rel": 0.05},
         )
         assert vc.passed
 
-    def test_max_of_abs_and_rel(self):
-        """Tube width is max(abs, rel * |ref|) — prevents zero-width at zero crossing."""
+    def test_min_width_floors_rel_at_zero_crossing(self):
+        """tube_min_width floors rel-mode width — prevents zero-width at zero crossing."""
         ref_time = np.array([0.0, 1.0])
         ref_values = np.array([0.0, 100.0])  # Crosses zero
-        # At t=0: |ref|=0, rel=0.05 → rel_width=0, abs=5 → width=5
-        act_values = np.array([3.0, 104.0])  # Within abs tube at zero
+        # At t=0: |ref|=0 so rel width = 0, but min_width=5 → effective width=5
+        act_values = np.array([3.0, 104.0])  # Within ±5 at zero, ±5% at t=1
 
         vc = _compare_tube(
             ref_time, ref_values, ref_time, act_values,
-            {"tube_abs": 5.0, "tube_rel": 0.05},
+            {"tube_width_mode": "rel", "tube_rel": 0.05, "tube_min_width": 5.0},
         )
         assert vc.passed
 
@@ -626,6 +626,7 @@ class TestTubeComparison:
         vc = _compare_tube(
             ref_time, ref_values, ref_time, act_values,
             {
+                "tube_width_mode": "band",
                 "tube_points": [
                     {"time": 0.0, "abs": 1.0, "rel": 0.0},
                     {"time": 100.0, "abs": 10.0, "rel": 0.0},
@@ -647,6 +648,7 @@ class TestTubeComparison:
         vc = _compare_tube(
             ref_time, ref_values, ref_time, act_values,
             {
+                "tube_width_mode": "band",
                 "tube_points": [
                     {"time": 0.0, "abs": 1.0, "rel": 0.0},
                     {"time": 100.0, "abs": 10.0, "rel": 0.0},
@@ -666,7 +668,7 @@ class TestTubeComparison:
 
         vc = _compare_tube(
             ref_time, ref_values, ref_time, act_values,
-            {"tube_abs": 5.0, "tube_rel": 0.0},
+            {"tube_width_mode": "band", "tube_abs": 5.0},
         )
         assert vc.nrmse > 0
         assert vc.rmse > 0
@@ -676,8 +678,8 @@ class TestTubeComparison:
         test = _make_test(variable_overrides={
             "x": {
                 "mode": "tube",
+                "tube_width_mode": "band",
                 "tube_abs": 0.01,
-                "tube_rel": 0.0,
             },
         })
         result, ref = _make_result_and_ref(offset=0.005)
@@ -697,7 +699,7 @@ class TestTubeComparison:
         vc = _compare_tube(
             ref_time, ref_values, ref_time, act_values,
             {
-                "tube_width_mode": "abs",
+                "tube_width_mode": "band",
                 "tube_points": [
                     {"time": 0.0, "upper": 5.0, "lower": 1.0},
                 ],
@@ -716,7 +718,7 @@ class TestTubeComparison:
         vc = _compare_tube(
             ref_time, ref_values, ref_time, act_values,
             {
-                "tube_width_mode": "abs",
+                "tube_width_mode": "band",
                 "tube_points": [
                     {"time": 0.0, "upper": 5.0, "lower": 1.0},
                 ],
@@ -916,7 +918,7 @@ class TestModeCompare:
         assert not vc.passed
 
     def test_tube_mode_pass(self):
-        mode = TubeMode(TubeConfig(tube_abs=1.0))
+        mode = TubeMode(TubeConfig(tube_width_mode="band", tube_abs=1.0))
         vc = mode.compare(self.ref_time, self.ref_values,
                           self.ref_time, self.act_values_close)
         assert vc.passed
@@ -924,7 +926,7 @@ class TestModeCompare:
         assert vc.tube_points_inside == 1.0
 
     def test_tube_mode_fail(self):
-        mode = TubeMode(TubeConfig(tube_abs=0.001))
+        mode = TubeMode(TubeConfig(tube_width_mode="band", tube_abs=0.001))
         vc = mode.compare(self.ref_time, self.ref_values,
                           self.ref_time, self.act_values_far)
         assert not vc.passed
@@ -950,7 +952,7 @@ class TestCompareTestWithModes:
     def test_default_points_flag_does_not_override_tube(self):
         """Bug fix: default_points=True must not override mode='tube'."""
         test = _make_test(variable_overrides={
-            "x": {"mode": "tube", "tube_abs": 0.01},
+            "x": {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.01},
         })
         result, ref = _make_result_and_ref(offset=0.005)
         comp = compare_test(test, result, ref, default_tolerance=1e-4, default_points=True)

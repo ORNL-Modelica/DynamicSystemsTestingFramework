@@ -2164,3 +2164,74 @@ renders `modelica-om-multifrequency` overlay (502 time points,
   resulting rel fraction (cap at 1000%) is more flexible —
   legitimate small-target conversions still go through.
 - Full suite at +29 tests, 0 regressions.
+
+## D86: Tube-mode taxonomy clean-up — `absolute` → `abs`, drop legacy aliases (2026-04-25)
+
+- **What**: Three named tube modes, no aliases, hard-validated at
+  the comparator entry point.
+  - `band` — constant offset in signal units (`ref ± width`)
+  - `rel`  — fraction of `|reference|`
+  - `abs`  — literal y-axis bounds (was `absolute`); requires
+             `tube_points` with explicit `upper`/`lower`
+- **Why**: The previous taxonomy had three load-bearing pieces of
+  back-compat cruft inherited from when tube-mode was first
+  introduced (commit `3389f57`, "tube mostly working", 2026-04-10):
+  - String `"abs"` aliased silently to `"band"` because the original
+    tube design used `"abs"` to mean "constant absolute offset"
+    before `"absolute"` was added later for "literal y-bounds". The
+    namespace got reshuffled but the alias stayed.
+  - Unset `tube_width_mode` + both `tube_abs` and `tube_rel` set
+    fell into a `max(abs, rel*|ref|)` formula that nothing in the
+    repo or TRANSFORM-UnitTests used.
+  - The verbose `"absolute"` was awkward next to two-letter `band`/
+    `rel`. Reclaiming `"abs"` for the truly-absolute (literal
+    y-bounds) interpretation is more semantically clean — `abs`
+    here means "absolute coordinates" rather than "absolute offset".
+- **Silent-flip risk**: `"abs"` flips meaning (band → literal
+  y-bounds). A pre-rename spec authored against the old taxonomy
+  wouldn't error — it'd silently behave differently. Mitigation: the
+  comparator now hard-raises `ValueError` on any
+  `tube_width_mode` outside `{"band", "rel", "abs"}`, and the
+  constant-tube shorthand additionally rejects `"abs"` (literal
+  y-bounds need both bounds, requires `tube_points`). External
+  consumers that do exist (TRANSFORM-UnitTests, internal example
+  libraries) were verified to use zero `"abs"` or `"absolute"`
+  strings before the change.
+
+### Surface area
+
+- `src/dstf/comparison/modes.py` — `Literal` type updated, help
+  text rewritten (the previous "band = max(abs, rel*|ref|)"
+  description was actually documenting the *removed* legacy
+  fallback, not what `band` did).
+- `src/dstf/comparison/comparator.py` — single up-front validator;
+  removed legacy `"abs"→"band"` alias (was 3 LOC), removed
+  unset-mode + both-abs+rel fallback (was 7 LOC), removed two
+  unreachable `elif` branches in the offset/literal split (was
+  10 LOC). Net `-15 +12 LOC`; cyclomatic complexity down a step.
+- `src/dstf/reporting/templates/interactive.js` — width-mode
+  dropdown option flipped.
+- `tests/test_comparator.py` — 10 call sites that relied on the
+  legacy fallback now declare an explicit mode.
+  `test_max_of_abs_and_rel` was renamed to
+  `test_min_width_floors_rel_at_zero_crossing` and rewritten to
+  use the modern `tube_min_width` parameter — preserving the
+  underlying "prevent zero-width at zero crossings" coverage with
+  the modern API instead of the removed legacy one.
+- `tests/test_mode_controls.py`, `tests/test_export_schema.py` —
+  hardcoded `"absolute"` enum expectations updated.
+
+### What was NOT renamed
+
+- The dataclass field `tube_abs` (the value used by `band` mode for
+  the constant offset) keeps its name. Renaming it cascades through
+  every spec and reference JSON in the wild and is not worth the
+  blast radius. Awkwardness: `tube_abs` is the value field for
+  `band` mode in the new taxonomy. Documented in the help text.
+- The per-point shorthand `{"time": t, "abs": w, "rel": r}` inside
+  `tube_points` is still legacy-flagged in the docstring but
+  preserved — no consumers were changed in this commit.
+
+### Validation
+
+- 837 + 69 playwright passing post-rename, 0 regressions.

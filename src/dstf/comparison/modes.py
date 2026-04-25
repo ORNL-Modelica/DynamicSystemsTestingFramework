@@ -98,16 +98,16 @@ class TubeConfig:
     `Literal[...]` choices feed the reporter's auto-derived UI
     (reporting/ui/mode_controls.py).
     """
-    tube_width_mode: Optional[Literal["band", "rel", "absolute"]] = field(
+    tube_width_mode: Optional[Literal["band", "rel", "abs"]] = field(
         default=None,
         metadata={
             "label": "Width mode",
             "help": (
                 "How the tube width is specified. "
-                "'rel' = fraction of |reference|; "
-                "'band' = offset in signal units (max(abs, rel*|ref|)); "
-                "'absolute' = literal y-axis bounds (not an offset). "
-                "Leave unset to use the rich tube editor's point-level config."
+                "'band' = constant offset in signal units (uses tube_abs); "
+                "'rel' = fraction of |reference| (uses tube_rel); "
+                "'abs' = literal y-axis bounds — requires tube_points "
+                "with explicit upper/lower."
             ),
         },
     )
