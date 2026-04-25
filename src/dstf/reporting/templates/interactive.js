@@ -481,13 +481,13 @@ const MODE_PLOT_CONTRIBUTIONS = {
         y0: target - yLimit, y1: target + yLimit,
         fillcolor: 'rgba(76,175,80,0.10)',
         line: { color: 'rgba(76,175,80,0.6)', width: 1, dash: 'dot' },
+        // Name embeds the leaf path + point index so the editor's
+        // plotly_relayout listener can route box edits to the right
+        // pt.time_tolerance / pt.tolerance fields. Plotly's global
+        // edits.shapePosition=true makes this draggable; the listener
+        // re-derives tolerances from the new bounds and re-renders so
+        // the box always snaps back centered on the point.
         name: `points_box:${leaf.path}:${xs.length - 1}`,
-        // Opt out of Plotly's native shape-drag: the box is purely
-        // derived (centered on the point with size = ±tolerance), so
-        // letting the user free-drag it would desynchronize from the
-        // point and steal subsequent shift+clicks meant for the diamond.
-        // Resize is exposed via shift+drag corner anchors instead.
-        editable: false,
       });
     }
     if (!xs.length) return { traces: [], shapes };
@@ -2120,26 +2120,6 @@ MODE_PLOT_EDITORS['points'] = (function() {
     return mode === 'rel' ? perTol * Math.abs(y) : perTol;
   }
 
-  // Pixel-space size of a point's tolerance box on the current plot.
-  // Returns null when the plot isn't laid out yet. Used to gate corner
-  // anchors — small boxes should not expose corner drag handles since
-  // they'd overlap the diamond's center anchor and create ambiguity.
-  function _boxPixelSize(leaf, pt) {
-    const idx = VARIABLE_INDEX[leaf.variable];
-    const plotEl = document.getElementById(`plot-${idx}`);
-    if (!plotEl || !plotEl._fullLayout) return null;
-    const xa = plotEl._fullLayout.xaxis;
-    const ya = plotEl._fullLayout.yaxis;
-    if (!xa || !ya) return null;
-    const { x: cx, y: cy } = _resolvedXY(leaf, pt);
-    const xTol = pt.time_tolerance != null ? Number(pt.time_tolerance) : 0;
-    const yLimit = _resolvedYLimit(leaf, pt);
-    return {
-      widthPx: Math.abs(xa.d2p(cx + xTol) - xa.d2p(cx - xTol)),
-      heightPx: Math.abs(ya.d2p(cy + yLimit) - ya.d2p(cy - yLimit)),
-    };
-  }
-
   function _sortByTime(leaf) {
     getPoints(leaf).sort((a, b) => {
       const ta = a.time != null ? Number(a.time) : Infinity;
@@ -2148,49 +2128,20 @@ MODE_PLOT_EDITORS['points'] = (function() {
     });
   }
 
-  // Pixel size below which a corner anchor isn't exposed. Below this,
-  // the corner overlaps the center anchor and shift+click can't
-  // disambiguate. Above this, the user can grab a visible corner to
-  // resize the box symmetrically.
-  const CORNER_VISIBILITY_PX = 30;
-
-  // Shared shift-modifier interaction layer — mirrors tube + dom-freq.
+  // Shared shift-modifier interaction layer for the diamond markers.
+  // The box itself is editable via Plotly's native shape-drag (handled
+  // by the plotly_relayout listener below), so anchors here are just
+  // the point centers.
   //   * shift+click on empty plot     → add point (explicit value at click)
-  //   * shift+drag on diamond center  → move time + value (becomes explicit
-  //                                     value if it was ref-relative)
-  //   * shift+drag on visible corner  → resize box symmetrically; the
-  //                                     point stays fixed and the box
-  //                                     stays centered on it. Only
-  //                                     exposed when the box is at least
-  //                                     CORNER_VISIBILITY_PX on one axis.
-  //   * shift+right-click on center   → delete point
+  //   * shift+drag on diamond         → move time + value (becomes
+  //                                     explicit value if ref-relative)
+  //   * shift+right-click on diamond  → delete point
   const _pointEditor = createPointPlotEditor({
     getAnchors(leaf) {
-      const tolDefault = getDefaultTolerance(leaf);
-      const anchors = [];
-      getPoints(leaf).forEach(pt => {
-        const { x: cx, y: cy } = _resolvedXY(leaf, pt);
-        anchors.push({ pt, x: cx, y: cy, kind: 'center' });
-        const sz = _boxPixelSize(leaf, pt);
-        const exposeCorners = sz && (
-          sz.widthPx >= CORNER_VISIBILITY_PX
-          || sz.heightPx >= CORNER_VISIBILITY_PX
-        );
-        if (!exposeCorners) return;
-        const xTol = pt.time_tolerance != null ? Number(pt.time_tolerance) : 0;
-        const yLimit = _resolvedYLimit(leaf, pt);
-        for (const sx of [+1, -1]) {
-          for (const sy of [+1, -1]) {
-            anchors.push({
-              pt, kind: 'corner',
-              x: cx + sx * xTol,
-              y: cy + sy * yLimit,
-              cx, cy,
-            });
-          }
-        }
+      return getPoints(leaf).map(pt => {
+        const { x, y } = _resolvedXY(leaf, pt);
+        return { pt, x, y };
       });
-      return anchors;
     },
     onClickAdd(leaf, _plotEl, x, y, commit) {
       const tDefault = getDefaultTolerance(leaf);
@@ -2202,29 +2153,15 @@ MODE_PLOT_EDITORS['points'] = (function() {
       });
       _sortByTime(leaf);
       refreshEditor(leaf, commit);
+      commit();
     },
     onDragStep(leaf, _plotEl, anchor, x, y, commit) {
-      if (anchor.kind === 'corner') {
-        // Resize symmetrically, keeping the point fixed. Use the original
-        // center captured at mousedown (anchor.cx / anchor.cy) so the box
-        // doesn't drift if the cursor passes the center.
-        const newXTol = Math.abs(Number(x) - anchor.cx);
-        const newYLimit = Math.abs(Number(y) - anchor.cy);
-        anchor.pt.time_tolerance = newXTol;
-        const mode = anchor.pt.tolerance_mode || 'abs';
-        if (mode === 'rel') {
-          const denom = Math.abs(anchor.cy);
-          anchor.pt.tolerance = denom > 0 ? newYLimit / denom : 0;
-        } else {
-          anchor.pt.tolerance = newYLimit;
-        }
-      } else {
-        // Center drag: move the point. If it was ref-relative, the drag
-        // promotes it to explicit-value at the dragged y — direct
-        // manipulation means "I want it here" regardless of prior linkage.
-        anchor.pt.time = Number(x);
-        anchor.pt.value = Number(y);
-      }
+      // Direct manipulation of the diamond writes both time + value, so
+      // a previously-ref-relative point becomes anchored to the dragged
+      // y. Mirrors how the tube editor treats drag — clear Value cell
+      // in the table to un-anchor back to ref-relative.
+      anchor.pt.time = Number(x);
+      anchor.pt.value = Number(y);
       refreshEditor(leaf, commit);
     },
     onDragEnd(leaf, _plotEl, _anchor, commit) {
@@ -2232,16 +2169,66 @@ MODE_PLOT_EDITORS['points'] = (function() {
       refreshEditor(leaf, commit);
     },
     onRemove(leaf, _plotEl, anchor, commit) {
-      // Right-click on a corner anchor — fall back to removing the
-      // owning point. Less surprising than no-op.
       const points = getPoints(leaf);
       const idx = points.indexOf(anchor.pt);
       if (idx >= 0) {
         points.splice(idx, 1);
         refreshEditor(leaf, commit);
+        commit();
       }
     },
   });
+
+  // Box-resize via Plotly's native shape-drag. PLOT_CFG sets
+  // edits.shapePosition=true globally, so the user can drag any box
+  // edge / corner / center. We listen for the resulting plotly_relayout
+  // events and re-derive tolerances from the new x0/x1/y0/y1 — half of
+  // each new dimension becomes the new tolerance. The point center is
+  // never touched, and the next render re-draws the box centered on
+  // pt.time + pt.value. Effective behavior:
+  //   * drag a corner / edge → symmetric resize; tolerances grow
+  //   * drag the center      → no half-extent change → snap back
+  //                            (size unchanged, center fixed on point)
+  function applyBoxRelayout(leaf, plotEl, evt, commit) {
+    if (!evt || !plotEl.layout) return false;
+    const updatedShapes = new Set();
+    for (const key of Object.keys(evt)) {
+      const m = key.match(/^shapes\[(\d+)\]\.[xy][01]$/);
+      if (m) updatedShapes.add(parseInt(m[1]));
+    }
+    if (updatedShapes.size === 0) return false;
+    let mutated = false;
+    const points = getPoints(leaf);
+    for (const shapeIdx of updatedShapes) {
+      const shape = plotEl.layout.shapes?.[shapeIdx];
+      if (!shape || !shape.name) continue;
+      const m = shape.name.match(/^points_box:(.+):(\d+)$/);
+      if (!m || m[1] !== leaf.path) continue;
+      const ptIdx = parseInt(m[2]);
+      const pt = points[ptIdx];
+      if (!pt) continue;
+      const halfX = Math.abs((Number(shape.x1) - Number(shape.x0)) / 2);
+      const halfY = Math.abs((Number(shape.y1) - Number(shape.y0)) / 2);
+      pt.time_tolerance = halfX;
+      const mode = pt.tolerance_mode || 'abs';
+      if (mode === 'rel') {
+        const { y: cy } = _resolvedXY(leaf, pt);
+        const denom = Math.abs(cy);
+        pt.tolerance = denom > 0 ? halfY / denom : 0;
+      } else {
+        pt.tolerance = halfY;
+      }
+      mutated = true;
+    }
+    if (mutated) {
+      refreshEditor(leaf, commit);
+      commit();
+    }
+    return mutated;
+  }
+
+  // Per-plotEl listener bookkeeping so deactivate can clean up.
+  const boxListenerByPlot = new WeakMap();
 
   // Render lifecycle.
   // A leaf can be mounted in multiple ``.node-editor`` slots — one per
@@ -2498,10 +2485,22 @@ MODE_PLOT_EDITORS['points'] = (function() {
   return {
     activate(leaf, plotEl, commit) {
       refreshEditor(leaf, commit);
-      if (plotEl) _pointEditor.attach(leaf, plotEl, commit);
+      if (plotEl) {
+        _pointEditor.attach(leaf, plotEl, commit);
+        const handler = (evt) => applyBoxRelayout(leaf, plotEl, evt, commit);
+        plotEl.on('plotly_relayout', handler);
+        boxListenerByPlot.set(plotEl, handler);
+      }
     },
     deactivate(leaf, plotEl) {
-      if (plotEl) _pointEditor.detach(plotEl);
+      if (plotEl) {
+        _pointEditor.detach(plotEl);
+        const handler = boxListenerByPlot.get(plotEl);
+        if (handler && plotEl.removeListener) {
+          plotEl.removeListener('plotly_relayout', handler);
+          boxListenerByPlot.delete(plotEl);
+        }
+      }
       getSlots(leaf).forEach(slot => {
         const root = slot.querySelector(':scope > .points-editor');
         if (root) root.remove();

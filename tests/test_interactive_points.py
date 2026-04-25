@@ -554,49 +554,17 @@ def test_points_editor_shift_click_on_plot_adds_point(
     assert after == before + 1
 
 
-def test_points_box_shapes_are_not_natively_editable(
+def test_points_box_relayout_resizes_symmetrically_around_point(
     tmp_path, playwright_browser,
 ):
-    """Plotly's PLOT_CFG.edits.shapePosition is on for the range mode's
-    bound lines, so it's globally enabled. The points-mode tolerance
-    boxes opt out per-shape (editable: false) — otherwise Plotly's
-    native shape-drag would steal subsequent shift+clicks from the
-    diamond marker and let the user free-drag the box off-center.
-    """
+    """Plotly's native shape-drag emits plotly_relayout with the new
+    box bounds. The points editor listens for these and re-derives
+    pt.time_tolerance + pt.tolerance from half the new bounds — the
+    point center stays fixed, so a re-render snaps the box back
+    centered on the point with the new size. This is the user-
+    requested behavior: 'I can resize the box, but it stays centered
+    on the point.'"""
     ctx = _context_with_points_leaf(
-        points=[{"time": 2.0, "value": 2.0, "tolerance": 0.1,
-                 "tolerance_mode": "abs", "time_tolerance": 0.5}],
-        tolerance=0.01,
-    )
-    html_path = _render_with_context(tmp_path, ctx)
-    page = playwright_browser.new_page()
-    page.goto(html_path.as_uri())
-    box_shapes = page.evaluate("""
-        () => {
-            const leaf = TREE_VIEW.children[0];
-            const traj = (VARIABLES_BY_NAME['h'] || {}).trajectory || {};
-            const contrib = MODE_PLOT_CONTRIBUTIONS['points'](leaf, traj);
-            return (contrib.shapes || [])
-                .filter(s => s.name && s.name.startsWith('points_box:'))
-                .map(s => s.editable);
-        }
-    """)
-    page.close()
-    assert len(box_shapes) == 1
-    assert box_shapes[0] is False
-
-
-def test_points_editor_shift_drag_corner_resizes_symmetrically(
-    tmp_path, playwright_browser,
-):
-    """Shift+drag on a tolerance-box corner adjusts pt.time_tolerance
-    and pt.tolerance from the cursor's distance to the original center,
-    while pt.time and pt.value stay fixed. Mirrors the user request:
-    let me size the box, but keep it centered on the point."""
-    ctx = _context_with_points_leaf(
-        # Box must be large enough that corner anchors are exposed
-        # (CORNER_VISIBILITY_PX=30 in JS). Trajectory spans t∈[0,5],
-        # value∈[0,5]; place point at center with generous tolerance.
         points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
                  "tolerance_mode": "abs", "time_tolerance": 1.0}],
         tolerance=0.01,
@@ -606,57 +574,104 @@ def test_points_editor_shift_drag_corner_resizes_symmetrically(
     page.goto(html_path.as_uri())
     if not _has_plotly(page):
         page.close()
-        pytest.skip("Plotly CDN not reachable; corner-resize test skipped")
+        pytest.skip("Plotly CDN not reachable; relayout test skipped")
     page.locator(
         '[data-path="/metrics/children/0"] > .node-header'
     ).first.click()
-    # Synthesize shift+mousedown at the NE corner (t=3.5, y=3.0), then
-    # drag to (t=4.0, y=3.5), then release. Expected: tolerance grows
-    # to (4.0-2.5)=1.5 in y_limit (abs mode → tolerance=1.5) and
-    # time_tolerance grows to (4.0-2.5)=1.5.
-    ok = page.evaluate("""
+    # Synthesize a relayout event mimicking what Plotly emits when
+    # the user drags a corner outward. New bounds: x∈[1, 4] (was
+    # [1.5, 3.5]) and y∈[1, 4] (was [2, 3]). Half-extents become 1.5
+    # on each axis → tolerance=1.5, time_tolerance=1.5.
+    page.evaluate("""
         () => {
             const idx = VARIABLE_INDEX['h'];
             const el = document.getElementById(`plot-${idx}`);
-            if (!el || !el._fullLayout) return false;
-            const fl = el._fullLayout;
-            const rect = el.getBoundingClientRect();
-            const cornerX = rect.left + (fl._size?.l || 0) + fl.xaxis.d2p(3.5);
-            const cornerY = rect.top + (fl._size?.t || 0) + fl.yaxis.d2p(3.0);
-            const newCornerX = rect.left + (fl._size?.l || 0) + fl.xaxis.d2p(4.0);
-            const newCornerY = rect.top + (fl._size?.t || 0) + fl.yaxis.d2p(3.5);
-            el.dispatchEvent(new MouseEvent('mousedown', {
-                button: 0, shiftKey: true,
-                clientX: cornerX, clientY: cornerY,
-                bubbles: true, cancelable: true,
-            }));
-            document.dispatchEvent(new MouseEvent('mousemove', {
-                shiftKey: true,
-                clientX: newCornerX, clientY: newCornerY,
-                bubbles: true, cancelable: true,
-            }));
-            document.dispatchEvent(new MouseEvent('mouseup', {
-                button: 0, shiftKey: true,
-                clientX: newCornerX, clientY: newCornerY,
-                bubbles: true, cancelable: true,
-            }));
-            return true;
+            // Mutate the shape's bounds in plotEl.layout (mirrors what
+            // Plotly does internally before emitting plotly_relayout).
+            const shapes = el.layout.shapes || [];
+            const boxIdx = shapes.findIndex(s =>
+                s.name && s.name.startsWith('points_box:'));
+            shapes[boxIdx].x0 = 1.0;
+            shapes[boxIdx].x1 = 4.0;
+            shapes[boxIdx].y0 = 1.0;
+            shapes[boxIdx].y1 = 4.0;
+            el.emit('plotly_relayout', {
+                [`shapes[${boxIdx}].x0`]: 1.0,
+                [`shapes[${boxIdx}].x1`]: 4.0,
+                [`shapes[${boxIdx}].y0`]: 1.0,
+                [`shapes[${boxIdx}].y1`]: 4.0,
+            });
         }
     """)
     pt = page.evaluate(
         "leafState['/metrics/children/0'].params.points[0]"
     )
     page.close()
-    assert ok
-    # Center is unchanged.
+    # Point center unchanged.
     assert float(pt["time"]) == pytest.approx(2.5)
     assert float(pt["value"]) == pytest.approx(2.5)
-    # Tolerances grew based on the new corner's distance from original
-    # center (cx=2.5, cy=2.5). New corner at (4.0, 3.5) → xTol = 1.5,
-    # yTol = 1.0 in abs mode. Pixel-to-data conversion incurs small
-    # rounding, so allow a percent of slack.
-    assert float(pt["time_tolerance"]) == pytest.approx(1.5, rel=0.01)
-    assert float(pt["tolerance"]) == pytest.approx(1.0, rel=0.01)
+    # Tolerances picked up from half-extents of the new bounds.
+    assert float(pt["time_tolerance"]) == pytest.approx(1.5)
+    assert float(pt["tolerance"]) == pytest.approx(1.5)
+
+
+def test_points_box_relayout_translation_snaps_back(
+    tmp_path, playwright_browser,
+):
+    """When a relayout shifts the box without changing its size
+    (translation), half-extents are unchanged so tolerances don't
+    update. The next render re-draws the box centered on the point —
+    effectively a 'snap back' that prevents the user from moving the
+    box off-center."""
+    ctx = _context_with_points_leaf(
+        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
+                 "tolerance_mode": "abs", "time_tolerance": 1.0}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    if not _has_plotly(page):
+        page.close()
+        pytest.skip("Plotly CDN not reachable; relayout test skipped")
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    # Translate the box by (+2, +2) without resizing. Original bounds
+    # were [1.5, 3.5] × [2.0, 3.0]; new bounds [3.5, 5.5] × [4.0, 5.0].
+    # Half-extents preserved (1.0 in x, 0.5 in y), so the user's new
+    # tolerances should match the originals — no drift.
+    page.evaluate("""
+        () => {
+            const idx = VARIABLE_INDEX['h'];
+            const el = document.getElementById(`plot-${idx}`);
+            const shapes = el.layout.shapes || [];
+            const boxIdx = shapes.findIndex(s =>
+                s.name && s.name.startsWith('points_box:'));
+            shapes[boxIdx].x0 = 3.5;
+            shapes[boxIdx].x1 = 5.5;
+            shapes[boxIdx].y0 = 4.0;
+            shapes[boxIdx].y1 = 5.0;
+            el.emit('plotly_relayout', {
+                [`shapes[${boxIdx}].x0`]: 3.5,
+                [`shapes[${boxIdx}].x1`]: 5.5,
+                [`shapes[${boxIdx}].y0`]: 4.0,
+                [`shapes[${boxIdx}].y1`]: 5.0,
+            });
+        }
+    """)
+    pt = page.evaluate(
+        "leafState['/metrics/children/0'].params.points[0]"
+    )
+    page.close()
+    # Point unchanged (the listener doesn't move pt.time / pt.value).
+    assert float(pt["time"]) == pytest.approx(2.5)
+    assert float(pt["value"]) == pytest.approx(2.5)
+    # Tolerances stay at the original (1.0, 0.5) — half of the new
+    # bounds. The center shift is silently ignored because the next
+    # render re-derives the box from pt.time + pt.value + tolerance.
+    assert float(pt["time_tolerance"]) == pytest.approx(1.0)
+    assert float(pt["tolerance"]) == pytest.approx(0.5)
 
 
 def test_points_editor_shift_right_click_removes_point(
@@ -699,11 +714,26 @@ def test_points_editor_shift_right_click_removes_point(
             return true;
         }
     """)
-    remaining = page.evaluate(
-        "leafState['/metrics/children/0'].params.points || []"
-    )
+    state = page.evaluate("""
+        () => {
+            const remaining = leafState['/metrics/children/0'].params.points || [];
+            // Also confirm the plot's diamond-marker trace count
+            // matches: onRemove must call commit() so the plot
+            // re-renders to drop the deleted point.
+            const idx = VARIABLE_INDEX['h'];
+            const el = document.getElementById(`plot-${idx}`);
+            const pointsTrace = (el.data || []).find(t =>
+                t.name && t.name.startsWith('Points '));
+            return {
+                remaining,
+                diamondCount: pointsTrace ? (pointsTrace.x || []).length : 0,
+            };
+        }
+    """)
     page.close()
     assert ok
-    assert len(remaining) == 1
+    assert len(state["remaining"]) == 1
     # The surviving point is the t=4.0 one — we removed t=1.0.
-    assert float(remaining[0].get("time")) == 4.0
+    assert float(state["remaining"][0].get("time")) == 4.0
+    # And the plot's diamond marker for the deleted point is gone.
+    assert state["diamondCount"] == 1
