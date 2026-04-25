@@ -1243,3 +1243,97 @@ class TestPointsDeclaredPath:
         assert not result.passed
         assert result.diagnostics["scored_points"] == 3
         assert result.diagnostics["failed_points"] == 1
+
+    def test_time_tolerance_passes_when_act_enters_box(self):
+        """Box check: act curve must enter the [time±x_tol] × [target±y_lim]
+        rectangle at least once. Construct an act curve that misses the
+        target at t=3 exactly but hits it at t=2.95.
+        """
+        import numpy as np
+        from dstf.comparison.comparator import _compare_points
+        # ref doesn't matter — point has explicit value.
+        ref_t = np.array([0.0, 5.0])
+        ref_v = np.array([0.0, 0.0])
+        # act curve crosses 30 around t=2.95.
+        act_t = np.array([0.0, 2.5, 2.9, 2.95, 3.0, 3.5, 5.0])
+        act_v = np.array([0.0, 20.0, 28.0, 30.0, 32.0, 35.0, 40.0])
+        result = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": 3.0, "value": 30.0,
+                     "tolerance": 0.5, "time_tolerance": 0.2}],
+            tolerance=0.01,
+        )
+        # At t=3.0, act is 32 (delta=2 > 0.5). Strict-time would FAIL.
+        # Box from [2.8, 3.2] × [29.5, 30.5]: act hits 30.0 at t=2.95 → PASS.
+        assert result.passed
+        assert result.diagnostics["worst_delta"] < 0.5
+
+    def test_time_tolerance_fails_when_act_misses_box(self):
+        """If the act curve never enters the box, point fails."""
+        import numpy as np
+        from dstf.comparison.comparator import _compare_points
+        ref_t = np.array([0.0, 5.0])
+        ref_v = np.array([0.0, 0.0])
+        # act stays well above 30 across the whole [2.8, 3.2] window.
+        act_t = np.array([0.0, 2.8, 3.0, 3.2, 5.0])
+        act_v = np.array([0.0, 35.0, 36.0, 37.0, 40.0])
+        result = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": 3.0, "value": 30.0,
+                     "tolerance": 0.5, "time_tolerance": 0.2}],
+            tolerance=0.01,
+        )
+        assert not result.passed
+        # Worst delta within the box is at t=2.8 where act=35, target=30 → delta=5.
+        assert result.diagnostics["worst_delta"] >= 5.0
+
+    def test_time_tolerance_zero_degenerates_to_strict_time(self):
+        """time_tolerance=0 must behave identically to a single-point check."""
+        import numpy as np
+        from dstf.comparison.comparator import _compare_points
+        ref_t = np.array([0.0, 5.0])
+        ref_v = np.array([0.0, 0.0])
+        act_t = np.array([0.0, 2.5, 3.0, 5.0])
+        act_v = np.array([0.0, 28.0, 32.0, 40.0])
+        # act(3.0) = 32, target = 30, delta = 2 > 0.5 → FAIL with strict time.
+        with_xtol = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": 3.0, "value": 30.0,
+                     "tolerance": 0.5, "time_tolerance": 0.0}],
+            tolerance=0.01,
+        )
+        without_xtol = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": 3.0, "value": 30.0, "tolerance": 0.5}],
+            tolerance=0.01,
+        )
+        # Both must give the same result.
+        assert with_xtol.passed == without_xtol.passed == False
+        assert (
+            with_xtol.diagnostics["worst_delta"]
+            == without_xtol.diagnostics["worst_delta"]
+        )
+
+    def test_time_tolerance_box_uses_interpolated_endpoints(self):
+        """Box check evaluates the act curve at every sample inside
+        [t_lo, t_hi] PLUS at the interpolated endpoints t_lo and t_hi
+        — so we don't miss a curve entering between samples."""
+        import numpy as np
+        from dstf.comparison.comparator import _compare_points
+        ref_t = np.array([0.0, 5.0])
+        ref_v = np.array([0.0, 0.0])
+        # Sparse act samples that bracket the target box.
+        # Box: [2.5, 3.5] × [29.0, 31.0]. Samples at 2.0 and 4.0 with
+        # values 20 and 40 → linear interp puts act(2.5) = 25, act(3.5) = 35.
+        # Neither crosses 30 inside the box at a sample, but the
+        # interpolated curve passes through (3.0, 30) which IS inside.
+        act_t = np.array([0.0, 2.0, 4.0, 5.0])
+        act_v = np.array([0.0, 20.0, 40.0, 50.0])
+        result = _compare_points(
+            ref_t, ref_v, act_t, act_v,
+            points=[{"time": 3.0, "value": 30.0,
+                     "tolerance": 1.0, "time_tolerance": 0.5}],
+            tolerance=0.01,
+        )
+        # Linear interp at t=3 gives act=30, delta=0 → PASS.
+        assert result.passed

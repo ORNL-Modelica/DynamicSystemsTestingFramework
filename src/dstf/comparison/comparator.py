@@ -261,6 +261,68 @@ def _compare_trajectories(
     )
 
 
+def _min_delta_in_box(
+    act_time: np.ndarray,
+    act_values: np.ndarray,
+    t_lo: float,
+    t_hi: float,
+    target: float,
+) -> tuple[float, float]:
+    """Find the smallest |act(t) - target| for t in [t_lo, t_hi].
+
+    Evaluates at every act_time sample inside the window plus the
+    interpolated endpoints t_lo and t_hi — so a curve that enters the
+    box between samples is still detected. Because the act trace is
+    piecewise-linear between samples, the minimum on any segment is
+    either at an endpoint or at a zero-crossing of ``act - target``;
+    if any segment crosses the target value, min delta is 0.
+
+    Returns (min_delta, t_at_min). When [t_lo, t_hi] is empty / outside
+    the trajectory, returns (inf, t_lo) — caller decides whether that
+    counts as a fail or a skip.
+    """
+    if len(act_time) == 0 or t_hi < t_lo:
+        return float("inf"), t_lo
+    # Build the ordered list of (t, v) eval points: interpolated
+    # endpoints t_lo / t_hi (if inside trajectory) + interior samples.
+    candidates: list[tuple[float, float]] = []
+    if act_time[0] <= t_lo <= act_time[-1]:
+        candidates.append((t_lo, float(np.interp(t_lo, act_time, act_values))))
+    for i, t in enumerate(act_time):
+        if t_lo <= t <= t_hi:
+            candidates.append((float(t), float(act_values[i])))
+    if act_time[0] <= t_hi <= act_time[-1]:
+        candidates.append((t_hi, float(np.interp(t_hi, act_time, act_values))))
+    if not candidates:
+        return float("inf"), t_lo
+    # Sort by time so adjacent-pair zero-crossing detection is well-defined.
+    candidates.sort(key=lambda tv: tv[0])
+    best_delta = float("inf")
+    best_t = t_lo
+    for t, v in candidates:
+        d = abs(v - target)
+        if d < best_delta:
+            best_delta = d
+            best_t = t
+    # Zero-crossing check on each linear segment (between adjacent eval
+    # points). If sign of (v - target) flips, the curve passes through
+    # the target value somewhere inside the segment → delta = 0 there.
+    for (t1, v1), (t2, v2) in zip(candidates, candidates[1:]):
+        d1 = v1 - target
+        d2 = v2 - target
+        if d1 == 0 or d2 == 0:
+            continue  # Already captured by endpoint scan.
+        if (d1 > 0) != (d2 > 0):
+            # Linear interp solve: t* = t1 + d1 / (d1 - d2) * (t2 - t1).
+            denom = d1 - d2
+            if denom != 0:
+                t_star = t1 + d1 / denom * (t2 - t1)
+                best_delta = 0.0
+                best_t = t_star
+                break
+    return best_delta, best_t
+
+
 def _compare_points(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -344,15 +406,22 @@ def _compare_points(
         per_tol = float(per_tol) if per_tol is not None else float(tolerance)
         mode = point.get("tolerance_mode", "abs")
         y_limit = per_tol * abs(target) if mode == "rel" else per_tol
-        # Single-point evaluation (Task 4 will replace this with a box).
         if len(act_time) == 0:
             continue
-        act_at_t = float(np.interp(t, act_time, act_values))
-        delta = abs(act_at_t - target)
+        x_tol = point.get("time_tolerance", 0)
+        x_tol = float(x_tol) if x_tol is not None else 0.0
+        t_lo = max(t - x_tol, float(act_time[0]))
+        t_hi = min(t + x_tol, float(act_time[-1]))
+        if t_hi < t_lo:
+            # Fully clipped (time outside trajectory + box doesn't reach in).
+            continue
+        delta, t_at_min = _min_delta_in_box(
+            act_time, act_values, t_lo, t_hi, target,
+        )
         scored += 1
         if delta > worst_delta:
             worst_delta = delta
-            worst_t = t
+            worst_t = t_at_min
         if delta > y_limit:
             failed += 1
 
