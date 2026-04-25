@@ -825,7 +825,6 @@ def generate_comparison_plots(
     plot_dir: Path,
     test_dir: Optional[Path] = None,
     test_model=None,
-    spec_path: Optional[Path] = None,
     ref_file: Optional[Path] = None,
     warnings: Optional[list] = None,
     last_run_at: Optional[float] = None,
@@ -854,9 +853,6 @@ def generate_comparison_plots(
         metric_tree=metric_tree, artifact_files=artifact_files,
         overlays=overlays,
     )
-
-    # Add spec path for "Save to Spec" functionality
-    context["spec_path"] = str(spec_path.resolve()) if spec_path else ""
 
     # Write comparison_data.json alongside the HTML. This is the
     # full-resolution data artifact for downstream tooling (notebooks,

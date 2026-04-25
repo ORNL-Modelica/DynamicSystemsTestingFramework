@@ -10,7 +10,6 @@ const VARIABLES_BY_NAME = MT_REPORT.VARIABLES_BY_NAME || {};
 const MODE_SCHEMAS = MT_REPORT.MODE_SCHEMAS || {};
 const DIAG_TRAJECTORIES = MT_REPORT.DIAG_TRAJECTORIES || [];
 const NB_TRAJECTORIES = MT_REPORT.NB_TRAJECTORIES || [];
-const SPEC_PATH = MT_REPORT.SPEC_PATH || "";
 
 // Variable name → index (element IDs). Order matches template iteration.
 const VARIABLE_ORDER = Object.keys(VARIABLES_BY_NAME || {});
@@ -3214,22 +3213,6 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
   };
 })();
 
-function interpOnRef(traj, x) {
-  const rt = traj.ref_time || [];
-  const rv = traj.ref_values || [];
-  if (!rt.length) return 0;
-  if (x <= rt[0]) return rv[0];
-  if (x >= rt[rt.length - 1]) return rv[rv.length - 1];
-  // Linear interp — good enough for placing a new control point.
-  for (let i = 1; i < rt.length; i++) {
-    if (rt[i] >= x) {
-      const f = (x - rt[i - 1]) / (rt[i] - rt[i - 1]);
-      return rv[i - 1] + f * (rv[i] - rv[i - 1]);
-    }
-  }
-  return rv[rv.length - 1];
-}
-
 // ---- Leaf activation (click a leaf to wire its editor) ----
 // Unified activate/deactivate lifecycle. ``.node-editor`` DOM cleanup
 // and window-brush injection are centralized here so no editor has to
@@ -4633,28 +4616,6 @@ function escapeSelector(s) {
 // When ``passMap`` is supplied (post-edit refresh), use the live-recomputed
 // pass states; otherwise fall back to the CLI-computed leaf.passed for
 // initial render.
-function updateSummary(passMap) {
-  const leaves = [];
-  walkLeaves(TREE_VIEW, l => leaves.push(l));
-  const getPass = (l) => passMap ? !!passMap[l.path] : !!l.passed;
-  const n = leaves.length;
-  const nPassed = leaves.filter(getPass).length;
-  const el = document.getElementById('summary-text');
-  if (el) {
-    const cls = nPassed === n ? 'pass' : 'fail';
-    el.className = cls;
-    el.innerHTML = `<strong>${nPassed}</strong> / <strong>${n}</strong> leaves passed`;
-  }
-  VARIABLE_ORDER.forEach((varname, idx) => {
-    const varLeaves = leaves.filter(l => l.variable === varname);
-    const varPassed = varLeaves.length > 0 && varLeaves.every(getPass);
-    const sel = document.querySelector(`.var-status[data-vidx="${idx}"]`);
-    if (sel) {
-      sel.className = `var-status ${varPassed ? 'pass' : 'fail'}`;
-      sel.textContent = varPassed ? 'PASS' : 'FAIL';
-    }
-  });
-}
 
 // ---- Overlay picker ----
 // Each .overlay-picker div declares which Plotly chart it drives via its

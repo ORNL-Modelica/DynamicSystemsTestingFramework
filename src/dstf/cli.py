@@ -145,7 +145,6 @@ def _get_runner(config, persistent: bool = False):
             from .simulators.openmodelica.session_loader import load_omc_session
             load_omc_session()  # raises if OMPython unavailable — fall back
         except RuntimeError as exc:
-            import sys
             print(
                 f"Persistent-worker OpenModelica unavailable — falling back to "
                 f"--batch mode.\n  {exc}",
@@ -1142,7 +1141,6 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         plot_dir=plot_dir,
         test_dir=test_dir,
         test_model=test,
-        spec_path=spec_path,
         ref_file=ref_file,
         warnings=comp.warnings,
         metric_tree=comp.metric_tree,
