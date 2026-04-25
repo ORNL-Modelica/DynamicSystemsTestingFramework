@@ -2249,11 +2249,18 @@ MODE_PLOT_EDITORS['points'] = (function() {
       // translation can produce dx0 ≠ dx1 by 1e-7 or so, which
       // fooled the previous edge-delta comparison into thinking the
       // user dragged an edge).
-      const sizeRelEps = Math.max(prevSizeX, 1) * 1e-6;
-      const sizeXChanged = Math.abs(newSizeX - prevSizeX) > sizeRelEps;
-      const sizeYChanged =
-        Math.abs(newSizeY - prevSizeY)
-        > Math.max(prevSizeY, 1) * 1e-6;
+      //
+      // Threshold: 0.1% of the box size (or 1e-3 absolute floor).
+      // A typical user-intent drag is several pixels = ≫ 1% of size,
+      // so this comfortably ignores FP noise without rejecting any
+      // visible drag. The prior 1e-6 threshold was tight enough that
+      // noise on every translation drag added ~5e-6 to halfX, and
+      // the box visibly grew over many drags ("snaps to middle but
+      // the box keeps on getting bigger and bigger" — user report).
+      const sizeXEps = Math.max(prevSizeX * 0.001, 1e-3);
+      const sizeYEps = Math.max(prevSizeY * 0.001, 1e-3);
+      const sizeXChanged = Math.abs(newSizeX - prevSizeX) > sizeXEps;
+      const sizeYChanged = Math.abs(newSizeY - prevSizeY) > sizeYEps;
       let halfX;
       if (!sizeXChanged) {
         halfX = prevHalfX;       // translation in x (or no x change)
@@ -2469,13 +2476,17 @@ MODE_PLOT_EDITORS['points'] = (function() {
           // Convert the stored tolerance value when switching modes so
           // the VISIBLE box size stays the same. abs stores the half-
           // height directly in y-units; rel stores it as a fraction of
-          // |target|. Without conversion, switching abs→rel would
-          // reinterpret the abs value as a fraction (often making the
-          // box huge or — when target ≈ 0 — making it vanish, which is
-          // exactly the user-reported "box disappeared" bug at
-          // sin(0)=0). Protection for target≈0 in abs→rel: revert the
-          // mode change since the conversion is undefined; user can
-          // shift the point or edit value first.
+          // |target|.
+          //
+          // Protection for "essentially zero" target on abs→rel: a
+          // small but non-zero target (e.g., solver-near-zero ~1e-7)
+          // produces a huge rel fraction when oldTol/targetAbs is
+          // computed. The previous threshold (1e-12) was so tight that
+          // it only caught EXACTLY-zero targets, and small numerical
+          // values like sin(t≈0) slipped through. Now we judge by
+          // whether the resulting rel fraction would be unreasonable
+          // (>10 = 1000%) — that catches both true zeros and the
+          // near-zero cases the user actually hit.
           const oldMode = pt.tolerance_mode || 'abs';
           const newMode = modeSel.value;
           if (oldMode !== newMode) {
@@ -2485,10 +2496,14 @@ MODE_PLOT_EDITORS['points'] = (function() {
             const { y } = _resolvedXY(leaf, pt);
             const targetAbs = Math.abs(y);
             if (oldMode === 'abs' && newMode === 'rel') {
-              if (targetAbs > 1e-12) {
-                pt.tolerance = oldTol / targetAbs;
+              const proposedRel = targetAbs > 0
+                ? oldTol / targetAbs
+                : Infinity;
+              if (Number.isFinite(proposedRel) && proposedRel <= 10) {
+                pt.tolerance = proposedRel;
               } else {
-                // Can't convert — target is zero. Revert.
+                // Conversion would produce an enormous (or undefined)
+                // rel fraction. Revert.
                 modeSel.value = 'abs';
                 refreshEditor(leaf, commit);
                 return;

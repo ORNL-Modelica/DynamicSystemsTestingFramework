@@ -867,6 +867,39 @@ def test_points_mode_switch_abs_to_rel_blocked_when_target_is_zero(
     assert float(pt["tolerance"]) == pytest.approx(0.5)
 
 
+def test_points_mode_switch_abs_to_rel_blocked_when_target_is_near_zero(
+    tmp_path, playwright_browser,
+):
+    """Solver-near-zero values (e.g., sin(t≈0) ≈ 1e-7 from numerical
+    precision) are not exactly zero but should be treated as such for
+    abs→rel conversion. Previously a 1e-12 threshold let these through
+    and produced a huge rel fraction (the user-reported "goes off to
+    huge number" symptom). Now the check is on the RESULTING rel
+    fraction: if oldTol/|target| > 10 (= 1000%), refuse the switch."""
+    ctx = _context_with_points_leaf(
+        # target = 1e-8 (solver near-zero). abs_tol = 0.5 → rel_tol
+        # would be 5e7, way over the 10x sanity cap → refuse.
+        points=[{"time": 0.0, "value": 1e-8, "tolerance": 0.5,
+                 "tolerance_mode": "abs"}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    page.locator(
+        '[data-path="/metrics/children/0"] .points-editor select'
+    ).first.select_option('rel')
+    pt = page.evaluate(
+        "leafState['/metrics/children/0'].params.points[0]"
+    )
+    page.close()
+    assert pt["tolerance_mode"] == "abs"
+    assert float(pt["tolerance"]) == pytest.approx(0.5)
+
+
 def test_points_box_relayout_translation_snaps_back(
     tmp_path, playwright_browser,
 ):
