@@ -482,6 +482,12 @@ const MODE_PLOT_CONTRIBUTIONS = {
         fillcolor: 'rgba(76,175,80,0.10)',
         line: { color: 'rgba(76,175,80,0.6)', width: 1, dash: 'dot' },
         name: `points_box:${leaf.path}:${xs.length - 1}`,
+        // Opt out of Plotly's native shape-drag: the box is purely
+        // derived (centered on the point with size = ±tolerance), so
+        // letting the user free-drag it would desynchronize from the
+        // point and steal subsequent shift+clicks meant for the diamond.
+        // Resize is exposed via shift+drag corner anchors instead.
+        editable: false,
       });
     }
     if (!xs.length) return { traces: [], shapes };
@@ -2106,6 +2112,34 @@ MODE_PLOT_EDITORS['points'] = (function() {
     return { x: t, y };
   }
 
+  function _resolvedYLimit(leaf, pt) {
+    const tolDefault = getDefaultTolerance(leaf);
+    const perTol = pt.tolerance != null ? Number(pt.tolerance) : tolDefault;
+    const mode = pt.tolerance_mode || 'abs';
+    const { y } = _resolvedXY(leaf, pt);
+    return mode === 'rel' ? perTol * Math.abs(y) : perTol;
+  }
+
+  // Pixel-space size of a point's tolerance box on the current plot.
+  // Returns null when the plot isn't laid out yet. Used to gate corner
+  // anchors — small boxes should not expose corner drag handles since
+  // they'd overlap the diamond's center anchor and create ambiguity.
+  function _boxPixelSize(leaf, pt) {
+    const idx = VARIABLE_INDEX[leaf.variable];
+    const plotEl = document.getElementById(`plot-${idx}`);
+    if (!plotEl || !plotEl._fullLayout) return null;
+    const xa = plotEl._fullLayout.xaxis;
+    const ya = plotEl._fullLayout.yaxis;
+    if (!xa || !ya) return null;
+    const { x: cx, y: cy } = _resolvedXY(leaf, pt);
+    const xTol = pt.time_tolerance != null ? Number(pt.time_tolerance) : 0;
+    const yLimit = _resolvedYLimit(leaf, pt);
+    return {
+      widthPx: Math.abs(xa.d2p(cx + xTol) - xa.d2p(cx - xTol)),
+      heightPx: Math.abs(ya.d2p(cy + yLimit) - ya.d2p(cy - yLimit)),
+    };
+  }
+
   function _sortByTime(leaf) {
     getPoints(leaf).sort((a, b) => {
       const ta = a.time != null ? Number(a.time) : Infinity;
@@ -2114,18 +2148,49 @@ MODE_PLOT_EDITORS['points'] = (function() {
     });
   }
 
+  // Pixel size below which a corner anchor isn't exposed. Below this,
+  // the corner overlaps the center anchor and shift+click can't
+  // disambiguate. Above this, the user can grab a visible corner to
+  // resize the box symmetrically.
+  const CORNER_VISIBILITY_PX = 30;
+
   // Shared shift-modifier interaction layer — mirrors tube + dom-freq.
-  // Anchors are one-per-point at the resolved (t, target_y).
   //   * shift+click on empty plot     → add point (explicit value at click)
-  //   * shift+drag on diamond marker  → move time + value (becomes explicit
+  //   * shift+drag on diamond center  → move time + value (becomes explicit
   //                                     value if it was ref-relative)
-  //   * shift+right-click on diamond  → delete point
+  //   * shift+drag on visible corner  → resize box symmetrically; the
+  //                                     point stays fixed and the box
+  //                                     stays centered on it. Only
+  //                                     exposed when the box is at least
+  //                                     CORNER_VISIBILITY_PX on one axis.
+  //   * shift+right-click on center   → delete point
   const _pointEditor = createPointPlotEditor({
     getAnchors(leaf) {
-      return getPoints(leaf).map(pt => {
-        const { x, y } = _resolvedXY(leaf, pt);
-        return { pt, x, y };
+      const tolDefault = getDefaultTolerance(leaf);
+      const anchors = [];
+      getPoints(leaf).forEach(pt => {
+        const { x: cx, y: cy } = _resolvedXY(leaf, pt);
+        anchors.push({ pt, x: cx, y: cy, kind: 'center' });
+        const sz = _boxPixelSize(leaf, pt);
+        const exposeCorners = sz && (
+          sz.widthPx >= CORNER_VISIBILITY_PX
+          || sz.heightPx >= CORNER_VISIBILITY_PX
+        );
+        if (!exposeCorners) return;
+        const xTol = pt.time_tolerance != null ? Number(pt.time_tolerance) : 0;
+        const yLimit = _resolvedYLimit(leaf, pt);
+        for (const sx of [+1, -1]) {
+          for (const sy of [+1, -1]) {
+            anchors.push({
+              pt, kind: 'corner',
+              x: cx + sx * xTol,
+              y: cy + sy * yLimit,
+              cx, cy,
+            });
+          }
+        }
       });
+      return anchors;
     },
     onClickAdd(leaf, _plotEl, x, y, commit) {
       const tDefault = getDefaultTolerance(leaf);
@@ -2139,12 +2204,27 @@ MODE_PLOT_EDITORS['points'] = (function() {
       refreshEditor(leaf, commit);
     },
     onDragStep(leaf, _plotEl, anchor, x, y, commit) {
-      // Update in-place. If point was ref-relative (no explicit value),
-      // the drag promotes it to explicit-value at the dragged y. This
-      // mirrors how the tube editor treats drag — direct manipulation
-      // means "I want it here" regardless of prior linkage.
-      anchor.pt.time = Number(x);
-      anchor.pt.value = Number(y);
+      if (anchor.kind === 'corner') {
+        // Resize symmetrically, keeping the point fixed. Use the original
+        // center captured at mousedown (anchor.cx / anchor.cy) so the box
+        // doesn't drift if the cursor passes the center.
+        const newXTol = Math.abs(Number(x) - anchor.cx);
+        const newYLimit = Math.abs(Number(y) - anchor.cy);
+        anchor.pt.time_tolerance = newXTol;
+        const mode = anchor.pt.tolerance_mode || 'abs';
+        if (mode === 'rel') {
+          const denom = Math.abs(anchor.cy);
+          anchor.pt.tolerance = denom > 0 ? newYLimit / denom : 0;
+        } else {
+          anchor.pt.tolerance = newYLimit;
+        }
+      } else {
+        // Center drag: move the point. If it was ref-relative, the drag
+        // promotes it to explicit-value at the dragged y — direct
+        // manipulation means "I want it here" regardless of prior linkage.
+        anchor.pt.time = Number(x);
+        anchor.pt.value = Number(y);
+      }
       refreshEditor(leaf, commit);
     },
     onDragEnd(leaf, _plotEl, _anchor, commit) {
@@ -2152,6 +2232,8 @@ MODE_PLOT_EDITORS['points'] = (function() {
       refreshEditor(leaf, commit);
     },
     onRemove(leaf, _plotEl, anchor, commit) {
+      // Right-click on a corner anchor — fall back to removing the
+      // owning point. Less surprising than no-op.
       const points = getPoints(leaf);
       const idx = points.indexOf(anchor.pt);
       if (idx >= 0) {

@@ -554,6 +554,111 @@ def test_points_editor_shift_click_on_plot_adds_point(
     assert after == before + 1
 
 
+def test_points_box_shapes_are_not_natively_editable(
+    tmp_path, playwright_browser,
+):
+    """Plotly's PLOT_CFG.edits.shapePosition is on for the range mode's
+    bound lines, so it's globally enabled. The points-mode tolerance
+    boxes opt out per-shape (editable: false) — otherwise Plotly's
+    native shape-drag would steal subsequent shift+clicks from the
+    diamond marker and let the user free-drag the box off-center.
+    """
+    ctx = _context_with_points_leaf(
+        points=[{"time": 2.0, "value": 2.0, "tolerance": 0.1,
+                 "tolerance_mode": "abs", "time_tolerance": 0.5}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    box_shapes = page.evaluate("""
+        () => {
+            const leaf = TREE_VIEW.children[0];
+            const traj = (VARIABLES_BY_NAME['h'] || {}).trajectory || {};
+            const contrib = MODE_PLOT_CONTRIBUTIONS['points'](leaf, traj);
+            return (contrib.shapes || [])
+                .filter(s => s.name && s.name.startsWith('points_box:'))
+                .map(s => s.editable);
+        }
+    """)
+    page.close()
+    assert len(box_shapes) == 1
+    assert box_shapes[0] is False
+
+
+def test_points_editor_shift_drag_corner_resizes_symmetrically(
+    tmp_path, playwright_browser,
+):
+    """Shift+drag on a tolerance-box corner adjusts pt.time_tolerance
+    and pt.tolerance from the cursor's distance to the original center,
+    while pt.time and pt.value stay fixed. Mirrors the user request:
+    let me size the box, but keep it centered on the point."""
+    ctx = _context_with_points_leaf(
+        # Box must be large enough that corner anchors are exposed
+        # (CORNER_VISIBILITY_PX=30 in JS). Trajectory spans t∈[0,5],
+        # value∈[0,5]; place point at center with generous tolerance.
+        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
+                 "tolerance_mode": "abs", "time_tolerance": 1.0}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    if not _has_plotly(page):
+        page.close()
+        pytest.skip("Plotly CDN not reachable; corner-resize test skipped")
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    # Synthesize shift+mousedown at the NE corner (t=3.5, y=3.0), then
+    # drag to (t=4.0, y=3.5), then release. Expected: tolerance grows
+    # to (4.0-2.5)=1.5 in y_limit (abs mode → tolerance=1.5) and
+    # time_tolerance grows to (4.0-2.5)=1.5.
+    ok = page.evaluate("""
+        () => {
+            const idx = VARIABLE_INDEX['h'];
+            const el = document.getElementById(`plot-${idx}`);
+            if (!el || !el._fullLayout) return false;
+            const fl = el._fullLayout;
+            const rect = el.getBoundingClientRect();
+            const cornerX = rect.left + (fl._size?.l || 0) + fl.xaxis.d2p(3.5);
+            const cornerY = rect.top + (fl._size?.t || 0) + fl.yaxis.d2p(3.0);
+            const newCornerX = rect.left + (fl._size?.l || 0) + fl.xaxis.d2p(4.0);
+            const newCornerY = rect.top + (fl._size?.t || 0) + fl.yaxis.d2p(3.5);
+            el.dispatchEvent(new MouseEvent('mousedown', {
+                button: 0, shiftKey: true,
+                clientX: cornerX, clientY: cornerY,
+                bubbles: true, cancelable: true,
+            }));
+            document.dispatchEvent(new MouseEvent('mousemove', {
+                shiftKey: true,
+                clientX: newCornerX, clientY: newCornerY,
+                bubbles: true, cancelable: true,
+            }));
+            document.dispatchEvent(new MouseEvent('mouseup', {
+                button: 0, shiftKey: true,
+                clientX: newCornerX, clientY: newCornerY,
+                bubbles: true, cancelable: true,
+            }));
+            return true;
+        }
+    """)
+    pt = page.evaluate(
+        "leafState['/metrics/children/0'].params.points[0]"
+    )
+    page.close()
+    assert ok
+    # Center is unchanged.
+    assert float(pt["time"]) == pytest.approx(2.5)
+    assert float(pt["value"]) == pytest.approx(2.5)
+    # Tolerances grew based on the new corner's distance from original
+    # center (cx=2.5, cy=2.5). New corner at (4.0, 3.5) → xTol = 1.5,
+    # yTol = 1.0 in abs mode. Pixel-to-data conversion incurs small
+    # rounding, so allow a percent of slack.
+    assert float(pt["time_tolerance"]) == pytest.approx(1.5, rel=0.01)
+    assert float(pt["tolerance"]) == pytest.approx(1.0, rel=0.01)
+
+
 def test_points_editor_shift_right_click_removes_point(
     tmp_path, playwright_browser,
 ):
