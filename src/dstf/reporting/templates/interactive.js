@@ -2117,156 +2117,172 @@ MODE_PLOT_EDITORS['points'] = (function() {
     );
     table.appendChild(thead);
     const tbody = document.createElement('tbody');
-    points.forEach((pt, i) => {
+
+    if (points.length === 0) {
+      // Zero-point fast path: italic placeholder row reinforcing the
+      // implicit final-only behavior. Spans all columns.
       const tr = document.createElement('tr');
-
-      // Time input — placeholder "final" when null.
-      const timeTd = document.createElement('td');
-      const timeInput = document.createElement('input');
-      timeInput.type = 'number';
-      timeInput.step = 'any';
-      timeInput.placeholder = 'final';
-      timeInput.value = pt.time != null ? String(pt.time) : '';
-      timeInput.addEventListener('change', () => {
-        const raw = timeInput.value.trim();
-        if (raw === '') pt.time = null;
-        else {
-          const n = Number(raw);
-          if (Number.isFinite(n)) pt.time = n;
-        }
-        refreshEditor(leaf, commit);
-        commit();
-      });
-      timeTd.appendChild(timeInput);
-      tr.appendChild(timeTd);
-
-      // x-tol input.
-      const xtolTd = document.createElement('td');
-      const xtolInput = document.createElement('input');
-      xtolInput.type = 'number';
-      xtolInput.step = 'any';
-      xtolInput.placeholder = '0';
-      xtolInput.value = pt.time_tolerance != null
-        ? String(pt.time_tolerance) : '';
-      xtolInput.addEventListener('change', () => {
-        const raw = xtolInput.value.trim();
-        if (raw === '') delete pt.time_tolerance;
-        else {
-          const n = Number(raw);
-          if (Number.isFinite(n) && n >= 0) pt.time_tolerance = n;
-        }
-        refreshEditor(leaf, commit);
-        commit();
-      });
-      xtolTd.appendChild(xtolInput);
-      tr.appendChild(xtolTd);
-
-      // Value input — empty = ref-relative.
-      const valTd = document.createElement('td');
-      const valInput = document.createElement('input');
-      valInput.type = 'number';
-      valInput.step = 'any';
-      valInput.placeholder = 'ref(t)';
-      valInput.value = pt.value != null ? String(pt.value) : '';
-      valInput.addEventListener('change', () => {
-        const raw = valInput.value.trim();
-        if (raw === '') delete pt.value;
-        else {
-          const n = Number(raw);
-          if (Number.isFinite(n)) pt.value = n;
-        }
-        refreshEditor(leaf, commit);
-        commit();
-      });
-      valTd.appendChild(valInput);
-      tr.appendChild(valTd);
-
-      // Mode dropdown.
-      const modeTd = document.createElement('td');
-      const modeSel = document.createElement('select');
-      for (const m of ['abs', 'rel']) {
-        const opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = m;
-        if ((pt.tolerance_mode || 'abs') === m) opt.selected = true;
-        modeSel.appendChild(opt);
-      }
-      modeSel.addEventListener('change', () => {
-        pt.tolerance_mode = modeSel.value;
-        refreshEditor(leaf, commit);
-        commit();
-      });
-      modeTd.appendChild(modeSel);
-      tr.appendChild(modeTd);
-
-      // Tolerance input.
-      const tolTd = document.createElement('td');
-      const tolInput = document.createElement('input');
-      tolInput.type = 'number';
-      tolInput.step = 'any';
-      tolInput.placeholder = String(tolDefault);
-      tolInput.value = pt.tolerance != null ? String(pt.tolerance) : '';
-      tolInput.addEventListener('change', () => {
-        const raw = tolInput.value.trim();
-        if (raw === '') delete pt.tolerance;
-        else {
-          const n = Number(raw);
-          if (Number.isFinite(n) && n > 0) pt.tolerance = n;
-        }
-        refreshEditor(leaf, commit);
-        commit();
-      });
-      tolTd.appendChild(tolInput);
-      tr.appendChild(tolTd);
-
-      // Match column.
-      const matchTd = document.createElement('td');
-      matchTd.className = 'match-cell';
-      const m = matches[i] || {};
-      if (m.ok === null) {
-        matchTd.innerHTML = '<span style="color:#9e9e9e">·</span>';
-      } else if (m.ok) {
-        matchTd.innerHTML = (
-          `<span style="color:#2e7d32">✓ matched</span> `
-          + `(Δ=${m.delta.toExponential(2)})`
-        );
-      } else {
-        matchTd.innerHTML = (
-          `<span style="color:#c62828">✕ unmatched</span> `
-          + `(Δ=${m.delta.toExponential(2)})`
-        );
-      }
-      tr.appendChild(matchTd);
-
-      // Delete.
-      const delTd = document.createElement('td');
-      const delBtn = document.createElement('button');
-      delBtn.className = 'row-delete';
-      delBtn.textContent = '✕';
-      delBtn.title = 'Remove this point';
-      delBtn.addEventListener('click', () => {
-        points.splice(i, 1);
-        refreshEditor(leaf, commit);
-        commit();
-      });
-      delTd.appendChild(delBtn);
-      tr.appendChild(delTd);
-
+      tr.className = 'points-implicit-row';
+      const td = document.createElement('td');
+      td.colSpan = 7;
+      td.style.fontStyle = 'italic';
+      td.style.color = '#666';
+      td.textContent = (
+        `final · uses ref[-1] · tolerance ${tolDefault} · `
+        + `+ add point overrides`
+      );
+      tr.appendChild(td);
       tbody.appendChild(tr);
-    });
+    } else {
+      points.forEach((pt, i) => {
+        const tr = document.createElement('tr');
+
+        // Time input.
+        const timeTd = document.createElement('td');
+        const timeInput = document.createElement('input');
+        timeInput.type = 'number';
+        timeInput.step = 'any';
+        timeInput.placeholder = 'final';
+        timeInput.value = pt.time != null ? String(pt.time) : '';
+        timeInput.addEventListener('change', () => {
+          const raw = timeInput.value.trim();
+          if (raw === '') pt.time = null;
+          else {
+            const n = Number(raw);
+            if (Number.isFinite(n)) pt.time = n;
+          }
+          refreshEditor(leaf, commit);
+          commit();
+        });
+        timeTd.appendChild(timeInput);
+        tr.appendChild(timeTd);
+
+        // x-tol input.
+        const xtolTd = document.createElement('td');
+        const xtolInput = document.createElement('input');
+        xtolInput.type = 'number';
+        xtolInput.step = 'any';
+        xtolInput.placeholder = '0';
+        xtolInput.value = pt.time_tolerance != null
+          ? String(pt.time_tolerance) : '';
+        xtolInput.addEventListener('change', () => {
+          const raw = xtolInput.value.trim();
+          if (raw === '') delete pt.time_tolerance;
+          else {
+            const n = Number(raw);
+            if (Number.isFinite(n) && n >= 0) pt.time_tolerance = n;
+          }
+          refreshEditor(leaf, commit);
+          commit();
+        });
+        xtolTd.appendChild(xtolInput);
+        tr.appendChild(xtolTd);
+
+        // Value input.
+        const valTd = document.createElement('td');
+        const valInput = document.createElement('input');
+        valInput.type = 'number';
+        valInput.step = 'any';
+        valInput.placeholder = 'ref(t)';
+        valInput.value = pt.value != null ? String(pt.value) : '';
+        valInput.addEventListener('change', () => {
+          const raw = valInput.value.trim();
+          if (raw === '') delete pt.value;
+          else {
+            const n = Number(raw);
+            if (Number.isFinite(n)) pt.value = n;
+          }
+          refreshEditor(leaf, commit);
+          commit();
+        });
+        valTd.appendChild(valInput);
+        tr.appendChild(valTd);
+
+        // Mode dropdown.
+        const modeTd = document.createElement('td');
+        const modeSel = document.createElement('select');
+        for (const m of ['abs', 'rel']) {
+          const opt = document.createElement('option');
+          opt.value = m;
+          opt.textContent = m;
+          if ((pt.tolerance_mode || 'abs') === m) opt.selected = true;
+          modeSel.appendChild(opt);
+        }
+        modeSel.addEventListener('change', () => {
+          pt.tolerance_mode = modeSel.value;
+          refreshEditor(leaf, commit);
+          commit();
+        });
+        modeTd.appendChild(modeSel);
+        tr.appendChild(modeTd);
+
+        // Tolerance input.
+        const tolTd = document.createElement('td');
+        const tolInput = document.createElement('input');
+        tolInput.type = 'number';
+        tolInput.step = 'any';
+        tolInput.placeholder = String(tolDefault);
+        tolInput.value = pt.tolerance != null ? String(pt.tolerance) : '';
+        tolInput.addEventListener('change', () => {
+          const raw = tolInput.value.trim();
+          if (raw === '') delete pt.tolerance;
+          else {
+            const n = Number(raw);
+            if (Number.isFinite(n) && n > 0) pt.tolerance = n;
+          }
+          refreshEditor(leaf, commit);
+          commit();
+        });
+        tolTd.appendChild(tolInput);
+        tr.appendChild(tolTd);
+
+        // Match column.
+        const matchTd = document.createElement('td');
+        matchTd.className = 'match-cell';
+        const m = matches[i] || {};
+        if (m.ok === null) {
+          matchTd.innerHTML = '<span style="color:#9e9e9e">·</span>';
+        } else if (m.ok) {
+          matchTd.innerHTML = (
+            `<span style="color:#2e7d32">✓ matched</span> `
+            + `(Δ=${m.delta.toExponential(2)})`
+          );
+        } else {
+          matchTd.innerHTML = (
+            `<span style="color:#c62828">✕ unmatched</span> `
+            + `(Δ=${m.delta.toExponential(2)})`
+          );
+        }
+        tr.appendChild(matchTd);
+
+        // Delete.
+        const delTd = document.createElement('td');
+        const delBtn = document.createElement('button');
+        delBtn.className = 'row-delete';
+        delBtn.textContent = '✕';
+        delBtn.title = 'Remove this point';
+        delBtn.addEventListener('click', () => {
+          points.splice(i, 1);
+          refreshEditor(leaf, commit);
+          commit();
+        });
+        delTd.appendChild(delBtn);
+        tr.appendChild(delTd);
+
+        tbody.appendChild(tr);
+      });
+    }
     table.appendChild(tbody);
     root.appendChild(table);
 
-    // Buttons row — Task 7 only has "+ add point". Snapshot button
-    // arrives in Task 8.
+    // Buttons row.
     const btnRow = document.createElement('div');
     btnRow.className = 'points-editor-buttons';
+
     const addBtn = document.createElement('button');
     addBtn.className = 'node-btn node-btn-add';
     addBtn.textContent = '+ add point';
     addBtn.addEventListener('click', () => {
-      // Seed time from previous point + 0.5s, or null (= "final") on
-      // an empty list.
       let seedTime = null;
       if (points.length) {
         const prev = points[points.length - 1];
@@ -2278,6 +2294,32 @@ MODE_PLOT_EDITORS['points'] = (function() {
       commit();
     });
     btnRow.appendChild(addBtn);
+
+    const snapshotBtn = document.createElement('button');
+    snapshotBtn.className = 'node-btn snapshot-btn';
+    snapshotBtn.textContent = '📸 Snapshot from ref';
+    snapshotBtn.title = (
+      'For every row whose Value is empty (ref-relative), fill in the '
+      + 'current ref(time) as an explicit value. Converts ref-based '
+      + 'points into baseline-free absolute points. Idempotent — rows '
+      + 'with an explicit value are untouched.'
+    );
+    snapshotBtn.addEventListener('click', () => {
+      const traj = getTrajectory(leaf);
+      const refTime = traj.ref_time || [];
+      const refValues = traj.ref_values || [];
+      if (!refTime.length) return;
+      const traceEnd = refTime[refTime.length - 1];
+      points.forEach(pt => {
+        if (pt.value != null) return;
+        const t = pt.time != null ? Number(pt.time) : traceEnd;
+        pt.value = _interpLinear(refTime, refValues, t);
+      });
+      refreshEditor(leaf, commit);
+      commit();
+    });
+    btnRow.appendChild(snapshotBtn);
+
     root.appendChild(btnRow);
   }
 

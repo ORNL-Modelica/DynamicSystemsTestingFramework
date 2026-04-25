@@ -370,3 +370,120 @@ def test_points_editor_delete_removes_row(tmp_path, playwright_browser):
     page.close()
     assert rows == 1
     assert remaining_time == 3.0
+
+
+# ---------------------------------------------------------------------------
+# Task 8: Snapshot from ref + zero-point fast-path placeholder
+# ---------------------------------------------------------------------------
+
+def test_points_editor_zero_point_placeholder_renders(
+    tmp_path, playwright_browser,
+):
+    """Empty points list → italic placeholder row shows the implicit
+    final-only behavior. No regular tbody rows for now."""
+    ctx = _context_with_points_leaf(points=[], tolerance=0.01)
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    placeholder_count = page.locator(
+        '[data-path="/metrics/children/0"] .points-editor '
+        '.points-implicit-row'
+    ).count()
+    placeholder_text = page.locator(
+        '[data-path="/metrics/children/0"] .points-editor '
+        '.points-implicit-row'
+    ).first.inner_text()
+    page.close()
+    assert placeholder_count == 1
+    assert "final" in placeholder_text.lower()
+    assert "ref" in placeholder_text.lower()
+
+
+def test_points_editor_first_add_replaces_placeholder(
+    tmp_path, playwright_browser,
+):
+    """Clicking + add point on an empty list removes the placeholder
+    and shows a real editable row."""
+    ctx = _context_with_points_leaf(points=[], tolerance=0.01)
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    page.locator(
+        '[data-path="/metrics/children/0"] .points-editor button.node-btn-add'
+    ).first.click()
+    placeholder_count = page.locator(
+        '[data-path="/metrics/children/0"] .points-editor '
+        '.points-implicit-row'
+    ).count()
+    rows = page.locator(
+        '[data-path="/metrics/children/0"] .points-editor tbody tr'
+    ).count()
+    page.close()
+    assert placeholder_count == 0
+    assert rows == 1
+
+
+def test_points_editor_snapshot_from_ref_fills_empty_value_cells(
+    tmp_path, playwright_browser,
+):
+    """📸 Snapshot from ref fills value for every row where value is
+    None. Rows with explicit value are untouched."""
+    ctx = _context_with_points_leaf(
+        points=[
+            {"time": 2.0, "tolerance": 0.01},                       # ref-relative
+            {"time": 4.0, "value": 99.0, "tolerance": 0.01},        # explicit
+            {"time": 1.0, "tolerance": 0.01},                       # ref-relative
+        ],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    page.locator(
+        '[data-path="/metrics/children/0"] .points-editor '
+        'button.snapshot-btn'
+    ).first.click()
+    values = page.evaluate("""
+        () => leafState['/metrics/children/0'].params.points.map(p => p.value)
+    """)
+    page.close()
+    # Fixture trajectory has ref[t] = t exactly. So snapshot of t=2 → 2,
+    # t=1 → 1. The explicit 99.0 is preserved.
+    assert values == [2.0, 99.0, 1.0]
+
+
+def test_points_editor_snapshot_idempotent_on_no_empty_rows(
+    tmp_path, playwright_browser,
+):
+    """When all rows have explicit value, snapshot is a no-op."""
+    ctx = _context_with_points_leaf(
+        points=[
+            {"time": 2.0, "value": 2.5, "tolerance": 0.01},
+            {"time": 4.0, "value": 4.5, "tolerance": 0.01},
+        ],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.locator(
+        '[data-path="/metrics/children/0"] > .node-header'
+    ).first.click()
+    page.locator(
+        '[data-path="/metrics/children/0"] .points-editor '
+        'button.snapshot-btn'
+    ).first.click()
+    values = page.evaluate("""
+        () => leafState['/metrics/children/0'].params.points.map(p => p.value)
+    """)
+    page.close()
+    assert values == [2.5, 4.5]
