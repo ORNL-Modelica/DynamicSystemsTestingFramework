@@ -557,7 +557,25 @@ const MODE_PLOT_CONTRIBUTIONS = {
     const mx = _nullOrNumber(p.max_value);
     if (mn !== null) shapes.push(...buildBoundShapes(mn, 'min'));
     if (mx !== null) shapes.push(...buildBoundShapes(mx, 'max'));
-    return { traces: [], shapes };
+    // Plotly autorange (and the double-click reset) ignores shapes — it
+    // only sees trace data. Without an anchor trace the y-axis snaps to
+    // the trajectory envelope and a far-out-of-window bound disappears.
+    // Emit one invisible scatter point per declared bound so autorange
+    // includes them in the reset range.
+    const traces = [];
+    const refTime = traj.ref_time || traj.act_time || [];
+    const xAnchor = refTime.length ? refTime[0] : 0;
+    const pushAnchor = (yVal) => {
+      traces.push({
+        x: [xAnchor], y: [yVal],
+        mode: 'markers',
+        marker: { color: 'rgba(0,0,0,0)', size: 0.1 },
+        showlegend: false, hoverinfo: 'skip',
+      });
+    };
+    if (mn !== null) pushAnchor(mn);
+    if (mx !== null) pushAnchor(mx);
+    return { traces, shapes };
   },
   'tube': (leaf, traj) => {
     if (!traj.ref_time || !traj.ref_time.length) return { traces: [], shapes: [] };

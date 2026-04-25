@@ -433,6 +433,59 @@ def test_range_plot_dual_style_when_window_set(tmp_path, playwright_browser):
     )
 
 
+def test_range_emits_invisible_trace_anchors_for_autorange(
+    tmp_path, playwright_browser,
+):
+    """Plotly autorange ignores shape coordinates — only trace data
+    drives the y-axis reset range. To make double-click reset include
+    the declared min/max bounds, the range plot contribution must emit
+    one invisible scatter point per declared bound at the bound's
+    y-value. Without these anchors, an out-of-window max_value produces
+    a double-click reset that snaps to the trajectory and hides the
+    bound.
+    """
+    ctx = _fixture_context()
+    # Bound far above the trajectory's [-0.01, 1.1] envelope so the
+    # autorange difference is observable. min_value left at -0.01.
+    ctx["tree_view"]["children"][1]["params"] = {
+        "min_value": -0.01, "max_value": 5.0,
+    }
+    ctx["tree_view"]["children"][1]["mode_values"] = {
+        "min_value": -0.01, "max_value": 5.0,
+    }
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    result = page.evaluate("""
+        () => {
+            const leaf = TREE_VIEW.children[1];
+            const traj = (VARIABLES_BY_NAME['h'] || {}).trajectory || {};
+            const contrib = MODE_PLOT_CONTRIBUTIONS['range'](leaf, traj);
+            const ys = (contrib.traces || [])
+                .flatMap(t => Array.isArray(t.y) ? t.y : []);
+            const opacities = (contrib.traces || [])
+                .map(t => (t.marker || {}).color);
+            return {
+                traceCount: (contrib.traces || []).length,
+                ys,
+                opacities,
+            };
+        }
+    """)
+    page.close()
+    assert result["traceCount"] == 2, (
+        "Expected 2 invisible trace anchors (one per declared bound). "
+        f"Got {result['traceCount']}."
+    )
+    assert -0.01 in result["ys"] and 5.0 in result["ys"], (
+        f"Anchor y-values should include both bounds. Got {result['ys']}."
+    )
+    assert all("rgba(0,0,0,0)" in c for c in result["opacities"]), (
+        "Anchor markers must be fully transparent so they don't render. "
+        f"Got marker colors: {result['opacities']}."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Task 5: Bug 3 — plot y-range resets after bound-edit sequence
 # ---------------------------------------------------------------------------
