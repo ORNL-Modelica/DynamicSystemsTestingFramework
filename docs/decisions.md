@@ -2235,3 +2235,103 @@ renders `modelica-om-multifrequency` overlay (502 time points,
 ### Validation
 
 - 837 + 69 playwright passing post-rename, 0 regressions.
+
+## D87: Tech-debt sweep — dead code + declared-items editor extraction (2026-04-25)
+
+- **What**: Two-arc tech-debt pass after D80–D86 closed out the
+  reporter-as-IDE feature work.
+- **Why**: D80–D85 added significant code surface (Python backend,
+  points editor, three editor migrations). D86 cleaned up tube-mode
+  taxonomy. Natural consolidation point before moving on to feature
+  work.
+
+### Arc 1: Dead-code sweep (commit `12d9195`, -46 LOC)
+
+Three orphans + one dangling pipeline. All confirmed by grep across
+src/ and tests/, verified against test_interactive_playwright.py for
+live JS references:
+
+- `cli.py:148` — redundant local `import sys` (sys is at module top).
+- `interactive.js` — orphan `interpOnRef` (linear interp helper,
+  replaced by `_interpLinear` everywhere; verified zero callers).
+- `interactive.js` — orphan `updateSummary` (superseded by
+  `updateSummaryFromMap` which integrates pass-recompute; the older
+  function lacked the integration and was left behind during a refactor).
+- `SPEC_PATH` — 4-file dangling pipeline (cli.py kwarg →
+  plot_comparison.py param → interactive.html template →
+  interactive.js const). Comment said "Save to Spec functionality"
+  but the JS read the value and discarded it; feature never wired up.
+
+The Python files came up remarkably clean — most subagent "defensive
+code" findings turned out to be load-bearing back-compat shims
+(legacy tube `"abs"` mode, flat-vs-nested stats schema), not safe to
+remove without user buy-in. The legacy tube alias was addressed
+separately in D86.
+
+### Arc 2: createDeclaredItemsTable extraction (-108 LOC net)
+
+Extracted `createDeclaredItemsTable` shared helper for the three
+declared-list editors (event-timing, points, dominant-frequency).
+Each editor now declares column accessors + match-evaluation logic
++ optional extras; the helper handles per-slot mounting, table
+shell, +add / ✕ scaffolding, refresh lifecycle, and empty-row
+placeholder.
+
+- Helper: 143 LOC (one new function, mounted next to
+  `createPointPlotEditor` as a sibling shared primitive).
+- event-timing editor: 268 LOC → 185 LOC (-83 LOC).
+- dom-frequency editor: 551 LOC → 479 LOC (-72 LOC). Spectrum
+  subplot rendering and `_peakEditor` plot integration kept inside
+  the IIFE; helper is invoked only for the table portion.
+- points editor: 620 LOC → 486 LOC (-134 LOC). Mode-switch
+  tolerance conversion (the abs↔rel half-extent preservation logic)
+  retained as `_modeCell` cell factory inside the IIFE.
+
+Net file delta on `interactive.js`: -108 LOC (4870 → 4762). Adding
+a 4th declared-list mode now costs ~80-100 LOC of column specs
+instead of ~250 LOC of from-scratch table code.
+
+### Honest re-estimate vs handoff
+
+The previous session's handoff implied 600-1000 LOC could come out
+of the editor extraction (citing a 74% overlap measurement from
+D82). Actual recovery: ~108 LOC. The 74% figure was for the
+*table-shell scaffolding specifically* (mount/slot/refresh/+add/✕),
+not the whole editor. Mode-specific code — column counts (4/7/6),
+match-evaluation algorithms (claim-pairing / minDeltaInBox /
+strongestPeakInWindow), and plot integrations (createPointPlotEditor
++ box-relayout listener for points; spectrum subplot for dom-freq)
+— genuinely diverges and resists abstraction. Real value of this
+refactor is uniformity for future declared-list modes, not LOC
+count.
+
+### Behavior changes captured in tests
+
+- **event-timing now multi-slot**: Previously mounted with
+  `querySelector` (singular), so only the full-tree mount got the
+  editor — same bug points was carrying pre-D85. Now uses the
+  helper's `querySelectorAll` slot finder, mirroring points and
+  dom-frequency. 4 unit tests in `test_interactive_event_timing.py`
+  updated to scope row counts via `.first.locator('tbody tr')`,
+  consistent with how points tests already scope.
+- The empty-row placeholder for points retains its
+  `points-implicit-row` class via the helper's new
+  `emptyRowClassName` spec field. Default-tolerance text in the
+  placeholder is regenerated per refresh via a factory function so
+  it stays current.
+
+### Validation
+
+- 837 + 69 playwright passing, 0 regressions.
+
+### What was NOT extracted
+
+- `createPointPlotEditor` (shift+click/drag/right-click) — already
+  shared across tube/points/dom-frequency. Out of scope for this
+  arc.
+- Plot integration (Plotly subplot, box-relayout listener) — stays
+  per-editor since the integrations are too divergent.
+- Tube editor — 635 LOC, but it's a different *kind* of editor
+  (control-point list with synced/unsynced modes, asymmetric tube
+  support), not a declared-list editor. Different abstraction
+  candidate.

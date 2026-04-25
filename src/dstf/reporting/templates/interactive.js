@@ -1094,6 +1094,192 @@ function createPointPlotEditor(spec) {
   };
 }
 
+// ---- createDeclaredItemsTable — shared scaffold for declared-list editors ----
+//
+// The three "declared-list" modes (event-timing, points, dominant-
+// frequency) all render a table of user-authored items with per-row
+// number/select inputs, an optional live Match column, a delete button,
+// and a button row with +add plus mode-specific extras (Detect,
+// Snapshot, source dropdown). This helper handles slot mounting, the
+// table shell, and the refresh lifecycle so each editor only has to
+// declare its column accessors and match-evaluation logic.
+//
+// Each mode supplies:
+//   {
+//     rootClassName,             // class for the per-slot root <div>
+//     tableClassName,            // class for the <table>
+//     getItems(leaf),            // -> array of items (mutated in place)
+//     columns: [
+//       { label, cell(item, leaf, ctx) -> HTMLElement },
+//       ...
+//     ],
+//     evaluateMatches?: (leaf) => Array,        // optional live match data
+//     renderMatch?: (match, item, leaf) => HTMLElement,  // required iff evaluateMatches
+//     addItem(leaf),                            // called by +add
+//     onRemove?: (leaf, idx, item),             // optional post-delete hook
+//     emptyMessage?: string | HTMLElement,      // shown when items=[]
+//     addLabel?: string,                        // +add button label (default '+ add')
+//     hint?: string,                            // HTML, rendered above the table
+//     emptyRowClassName?: string,               // class for the empty <tr>
+//     extraButtons?: Array<(leaf, ctx) => HTMLElement | null>,  // appended after +add
+//     footer?: (leaf, ctx) => HTMLElement | null,  // appended below the button row
+//   }
+//
+// `emptyMessage` may be a string (HTML), an HTMLElement, or a factory
+// `(leaf) => string|HTMLElement` invoked on every refresh.
+//
+// `ctx` passed to cell + extraButton closures:
+//   { commit, refresh: () => void }
+//
+// `refresh()` re-renders the table in every mounted slot for the leaf.
+// Helper-built handlers (delete, +add) call refresh + commit; cells
+// call them as needed after their own mutations.
+//
+// Returns { activate(leaf, commit), refresh(leaf, commit), deactivate(leaf) }.
+
+function createDeclaredItemsTable(spec) {
+  const containersByPath = new Map();   // leaf.path -> [HTMLElement, ...]
+
+  function _ensureContainers(leaf) {
+    const slots = Array.from(document.querySelectorAll(
+      `[data-path="${escapeSelector(leaf.path)}"] .node-editor`,
+    ));
+    const containers = [];
+    for (const slot of slots) {
+      let root = slot.querySelector(`:scope > .${spec.rootClassName}`);
+      if (!root) {
+        root = document.createElement('div');
+        root.className = spec.rootClassName;
+        slot.appendChild(root);
+      }
+      containers.push(root);
+    }
+    containersByPath.set(leaf.path, containers);
+    return containers;
+  }
+
+  function refresh(leaf, commit) {
+    const containers = containersByPath.get(leaf.path) || _ensureContainers(leaf);
+    const ctx = { commit, refresh: () => refresh(leaf, commit) };
+    const items = spec.getItems(leaf);
+    const matches = spec.evaluateMatches ? spec.evaluateMatches(leaf) : null;
+    for (const root of containers) _renderInto(root, leaf, items, matches, ctx);
+  }
+
+  function _renderInto(root, leaf, items, matches, ctx) {
+    root.innerHTML = '';
+
+    if (spec.hint) {
+      const h = document.createElement('div');
+      h.className = 'editor-hint';
+      h.innerHTML = spec.hint;
+      root.appendChild(h);
+    }
+
+    const table = document.createElement('table');
+    table.className = spec.tableClassName;
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    for (const col of spec.columns) {
+      const th = document.createElement('th');
+      th.textContent = col.label;
+      headRow.appendChild(th);
+    }
+    if (spec.renderMatch) {
+      const th = document.createElement('th');
+      th.textContent = 'Match (live)';
+      headRow.appendChild(th);
+    }
+    headRow.appendChild(document.createElement('th'));  // delete col
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    if (items.length === 0 && spec.emptyMessage != null) {
+      const tr = document.createElement('tr');
+      if (spec.emptyRowClassName) tr.className = spec.emptyRowClassName;
+      const td = document.createElement('td');
+      td.colSpan = spec.columns.length + (spec.renderMatch ? 1 : 0) + 1;
+      const msg = typeof spec.emptyMessage === 'function'
+        ? spec.emptyMessage(leaf) : spec.emptyMessage;
+      if (typeof msg === 'string') td.innerHTML = msg;
+      else td.appendChild(msg);
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    } else {
+      items.forEach((item, i) => {
+        const tr = document.createElement('tr');
+        for (const col of spec.columns) {
+          const td = document.createElement('td');
+          td.appendChild(col.cell(item, leaf, ctx));
+          tr.appendChild(td);
+        }
+        if (spec.renderMatch) {
+          const td = document.createElement('td');
+          td.className = 'match-cell';
+          td.appendChild(spec.renderMatch(matches ? matches[i] : null, item, leaf));
+          tr.appendChild(td);
+        }
+        const delTd = document.createElement('td');
+        const delBtn = document.createElement('button');
+        delBtn.className = 'row-delete';
+        delBtn.textContent = '✕';
+        delBtn.title = 'Remove this row';
+        delBtn.addEventListener('click', () => {
+          items.splice(i, 1);
+          if (spec.onRemove) spec.onRemove(leaf, i, item);
+          ctx.refresh();
+          ctx.commit();
+        });
+        delTd.appendChild(delBtn);
+        tr.appendChild(delTd);
+        tbody.appendChild(tr);
+      });
+    }
+    table.appendChild(tbody);
+    root.appendChild(table);
+
+    const btnRow = document.createElement('div');
+    btnRow.className = 'editor-button-row';
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'node-btn node-btn-add';
+    addBtn.textContent = spec.addLabel || '+ add';
+    addBtn.addEventListener('click', () => {
+      spec.addItem(leaf);
+      ctx.refresh();
+      ctx.commit();
+    });
+    btnRow.appendChild(addBtn);
+
+    if (spec.extraButtons) {
+      for (const factory of spec.extraButtons) {
+        const el = factory(leaf, ctx);
+        if (el) btnRow.appendChild(el);
+      }
+    }
+    root.appendChild(btnRow);
+
+    if (spec.footer) {
+      const f = spec.footer(leaf, ctx);
+      if (f) root.appendChild(f);
+    }
+  }
+
+  return {
+    activate(leaf, commit) {
+      _ensureContainers(leaf);
+      refresh(leaf, commit);
+    },
+    refresh,
+    deactivate(leaf) {
+      const containers = containersByPath.get(leaf.path) || [];
+      for (const root of containers) if (root.parentNode) root.remove();
+      containersByPath.delete(leaf.path);
+    },
+  };
+}
+
 MODE_PLOT_EDITORS['tube'] = (function() {
   const editorState = {};   // leafPath → {synced, perPointModes}
 
@@ -1801,6 +1987,10 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
     return (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
   }
 
+  function sortEvents(leaf) {
+    getEvents(leaf).sort((a, b) => Number(a.time) - Number(b.time));
+  }
+
   // Evaluate live match status for each declared event against the
   // ACTUAL signal's auto-detected events. Does NOT substitute for CLI
   // pass/fail — this is live feedback only. Same pairing rule as the
@@ -1820,10 +2010,7 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
       for (let j = 0; j < actEvents.length; j++) {
         if (claimed[j]) continue;
         const d = Math.abs(actEvents[j] - target);
-        if (d <= tol && d < bestD) {
-          bestD = d;
-          bestIdx = j;
-        }
+        if (d <= tol && d < bestD) { bestD = d; bestIdx = j; }
       }
       if (bestIdx < 0) return { matched: false, delta: null, at: null };
       claimed[bestIdx] = true;
@@ -1831,208 +2018,123 @@ MODE_PLOT_EDITORS['event-timing'] = (function() {
     });
   }
 
-  function sortEvents(leaf) {
-    const evs = getEvents(leaf);
-    evs.sort((a, b) => Number(a.time) - Number(b.time));
-  }
-
-  // --- table rendering ---------------------------------------------------
-  const mountedByLeaf = new WeakMap();
-
-  function mount(container, leaf, commit) {
-    const root = document.createElement('div');
-    root.className = 'event-timing-editor';
-    container.appendChild(root);
-    mountedByLeaf.set(leaf, { root });
-    refreshEditor(leaf, commit);
-  }
-
-  function unmount(container) {
-    const el = container.querySelector('.event-timing-editor');
-    if (el) el.remove();
-  }
-
-  function refreshEditor(leaf, commit) {
-    const m = mountedByLeaf.get(leaf);
-    if (!m) return;
-    renderTable(m.root, leaf, commit);
-  }
-
-  function renderTable(root, leaf, commit) {
-    const evs = getEvents(leaf);
-    const globalTol = getGlobalTolerance(leaf);
-    const matches = evaluateLiveMatches(leaf);
-
-    root.innerHTML = '';
-
-    // Table.
-    const table = document.createElement('table');
-    table.className = 'event-table';
-    const thead = document.createElement('thead');
-    thead.innerHTML = (
-      '<tr>'
-      + '<th>Time (s)</th>'
-      + '<th>Tolerance (s)</th>'
-      + '<th>Match (live)</th>'
-      + '<th></th>'
-      + '</tr>'
-    );
-    table.appendChild(thead);
-    const tbody = document.createElement('tbody');
-    evs.forEach((ev, i) => {
-      const tr = document.createElement('tr');
-      // Time input.
-      const timeTd = document.createElement('td');
-      const timeInput = document.createElement('input');
-      timeInput.type = 'number';
-      timeInput.step = 'any';
-      timeInput.value = ev.time != null ? String(ev.time) : '';
-      timeInput.addEventListener('change', () => {
-        const n = Number(timeInput.value);
-        if (Number.isFinite(n)) ev.time = n;
-        sortEvents(leaf);
-        refreshEditor(leaf, commit);
-        commit();
-      });
-      timeTd.appendChild(timeInput);
-      tr.appendChild(timeTd);
-      // Tolerance input.
-      const tolTd = document.createElement('td');
-      const tolInput = document.createElement('input');
-      tolInput.type = 'number';
-      tolInput.step = 'any';
-      tolInput.placeholder = String(globalTol);
-      tolInput.value = ev.tolerance != null ? String(ev.tolerance) : '';
-      tolInput.addEventListener('change', () => {
-        const raw = tolInput.value.trim();
-        if (raw === '') {
-          delete ev.tolerance;
-        } else {
-          const n = Number(raw);
-          if (Number.isFinite(n) && n > 0) ev.tolerance = n;
-        }
-        refreshEditor(leaf, commit);
-        commit();
-      });
-      tolTd.appendChild(tolInput);
-      tr.appendChild(tolTd);
-      // Match column (live).
-      const matchTd = document.createElement('td');
-      matchTd.className = 'match-cell';
-      const m = matches[i];
-      if (m.matched) {
-        matchTd.innerHTML = (
+  const editor = createDeclaredItemsTable({
+    rootClassName: 'event-timing-editor',
+    tableClassName: 'event-table',
+    addLabel: '+ add event',
+    getItems: getEvents,
+    columns: [
+      {
+        label: 'Time (s)',
+        cell: (ev, leaf, ctx) => {
+          const inp = document.createElement('input');
+          inp.type = 'number'; inp.step = 'any';
+          inp.value = ev.time != null ? String(ev.time) : '';
+          inp.addEventListener('change', () => {
+            const n = Number(inp.value);
+            if (Number.isFinite(n)) ev.time = n;
+            sortEvents(leaf);
+            ctx.refresh();
+            ctx.commit();
+          });
+          return inp;
+        },
+      },
+      {
+        label: 'Tolerance (s)',
+        cell: (ev, leaf, ctx) => {
+          const inp = document.createElement('input');
+          inp.type = 'number'; inp.step = 'any';
+          inp.placeholder = String(getGlobalTolerance(leaf));
+          inp.value = ev.tolerance != null ? String(ev.tolerance) : '';
+          inp.addEventListener('change', () => {
+            const raw = inp.value.trim();
+            if (raw === '') delete ev.tolerance;
+            else {
+              const n = Number(raw);
+              if (Number.isFinite(n) && n > 0) ev.tolerance = n;
+            }
+            ctx.refresh();
+            ctx.commit();
+          });
+          return inp;
+        },
+      },
+    ],
+    evaluateMatches: evaluateLiveMatches,
+    renderMatch: (m) => {
+      const span = document.createElement('span');
+      if (m && m.matched) {
+        span.innerHTML =
           '<span style="color:#2e7d32">✓ matched</span> '
-          + `@ t=${m.at.toPrecision(4)} (Δ=${m.delta.toPrecision(2)})`
-        );
+          + `@ t=${m.at.toPrecision(4)} (Δ=${m.delta.toPrecision(2)})`;
       } else {
-        matchTd.innerHTML = (
-          '<span style="color:#c62828">✕ unmatched</span>'
-        );
+        span.innerHTML = '<span style="color:#c62828">✕ unmatched</span>';
       }
-      tr.appendChild(matchTd);
-      // Delete button.
-      const delTd = document.createElement('td');
-      const delBtn = document.createElement('button');
-      delBtn.className = 'row-delete';
-      delBtn.textContent = '✕';
-      delBtn.title = 'Remove this event';
-      delBtn.addEventListener('click', () => {
-        evs.splice(i, 1);
-        refreshEditor(leaf, commit);
-        commit();
-      });
-      delTd.appendChild(delBtn);
-      tr.appendChild(delTd);
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    root.appendChild(table);
-
-    // Button row: add + (new) detect with source dropdown.
-    const btnRow = document.createElement('div');
-    btnRow.className = 'event-editor-buttons';
-
-    const addBtn = document.createElement('button');
-    addBtn.className = 'node-btn node-btn-add';
-    addBtn.textContent = '+ add event';
-    addBtn.addEventListener('click', () => {
+      return span;
+    },
+    addItem: (leaf) => {
+      const evs = getEvents(leaf);
       const seedTime = evs.length ? Number(evs[evs.length - 1].time) + 0.5 : 0;
       evs.push({ time: seedTime });
       sortEvents(leaf);
-      refreshEditor(leaf, commit);
-      commit();
-    });
-    btnRow.appendChild(addBtn);
+    },
+    extraButtons: [
+      // Source dropdown — which signal Detect should scan.
+      (leaf) => {
+        const label = document.createElement('label');
+        label.className = 'editor-hint';
+        label.style.marginLeft = '1em';
+        label.textContent = 'Detect from: ';
+        label.title = (
+          'Which signal to scan for duplicate-time samples when you click '
+          + 'Detect. Reference = pick up events from the saved baseline; '
+          + 'Actual = pick up events from this run (useful on a fresh test '
+          + 'with no baseline).'
+        );
+        const sel = document.createElement('select');
+        sel.className = 'detect-source-select';
+        for (const [val, txt] of [['ref', 'Reference'], ['act', 'Actual']]) {
+          const opt = document.createElement('option');
+          opt.value = val; opt.textContent = txt;
+          if (getDetectSource(leaf) === val) opt.selected = true;
+          sel.appendChild(opt);
+        }
+        sel.addEventListener('change', () => setDetectSource(leaf, sel.value));
+        label.appendChild(sel);
+        return label;
+      },
+      // Detect button — replaces declared events with auto-detected.
+      (leaf, ctx) => {
+        const btn = document.createElement('button');
+        btn.className = 'node-btn detect-events-btn';
+        btn.textContent = '🔍 Detect events';
+        btn.title = (
+          'Replace the declared-events list with duplicate-time samples '
+          + "auto-detected on the selected source signal. Uses Modelica's "
+          + 'convention: two consecutive samples at the same t flag a '
+          + 'solver event.'
+        );
+        btn.addEventListener('click', () => {
+          const traj = getTrajectory(leaf);
+          const source = getDetectSource(leaf);
+          const times = source === 'act' ? (traj.act_time || []) : (traj.ref_time || []);
+          const detected = _detectEvents(times);
+          const globalTol = getGlobalTolerance(leaf);
+          leafState[leaf.path].params.events = detected.map(
+            t => ({ time: Number(t), tolerance: globalTol })
+          );
+          ctx.refresh();
+          ctx.commit();
+        });
+        return btn;
+      },
+    ],
+  });
 
-    // Source dropdown — which signal to scan for auto-detected events.
-    const sourceLabel = document.createElement('label');
-    sourceLabel.className = 'editor-hint';
-    sourceLabel.style.marginLeft = '1em';
-    sourceLabel.textContent = 'Detect from: ';
-    sourceLabel.title = (
-      'Which signal to scan for duplicate-time samples when you click '
-      + 'Detect. Reference = pick up events from the saved baseline; '
-      + 'Actual = pick up events from this run (useful on a fresh test '
-      + 'with no baseline).'
-    );
-    const sourceSel = document.createElement('select');
-    sourceSel.className = 'detect-source-select';
-    for (const [val, txt] of [['ref', 'Reference'], ['act', 'Actual']]) {
-      const opt = document.createElement('option');
-      opt.value = val; opt.textContent = txt;
-      if (getDetectSource(leaf) === val) opt.selected = true;
-      sourceSel.appendChild(opt);
-    }
-    sourceSel.addEventListener('change', () => {
-      setDetectSource(leaf, sourceSel.value);
-    });
-    sourceLabel.appendChild(sourceSel);
-    btnRow.appendChild(sourceLabel);
-
-    const detectBtn = document.createElement('button');
-    detectBtn.className = 'node-btn detect-events-btn';
-    detectBtn.textContent = '🔍 Detect events';
-    detectBtn.title = (
-      'Replace the declared-events list with duplicate-time samples '
-      + "auto-detected on the selected source signal. Uses Modelica's "
-      + 'convention: two consecutive samples at the same t flag a '
-      + 'solver event.'
-    );
-    detectBtn.addEventListener('click', () => {
-      const traj = getTrajectory(leaf);
-      const source = getDetectSource(leaf);
-      const times = source === 'act' ? (traj.act_time || []) : (traj.ref_time || []);
-      const detected = _detectEvents(times);
-      const globalTol = getGlobalTolerance(leaf);
-      const seed = detected.map(t => ({ time: Number(t), tolerance: globalTol }));
-      leafState[leaf.path].params.events = seed;
-      refreshEditor(leaf, commit);
-      commit();
-    });
-    btnRow.appendChild(detectBtn);
-
-    root.appendChild(btnRow);
-  }
-
-  // --- editor lifecycle (MODE_PLOT_EDITORS contract) ---------------------
   return {
-    activate(leaf, plotEl, commit) {
-      // The leaf's editor slot is a .node-editor <div> the core
-      // already cleared for us. Find it via the leaf's DOM anchor.
-      const anchor = document.querySelector(
-        `[data-path="${escapeSelector(leaf.path)}"] .node-editor`
-      );
-      if (!anchor) return;
-      mount(anchor, leaf, commit);
-    },
-    deactivate(leaf, _plotEl) {
-      const anchor = document.querySelector(
-        `[data-path="${escapeSelector(leaf.path)}"] .node-editor`
-      );
-      if (anchor) unmount(anchor);
-      mountedByLeaf.delete(leaf);
-    },
+    activate(leaf, _plotEl, commit) { editor.activate(leaf, commit); },
+    deactivate(leaf, _plotEl) { editor.deactivate(leaf); },
   };
 })();
 
@@ -2151,7 +2253,7 @@ MODE_PLOT_EDITORS['points'] = (function() {
         tolerance_mode: 'abs',
       });
       _sortByTime(leaf);
-      refreshEditor(leaf, commit);
+      tableEditor.refresh(leaf, commit);
       commit();
     },
     onDragStep(leaf, _plotEl, anchor, x, y, commit) {
@@ -2161,18 +2263,18 @@ MODE_PLOT_EDITORS['points'] = (function() {
       // in the table to un-anchor back to ref-relative.
       anchor.pt.time = Number(x);
       anchor.pt.value = Number(y);
-      refreshEditor(leaf, commit);
+      tableEditor.refresh(leaf, commit);
     },
     onDragEnd(leaf, _plotEl, _anchor, commit) {
       _sortByTime(leaf);
-      refreshEditor(leaf, commit);
+      tableEditor.refresh(leaf, commit);
     },
     onRemove(leaf, _plotEl, anchor, commit) {
       const points = getPoints(leaf);
       const idx = points.indexOf(anchor.pt);
       if (idx >= 0) {
         points.splice(idx, 1);
-        refreshEditor(leaf, commit);
+        tableEditor.refresh(leaf, commit);
         commit();
       }
     },
@@ -2305,7 +2407,7 @@ MODE_PLOT_EDITORS['points'] = (function() {
         layoutUpdates[`shapes[${shapeIdx}].y1`] = mirrorY1;
     }
     if (!mutated) return false;
-    refreshEditor(leaf, commit);
+    tableEditor.refresh(leaf, commit);
     if (Object.keys(layoutUpdates).length > 0
         && typeof Plotly !== 'undefined') {
       _updatingBox = true;
@@ -2334,257 +2436,114 @@ MODE_PLOT_EDITORS['points'] = (function() {
   // relayout. The map stores both so detach can iterate.
   const boxListenerByPlot = new WeakMap();
 
-  // Render lifecycle.
-  // A leaf can be mounted in multiple ``.node-editor`` slots — one per
-  // per-variable plot section plus the full-tree mount. We render into
-  // every slot so the table stays in lock step regardless of which one
-  // the user is looking at. Mirrors the tube editor's slot model.
-  function getSlots(leaf) {
-    return Array.from(document.querySelectorAll(
-      `[data-path="${escapeSelector(leaf.path)}"] .node-editor`,
-    ));
-  }
+  // ---- Cell factories — column-spec building blocks ----
 
-  function refreshEditor(leaf, commit) {
-    getSlots(leaf).forEach(slot => {
-      let root = slot.querySelector(':scope > .points-editor');
-      if (!root) {
-        root = document.createElement('div');
-        root.className = 'points-editor';
-        slot.appendChild(root);
-      }
-      renderTable(root, leaf, commit);
-    });
-  }
-
-  function renderTable(root, leaf, commit) {
-    const points = getPoints(leaf);
-    const tolDefault = getDefaultTolerance(leaf);
-    const matches = evaluateLiveMatches(leaf);
-
-    root.innerHTML = '';
-
-    const table = document.createElement('table');
-    table.className = 'points-table';
-    const thead = document.createElement('thead');
-    thead.innerHTML = (
-      '<tr>'
-      + '<th>Time</th>'
-      + '<th>X-Tolerance</th>'
-      + '<th>Value</th>'
-      + '<th>Mode</th>'
-      + '<th>Tolerance</th>'
-      + '<th>Match (live)</th>'
-      + '<th></th>'
-      + '</tr>'
-    );
-    table.appendChild(thead);
-    const tbody = document.createElement('tbody');
-
-    if (points.length === 0) {
-      // Zero-point fast path: italic placeholder row reinforcing the
-      // implicit final-only behavior. Spans all columns.
-      const tr = document.createElement('tr');
-      tr.className = 'points-implicit-row';
-      const td = document.createElement('td');
-      td.colSpan = 7;
-      td.style.fontStyle = 'italic';
-      td.style.color = '#666';
-      td.textContent = (
-        `final · uses ref[-1] · tolerance ${tolDefault} · `
-        + `+ add point overrides`
-      );
-      tr.appendChild(td);
-      tbody.appendChild(tr);
-    } else {
-      points.forEach((pt, i) => {
-        const tr = document.createElement('tr');
-
-        // Time input.
-        const timeTd = document.createElement('td');
-        const timeInput = document.createElement('input');
-        timeInput.type = 'number';
-        timeInput.step = 'any';
-        timeInput.placeholder = 'final';
-        timeInput.value = pt.time != null ? String(pt.time) : '';
-        timeInput.addEventListener('change', () => {
-          const raw = timeInput.value.trim();
-          if (raw === '') pt.time = null;
-          else {
-            const n = Number(raw);
-            if (Number.isFinite(n)) pt.time = n;
-          }
-          refreshEditor(leaf, commit);
-          commit();
-        });
-        timeTd.appendChild(timeInput);
-        tr.appendChild(timeTd);
-
-        // x-tol input.
-        const xtolTd = document.createElement('td');
-        const xtolInput = document.createElement('input');
-        xtolInput.type = 'number';
-        xtolInput.step = 'any';
-        xtolInput.placeholder = '0';
-        xtolInput.value = pt.time_tolerance != null
-          ? String(pt.time_tolerance) : '';
-        xtolInput.addEventListener('change', () => {
-          const raw = xtolInput.value.trim();
-          if (raw === '') delete pt.time_tolerance;
-          else {
-            const n = Number(raw);
-            if (Number.isFinite(n) && n >= 0) pt.time_tolerance = n;
-          }
-          refreshEditor(leaf, commit);
-          commit();
-        });
-        xtolTd.appendChild(xtolInput);
-        tr.appendChild(xtolTd);
-
-        // Value input.
-        const valTd = document.createElement('td');
-        const valInput = document.createElement('input');
-        valInput.type = 'number';
-        valInput.step = 'any';
-        valInput.placeholder = 'ref(t)';
-        valInput.value = pt.value != null ? String(pt.value) : '';
-        valInput.addEventListener('change', () => {
-          const raw = valInput.value.trim();
-          if (raw === '') delete pt.value;
-          else {
-            const n = Number(raw);
-            if (Number.isFinite(n)) pt.value = n;
-          }
-          refreshEditor(leaf, commit);
-          commit();
-        });
-        valTd.appendChild(valInput);
-        tr.appendChild(valTd);
-
-        // Mode dropdown.
-        const modeTd = document.createElement('td');
-        const modeSel = document.createElement('select');
-        for (const m of ['abs', 'rel']) {
-          const opt = document.createElement('option');
-          opt.value = m;
-          opt.textContent = m;
-          if ((pt.tolerance_mode || 'abs') === m) opt.selected = true;
-          modeSel.appendChild(opt);
-        }
-        modeSel.addEventListener('change', () => {
-          // Convert the stored tolerance value when switching modes so
-          // the VISIBLE box size stays the same. abs stores the half-
-          // height directly in y-units; rel stores it as a fraction of
-          // |target|.
-          //
-          // Protection for "essentially zero" target on abs→rel: a
-          // small but non-zero target (e.g., solver-near-zero ~1e-7)
-          // produces a huge rel fraction when oldTol/targetAbs is
-          // computed. The previous threshold (1e-12) was so tight that
-          // it only caught EXACTLY-zero targets, and small numerical
-          // values like sin(t≈0) slipped through. Now we judge by
-          // whether the resulting rel fraction would be unreasonable
-          // (>10 = 1000%) — that catches both true zeros and the
-          // near-zero cases the user actually hit.
-          const oldMode = pt.tolerance_mode || 'abs';
-          const newMode = modeSel.value;
-          if (oldMode !== newMode) {
-            const tolDef = getDefaultTolerance(leaf);
-            const oldTol = pt.tolerance != null
-              ? Number(pt.tolerance) : tolDef;
-            const { y } = _resolvedXY(leaf, pt);
-            const targetAbs = Math.abs(y);
-            if (oldMode === 'abs' && newMode === 'rel') {
-              const proposedRel = targetAbs > 0
-                ? oldTol / targetAbs
-                : Infinity;
-              if (Number.isFinite(proposedRel) && proposedRel <= 10) {
-                pt.tolerance = proposedRel;
-              } else {
-                // Conversion would produce an enormous (or undefined)
-                // rel fraction. Revert.
-                modeSel.value = 'abs';
-                refreshEditor(leaf, commit);
-                return;
-              }
-            } else if (oldMode === 'rel' && newMode === 'abs') {
-              pt.tolerance = oldTol * targetAbs;
-            }
-          }
-          pt.tolerance_mode = newMode;
-          refreshEditor(leaf, commit);
-          commit();
-        });
-        modeTd.appendChild(modeSel);
-        tr.appendChild(modeTd);
-
-        // Tolerance input.
-        const tolTd = document.createElement('td');
-        const tolInput = document.createElement('input');
-        tolInput.type = 'number';
-        tolInput.step = 'any';
-        tolInput.placeholder = String(tolDefault);
-        tolInput.value = pt.tolerance != null ? String(pt.tolerance) : '';
-        tolInput.addEventListener('change', () => {
-          const raw = tolInput.value.trim();
-          if (raw === '') delete pt.tolerance;
-          else {
-            const n = Number(raw);
-            if (Number.isFinite(n) && n > 0) pt.tolerance = n;
-          }
-          refreshEditor(leaf, commit);
-          commit();
-        });
-        tolTd.appendChild(tolInput);
-        tr.appendChild(tolTd);
-
-        // Match column.
-        const matchTd = document.createElement('td');
-        matchTd.className = 'match-cell';
-        const m = matches[i] || {};
-        if (m.ok === null) {
-          matchTd.innerHTML = '<span style="color:#9e9e9e">·</span>';
-        } else if (m.ok) {
-          matchTd.innerHTML = (
-            `<span style="color:#2e7d32">✓ matched</span> `
-            + `(Δ=${m.delta.toExponential(2)})`
-          );
+  function _numberCell(field, opts = {}) {
+    return (pt, leaf, ctx) => {
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.step = 'any';
+      if (opts.placeholder) inp.placeholder = opts.placeholder(leaf, pt);
+      inp.value = pt[field] != null ? String(pt[field]) : '';
+      inp.addEventListener('change', () => {
+        const raw = inp.value.trim();
+        if (raw === '') {
+          if (opts.allowNull) pt[field] = null;
+          else delete pt[field];
         } else {
-          matchTd.innerHTML = (
-            `<span style="color:#c62828">✕ unmatched</span> `
-            + `(Δ=${m.delta.toExponential(2)})`
-          );
+          const n = Number(raw);
+          if (Number.isFinite(n) && (!opts.validate || opts.validate(n))) {
+            pt[field] = n;
+          }
         }
-        tr.appendChild(matchTd);
-
-        // Delete.
-        const delTd = document.createElement('td');
-        const delBtn = document.createElement('button');
-        delBtn.className = 'row-delete';
-        delBtn.textContent = '✕';
-        delBtn.title = 'Remove this point';
-        delBtn.addEventListener('click', () => {
-          points.splice(i, 1);
-          refreshEditor(leaf, commit);
-          commit();
-        });
-        delTd.appendChild(delBtn);
-        tr.appendChild(delTd);
-
-        tbody.appendChild(tr);
+        ctx.refresh();
+        ctx.commit();
       });
+      return inp;
+    };
+  }
+
+  function _modeCell(pt, leaf, ctx) {
+    const sel = document.createElement('select');
+    for (const m of ['abs', 'rel']) {
+      const opt = document.createElement('option');
+      opt.value = m; opt.textContent = m;
+      if ((pt.tolerance_mode || 'abs') === m) opt.selected = true;
+      sel.appendChild(opt);
     }
-    table.appendChild(tbody);
-    root.appendChild(table);
+    // Convert the stored tolerance value when switching modes so the
+    // VISIBLE box size stays the same. abs stores the half-height
+    // directly in y-units; rel stores it as a fraction of |target|.
+    //
+    // Protection for "essentially zero" target on abs→rel: a small but
+    // non-zero target (e.g., solver-near-zero ~1e-7) produces a huge
+    // rel fraction when oldTol/targetAbs is computed. The previous
+    // threshold (1e-12) was so tight that it only caught EXACTLY-zero
+    // targets, and small numerical values like sin(t≈0) slipped
+    // through. Now we judge by whether the resulting rel fraction
+    // would be unreasonable (>10 = 1000%) — that catches both true
+    // zeros and the near-zero cases the user actually hit.
+    sel.addEventListener('change', () => {
+      const oldMode = pt.tolerance_mode || 'abs';
+      const newMode = sel.value;
+      if (oldMode !== newMode) {
+        const tolDef = getDefaultTolerance(leaf);
+        const oldTol = pt.tolerance != null ? Number(pt.tolerance) : tolDef;
+        const { y } = _resolvedXY(leaf, pt);
+        const targetAbs = Math.abs(y);
+        if (oldMode === 'abs' && newMode === 'rel') {
+          const proposedRel = targetAbs > 0 ? oldTol / targetAbs : Infinity;
+          if (Number.isFinite(proposedRel) && proposedRel <= 10) {
+            pt.tolerance = proposedRel;
+          } else {
+            // Conversion would produce an enormous (or undefined) rel
+            // fraction. Revert.
+            sel.value = 'abs';
+            ctx.refresh();
+            return;
+          }
+        } else if (oldMode === 'rel' && newMode === 'abs') {
+          pt.tolerance = oldTol * targetAbs;
+        }
+      }
+      pt.tolerance_mode = newMode;
+      ctx.refresh();
+      ctx.commit();
+    });
+    return sel;
+  }
 
-    // Buttons row.
-    const btnRow = document.createElement('div');
-    btnRow.className = 'points-editor-buttons';
-
-    const addBtn = document.createElement('button');
-    addBtn.className = 'node-btn node-btn-add';
-    addBtn.textContent = '+ add point';
-    addBtn.addEventListener('click', () => {
+  const tableEditor = createDeclaredItemsTable({
+    rootClassName: 'points-editor',
+    tableClassName: 'points-table',
+    addLabel: '+ add point',
+    getItems: getPoints,
+    columns: [
+      { label: 'Time', cell: _numberCell('time', { placeholder: () => 'final', allowNull: true }) },
+      { label: 'X-Tolerance', cell: _numberCell('time_tolerance', { placeholder: () => '0', validate: n => n >= 0 }) },
+      { label: 'Value', cell: _numberCell('value', { placeholder: () => 'ref(t)' }) },
+      { label: 'Mode', cell: _modeCell },
+      { label: 'Tolerance', cell: _numberCell('tolerance', {
+          placeholder: (leaf) => String(getDefaultTolerance(leaf)),
+          validate: n => n > 0,
+        }) },
+    ],
+    evaluateMatches: evaluateLiveMatches,
+    renderMatch: (m) => {
+      const span = document.createElement('span');
+      const mm = m || {};
+      if (mm.ok === null || mm.ok === undefined) {
+        span.innerHTML = '<span style="color:#9e9e9e">·</span>';
+      } else if (mm.ok) {
+        span.innerHTML = `<span style="color:#2e7d32">✓ matched</span> `
+                       + `(Δ=${mm.delta.toExponential(2)})`;
+      } else {
+        span.innerHTML = `<span style="color:#c62828">✕ unmatched</span> `
+                       + `(Δ=${mm.delta.toExponential(2)})`;
+      }
+      return span;
+    },
+    addItem: (leaf) => {
+      const points = getPoints(leaf);
       let seedTime = null;
       if (points.length) {
         const prev = points[points.length - 1];
@@ -2592,42 +2551,53 @@ MODE_PLOT_EDITORS['points'] = (function() {
         seedTime = prevT != null ? prevT + 0.5 : null;
       }
       points.push({ time: seedTime });
-      refreshEditor(leaf, commit);
-      commit();
-    });
-    btnRow.appendChild(addBtn);
-
-    const snapshotBtn = document.createElement('button');
-    snapshotBtn.className = 'node-btn snapshot-btn';
-    snapshotBtn.textContent = '📸 Snapshot from ref';
-    snapshotBtn.title = (
-      'For every row whose Value is empty (ref-relative), fill in the '
-      + 'current ref(time) as an explicit value. Converts ref-based '
-      + 'points into baseline-free absolute points. Idempotent — rows '
-      + 'with an explicit value are untouched.'
-    );
-    snapshotBtn.addEventListener('click', () => {
-      const traj = getTrajectory(leaf);
-      const refTime = traj.ref_time || [];
-      const refValues = traj.ref_values || [];
-      if (!refTime.length) return;
-      const traceEnd = refTime[refTime.length - 1];
-      points.forEach(pt => {
-        if (pt.value != null) return;
-        const t = pt.time != null ? Number(pt.time) : traceEnd;
-        pt.value = _interpLinear(refTime, refValues, t);
-      });
-      refreshEditor(leaf, commit);
-      commit();
-    });
-    btnRow.appendChild(snapshotBtn);
-
-    root.appendChild(btnRow);
-  }
+    },
+    // Zero-point fast path: italic placeholder row reinforcing the
+    // implicit final-only behavior. Re-rendered per edit so the
+    // default-tolerance number is always current.
+    emptyRowClassName: 'points-implicit-row',
+    emptyMessage: (leaf) => {
+      const span = document.createElement('span');
+      span.style.fontStyle = 'italic';
+      span.style.color = '#666';
+      span.textContent = `final · uses ref[-1] · tolerance ${getDefaultTolerance(leaf)} · `
+                       + `+ add point overrides`;
+      return span;
+    },
+    extraButtons: [
+      // 📸 Snapshot from ref — fills empty Value cells with current ref(time).
+      (leaf, ctx) => {
+        const btn = document.createElement('button');
+        btn.className = 'node-btn snapshot-btn';
+        btn.textContent = '📸 Snapshot from ref';
+        btn.title = (
+          'For every row whose Value is empty (ref-relative), fill in the '
+          + 'current ref(time) as an explicit value. Converts ref-based '
+          + 'points into baseline-free absolute points. Idempotent — rows '
+          + 'with an explicit value are untouched.'
+        );
+        btn.addEventListener('click', () => {
+          const traj = getTrajectory(leaf);
+          const refTime = traj.ref_time || [];
+          const refValues = traj.ref_values || [];
+          if (!refTime.length) return;
+          const traceEnd = refTime[refTime.length - 1];
+          getPoints(leaf).forEach(pt => {
+            if (pt.value != null) return;
+            const t = pt.time != null ? Number(pt.time) : traceEnd;
+            pt.value = _interpLinear(refTime, refValues, t);
+          });
+          ctx.refresh();
+          ctx.commit();
+        });
+        return btn;
+      },
+    ],
+  });
 
   return {
     activate(leaf, plotEl, commit) {
-      refreshEditor(leaf, commit);
+      tableEditor.activate(leaf, commit);
       if (plotEl) {
         _pointEditor.attach(leaf, plotEl, commit);
         const liveHandler = (evt) =>
@@ -2653,10 +2623,7 @@ MODE_PLOT_EDITORS['points'] = (function() {
           boxListenerByPlot.delete(plotEl);
         }
       }
-      getSlots(leaf).forEach(slot => {
-        const root = slot.querySelector(':scope > .points-editor');
-        if (root) root.remove();
-      });
+      tableEditor.deactivate(leaf);
     },
   };
 })();
@@ -2671,12 +2638,13 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
   //   * Diamond markers at each declared peak's frequency, draggable via
   //     Shift+click/drag/right-click through the shared PointPlotEditor.
   //   * Acceptance-band shapes around each declared peak.
-  //   * Table: freq, tolerance, mode, match-live, remove.
+  //   * Table (via createDeclaredItemsTable): freq, tolerance, mode,
+  //     match-live, src-window, remove.
   //   * Detect dropdown: source = Reference | Actual. Uses the live
   //     windowed spectrum, so "brush a window → Detect" works in one
   //     interaction cycle. Populates derived_from_window metadata on
   //     each added peak so provenance survives the patch round-trip.
-  const mountedByLeaf = new WeakMap();
+  const slotsByLeaf = new WeakMap();   // leaf -> [{slot, subplotDiv}, ...]
   // Per-leaf selected detect source (in-memory; not persisted).
   const detectSourceByPath = new Map();
 
@@ -2757,8 +2725,9 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
   // Live match evaluation: does each declared peak have a local max in
   // its tolerance window on the actual spectrum? Replaces CLI-stale
   // paired_peaks in the table's match column. Returns [{declared_hz,
-  // matched_hz, delta, in_window_freqs_missing}].
-  function evaluateMatches(leaf, actSpectrum) {
+  // matched_hz, delta}].
+  function evaluateMatches(leaf) {
+    const actSpectrum = getLiveSpectrum(leaf, 'act');
     const pks = getDeclaredPeaks(leaf);
     return pks.map(pk => {
       const f = Number(pk.freq);
@@ -2790,44 +2759,38 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
     onClickAdd(leaf, _plotEl, x, _y, commit) {
       if (!(x > 0)) return;
       const pks = getDeclaredPeaks(leaf);
-      const newPk = {
-        freq: Number(x),
-        tolerance: 0.01,
-        tolerance_mode: 'rel',
-      };
+      const newPk = { freq: Number(x), tolerance: 0.01, tolerance_mode: 'rel' };
       const w = _windowCopy(getLeafWindow(leaf));
       if (w) newPk.derived_from_window = w;
       pks.push(newPk);
       sortDeclared(leaf);
-      refreshEditor(leaf, commit);
+      refreshAll(leaf, commit);
     },
-    onDragStep(leaf, _plotEl, anchor, x, _y, _commit) {
+    onDragStep(leaf, _plotEl, anchor, x, _y, commit) {
       if (!(x > 0)) return;
       anchor.pt.freq = Number(x);
       sortDeclared(leaf);
-      refreshEditor(leaf, _commit);
+      refreshAll(leaf, commit);
     },
     onDragEnd(leaf, _plotEl, _anchor, commit) {
       sortDeclared(leaf);
-      refreshEditor(leaf, commit);
+      refreshAll(leaf, commit);
     },
     onRemove(leaf, _plotEl, anchor, commit) {
       const pks = getDeclaredPeaks(leaf);
       const idx = pks.indexOf(anchor.pt);
       if (idx >= 0) {
         pks.splice(idx, 1);
-        refreshEditor(leaf, commit);
+        refreshAll(leaf, commit);
       }
     },
   });
 
-  function refreshEditor(leaf, commit) {
-    const mounted = mountedByLeaf.get(leaf);
-    if (!mounted) return;
-    for (const { subplotDiv, tableDiv } of mounted) {
-      _renderSpectrumAndPeaks(subplotDiv, leaf);
-      _renderTable(tableDiv, leaf, commit);
-    }
+  // Full refresh — subplot + table + commit. Table refresh is delegated
+  // to the helper.
+  function refreshAll(leaf, commit) {
+    refreshSubplotOnly(leaf);
+    tableEditor.refresh(leaf, commit);
     commit();
   }
 
@@ -2837,13 +2800,12 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
   // the input element (which would drop focus and eat decimal points).
   // The full refresh (rebuilding the table with its sorted rows + live
   // match column) happens on `change` (blur / Enter).
-  function refreshSubplotOnly(leaf, commit) {
-    const mounted = mountedByLeaf.get(leaf);
+  function refreshSubplotOnly(leaf) {
+    const mounted = slotsByLeaf.get(leaf);
     if (!mounted) return;
     for (const { subplotDiv } of mounted) {
       _renderSpectrumAndPeaks(subplotDiv, leaf);
     }
-    commit();
   }
 
   function _renderSpectrumAndPeaks(div, leaf) {
@@ -2859,7 +2821,7 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
       return;
     }
     const pks = getDeclaredPeaks(leaf);
-    const liveMatches = evaluateMatches(leaf, actSpec);
+    const liveMatches = evaluateMatches(leaf);
     const matchByIdx = Object.fromEntries(
       liveMatches.map((m, i) => [i, m]),
     );
@@ -2937,135 +2899,79 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
     }, { displayModeBar: false, responsive: true });
   }
 
-  function _renderTable(container, leaf, commit) {
-    container.innerHTML = '';
-    const pks = getDeclaredPeaks(leaf);
-    const actSpec = getLiveSpectrum(leaf, 'act');
-    const liveMatches = evaluateMatches(leaf, actSpec);
+  // Number-input cell with dual `input` (live subplot preview, keeps
+  // focus alive) and `change` (sort + full refresh on blur/Enter)
+  // semantics. Mid-typing keystrokes mustn't destroy the input element
+  // or it drops focus and eats decimal points.
+  function _peakNumberCell(field, mutateOnInput) {
+    return (pk, leaf, ctx) => {
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.step = 'any'; inp.min = '0';
+      inp.value = String(pk[field]);
+      inp.addEventListener('input', () => {
+        const v = parseFloat(inp.value);
+        if (Number.isFinite(v) && mutateOnInput(v)) {
+          pk[field] = v;
+          refreshSubplotOnly(leaf);
+        }
+      });
+      inp.addEventListener('change', () => {
+        const v = parseFloat(inp.value);
+        if (Number.isFinite(v) && mutateOnInput(v)) {
+          pk[field] = v;
+          if (field === 'freq') sortDeclared(leaf);
+          refreshAll(leaf, ctx.commit);
+        }
+      });
+      return inp;
+    };
+  }
 
-    const hint = document.createElement('div');
-    hint.className = 'editor-hint';
-    hint.innerHTML = 'Shift+click on the spectrum to add a peak · '
-                   + 'Shift+drag to move · Shift+right-click to remove · '
-                   + 'Edit the window to rescope the spectrum';
-    container.appendChild(hint);
-
-    const table = document.createElement('table');
-    table.className = 'tube-table';
-    const header = table.insertRow();
-    header.innerHTML = '<th>Freq (Hz)</th><th>Tolerance</th>'
-                     + '<th>Mode</th><th>Match (live)</th>'
-                     + '<th>Src window</th><th></th>';
-
-    pks.forEach((pk, i) => {
-      const row = table.insertRow();
-      // Freq — input event for live plot preview (subplot only, keeps
-      // focus alive), change event for full refresh + sort on blur.
-      const freqTd = document.createElement('td');
-      const freqInp = document.createElement('input');
-      freqInp.type = 'number'; freqInp.step = 'any'; freqInp.min = '0';
-      freqInp.value = String(pk.freq);
-      freqInp.addEventListener('input', () => {
-        const v = parseFloat(freqInp.value);
-        if (Number.isFinite(v) && v > 0) {
-          pk.freq = v;
-          refreshSubplotOnly(leaf, commit);
-        }
-      });
-      freqInp.addEventListener('change', () => {
-        const v = parseFloat(freqInp.value);
-        if (Number.isFinite(v) && v > 0) {
-          pk.freq = v;
-          sortDeclared(leaf);
-          refreshEditor(leaf, commit);
-        }
-      });
-      freqTd.appendChild(freqInp); row.appendChild(freqTd);
-      // Tolerance — same split.
-      const tolTd = document.createElement('td');
-      const tolInp = document.createElement('input');
-      tolInp.type = 'number'; tolInp.step = 'any'; tolInp.min = '0';
-      tolInp.value = String(pk.tolerance);
-      tolInp.addEventListener('input', () => {
-        const v = parseFloat(tolInp.value);
-        if (Number.isFinite(v) && v >= 0) {
-          pk.tolerance = v;
-          refreshSubplotOnly(leaf, commit);
-        }
-      });
-      tolInp.addEventListener('change', () => {
-        const v = parseFloat(tolInp.value);
-        if (Number.isFinite(v) && v >= 0) {
-          pk.tolerance = v;
-          refreshEditor(leaf, commit);
-        }
-      });
-      tolTd.appendChild(tolInp); row.appendChild(tolTd);
-      // Tolerance mode
-      const modeTd = document.createElement('td');
-      const modeSel = document.createElement('select');
-      for (const m of ['rel', 'abs']) {
-        const opt = document.createElement('option');
-        opt.value = m; opt.textContent = m;
-        if (pk.tolerance_mode === m) opt.selected = true;
-        modeSel.appendChild(opt);
-      }
-      modeSel.title = 'rel = fractional (e.g. 0.01 = 1% of declared freq); '
+  const tableEditor = createDeclaredItemsTable({
+    rootClassName: 'peak-editor-ui',
+    tableClassName: 'tube-table',
+    addLabel: '+ add peak',
+    hint: 'Shift+click on the spectrum to add a peak · '
+        + 'Shift+drag to move · Shift+right-click to remove · '
+        + 'Edit the window to rescope the spectrum',
+    getItems: getDeclaredPeaks,
+    columns: [
+      { label: 'Freq (Hz)', cell: _peakNumberCell('freq', v => v > 0) },
+      { label: 'Tolerance', cell: _peakNumberCell('tolerance', v => v >= 0) },
+      {
+        label: 'Mode',
+        cell: (pk, leaf, ctx) => {
+          const sel = document.createElement('select');
+          for (const m of ['rel', 'abs']) {
+            const opt = document.createElement('option');
+            opt.value = m; opt.textContent = m;
+            if (pk.tolerance_mode === m) opt.selected = true;
+            sel.appendChild(opt);
+          }
+          sel.title = 'rel = fractional (e.g. 0.01 = 1% of declared freq); '
                     + 'abs = Hz';
-      modeSel.addEventListener('change', () => {
-        pk.tolerance_mode = modeSel.value === 'abs' ? 'abs' : 'rel';
-        refreshEditor(leaf, commit);
-      });
-      modeTd.appendChild(modeSel); row.appendChild(modeTd);
-      // Live match status (JS scorer).
-      const matchTd = document.createElement('td');
-      const m = liveMatches[i];
+          sel.addEventListener('change', () => {
+            pk.tolerance_mode = sel.value === 'abs' ? 'abs' : 'rel';
+            refreshAll(leaf, ctx.commit);
+          });
+          return sel;
+        },
+      },
+    ],
+    evaluateMatches,
+    renderMatch: (m) => {
+      const span = document.createElement('span');
       if (!m || m.matched_hz == null) {
-        matchTd.innerHTML = '<span class="fail">no match</span>';
+        span.innerHTML = '<span class="fail">no match</span>';
       } else {
         const dhz = m.delta != null ? m.delta.toExponential(2) : '';
-        matchTd.innerHTML = `<span class="pass">${m.matched_hz.toFixed(4)} Hz `
-                          + `(Δ ${dhz})</span>`;
+        span.innerHTML = `<span class="pass">${m.matched_hz.toFixed(4)} Hz `
+                       + `(Δ ${dhz})</span>`;
       }
-      row.appendChild(matchTd);
-      // Source window (provenance metadata)
-      const winTd = document.createElement('td');
-      const w = pk.derived_from_window;
-      if (w && (w.start != null || w.end != null)) {
-        const s = w.start != null ? Number(w.start).toPrecision(3) : '−∞';
-        const e = w.end != null ? Number(w.end).toPrecision(3) : '+∞';
-        const span = document.createElement('span');
-        span.className = 'editor-hint';
-        span.textContent = `[${s}, ${e}]`;
-        span.title = `Detected in window [${s}, ${e}]. Scoring uses the `
-                   + `leaf-level window; this metadata records where you found it.`;
-        winTd.appendChild(span);
-      } else {
-        winTd.innerHTML = '<span class="editor-hint">—</span>';
-      }
-      row.appendChild(winTd);
-      // Remove
-      const rmTd = document.createElement('td');
-      const rmBtn = document.createElement('button');
-      rmBtn.className = 'node-btn node-btn-remove';
-      rmBtn.textContent = '✕';
-      rmBtn.title = 'Remove peak';
-      rmBtn.addEventListener('click', () => {
-        pks.splice(i, 1);
-        refreshEditor(leaf, commit);
-      });
-      rmTd.appendChild(rmBtn); row.appendChild(rmTd);
-    });
-    container.appendChild(table);
-
-    // Buttons row: add + detect (with source dropdown).
-    const btnRow = document.createElement('div');
-    btnRow.className = 'peak-editor-buttons';
-
-    const addBtn = document.createElement('button');
-    addBtn.className = 'node-btn node-btn-add';
-    addBtn.textContent = '+ add peak';
-    addBtn.addEventListener('click', () => {
+      return span;
+    },
+    addItem: (leaf) => {
+      const pks = getDeclaredPeaks(leaf);
       // Seed frequency from the first detected peak on the live ref
       // spectrum, or 1.0 Hz as a last resort.
       const live = getLiveSpectrum(leaf, 'ref');
@@ -3074,107 +2980,96 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
       const seedFreq = pks.length
         ? (pks[pks.length - 1].freq + (freqs[pks.length] || pks[pks.length - 1].freq * 2))
         : (freqs[0] || 1.0);
-      const newPk = {
-        freq: Number(seedFreq),
-        tolerance: 0.01,
-        tolerance_mode: 'rel',
-      };
+      const newPk = { freq: Number(seedFreq), tolerance: 0.01, tolerance_mode: 'rel' };
       const w = _windowCopy(getLeafWindow(leaf));
       if (w) newPk.derived_from_window = w;
       pks.push(newPk);
       sortDeclared(leaf);
-      refreshEditor(leaf, commit);
-    });
-    btnRow.appendChild(addBtn);
-
-    // Detect source dropdown — picks WHICH signal the Detect button
-    // analyzes. Does not affect the subplot display (both reference
-    // and actual curves are always shown). Default: Reference (the
-    // regression target). Pick Actual for fresh tests where no
-    // baseline exists yet.
-    const sourceLabel = document.createElement('label');
-    sourceLabel.className = 'editor-hint';
-    sourceLabel.style.marginLeft = '1em';
-    sourceLabel.textContent = 'Detect from: ';
-    sourceLabel.title = 'Chooses which signal Detect analyzes for peaks. '
-                      + 'Does NOT change the subplot display (both curves '
-                      + 'are always shown). Reference = seed from the '
-                      + 'regression target; Actual = seed from the current '
-                      + 'run\'s output (useful on fresh tests without a '
-                      + 'baseline).';
-    const sourceSel = document.createElement('select');
-    sourceSel.className = 'detect-source-select';
-    for (const [val, txt] of [['ref', 'Reference'], ['act', 'Actual']]) {
-      const opt = document.createElement('option');
-      opt.value = val; opt.textContent = txt;
-      if (getDetectSource(leaf) === val) opt.selected = true;
-      sourceSel.appendChild(opt);
-    }
-    sourceSel.addEventListener('change', () => {
-      setDetectSource(leaf, sourceSel.value);
-    });
-    sourceLabel.appendChild(sourceSel);
-    btnRow.appendChild(sourceLabel);
-
-    const detectBtn = document.createElement('button');
-    detectBtn.className = 'node-btn';
-    detectBtn.textContent = '🔍 Detect peaks';
-    detectBtn.title = 'Replace the table with peaks detected on the '
-                    + 'selected source spectrum, scoped to the leaf\'s '
-                    + 'current window. Low-freq noise (< ~2 cycles per '
-                    + 'window) is filtered out. Each new peak is stamped '
-                    + 'with "derived_from_window" metadata for provenance.';
-    detectBtn.addEventListener('click', () => {
-      const source = getDetectSource(leaf);
-      const live = getLiveSpectrum(leaf, source);
-      if (live.freqs.length < 3) return;
-      // Default min_frequency: require at least 2 full cycles within the
-      // windowed signal. Anything below that is low-freq leakage / trend
-      // residue, not a reliably-resolved peak. Matches the intuition
-      // "don't flag a peak whose period doesn't fit twice in my window."
-      const binSpacing = live.freqs[1] - live.freqs[0];
-      const minFreq = 2 * binSpacing;
-      const detected = _findTopNPeaksJS(live.freqs, live.magnitudes, 3, minFreq);
-      if (detected.length === 0) return;
-      const w = _windowCopy(getLeafWindow(leaf));
-      const seed = detected.map(p => {
-        const pk = {
-          freq: Number(p.freq),
-          tolerance: 0.01,
-          tolerance_mode: 'rel',
-        };
-        if (w) pk.derived_from_window = w;
-        return pk;
-      });
-      setDeclaredPeaks(leaf, seed);
-      refreshEditor(leaf, commit);
-    });
-    btnRow.appendChild(detectBtn);
-
+    },
+    extraButtons: [
+      // Detect source dropdown — picks WHICH signal Detect analyzes.
+      // Does not affect the subplot display (both curves always shown).
+      // Default: Reference (the regression target). Pick Actual for
+      // fresh tests where no baseline exists yet.
+      (leaf) => {
+        const label = document.createElement('label');
+        label.className = 'editor-hint';
+        label.style.marginLeft = '1em';
+        label.textContent = 'Detect from: ';
+        label.title = 'Chooses which signal Detect analyzes for peaks. '
+                    + 'Does NOT change the subplot display (both curves '
+                    + 'are always shown). Reference = seed from the '
+                    + 'regression target; Actual = seed from the current '
+                    + 'run\'s output (useful on fresh tests without a '
+                    + 'baseline).';
+        const sel = document.createElement('select');
+        sel.className = 'detect-source-select';
+        for (const [val, txt] of [['ref', 'Reference'], ['act', 'Actual']]) {
+          const opt = document.createElement('option');
+          opt.value = val; opt.textContent = txt;
+          if (getDetectSource(leaf) === val) opt.selected = true;
+          sel.appendChild(opt);
+        }
+        sel.addEventListener('change', () => setDetectSource(leaf, sel.value));
+        label.appendChild(sel);
+        return label;
+      },
+      // Detect button — replaces the table with peaks detected on the
+      // selected source spectrum, scoped to the leaf's current window.
+      (leaf, ctx) => {
+        const btn = document.createElement('button');
+        btn.className = 'node-btn';
+        btn.textContent = '🔍 Detect peaks';
+        btn.title = 'Replace the table with peaks detected on the '
+                  + 'selected source spectrum, scoped to the leaf\'s '
+                  + 'current window. Low-freq noise (< ~2 cycles per '
+                  + 'window) is filtered out. Each new peak is stamped '
+                  + 'with "derived_from_window" metadata for provenance.';
+        btn.addEventListener('click', () => {
+          const source = getDetectSource(leaf);
+          const live = getLiveSpectrum(leaf, source);
+          if (live.freqs.length < 3) return;
+          // Default min_frequency: require at least 2 full cycles within
+          // the windowed signal. Anything below that is low-freq leakage
+          // / trend residue, not a reliably-resolved peak. Matches "don't
+          // flag a peak whose period doesn't fit twice in my window".
+          const binSpacing = live.freqs[1] - live.freqs[0];
+          const detected = _findTopNPeaksJS(live.freqs, live.magnitudes, 3, 2 * binSpacing);
+          if (detected.length === 0) return;
+          const w = _windowCopy(getLeafWindow(leaf));
+          setDeclaredPeaks(leaf, detected.map(p => {
+            const pk = { freq: Number(p.freq), tolerance: 0.01, tolerance_mode: 'rel' };
+            if (w) pk.derived_from_window = w;
+            return pk;
+          }));
+          refreshAll(leaf, ctx.commit);
+        });
+        return btn;
+      },
+    ],
     // Resolution hint — tells the user what the current window's FFT
     // bin spacing is, so they can choose meaningful tolerances. If a
     // 1-Hz declared peak has a 0.05 Hz tolerance on a signal whose bin
     // spacing is 0.25 Hz, that's sub-bin and will fail for reasons
     // unrelated to drift.
-    const resolutionHint = document.createElement('div');
-    resolutionHint.className = 'editor-hint';
-    resolutionHint.style.marginTop = '0.4em';
-    const refSpec = getLiveSpectrum(leaf, 'ref');
-    if (refSpec.freqs.length >= 2) {
+    footer: (leaf) => {
+      const refSpec = getLiveSpectrum(leaf, 'ref');
+      if (refSpec.freqs.length < 2) return null;
       const binSpacing = refSpec.freqs[1] - refSpec.freqs[0];
-      resolutionHint.textContent = (
+      const div = document.createElement('div');
+      div.className = 'editor-hint';
+      div.style.marginTop = '0.4em';
+      div.textContent =
         `FFT bin resolution: ~${binSpacing.toExponential(2)} Hz. `
         + `Tolerances tighter than this may fail regardless of actual drift; `
-        + `set at least 2× bin spacing for reliable matching.`
-      );
-    }
-    container.appendChild(btnRow);
-    container.appendChild(resolutionHint);
-  }
+        + `set at least 2× bin spacing for reliable matching.`;
+      return div;
+    },
+  });
 
   return {
     activate(leaf, _plotEl, commit) {
-      const mounted = [];
+      const slots = [];
       getEditorSlots(leaf).forEach(slot => {
         const title = document.createElement('div');
         title.className = 'editor-title';
@@ -3187,28 +3082,27 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
         subplotDiv.style.height = '260px';
         slot.appendChild(subplotDiv);
 
-        const tableDiv = document.createElement('div');
-        tableDiv.className = 'peak-editor-ui';
-        slot.appendChild(tableDiv);
-
-        mounted.push({ slot, subplotDiv, tableDiv });
+        slots.push({ slot, subplotDiv });
       });
-      mountedByLeaf.set(leaf, mounted);
-      // Initial render + attach shift-editor to each subplot.
-      for (const { subplotDiv, tableDiv } of mounted) {
+      slotsByLeaf.set(leaf, slots);
+      // Helper appends its table root to each slot (after title +
+      // subplot), then we render the spectrum and attach the shift-
+      // editor to each subplot.
+      tableEditor.activate(leaf, commit);
+      for (const { subplotDiv } of slots) {
         _renderSpectrumAndPeaks(subplotDiv, leaf);
-        _renderTable(tableDiv, leaf, commit);
         _peakEditor.attach(leaf, subplotDiv, commit);
       }
       commit();
     },
     deactivate(leaf, _plotEl) {
-      const mounted = mountedByLeaf.get(leaf) || [];
-      for (const { subplotDiv } of mounted) {
+      const slots = slotsByLeaf.get(leaf) || [];
+      for (const { subplotDiv } of slots) {
         _peakEditor.detach(subplotDiv);
         if (window.Plotly && subplotDiv.isConnected) Plotly.purge(subplotDiv);
       }
-      mountedByLeaf.delete(leaf);
+      slotsByLeaf.delete(leaf);
+      tableEditor.deactivate(leaf);
     },
   };
 })();

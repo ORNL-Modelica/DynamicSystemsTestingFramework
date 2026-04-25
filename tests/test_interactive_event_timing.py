@@ -131,9 +131,11 @@ def test_event_timing_editor_renders_existing_declared_events(
     page.locator(
         '[data-path="/metrics/children/0"] > .node-header'
     ).first.click()
+    # Editor mounts in every .node-editor slot for the leaf; scope the
+    # row count to the first mount.
     rows = page.locator(
-        '[data-path="/metrics/children/0"] .event-timing-editor tbody tr'
-    ).count()
+        '[data-path="/metrics/children/0"] .event-timing-editor'
+    ).first.locator('tbody tr').count()
     page.close()
     assert rows == 2, f"Expected 2 rows in declared-events table, got {rows}"
 
@@ -155,9 +157,11 @@ def test_event_timing_editor_add_button_appends_row(
         '[data-path="/metrics/children/0"] .event-timing-editor '
         'button.node-btn-add'
     ).first.click()
+    # Editor mounts in every .node-editor slot for the leaf; scope the
+    # row count to the first mount.
     rows = page.locator(
-        '[data-path="/metrics/children/0"] .event-timing-editor tbody tr'
-    ).count()
+        '[data-path="/metrics/children/0"] .event-timing-editor'
+    ).first.locator('tbody tr').count()
     events_len = page.evaluate("""
         () => (leafState['/metrics/children/0'].params.events || []).length
     """)
@@ -189,9 +193,10 @@ def test_event_timing_editor_delete_button_removes_row(
         '[data-path="/metrics/children/0"] .event-timing-editor '
         'tbody tr button.row-delete'
     ).first.click()
+    # Scope row count to the first mount (editor renders in every slot).
     rows = page.locator(
-        '[data-path="/metrics/children/0"] .event-timing-editor tbody tr'
-    ).count()
+        '[data-path="/metrics/children/0"] .event-timing-editor'
+    ).first.locator('tbody tr').count()
     remaining_time = page.evaluate("""
         () => {
             const evs = leafState['/metrics/children/0'].params.events || [];
@@ -247,11 +252,12 @@ def test_event_timing_detect_source_actual_uses_act_time(
     page.locator(
         '[data-path="/metrics/children/0"] > .node-header'
     ).first.click()
-    # Select Actual in the dropdown, then Detect.
+    # Select Actual in the dropdown, then Detect. The dropdown lives in
+    # every editor mount; pick the first since they share the same state.
     page.locator(
         '[data-path="/metrics/children/0"] .event-timing-editor '
         'select.detect-source-select'
-    ).select_option('act')
+    ).first.select_option('act')
     page.locator(
         '[data-path="/metrics/children/0"] .event-timing-editor '
         'button.detect-events-btn'
