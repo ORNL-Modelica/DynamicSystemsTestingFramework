@@ -82,7 +82,7 @@ def _mode_controls_html(metric: str, params: dict) -> str:
     # Minimal valid control HTML per mode; mirrors what the real schema
     # renderer emits (tested separately in test_mode_controls.py). We just
     # need data-field entries so Playwright can exercise input sync.
-    if metric == "nrmse" or metric == "final-only":
+    if metric == "nrmse" or metric == "points":
         val = params.get("tolerance", 1e-4)
         return (
             '<div class="mode-controls" data-mode="%s" data-variable="x">'

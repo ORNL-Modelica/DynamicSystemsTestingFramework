@@ -25,7 +25,7 @@ class TestSchemaBuilder:
         from dstf.reporting.schema_export import build_schema
 
         defs = build_schema()["$defs"]
-        for mode in ["mode_nrmse", "mode_tube", "mode_final_only", "mode_range",
+        for mode in ["mode_nrmse", "mode_tube", "mode_points", "mode_range",
                      "mode_event_timing", "mode_dominant_frequency"]:
             assert mode in defs, f"Missing mode definition: {mode}"
 

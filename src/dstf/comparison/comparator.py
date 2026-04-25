@@ -261,39 +261,52 @@ def _compare_trajectories(
     )
 
 
-def _compare_final_values(
-    ref_final: float,
-    act_final: float,
-    tolerance: float,
+def _compare_points(
+    ref_time: np.ndarray,
+    ref_values: np.ndarray,
+    act_time: np.ndarray,
+    act_values: np.ndarray,
+    points: Optional[list[dict]] = None,
+    tolerance: float = 1e-4,
 ) -> VariableComparison:
-    """Compare only final values.
+    """Compare actual vs reference at declared time points.
 
-    Uses absolute error for near-zero references,
-    relative error otherwise.
+    When ``points`` is None or empty, falls back to the legacy final-
+    value check (act[-1] vs ref[-1] with ``tolerance`` as absolute
+    delta). When ``points`` is a non-empty list, declared-points
+    handling lands in Task 3 of the points-mode plan; for now, this
+    branch raises NotImplementedError so downstream callers see a
+    clear error if they hit the unimplemented path.
     """
-    abs_err = abs(act_final - ref_final)
-
-    if abs(ref_final) > _EPS:
-        nrmse = abs_err / abs(ref_final)
-    elif abs(act_final) > _EPS:
-        nrmse = abs(act_final)
-    else:
-        nrmse = 0.0
-
-    passed = nrmse < tolerance
-
-    return VariableComparison(
-        index=0,
-        name="",
-        passed=passed,
-        nrmse=nrmse,
-        rmse=abs_err,
-        signal_range=0.0,
-        max_abs_error=abs_err,
-        max_abs_error_time=0.0,
-        reference_final=ref_final,
-        actual_final=act_final,
-        is_constant=True,
+    if not points:
+        # Implicit final-only — preserved behavior.
+        if len(ref_values) == 0 or len(act_values) == 0:
+            return VariableComparison(
+                index=0, name="", passed=False,
+                nrmse=float("inf"), rmse=float("inf"),
+                signal_range=0.0,
+                max_abs_error=float("inf"),
+                max_abs_error_time=0.0,
+                reference_final=float("nan"),
+                actual_final=float("nan"),
+                mode="points",
+                diagnostics={"error": "empty trajectory"},
+            )
+        ref_final = float(ref_values[-1])
+        act_final = float(act_values[-1])
+        delta = abs(act_final - ref_final)
+        passed = delta < tolerance
+        return VariableComparison(
+            index=0, name="", passed=passed,
+            nrmse=delta, rmse=delta, signal_range=0.0,
+            max_abs_error=delta,
+            max_abs_error_time=float(ref_time[-1]) if len(ref_time) else 0.0,
+            reference_final=ref_final, actual_final=act_final,
+            mode="points",
+            diagnostics={"tolerance": tolerance, "delta": delta},
+        )
+    raise NotImplementedError(
+        "Declared-points scoring lands in Task 3 of the points-mode plan."
     )
 
 
@@ -1097,7 +1110,7 @@ def compare_test(
 
         var_override = merged_overrides.get(name, {})
         tolerance = var_override.get("tolerance", base_tolerance)
-        mode = resolve_mode(var_override, tolerance, default_final_only=final_only)
+        mode = resolve_mode(var_override, tolerance, default_points=final_only)
 
         if ref_var is None:
             # Baseline-free modes (range; event-timing with declared events;
@@ -1192,7 +1205,7 @@ def _test_is_baseline_free(
             override = _leaf_override_dict(leaf)
             tol = float(leaf.params.get("tolerance", default_tolerance))
             try:
-                mode = resolve_mode(override, tol, default_final_only=False)
+                mode = resolve_mode(override, tol, default_points=False)
             except Exception:
                 # A leaf whose config doesn't resolve to a valid mode can't
                 # be baseline-free by our check — fall back to NO_REF.
@@ -1212,7 +1225,7 @@ def _test_is_baseline_free(
     for override in test.variable_overrides.values():
         tol = float(override.get("tolerance", base_tolerance))
         try:
-            mode = resolve_mode(override, tol, default_final_only=False)
+            mode = resolve_mode(override, tol, default_points=False)
         except Exception:
             return False
         if not mode.is_baseline_free():

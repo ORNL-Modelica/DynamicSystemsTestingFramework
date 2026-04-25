@@ -9,7 +9,7 @@ import pytest
 from dstf.comparison.modes import (
     DominantFrequencyConfig,
     EventTimingConfig,
-    FinalOnlyConfig,
+    PointsConfig,
     NrmseConfig,
     RangeConfig,
     TubeConfig,
@@ -63,9 +63,11 @@ class TestDeriveSchemaPerMode:
         assert pts.optional is True
 
     def test_final_only(self):
-        s = derive_schema(FinalOnlyConfig, mode="final_only")
-        assert [f.name for f in s.fields] == ["tolerance"]
-        assert s.fields[0].default == pytest.approx(1e-4)
+        s = derive_schema(PointsConfig, mode="points")
+        names = [f.name for f in s.fields]
+        assert set(names) == {"points", "tolerance"}
+        tol = next(f for f in s.fields if f.name == "tolerance")
+        assert tol.default == pytest.approx(1e-4)
 
     def test_range_optional_floats(self):
         s = derive_schema(RangeConfig, mode="range")
@@ -184,7 +186,7 @@ class TestRenderSchemaHtml:
 class TestRegistry:
     def test_bundled_modes_registered(self):
         assert set(registered_modes()) >= {
-            "nrmse", "tube", "final_only", "range",
+            "nrmse", "tube", "points", "range",
             "event-timing", "dominant-frequency",
         }
 
@@ -346,7 +348,7 @@ class TestEmitModeSchemas:
 
     def test_includes_every_bundled_mode(self):
         schemas = emit_mode_schemas()
-        for mode in ("nrmse", "tube", "final_only", "range",
+        for mode in ("nrmse", "tube", "points", "range",
                      "event-timing", "dominant-frequency"):
             assert mode in schemas, f"{mode} missing from emit_mode_schemas"
 

@@ -28,7 +28,7 @@ from typing import Optional, Union
 
 VALID_COMBINATORS = frozenset({"and", "or", "k-of-n", "warn", "weighted"})
 VALID_METRICS = frozenset({
-    "nrmse", "tube", "final-only", "range",
+    "nrmse", "tube", "points", "range",
     "event-timing", "dominant-frequency",
 })
 
@@ -291,7 +291,7 @@ _MODE_TO_METRIC = {
     None: "nrmse",
     "nrmse": "nrmse",
     "tube": "tube",
-    "final_only": "final-only",
+    "points": "points",
     "range": "range",
     "event-timing": "event-timing",
     "dominant-frequency": "dominant-frequency",

@@ -10,7 +10,7 @@ from dstf.comparison.comparator import (
     _split_segments,
     _dedup_time_series,
     _compare_trajectories,
-    _compare_final_values,
+    _compare_points,
     _check_structural_changes,
 )
 from dstf.simulators.base import TestResult
@@ -283,23 +283,35 @@ class TestCompareTrajectories:
 # ---------------------------------------------------------------------------
 
 class TestCompareFinalValues:
+    """Coverage for `_compare_points` in its empty-points / final-only branch."""
+
+    _t = np.array([0.0, 1.0])
+
     def test_identical(self):
-        vc = _compare_final_values(1.0, 1.0, 1e-4)
+        vc = _compare_points(self._t, np.array([1.0, 1.0]),
+                             self._t, np.array([1.0, 1.0]),
+                             tolerance=1e-4)
         assert vc.passed is True
         assert vc.nrmse == 0.0
 
     def test_different(self):
-        vc = _compare_final_values(1.0, 1.1, 1e-4)
+        vc = _compare_points(self._t, np.array([1.0, 1.0]),
+                             self._t, np.array([1.1, 1.1]),
+                             tolerance=1e-4)
         assert vc.passed is False
         assert vc.nrmse == pytest.approx(0.1)
 
     def test_zero_reference(self):
-        """Near-zero reference uses absolute error."""
-        vc = _compare_final_values(0.0, 0.0001, 1e-4)
+        """Near-zero reference still measures absolute delta."""
+        vc = _compare_points(self._t, np.array([0.0, 0.0]),
+                             self._t, np.array([0.0001, 0.0001]),
+                             tolerance=1e-4)
         assert vc.passed is False
 
     def test_both_zero(self):
-        vc = _compare_final_values(0.0, 0.0, 1e-4)
+        vc = _compare_points(self._t, np.array([0.0, 0.0]),
+                             self._t, np.array([0.0, 0.0]),
+                             tolerance=1e-4)
         assert vc.passed is True
         assert vc.nrmse == 0.0
 
@@ -760,10 +772,10 @@ from dstf.comparison.modes import (
     resolve_mode,
     NrmseMode,
     TubeMode,
-    FinalOnlyMode,
+    PointsMode,
     NrmseConfig,
     TubeConfig,
-    FinalOnlyConfig,
+    PointsConfig,
     ComparisonMode,
 )
 
@@ -800,23 +812,23 @@ class TestResolveMode:
         assert mode.config.tube_width_mode == "band"
 
     def test_explicit_final_only(self):
-        """mode='final_only' → FinalOnlyMode."""
-        mode = resolve_mode({"mode": "final_only"}, tolerance=0.05)
-        assert isinstance(mode, FinalOnlyMode)
-        assert mode.name == "final_only"
+        """mode='final_only' → PointsMode."""
+        mode = resolve_mode({"mode": "points"}, tolerance=0.05)
+        assert isinstance(mode, PointsMode)
+        assert mode.name == "points"
         assert mode.config.tolerance == 0.05
 
     def test_default_final_only_flag(self):
-        """default_final_only=True with no explicit mode → FinalOnlyMode."""
-        mode = resolve_mode({}, tolerance=1e-4, default_final_only=True)
-        assert isinstance(mode, FinalOnlyMode)
+        """default_points=True with no explicit mode → PointsMode."""
+        mode = resolve_mode({}, tolerance=1e-4, default_points=True)
+        assert isinstance(mode, PointsMode)
 
     def test_tube_not_overridden_by_final_only(self):
         """Bug fix: explicit tube mode must NOT be overridden by final_only flag."""
         mode = resolve_mode(
             {"mode": "tube", "tube_abs": 1.0},
             tolerance=1e-4,
-            default_final_only=True,
+            default_points=True,
         )
         assert isinstance(mode, TubeMode)
         assert mode.name == "tube"
@@ -826,7 +838,7 @@ class TestResolveMode:
         mode = resolve_mode(
             {"mode": "nrmse"},
             tolerance=1e-4,
-            default_final_only=True,
+            default_points=True,
         )
         assert isinstance(mode, NrmseMode)
 
@@ -919,14 +931,14 @@ class TestModeCompare:
         assert vc.tube_points_inside < 1.0
 
     def test_final_only_mode_pass(self):
-        mode = FinalOnlyMode(FinalOnlyConfig(tolerance=0.01))
+        mode = PointsMode(PointsConfig(tolerance=0.01))
         vc = mode.compare(self.ref_time, self.ref_values,
                           self.ref_time, self.act_values_close)
         assert vc.passed
-        assert vc.mode == "nrmse"  # _compare_final_values doesn't set mode
+        assert vc.mode == "points"
 
     def test_final_only_mode_fail(self):
-        mode = FinalOnlyMode(FinalOnlyConfig(tolerance=1e-6))
+        mode = PointsMode(PointsConfig(tolerance=1e-6))
         vc = mode.compare(self.ref_time, self.ref_values,
                           self.ref_time, self.act_values_far)
         assert not vc.passed

@@ -19,7 +19,7 @@ from typing import Any
 from ..comparison.modes import (
     DominantFrequencyConfig,
     EventTimingConfig,
-    FinalOnlyConfig,
+    PointsConfig,
     NrmseConfig,
     RangeConfig,
     TubeConfig,
@@ -81,7 +81,7 @@ def build_schema() -> dict:
         for name, cls in [
             ("nrmse", NrmseConfig),
             ("tube", TubeConfig),
-            ("final_only", FinalOnlyConfig),
+            ("points", PointsConfig),
             ("range", RangeConfig),
             ("event-timing", EventTimingConfig),
             ("dominant-frequency", DominantFrequencyConfig),

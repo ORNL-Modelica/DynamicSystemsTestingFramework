@@ -38,7 +38,7 @@ UPDATE = os.environ.get("UPDATE_GOLDEN") == "1"
 _MODE_TO_METRIC = {
     "nrmse": "nrmse",
     "tube": "tube",
-    "final_only": "final-only",
+    "points": "points",
     "range": "range",
     "event-timing": "event-timing",
     "dominant-frequency": "dominant-frequency",
@@ -75,7 +75,7 @@ def _leaf(mode: str, mode_values: dict, *, path: str = "/metrics/children/0",
         "score": 1.0e-5,
         "label": "x",
         "name": "x",
-        "mode_effective": metric if metric != "final-only" else "final_only",
+        "mode_effective": metric if metric != "points" else "points",
         "nrmse": 1.0e-5,
         "rmse": 1.0e-5,
         "signal_range": 2.0,
@@ -107,7 +107,7 @@ def _build_context(mode: str) -> dict:
         "nrmse": {"tolerance": 1e-4},
         "tube": {"tube_width_mode": "rel", "tube_abs": 0.0, "tube_rel": 0.02,
                  "tube_min_width": 0.0, "tube_interpolation": "linear"},
-        "final_only": {"tolerance": 1e-4},
+        "points": {"tolerance": 1e-4},
         "range": {"min_value": -1.0, "max_value": 1.0},
         "event-timing": {"time_tolerance": 1e-3, "count_must_match": True},
         "dominant-frequency": {"rel_tolerance": 0.01, "min_frequency": 0.0},
@@ -210,7 +210,7 @@ def _structural_hash(html: str) -> str:
 # Tests
 # ---------------------------------------------------------------------------
 
-MODES = ["nrmse", "tube", "final_only", "range", "event-timing", "dominant-frequency"]
+MODES = ["nrmse", "tube", "points", "range", "event-timing", "dominant-frequency"]
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -244,7 +244,7 @@ def test_every_mode_fixture_contains_its_leaf_metric_in_data():
     metric_signatures = {
         "nrmse": '"metric": "nrmse"',
         "tube": '"metric": "tube"',
-        "final_only": '"metric": "final-only"',
+        "points": '"metric": "points"',
         "range": '"metric": "range"',
         "event-timing": '"metric": "event-timing"',
         "dominant-frequency": '"metric": "dominant-frequency"',
@@ -283,6 +283,8 @@ def test_interactive_js_exports_required_globals():
 def test_plot_contribution_registry_present_in_js():
     js = _read_js()
     assert "MODE_PLOT_CONTRIBUTIONS" in js
+    # Note: JS still uses 'final-only' as the leaf metric key; Task 5 of the
+    # points-mode plan ports the JS scorer table to 'points'.
     for key in ["nrmse", "final-only", "range", "tube", "event-timing", "dominant-frequency"]:
         assert f"'{key}'" in js, f"Contribution entry {key!r} missing from interactive.js"
 

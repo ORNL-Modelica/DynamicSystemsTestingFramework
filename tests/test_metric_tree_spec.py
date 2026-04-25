@@ -41,9 +41,9 @@ class TestLeafSpec:
         assert node.params == {"tube_rel": 0.05, "tube_width_mode": "rel"}
 
     def test_final_only_leaf(self):
-        node = parse_metric_tree({"metric": "final-only", "variable": "x"})
+        node = parse_metric_tree({"metric": "points", "variable": "x"})
         assert isinstance(node, LeafSpec)
-        assert node.metric == "final-only"
+        assert node.metric == "points"
 
     def test_range_leaf_keeps_min_max_params(self):
         node = parse_metric_tree({

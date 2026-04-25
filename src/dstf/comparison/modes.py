@@ -5,9 +5,10 @@ time series and returns a VariableComparison.  Mode-specific configuration is
 encapsulated in a typed dataclass rather than an untyped dict.
 
 Modes:
-    NrmseMode     — normalized RMSE with piecewise event handling (default)
-    TubeMode      — tolerance tube envelope around reference trajectory
-    FinalOnlyMode — compare only the final value of each variable
+    NrmseMode  — normalized RMSE with piecewise event handling (default)
+    TubeMode   — tolerance tube envelope around reference trajectory
+    PointsMode — compare values at declared time points (or the final value
+                 when no points are declared)
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from .comparator import (
     VariableComparison,
     _compare_dominant_frequency,
     _compare_event_timing,
-    _compare_final_values,
+    _compare_points,
     _compare_range,
     _compare_trajectories,
     _compare_tube,
@@ -167,15 +168,37 @@ class TubeConfig:
 
 
 @dataclass(frozen=True)
-class FinalOnlyConfig:
-    """Configuration for final-value comparison."""
+class PointsConfig:
+    """Configuration for point-based comparison.
+
+    When ``points`` is None or [], the mode behaves exactly like the
+    former final-only: checks ``act[-1]`` vs ``ref[-1]`` with
+    ``tolerance`` as absolute delta. When ``points`` is a non-empty
+    list, each entry is a declared checkpoint with optional explicit
+    target value, per-point tolerance, and per-point time-tolerance.
+    See docs/superpowers/specs/2026-04-24-points-mode-design.md.
+    """
+    points: Optional[list[dict]] = field(
+        default=None,
+        metadata={
+            "label": "Declared points",
+            "help": (
+                "Optional list of (time, value, tolerance, "
+                "tolerance_mode, time_tolerance) checkpoints. When None "
+                "or empty, the mode falls back to final-value comparison "
+                "with the global ``tolerance``. Authored via the table "
+                "editor in the interactive HTML reporter."
+            ),
+        },
+    )
     tolerance: float = field(
         default=1e-4,
         metadata={
-            "label": "Tolerance",
+            "label": "Default tolerance",
             "help": (
-                "Pass iff |actual_final - reference_final| is below this value. "
-                "Only the last sample is compared; trajectory shape is ignored."
+                "Default per-point y-tolerance when not specified inside "
+                "a point dict. Also the tolerance for the implicit final-"
+                "value check when ``points`` is empty."
             ),
         },
     )
@@ -324,20 +347,37 @@ class TubeMode(ComparisonMode):
         )
 
 
-class FinalOnlyMode(ComparisonMode):
-    """Compare only final values."""
+class PointsMode(ComparisonMode):
+    """Compare actual vs reference at user-declared time points.
 
-    def __init__(self, config: FinalOnlyConfig):
+    When ``config.points`` is None or empty, falls back to the legacy
+    final-value-only check (act[-1] vs ref[-1] with config.tolerance).
+    """
+
+    def __init__(self, config: PointsConfig):
         self.config = config
 
     @property
     def name(self) -> str:
-        return "final_only"
+        return "points"
 
     def compare(self, ref_time, ref_values, act_time, act_values):
-        ref_final = float(ref_values[-1]) if len(ref_values) > 0 else 0.0
-        act_final = float(act_values[-1]) if len(act_values) > 0 else 0.0
-        return _compare_final_values(ref_final, act_final, self.config.tolerance)
+        return _compare_points(
+            ref_time, ref_values, act_time, act_values,
+            points=self.config.points,
+            tolerance=self.config.tolerance,
+        )
+
+    def is_baseline_free(self) -> bool:
+        # Baseline-free iff non-empty points list AND every point
+        # has an explicit ``value``. Empty list → implicit final
+        # comparison reads ref → not baseline-free. Mixed (some with
+        # value, some without) is also not baseline-free; users
+        # commit to all-or-nothing.
+        pts = self.config.points
+        if not pts:
+            return False
+        return all(p.get("value") is not None for p in pts)
 
 
 class EventTimingMode(ComparisonMode):
@@ -433,18 +473,22 @@ _TUBE_KEYS = frozenset({
 def resolve_mode(
     var_override: dict,
     tolerance: float,
-    default_final_only: bool = False,
+    default_points: bool = False,
 ) -> ComparisonMode:
     """Build the appropriate ComparisonMode from a per-variable override dict.
 
     Resolution order:
     1. Explicit ``mode`` key in override → use that mode.
-    2. If no explicit mode and ``default_final_only`` is True → FinalOnlyMode
-       (but only when mode is not explicitly set to something else).
-    3. Otherwise → NrmseMode.
+    2. If no explicit mode and ``default_points`` is True → PointsMode
+       with points=None (implicit final-value check).
+    3. Otherwise → NrmseMode (legacy default).
 
-    This fixes the previous bug where ``config.final_only`` could override
-    an explicit ``mode: "tube"`` setting.
+    Recognized mode strings:
+      "points"             → PointsMode (canonical)
+      "tube"               → TubeMode
+      "range"              → RangeMode
+      "event-timing"       → EventTimingMode
+      "dominant-frequency" → DominantFrequencyMode
     """
     mode_name = var_override.get("mode", "")
 
@@ -475,8 +519,11 @@ def resolve_mode(
             peaks=var_override.get("peaks"),
         ))
 
-    if mode_name == "final_only" or (not mode_name and default_final_only):
-        return FinalOnlyMode(FinalOnlyConfig(tolerance=tolerance))
+    if mode_name == "points" or (not mode_name and default_points):
+        return PointsMode(PointsConfig(
+            points=var_override.get("points"),
+            tolerance=tolerance,
+        ))
 
     # Default: NRMSE
     return NrmseMode(NrmseConfig(tolerance=tolerance))

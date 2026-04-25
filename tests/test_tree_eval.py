@@ -243,7 +243,7 @@ class TestLeafEval:
 
     def test_final_only_leaf(self):
         spec = parse_metric_tree({
-            "metric": "final-only", "variable": "x", "tolerance": 0.01,
+            "metric": "points", "variable": "x", "tolerance": 0.01,
         })
         t, ref_vals = _linear()
         _, act_vals = _linear(offset=0.005)

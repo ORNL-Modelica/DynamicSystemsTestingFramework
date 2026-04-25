@@ -57,7 +57,7 @@ class BaselineView:
 _METRIC_TO_MODE_KEY = {
     "nrmse": None,
     "tube": "tube",
-    "final-only": "final_only",
+    "points": "points",
     "range": "range",
     "event-timing": "event-timing",
     "dominant-frequency": "dominant-frequency",
@@ -152,7 +152,7 @@ def to_view(tree: MetricResult) -> dict:
       * ``label``     — human-readable (variable name for leaves,
                         "and[N]" / "or[N]" / "warn" / "k-of-n[K/N]" for combinators)
       * ``score``     — float or None
-      * ``mode``      — metric mode on leaves (nrmse / tube / final_only)
+      * ``mode``      — metric mode on leaves (nrmse / tube / points)
       * ``tolerance`` — on leaves, the tolerance applied
       * ``warned``    — True on ``warn`` nodes whose child failed
       * ``children``  — recursive list (empty for leaves)
@@ -222,7 +222,7 @@ def _evaluate_leaf(
     var_result = var_results_by_name.get(leaf.variable)
     override = _leaf_override_dict(leaf)
     tolerance = float(leaf.params.get("tolerance", base_tolerance))
-    mode = resolve_mode(override, tolerance, default_final_only=False)
+    mode = resolve_mode(override, tolerance, default_points=False)
 
     # Phase 4.A.2: leaf.against picks the named baseline. Missing name →
     # hard fail with a clear label (loud on user-facing reports). Unless

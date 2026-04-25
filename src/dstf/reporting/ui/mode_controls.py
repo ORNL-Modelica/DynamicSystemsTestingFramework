@@ -457,7 +457,7 @@ def _register_bundled() -> None:
     from ...comparison.modes import (
         DominantFrequencyConfig,
         EventTimingConfig,
-        FinalOnlyConfig,
+        PointsConfig,
         NrmseConfig,
         RangeConfig,
         TubeConfig,
@@ -470,7 +470,7 @@ def _register_bundled() -> None:
     # tube_interpolation, passthrough tube_points) remain; the editor
     # sits on top of them, activated by clicking the leaf node.
     register_mode_ui("tube", TubeConfig, has_plot_editor=True)
-    register_mode_ui("final_only", FinalOnlyConfig)
+    register_mode_ui("points", PointsConfig)
     # Range has a JS-side interactive plot editor — drag the dashed
     # min/max reference lines directly on the plot. Scalar inputs in
     # the leaf's controls also edit the same state (bidirectional sync).
