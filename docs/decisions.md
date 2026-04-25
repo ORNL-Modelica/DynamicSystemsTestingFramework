@@ -2016,4 +2016,151 @@ renders `modelica-om-multifrequency` overlay (502 time points,
   editor (mount, render, add, delete, placeholder, Snapshot button).
 - Cross-metric matrix from range-fix Task 6 still passes after
   `'final-only'` → `'points'` rename.
+
+## D85: Points editor polish + range autorange fix + cross-library points parity (2026-04-25)
+
+- **What**: Eight commits on top of D84 closing out the points-mode
+  user-facing UX, fixing a long-standing range plot quirk, and
+  filling the example-coverage gap that D84 left behind.
+- **Why**: D84 shipped points mode with the JS scorer + plot
+  decoration + table editor scaffold, but a real-browser pass
+  surfaced four distinct UX bugs the Playwright suite hadn't
+  caught (single-slot mount, missing shift-modifier parity, no
+  plot-level resize, mode-switch dataloss). The range double-click
+  reset never included declared bounds because Plotly's autorange
+  is trace-only. And no library had a points-mode example test, so
+  a downstream consumer of the rename couldn't see the new mode in
+  action.
+
+### Range double-click autorange (commit `5a02d9f`)
+
+- Plotly's autorange computes y-extent from trace data, ignoring
+  shape positions. The `range` mode renders bound lines as shapes,
+  so a `max_value` placed far outside the trajectory was invisible
+  to autorange — double-click reset clipped to the trajectory and
+  hid the bound. Workaround: emit one transparent-marker scatter
+  trace per declared bound at the bound's y-value. Autorange picks
+  it up; the marker is invisible (`marker.color: rgba(0,0,0,0)`).
+  Resolves the "Range autoscale edge case" item that's been on
+  `docs/qa/reporter_checklist.md` since Phase 6.
+
+### Cross-library points parity (commit `8c71d1a`)
+
+- D84 had zero example coverage. Added a `PointsCheckTest` in each
+  fixture library (Modelica + Julia + Python + the FMU reference
+  spec) using the same x = sin(time) signal — all five per-point
+  knobs exercised: implicit ref-relative target, explicit absolute
+  with rel y-tolerance, ref-relative with `time_tolerance` x-box,
+  explicit absolute trough, ref-relative endpoint. FMU spec uses
+  Dahlquist (e^-t, clean exponential decay) for variety. Linux
+  references regenerated locally for OpenModelica, Julia/MTK,
+  Python (scipy), and FMPy. Dymola/windows ref deferred to user's
+  next Windows session.
+
+### Points editor — multi-slot mount + shift-modifier parity (`62bcfaf`)
+
+- The rich points table was using `querySelector` (singular) on
+  activate, so it only mounted into the first `.node-editor` slot
+  — the full-tree mount up top, not the per-variable section the
+  user was actually looking at. Switched to `querySelectorAll` +
+  per-slot `.points-editor` sub-container, mirroring the tube
+  editor's slot model. All slots now stay in lock step.
+- Wired `MODE_PLOT_EDITORS['points']` into `createPointPlotEditor`
+  factory. Closes ideas.md #61 — diamond markers now have full
+  shift+click/drag/right-click parity with tube and dom-frequency.
+  Same abstraction; no duplication.
+- Suppressed the auto-derived `mode_controls_html` for points
+  (added to the `skipModeControls` list alongside tube and
+  dom-frequency) so the rich table is the sole config surface.
+
+### Points box resize + reliability (`2c80568` + `f19dc6e` + `057cf59`)
+
+- Three iterations on the box-edit interaction, all triggered by
+  real-browser regression-by-regression feedback:
+  1. **`onClickAdd` + `onRemove` weren't calling commit().** Add /
+     delete updated `leafState` and re-rendered the table, but the
+     plot kept the stale diamond / tolerance box visible until the
+     next unrelated re-render. Fixed by adding `commit()` after
+     `refreshEditor` in both callbacks.
+  2. **Replaced the corner-anchor system with a plotly_relayout
+     listener.** PLOT_CFG has `edits.shapePosition: true` globally
+     (range mode needs it for bound-line drag). The previous
+     attempt at `editable: false` per shape was a no-op when the
+     global flag is on. Plotly's native shape-drag would steal
+     subsequent shift+clicks meant for the diamond. New design:
+     the box IS native-draggable, and on every `plotly_relayout`
+     for a `points_box:*` shape we re-derive `pt.time_tolerance`
+     and `pt.tolerance` from the new bounds and re-render. Drag-
+     to-resize works; drag-to-translate snaps back (size unchanged
+     → same canonical bounds → no-op mirror).
+  3. **`plotly_relayouting` (live) doesn't fire for shape edits.**
+     Only `plotly_relayout` (release) does. The "live mirror as
+     you drag" UX is therefore unreachable through Plotly events
+     alone — would require disabling shape-edit globally and
+     reimplementing range + points box drag through custom mouse
+     handlers. User accepted the snap-on-release UX in lieu of the
+     refactor.
+  4. **Edge-vs-translation detection rewritten twice.** First by
+     event-key presence (broken: Plotly emits all four bounds even
+     on edge drag). Then by canonical-state delta (broken: pixel-
+     to-data conversion noise of ~5e-6 misclassified each
+     translation as a tiny edge drag, accumulating box growth over
+     many drags — "the box keeps on getting bigger and bigger").
+     Final: size-based check with 0.1%-of-size or 1e-3 absolute
+     threshold — robust to FP noise, well below any real user-
+     intent drag (typically several pixels).
+
+### Mode-switch tolerance conversion (`ae3cab9` + `a05b829`)
+
+- Switching `tolerance_mode` between abs and rel kept the stored
+  numeric value unchanged. Since rel interprets the value as a
+  fraction of `|target|`, the visible box size jumped wildly on
+  every mode toggle — and for points where target ≈ 0 (e.g.,
+  `sin(t)` at t=0 in the new fixture test), the rel box collapsed
+  to height 0 and vanished entirely. Fixed by converting on the
+  switch:
+  - abs → rel: `rel_tol = abs_tol / |target|`
+  - rel → abs: `abs_tol = rel_tol * |target|`
+  Visible box size stays the same; user's intent of "swap how the
+  tolerance is stored" is honored.
+- Near-zero target protection: the abs→rel direction is rejected
+  if the resulting rel fraction would exceed 10 (= 1000% — beyond
+  that the relationship is meaningless). Catches both true zeros
+  and solver-near-zero values like sin(0) ≈ 1e-7 from numerical
+  precision (which the user actually hit and reported as "goes
+  off to huge number"). Mode dropdown reverts to abs on rejection;
+  no data is lost.
+
+### Validation
+
+- 12 new Playwright tests in `test_interactive_points.py` (multi-
+  slot mount, shift+click add, shift+right-click delete, native
+  shape-edit invariants, edge-drag detection from full-snapshot
+  payloads, FP-noise-robust translation, mode conversion both
+  directions, near-zero protection, plot-update-on-delete, live-
+  event resize, corner-drag symmetric resize).
+- 1 new test in `test_interactive_range_window.py` (autorange
+  anchor traces).
+- Full suite: 825 → 837 (+12), 0 regressions.
+
+### Rejected alternatives
+
+- **Disable Plotly's `edits.shapePosition` globally and reimplement
+  range + points box drag through custom mousedown/move/up.** Would
+  give true live mirror during the drag (the user's original
+  desideratum). Not done because (a) the snap-on-release UX is
+  acceptable to the user once the underlying math is correct, and
+  (b) the refactor is large enough to warrant its own arc. Logged
+  as a known limitation in `docs/qa/reporter_checklist.md`.
+- **Per-shape `editable: false`.** Plotly's global
+  `edits.shapePosition` overrides per-shape opt-out; the attribute
+  was a silent no-op. Verified empirically.
+- **Threshold tuning of 1e-6 or 1e-9 for noise rejection.** Too
+  tight; let pixel-coord conversion noise through. 0.1% of size
+  with a 1e-3 absolute floor is the operating point that survived
+  user testing.
+- **Block abs→rel only when target is exactly zero.** Doesn't catch
+  solver-near-zero values like 1e-7. Output-sanity check on the
+  resulting rel fraction (cap at 1000%) is more flexible —
+  legitimate small-target conversions still go through.
 - Full suite at +29 tests, 0 regressions.

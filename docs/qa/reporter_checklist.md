@@ -69,14 +69,15 @@ uv run dstf --config examples/fmu/testing.json companion add \
 - [ ] Node tree indentation clear enough to see combinator nesting
       (warn wrapper should visibly contain its child leaf).
 
-## Range autoscale edge case (known issue)
+## Range autoscale (resolved D85)
 
-- [ ] Range leaf with a min below the data's own range — e.g., set `min`
-      to `-5` on BouncingBall's `h` leaf. The red dashed line should still
-      be visible. **Known**: Plotly's y-axis autoscale doesn't include
-      layout shapes, so the line may clip off the bottom of the plot. If
-      you have to double-click the plot to zoom out, file that as a visual
-      polish item — not a blocker.
+- [ ] Range leaf with a min/max far outside the data's own range — e.g.,
+      set `max` to `5.0` on BouncingBall's `h` leaf (data is in [0, 1]).
+      The red dashed line should be visible AND a double-click reset
+      should snap the y-axis to include both the trajectory and the
+      bound. (D85 added invisible-marker scatter traces at each declared
+      bound's y-value; Plotly's autorange picks them up where it ignores
+      shape coordinates.)
 
 ## Drag-based plot interactions (hard to test synthetically)
 
@@ -95,6 +96,43 @@ uv run dstf --config examples/fmu/testing.json companion add \
       window_start + window_end inputs populate; the blue x-band
       highlight appears across the selected range. Verify the
       export-patch JSON shows the window `add` op.
+
+## Points editor — full plot interactivity (D85)
+
+Activate a `points` leaf with at least one declared point (the
+`PointsCheckTest` in any of the fixture libraries works).
+
+- [ ] **Shift+click on empty plot adds a point.** A new diamond marker
+      appears at the click coordinates with explicit `value`, `abs`
+      tolerance mode, and the leaf's default tolerance. The table gains
+      a row.
+- [ ] **Shift+drag the diamond marker.** Diamond moves with the cursor.
+      Both `time` and `value` columns update. (Direct manipulation
+      promotes a previously-ref-relative point to explicit-value.)
+- [ ] **Shift+right-click the diamond marker.** Diamond and tolerance
+      box vanish from the plot; row vanishes from the table.
+- [ ] **Drag the right edge of the tolerance box outward.** On release
+      (no shift needed): `X-Tolerance` cell updates to the new value;
+      the box re-renders centered on the diamond with the new size
+      (left edge moves leftward to mirror). Caveat: the live drag does
+      NOT mirror the opposite edge — it only snaps on release. Plotly
+      doesn't emit `plotly_relayouting` for shape edits, so live mirror
+      requires a refactor we deferred. Snap-on-release is correct
+      behavior; the mid-drag visual lopsidedness is cosmetic only.
+- [ ] **Drag the box body (not an edge).** On release the box snaps
+      back to its original position centered on the diamond. No
+      tolerance change. Multiple translation drags should NOT
+      accumulate any growth in the box (was a bug; now fixed via
+      size-based change detection).
+- [ ] **Switch a point's mode dropdown** abs↔rel. The visible box size
+      stays the same; the stored value converts (rel = abs/|target|,
+      abs = rel·|target|). For a point at value=0 (or solver near-zero),
+      the abs→rel switch is rejected — dropdown reverts to abs and the
+      box doesn't vanish.
+- [ ] **📸 Snapshot from ref.** For every row whose Value cell is empty
+      (ref-relative), the button fills in the current `ref(time)` as an
+      explicit value. Idempotent — rows with explicit value are
+      untouched.
 
 ## Soft_check / companion overlay visuals
 
@@ -152,7 +190,13 @@ Playwright covers correctness. These check the UX:
 - Shift+drag / Shift+right-click on existing tube control points (move /
   delete via plot interaction) not yet wired — only Shift+click-to-add
   works on the plot today. Table inputs + row − buttons are the other
-  edit paths.
+  edit paths. (Points has the full set as of D85; tube parity is open.)
+- Points box edge drag does NOT mirror the opposite edge live during the
+  drag — it only snaps to centered on release. Plotly's
+  `plotly_relayouting` event doesn't fire for shape edits, so true live
+  mirror requires disabling `edits.shapePosition` globally and
+  reimplementing range + points box drag through custom mousedown/move/up
+  handlers. Tracked as a D85 follow-up; snap-on-release accepted.
 - Window brush is one-shot per activation: drag once, set, brush mode
   exits. No "keep selecting" lock.
 - `+` button only adds leaves. Wrapping a subtree in a new combinator
