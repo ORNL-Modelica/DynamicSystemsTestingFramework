@@ -283,9 +283,9 @@ def test_interactive_js_exports_required_globals():
 def test_plot_contribution_registry_present_in_js():
     js = _read_js()
     assert "MODE_PLOT_CONTRIBUTIONS" in js
-    # Note: JS still uses 'final-only' as the leaf metric key; Task 5 of the
-    # points-mode plan ports the JS scorer table to 'points'.
-    for key in ["nrmse", "final-only", "range", "tube", "event-timing", "dominant-frequency"]:
+    # Task 6 of the points-mode plan replaced 'final-only' with 'points'
+    # (diamond marker + translucent tolerance box per declared point).
+    for key in ["nrmse", "points", "range", "tube", "event-timing", "dominant-frequency"]:
         assert f"'{key}'" in js, f"Contribution entry {key!r} missing from interactive.js"
 
 

@@ -177,3 +177,95 @@ def test_points_scorer_window_clips_points(tmp_path, playwright_browser):
     """)
     page.close()
     assert pass_state is True
+
+
+# ---------------------------------------------------------------------------
+# Task 6: plot decoration (translucent box + diamond marker)
+# ---------------------------------------------------------------------------
+
+def test_points_plot_no_decoration_when_no_points(tmp_path, playwright_browser):
+    """Empty points list → no plot contribution (the implicit final
+    case is invisible on the plot — same as the rest of the reporter)."""
+    ctx = _context_with_points_leaf(points=None, tolerance=0.01)
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    contrib = page.evaluate("""
+        () => {
+            const leaf = TREE_VIEW.children[0];
+            const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+            const c = MODE_PLOT_CONTRIBUTIONS['points'](leaf, traj);
+            return {traces: c.traces.length, shapes: c.shapes.length};
+        }
+    """)
+    page.close()
+    assert contrib["traces"] == 0
+    assert contrib["shapes"] == 0
+
+
+def test_points_plot_diamond_per_point_when_xtol_zero(
+    tmp_path, playwright_browser,
+):
+    """Two declared points, no time_tolerance → 2 diamond markers as a
+    single trace (one trace with 2 (x,y) entries) + 2 zero-width
+    rectangle shapes (one per point)."""
+    ctx = _context_with_points_leaf(
+        points=[
+            {"time": 2.0, "value": 2.0, "tolerance": 0.5},
+            {"time": 4.0, "value": 4.0, "tolerance": 0.5},
+        ],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    contrib = page.evaluate("""
+        () => {
+            const leaf = TREE_VIEW.children[0];
+            const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+            const c = MODE_PLOT_CONTRIBUTIONS['points'](leaf, traj);
+            return {
+                traces: c.traces.length,
+                trace0_xs: c.traces[0] && c.traces[0].x,
+                trace0_ys: c.traces[0] && c.traces[0].y,
+                trace0_symbol: c.traces[0] && c.traces[0].marker.symbol,
+                shapes: c.shapes.length,
+                shape0_x0: c.shapes[0] && c.shapes[0].x0,
+                shape0_x1: c.shapes[0] && c.shapes[0].x1,
+            };
+        }
+    """)
+    page.close()
+    assert contrib["traces"] == 1, "Single marker trace with 2 points"
+    assert contrib["trace0_xs"] == [2.0, 4.0]
+    assert contrib["trace0_ys"] == [2.0, 4.0]
+    assert contrib["trace0_symbol"] == "diamond"
+    assert contrib["shapes"] == 2, "One rectangle per point"
+    # With time_tolerance=0, rectangle is zero-width.
+    assert contrib["shape0_x0"] == contrib["shape0_x1"] == 2.0
+
+
+def test_points_plot_box_has_width_when_xtol_set(tmp_path, playwright_browser):
+    """time_tolerance=0.2 → rectangle spans [time-0.2, time+0.2]."""
+    ctx = _context_with_points_leaf(
+        points=[{"time": 3.0, "value": 30.0,
+                 "tolerance": 0.5, "time_tolerance": 0.2}],
+        tolerance=0.01,
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    contrib = page.evaluate("""
+        () => {
+            const leaf = TREE_VIEW.children[0];
+            const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
+            const c = MODE_PLOT_CONTRIBUTIONS['points'](leaf, traj);
+            return {x0: c.shapes[0].x0, x1: c.shapes[0].x1,
+                    y0: c.shapes[0].y0, y1: c.shapes[0].y1};
+        }
+    """)
+    page.close()
+    assert contrib["x0"] == pytest.approx(2.8)
+    assert contrib["x1"] == pytest.approx(3.2)
+    assert contrib["y0"] == pytest.approx(29.5)
+    assert contrib["y1"] == pytest.approx(30.5)

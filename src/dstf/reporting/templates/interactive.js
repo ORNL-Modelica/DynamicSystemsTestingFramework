@@ -432,17 +432,69 @@ function updatePassPills(passMap) {
 // variable, if the leaf's visibility toggle is on.
 const MODE_PLOT_CONTRIBUTIONS = {
   'nrmse': () => ({ traces: [], shapes: [] }),
-  'final-only': (leaf, traj) => {
-    const t = (traj.ref_time && traj.ref_time.length)
-      ? traj.ref_time[traj.ref_time.length - 1]
-      : ((traj.act_time && traj.act_time.length)
-         ? traj.act_time[traj.act_time.length - 1] : null);
-    if (t == null) return { traces: [], shapes: [] };
-    return { traces: [], shapes: [{
-      type: 'line', xref: 'x', yref: 'paper',
-      x0: t, x1: t, y0: 0, y1: 1,
-      line: { color: '#607D8B', width: 1, dash: 'dot' },
-    }] };
+  'points': (leaf, traj) => {
+    const params = (leafState[leaf.path] || {}).params || {};
+    const tolDefault = Number(params.tolerance) || 0;
+    const points = Array.isArray(params.points) ? params.points : null;
+    if (!points || points.length === 0) {
+      // Implicit final case — no plot contribution. The implicit
+      // check just compares the final value; nothing useful to draw.
+      return { traces: [], shapes: [] };
+    }
+    const refTime = traj.ref_time || [];
+    const refValues = traj.ref_values || [];
+    const actTime = traj.act_time || [];
+    const traceEnd = refTime.length ? refTime[refTime.length - 1]
+                   : (actTime.length ? actTime[actTime.length - 1] : 0);
+
+    const xs = [];
+    const ys = [];
+    const shapes = [];
+    for (const point of points) {
+      let t = point.time;
+      if (t == null) t = traceEnd;
+      else t = Number(t);
+      // Resolve target.
+      let target;
+      if (point.value != null) {
+        target = Number(point.value);
+      } else if (refTime.length) {
+        target = _interpLinear(refTime, refValues, t);
+      } else {
+        continue;     // ref-relative without ref data — skip
+      }
+      // y-limit (resolved absolute size of the band).
+      const perTol = point.tolerance != null ? Number(point.tolerance) : tolDefault;
+      const mode = point.tolerance_mode || 'abs';
+      const yLimit = mode === 'rel' ? perTol * Math.abs(target) : perTol;
+      const xTol = point.time_tolerance != null
+        ? Number(point.time_tolerance) : 0;
+      // Marker.
+      xs.push(t);
+      ys.push(target);
+      // Translucent rectangle. Width = 2 * xTol (zero when xTol=0 →
+      // visually a vertical line segment thanks to Plotly drawing
+      // zero-width rects as a single line stroke).
+      shapes.push({
+        type: 'rect', xref: 'x', yref: 'y',
+        x0: t - xTol, x1: t + xTol,
+        y0: target - yLimit, y1: target + yLimit,
+        fillcolor: 'rgba(76,175,80,0.10)',
+        line: { color: 'rgba(76,175,80,0.6)', width: 1, dash: 'dot' },
+        name: `points_box:${leaf.path}:${xs.length - 1}`,
+      });
+    }
+    if (!xs.length) return { traces: [], shapes };
+    const traces = [{
+      x: xs, y: ys, mode: 'markers', type: 'scatter',
+      name: `Points ${leaf.path}`,
+      marker: {
+        color: '#2e7d32', size: 12, symbol: 'diamond',
+        line: { color: 'white', width: 1.5 },
+      },
+      hoverinfo: 'x+y', showlegend: true,
+    }];
+    return { traces, shapes };
   },
   'range': (leaf, traj) => {
     const p = leafState[leaf.path] ? leafState[leaf.path].params : {};
