@@ -161,7 +161,7 @@ User's explicit roadmap from start of session, with status at HEAD:
 | 5 | Baseline-free NO_REF short-circuit | ✓ D83 |
 | 6 | Code review / tech-debt review | ✓ D86 + D87 |
 | 7 | New capabilities (experiment alignment, Dyad, Julia recognizer, FMU export matrix) | **pending** |
-| 8 | Docs cleanup throughout (user guides, technical manual) | **pending** |
+| 8 | Docs cleanup throughout (user guides, technical manual) | ✓ commit `397c4d6` |
 
 ### Next session — top-of-stack candidates
 
@@ -172,8 +172,6 @@ User's explicit roadmap from start of session, with status at HEAD:
   - **MTK FMU export** via `ModelingToolkit.generate_fmu` (~1 day). Wires Julia into the `Capability.FMU_EXPORT` cross-backend chain.
   - **Dyad validation** (~½ day). Port one Dyad sample, prove the "Dyad → MTK → runner" claim.
   - **Julia source recognizer** (~1 day). Auto-discover Julia tests from `.jl` files (parallel to Modelica `.mo` UnitTests-annotation discovery). Removes the need to hand-author `test_spec.json` for Julia libraries.
-
-* **#8 Docs cleanup throughout**. Each prior arc folded its own doc updates into commits, so the current state of docs is self-consistent — but there's no top-level user guide tour. README.md was flagged as substantially out of date (still describes only Dymola). ~1-2 days for a comprehensive sweep + new-user "first 5 minutes" walkthrough.
 
 **Smaller follow-ups (C / D-tier)**
 
