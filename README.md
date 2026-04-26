@@ -1,352 +1,190 @@
 # Dynamic Systems Testing Framework (DSTF)
 
-Formerly ModelicaTesting. Standalone regression testing for Modelica libraries (and more — DSTF now supports FMU, Julia/ModelingToolkit, and arbitrary-Python backends as well). Discovers test models, runs simulations, compares results against stored references, and reports pass/fail.
+Regression and unit testing for time-dependent system behavior. Discovers tests, runs simulations, compares against versioned baselines, and reports — across **Modelica (Dymola, OpenModelica), FMU (FMPy), Julia/ModelingToolkit, and arbitrary Python**.
 
-Library-agnostic — works with any Modelica library. Tests can be defined in-model (via `UnitTests` components) or externally (via `test_spec.json`), or both.
+Library-agnostic: tests can be discovered from in-model annotations (`UnitTests` components), declarative `test_spec.json`, or both. Reference results are partitioned per backend / OS so the same library can be regression-tested across simulators without ref drift.
 
-## Requirements
+> Formerly **ModelicaTesting**. Renamed in D81 (2026-04-25); see `docs/decisions.md`.
 
-- Python 3.10+
-- Dymola (for running simulations)
-- Dependencies managed via [uv](https://docs.astral.sh/uv/)
+## What's in the box
 
-## Installation & Invocation
+- **5 simulator backends**, each with persistent-worker support where it pays off:
 
-The package ships a console script named `dstf`.
+  | Backend | Source kind | Persistent | Notes |
+  |---|---|---|---|
+  | Dymola | Modelica `.mo` | ✓ default | Python interface; falls back to batched `.mos` |
+  | OpenModelica | Modelica `.mo` | ✓ default | OMPython ZMQ; falls back to `omc -s` |
+  | FMPy | Pre-built FMU | per-test thread | `fmpy.simulate_fmu` in-process |
+  | Julia / MTK | `.jl` ModelingToolkit | ✓ default | stdin-JSON pipe; Dyad untested |
+  | Python | Any `simulate(stop_time, tol) -> dict` | subprocess-per-test | scipy, pandas, CSV loader, HTTP — anything |
+
+- **6 comparison modes**, composable via a `MetricTree`:
+
+  | Mode | What it scores |
+  |---|---|
+  | `nrmse` | RMSE over signal range — the default |
+  | `tube` | Pass if signal stays inside a (constant or time-varying) envelope around ref |
+  | `points` | Per-point checks at declared times with `time_tolerance` x-box and abs/rel y-tolerance |
+  | `range` | Scalar `min_value` / `max_value` bounds — baseline-free |
+  | `event-timing` | Match Modelica solver events against a declared list within per-event tolerance |
+  | `dominant-frequency` | FFT peak matching against a declared peaks table — windowable |
+
+  Combinators: `and`, `or`, `k-of-n`, `warn` (relax to advisory), `weighted`. Leaves can scope to a time window and target named baselines (`primary`, soft-checks, companions).
+
+- **Reporter as IDE** — interactive Plotly HTML with live per-leaf re-scoring on edit, structural tree editing, shape-drag tube/range/peak/points-box editors, and RFC 6902 JSON-Patch export round-tripped via `dstf spec-update`. Plus live dashboard during runs and JUnit XML for CI.
+
+- **Three baseline roles** per test, partitioned on disk: **primary** (regression anchor, hard-fail), **soft_checks** (warn-wrapped cross-regression imports), **companions** (plot-only overlays, including cross-library).
+
+## Install
+
+End users:
 
 ```bash
-# End users: install as an isolated tool
-uv tool install dstf     # then run plain: dstf ...
-
-# Developers: editable install inside the project
-uv pip install -e ".[dev]"
-uv run dstf ...          # canonical dev form
-python -m dstf ...                   # equivalent fallback
+uv tool install dstf       # then run plain: dstf ...
+# or: pipx install dstf
 ```
 
-All examples below use `uv run dstf`. Drop the `uv run` prefix if you installed via `uv tool install` / `pipx`.
-
-## Quick Start
+Developers:
 
 ```bash
-# Discover tests in a library
-uv run dstf --package-path /path/to/MyLibrary/MyLib discover
-
-# Run tests and compare against stored references
-uv run dstf --package-path /path/to/MyLibrary/MyLib run
-
-# Run with explicit reference location
-uv run dstf \
-  --package-path /path/to/MyLibrary/MyLib \
-  --reference-root /path/to/my-refs \
-  run
-
-# Accept results as new baselines
-uv run dstf --package-path /path/to/MyLibrary/MyLib run --accept
-
-# Run a subset
-uv run dstf run --filter "*_Test" --package MyLib.Blocks
+uv pip install -e ".[dev]"             # core + pytest
+uv pip install -e ".[dev,fmpy,om]"     # plus FMPy + OpenModelica extras
+uv run dstf --help
 ```
 
-`--package-path` points at the directory containing `package.mo`. If omitted, the tool auto-detects from the current working directory.
+For the Julia backend, install Julia 1.11+ and instantiate the demo project once:
 
-## Defining Tests
-
-### Option 1: In-Model (UnitTests component)
-
-Add a `UnitTests` component inside your Modelica example model:
-
-```modelica
-model MyTest
-  // ... model equations ...
-  Utilities.ErrorAnalysis.UnitTests unitTests(
-    n=2,
-    x={pipe.T[end], pump.m_flow}
-  );
-end MyTest;
+```bash
+curl -fsSL https://install.julialang.org | sh -s -- -y --default-channel 1.11
+cd examples/julia/JuliaMtkTestingLib && julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
-The testing tool scans `.mo` files for `UnitTests` instantiations and extracts the tracked variables.
+For the Python `SimpleRamp` example: `uv pip install scipy`.
 
-### Option 2: External Test Spec
+## First 5 minutes
 
-Define tests in a `test_spec.json` file without modifying Modelica code:
+The repo ships demo libraries for every backend. Easiest first run is the Modelica demo:
+
+```bash
+# From the repo root:
+uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run
+```
+
+What this does:
+
+1. Reads `testing.json` to find the demo library, the simulator (Dymola or OpenModelica — first one whose binary exists wins), the reference root, and any per-test recognizers.
+2. Discovers the demo tests via the bundled `UnitTests` recognizer plus declarative recognizers in the JSON.
+3. Runs each in a persistent simulator worker, partitioning output under `testing_output/` by backend + OS.
+4. Compares against `Resources/ReferenceResults/<Backend>/<os>/ref_NNNN.json` baselines.
+5. Prints a console report with pass/fail per test.
+
+To see the interactive HTML reporter:
+
+```bash
+uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --report ./reports
+```
+
+The dashboard URL is printed when a parallel run starts (`--parallel N`); auto-refreshes every 2s.
+
+To repeat with another backend's demo library, swap the config path:
+
+```bash
+# OpenModelica or Dymola, depending on which binaries the demo finds
+uv run dstf --config examples/julia/JuliaMtkTestingLib/Resources/ReferenceResults/testing.json run
+uv run dstf --config examples/python/PythonTestingLib/Resources/ReferenceResults/testing.json run
+uv run dstf --config examples/fmu/testing.json run    # needs reference-fmus-binaries/
+```
+
+## Configuration cheat-sheet
+
+`testing.json` is the single entry point. The full field reference lives in `docs/usage.md`; the headline shape:
 
 ```json
 {
-  "tests": [
-    {
-      "model": "MyLib.Examples.PipeTest",
-      "variables": ["pipe.T[1]", "pump.m_flow"]
-    },
-    {
-      "model": "MyLib.Examples.HeatExchanger",
-      "variables": ["medium.T*", "shell.h_*"],
-      "stop_time": 500
-    },
-    {
-      "model": "MyLib.Examples.SimplePump",
-      "variables": []
-    },
-    {
-      "model": "MyLib.Examples.FullSystem",
-      "variables": ["*"]
-    }
-  ]
-}
-```
-
-Variable patterns:
-
-| Pattern | Meaning |
-|---------|---------|
-| `"pipe.T[1]"` | Exact variable name |
-| `"pipe.T*"` | Glob — matches `pipe.T[1]`, `pipe.T[2]`, etc. |
-| `"pipe.T[*]"` | All array indices |
-| `"medium.T*"` | All variables starting with `medium.T` |
-| `[]` | Simulate only — no variable comparison |
-| `["*"]` | Track all variables |
-
-Point the tool at your spec file:
-
-```bash
-uv run dstf --test-spec test_spec.json discover
-```
-
-Or reference it from `testing.json`:
-
-```json
-{
-  "test_spec": "test_spec.json"
-}
-```
-
-### Option 3: Both
-
-When a model appears in both `UnitTests` and `test_spec.json`, variables from both sources are merged (deduplicated). Simulation parameters from the spec override experiment annotation defaults.
-
-## Configuration
-
-### testing.json
-
-Auto-created on first run if not found. Looked for in the parent of the package directory (repo root), the package directory itself, or the current working directory.
-
-```json
-{
-  "simulator": "Dymola 2025",
+  "source_path": "../../MyLib",
   "simulators": {
-    "Dymola 2025": [
-      "C:/Program Files/Dymola 2025/bin64/dymola.exe",
-      "/opt/dymola-2025/bin/dymola.sh"
-    ],
-    "Dymola 2024x": [
-      "C:/Program Files/Dymola 2024x/bin64/dymola.exe"
-    ]
+    "Dymola":       ["C:\\Program Files\\Dymola 2026x\\bin64\\Dymola.exe"],
+    "OpenModelica": ["/usr/bin/omc"]
   },
-  "reference_root": "/path/to/references",
   "test_spec": "test_spec.json",
-  "dependencies": [
-    "/path/to/SomeDependency"
-  ],
-  "show_ide": false
+  "dependencies": ["/path/to/SomeDep"],
+  "tolerance": 1e-4,
+  "diagnostic_variables": ["CPUtime", "EventCounter"]
 }
 ```
 
-| Field | Description | Default |
-|-------|-------------|---------|
-| `simulator` | Simulator name from `simulators` map | `Dymola` |
-| `simulators` | Named entries mapping to executable paths per OS | `{}` |
-| `reference_root` | Where to store/find references | `<repo>/Resources/ReferenceResults` |
-| `test_spec` | Path to external test spec file | None |
-| `dependencies` | Paths to dependency library roots | `[]` |
-| `show_ide` | Show simulator GUI instead of headless | `false` |
-| `work_dir` | Simulation output directory | `./testing_output/<lib>/<sim>/<os>` |
-| `os` | Override OS detection | Auto-detect |
+The first `simulators` entry whose binary exists wins (no need for per-OS config files). `simulator: "Dymola"` (or any named entry) forces a specific one.
 
-The `simulators` map supports multiple versions and platforms. The tool picks the first path that exists on the current machine:
-
-```json
-{
-  "simulators": {
-    "Dymola 2025": [
-      "C:/Program Files/Dymola 2025/bin64/dymola.exe",
-      "/opt/dymola-2025/bin/dymola.sh",
-      "dymola"
-    ]
-  }
-}
-```
-
-### CLI flags override config
+## Common commands
 
 ```bash
-uv run dstf run \
-  --package-path /path/to/MyLib \
-  --reference-root /path/to/my-refs \
-  --simulator "Dymola 2024x" \
-  --simulator-path "C:/Program Files/Dymola 2024x/bin64/dymola.exe"
+# Discover tests without running
+uv run dstf --config testing.json discover
+
+# Run, compare, accept all current results as new baselines
+uv run dstf --config testing.json run --accept
+
+# Interactive review by category
+uv run dstf --config testing.json run -i failed
+
+# Filter (glob, comma list, or @file)
+uv run dstf --config testing.json run --filter "Foo.A,Foo.B"
+uv run dstf --config testing.json run --filter @rerun.txt
+
+# Parallel + small-batch dispatch + interactive HTML report
+uv run dstf --config testing.json run --parallel 4 --batch-size 3 --report ./reports
+
+# Rerun only previously-failed tests, merge with last full run, regen report
+uv run dstf --config testing.json run --rerun failed,sim-failed --merge --report
+
+# Compare without re-simulating (uses last results)
+uv run dstf --config testing.json compare
+
+# Apply an RFC 6902 JSON-Patch exported from the interactive report
+uv run dstf --config testing.json spec-update spec_patch.json
+
+# Manage the other baseline roles
+uv run dstf --config testing.json companion add <model> <name> <path>
+uv run dstf --config testing.json soft-check list <model>
+uv run dstf --config testing.json import-baseline <model> <role> <name> <source>
+
+# Manifest / schema
+uv run dstf --config testing.json manifest dump
+uv run dstf --config testing.json manifest cleanup --orphans [--apply]
+uv run dstf --config testing.json export-schema --output schema.json
+
+# Diagnose Dymola Python interface discovery
+uv run dstf check-dymola
 ```
 
-## Commands
+`uv run dstf <command> --help` for each subcommand's full flag set.
 
-### discover — Find tests
+## Where things live
 
-```bash
-uv run dstf discover
-uv run dstf discover --filter "MyLib.Fluid.*"
-uv run dstf discover --package MyLib.Fluid
-```
+| Doc | What's in it |
+|---|---|
+| `docs/usage.md` | The deep user guide — every command, every config field, every comparison mode |
+| `docs/architecture.md` | Six-layer plug-in pipeline + current-state map to code |
+| `docs/extensibility.md` | Plug-in contracts for Source / Discovery / Backend / Dataset / Metric / Combinator |
+| `docs/vision.md` | Where the framework is going (target user base, non-Modelica futures) |
+| `docs/decisions.md` | Authoritative decision log (D1–D87 as of 2026-04-25) |
+| `docs/ideas.md` | Backlog (unimplemented features, with explicit deferred-by-design entries) |
+| `docs/SESSION_HANDOFF.md` | Most-recent session state — read this when picking up work |
+| `examples/{modelica,fmu,julia,python}/` | Working demo libraries — one per backend |
 
-### run — Simulate and compare
-
-```bash
-# Run and compare against stored references
-uv run dstf run
-
-# Accept results as new baselines
-uv run dstf run --accept
-
-# Parallel with timeout
-uv run dstf run --parallel 4 --timeout 300
-
-# Compare only final values
-uv run dstf run --final-only --tolerance 1e-3
-
-# Show Dymola GUI for debugging
-uv run dstf run --show-ide --filter "MyLib.SomeTest"
-```
-
-### compare — Compare without re-running
-
-```bash
-uv run dstf compare
-```
-
-### Report formats
-
-```bash
-uv run dstf run --report-format console  # Default
-uv run dstf run --report-format junit    # JUnit XML for CI
-uv run dstf run --report-format html     # HTML report
-```
-
-### manifest — Manage test IDs
-
-Tests are assigned stable numeric IDs stored in `test_manifest.json`. IDs are never reused.
-
-```bash
-# Show all registered tests
-uv run dstf manifest show
-
-# Rebuild manifest from discovered tests
-uv run dstf manifest rebuild
-
-# Remove reference files for obsolete tests
-uv run dstf manifest cleanup
-```
-
-### export — Export reference data
-
-```bash
-uv run dstf export --format json
-uv run dstf export --format csv
-```
-
-### convert — Change reference file format
-
-```bash
-# Old abbreviated filenames -> numeric IDs + manifest
-uv run dstf convert to-manifest
-
-# Numeric IDs -> human-readable filenames
-uv run dstf convert from-manifest
-```
-
-### migrate — Import from buildingspy
-
-```bash
-uv run dstf migrate /path/to/old/ReferenceResults
-```
-
-## Reference Results
-
-### Layout
-
-References are partitioned by simulator backend and OS:
-
-```
-<reference_root>/
-├── test_manifest.json          # ID -> model mapping (shared)
-├── Dymola/
-│   ├── linux/
-│   │   ├── ref_0001.json
-│   │   └── ...
-│   └── windows/
-│       ├── ref_0001.json
-│       └── ...
-└── OpenModelica/
-    └── linux/
-        └── ...
-```
-
-### Simulation output
-
-Simulation artifacts are partitioned to prevent conflicts when testing with multiple simulator versions or platforms:
-
-```
-testing_output/
-└── TRANSFORM/
-    ├── Dymola/
-    │   └── windows/
-    │       ├── test_0001.mos
-    │       ├── test_0001.mat
-    │       └── ...
-    └── Dymola_2024x/
-        └── windows/
-            └── ...
-```
-
-### Typical setup
-
-```
-TRANSFORM-Library/              # The Modelica library repo
-├── TRANSFORM/
-│   └── package.mo              # <-- point --package-path here
-├── testing.json
-└── test_spec.json
-
-TRANSFORM-References/           # Reference results (separate repo)
-├── test_manifest.json
-└── Dymola/
-    └── windows/
-        ├── ref_0001.json
-        └── ...
-```
-
-## How It Works
-
-### Test discovery
-
-Scans `.mo` files for `UnitTests` component instantiations and/or reads `test_spec.json`. Extracts tracked variables and simulation parameters from experiment annotations, with spec overrides applied on top.
-
-### Simulation
-
-Generates per-test `.mos` scripts with numeric result file names (`test_0001.mat`). Each test runs in its own Dymola process with a configurable timeout. Supports parallel execution.
-
-### Comparison
-
-Mirrors the `AbsRelRMS.mo` logic: absolute and relative errors with machine-epsilon filtering, RMS aggregation. Supports full trajectory comparison (default) or final-value-only mode.
-
-## CI Integration
+## CI integration
 
 ```yaml
 - run: |
-    uv run dstf \
-      --package-path ./MyLibrary \
-      --reference-root ./references \
-      run --report-format junit
+    uv run dstf --config ./testing.json run --report-format junit --output test-results.xml
 - uses: actions/upload-artifact@v4
   with:
     name: test-results
     path: test-results.xml
 ```
+
+For HTML reports as build artifacts, also pass `--report ./reports` and upload the `reports/` directory.
+
+## Status
+
+837 pytest passing (incl. ~70 Playwright browser tests). 5 backends production. 3 demo libraries. Reporter-as-IDE feature-complete; the points / range / tube / dom-frequency editors all share the `createDeclaredItemsTable` scaffold (D87) and `createPointPlotEditor` shift-modifier interaction layer.

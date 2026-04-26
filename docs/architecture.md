@@ -49,49 +49,60 @@ Forward work: multi-baseline reads into tree leaves (hybrid schema is there, but
 ## Project Layout
 
 ```
-ModelicaTesting/
-├── examples/
-│   └── modelica/
-│       └── ModelicaTestingLib/      # Modelica demo library (test fixture + reference implementation)
-│           ├── Components/UnitTests.mo   # Reusable UnitTests component
-│           ├── Examples/                 # SimpleTest, EventTest, ConstantTest, IntervalTest, NoUnitTest
-│           └── Resources/ReferenceResults/  # testing.json + baselines for this library
-├── tests/                           # pytest suite
-│   ├── fixtures/results/Dymola/     # Real Dymola artifacts (.mat, dslog.txt, etc.)
-│   └── test_*.py                    # Unit tests for all modules
+ModelicaTesting/                         # repo root (the project name is DSTF; on-disk dir kept its old name)
+├── examples/                            # Demo libraries — one per backend, used by README first-5-min walkthrough
+│   ├── modelica/ModelicaTestingLib/       # Components/UnitTests.mo + Examples/ + Resources/ReferenceResults/
+│   ├── fmu/                                # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)
+│   ├── julia/JuliaMtkTestingLib/           # ModelingToolkit demo, mirrors the Modelica layout
+│   └── python/PythonTestingLib/            # SimpleRamp (scipy) + ConstantCsv (pure data loader)
+├── tests/                               # pytest suite (~750 tests; ~70 Playwright gated by importorskip)
+│   ├── fixtures/results/Dymola/         # Real Dymola artifacts (.mat, dslog.txt, etc.)
+│   └── test_*.py                        # Unit tests for all modules
 ```
 
 ## Package Layout
 
 ```
 src/dstf/
-├── cli.py                    # argparse CLI: discover, run, compare, export, manifest (cleanup/dump), add
-├── config.py                 # Config dataclass, path resolution, testing.json loading
+├── cli.py                    # argparse CLI: discover, run, compare, export, manifest, add, spec-update,
+│                             #   companion, soft-check, import-baseline, export-schema, migrate-baselines, check-dymola
+├── config.py                 # Config dataclass, path resolution, testing.json loading, simulator auto-detect
 ├── discovery/
+│   ├── recognizer.py         # Recognizer registry (bundled + user-declared, merged by model_id)
 │   ├── mo_parser.py          # Scans .mo files for UnitTests components
+│   ├── json_recognizer.py    # Declarative recognizers from testing.json
 │   ├── spec_parser.py        # Parses test_spec.json (external test definitions)
-│   └── test_registry.py      # TestModel dataclass, discover_tests() merges both sources
+│   ├── patch_apply.py        # RFC 6902 JSON-Patch round-trip (powers `dstf spec-update`)
+│   └── test_registry.py      # TestModel dataclass, discover_tests() merges all sources
 ├── simulators/
 │   ├── __init__.py           # Simulator registry: @register decorator, get_runner() factory
-│   ├── base.py               # SimulatorRunner ABC, VariableResult, TestResult, BatchManifest
+│   ├── base.py               # SimulatorRunner ABC, VariableResult, TestResult, BatchManifest, Capability flags
 │   ├── progress.py           # Backend-agnostic ProgressReporter (status.json + auto-refresh dashboard.html)
-│   └── dymola/
-│       ├── runner.py          # DymolaRunner (@register("Dymola")), DymolaConfig, batch .mos generation, queue-dispatched batches
-│       ├── mat_reader.py      # Custom MAT4 binary parser with numpy.memmap for selective reads
-│       └── log_parser.py      # Parses dslog.txt + translation_log.txt for statistics
+│   ├── common/               # Shared: mat_reader, persistent-worker dispatch scaffolding
+│   ├── cross_backend.py      # EXPERIMENTAL Dymola → FMU → FMPy baseline chain
+│   ├── dymola/               # DymolaRunner (.mos batch) + PersistentDymolaRunner (Python interface)
+│   ├── fmpy/                 # FmpyRunner (in-process; per-test thread)
+│   ├── openmodelica/         # OpenModelicaRunner (omc -s) + PersistentOpenModelicaRunner (OMPython ZMQ)
+│   ├── julia/                # JuliaRunner (subprocess) + PersistentJuliaRunner (stdin-JSON pipe)
+│   └── python/               # PythonRunner — subprocess-per-test, any `simulate(stop_time, tol) -> dict`
 ├── comparison/
-│   ├── comparator.py         # compare_test/compare_all orchestration, piecewise NRMSE, tube, final-value
-│   └── modes.py              # ComparisonMode ABC, NrmseMode/TubeMode/PointsMode, typed configs, resolve_mode()
+│   ├── comparator.py         # compare_test / compare_all orchestration; per-mode scoring functions
+│   ├── modes.py              # ComparisonMode ABC + 6 modes (nrmse, tube, points, range, event-timing,
+│   │                         #   dominant-frequency); typed configs; resolve_mode()
+│   ├── tree_spec.py          # MetricTree LeafSpec / CombinatorSpec + implicit_and_tree() builder
+│   ├── tree_eval.py          # Tree evaluator threading primary + named baselines
+│   └── validator.py          # Baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped)
 ├── storage/
-│   └── reference_store.py    # RefIndex + ReferenceStore (per-test JSON files)
+│   └── reference_store.py    # RefIndex + ReferenceStore: primary + soft_checks + companions CRUD
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
     ├── junit_report.py       # JUnit XML for CI
-    ├── html_report.py        # Builds context dict, renders Jinja2 template, writes comparison_data.json sidecar
-    ├── templates/
-    │   ├── comparison.html   # Jinja2 template: static matplotlib-based report with progressive disclosure
-    │   └── interactive.html  # Jinja2 template: interactive Plotly.js report (zoom, pan, hover, live tolerance editing)
-    └── plot_comparison.py    # Per-variable PNG plots + HTML viewer with stats tables
+    ├── html_report.py        # Builds index.html across the suite
+    ├── plot_comparison.py    # Per-test interactive.html generator + comparison_data.json sidecar
+    ├── overlay_loader.py     # Companion CSV/JSON ingest + soft-check baseline projection
+    ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf export-schema`)
+    ├── templates/            # interactive.html + interactive.js (the reporter-as-IDE)
+    └── ui/mode_controls.py   # Auto-derived per-mode UI from typed comparison configs
 ```
 
 ## Data Flow
