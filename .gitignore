@@ -70,3 +70,4 @@ htmlcov/
 # Cursor
 .cursorignore
 .cursorindexingignore
+.claude/settings.local.json
