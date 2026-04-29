@@ -152,6 +152,11 @@ def _compare_trajectories(
     act_values: np.ndarray,
     tolerance: float,
 ) -> VariableComparison:
+    # parity-test: live-preview JS counterpart at
+    # src/dstf/reporting/templates/interactive.js MODE_SCORERS['nrmse']
+    # (around line 113). The two implementations MUST agree on pass/fail
+    # for any (ref, act, tolerance); drift is caught by
+    # tests/test_scorer_parity.py. Update both when changing the math.
     """Compare two time series using piecewise NRMSE.
 
     If the reference has duplicate time values (events), the comparison
@@ -331,6 +336,9 @@ def _compare_points(
     points: Optional[list[dict]] = None,
     tolerance: float = 1e-4,
 ) -> VariableComparison:
+    # parity-test: live-preview JS counterpart at
+    # src/dstf/reporting/templates/interactive.js MODE_SCORERS['points']
+    # (around line 145). Drift is caught by tests/test_scorer_parity.py.
     """Compare actual vs reference at declared time points.
 
     When ``points`` is None or empty, falls back to the legacy final-
@@ -491,6 +499,13 @@ def _compare_tube(
     act_values: np.ndarray,
     tube_config: dict,
 ) -> VariableComparison:
+    # parity-test: live-preview JS counterpart at
+    # src/dstf/reporting/templates/interactive.js MODE_SCORERS['tube']
+    # (around line 210). The tube interpolation logic is the trickiest of
+    # the live-preview modes — both implementations need to handle the
+    # same width-mode dispatch (rel/band/absolute), the same tube_points
+    # interpolation, and the same min_width clamping. Drift is caught by
+    # tests/test_scorer_parity.py.
     """Compare using a tolerance tube around the reference trajectory.
 
     Tube width modes:
@@ -620,6 +635,9 @@ def _compare_range(
     min_value: Optional[float],
     max_value: Optional[float],
 ) -> VariableComparison:
+    # parity-test: live-preview JS counterpart at
+    # src/dstf/reporting/templates/interactive.js MODE_SCORERS['range']
+    # (around line 198). Drift is caught by tests/test_scorer_parity.py.
     """Check that every sample of the actual signal lies within [min, max].
 
     Reference data is not used — the bounds come from the spec itself.

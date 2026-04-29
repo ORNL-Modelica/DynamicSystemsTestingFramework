@@ -109,7 +109,12 @@ function overlayTraceName(role, name) {
 // max_abs_error, trajectory shapes). The CLI remains authoritative for
 // event-timing + dominant-frequency (FFT / event-detection not reimplemented
 // JS-side); their pills stay on whatever the evaluator decided.
+// parity-test: each entry below mirrors a Python ``_compare_*`` function
+// from src/dstf/comparison/comparator.py. Drift is caught by
+// tests/test_scorer_parity.py — when changing math here, update the
+// Python counterpart and the parity-test expectations.
 const MODE_SCORERS = {
+  // Mirror of _compare_trajectories (comparator.py:148).
   'nrmse': (leaf) => {
     const tol = _paramNumber(leaf, 'tolerance', leaf.tolerance_used);
     const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
@@ -142,6 +147,7 @@ const MODE_SCORERS = {
     const nrmse = range > 0 ? rmse / range : rmse;
     return nrmse < tol;
   },
+  // Mirror of _compare_points (comparator.py:331).
   'points': (leaf) => {
     const tol = _paramNumber(leaf, 'tolerance', leaf.tolerance_used);
     const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
@@ -195,6 +201,7 @@ const MODE_SCORERS = {
     }
     return allMatched;
   },
+  // Mirror of _compare_range (comparator.py:617).
   'range': (leaf) => {
     const p = (leafState[leaf.path] || {}).params || {};
     const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
@@ -207,6 +214,8 @@ const MODE_SCORERS = {
     }
     return true;
   },
+  // Mirror of _compare_tube (comparator.py:487). Trickiest of the
+  // mirrors — width-mode dispatch + tube_points interpolation.
   'tube': (leaf) => {
     const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
     if (!traj.ref_time || !traj.ref_time.length) return !!leaf.passed;
