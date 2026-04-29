@@ -2,7 +2,9 @@
 
 import json
 import logging
+import queue
 import sys
+import threading
 import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -250,6 +252,42 @@ def assign_test_keys(
 _print_lock = Lock()
 
 
+def _print_run_header(
+    total: int,
+    suffix_phrase: str,
+    parallel: int,
+    timeout_s: float,
+    work_dir: Optional[Path],
+    *,
+    timeout_per_test: bool = False,
+) -> None:
+    """Print the standard "Running N tests..." header + dashboard URL.
+
+    Single source of truth for the header style across all runners (default
+    batch loop, persistent template, batch Dymola's batched-mos override).
+    *suffix_phrase* differentiates modes — empty for the default loop,
+    ``"via persistent <Backend> workers"`` for persistent runners, or
+    ``"in M batch(es) of up to K"`` for the legacy Dymola batch path.
+
+    *timeout_per_test* toggles the units in the timeout label: the default
+    batch loop applies one timeout per test, while batch Dymola and the
+    persistent template apply it per worker-test, so both prefer the
+    ``s/test`` rendering.
+    """
+    timeout_label = (
+        f"timeout={timeout_s}s/test" if timeout_per_test
+        else f"timeout={timeout_s}s"
+    )
+    parts = [f"Running {total} tests"]
+    if suffix_phrase:
+        parts.append(f" {suffix_phrase}")
+    parts.append(f" (parallel={parallel}, {timeout_label})")
+    print("".join(parts), file=sys.stderr)
+    if work_dir is not None:
+        dashboard = work_dir / "dashboard.html"
+        print(f"Live progress: {dashboard.resolve().as_uri()}", file=sys.stderr)
+
+
 def _print_progress(
     index: int,
     total: int,
@@ -279,6 +317,97 @@ def _print_progress(
             parts.append(f"  [{detail}]")
 
         print("".join(parts), file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Abstract persistent-worker interface
+# ---------------------------------------------------------------------------
+
+class Worker(ABC):
+    """One long-lived simulator subprocess wrapped as a test-running unit.
+
+    Each persistent-worker backend (Dymola / OpenModelica / Julia today)
+    has its own concrete subclass that owns a real OS process — a Dymola
+    instance, an ``OMCSessionZMQ``, a ``julia --project=...`` subprocess.
+    The shape declared here is what :class:`PersistentRunnerBase` (Phase 4)
+    will rely on to orchestrate them generically.
+
+    Subclasses extend ``__init__`` with backend-specific config (e.g.
+    ``DymolaConfig``, an interface class to instantiate). They must always
+    call ``super().__init__(worker_id, config)`` so the framework's
+    invariants (worker_id stable across restarts; ``self.config`` available
+    to dispatch logic) hold.
+
+    Lifecycle contract:
+        ``__init__`` → ``start()`` → ``run_test_with_timeout()`` × N
+            → ``close()``
+    ``close()`` MUST be idempotent — :class:`PersistentRunnerBase`'s teardown
+    calls it on every worker including ones that never started successfully.
+
+    On failure, ``start()`` raises (typically :class:`RuntimeError`); the
+    runner records the failure and excludes that worker from the live pool.
+    Inside the dispatch loop, ``run_test_with_timeout`` MUST NOT raise on
+    test-level failures — return a ``TestRunResult`` with ``success=False``
+    instead. Reserve raises for worker-level catastrophes (subprocess died,
+    pipe broken) so the caller's restart logic can intervene.
+    """
+
+    def __init__(self, worker_id: int, config: Config):
+        self.worker_id = worker_id
+        self.config = config
+
+    @abstractmethod
+    def start(self) -> None:
+        """Bring the worker process up and apply startup (library loads,
+        framework settings). Raise on failure.
+        """
+
+    @abstractmethod
+    def close(self, grace: float = 5.0) -> None:
+        """Tear the worker down. Try graceful first; hard-kill if the
+        graceful path doesn't return within *grace* seconds. Idempotent —
+        safe to call on a worker that never started or already closed.
+        """
+
+    @abstractmethod
+    def is_alive(self) -> bool:
+        """True iff the worker can accept another test. Backends without
+        watchable subprocess state can implement this as ``self._handle is
+        not None``.
+        """
+
+    @abstractmethod
+    def run_test_with_timeout(
+        self,
+        test: TestModel,
+        test_key: str,
+        timeout: float,
+        progress: Optional["object"] = None,
+    ) -> "TestRunResult":
+        """Run *test* with a watchdog. On timeout, hard-kill the worker
+        process and return ``TestRunResult(timed_out=True, success=False)``.
+        Test-level failures (sim error, missing variable) return a
+        ``success=False`` result, not a raise. Worker-level catastrophes
+        (subprocess died, pipe broken) MAY raise so the caller restarts.
+
+        *progress* is the optional :class:`ProgressReporter` so the worker
+        can emit ``on_phase`` updates (translation vs simulation) for the
+        live dashboard. Backends that don't have meaningful sub-phases
+        accept and ignore the parameter.
+        """
+
+    def export_fmu(self, test: TestModel, output_dir: "Path") -> "Path":
+        """Export *test*'s model as an FMU into *output_dir*.
+
+        Backends that declare :attr:`Capability.FMU_EXPORT` on their
+        :class:`SimulatorRunner` MUST override this; the default raises
+        :class:`NotImplementedError`. Used by 4.B's cross-backend chain
+        (e.g. Dymola export → FMPy simulate as a second baseline).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support FMU export. "
+            f"Backend must declare Capability.FMU_EXPORT and override export_fmu()."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +447,34 @@ class SimulatorRunner(ABC):
         # Optional model_id → "ref_NNNN" map for dashboard report links
         # (set by CLI before run_tests if reference IDs are known)
         self.ref_id_map: dict[str, Optional[str]] = {}
+
+    @classmethod
+    def persistent_runner_cls(cls) -> Optional[type["SimulatorRunner"]]:
+        """Return the persistent-worker variant of this runner, or ``None``
+        if the backend is batch-only.
+
+        Override on backends that ship a persistent runner; the override
+        lazy-imports its sibling persistent module so the optional dep
+        (DymolaInterface, OMPython, ``julia`` binary) is not pulled in
+        during a plain batch run. The CLI calls this — keeping the lookup
+        on the runner class rather than in CLI code means a new persistent
+        backend is purely a runner-module change with no CLI edit.
+        """
+        return None
+
+    @classmethod
+    def preflight(cls, config: Config) -> None:
+        """Cheap pre-startup dependency probe.
+
+        Override on persistent runners that have an external dependency
+        (Python module, native binary, license file) to raise
+        :class:`RuntimeError` with an install hint when it's missing.
+        Cheap probes only — full failure modes (worker compile errors,
+        license issues) still surface from ``run_tests``. Default is a
+        no-op for runners with no extra dependencies beyond what the
+        package declares.
+        """
+        return None
 
     def export_fmu(self, test: TestModel, output_dir: "Path") -> "Path":
         """Export the test's model as an FMU into ``output_dir``.
@@ -391,13 +548,10 @@ class SimulatorRunner(ABC):
         )
         manifest.save()
 
-        print(
-            f"Running {total} tests"
-            f" (parallel={self.config.parallel}, timeout={self.config.timeout}s)",
-            file=sys.stderr,
+        _print_run_header(
+            total, "", self.config.parallel, self.config.timeout,
+            self.config.work_dir,
         )
-        dashboard = self.config.work_dir / "dashboard.html"
-        print(f"Live progress: {dashboard.resolve().as_uri()}", file=sys.stderr)
 
         def _result_status(rr: TestRunResult) -> str:
             if rr.timed_out:
@@ -556,3 +710,324 @@ class SimulatorRunner(ABC):
 
         manifests = [BatchManifest.load(p) for p in manifest_paths]
         return self.read_results(manifests, tests)
+
+
+# ---------------------------------------------------------------------------
+# Persistent-worker template
+# ---------------------------------------------------------------------------
+
+class PersistentRunnerBase(SimulatorRunner):
+    """Template-method class for persistent-worker runners.
+
+    Owns the orchestration shared by Dymola / OpenModelica / Julia persistent
+    runners — so adding a new persistent backend is a one-class job, not a
+    250-line copy-paste of the dispatch loop.
+
+    Subclass contract:
+
+      - Set ``worker_cls`` to your :class:`Worker` subclass.
+      - Set ``backend_label`` (e.g. ``"Dymola"``) — used in headers and
+        thread names. Read by both the run-header line and the final
+        completion message.
+      - Override :meth:`make_worker` if your worker constructor needs
+        backend-specific args beyond ``(worker_id, config)``. Use
+        :meth:`setup_before_workers` to populate any class state your
+        ``make_worker`` reads.
+      - Override :meth:`setup_before_workers` if your backend has runtime
+        patches that must apply before any worker spawns (Dymola: log
+        filter + parallel-startup lock).
+      - Override :meth:`preflight` (already declared on ``SimulatorRunner``)
+        to add a cheap dependency probe — see :meth:`_get_runner` in the CLI.
+
+    The :meth:`run_tests` template enforces the lifecycle:
+
+        setup_before_workers → ProgressReporter → assign_test_keys
+            → BatchManifest → make_worker × N → start in parallel
+            → filter live workers (raise if zero) → dispatch with restart
+            → close all workers → finalize progress
+
+    Subclasses generally don't need to touch :meth:`run_tests` itself.
+    """
+
+    #: Worker subclass to instantiate per slot. MUST be set by subclasses.
+    worker_cls: type["Worker"] = None  # type: ignore[assignment]
+
+    #: Human-readable backend name for headers and thread names.
+    backend_label: str = ""
+
+    #: Per-worker restart budget. After a timeout or worker-level exception
+    #: the dispatch loop will try to ``start()`` the worker again up to this
+    #: many times; on exhaustion the in-flight test gets a synthetic
+    #: ``Worker dead; restart exhausted`` failure result.
+    max_restarts_per_worker: int = 3
+
+    @classmethod
+    def persistent_runner_cls(cls):
+        return cls  # we ARE the persistent variant; stop recursing
+
+    def setup_before_workers(self) -> None:
+        """Hook for runtime patches that must take effect before any worker
+        spawns. Default no-op. Dymola uses this to install its log filter
+        and narrow the parallel-startup lock; OpenModelica uses it to
+        cache its session class; Julia today needs nothing here.
+        """
+        return None
+
+    def make_worker(self, worker_id: int) -> "Worker":
+        """Construct one :class:`Worker`. Default calls
+        ``self.worker_cls(worker_id, self.config)``. Backends with extra
+        construction args (e.g. ``DymolaConfig`` + interface class) override
+        this — typically reading state stashed by
+        :meth:`setup_before_workers`.
+        """
+        if self.worker_cls is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} must set the `worker_cls` class attr "
+                f"or override `make_worker`."
+            )
+        return self.worker_cls(worker_id, self.config)
+
+    def starting_workers_message(self, n_workers: int) -> str:
+        """The "Starting N <backend> worker(s)..." line printed before
+        worker startup. Override to add backend-specific guidance — e.g.
+        Julia's warmup notice that the first run does several minutes of
+        JIT compilation. Default uses :attr:`backend_label`.
+        """
+        return f"Starting {n_workers} {self.backend_label} worker(s)..."
+
+    # ------------------------------------------------------------------
+    # The template
+    # ------------------------------------------------------------------
+
+    def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
+        if not tests:
+            return []
+
+        self.setup_before_workers()
+        self.config.work_dir.mkdir(parents=True, exist_ok=True)
+        total = len(tests)
+
+        from .progress import ProgressReporter
+        self.progress = ProgressReporter(self.config.work_dir, total)
+
+        manifest_map, test_items = assign_test_keys(self.config.work_dir, tests)
+        for test, test_key in test_items:
+            report_dir = self.ref_id_map.get(test.model_id) or test_key
+            self.progress.register(test_key, test.model_id, report_dir=report_dir)
+
+        manifest = BatchManifest(
+            batch_id=0,
+            work_dir=self.config.work_dir,
+            manifest=manifest_map,
+        )
+        manifest.save()
+
+        n_workers = max(1, self.config.parallel)
+        _print_run_header(
+            total, f"via persistent {self.backend_label} workers",
+            n_workers, self.config.timeout, self.config.work_dir,
+            timeout_per_test=True,
+        )
+
+        workers = [self.make_worker(i) for i in range(n_workers)]
+
+        start_all = time.monotonic()
+        print(self.starting_workers_message(n_workers), file=sys.stderr)
+
+        live_workers = self._start_workers_parallel(workers)
+        if not live_workers:
+            if self.progress is not None:
+                self.progress.finalize()
+            raise RuntimeError(
+                f"All {self.backend_label} persistent workers failed to start. "
+                f"See per-worker errors above. Try re-running with --batch."
+            )
+        print(
+            f"  {len(live_workers)}/{n_workers} workers ready in "
+            f"{time.monotonic() - start_all:.1f}s",
+            file=sys.stderr,
+        )
+
+        results = self._dispatch_with_restart(live_workers, test_items, total)
+
+        for w in workers:
+            w.close()
+
+        wall = time.monotonic() - start_all
+        self._print_run_summary(results, total, wall)
+
+        manifest.results = results
+        if self.progress is not None:
+            self.progress.finalize()
+        return [manifest]
+
+    # ------------------------------------------------------------------
+    # Internal building blocks
+    # ------------------------------------------------------------------
+
+    def _start_workers_parallel(self, workers: list["Worker"]) -> list["Worker"]:
+        """Spawn every worker concurrently. Returns the subset that started
+        successfully; failures are logged per-worker. Caller decides what
+        to do on zero-live-workers (the template raises ``RuntimeError``).
+        """
+        worker_ready: dict[int, bool] = {}
+        ready_lock = threading.Lock()
+
+        def _start_one(w: "Worker"):
+            t0 = time.monotonic()
+            try:
+                w.start()
+                dt = time.monotonic() - t0
+                with ready_lock:
+                    worker_ready[w.worker_id] = True
+                print(f"  Worker {w.worker_id}: ready ({dt:.1f}s)", file=sys.stderr)
+            except Exception as exc:
+                with ready_lock:
+                    worker_ready[w.worker_id] = False
+                print(
+                    f"  Worker {w.worker_id}: start FAILED — {exc}",
+                    file=sys.stderr,
+                )
+
+        with ThreadPoolExecutor(max_workers=len(workers)) as pool:
+            futures = [pool.submit(_start_one, w) for w in workers]
+            for f in as_completed(futures):
+                f.result()  # propagate unexpected errors; start errors already printed
+
+        return [w for w in workers if worker_ready.get(w.worker_id)]
+
+    def _dispatch_with_restart(
+        self,
+        live_workers: list["Worker"],
+        test_items: list,
+        total: int,
+    ) -> list[TestRunResult]:
+        """Shared queue + sentinel + per-worker restart dispatch.
+
+        Each test goes once into ``work_queue``; each live worker gets one
+        sentinel ``None`` to signal "drain done." Workers that die mid-run
+        get up to :attr:`max_restarts_per_worker` restart attempts; on
+        exhaustion the in-flight test gets a synthetic failure result.
+        """
+        work_queue: queue.Queue[Optional[tuple]] = queue.Queue()
+        for item in test_items:
+            work_queue.put(item)
+        for _ in live_workers:
+            work_queue.put(None)
+
+        results: list[TestRunResult] = []
+        results_lock = threading.Lock()
+        completed = [0]
+
+        def _record(test, test_key, tr: TestRunResult) -> None:
+            with results_lock:
+                results.append(tr)
+                completed[0] += 1
+                idx = completed[0]
+            label = f"{test_key} {test.model_id.rsplit('.', 1)[-1]}"
+            status = "ok" if tr.success else ("TIMEOUT" if tr.timed_out else "FAIL")
+            parts = []
+            if getattr(tr, "translation_wall", None) is not None:
+                parts.append(f"xlate {tr.translation_wall:.1f}s")
+            if getattr(tr, "sim_wall", None) is not None:
+                parts.append(f"sim {tr.sim_wall:.1f}s")
+            if tr.success and parts:
+                detail_str: Optional[str] = ", ".join(parts)
+            elif not tr.success:
+                detail_str = (tr.error_message or "")[:80]
+            else:
+                detail_str = None
+            _print_progress(
+                idx, total, label, status,
+                elapsed=tr.elapsed,
+                detail=detail_str,
+            )
+            if self.progress is not None:
+                self.progress.on_finish(
+                    test_key, success=tr.success, elapsed=tr.elapsed,
+                    detail=None if tr.success else (tr.error_message or "")[:120],
+                    timed_out=tr.timed_out,
+                )
+
+        def _try_restart(w: "Worker") -> bool:
+            n_restarts = getattr(w, "_n_restarts", 0)
+            if n_restarts >= self.max_restarts_per_worker:
+                return False
+            n_restarts += 1
+            w._n_restarts = n_restarts  # type: ignore[attr-defined]
+            t0 = time.monotonic()
+            try:
+                w.start()
+                print(
+                    f"  Worker {w.worker_id}: restarted "
+                    f"({time.monotonic() - t0:.1f}s, attempt {n_restarts}/"
+                    f"{self.max_restarts_per_worker})",
+                    file=sys.stderr,
+                )
+                return True
+            except Exception as exc:
+                print(
+                    f"  Worker {w.worker_id}: restart FAILED — {exc}",
+                    file=sys.stderr,
+                )
+                return False
+
+        def _worker_loop(w: "Worker"):
+            while True:
+                item = work_queue.get()
+                if item is None:
+                    work_queue.task_done()
+                    return
+                test, test_key = item
+                try:
+                    if not w.is_alive():
+                        if not _try_restart(w):
+                            _record(test, test_key, TestRunResult(
+                                model_id=test.model_id, test_key=test_key,
+                                success=False, elapsed=0.0,
+                                error_message="Worker dead; restart exhausted",
+                            ))
+                            continue
+                    if self.progress is not None:
+                        self.progress.on_start(test_key, worker_id=w.worker_id)
+                    timeout = float(
+                        test.timeout if test.timeout is not None
+                        else self.config.timeout
+                    )
+                    tr = w.run_test_with_timeout(
+                        test, test_key, timeout, progress=self.progress,
+                    )
+                    _record(test, test_key, tr)
+                finally:
+                    work_queue.task_done()
+
+        thread_prefix = self.backend_label.lower().replace(" ", "-") or "pworker"
+        threads = [
+            threading.Thread(
+                target=_worker_loop, args=(w,),
+                name=f"{thread_prefix}-pworker-{w.worker_id}",
+            )
+            for w in live_workers
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return results
+
+    def _print_run_summary(
+        self, results: list[TestRunResult], total: int, wall: float,
+    ) -> None:
+        total_work = sum(r.elapsed for r in results)
+        speedup = (total_work / wall) if wall > 0 else 0.0
+        n_ok = sum(1 for r in results if r.success)
+        n_timeout = sum(1 for r in results if r.timed_out)
+        n_fail = total - n_ok - n_timeout
+        print(file=sys.stderr)
+        print(
+            f"Persistent {self.backend_label} run complete: "
+            f"{n_ok} ok, {n_fail} failed, {n_timeout} timed out "
+            f"({wall:.0f}s wall, {total_work:.0f}s total work, "
+            f"{speedup:.1f}x parallel speedup)",
+            file=sys.stderr,
+        )

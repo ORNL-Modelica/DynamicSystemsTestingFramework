@@ -87,9 +87,9 @@ class JuliaRunner(SimulatorRunner):
     """Subprocess-per-test Julia/MTK runner."""
 
     capabilities = frozenset({
-        Capability.BATCH_FALLBACK,  # the only mode today
+        Capability.BATCH_FALLBACK,  # subprocess-per-test (this class)
+        Capability.PERSISTENT_WORKERS,  # via PersistentJuliaRunner (D78)
         # Deliberately absent:
-        #   PERSISTENT_WORKERS — no stdin-driven long-lived Julia process yet
         #   FMU_EXPORT — MTK.generate_fmu deferred
     })
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
@@ -106,6 +106,11 @@ class JuliaRunner(SimulatorRunner):
         # Resolve once so run_single_test errors are loud + early when
         # the binary is missing; lets --filter walk the test set quickly.
         self.julia_config = JuliaConfig.from_config(config)
+
+    @classmethod
+    def persistent_runner_cls(cls):
+        from .persistent_runner import PersistentJuliaRunner
+        return PersistentJuliaRunner
 
     # ------------------------------------------------------------------
     # Simulation

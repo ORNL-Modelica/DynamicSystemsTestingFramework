@@ -46,7 +46,9 @@ from ...discovery.test_registry import TestModel
 from ..base import (
     BatchManifest,
     Capability,
+    PersistentRunnerBase,
     TestRunResult,
+    Worker,
     assign_test_keys,
 )
 from .runner import JuliaConfig, JuliaRunner, _resolve_julia_source
@@ -65,7 +67,7 @@ _WORKER_READY_TIMEOUT = 240.0
 _CLOSE_GRACE_SECONDS = 5.0
 
 
-class JuliaWorker:
+class JuliaWorker(Worker):
     """One long-lived Julia subprocess.
 
     Owns a subprocess + a pair of reader threads (stdout / stderr) that
@@ -75,8 +77,7 @@ class JuliaWorker:
     """
 
     def __init__(self, worker_id: int, config: Config, julia_cfg: JuliaConfig):
-        self.worker_id = worker_id
-        self.config = config
+        super().__init__(worker_id, config)
         self.julia_cfg = julia_cfg
         self.proc: Optional[subprocess.Popen] = None
         self._stdout_q: queue.Queue[str] = queue.Queue()
@@ -137,9 +138,18 @@ class JuliaWorker:
     # ---------------------------------------------------------------
 
     def run_test_with_timeout(
-        self, test: TestModel, test_key: str, timeout: float,
+        self,
+        test: TestModel,
+        test_key: str,
+        timeout: float,
+        progress: Optional[object] = None,
     ) -> TestRunResult:
         """Dispatch one test, wait ``timeout`` seconds for the response.
+
+        ``progress`` is accepted for shape compatibility with the other
+        backends' workers (Dymola/OM emit ``on_phase`` updates from inside
+        the worker). Julia today reports phases via the dispatch loop's
+        ``_record`` helper instead, so this argument is currently ignored.
 
         Timed-out workers are hard-killed (the subprocess); the caller's
         restart logic decides whether to respawn.
@@ -350,210 +360,49 @@ class JuliaWorker:
 # Runner
 # ---------------------------------------------------------------------------
 
-class PersistentJuliaRunner(JuliaRunner):
-    """Persistent-worker Julia runner. Subclasses :class:`JuliaRunner` so
-    it inherits ``read_result`` + config resolution; only ``run_tests``
-    changes."""
+class PersistentJuliaRunner(PersistentRunnerBase, JuliaRunner):
+    """Persistent-worker Julia runner.
+
+    Inherits dispatch-loop machinery from :class:`PersistentRunnerBase`
+    and ``read_result`` + config resolution from the batch
+    :class:`JuliaRunner`. Order matters — ``PersistentRunnerBase`` first so
+    its ``run_tests`` template wins over the batch runner's per-test
+    override.
+    """
 
     capabilities = frozenset({
         Capability.PERSISTENT_WORKERS,
         Capability.BATCH_FALLBACK,
     })
 
-    def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
-        if not tests:
-            return []
+    worker_cls = JuliaWorker
+    backend_label = "Julia"
 
-        self.config.work_dir.mkdir(parents=True, exist_ok=True)
-        total = len(tests)
-
-        from ..progress import ProgressReporter
-        self.progress = ProgressReporter(self.config.work_dir, total)
-
-        manifest_map, test_items = assign_test_keys(self.config.work_dir, tests)
-        for test, test_key in test_items:
-            report_dir = self.ref_id_map.get(test.model_id) or test_key
-            self.progress.register(test_key, test.model_id, report_dir=report_dir)
-
-        manifest = BatchManifest(
-            batch_id=0,
-            work_dir=self.config.work_dir,
-            manifest=manifest_map,
-        )
-        manifest.save()
-
-        n_workers = max(1, self.config.parallel)
-        print(
-            f"Running {total} tests via persistent Julia workers "
-            f"(parallel={n_workers}, timeout={self.config.timeout}s/test)",
-            file=sys.stderr,
-        )
-        dashboard = self.config.work_dir / "dashboard.html"
-        print(f"Live progress: {dashboard.resolve().as_uri()}", file=sys.stderr)
-
-        workers = [
-            JuliaWorker(i, self.config, self.julia_config)
-            for i in range(n_workers)
-        ]
-
-        start_all = time.monotonic()
-        print(
-            f"Warming up {n_workers} Julia worker(s) — first run may take "
-            f"2-3 min while MTK + OrdinaryDiffEq load from cache...",
-            file=sys.stderr,
-        )
-
-        worker_ready: dict[int, bool] = {}
-        ready_lock = threading.Lock()
-
-        def _start_one(w: JuliaWorker):
-            t0 = time.monotonic()
-            try:
-                w.start()
-                dt = time.monotonic() - t0
-                with ready_lock:
-                    worker_ready[w.worker_id] = True
-                print(f"  Worker {w.worker_id}: ready ({dt:.1f}s)", file=sys.stderr)
-            except Exception as exc:
-                with ready_lock:
-                    worker_ready[w.worker_id] = False
-                print(
-                    f"  Worker {w.worker_id}: start FAILED — {exc}",
-                    file=sys.stderr,
-                )
-
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            futures = [pool.submit(_start_one, w) for w in workers]
-            for f in as_completed(futures):
-                f.result()
-
-        live_workers = [w for w in workers if worker_ready.get(w.worker_id)]
-        if not live_workers:
-            if self.progress is not None:
-                self.progress.finalize()
+    @classmethod
+    def preflight(cls, config) -> None:
+        # Cheap probe: does `julia` resolve on PATH? Subsequent failures
+        # (toml errors, missing packages, MTK compile failures) still
+        # bubble up from worker.start() inside run_tests.
+        import shutil
+        if not shutil.which("julia"):
             raise RuntimeError(
-                "All Julia persistent workers failed to start. "
-                "Try re-running with --batch to fall back to per-test subprocess."
+                "Julia binary not found on PATH. The persistent-worker Julia "
+                "runner spawns a long-lived `julia --project=...` subprocess "
+                "and needs `julia` available.\n"
+                "\n"
+                "Install Julia from https://julialang.org/downloads/ "
+                "(or use a version manager like `juliaup`)."
             )
-        print(
-            f"  {len(live_workers)}/{n_workers} workers ready in "
-            f"{time.monotonic() - start_all:.1f}s",
-            file=sys.stderr,
+
+    def make_worker(self, worker_id: int) -> JuliaWorker:
+        return JuliaWorker(worker_id, self.config, self.julia_config)
+
+    def starting_workers_message(self, n_workers: int) -> str:
+        # First runs hit MTK + OrdinaryDiffEq JIT compile, which is
+        # multi-minute. Surfacing this at start time so users don't think
+        # the worker is hung. Subsequent runs hit the cache and start in
+        # seconds, but the message is still accurate as a worst case.
+        return (
+            f"Warming up {n_workers} Julia worker(s) — first run may take "
+            f"2-3 min while MTK + OrdinaryDiffEq load from cache..."
         )
-
-        MAX_RESTARTS_PER_WORKER = 3
-
-        work_queue: queue.Queue = queue.Queue()
-        for item in test_items:
-            work_queue.put(item)
-        for _ in live_workers:
-            work_queue.put(None)  # sentinel
-
-        results: list[TestRunResult] = []
-        results_lock = threading.Lock()
-        completed = [0]
-
-        def _record(test, test_key, tr: TestRunResult) -> None:
-            with results_lock:
-                results.append(tr)
-                completed[0] += 1
-                idx = completed[0]
-            label = f"{test_key} {test.model_id.rsplit('.', 1)[-1]}"
-            status = "ok" if tr.success else ("TIMEOUT" if tr.timed_out else "FAIL")
-            _print_progress(
-                idx, total, label, status, elapsed=tr.elapsed,
-                detail=(tr.error_message[:80] if not tr.success and tr.error_message else None),
-            )
-            if self.progress:
-                self.progress.on_finish(
-                    test_key, success=tr.success, elapsed=tr.elapsed,
-                    detail=(tr.error_message[:80] if not tr.success and tr.error_message else None),
-                    timed_out=tr.timed_out,
-                )
-
-        def dispatch_loop(worker: JuliaWorker):
-            restarts = 0
-            while True:
-                item = work_queue.get()
-                if item is None:
-                    break
-                test, test_key = item
-                if not worker.is_alive():
-                    if restarts >= MAX_RESTARTS_PER_WORKER:
-                        tr = TestRunResult(
-                            model_id=test.model_id, test_key=test_key, success=False,
-                            error_message=f"Worker {worker.worker_id} exceeded max restarts",
-                        )
-                        _record(test, test_key, tr)
-                        continue
-                    restarts += 1
-                    print(
-                        f"  Worker {worker.worker_id}: restarting ({restarts}/"
-                        f"{MAX_RESTARTS_PER_WORKER})",
-                        file=sys.stderr,
-                    )
-                    try:
-                        worker.start()
-                    except Exception as exc:
-                        tr = TestRunResult(
-                            model_id=test.model_id, test_key=test_key, success=False,
-                            error_message=f"Worker restart failed: {exc}",
-                        )
-                        _record(test, test_key, tr)
-                        continue
-
-                if self.progress:
-                    self.progress.on_start(test_key)
-                    self.progress.on_phase(test_key, "simulating")
-
-                timeout = float(
-                    test.timeout if test.timeout is not None else self.config.timeout
-                )
-                tr = worker.run_test_with_timeout(test, test_key, timeout)
-                _record(test, test_key, tr)
-
-        threads = [
-            threading.Thread(target=dispatch_loop, args=(w,), daemon=True)
-            for w in live_workers
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        for w in workers:
-            w.close()
-
-        elapsed_total = time.monotonic() - start_all
-        n_ok = sum(1 for r in results if r.success)
-        n_to = sum(1 for r in results if r.timed_out)
-        print(
-            f"\nSimulations complete: {n_ok} ok, {total - n_ok - n_to} failed, "
-            f"{n_to} timed out ({elapsed_total:.0f}s elapsed)",
-            file=sys.stderr,
-        )
-        if self.progress is not None:
-            self.progress.finalize()
-
-        return [manifest]
-
-
-def _print_progress(
-    idx: int, total: int, label: str, status: str,
-    elapsed: float = 0.0, detail: Optional[str] = None,
-) -> None:
-    """Compact per-test progress line shared with the batch runner's style."""
-    bar_width = 30
-    frac = idx / max(1, total)
-    filled = int(frac * bar_width)
-    bar = "=" * filled + " " * (bar_width - filled)
-    pct = int(frac * 100)
-    extra = ""
-    if elapsed:
-        extra = f" ({elapsed:.1f}s)"
-    if detail:
-        extra += f" — {detail}"
-    sys.stderr.write(
-        f"\r  [{bar}] {idx}/{total} ({pct}%) {label} → {status}{extra}\n"
-    )
-    sys.stderr.flush()

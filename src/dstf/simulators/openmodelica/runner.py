@@ -97,6 +97,11 @@ class OpenModelicaRunner(SimulatorRunner):
         super().__init__(config)
         self.om_config = OpenModelicaConfig.from_config(config)
 
+    @classmethod
+    def persistent_runner_cls(cls):
+        from .persistent_runner import PersistentOpenModelicaRunner
+        return PersistentOpenModelicaRunner
+
     # ------------------------------------------------------------------
     # Simulation
     # ------------------------------------------------------------------

@@ -15,13 +15,14 @@ from ...config import Config
 from ...discovery.test_registry import TestModel
 from .. import register
 from ..base import (
+    BatchManifest,
     Capability,
     DatasetType,
     SimulatorRunner,
-    TestRunResult,
     TestResult,
+    TestRunResult,
     VariableResult,
-    BatchManifest,
+    _print_run_header,
     resolve_variable_patterns,
 )
 from .log_parser import parse_dslog
@@ -78,6 +79,11 @@ class DymolaRunner(SimulatorRunner):
         super().__init__(config)
         self.dymola_config = DymolaConfig.from_config(config)
 
+    @classmethod
+    def persistent_runner_cls(cls):
+        from .persistent_runner import PersistentDymolaRunner
+        return PersistentDymolaRunner
+
     def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
         """Run tests in batches with parallelism."""
         if not tests:
@@ -131,13 +137,11 @@ class DymolaRunner(SimulatorRunner):
         for i in range(0, total, batch_size):
             batches.append(test_items[i:i + batch_size])
 
-        print(
-            f"Running {total} tests in {len(batches)} batch(es) of up to {batch_size}"
-            f" (parallel={n_workers}, timeout={self.config.timeout}s/test)",
-            file=sys.stderr,
+        _print_run_header(
+            total, f"in {len(batches)} batch(es) of up to {batch_size}",
+            n_workers, self.config.timeout, self.config.work_dir,
+            timeout_per_test=True,
         )
-        dashboard = self.config.work_dir / "dashboard.html"
-        print(f"Live progress: {dashboard.resolve().as_uri()}", file=sys.stderr)
 
         # Generate and run batch scripts
         all_results: list[TestRunResult] = []

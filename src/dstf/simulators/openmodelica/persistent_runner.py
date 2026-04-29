@@ -40,7 +40,9 @@ from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..base import (
     BatchManifest,
+    PersistentRunnerBase,
     TestRunResult,
+    Worker,
     _print_progress,
     assign_test_keys,
 )
@@ -194,7 +196,7 @@ def _is_notice_line(line: str) -> bool:
     )
 
 
-class OpenModelicaWorker:
+class OpenModelicaWorker(Worker):
     """One live OMCSessionZMQ process wrapped as a test runner."""
 
     def __init__(
@@ -204,8 +206,7 @@ class OpenModelicaWorker:
         om_config: OpenModelicaConfig,
         session_cls,
     ):
-        self.worker_id = worker_id
-        self.config = config
+        super().__init__(worker_id, config)
         self.om_config = om_config
         self._OMCSession = session_cls
         self.session = None  # the OMCSessionZMQ instance
@@ -594,219 +595,36 @@ class OpenModelicaWorker:
 # ---------------------------------------------------------------------------
 
 
-class PersistentOpenModelicaRunner(OpenModelicaRunner):
+class PersistentOpenModelicaRunner(PersistentRunnerBase, OpenModelicaRunner):
     """OpenModelica runner using persistent OMCSessionZMQ workers + a queue.
 
-    Subclasses the batch :class:`OpenModelicaRunner` so it inherits
-    :meth:`read_result` and the OM config extraction; only overrides
-    :meth:`run_tests`.
+    Inherits the dispatch-loop machinery from :class:`PersistentRunnerBase`
+    and the batch :class:`OpenModelicaRunner` for ``read_result`` + config
+    extraction. Order matters — ``PersistentRunnerBase`` first so its
+    ``run_tests`` template wins over the batch runner's per-test override.
     """
 
-    def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
-        if not tests:
-            return []
+    worker_cls = OpenModelicaWorker
+    backend_label = "OpenModelica"
 
-        # Deferred import — dependency only matters in persistent mode.
-        session_cls = load_omc_session()
+    @classmethod
+    def preflight(cls, config) -> None:
+        # Probes OMPython availability (the optional `[om]` extra). Cheap
+        # — load_omc_session caches after first call. RuntimeError carries
+        # the install hint that the CLI surfaces verbatim.
+        # Lazy import inside the method so tests can monkeypatch
+        # ``session_loader.load_omc_session`` and have the patch take
+        # effect here without also having to re-bind this module's
+        # already-imported reference.
+        from .session_loader import load_omc_session as _load
+        _load()
 
-        self.config.work_dir.mkdir(parents=True, exist_ok=True)
-        total = len(tests)
+    def setup_before_workers(self) -> None:
+        # Cache the OMCSessionZMQ class for make_worker. Called once per run;
+        # load_omc_session is itself cached after the first call.
+        self._session_cls = load_omc_session()
 
-        from ..progress import ProgressReporter
-        self.progress = ProgressReporter(self.config.work_dir, total)
-
-        manifest_map, test_items = assign_test_keys(self.config.work_dir, tests)
-        for test, test_key in test_items:
-            report_dir = self.ref_id_map.get(test.model_id) or test_key
-            self.progress.register(test_key, test.model_id, report_dir=report_dir)
-
-        manifest = BatchManifest(
-            batch_id=0,
-            work_dir=self.config.work_dir,
-            manifest=manifest_map,
+    def make_worker(self, worker_id: int) -> OpenModelicaWorker:
+        return OpenModelicaWorker(
+            worker_id, self.config, self.om_config, self._session_cls,
         )
-        manifest.save()
-
-        n_workers = max(1, self.config.parallel)
-        print(
-            f"Running {total} tests via persistent OM workers "
-            f"(parallel={n_workers}, timeout={self.config.timeout}s/test)",
-            file=sys.stderr,
-        )
-        dashboard = self.config.work_dir / "dashboard.html"
-        print(f"Live progress: {dashboard.resolve().as_uri()}", file=sys.stderr)
-
-        workers: list[OpenModelicaWorker] = [
-            OpenModelicaWorker(i, self.config, self.om_config, session_cls)
-            for i in range(n_workers)
-        ]
-
-        start_all = time.monotonic()
-        print(f"Starting {n_workers} OpenModelica worker(s)...", file=sys.stderr)
-
-        worker_ready: dict[int, bool] = {}
-        ready_lock = threading.Lock()
-
-        def _start_one(w: OpenModelicaWorker):
-            t0 = time.monotonic()
-            try:
-                w.start()
-                dt = time.monotonic() - t0
-                with ready_lock:
-                    worker_ready[w.worker_id] = True
-                print(f"  Worker {w.worker_id}: ready ({dt:.1f}s)", file=sys.stderr)
-            except Exception as exc:
-                with ready_lock:
-                    worker_ready[w.worker_id] = False
-                print(
-                    f"  Worker {w.worker_id}: start FAILED — {exc}",
-                    file=sys.stderr,
-                )
-
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            futures = [pool.submit(_start_one, w) for w in workers]
-            for f in as_completed(futures):
-                f.result()
-
-        live_workers = [w for w in workers if worker_ready.get(w.worker_id)]
-        if not live_workers:
-            if self.progress is not None:
-                self.progress.finalize()
-            raise RuntimeError(
-                "All OpenModelica persistent workers failed to start. "
-                "See per-worker errors above. Try re-running with --batch to fall back "
-                "to per-test omc subprocesses."
-            )
-        print(
-            f"  {len(live_workers)}/{n_workers} workers ready in "
-            f"{time.monotonic() - start_all:.1f}s",
-            file=sys.stderr,
-        )
-
-        MAX_RESTARTS_PER_WORKER = 3
-
-        work_queue: queue.Queue[Optional[tuple]] = queue.Queue()
-        for item in test_items:
-            work_queue.put(item)
-        for _ in live_workers:
-            work_queue.put(None)
-
-        results: list[TestRunResult] = []
-        results_lock = threading.Lock()
-        completed = [0]
-
-        def _record(test, test_key, tr: TestRunResult) -> None:
-            with results_lock:
-                results.append(tr)
-                completed[0] += 1
-                idx = completed[0]
-            label = f"{test_key} {test.model_id.rsplit('.', 1)[-1]}"
-            status = "ok" if tr.success else ("TIMEOUT" if tr.timed_out else "FAIL")
-            parts = []
-            if tr.translation_wall is not None:
-                parts.append(f"xlate {tr.translation_wall:.1f}s")
-            if tr.sim_wall is not None:
-                parts.append(f"sim {tr.sim_wall:.1f}s")
-            if tr.success and parts:
-                detail_str = ", ".join(parts)
-            elif not tr.success:
-                detail_str = (tr.error_message or "")[:80]
-            else:
-                detail_str = None
-            _print_progress(
-                idx, total, label, status,
-                elapsed=tr.elapsed,
-                detail=detail_str,
-            )
-            if self.progress is not None:
-                self.progress.on_finish(
-                    test_key, success=tr.success, elapsed=tr.elapsed,
-                    detail=None if tr.success else (tr.error_message or "")[:120],
-                    timed_out=tr.timed_out,
-                )
-
-        def _try_restart(w: OpenModelicaWorker) -> bool:
-            if w._n_restarts >= MAX_RESTARTS_PER_WORKER:
-                return False
-            w._n_restarts += 1
-            t0 = time.monotonic()
-            try:
-                w.start()
-                print(
-                    f"  Worker {w.worker_id}: restarted "
-                    f"({time.monotonic() - t0:.1f}s, attempt {w._n_restarts}/"
-                    f"{MAX_RESTARTS_PER_WORKER})",
-                    file=sys.stderr,
-                )
-                return True
-            except Exception as exc:
-                print(
-                    f"  Worker {w.worker_id}: restart FAILED — {exc}",
-                    file=sys.stderr,
-                )
-                return False
-
-        def _worker_loop(w: OpenModelicaWorker):
-            while True:
-                item = work_queue.get()
-                if item is None:
-                    work_queue.task_done()
-                    return
-                test, test_key = item
-                try:
-                    if not w.is_alive():
-                        if not _try_restart(w):
-                            _record(test, test_key, TestRunResult(
-                                model_id=test.model_id, test_key=test_key,
-                                success=False, elapsed=0.0,
-                                error_message="Worker dead; restart exhausted",
-                            ))
-                            continue
-
-                    if self.progress is not None:
-                        self.progress.on_start(test_key, worker_id=w.worker_id)
-
-                    timeout = float(
-                        test.timeout if test.timeout is not None
-                        else self.config.timeout
-                    )
-                    tr = w.run_test_with_timeout(
-                        test, test_key, timeout, progress=self.progress,
-                    )
-                    _record(test, test_key, tr)
-                finally:
-                    work_queue.task_done()
-
-        threads = [
-            threading.Thread(
-                target=_worker_loop, args=(w,), name=f"om-pworker-{w.worker_id}",
-            )
-            for w in live_workers
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        for w in workers:
-            w.close()
-
-        wall = time.monotonic() - start_all
-        total_work = sum(r.elapsed for r in results)
-        speedup = (total_work / wall) if wall > 0 else 0.0
-        n_ok = sum(1 for r in results if r.success)
-        n_timeout = sum(1 for r in results if r.timed_out)
-        n_fail = total - n_ok - n_timeout
-        print(file=sys.stderr)
-        print(
-            f"Persistent OM run complete: {n_ok} ok, {n_fail} failed, "
-            f"{n_timeout} timed out "
-            f"({wall:.0f}s wall, {total_work:.0f}s total work, "
-            f"{speedup:.1f}x parallel speedup)",
-            file=sys.stderr,
-        )
-
-        manifest.results = results
-        if self.progress is not None:
-            self.progress.finalize()
-        return [manifest]

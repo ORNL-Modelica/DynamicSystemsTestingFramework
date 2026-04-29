@@ -34,7 +34,9 @@ from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..base import (
     BatchManifest,
+    PersistentRunnerBase,
     TestRunResult,
+    Worker,
     _print_progress,
     assign_test_keys,
 )
@@ -161,7 +163,7 @@ class _suppress_stderr_noise:
         return False  # don't suppress exceptions — noise window expires naturally
 
 
-class DymolaWorker:
+class DymolaWorker(Worker):
     """One live Dymola process wrapped as a test runner."""
 
     def __init__(
@@ -171,8 +173,7 @@ class DymolaWorker:
         dymola_config: DymolaConfig,
         dymola_interface_cls,
     ):
-        self.worker_id = worker_id
-        self.config = config
+        super().__init__(worker_id, config)
         self.dymola_config = dymola_config
         self._DI = dymola_interface_cls
         self.dymola = None  # the DymolaInterface instance
@@ -630,12 +631,47 @@ class DymolaWorker:
 
 # ---------------------------------------------------------------------------
 
-class PersistentDymolaRunner(DymolaRunner):
+class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
     """Dymola runner using persistent DymolaInterface workers + a queue.
 
-    Subclasses the batched DymolaRunner so it inherits `read_result` and config
-    extraction; only overrides `run_tests`.
+    Inherits the dispatch-loop machinery from :class:`PersistentRunnerBase`
+    and the batched :class:`DymolaRunner` for ``read_result`` + config
+    extraction. Order matters — ``PersistentRunnerBase`` first so its
+    ``run_tests`` template wins over the batch ``.mos`` runner's override.
     """
+
+    worker_cls = DymolaWorker
+    backend_label = "Dymola"
+
+    @classmethod
+    def preflight(cls, config) -> None:
+        # Probes the Dymola Python interface (the wheel/egg shipped under
+        # the Dymola install). Cheap — load_dymola_interface caches after
+        # the first call. RuntimeError carries an install hint that the
+        # CLI surfaces verbatim.
+        # Lazy import inside the method so tests can monkeypatch
+        # ``interface_loader.load_dymola_interface`` and have the patch
+        # take effect here.
+        from .interface_loader import load_dymola_interface as _load
+        _load(config.dymola_interface_path)
+
+    def setup_before_workers(self) -> None:
+        # Cache the DymolaInterface class for make_worker, then apply
+        # Dymola-specific runtime patches. These two patches must run
+        # before any worker spawns:
+        #   * _install_dymola_log_filter — silences DymolaInterface's
+        #     own urlopen-spam during forced timeout teardowns.
+        #   * _patch_dymola_for_parallel_startup — narrows DymolaInterface's
+        #     module-level startup lock so workers can launch concurrently
+        #     (~7s × N serialized → all workers in ~7s wall).
+        self._di_cls = load_dymola_interface(self.config.dymola_interface_path)
+        _install_dymola_log_filter()
+        _patch_dymola_for_parallel_startup()
+
+    def make_worker(self, worker_id: int) -> DymolaWorker:
+        return DymolaWorker(
+            worker_id, self.config, self.dymola_config, self._di_cls,
+        )
 
     def export_fmu(self, test: TestModel, output_dir: Path) -> Path:
         """Spin up a one-shot worker to export a single FMU (4.B.2).
@@ -667,217 +703,4 @@ class PersistentDymolaRunner(DymolaRunner):
             except Exception:
                 pass
 
-    def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
-        if not tests:
-            return []
-
-        # Import lazily so the dependency only matters in --persistent mode.
-        di_cls = load_dymola_interface(self.config.dymola_interface_path)
-        # Patch Dymola's logger so timeout-noise suppression takes effect
-        # from the first timeout, and narrow its module-level startup lock
-        # so workers can launch in parallel (instead of ~7s × N serialized).
-        _install_dymola_log_filter()
-        _patch_dymola_for_parallel_startup()
-
-        self.config.work_dir.mkdir(parents=True, exist_ok=True)
-        total = len(tests)
-
-        from ..progress import ProgressReporter
-        self.progress = ProgressReporter(self.config.work_dir, total)
-
-        # Persistent keys — same behavior as batched runner
-        manifest_map, test_items = assign_test_keys(self.config.work_dir, tests)
-        for test, test_key in test_items:
-            report_dir = self.ref_id_map.get(test.model_id) or test_key
-            self.progress.register(test_key, test.model_id, report_dir=report_dir)
-
-        manifest = BatchManifest(
-            batch_id=0,
-            work_dir=self.config.work_dir,
-            manifest=manifest_map,
-        )
-        manifest.save()
-
-        n_workers = max(1, self.config.parallel)
-        print(
-            f"Running {total} tests via persistent workers "
-            f"(parallel={n_workers}, timeout={self.config.timeout}s/test)",
-            file=sys.stderr,
-        )
-        dashboard = self.config.work_dir / "dashboard.html"
-        print(f"Live progress: {dashboard.resolve().as_uri()}", file=sys.stderr)
-
-        # Start workers concurrently — each pays the library-load cost once.
-        workers: list[DymolaWorker] = [
-            DymolaWorker(i, self.config, self.dymola_config, di_cls)
-            for i in range(n_workers)
-        ]
-
-        start_all = time.monotonic()
-        print(f"Starting {n_workers} Dymola worker(s)...", file=sys.stderr)
-
-        worker_ready: dict[int, bool] = {}
-        ready_lock = threading.Lock()
-
-        def _start_one(w: DymolaWorker):
-            t0 = time.monotonic()
-            try:
-                w.start()
-                dt = time.monotonic() - t0
-                with ready_lock:
-                    worker_ready[w.worker_id] = True
-                print(f"  Worker {w.worker_id}: ready ({dt:.1f}s)", file=sys.stderr)
-            except Exception as exc:
-                with ready_lock:
-                    worker_ready[w.worker_id] = False
-                print(f"  Worker {w.worker_id}: start FAILED — {exc}", file=sys.stderr)
-
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            futures = [pool.submit(_start_one, w) for w in workers]
-            for f in as_completed(futures):
-                f.result()  # propagate unexpected errors; start errors already printed
-
-        live_workers = [w for w in workers if worker_ready.get(w.worker_id)]
-        if not live_workers:
-            if self.progress is not None:
-                self.progress.finalize()
-            raise RuntimeError(
-                "All Dymola persistent workers failed to start. "
-                "See per-worker errors above. Try re-running with --batch to fall back "
-                "to the .mos script runner."
-            )
-        print(
-            f"  {len(live_workers)}/{n_workers} workers ready in "
-            f"{time.monotonic() - start_all:.1f}s",
-            file=sys.stderr,
-        )
-
-        # Dispatch: shared queue, one thread per live worker.
-        # Workers that die mid-run get one restart attempt per test.
-        MAX_RESTARTS_PER_WORKER = 3
-        di_cls_local = di_cls
-
-        work_queue: queue.Queue[Optional[tuple]] = queue.Queue()
-        for item in test_items:
-            work_queue.put(item)
-        for _ in live_workers:
-            work_queue.put(None)  # sentinel per worker
-
-        results: list[TestRunResult] = []
-        results_lock = threading.Lock()
-        completed = [0]
-
-        def _record(test, test_key, tr: TestRunResult) -> None:
-            with results_lock:
-                results.append(tr)
-                completed[0] += 1
-                idx = completed[0]
-            label = f"{test_key} {test.model_id.rsplit('.', 1)[-1]}"
-            status = "ok" if tr.success else ("TIMEOUT" if tr.timed_out else "FAIL")
-            # Include phase timings in detail when available
-            parts = []
-            if tr.translation_wall is not None:
-                parts.append(f"xlate {tr.translation_wall:.1f}s")
-            if tr.sim_wall is not None:
-                parts.append(f"sim {tr.sim_wall:.1f}s")
-            if tr.success and parts:
-                detail_str = ", ".join(parts)
-            elif not tr.success:
-                detail_str = (tr.error_message or "")[:80]
-            else:
-                detail_str = None
-            _print_progress(
-                idx, total, label, status,
-                elapsed=tr.elapsed,
-                detail=detail_str,
-            )
-            if self.progress is not None:
-                self.progress.on_finish(
-                    test_key, success=tr.success, elapsed=tr.elapsed,
-                    detail=None if tr.success else (tr.error_message or "")[:120],
-                    timed_out=tr.timed_out,
-                )
-
-        def _try_restart(w: DymolaWorker) -> bool:
-            if w._n_restarts >= MAX_RESTARTS_PER_WORKER:
-                return False
-            w._n_restarts += 1
-            t0 = time.monotonic()
-            try:
-                w.start()
-                print(
-                    f"  Worker {w.worker_id}: restarted "
-                    f"({time.monotonic() - t0:.1f}s, attempt {w._n_restarts}/"
-                    f"{MAX_RESTARTS_PER_WORKER})",
-                    file=sys.stderr,
-                )
-                return True
-            except Exception as exc:
-                print(
-                    f"  Worker {w.worker_id}: restart FAILED — {exc}",
-                    file=sys.stderr,
-                )
-                return False
-
-        def _worker_loop(w: DymolaWorker):
-            while True:
-                item = work_queue.get()
-                if item is None:
-                    work_queue.task_done()
-                    return
-                test, test_key = item
-                try:
-                    # Ensure worker is alive; restart if needed
-                    if not w.is_alive():
-                        if not _try_restart(w):
-                            _record(test, test_key, TestRunResult(
-                                model_id=test.model_id, test_key=test_key,
-                                success=False, elapsed=0.0,
-                                error_message="Worker dead; restart exhausted",
-                            ))
-                            continue
-
-                    if self.progress is not None:
-                        self.progress.on_start(test_key, worker_id=w.worker_id)
-
-                    timeout = float(test.timeout if test.timeout is not None
-                                    else self.config.timeout)
-                    tr = w.run_test_with_timeout(
-                        test, test_key, timeout, progress=self.progress,
-                    )
-                    _record(test, test_key, tr)
-                    # After a timeout or worker exception, is_alive() is False;
-                    # restart happens lazily on the next iteration.
-                finally:
-                    work_queue.task_done()
-
-        threads = [
-            threading.Thread(target=_worker_loop, args=(w,), name=f"dym-pworker-{w.worker_id}")
-            for w in live_workers
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        # Tear down workers (library unload + process exit)
-        for w in workers:
-            w.close()
-
-        wall = time.monotonic() - start_all
-        total_work = sum(r.elapsed for r in results)
-        speedup = (total_work / wall) if wall > 0 else 0.0
-        n_ok = sum(1 for r in results if r.success)
-        n_timeout = sum(1 for r in results if r.timed_out)
-        n_fail = total - n_ok - n_timeout
-        print(file=sys.stderr)
-        print(
-            f"Persistent run complete: {n_ok} ok, {n_fail} failed, {n_timeout} timed out "
-            f"({wall:.0f}s wall, {total_work:.0f}s total work, {speedup:.1f}x parallel speedup)",
-            file=sys.stderr,
-        )
-
-        manifest.results = results
-        if self.progress is not None:
-            self.progress.finalize()
-        return [manifest]
+    # run_tests is inherited from PersistentRunnerBase.
