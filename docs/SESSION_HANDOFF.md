@@ -167,6 +167,7 @@ Same list as D87 handoff — none of these were touched this session:
 **Smaller follow-ups (C / D-tier)**
 
 * **`Dymola/linux/` baselines** — couples to A-tier item above; once timeouts are understood, accept.
+* **CLI subcommand parity + standardization** (ideas.md #62). Concrete known gap: `dstf compare` has no `--parallel` and runs serially even when the user has cores. Wider audit warranted across all subcommands. Hard constraint: same-or-reduction LOC; the right mechanism is argparse parent parsers (`parents=[...]`) so flag groups dedupe across subcommands. ~½ day, net-negative LOC.
 * **Dymola batch FMU export** (`TODO(batch-fmu-export)`). ~30-50 LOC `.mos` script work; deferred until a batch-only codebase actually needs it.
 * **Persistent-worker Python** (ideas.md #58). Mirrors Julia D77→D78. Defer until perf ceiling hits.
 * **Live edge mirror for box-resize drag** (D85 follow-up). Snap-on-release UX is acceptable today; revisit if any user actually misses live mirror.
