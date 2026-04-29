@@ -1,156 +1,140 @@
-# Session handoff — DSTF tube taxonomy + tech-debt sweep
+# Session handoff — DSTF persistent-worker abstraction + JS scorer parity floor
 
-**Date**: 2026-04-25
-**Covers**: D80 through D87 (nine-arc session)
-**State at HEAD** (commit `d494d7f`):
-- **837 tests passing + 0 skipped, 0 regressions**
-- **5 simulator backends**: Dymola, FMPy, OpenModelica, Julia/MTK, Python
-- **3 test libraries**: `ModelicaTestingLib` (11 tests), `JuliaMtkTestingLib` (8 tests), `PythonTestingLib` (3 tests) — points-mode parity test in each
-- **All 6 comparison modes window-aware end-to-end in JS** (NRMSE, tube, points, range, event-timing CLI-authoritative, dominant-frequency)
-- **All three declared-list editors share `createDeclaredItemsTable` scaffold** — event-timing, points, dominant-frequency. Mode-specific bits (column accessors, match algorithms, plot integration) stay per-IIFE; the helper handles slot mounting, table shell, +add / ✕, refresh lifecycle.
-- **Tube modes finalized at three names** — `band` (constant offset around ref), `rel` (fraction of |ref|), `abs` (literal y-bounds — was `absolute`). Hard-validated, no aliases, no fallbacks.
-- **Points editor is feature-complete in the browser**: multi-slot mount, shift+click/drag/right-click parity with tube + dom-freq via `createPointPlotEditor`, native Plotly shape-drag for box resize with relayout-listener mirror, mode-switch tolerance conversion with near-zero protection.
+**Date**: 2026-04-29
+**Covers**: D88 (persistent-worker refactor + bug fixes) → D89 (audit-driven debt sweep + JS scorer parity)
+**State at HEAD** (commit `5d72bd6`):
+- **842 tests passing + 3 expected optional-dep skips, 0 regressions** (full suite runs in ~4½ min on Linux WSL)
+- **5 simulator backends, 3 test libraries** unchanged
+- **All five live-preview comparison modes are now JS↔Python parity-tested** — `nrmse`, `tube`, `range`, `points`, `dominant-frequency`. The sixth (`event-timing`) stays CLI-authoritative per design (no JS scorer to drift). Test at `tests/test_scorer_parity.py`; deliberate JS mistuning fails it with a per-leaf diagnostic.
+- **Persistent-worker abstraction extracted** — `Worker` ABC + `PersistentRunnerBase` template-method class in `simulators/base.py` own the dispatch loop; each persistent runner shrank by 150-180 lines (498 lines of duplicated boilerplate eliminated). Adding a new persistent backend is now a ~30-line job (set `worker_cls` + `backend_label` + override 2-3 hooks).
+- **CLI runner selection is registry-driven** — zero backend-name strings in selection logic. New persistent backends plug in by overriding `persistent_runner_cls()` + `preflight()` on their runner classes; no CLI edit.
+- **Capability declarations are honest at registration** — `@register` decorator validates that flagged capabilities have matching method overrides; caught one stale `FMU_EXPORT` flag (DymolaRunner batch class) and produced a `TODO(batch-fmu-export)` placeholder.
+- **`comparator.py` split** into `types.py` (85 LOC dataclasses) + `algorithms.py` (1023 LOC pure compute) + `comparator.py` (428 LOC orchestration, was 1424).
+- **`plot_comparison.py`'s 444-line `_build_template_context` is now a 75-line orchestrator** over 9 focused `_build_*` helpers.
 
-**Naming**: As of D81, the tool is **Dynamic Systems Testing Framework (DSTF)**; CLI is `dstf`; Python import root is `dstf`. Historical plans/specs under `docs/superpowers/` and D1–D79 entries in `docs/decisions.md` retain the old `modelica-testing` / `final-only` names — that's by design (snapshots of past state).
+**Cross-OS validation**: User confirmed Windows + Linux runs both work end-to-end this session. Linux Dymola via the `/usr/local/bin/dymola` wrapper script (the bare `bin64/dymola` binary fails because it bypasses the `LD_LIBRARY_PATH` setup the wrapper does — DEBT marker added at the worker construction site).
 
 ---
 
 ## Session arc
 
-Nine conceptually distinct arcs over one long session. Each is a multi-commit unit on `main`:
+Two arcs over one session. Each is a multi-commit unit on `main`:
 
 | Arc | Range | Theme |
 |---|---|---|
-| **D80** | `9e1954e` → `53eaa34` (11 commits) | Python-driven tests as a 5th backend — `PythonRunner` + `PythonTestingLib` (SimpleRamp scipy + ConstantCsv pure-data-loader). The CSV loader is the architectural proof that the backend abstraction isn't secretly simulator-shaped. |
-| **D81** | `37e7056` → `78bd4da` (4 commits) | Full tool rename: `modelica_testing` → `dstf`, `--final-only`-style flag aliases swept too, brand throughout docs + memory + settings. Clean break, no back-compat alias. |
-| **Range fixes + cross-metric consistency** | `821b3c2` → `959a92d` (6 commits) | systematic-debugging surfaced 4 cross-cutting issues: range JS scorer ignored window (Bug 1), bound lines drew full-width (Bug 2), tube scorer had latent same-class bug, nrmse/final-only used CLI-cached values (silent no-op on window edits). Extracted `_sliceLeafTrajectory` helper, applied to every JS scorer + plot decorator. Bug 3 (Plotly autorange-stuck-after-shape-edit) characterized as non-reproducing via state-mutation path; left a regression test as guard. Cross-metric matrix locked in as parameterized regression. |
-| **D82** | `4647ee4` → `38ff4a3` (5 commits) | Event-timing declared-events editor. CLI gained `events: Optional[list[dict]]` field; declared list claims nearest auto-detected actual within per-event tolerance. JS editor: table + detect-from-{ref,actual} + live match column. Stays CLI-authoritative for pass/fail. |
-| **D83** | `bd626a9` (1 commit) | Baseline-free NO_REF short-circuit. `ComparisonMode.is_baseline_free()` overridable per mode; comparator skips NO_REF when every leaf scorer can run without ref. Surfaced + fixed two adjacent bugs: `resolve_mode` wasn't forwarding `events` to EventTimingConfig (D82 oversight) and `_compare_dominant_frequency` unconditionally required ref FFT. |
-| **D84** | `e975aae` → `0b8d0b2` (9 commits) | Final-only → **points** mode rename + capability expansion. Per-point ref-relative or absolute targets, abs/rel y-tolerance modes, **x-axis tolerance (`time_tolerance`)** for solver-timing-drift cases. New JS editor with table, "📸 Snapshot from ref" button, zero-point fast-path placeholder. Plot: diamond marker + translucent tolerance box per point. |
-| **D85** | `5a02d9f` → `a05b829` (8 commits) | Range autorange fix (transparent-marker scatter trace per declared bound, so double-click reset includes the bound) + cross-library points parity tests + points editor polish. Editor polish: multi-slot mount via `querySelectorAll`, shift+click/drag/right-click via `createPointPlotEditor`, Plotly-native box resize wired through a `plotly_relayout` listener that re-derives `pt.time_tolerance` and `pt.tolerance` from new bounds and snaps back centered. Mode-switch tolerance conversion (abs↔rel) preserves visible box size; near-zero target protection rejects abs→rel switches that would produce > 1000% rel fractions. Closes ideas.md #61 (points draggable plot markers, full scope). |
-| **D86** | `ec3fa8f` (1 commit) | Tube-mode taxonomy clean-up. Three named modes — `band` (constant offset, was also called `abs`), `rel`, `abs` (literal y-bounds, was `absolute`). Removed legacy `"abs"→"band"` alias and the unset-mode + both-abs+rel max() fallback. Hard-validated at the comparator entry. Silent-flip risk for `"abs"` (band → literal y-bounds) handled by hard-raise on any unrecognized mode. Verified zero pre-rename `"abs"`/`"absolute"` usage in repo + TRANSFORM-UnitTests before shipping. 10 test call sites updated to declare explicit modes; `test_max_of_abs_and_rel` rewritten as `test_min_width_floors_rel_at_zero_crossing` using the modern `tube_min_width` API. |
-| **D87** | `12d9195` + `d494d7f` (2 commits) | Tech-debt sweep. Arc 1: dead code (-46 LOC across 4 files) — orphan `interpOnRef` / `updateSummary` / 4-file `SPEC_PATH` dangling pipeline / cli.py redundant `import sys`. Arc 2: extracted `createDeclaredItemsTable` helper (-108 LOC net) — three declared-list editors (event-timing, points, dom-freq) now share slot-mounting + table-shell + +add/✕ scaffolding via column-spec pattern. Honest re-estimate: handoff implied 600-1000 LOC; actual recovery ~108. Mode-specific bits genuinely diverge. Real value is uniformity for future declared-list modes. |
+| **D88** | `7e68e61` → `1e1983e` (4 commits) | **Persistent-worker abstraction.** Started from a Linux OM run that surfaced three bugs in the persistent-worker code path: (BUG-A) "All workers failed to start. Aborting." was actually a `print`+`return` that let read/compare/report run on empty results producing fake "ok" outcomes; (BUG-B) Dymola wheel-extract cache used a path-only `.extracted` marker that happily reused a 32-byte stub `dymola_interface.py` even after the wheel was replaced; (BUG-C) duplicate `Running N tests...` line at `cli.py:200`. After fixing those + cleanup of dead `@register("Julia.Persistent")` + xdg-open spam suppression for headless Linux, refactored the three persistent runners into a `Worker` ABC + `PersistentRunnerBase` template (Phases 1-5) + docs. Each persistent runner shrank ~50% by line count; the dispatch logic exists once. CLI's `_get_runner` lost all backend-name strings via `persistent_runner_cls()` + `preflight()` classmethod hooks. |
+| **D89** | `9af3f57` → `5d72bd6` (7 commits) | **Audit-driven debt sweep + JS scorer parity floor.** A code-review pass after D88 surfaced: (#1) `Config.simulator = "Dymola"` was a literal-as-sentinel default, causing `--simulator Dymola` from CLI to be silently overridden by testing.json — fixed via `Optional[str] = None`. (#2) capability validator at `@register` decoration time. (#3) argparse setup extracted from `main()` into `build_arg_parser()` + module-scope `_COMMANDS` table + a parity test that catches subcommand/dispatch-table drift. Then per user direction: option C JS↔Python scorer parity test (initially 4 modes, extended to 5 to include `dominant-frequency` after discovering its FFT-based JS scorer does exist despite vision.md claiming otherwise). Cross-reference markers at every Python↔JS scorer pair so a `comparator.py` change reminds the dev to update the JS too. Line-ending normalization via `.gitattributes` + one-time renormalize cleared 30 files of CRLF/LF noise. `comparator.py` split into `types.py` + `algorithms.py` + `comparator.py`. `plot_comparison.py`'s 444-line `_build_template_context` extracted into 9 focused helpers + a 75-line orchestrator. |
 
-Total: 47 commits.
+Total: 11 commits. (Plus one user housekeeping commit `95831d4` removing `.claude/settings.local.json` from tracking — unrelated to D88/D89 themes.)
 
-Each arc has a corresponding plan + spec under `docs/superpowers/`:
-- `plans/2026-04-24-python-driven-tests.md` — D80
-- `plans/2026-04-24-dstf-rename.md` — D81
-- `plans/2026-04-24-range-metric-fixes.md` — Range fixes
-- `plans/2026-04-24-event-timing-editor.md` — D82
-- `specs/2026-04-24-points-mode-design.md` + `plans/2026-04-24-points-mode.md` — D84
-
-D83 + D85 had no plan files (D83 a single small fix in-conversation; D85 a sequence of regression-by-regression fixes from real-browser feedback, each commit message capturing what was learned).
+Each arc has commit messages capturing per-step rationale; refer to `git log` for the full audit trail.
 
 ---
 
-## Dev env (unchanged)
+## Dev env (unchanged from previous handoff)
 
 ```bash
-# Core (post-rename)
-uv pip install -e ".[dev,fmpy,om]"
-uv pip install pytest-playwright
-uv run playwright install chromium
-
-# Julia (D77+)
-curl -fsSL https://install.julialang.org | sh -s -- -y --default-channel 1.11
-cd examples/julia/JuliaMtkTestingLib && julia --project=. -e 'using Pkg; Pkg.instantiate()'
-
-# Python (D80+)
-uv pip install scipy   # for SimpleRamp; ConstantCsv has stdlib-only deps
+# One-time setup
+uv pip install -e ".[dev]"           # adds scipy now (Python e2e tests need it)
+uv pip install pytest-playwright     # JS↔Python parity tests need this
+uv run playwright install chromium   # ~120 MB; first time only
 ```
 
-**Venv drift caveat** (persisted): `uv run` may resolve miniforge3's pytest, NOT the project venv. If a hard dep errors as missing, install into whichever Python `uv run which pytest` points at (typically `/home/fig/miniforge3/bin/pip install X`).
+scipy moved into `[dev]` extras this session — was previously implicit on miniforge's pytest, but `uv run pytest` on a clean `.venv` would fail the `_scipy_available` subprocess check. New users can now do the standard `uv pip install -e ".[dev]"` and get the full suite running.
 
 ---
 
 ## Backends (5, all production)
 
-| Backend | Runner | Transport | Persistent | Typical use |
-|---|---|---|---|---|
-| **Dymola** | `DymolaRunner` | Python interface (default) / `.mos` batch | ✓ default | Proprietary Modelica |
-| **FMPy** | `FmpyRunner` | `fmpy.simulate_fmu` in-process | per-test thread | Pre-built FMUs |
-| **OpenModelica** | `OpenModelicaRunner` | OMPython ZMQ (default) / `omc` batch | ✓ default | Open-source Modelica |
-| **Julia / MTK** | `JuliaRunner` | subprocess (batch) / stdin-JSON pipe (D78 persistent) | ✓ default | ModelingToolkit / Dyad (Dyad untested) |
-| **Python** | `PythonRunner` | subprocess per test (batch) | ✗ MVP | Arbitrary Python: scipy, CSV, pandas, HTTP, ... |
+Unchanged from prior session — but the persistent-worker plumbing under each is significantly cleaner now:
 
-References partition by `<reference_root>/<Backend>/<os>/ref_NNNN.json`. CLI's `_get_runner(persistent=True)` swaps to persistent variants where available; falls back to batch on `RuntimeError`.
+| Backend | Class | Persistent runner | Worker class | Capability flags |
+|---|---|---|---|---|
+| **Dymola** | `DymolaRunner` | `PersistentDymolaRunner` | `DymolaWorker` | PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT |
+| **OpenModelica** | `OpenModelicaRunner` | `PersistentOpenModelicaRunner` | `OpenModelicaWorker` | PERSISTENT_WORKERS, BATCH_FALLBACK |
+| **Julia/MTK** | `JuliaRunner` | `PersistentJuliaRunner` | `JuliaWorker` | PERSISTENT_WORKERS, BATCH_FALLBACK |
+| **FMPy** | `FmpyRunner` | — | — | PERSISTENT_WORKERS |
+| **Python** | `PythonRunner` | — | — | BATCH_FALLBACK |
+
+The persistent runners all subclass `PersistentRunnerBase` (in `simulators/base.py`); their workers subclass `Worker` (same module). The orchestration template owns startup/dispatch/teardown; backends fill in `worker_cls`, `backend_label`, `make_worker`, optional `setup_before_workers`, `preflight`, `starting_workers_message`. See `docs/extensibility.md` §3 "Persistent-worker contract" — the canonical worked example is `PersistentOpenModelicaRunner` (smallest of the three).
+
+Capability honesty validator at `simulators/__init__.py:_validate_capabilities` enforces that declared flags have matching method overrides. Stale flags fail at module-import time (TypeError) instead of later `NotImplementedError`.
 
 ---
 
-## Reporter-as-IDE — feature complete
+## Reporter-as-IDE — feature complete + parity-tested
 
-| Mode | CLI window-aware | JS live scorer window-aware | Plot decoration window-aware | Editor |
-|---|---|---|---|---|
-| nrmse | ✓ | ✓ (live-ported D-range) | N/A | auto-derived inputs |
-| tube | ✓ | ✓ (D-range fix) | ~ (delegates to editor when active) | shape-drag + control-point editor |
-| points (D84/D85) | ✓ | ✓ | ✓ (translucent box + diamond, native shape-drag for resize) | declared-points table + Snapshot + shift+click/drag/right-click |
-| range | ✓ | ✓ (D-range fix) | ✓ (dual-style gray/red, D-range fix) | shape-drag |
-| event-timing | ✓ | N/A (CLI-authoritative) | ✗ (overlay only) | declared-events table + Detect (D82) |
-| dominant-frequency | ✓ | ✓ | ✓ (spectrum subplot) | declared-peaks table + Detect + draggable markers |
+Status unchanged from prior session, but the **JS scorer drift surface is now mechanically tested**:
 
-Cross-cutting helpers introduced D-range:
-- `_sliceLeafTrajectory(leaf, traj)` — reads `leafState[leaf.path].window`, returns `{refTime, refValues, actTime, actValues}` clipped. Used by every window-aware scorer.
-- `_minDeltaInBox(times, values, tLo, tHi, target)` — D84 — Python `_min_delta_in_box` mirror with zero-crossing detection on adjacent linear segments. Used by points scorer + plot decorator.
+* `tests/test_scorer_parity.py` — 1 playwright test, 10 fixtures (5 modes × 2 verdicts each). Renders synthetic ref/act trajectories into `interactive.html`, runs the actual `_compare_*` Python functions for the authoritative verdict, evaluates `MODE_SCORERS[mode](leaf)` from JS via `page.evaluate()`, asserts every leaf agrees. Disagreements are reported per-leaf so a single failure surfaces full-extent drift.
+* Cross-reference markers at every Python↔JS scorer pair: `comparator.py` `_compare_*` sites point at the JS line; `interactive.js` `MODE_SCORERS` entries point at the Python function. `git grep parity-test` finds them all.
+* vision.md "Live preview policy" updated — D75-D76 added the FFT scorer; the doc had said `dominant-frequency` was CLI-authoritative, but JS has had a live FFT scorer since then. Doc now reflects reality.
+
+Drift-detection has teeth: deliberately mistuning the JS NRMSE scorer (`nrmse < tol * 0.001`) makes the test fail with `"nrmse (pass): Python=True, JS=False — params={'tolerance': 0.01}"`. Same for `dominant-frequency`. Restoring the JS makes it pass.
 
 ---
 
 ## Plan-quality lessons learned this session
 
-Worth carrying forward to future plans:
+Worth carrying forward:
 
-1. **Exhaustive grep before listing files**: D84 Task 1 listed 4 source files to rename; subagent found 3 more with module-level imports of the renamed class (`schema_export.py`, `tree_spec.py`, additional `comparator.py` call-sites). Future rename plans should `grep -rln <old-name> src/` before drafting the file list.
-2. **Algorithm sanity check on new helpers**: D84 Task 4's `_min_delta_in_box` initially missed zero-crossing detection — a piecewise-linear curve can pass through target between samples without any sample seeing delta=0. Subagent caught it; I propagated the fix to the JS port in Task 5 by calling it out explicitly. Lesson: if a helper claims "find min over [a, b] of a piecewise-linear function," it must either evaluate at vertices OR detect zero-crossings.
-3. **Sed identifier vs string**: D84 Task 9's broad `final_only → points` sed swept too aggressively, rewriting 5 places where `final_only` was a Python identifier (parameter, CLI flag) when they should have been `default_points`. Manual skim caught all of them; future plans should distinguish identifier renames from string-content renames.
-4. **Pre-known plan corrections accumulate**: each plan inherits the prior session's discovered corrections. The set as of D84:
-   - Playwright test imports: `from test_interactive_playwright import (...)` not `from tests.test_interactive_playwright`.
-   - `leafState` is a script-scope const, not `window.leafState`.
-   - Global tree variable is `TREE_VIEW`, not `SPEC_TREE`.
-   - `initLeafState()` merges `params` with `mode_values` (mode_values wins) — fixture overrides need both.
-   - Don't rely on linspace-grid float-exactness; use piecewise-constant or hand-tuned trajectories for deterministic tests.
+1. **Read the vision/usage docs before recommending architectural alternatives.** Mid-session I proposed Pyodide / hybrid-server alternatives to the JS↔Python duplication without having read `vision.md:98-110` — which already explicitly forbids server-mode (`No local server; no live-apply; no auto-rerun`), explicitly defers JS unit tests (`unless the reporter becomes a regression source`), and pins a 5 MB embedded payload budget that Pyodide alone violates. The user caught it; I had to course-correct. Lesson: treat documented design constraints as load-bearing, not as optional context. A 30-second `grep -n "interactive\|reporter\|live-preview" docs/vision.md` would have caught it.
+
+2. **Verify "this mirrors that" claims by searching for the counterpart, not by assuming.** I pitched extending parity testing to `MODE_PLOT_CONTRIBUTIONS` thinking it mirrored Python; turns out it has no Python counterpart at all (Plotly traces are JS-only). One `grep` for the supposed Python function would have caught it. Lesson: when proposing a parity test, the first action is `grep` for the named Python counterpart in `src/`; if it doesn't exist, the parity surface doesn't exist.
+
+3. **Sentinel-as-default is a bug, not a style choice.** `Config.simulator = "Dymola"` looked like a reasonable default but collapsed two semantically-distinct cases ("user explicitly requested Dymola" vs "user didn't specify") into one indistinguishable string. The bug-symptom — `--simulator Dymola` getting silently overridden by testing.json — was not surfaced by any test until I added one. Future audits: any field where the default is a non-`None` literal that gets compared against in resolution logic deserves a re-think.
+
+4. **Capability declarations need mechanical enforcement.** D86's tube taxonomy showed similar drift potential; this session's `Capability.FMU_EXPORT` on `DymolaRunner` (declared, never implemented at the batch level) shows it's a real failure mode. The `@register` validator catches it at module-import time.
+
+5. **Line-ending hygiene needs explicit `.gitattributes` for cross-OS dev.** WSL on Windows + Windows-native tooling produced 30 CRLF working-tree files that survived multiple sessions as persistent `git status` noise. `.gitattributes` with `* text=auto eol=lf` plus a one-time renormalize fixed it. New contributors get LF in the index automatically.
 
 ---
 
 ## Known limitations (deferred by design)
 
+Updated from prior session:
+
 | Item | Why | Workaround |
 |---|---|---|
 | Event-timing live JS scorer | Event-pairing algorithm non-trivial; CLI authoritative | Pill shows CLI result until next CLI rerun |
+| **Dymola batch FMU export** | `translateModelFMU` works in persistent mode (via `DymolaInterface`); the `.mos`-driven batch path is declared as a capability but not yet wired. `TODO(batch-fmu-export)` marker in `DymolaRunner.export_fmu`. | Use persistent mode (drop `--batch`) for cross-backend chains; or contribute the `.mos`-script implementation (~30-50 LOC) |
+| **`_find_top_n_peaks` JS↔Python parity** | Used for "Detect peaks from reference" UX in dominant-frequency authoring. Drift = different default peak suggestions in UI vs CLI. **Doesn't affect actual test verdicts.** Authoring-UX correctness only. | Skip until a real drift case appears |
+| **`renderModeControlsHtmlJs` parity** | HTML-string parity testing is brittle (whitespace, attribute order). Python schema is the source of truth; JS is "a dumb walker" per its own comment. | Trust the Python golden-file snapshots |
 | Tube per-point-per-side width modes | JS UI stores; polygon uses global mode | Use synced mode |
 | Window brush one-shot per activation | UX choice | Click brush again to redo |
 | Multi-select wrap in tree editor | Deferred | Wrap single, then move siblings |
 | JuliaRunner FMU export | `MTK.generate_fmu` not wired | Run directly via Julia runner |
 | Persistent-worker Python | D77→D78 progression not yet applied | Subprocess-per-test sufficient for typical suites |
 | Dyad tests | Untested (should work — compiles to MTK) | Port a sample when concrete need arises |
-| Bug 3 reproduction (Plotly autorange-stuck) | Doesn't reproduce via state-mutation path | Characterization test guards current behavior; investigate again with concrete in-browser repro |
-| ~~Points mode draggable markers~~ | DONE in D85 | — |
-| Points mode live edge mirror during drag | Plotly doesn't fire `plotly_relayouting` for shape edits — only the final `plotly_relayout` on release. True live mirror would require disabling shape-edit globally and reimplementing range + points box drag through custom mousedown/move/up | Snap-on-release accepted as the UX for now. Unblocks if revisited. |
+| Bug 3 reproduction (Plotly autorange-stuck) | Doesn't reproduce via state-mutation path | Characterization test guards current behavior |
+| Points mode live edge mirror during drag | Plotly doesn't fire `plotly_relayouting` for shape edits | Snap-on-release accepted |
 | ModelicaTestingLib EventTest / IntervalTest / NoUnitTest / SimulateOnlyTest on Julia | Deferred | — |
-| PointsCheckTest Dymola/windows reference | Generated locally for OM/Julia/Python/FMPy; Dymola needs Windows host | `dstf run --filter "*PointsCheckTest" --accept` from a Windows shell |
+| **`Dymola/linux/` baselines empty** | User accepted Linux Dymola baselines this session; some timed out / failed. The framework runs but the regression set hasn't fully landed. | Investigate timeouts on the failing tests; re-run with longer `--timeout` or skip-list the chronically slow ones |
 
 ---
 
 ## Pre-session sanity
 
 ```bash
-git log --oneline -15                                         # confirms D80..D87
-uv run pytest -q                                              # expect 837 passed + 0 skipped, 0 failures
+git log --oneline -15                                         # confirms D88..D89 (HEAD = 5d72bd6)
+uv run pytest -q --ignore=tests/test_interactive_html.py      # expect 842 passed + 3 skipped, 0 failures
 export PATH="$HOME/.juliaup/bin:$PATH" && uv run pytest -q    # same on Julia-installed envs
 
 # Smoke tests (each should produce PASS):
-uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run
+uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --simulator Dymola
+uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --simulator OpenModelica
 uv run dstf --config examples/julia/JuliaMtkTestingLib/Resources/ReferenceResults/testing.json run
 uv run dstf --config examples/python/PythonTestingLib/Resources/ReferenceResults/testing.json run
 uv run dstf --config examples/fmu/testing.json run   # requires reference-fmus-binaries/
 ```
 
-**Working-tree noise** as of session end: ~33 files (LICENSE, docs/llm_responses, ref JSONs, fixture text) had pre-existing line-ending or whitespace deltas sitting unstaged from an earlier session. Same pattern as commit `174d19f` ("no message"). Not from D80–D87 work. Decide whether to commit / revert / investigate at session start.
+**Working tree should be clean** — the CRLF/LF noise from prior sessions is gone after this session's `.gitattributes` normalization.
 
 ---
 
 ## Candidate next moves
 
-User's explicit roadmap from start of session, with status at HEAD:
+User's roadmap (`#1`-`#8` from the D80-D87 session) is intact; this session was orthogonal cleanup. Status:
 
 | # | Item | Status |
 |---|---|---|
@@ -159,58 +143,50 @@ User's explicit roadmap from start of session, with status at HEAD:
 | 3 | Event-timing HTML editor | ✓ D82 |
 | 4 | Final-only → point-based | ✓ D84 |
 | 5 | Baseline-free NO_REF short-circuit | ✓ D83 |
-| 6 | Code review / tech-debt review | ✓ D86 + D87 |
+| 6 | Code review / tech-debt review | ✓ D86 + D87 + this session (D88+D89) |
 | 7 | New capabilities (experiment alignment, Dyad, Julia recognizer, FMU export matrix) | **pending** |
-| 8 | Docs cleanup throughout (user guides, technical manual) | ✓ commit `397c4d6` |
+| 8 | Docs cleanup throughout | ✓ commit `397c4d6` |
 
 ### Next session — top-of-stack candidates
 
-**B-tier (recommended starts)**
+**A-tier (concrete user need this session)**
 
-* **#7 capabilities**: pick one to start with —
-  - **Experiment-data alignment preprocessing** (ideas.md #57). Preprocessing `ComparisonMode` wrapper that does time-offset/amplitude-scale alignment before scoring. The `points` mode with `time_tolerance` already covers the discrete-checkpoint case; this would be the continuous-trajectory variant (pyfunnel-style). Needs a concrete user use case before building (D66 economy-of-tools guard). ~3-5 days.
-  - **MTK FMU export** via `ModelingToolkit.generate_fmu` (~1 day). Wires Julia into the `Capability.FMU_EXPORT` cross-backend chain.
-  - **Dyad validation** (~½ day). Port one Dyad sample, prove the "Dyad → MTK → runner" claim.
-  - **Julia source recognizer** (~1 day). Auto-discover Julia tests from `.jl` files (parallel to Modelica `.mo` UnitTests-annotation discovery). Removes the need to hand-author `test_spec.json` for Julia libraries.
+* **Investigate Linux Dymola timeouts.** User ran `--accept` on Linux this session and saw "several timeouts and failures." The framework abstraction held up; the actual test data is the question. Worth running with `--report` (no `--accept`) to characterize what failed visually: solver-config issues, missing dependencies, real timeouts, or platform-specific solver behavior. Establish proper `Dymola/linux/` baselines once the failing tests are understood.
+
+* **Validate against `TRANSFORM-UnitTests`** as the strongest regression signal. The persistent-worker / CLI changes in D88+D89 touched the call paths every external user hits. Running against a real downstream library with custom recognizers + dependencies + baselines is the strongest "did we regress anything" check available without a Windows host.
+
+**B-tier (recommended starts for #7 capabilities)**
+
+Same list as D87 handoff — none of these were touched this session:
+
+* **Experiment-data alignment preprocessing** (ideas.md #57). ~3-5 days. Needs a concrete user use case.
+* **MTK FMU export** via `ModelingToolkit.generate_fmu` (~1 day). Wires Julia into the `Capability.FMU_EXPORT` cross-backend chain.
+* **Dyad validation** (~½ day). Port one Dyad sample.
+* **Julia source recognizer** (~1 day). Auto-discover Julia tests from `.jl` files.
 
 **Smaller follow-ups (C / D-tier)**
 
-* **Persistent-worker Python** (ideas.md #58). Mirrors Julia D77→D78. Pays off for suites with hundreds of Python tests. Defer until perf ceiling hits.
-* ~~**Points mode draggable markers** (ideas.md #61).~~ Done in D85.
-* ~~**Shared declared-items editor extraction** (D82 follow-up; ideas.md #60).~~ Done in D87. Net -108 LOC; the helper is `createDeclaredItemsTable`. A 4th declared-list mode would now cost ~80-100 LOC of column specs.
-* **Live edge mirror for box-resize drag** (D85 follow-up). Requires disabling global `edits.shapePosition` and reimplementing range + points box drag as custom mousedown/move/up handlers. Snap-on-release UX is acceptable today; revisit if any user actually misses live mirror.
-* **#53 `check-openmodelica` / `check-julia` CLI subcommands**. Symmetric with `check-dymola`.
-* **#54 OM FMU export** via `buildModelFMU`.
-* **#47 time-array dedup** / bump embedded-sample cap.
+* **`Dymola/linux/` baselines** — couples to A-tier item above; once timeouts are understood, accept.
+* **Dymola batch FMU export** (`TODO(batch-fmu-export)`). ~30-50 LOC `.mos` script work; deferred until a batch-only codebase actually needs it.
+* **Persistent-worker Python** (ideas.md #58). Mirrors Julia D77→D78. Defer until perf ceiling hits.
+* **Live edge mirror for box-resize drag** (D85 follow-up). Snap-on-release UX is acceptable today; revisit if any user actually misses live mirror.
+* **`check-openmodelica` / `check-julia` CLI subcommands**. Symmetric with `check-dymola`.
+* **OM FMU export** via `buildModelFMU`.
+* **`_find_top_n_peaks` JS parity** (~30 min) — closes the last scoring-related JS↔Python drift surface, but only matters for the "Detect peaks from reference" UX feature.
+* **`reference_store.py` review** (~1-2 hr) — 933 lines but coordinated; less clear there's a clean seam without first reading carefully.
 * **Visual-regression Playwright screenshots**.
-* **Phase 9 dataset types** (E-tier foundational): Events / Spectrum / Distribution / Scalars / Field. Unlocks Fréchet (#23), spectral coherence (#24), pyfunnel x-tolerance (#25), ISO 18571 (#26).
+* **Phase 9 dataset types** (E-tier foundational): Events / Spectrum / Distribution / Scalars / Field.
 
 ---
 
 ## Starter prompt for the next session
 
-> Resuming DSTF (Dynamic Systems Testing Framework) at commit `d494d7f` on `main`. The previous session was a 9-arc marathon (D80 → D87) that closed out the user's whole roadmap items #1-#6. Highlights:
-> - Added Python as a 5th backend with the architectural-proof CSV-loader test (D80).
-> - Renamed the tool from ModelicaTesting to DSTF (D81), no back-compat alias.
-> - Fixed three range-metric bugs and extracted `_sliceLeafTrajectory` for cross-metric window-edit consistency.
-> - Added event-timing declared-events editor (D82), points-mode rename + x-axis tolerance (D84), baseline-free NO_REF short-circuit (D83), points editor polish to feature-complete (D85).
-> - Tube-mode taxonomy clean-up (D86): three names — `band` (constant offset around ref), `rel` (fraction of |ref|), `abs` (literal y-bounds, was `absolute`). Hard-validated, no aliases, no fallbacks. `"abs"` flipped meaning, mitigated by hard-raise on unrecognized modes.
-> - Tech-debt sweep (D87): -46 LOC dead code (orphan JS functions, dangling SPEC_PATH pipeline, redundant import); extracted `createDeclaredItemsTable` shared scaffold across event-timing/points/dom-frequency editors (-108 LOC net on `interactive.js`).
+> Resuming DSTF (Dynamic Systems Testing Framework) at commit `5d72bd6` on `main`. The previous session was a 2-arc cleanup pass (D88: persistent-worker abstraction extraction + bug fixes from a Linux OM run; D89: audit-driven debt sweep + JS scorer parity floor). Highlights:
 >
-> **State at HEAD**: 837 passing, 0 skipped, 0 regressions. 5 backends, 3 fixture libraries. Reporter-as-IDE is feature-complete; declared-list editors share a single column-spec scaffold. `interactive.js` is 4762 LOC.
+> - 842 unit tests pass + 3 expected skips, 0 regressions. JS↔Python scorer parity for all 5 live-preview modes (`tests/test_scorer_parity.py`).
+> - `Worker` ABC + `PersistentRunnerBase` template in `simulators/base.py`; persistent runners shrank ~50%; new persistent backends are now ~30 LOC. CLI runner selection is fully registry-driven via `persistent_runner_cls()` + `preflight()` classmethod hooks (zero backend-name strings in `cli.py:_get_runner`).
+> - `comparator.py` split into `types.py` + `algorithms.py` + `comparator.py`. `plot_comparison.py`'s 444-line `_build_template_context` is now a 75-line orchestrator over 9 focused helpers.
+> - User confirmed Windows + Linux runs both work end-to-end. Linux Dymola via `/usr/local/bin/dymola` wrapper; bare `bin64/dymola` fails (DEBT marker on the worker construction site).
+> - Roadmap items #1-#6 + #8 closed. #7 (capabilities) still pending; A-tier next moves are characterizing Linux Dymola timeouts the user observed and validating against `TRANSFORM-UnitTests`.
 >
-> **Read first**: `docs/SESSION_HANDOFF.md` (this file), D80–D87 in `docs/decisions.md`, and the candidate next moves at the bottom of this file.
->
-> **Default next move — pick one**:
->
-> 1. **#7 New capability — pick one**: experiment-data alignment preprocessing (~3-5 days, needs concrete use case; the continuous-trajectory complement to points-mode `time_tolerance`), MTK FMU export (~1 day), Dyad validation (~½ day), or Julia source recognizer (~1 day).
->
-> 2. **#8 Docs cleanup** (~1-2 days). README.md is substantially out of date — still describes only Dymola. Add a "first 5 minutes" walkthrough that uses one of each backend.
->
-> **Smaller alternatives**: persistent-worker Python (mirrors Julia D77→D78 if perf ceiling hits), live edge mirror via custom drag handlers (D85 limitation), `check-openmodelica` / `check-julia` CLI subcommands (#53), OM FMU export via `buildModelFMU` (#54).
->
-> **Dev env prereqs** (if venv was recreated): `uv pip install -e ".[dev,fmpy,om]"` + pytest-playwright + chromium. Julia: `cd examples/julia/JuliaMtkTestingLib && julia --project=. -e 'using Pkg; Pkg.instantiate()'`. Python scipy for SimpleRamp + PointsCheck examples. Watch venv drift (miniforge vs project .venv).
->
-> **Working-tree noise as of session end**: ~33 files (LICENSE, llm_responses, ref JSONs, fixture text) had pre-existing line-ending or whitespace deltas unstaged from an earlier session — same pattern as commit `174d19f`. Decide whether to commit / revert / investigate before starting new work.
->
-> **Out of scope unless explicitly adopted**: Phase 9 dataset types, ML-driven anything, mid-stream refactor of stable abstractions (ComparisonMode / SimulatorRunner / MetricTree).
+> Pre-session sanity: `git log --oneline -15`, `uv run pytest -q --ignore=tests/test_interactive_html.py` (expect 842 passed + 3 skipped). Smoke each backend with the example testing.json files. CRLF/LF noise from prior sessions is gone.
