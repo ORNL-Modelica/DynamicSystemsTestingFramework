@@ -143,3 +143,29 @@ def test_should_review_sim_failed_with_failed():
     assert _should_review(FakeComparison(sim_success=False), filters) is True
     assert _should_review(FakeComparison(passed=False), filters) is True
     assert _should_review(FakeComparison(passed=True), filters) is False
+
+
+# ---------------------------------------------------------------------------
+# Parser <-> dispatch-table parity
+# ---------------------------------------------------------------------------
+
+
+def test_argparse_subcommands_match_dispatch_table():
+    """Every subcommand registered with argparse must have a handler in
+    ``_COMMANDS``, and vice versa. Catches drift when adding a new
+    subcommand to one site but forgetting the other."""
+    from dstf.cli import build_arg_parser, _COMMANDS
+
+    parser = build_arg_parser()
+    # subparsers action holds the subcommand registry
+    subparsers_action = next(
+        a for a in parser._actions
+        if isinstance(a, argparse._SubParsersAction)
+    )
+    parser_commands = set(subparsers_action.choices.keys())
+    dispatch_commands = set(_COMMANDS.keys())
+    assert parser_commands == dispatch_commands, (
+        f"argparse subcommands and _COMMANDS dispatch table drifted:\n"
+        f"  in argparse but not _COMMANDS: {parser_commands - dispatch_commands}\n"
+        f"  in _COMMANDS but not argparse: {dispatch_commands - parser_commands}"
+    )

@@ -150,6 +150,32 @@ class TestConfig:
         )
         assert config.simulator == "OpenModelica"
 
+    def test_explicit_dymola_cli_overrides_config_file(self, tmp_path):
+        """Regression: a CLI passing ``simulator="Dymola"`` is authoritative
+        even when testing.json says something else.
+
+        Pre-fix, ``Config.simulator`` defaulted to the literal string
+        ``"Dymola"`` and the resolution code used ``self.simulator == "Dymola"``
+        as a sentinel meaning "user didn't choose one." That collapsed the
+        two cases — explicitly chose Dymola vs. didn't choose — and let
+        testing.json silently override an explicit ``--simulator Dymola``.
+        Default is now ``None``; only ``None`` triggers file/auto-detect.
+        """
+        lib_dir = tmp_path / "Lib"
+        lib_dir.mkdir()
+        (lib_dir / "package.mo").write_text("package Lib end Lib;")
+        cfg_dir = tmp_path / "Resources" / "ReferenceResults"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "testing.json").write_text(json.dumps({
+            "source_path": str(lib_dir),
+            "simulator": "OpenModelica",
+        }))
+        config = Config(
+            config_file=str(cfg_dir / "testing.json"),
+            simulator="Dymola",  # CLI says Dymola
+        )
+        assert config.simulator == "Dymola"
+
     def test_reference_root_auto_detect(self, tmp_path, sample_models_dir):
         """When testing.json is in ReferenceResults/, that becomes reference_root."""
         ref_dir = tmp_path / "ReferenceResults"

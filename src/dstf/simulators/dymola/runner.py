@@ -63,7 +63,12 @@ class DymolaRunner(SimulatorRunner):
     capabilities = frozenset({
         Capability.PERSISTENT_WORKERS,  # DymolaInterface-based workers (default)
         Capability.BATCH_FALLBACK,      # .mos script runner (--batch flag)
-        Capability.FMU_EXPORT,          # reserved: Dymola can export FMUs (not yet wired)
+        Capability.FMU_EXPORT,          # via translateModelFMU; persistent path
+                                        # implements it natively. Batch-mode
+                                        # export is declared (so cross-backend
+                                        # chains run for batch-only codebases)
+                                        # but the actual .mos-driven export path
+                                        # is not yet wired — see export_fmu().
     })
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
     artifact_files = (
@@ -83,6 +88,25 @@ class DymolaRunner(SimulatorRunner):
     def persistent_runner_cls(cls):
         from .persistent_runner import PersistentDymolaRunner
         return PersistentDymolaRunner
+
+    def export_fmu(self, test: TestModel, output_dir: Path) -> Path:
+        # TODO(batch-fmu-export): write a `translateModelFMU(...)` .mos
+        # script + spawn `dymola -nowindow` against it, then locate the
+        # resulting .fmu in `output_dir`. Persistent variant
+        # (PersistentDymolaRunner.export_fmu) does the same call through
+        # the in-process DymolaInterface — share the FMU-locator helper
+        # but the spawn/parse plumbing has to be batch-specific.
+        # Why not done now: persistent is the default path; only codebases
+        # restricted to batch (no DymolaInterface available, e.g. CI
+        # without the wheel) actually need this. Cross-backend chains in
+        # batch mode currently no-op via the catch in cross_backend.py.
+        raise NotImplementedError(
+            "Dymola batch-mode FMU export is declared as a capability but "
+            "the .mos-script implementation is not yet wired. Use "
+            "persistent mode (drop --batch) to export via DymolaInterface, "
+            "or contribute the batch path — see TODO(batch-fmu-export) in "
+            "DymolaRunner.export_fmu."
+        )
 
     def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
         """Run tests in batches with parallelism."""

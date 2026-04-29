@@ -242,8 +242,13 @@ class Config:
     # Reference results location (can be a separate repo/directory)
     reference_root: Optional[Path] = None
 
-    # Simulator selection
-    simulator: str = "Dymola"
+    # Simulator selection. ``None`` means "not explicitly chosen" — the
+    # post-init resolution then consults testing.json's ``simulator`` key,
+    # then auto-detect from the ``simulators`` map, then falls back to
+    # ``"Dymola"`` as the historical default. A non-None value (typically
+    # from a CLI ``--simulator`` flag) is treated as authoritative and is
+    # NOT overridden by anything from testing.json.
+    simulator: Optional[str] = None
     simulator_path: Optional[str] = None
     show_ide: bool = False
     simulator_setup: list[str] = field(default_factory=list)  # Commands run after loading libraries
@@ -394,21 +399,22 @@ class Config:
         if self.os_name is None:
             self.os_name = file_config.get("os", detect_os())
 
-        # Simulator selection. The dataclass default is "Dymola"; we treat
-        # that as "CLI didn't set one" for compatibility with existing usage.
-        # Resolution order:
-        #   1. CLI override  — self.simulator != "Dymola"          ⇒ keep
-        #   2. testing.json  — explicit "simulator" key            ⇒ use
-        #   3. testing.json  — auto-pick from "simulators" map     ⇒ first
-        #      entry whose binary resolves on the current machine / PATH
-        #   4. Fall through to the default ("Dymola")
-        if "simulator" in file_config and self.simulator == "Dymola":
-            self.simulator = file_config["simulator"]
-        elif "simulator" not in file_config and self.simulator == "Dymola":
-            simulators_config = file_config.get("simulators", {})
-            detected = _auto_detect_simulator(simulators_config)
-            if detected:
-                self.simulator, self.simulator_path = detected
+        # Simulator selection. Resolution order, first match wins:
+        #   1. Explicit constructor / CLI value (self.simulator is not None)
+        #   2. testing.json explicit "simulator" key
+        #   3. testing.json "simulators" map auto-detect (first entry whose
+        #      binary resolves on the current machine / PATH)
+        #   4. Default "Dymola" (historical fallback)
+        if self.simulator is None:
+            if "simulator" in file_config:
+                self.simulator = file_config["simulator"]
+            else:
+                simulators_config = file_config.get("simulators", {})
+                detected = _auto_detect_simulator(simulators_config)
+                if detected:
+                    self.simulator, self.simulator_path = detected
+                else:
+                    self.simulator = "Dymola"
 
         # Show IDE
         if not self.show_ide and "show_ide" in file_config:

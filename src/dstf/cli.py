@@ -1264,7 +1264,11 @@ def _build_config(args: argparse.Namespace) -> Config:
     return Config(**kwargs)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Construct the top-level CLI parser. Pulled out of :func:`main` so
+    tests can introspect subcommands and flags without dispatching, and
+    so :func:`main` stays a thin parse-and-dispatch shell.
+    """
     parser = argparse.ArgumentParser(
         prog="dstf",
         description="Dynamic Systems Testing Framework — regression & unit testing for time-dependent system behavior",
@@ -1493,29 +1497,37 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Locate and load Dymola's Python interface; report what was found",
     )
 
-    args = parser.parse_args(argv)
+    return parser
 
+
+# Subcommand → handler dispatch table. Lives at module scope so tests can
+# assert the registered commands without re-running `main()`. Update both
+# the parser (in :func:`build_arg_parser`) and this dict when adding a
+# subcommand — symmetry is checked by :data:`_COMMANDS_PARSER_PARITY` test.
+_COMMANDS = {
+    "discover": cmd_discover,
+    "run": cmd_run,
+    "compare": cmd_compare,
+    "export": cmd_export,
+    "manifest": cmd_manifest,
+    "add": cmd_add,
+    "spec-update": cmd_spec_update,
+    "companion": cmd_companion,
+    "soft-check": cmd_soft_check,
+    "import-baseline": cmd_import_baseline,
+    "export-schema": cmd_export_schema,
+    "migrate-baselines": cmd_migrate_baselines,
+    "check-dymola": cmd_check_dymola,
+}
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
         return 1
-
-    commands = {
-        "discover": cmd_discover,
-        "run": cmd_run,
-        "compare": cmd_compare,
-        "export": cmd_export,
-        "manifest": cmd_manifest,
-        "add": cmd_add,
-        "spec-update": cmd_spec_update,
-        "companion": cmd_companion,
-        "soft-check": cmd_soft_check,
-        "import-baseline": cmd_import_baseline,
-        "export-schema": cmd_export_schema,
-        "migrate-baselines": cmd_migrate_baselines,
-        "check-dymola": cmd_check_dymola,
-    }
-
-    return commands[args.command](args)
+    return _COMMANDS[args.command](args)
 
 
 def main_entry() -> None:
