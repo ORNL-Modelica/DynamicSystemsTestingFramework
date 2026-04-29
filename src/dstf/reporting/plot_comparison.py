@@ -373,28 +373,31 @@ def _render_window_controls(
     )
 
 
-def _build_template_context(
-    model_id: str,
-    comparisons: list[VariableComparison],
-    ref_data: Optional[dict],
-    cur_stats: Optional[dict],
-    test_dir: Optional[Path],
-    test_model=None,
-    result=None,
-    ref_file: Optional[Path] = None,
-    warnings: Optional[list] = None,
-    last_run_at: Optional[float] = None,
-    metric_tree=None,
-    artifact_files: tuple[tuple[str, str], ...] = (),
-    overlays: Optional[list] = None,
-) -> dict:
-    """Build the full template context dict from comparison data."""
-    if cur_stats is None:
-        cur_stats = {}
-    ref_stats = ref_data.get("statistics", {}) if ref_data else {}
-    ref_sim = ref_data.get("simulation", {}) if ref_data else {}
+# ---------------------------------------------------------------------------
+# Per-section context builders
+# ---------------------------------------------------------------------------
+# _build_template_context (below) is an orchestrator over the helpers in this
+# section. Each helper produces one named slice of the output context dict
+# (ref_info / sim_params / statistics_sections / etc.) so per-section edits
+# don't muddy git blame on unrelated sections, and each piece is independently
+# testable by feeding it a small input dict + asserting on the returned slice.
+# Shared invariants:
+#   * Every helper accepts already-extracted inputs (ref_stats, ref_sim) so
+#     the orchestrator owns the "if ref_data else {}" sentinel-handling.
+#   * Helpers return values; mutation of caller-owned state happens only at
+#     the orchestrator level (overlay attach is the one in-place step).
 
-    # --- Reference info rows ---
+
+def _build_ref_info(
+    comparisons: list,
+    ref_data: Optional[dict],
+    test_dir: Optional[Path],
+    ref_file: Optional[Path],
+) -> list:
+    """Build the test-metadata rows shown in the report's "Reference Info"
+    section: test_id / status / dates / reference-file link / test-dir link
+    / tracked-variable count.
+    """
     ref_info = []
     meta_fields = [
         ("test_id", "Test ID"),
@@ -407,7 +410,6 @@ def _build_template_context(
         if ref_val:
             ref_info.append({"label": label, "value": _format_value(ref_val)})
 
-    # Add link to reference file
     if ref_data and ref_data.get("test_id"):
         from ..storage.reference_store import RefIndex
         ref_filename = RefIndex.ref_filename(ref_data["test_id"])
@@ -416,7 +418,6 @@ def _build_template_context(
             row["link"] = ref_file.resolve().as_uri()
         ref_info.append(row)
 
-    # Add test directory key (e.g., test_0051)
     if test_dir and test_dir.exists():
         ref_info.append({
             "label": "Test Directory",
@@ -430,8 +431,14 @@ def _build_template_context(
             f" / {ref_data.get('n_vars', '?')} reference" if ref_data else ""
         ) if comparisons else "",
     })
+    return ref_info
 
-    # --- Simulation parameters (current vs reference) ---
+
+def _build_sim_params(test_model, ref_sim: dict) -> list:
+    """Build the current-vs-reference simulation-parameter table (stop_time,
+    tolerance, method, ...). Each row carries a ``changed`` flag the
+    template uses to highlight drift.
+    """
     sim_params = []
     sim_fields = [
         ("stop_time", "Stop Time"),
@@ -452,17 +459,21 @@ def _build_template_context(
                 "reference": ref_str,
                 "changed": cur_str != "" and ref_str != "" and cur_str != ref_str,
             })
+    return sim_params
 
-    # --- Statistics sections (auto-detected) ---
-    # Render every top-level dict in stats as its own collapsible section
-    # plus a "Simulation Statistics" section that mops up all top-level
-    # scalar keys. Future categories (e.g., "timing") drop in for free.
+
+def _build_statistics_sections(ref_stats: dict, cur_stats: dict) -> list:
+    """Auto-detect and render every top-level dict in stats as its own
+    collapsible section, plus mop up top-level scalars under "Simulation
+    Statistics" for back-compat with older reference shapes. Future
+    categories (e.g. ``"timing"``) drop in for free since the dispatch
+    is by dict key, not a hardcoded enum.
+    """
     SECTION_TITLES = {
         "translation": "Translation Statistics",
         "simulation": "Simulation Statistics",
         "timing": "Timing",
     }
-    # Collect all dict-valued section keys across both refs and current
     section_keys: list[str] = []
     seen: set[str] = set()
     for src in (ref_stats, cur_stats):
@@ -471,8 +482,6 @@ def _build_template_context(
                 seen.add(k)
                 section_keys.append(k)
 
-    # Render each known section; preserve conventional order first, then
-    # append any unrecognized categories in the order they were encountered.
     preferred = ["translation", "simulation", "timing"]
     ordered_keys = [k for k in preferred if k in seen] + [
         k for k in section_keys if k not in preferred
@@ -482,7 +491,6 @@ def _build_template_context(
     for key in ordered_keys:
         ref_cat = ref_stats.get(key, {}) if isinstance(ref_stats.get(key), dict) else {}
         cur_cat = cur_stats.get(key, {}) if isinstance(cur_stats.get(key), dict) else {}
-        # Merge top-level scalar keys into the simulation section for back-compat
         if key == "simulation":
             for k, v in ref_stats.items():
                 if not isinstance(v, dict):
@@ -491,7 +499,6 @@ def _build_template_context(
                 if not isinstance(v, dict):
                     cur_cat.setdefault(k, v)
         title = SECTION_TITLES.get(key, key.replace("_", " ").title())
-        # Timing section: rough-operation order rather than alphabetical
         key_order = None
         if key == "timing":
             key_order = ["translation_wall", "sim_wall", "other_wall", "total_wall"]
@@ -499,8 +506,6 @@ def _build_template_context(
         if section:
             statistics_sections.append(section)
 
-    # If there was no simulation section but we have top-level scalars,
-    # render them anyway under "Simulation Statistics"
     if "simulation" not in seen:
         ref_scalars = {k: v for k, v in ref_stats.items() if not isinstance(v, dict)}
         cur_scalars = {k: v for k, v in cur_stats.items() if not isinstance(v, dict)}
@@ -508,15 +513,22 @@ def _build_template_context(
             section = _build_stats_section("Simulation Statistics", ref_scalars, cur_scalars)
             if section:
                 statistics_sections.append(section)
+    return statistics_sections
 
-    # --- Overlay summary (companions + soft_checks, A2 / idea #50) ---
-    # Per-trajectory overlay attachment happens below, after trajectories
-    # are assembled. Summary at the test level surfaces missing/invalid
-    # companions in the picker even when they don't render a trace.
-    overlays = overlays or []
-    from .overlay_loader import attach_overlays_to_trajectories, overlay_summary
 
-    # --- Trajectory data for interactive plots ---
+def _build_trajectories(
+    comparisons: list,
+    result,
+    ref_data: Optional[dict],
+) -> tuple[list, list, list]:
+    """Build the trajectory triple — primary tracked variables, diagnostic
+    variables (CPUtime / EventCounter), and the no-baseline pass-through
+    used when a test runs without a reference. Diagnostic refs may carry
+    a scalar summary instead of a full trajectory; the legacy
+    full-array shape is still accepted for back-read.
+
+    Returns ``(trajectories, diag_trajectories, nobaseline_trajectories)``.
+    """
     trajectories = []
     ref_time_list = ref_data.get("time", []) if ref_data else []
     ref_vars_by_idx = {}
@@ -531,31 +543,22 @@ def _build_template_context(
                 if v.index == vc.index:
                     act_var = v
                     break
-
             ref_var = ref_vars_by_idx.get(vc.index)
-            traj = {
+            trajectories.append({
                 "index": vc.index,
                 "name": vc.name or f"x[{vc.index}]",
                 "act_time": act_var.time.tolist() if act_var else [],
                 "act_values": act_var.values.tolist() if act_var else [],
                 "ref_time": ref_time_list,
                 "ref_values": ref_var["values"] if ref_var else [],
-            }
-            trajectories.append(traj)
+            })
 
-    # Diagnostic trajectories. Baselines now store a scalar summary for
-    # diagnostic variables (no trajectory — CPUtime etc. are nondeterministic
-    # and were producing spurious git diffs). When a baseline only has the
-    # summary, ``ref_values`` is empty and the Plotly trace skips the
-    # reference overlay. Legacy baselines with a full ``values`` array still
-    # work — we pass it through until they're re-accepted.
     diag_trajectories = []
     if result and result.diagnostics:
         ref_diags_by_name = {}
         if ref_data:
             for rd in ref_data.get("diagnostics", []):
                 ref_diags_by_name[rd["name"]] = rd
-
         for diag in result.diagnostics:
             ref_diag = ref_diags_by_name.get(diag.name)
             ref_values = ref_diag.get("values", []) if ref_diag else []
@@ -567,7 +570,6 @@ def _build_template_context(
                 "ref_values": ref_values,
             })
 
-    # No-baseline trajectories
     nobaseline_trajectories = []
     if not comparisons and result and result.variables:
         for var in result.variables:
@@ -577,65 +579,93 @@ def _build_template_context(
                 "time": var.time.tolist(),
                 "values": var.values.tolist(),
             })
+    return trajectories, diag_trajectories, nobaseline_trajectories
 
-    # --- Diagnostic summary rows (current final/min/max vs. reference summary) ---
-    # Replaces the old full-trajectory comparison for diagnostic variables.
-    # The trajectory is informational; the summary values are the actual
-    # regression signal (final CPUtime, total event count).
+
+def _build_diag_summaries(result, ref_data: Optional[dict]) -> list:
+    """Diagnostic-variable summary rows (current final/min/max vs reference
+    summary). Replaces the pre-D78 full-trajectory comparison for
+    diagnostics — the trajectory is informational; the summary values
+    are the actual regression signal (final CPUtime, total event count).
+    """
+    if not (result and result.diagnostics):
+        return []
+    ref_diags_by_name = {}
+    if ref_data:
+        for rd in ref_data.get("diagnostics", []):
+            ref_diags_by_name[rd["name"]] = rd
     diag_summaries = []
-    if result and result.diagnostics:
-        ref_diags_by_name = {}
-        if ref_data:
-            for rd in ref_data.get("diagnostics", []):
-                ref_diags_by_name[rd["name"]] = rd
-        for diag in result.diagnostics:
-            values = np.asarray(diag.values)
-            cur_final = float(values[-1]) if values.size else None
-            ref_entry = ref_diags_by_name.get(diag.name, {})
-            # Accept either new summary shape (final/min/max) or legacy full-
-            # trajectory shape (values) for back-read during transition.
-            if "final" in ref_entry:
-                ref_final = ref_entry.get("final")
-            elif "values" in ref_entry and ref_entry["values"]:
-                ref_final = float(ref_entry["values"][-1])
-            else:
-                ref_final = None
-            diag_summaries.append({
-                "name": diag.name,
-                "current": _format_value(cur_final) if cur_final is not None else "",
-                "reference": _format_value(ref_final) if ref_final is not None else "",
-                "changed": (
-                    cur_final is not None and ref_final is not None
-                    and cur_final != ref_final
-                ),
-            })
+    for diag in result.diagnostics:
+        values = np.asarray(diag.values)
+        cur_final = float(values[-1]) if values.size else None
+        ref_entry = ref_diags_by_name.get(diag.name, {})
+        # Accept either new summary shape (final/min/max) or legacy full-
+        # trajectory shape (values) for back-read during transition.
+        if "final" in ref_entry:
+            ref_final = ref_entry.get("final")
+        elif "values" in ref_entry and ref_entry["values"]:
+            ref_final = float(ref_entry["values"][-1])
+        else:
+            ref_final = None
+        diag_summaries.append({
+            "name": diag.name,
+            "current": _format_value(cur_final) if cur_final is not None else "",
+            "reference": _format_value(ref_final) if ref_final is not None else "",
+            "changed": (
+                cur_final is not None and ref_final is not None
+                and cur_final != ref_final
+            ),
+        })
+    return diag_summaries
 
-    # --- Artifact links ---
-    # Backend declares its interesting per-test files on the runner class's
-    # ``artifact_files`` attribute. The reporter just walks that list and
-    # skips entries that aren't on disk — no hardcoded Dymola names here.
+
+def _build_artifacts(
+    test_dir: Optional[Path],
+    artifact_files: tuple[tuple[str, str], ...],
+) -> list:
+    """Walk the runner-declared :attr:`SimulatorRunner.artifact_files`
+    list, return entries for files that exist on disk. Backend-agnostic
+    — no hardcoded Dymola/OM/etc. names here.
+    """
+    if not (test_dir and test_dir.exists()):
+        return []
     artifacts = []
-    if test_dir and test_dir.exists():
-        for fname, label in (artifact_files or ()):
-            fpath = test_dir / fname
-            if fpath.exists():
-                artifacts.append({"uri": fpath.resolve().as_uri(), "label": label})
+    for fname, label in (artifact_files or ()):
+        fpath = test_dir / fname
+        if fpath.exists():
+            artifacts.append({"uri": fpath.resolve().as_uri(), "label": label})
+    return artifacts
 
+
+def _compute_summary_flags(
+    comparisons: list, result, test_model,
+) -> tuple[int, int, bool, bool]:
+    """Top-level pass/fail summary flags for the report header.
+
+    Returns ``(n_passed, n_nobaseline, is_simulate_only, sim_failed)``.
+    ``simulate_only`` tests legitimately have no comparisons and no
+    variables — the pass signal is "the simulation ran", so this guards
+    against rendering a misleading "Simulation failed" banner for them.
+    """
     n_passed = sum(1 for vc in comparisons if vc.passed)
     n_nobaseline = (
         len(result.variables) if (not comparisons and result and result.variables) else 0
     )
-    # simulate_only tests legitimately have no comparisons and no
-    # variables — the pass signal is "the simulation ran". Don't flag
-    # them as sim_failed, which would otherwise render a misleading
-    # "Simulation failed" banner in the summary.
     is_simulate_only = bool(test_model and getattr(test_model, "simulate_only", False))
     sim_failed = (
         len(comparisons) == 0 and n_nobaseline == 0 and not is_simulate_only
     )
+    return n_passed, n_nobaseline, is_simulate_only, sim_failed
 
-    # --- Key stats for top-level summary ---
-    # Pull out the most important metrics from both current and reference
+
+def _build_key_stats(
+    comparisons: list, ref_stats: dict, cur_stats: dict,
+) -> list:
+    """Top-level summary row: worst score across leaves, plus a small
+    fixed pick of structural stats (continuous states, nonlinear
+    counts) and CPUtime / EventCounter. Format mirrors statistics_sections
+    rows so the template renderer is uniform.
+    """
     def _get_stat(source: dict, category: str, key: str):
         cat = source.get(category, {})
         if isinstance(cat, dict):
@@ -647,10 +677,10 @@ def _build_template_context(
         return val if not isinstance(val, dict) else None
 
     key_stats = []
-    # "Worst Score" — for NRMSE leaves this is the max NRMSE (lower is better);
-    # for range/tube leaves the nrmse field carries mode-specific content
-    # (max_violation / fraction-inside). Mixed-mode tests get the worst
-    # across whatever leaves they contain.
+    # "Worst Score" — for NRMSE leaves this is the max NRMSE (lower is
+    # better); for range/tube leaves the nrmse field carries mode-specific
+    # content (max_violation / fraction-inside). Mixed-mode tests get the
+    # worst across whatever leaves they contain.
     worst_score = max((vc.nrmse for vc in comparisons), default=None)
     if worst_score is not None:
         key_stats.append({"label": "Worst Score", "current": f"{worst_score:.4e}", "reference": ""})
@@ -685,43 +715,46 @@ def _build_template_context(
                 "reference": _format_value(ref_val),
                 "changed": cur_val is not None and ref_val is not None and str(cur_val) != str(ref_val),
             })
+    return key_stats
 
-    warning_rows = []
-    for w in warnings or []:
-        warning_rows.append({
+
+def _build_warning_rows(warnings: Optional[list]) -> list:
+    """Translate :class:`StructuralWarning` instances into the row dicts
+    the template iterates over. Trivial wrapper, kept as a helper for
+    symmetry with the other ``_build_*`` extractors.
+    """
+    return [
+        {
             "field": w.field,
             "reference": str(w.reference_value),
             "current": str(w.current_value),
-        })
+        }
+        for w in (warnings or [])
+    ]
 
-    last_run_str = ""
-    if last_run_at:
-        from datetime import datetime
-        last_run_str = datetime.fromtimestamp(last_run_at).isoformat(timespec="seconds")
 
-    # Stamp overlays onto each trajectory by variable name. Missing /
-    # invalid overlays drop off the per-plot path but stay in
-    # overlay_summary so the report can surface them as "not rendered".
-    # The nobaseline list gets the same pass so NO_REF tests can still show
-    # sibling-backend / companion / soft_check overlays — useful for the
-    # pre-accept cross-check story on a brand-new backend / OS.
-    attach_overlays_to_trajectories(trajectories, overlays)
-    attach_overlays_to_trajectories(nobaseline_trajectories, overlays)
-    overlay_rows = overlay_summary(overlays)
+def _build_tree_view_and_variables(
+    comparisons: list,
+    test_model,
+    metric_tree,
+    trajectories: list,
+) -> tuple[Optional[dict], dict]:
+    """Stage-2 single-source-of-truth: returns ``(tree_view,
+    variables_by_name)``.
 
-    # --- Stage 2: recursive tree view + per-variable plot grouping ---
-    # Single source of truth for the Stage-2 UI:
-    #   * ``tree_view`` — the full SpecNode tree serialized with per-node
-    #     paths + evaluation results, leaves augmented with render
-    #     artifacts (mode_controls_html, score_display, ...). The JS
-    #     recursive component walks this directly.
-    #   * ``variables_by_name`` — one entry per unique variable, carrying
-    #     its trajectory + overlays + the leaf paths that target it.
-    #     Drives "one plot per variable" rendering; per-variable plot
-    #     sections mount a filtered view of the tree below.
-    #   * ``mode_schemas`` — typed control schemas for every registered
-    #     mode, so the JS can build controls for newly-added leaves
-    #     without a server round-trip.
+    The reporter's recursive-component UI walks ``tree_view`` directly
+    (a serialized SpecNode tree with per-node paths + evaluation results,
+    leaves augmented with render artifacts). ``variables_by_name`` carries
+    one entry per unique variable — its trajectory + overlays + the leaf
+    paths targeting it — so per-variable plot sections mount a filtered
+    view of the same tree.
+
+    When there are no comparisons the function returns ``(None, {})`` —
+    sim-failed and no-baseline tests render without a tree view at all.
+    """
+    if not comparisons:
+        return None, {}
+
     from ..comparison.tree_spec import (
         collect_leaf_paths as _collect_leaf_paths,
         collect_variables as _collect_variables,
@@ -730,66 +763,130 @@ def _build_template_context(
         synthesize_implicit_tree as _synthesize_implicit_tree,
     )
     from ..comparison.tree_eval import flatten_evaluation as _flatten_evaluation
-    from .ui.mode_controls import emit_mode_schemas as _emit_mode_schemas
 
-    tree_view: Optional[dict] = None
-    variables_by_name: dict[str, dict] = {}
+    comparison_var_names = [
+        vc.name or f"x[{vc.index}]" for vc in comparisons
+    ]
+    if test_model is not None and getattr(test_model, "metric_tree_spec", None) is not None:
+        spec = test_model.metric_tree_spec
+    else:
+        spec = _synthesize_implicit_tree(
+            comparison_var_names,
+            variable_overrides=(
+                getattr(test_model, "variable_overrides", None)
+                if test_model else None
+            ),
+        )
 
-    if comparisons:
-        comparison_var_names = [
-            vc.name or f"x[{vc.index}]" for vc in comparisons
-        ]
-        if test_model is not None and getattr(test_model, "metric_tree_spec", None) is not None:
-            spec = test_model.metric_tree_spec
-        else:
-            spec = _synthesize_implicit_tree(
-                comparison_var_names,
-                variable_overrides=(
-                    getattr(test_model, "variable_overrides", None)
-                    if test_model else None
-                ),
+    eval_by_path = (
+        _flatten_evaluation(metric_tree) if metric_tree is not None else {}
+    )
+
+    # Map path → VariableComparison so _augment_tree_view can enrich each
+    # leaf with render artifacts. Length mismatch = spec/eval drift; skip
+    # augmentation rather than misaddress per-leaf data.
+    leaf_paths_full = _collect_leaf_paths(spec)
+    if len(leaf_paths_full) == len(comparisons):
+        comparisons_by_path = dict(zip(leaf_paths_full, comparisons))
+    else:
+        comparisons_by_path = {}
+
+    # Collect per-variable simulation bounds so window inputs show the
+    # full-trajectory range as placeholder hints.
+    time_bounds: dict[str, tuple[float, float]] = {}
+    for traj in trajectories:
+        ref_time = traj.get("ref_time") or traj.get("act_time") or []
+        if ref_time:
+            time_bounds[traj["name"]] = (
+                float(ref_time[0]), float(ref_time[-1]),
             )
 
-        eval_by_path = (
-            _flatten_evaluation(metric_tree) if metric_tree is not None else {}
-        )
+    tree_view = _spec_to_view(spec, evaluation_by_path=eval_by_path)
+    _augment_tree_view(
+        tree_view, comparisons_by_path,
+        time_bounds_by_variable=time_bounds,
+    )
 
-        # Map path → VariableComparison so _augment_tree_view can enrich
-        # each leaf with render artifacts. Length mismatch = spec/eval
-        # drift; skip augmentation rather than misaddress per-leaf data.
-        leaf_paths_full = _collect_leaf_paths(spec)
-        if len(leaf_paths_full) == len(comparisons):
-            comparisons_by_path = dict(zip(leaf_paths_full, comparisons))
-        else:
-            comparisons_by_path = {}
+    # Dedupe trajectories by variable name into a per-variable dict.
+    # Overlays already attached per-trajectory-entry; first match wins.
+    variables_by_name: dict[str, dict] = {}
+    for vn in _collect_variables(spec):
+        match_traj = next((t for t in trajectories if t["name"] == vn), None)
+        variables_by_name[vn] = {
+            "name": vn,
+            "trajectory": match_traj or {},
+            "overlays": (match_traj or {}).get("overlays", []),
+            "leaf_paths": [p for _, p in _leaves_for_variable(spec, vn)],
+        }
+    return tree_view, variables_by_name
 
-        # Collect per-variable simulation bounds so window inputs show
-        # the full-trajectory range as placeholder hints.
-        time_bounds: dict[str, tuple[float, float]] = {}
-        for traj in trajectories:
-            ref_time = traj.get("ref_time") or traj.get("act_time") or []
-            if ref_time:
-                time_bounds[traj["name"]] = (
-                    float(ref_time[0]), float(ref_time[-1]),
-                )
 
-        tree_view = _spec_to_view(spec, evaluation_by_path=eval_by_path)
-        _augment_tree_view(
-            tree_view, comparisons_by_path,
-            time_bounds_by_variable=time_bounds,
-        )
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
 
-        # Dedupe trajectories by variable name into a per-variable dict.
-        # Overlays already attached per-trajectory-entry; first match wins.
-        for vn in _collect_variables(spec):
-            match_traj = next((t for t in trajectories if t["name"] == vn), None)
-            variables_by_name[vn] = {
-                "name": vn,
-                "trajectory": match_traj or {},
-                "overlays": (match_traj or {}).get("overlays", []),
-                "leaf_paths": [p for _, p in _leaves_for_variable(spec, vn)],
-            }
 
+def _build_template_context(
+    model_id: str,
+    comparisons: list[VariableComparison],
+    ref_data: Optional[dict],
+    cur_stats: Optional[dict],
+    test_dir: Optional[Path],
+    test_model=None,
+    result=None,
+    ref_file: Optional[Path] = None,
+    warnings: Optional[list] = None,
+    last_run_at: Optional[float] = None,
+    metric_tree=None,
+    artifact_files: tuple[tuple[str, str], ...] = (),
+    overlays: Optional[list] = None,
+) -> dict:
+    """Build the full template context dict from comparison data.
+
+    Orchestrator over the per-section ``_build_*`` helpers above. Each
+    output key in the returned dict is produced by exactly one helper.
+    """
+    if cur_stats is None:
+        cur_stats = {}
+    ref_stats = ref_data.get("statistics", {}) if ref_data else {}
+    ref_sim = ref_data.get("simulation", {}) if ref_data else {}
+
+    ref_info = _build_ref_info(comparisons, ref_data, test_dir, ref_file)
+    sim_params = _build_sim_params(test_model, ref_sim)
+    statistics_sections = _build_statistics_sections(ref_stats, cur_stats)
+    trajectories, diag_trajectories, nobaseline_trajectories = _build_trajectories(
+        comparisons, result, ref_data,
+    )
+    diag_summaries = _build_diag_summaries(result, ref_data)
+    artifacts = _build_artifacts(test_dir, artifact_files)
+    n_passed, _n_nobaseline, is_simulate_only, sim_failed = _compute_summary_flags(
+        comparisons, result, test_model,
+    )
+    key_stats = _build_key_stats(comparisons, ref_stats, cur_stats)
+    warning_rows = _build_warning_rows(warnings)
+
+    last_run_str = ""
+    if last_run_at:
+        from datetime import datetime
+        last_run_str = datetime.fromtimestamp(last_run_at).isoformat(timespec="seconds")
+
+    # Stamp overlays onto each trajectory by variable name. The nobaseline
+    # list gets the same pass so NO_REF tests can still show
+    # sibling-backend / companion / soft_check overlays — useful for the
+    # pre-accept cross-check story on a brand-new backend / OS. Missing
+    # or invalid overlays drop off the per-plot path but stay in
+    # ``overlay_rows`` so the report surfaces them as "not rendered".
+    from .overlay_loader import attach_overlays_to_trajectories, overlay_summary
+    overlays = overlays or []
+    attach_overlays_to_trajectories(trajectories, overlays)
+    attach_overlays_to_trajectories(nobaseline_trajectories, overlays)
+    overlay_rows = overlay_summary(overlays)
+
+    tree_view, variables_by_name = _build_tree_view_and_variables(
+        comparisons, test_model, metric_tree, trajectories,
+    )
+
+    from .ui.mode_controls import emit_mode_schemas as _emit_mode_schemas
     return {
         "model_id": model_id,
         "n_passed": n_passed,
