@@ -319,6 +319,17 @@ class DymolaWorker(Worker):
         except Exception as exc:  # DymolaException or connection loss
             elapsed = time.monotonic() - start
             self._n_tests_run += 1
+            # Best-effort savelog before bailing — if the worker is still
+            # responsive enough to dump its translation log, the per-test
+            # report can show the diagnostic. Worker may already be dead
+            # (e.g. urlopen connection refused after Dymola crashed); the
+            # inner try/except guards against that. Mirrors the savelog at
+            # line ~318 in the happy path.
+            try:
+                if self.dymola is not None:
+                    self.dymola.savelog(str(test_dir / "translation_log.txt"))
+            except Exception:
+                pass
             msg = f"DymolaInterface error: {exc}"
             return TestRunResult(
                 model_id=test.model_id,
@@ -556,9 +567,12 @@ class DymolaWorker(Worker):
         t.join(timeout)
 
         if t.is_alive():
-            # Hard-kill Dymola. Inner thread becomes daemon noise.
+            # Hard-kill Dymola. Inner thread becomes daemon noise. Grace bumped
+            # from 1.0s to 5.0s so Dymola has a real chance to flush its open
+            # dslog.txt handle before psutil escalates to SIGKILL — diagnostic
+            # loss on timeout was a real reported pain point on TRANSFORM/Linux.
             with _suppress_stderr_noise():
-                self.close(grace=1.0)
+                self.close(grace=5.0)
                 t.join(0.5)
             elapsed = time.monotonic() - start_ts
 
@@ -581,14 +595,19 @@ class DymolaWorker(Worker):
             # Worker-level exception (e.g., DymolaInterface dropped its JSON-RPC
             # connection mid-call). Check whether the simulation completed
             # anyway — Dymola often crashes/disconnects after writing the result.
+            # Both close() calls are wrapped in the urlopen-noise suppression so
+            # stale RPC retries during teardown don't spam the terminal — same
+            # pattern as the timeout path above.
             elapsed = time.monotonic() - start_ts
             disk_result = self._evaluate_from_disk(test, test_key, elapsed)
             if disk_result.success:
                 # Worker connection is still considered broken — restart on next iter
-                self.close(grace=1.0)
+                with _suppress_stderr_noise():
+                    self.close(grace=1.0)
                 return disk_result
 
-            self.close(grace=1.0)
+            with _suppress_stderr_noise():
+                self.close(grace=1.0)
             exc = exc_box[0]
             return TestRunResult(
                 model_id=test.model_id,
