@@ -319,17 +319,18 @@ class DymolaWorker(Worker):
         except Exception as exc:  # DymolaException or connection loss
             elapsed = time.monotonic() - start
             self._n_tests_run += 1
-            # Best-effort savelog before bailing — if the worker is still
-            # responsive enough to dump its translation log, the per-test
-            # report can show the diagnostic. Worker may already be dead
-            # (e.g. urlopen connection refused after Dymola crashed); the
-            # inner try/except guards against that. Mirrors the savelog at
-            # line ~318 in the happy path.
-            try:
-                if self.dymola is not None:
-                    self.dymola.savelog(str(test_dir / "translation_log.txt"))
-            except Exception:
-                pass
+            # Don't call savelog here — the JSON-RPC connection state is
+            # indeterminate after Dymola raises mid-call. An attempted
+            # savelog can complete partially, leaving the next test's RPC
+            # ID mismatched with the prior savelog's response, which
+            # poisons the worker for every subsequent test ("Mismatch
+            # request/response ID in JSON-RPC call" cascade observed on
+            # TRANSFORM/Linux). Translation-log preservation on this path
+            # would require either a connection-health probe before the
+            # savelog attempt or splitting the RPC client to discard
+            # in-flight state on exception — both bigger than this branch
+            # warrants. dslog.txt (written by Dymola itself during
+            # simulation) is still the available diagnostic.
             msg = f"DymolaInterface error: {exc}"
             return TestRunResult(
                 model_id=test.model_id,
