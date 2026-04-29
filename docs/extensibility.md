@@ -139,6 +139,60 @@ A Backend must:
 5. Use `ProgressReporter` (backend-agnostic, already exists) for live-dashboard status.
 6. Put all tool-specific code under `backends/<name>/`. No tool-specific imports in framework core.
 
+### Persistent-worker contract
+
+If your backend can hold a loaded model in memory across tests (declares `Capability.PERSISTENT_WORKERS`), inherit from `PersistentRunnerBase` (in `simulators/base.py`) and supply a `Worker` subclass — you do **not** re-implement the dispatch loop. The template owns the orchestration; you fill in backend-specific construction and lifecycle hooks.
+
+**`Worker` ABC** (in `simulators/base.py`) declares the long-lived-process contract every persistent backend's worker must satisfy:
+
+| Method | Required | Contract |
+|---|---|---|
+| `__init__(worker_id, config, ...)` | yes | Subclass extends with backend-specific args (e.g. `DymolaConfig`, an interface class). MUST call `super().__init__(worker_id, config)`. |
+| `start()` | yes | Bring the process up, apply startup (library loads, framework settings). Raise on failure. |
+| `close(grace=...)` | yes | Tear down. Try graceful first; hard-kill if the graceful path doesn't return within `grace` seconds. Idempotent — safe on workers that never started or already closed. |
+| `is_alive()` | yes | True iff the worker can accept another test. |
+| `run_test_with_timeout(test, test_key, timeout, progress=None)` | yes | Run one test with a watchdog. **MUST NOT** raise on test-level failures — return a `TestRunResult(success=False)` instead. **MAY** raise on worker-level catastrophes (subprocess died, pipe broken) so the dispatch loop's restart logic intervenes. |
+| `export_fmu(test, output_dir)` | iff `FMU_EXPORT` | Default raises `NotImplementedError`. |
+
+**`PersistentRunnerBase`** (subclass of `SimulatorRunner`) provides the full `run_tests` template:
+
+```
+setup_before_workers → ProgressReporter → assign_test_keys
+    → BatchManifest → make_worker × N → start in parallel
+    → filter live workers (raise if zero) → dispatch with restart
+    → close all workers → finalize progress
+```
+
+You fill in:
+
+| Hook | Default | Override when |
+|---|---|---|
+| `worker_cls` (class attr) | `None` | Always — set to your `Worker` subclass. |
+| `backend_label` (class attr) | `""` | Always — used in headers and thread names ("via persistent **<label>** workers"). |
+| `make_worker(worker_id)` | `worker_cls(worker_id, self.config)` | Your worker constructor needs extra args beyond `(worker_id, config)`. Read state stashed by `setup_before_workers`. |
+| `setup_before_workers()` | no-op | Backend has runtime patches that must apply before any worker spawns (Dymola: log filter + parallel-startup lock). |
+| `preflight(config)` (classmethod) | no-op | Backend has an external dependency (Python module, native binary, license file). Raise `RuntimeError` with an install hint when missing — the CLI surfaces it verbatim. |
+| `starting_workers_message(n)` | `"Starting N <label> worker(s)..."` | You want a backend-specific notice (Julia: warmup-time warning). |
+| `max_restarts_per_worker` (class attr) | `3` | Restart budget needs tuning. |
+| `persistent_runner_cls()` (classmethod) | `cls` | Don't override — the default returns self so the CLI doesn't recurse. |
+
+Plus on the **batch** runner class (the one decorated with `@register("YourBackend")`):
+
+| Hook | Default | Override when |
+|---|---|---|
+| `persistent_runner_cls()` (classmethod) | `None` (batch-only) | Backend ships a persistent variant. Lazy-import + return its class so the optional dep isn't pulled in during a plain batch run. |
+
+**Inheritance order matters.** Persistent runners inherit from both `PersistentRunnerBase` *and* the batch runner. The MRO must put `PersistentRunnerBase` first so its `run_tests` template wins over the batch runner's per-test override:
+
+```python
+class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
+    worker_cls = DymolaWorker
+    backend_label = "Dymola"
+    ...
+```
+
+Worked example: `simulators/openmodelica/persistent_runner.py` is the smallest of the three live persistent runners — read it as the canonical reference.
+
 ### Current
 
 `SimulatorRunner` ABC with two concrete implementations: `DymolaRunner` (native Modelica) and `FmpyRunner` (FMU). Phase 1.2 introduced the `Capability` + `DatasetType` enums and the `capabilities` / `produced_datasets` class-attribute contract; Phase 2.3 validated the contract with a second backend.
