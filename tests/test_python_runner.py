@@ -5,7 +5,6 @@ The registration test doesn't need scipy and always runs.
 """
 from __future__ import annotations
 
-import importlib.util
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,7 +20,21 @@ _CONFIG = _EXAMPLES_DIR / "Resources" / "ReferenceResults" / "testing.json"
 
 
 def _scipy_available() -> bool:
-    return importlib.util.find_spec("scipy") is not None
+    """True iff scipy is importable from the *subprocess* Python that dstf
+    will spawn for end-to-end tests.
+
+    The test runner and the dstf subprocess can resolve to different Python
+    interpreters (e.g. ``uv run pytest`` falling through to a global pytest
+    on PATH while ``uv run dstf`` uses the project ``.venv``). Probing the
+    test runner's own ``sys.path`` would lie about whether the simulation
+    will actually find scipy. Subprocess-probing is slow (~150ms) but only
+    runs once at module load.
+    """
+    result = subprocess.run(
+        ["uv", "run", "python", "-c", "import scipy"],
+        capture_output=True, timeout=30,
+    )
+    return result.returncode == 0
 
 
 def test_python_runner_registered():

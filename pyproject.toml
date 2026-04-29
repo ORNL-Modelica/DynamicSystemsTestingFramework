@@ -11,7 +11,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+# scipy is needed for examples/python/PythonTestingLib/Examples/SimpleRamp.py
+# (the Python-backend example uses scipy.integrate.solve_ivp). The end-to-end
+# Python-runner tests skip cleanly without it (see tests/test_python_runner.py
+# `_scipy_available`), but the default dev install pulls it so the full suite
+# runs out of the box.
+dev = ["pytest>=7.0", "scipy>=1.10"]
 # FMPy backend (Phase 2). Install with: uv pip install -e ".[fmpy]"
 # Or bundled with dev: uv pip install -e ".[dev,fmpy]"
 fmpy = ["fmpy>=0.3"]

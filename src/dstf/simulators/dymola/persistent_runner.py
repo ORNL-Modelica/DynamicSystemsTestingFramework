@@ -189,6 +189,14 @@ class DymolaWorker:
         """
         kwargs: dict = {"showwindow": bool(self.dymola_config.show_ide)}
         if self.config.simulator_path:
+            # DEBT: on Linux, simulator_path must point at the wrapper script
+            # (e.g. /usr/local/bin/dymola), not the bare bin64/dymola binary.
+            # The wrapper exports LD_LIBRARY_PATH so Dymola finds its bundled
+            # libgit2/Qt6/Qtitan libs. Pointing at bin64/dymola directly fails
+            # with confusing "shared library not found" + "Mismatching Dymola
+            # version" errors — DymolaInterface only sees an unstartable child
+            # process. Surface this as a friendlier check at config-resolution
+            # time once we have a Linux-aware simulator-path validator.
             kwargs["dymolapath"] = str(self.config.simulator_path)
 
         self.dymola = self._DI(**kwargs)
@@ -731,10 +739,13 @@ class PersistentDymolaRunner(DymolaRunner):
 
         live_workers = [w for w in workers if worker_ready.get(w.worker_id)]
         if not live_workers:
-            print("All workers failed to start. Aborting.", file=sys.stderr)
             if self.progress is not None:
                 self.progress.finalize()
-            return [manifest]
+            raise RuntimeError(
+                "All Dymola persistent workers failed to start. "
+                "See per-worker errors above. Try re-running with --batch to fall back "
+                "to the .mos script runner."
+            )
         print(
             f"  {len(live_workers)}/{n_workers} workers ready in "
             f"{time.monotonic() - start_all:.1f}s",

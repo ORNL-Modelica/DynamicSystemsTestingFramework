@@ -235,14 +235,20 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("No tests matched the filter.")
         return 1
 
-    print(f"Running {len(tests)} tests...")
     # Pre-populate model_id → "ref_NNNN" map so the live dashboard can link
     # to the correct per-test report directory (matches generate_report_suite naming).
     for test in tests:
         ref_id = store.index.get_id(test.model_id)
         if ref_id:
             runner.ref_id_map[test.model_id] = f"ref_{ref_id}"
-    manifests = runner.run_tests(tests)
+    try:
+        manifests = runner.run_tests(tests)
+    except RuntimeError as exc:
+        # Runners raise on unrecoverable startup conditions (e.g. all persistent
+        # workers failed to spawn). Convert to a clean exit instead of dumping a
+        # traceback — the runner has typically already printed the cause.
+        print(f"\nRun aborted: {exc}", file=sys.stderr)
+        return 1
 
     # Enrich batch manifest with ref IDs now that store is available
     for m in manifests:

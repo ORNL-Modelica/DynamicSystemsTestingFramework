@@ -43,7 +43,6 @@ from typing import Optional
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
-from .. import register
 from ..base import (
     BatchManifest,
     Capability,
@@ -351,7 +350,6 @@ class JuliaWorker:
 # Runner
 # ---------------------------------------------------------------------------
 
-@register("Julia.Persistent")  # distinct registry key; factory handles fallback
 class PersistentJuliaRunner(JuliaRunner):
     """Persistent-worker Julia runner. Subclasses :class:`JuliaRunner` so
     it inherits ``read_result`` + config resolution; only ``run_tests``

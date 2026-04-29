@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -126,20 +127,39 @@ def _cache_root() -> Path:
     return root / "modelica-testing" / "dymola-interface"
 
 
+def _cache_signature(archive: Path) -> str:
+    """Signature stored in the cache marker so we can invalidate stale or
+    corrupt extractions. Pairs source archive size + mtime — cheap to compute,
+    catches both wheel updates (Dymola refresh) and partial/interrupted
+    extractions that left bogus content (a 32-byte stub `dymola_interface.py`
+    actually shipped in our cache once; the touch-only marker happily reused
+    it). If the wheel is replaced byte-for-byte the mtime still changes, so
+    this is conservative-correct without needing a hash.
+    """
+    st = archive.stat()
+    return f"{archive}|{st.st_size}|{st.st_mtime_ns}"
+
+
 def _prepare_sys_path(archive: Path) -> Path:
     """Make `import dymola` work. Returns the path added to sys.path."""
     if archive.suffix == ".egg":
         # zipimport supports .egg directly
         entry = str(archive)
     else:
-        # Extract .whl to cache once, then add the extract dir
+        # Extract .whl to cache once, then add the extract dir.
         extract_dir = _cache_root() / archive.stem
         marker = extract_dir / ".extracted"
-        if not marker.exists():
+        signature = _cache_signature(archive)
+        cached_signature = marker.read_text() if marker.exists() else None
+        if cached_signature != signature:
+            # Wipe and re-extract on first use OR on signature drift (wheel
+            # updated, mtime changed, prior extraction corrupted).
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir)
             extract_dir.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(archive) as z:
                 z.extractall(extract_dir)
-            marker.write_text(str(archive))
+            marker.write_text(signature)
         entry = str(extract_dir)
     if entry not in sys.path:
         sys.path.insert(0, entry)

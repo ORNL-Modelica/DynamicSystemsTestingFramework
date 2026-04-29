@@ -670,10 +670,13 @@ class PersistentOpenModelicaRunner(OpenModelicaRunner):
 
         live_workers = [w for w in workers if worker_ready.get(w.worker_id)]
         if not live_workers:
-            print("All workers failed to start. Aborting.", file=sys.stderr)
             if self.progress is not None:
                 self.progress.finalize()
-            return [manifest]
+            raise RuntimeError(
+                "All OpenModelica persistent workers failed to start. "
+                "See per-worker errors above. Try re-running with --batch to fall back "
+                "to per-test omc subprocesses."
+            )
         print(
             f"  {len(live_workers)}/{n_workers} workers ready in "
             f"{time.monotonic() - start_all:.1f}s",

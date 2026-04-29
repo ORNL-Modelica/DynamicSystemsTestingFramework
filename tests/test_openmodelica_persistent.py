@@ -589,6 +589,35 @@ class TestCLISelectionWiring:
         runner = cli_mod._get_runner(cfg, persistent=False)
         assert not isinstance(runner, PersistentOpenModelicaRunner)
 
+    def test_run_tests_raises_when_all_workers_fail_to_start(
+        self, tmp_path, monkeypatch,
+    ):
+        """Regression for a bug where the persistent runner printed
+        ``"All workers failed to start. Aborting."`` but then *returned* the
+        empty manifest, letting the read/compare/report phases run on
+        non-existent results and emit fake "ok" outcomes. The fix raises
+        :class:`RuntimeError`; the CLI converts it to a clean non-zero exit.
+        """
+        from dstf.simulators.openmodelica.persistent_runner import (
+            OpenModelicaWorker,
+            PersistentOpenModelicaRunner,
+        )
+
+        cfg = _make_config(tmp_path, dependencies=["Modelica"])
+        monkeypatch.setattr(
+            "dstf.simulators.openmodelica.persistent_runner.load_omc_session",
+            lambda: FakeSession,
+        )
+
+        def _always_fail(self):
+            raise RuntimeError(f"Worker {self.worker_id}: synthetic failure")
+
+        monkeypatch.setattr(OpenModelicaWorker, "start", _always_fail)
+
+        runner = PersistentOpenModelicaRunner(cfg)
+        with pytest.raises(RuntimeError, match="All OpenModelica persistent workers"):
+            runner.run_tests([_make_test()])
+
 
 # ---------------------------------------------------------------------------
 # Integration tests (real omc + real OMPython)
