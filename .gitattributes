@@ -1,0 +1,19 @@
+# Normalize line endings: keep LF in the index regardless of platform
+# checkout setting. Without this, files authored or copied on Windows /
+# WSL with CRLF endings show up as modified even when their content
+# hasn't changed, polluting `git status` and `git diff`. The git working
+# tree still gets native line endings on checkout where appropriate.
+* text=auto eol=lf
+
+# Binary files — Git autodetects most, but pinning these avoids any
+# accidental newline rewriting if a future textual heuristic drifts.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.fmu binary
+*.mat binary
+*.whl binary
+*.egg binary
