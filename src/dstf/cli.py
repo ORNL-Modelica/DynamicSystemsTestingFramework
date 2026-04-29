@@ -121,6 +121,36 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
+_PERSISTENT_BACKENDS = frozenset({"Dymola", "OpenModelica", "Julia"})
+
+
+def _preflight_persistent_backend(config) -> None:
+    """Verify the persistent-worker dependency for ``config.simulator_backend``.
+
+    Raises :class:`RuntimeError` with an install hint if the dependency is
+    missing. Cheap probes only — full failure modes (worker compile errors,
+    license issues) still surface from the runner itself.
+    """
+    backend = config.simulator_backend
+    if backend == "Dymola":
+        from .simulators.dymola.interface_loader import load_dymola_interface
+        load_dymola_interface(config.dymola_interface_path)
+    elif backend == "OpenModelica":
+        from .simulators.openmodelica.session_loader import load_omc_session
+        load_omc_session()
+    elif backend == "Julia":
+        import shutil
+        if not shutil.which("julia"):
+            raise RuntimeError(
+                "Julia binary not found on PATH. The persistent-worker Julia "
+                "runner spawns a long-lived `julia --project=...` subprocess "
+                "and needs `julia` available.\n"
+                "\n"
+                "Install Julia from https://julialang.org/downloads/ "
+                "(or use a version manager like `juliaup`)."
+            )
+
+
 def _get_runner(config, persistent: bool = False):
     """Get the appropriate simulator runner for the configured simulator.
 
@@ -128,36 +158,44 @@ def _get_runner(config, persistent: bool = False):
     if the backend supports one:
 
     - Dymola → :class:`PersistentDymolaRunner` (requires the Dymola Python
-      interface; falls back to batch on :class:`RuntimeError`).
-    - OpenModelica → :class:`PersistentOpenModelicaRunner` (requires OMPython;
-      falls back to batch on :class:`RuntimeError`).
+      interface).
+    - OpenModelica → :class:`PersistentOpenModelicaRunner` (requires OMPython).
     - Julia → :class:`PersistentJuliaRunner` (D78; stdin/stdout pipe to a
-      long-lived ``julia --project=... run_persistent.jl``; falls back to
-      batch on :class:`RuntimeError`).
+      long-lived ``julia --project=... run_persistent.jl``; requires the
+      ``julia`` binary on PATH).
+
+    Pre-flights the persistent backend's external dependency. On failure,
+    prints a unified error pointing at both fixes (install the dep, or
+    re-run with ``--batch``) and exits ``1`` — no silent fallback.
     """
     from .simulators import get_runner
     runner = get_runner(config)
-    if persistent and config.simulator_backend == "Dymola":
+    if not persistent or config.simulator_backend not in _PERSISTENT_BACKENDS:
+        return runner
+    backend = config.simulator_backend
+    try:
+        _preflight_persistent_backend(config)
+    except RuntimeError as exc:
+        print(
+            f"Persistent-worker {backend} unavailable. Aborting.\n"
+            f"\n"
+            f"{exc}\n"
+            f"\n"
+            f"Or re-run with `--batch` to use the per-test subprocess runner instead.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if backend == "Dymola":
         from .simulators.dymola.persistent_runner import PersistentDymolaRunner
-        runner = PersistentDymolaRunner(config)
-    elif persistent and config.simulator_backend == "OpenModelica":
-        try:
-            from .simulators.openmodelica.session_loader import load_omc_session
-            load_omc_session()  # raises if OMPython unavailable — fall back
-        except RuntimeError as exc:
-            print(
-                f"Persistent-worker OpenModelica unavailable — falling back to "
-                f"--batch mode.\n  {exc}",
-                file=sys.stderr,
-            )
-        else:
-            from .simulators.openmodelica.persistent_runner import (
-                PersistentOpenModelicaRunner,
-            )
-            runner = PersistentOpenModelicaRunner(config)
-    elif persistent and config.simulator_backend == "Julia":
+        return PersistentDymolaRunner(config)
+    if backend == "OpenModelica":
+        from .simulators.openmodelica.persistent_runner import (
+            PersistentOpenModelicaRunner,
+        )
+        return PersistentOpenModelicaRunner(config)
+    if backend == "Julia":
         from .simulators.julia.persistent_runner import PersistentJuliaRunner
-        runner = PersistentJuliaRunner(config)
+        return PersistentJuliaRunner(config)
     return runner
 
 

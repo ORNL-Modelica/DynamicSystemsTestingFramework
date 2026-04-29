@@ -16,10 +16,7 @@ _INSTALL_HINT = (
     "OMPython is not installed. The persistent-worker OpenModelica runner "
     "needs it to drive omc over ZMQ. Install the optional extra:\n"
     "\n"
-    "    uv pip install -e \".[om]\"\n"
-    "\n"
-    "or fall back to the batch runner with `--batch` (per-test omc subprocess, "
-    "no OMPython required)."
+    "    uv pip install -e \".[om]\""
 )
 
 

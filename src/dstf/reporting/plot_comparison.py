@@ -1216,14 +1216,23 @@ def generate_report_suite(
 
 
 def open_in_browser(path: Path) -> None:
-    """Open a file in the system's default browser/viewer."""
+    """Open a file in the system's default browser/viewer.
+
+    Always prints a ``file://`` URL so the user has a clickable fallback
+    (most terminals make it clickable). Subprocess stdout/stderr are
+    silenced — on headless Linux/WSL ``xdg-open`` prints a long list of
+    "Permission denied" candidates when no browser is registered, and
+    that noise has no actionable signal for the user.
+    """
+    print(f"View: {path.resolve().as_uri()}")
     system = platform.system()
+    silent = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     try:
         if system == "Windows":
-            subprocess.Popen(["start", "", str(path)], shell=True)
+            subprocess.Popen(["start", "", str(path)], shell=True, **silent)
         elif system == "Darwin":
-            subprocess.Popen(["open", str(path)])
+            subprocess.Popen(["open", str(path)], **silent)
         else:
-            subprocess.Popen(["xdg-open", str(path)])
+            subprocess.Popen(["xdg-open", str(path)], **silent)
     except OSError:
-        print(f"  Could not open browser. View manually: {path}")
+        pass

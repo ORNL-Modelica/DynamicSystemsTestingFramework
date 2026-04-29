@@ -549,18 +549,12 @@ class TestCLISelectionWiring:
         runner = cli_mod._get_runner(cfg, persistent=True)
         assert isinstance(runner, PersistentOpenModelicaRunner)
 
-    def test_get_runner_falls_back_when_ompython_missing(
+    def test_get_runner_aborts_when_ompython_missing(
         self, tmp_path, monkeypatch, capsys,
     ):
-        """load_omc_session raising RuntimeError → CLI sticks with batch
-        OpenModelicaRunner and prints a fallback notice."""
+        """load_omc_session raising RuntimeError → CLI prints a unified
+        error and exits 1 (no silent fallback to batch)."""
         from dstf import cli as cli_mod
-        from dstf.simulators.openmodelica.persistent_runner import (
-            PersistentOpenModelicaRunner,
-        )
-        from dstf.simulators.openmodelica.runner import (
-            OpenModelicaRunner,
-        )
 
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
 
@@ -571,11 +565,13 @@ class TestCLISelectionWiring:
             "dstf.simulators.openmodelica.session_loader.load_omc_session",
             _raise,
         )
-        runner = cli_mod._get_runner(cfg, persistent=True)
-        assert isinstance(runner, OpenModelicaRunner)
-        assert not isinstance(runner, PersistentOpenModelicaRunner)
+        with pytest.raises(SystemExit) as excinfo:
+            cli_mod._get_runner(cfg, persistent=True)
+        assert excinfo.value.code == 1
         stderr = capsys.readouterr().err
         assert "Persistent-worker OpenModelica unavailable" in stderr
+        assert "Aborting" in stderr
+        assert "--batch" in stderr
 
     def test_get_runner_batch_mode_never_selects_persistent(
         self, tmp_path, monkeypatch,

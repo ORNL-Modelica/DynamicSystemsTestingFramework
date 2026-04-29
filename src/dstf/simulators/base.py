@@ -396,14 +396,30 @@ class SimulatorRunner(ABC):
             f" (parallel={self.config.parallel}, timeout={self.config.timeout}s)",
             file=sys.stderr,
         )
+        dashboard = self.config.work_dir / "dashboard.html"
+        print(f"Live progress: {dashboard.resolve().as_uri()}", file=sys.stderr)
+
+        def _result_status(rr: TestRunResult) -> str:
+            if rr.timed_out:
+                return "timeout"
+            return "ok" if rr.success else "fail"
 
         run_results: list[TestRunResult] = []
         wall_start = time.monotonic()
+        completed = 0
+        key_lookup = {t.model_id: tk for t, tk, _ in test_items}
 
         if self.config.parallel <= 1:
             for test, test_key, idx in test_items:
                 result = self.run_single_test(test, test_key, idx, total)
                 run_results.append(result)
+                completed += 1
+                _print_progress(
+                    completed, total,
+                    f"{test_key} {test.model_id}",
+                    _result_status(result),
+                    elapsed=result.elapsed,
+                )
         else:
             futures = {}
             with ThreadPoolExecutor(max_workers=self.config.parallel) as pool:
@@ -414,7 +430,17 @@ class SimulatorRunner(ABC):
                     futures[future] = test.model_id
 
                 for future in as_completed(futures):
-                    run_results.append(future.result())
+                    result = future.result()
+                    run_results.append(result)
+                    completed += 1
+                    model_id = futures[future]
+                    test_key = key_lookup.get(model_id, "")
+                    _print_progress(
+                        completed, total,
+                        f"{test_key} {model_id}",
+                        _result_status(result),
+                        elapsed=result.elapsed,
+                    )
 
         # Summary
         wall_elapsed = time.monotonic() - wall_start
