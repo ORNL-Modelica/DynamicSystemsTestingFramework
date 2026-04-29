@@ -273,6 +273,9 @@ const MODE_SCORERS = {
   },
   // event-timing intentionally absent — CLI-authoritative (event pairing
   // algorithm stays Python-side).
+  // Mirror of _compare_dominant_frequency (comparator.py:906). Power-of-2
+  // FFT resampling makes bin frequencies bit-identical with Python; both
+  // sides agree on which bin a declared peak falls in.
   'dominant-frequency': (leaf) => {
     // Declared-peaks live scorer (D75+D76). Computes the actual signal's
     // spectrum LIVE via the ported FFT, scoped to the leaf's current

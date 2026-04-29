@@ -93,6 +93,19 @@ def _trajectory_for(mode: str, verdict: str) -> dict:
             act = ref.copy()
             act[-1] = 1.5
         return _traj(t, ref, t, act)
+    if mode == "dominant-frequency":
+        # Pure 5 Hz tone over a 1-second window with 256 samples — gives
+        # the FFT a clean main lobe at 5 Hz and a Nyquist cap of 128 Hz.
+        # Python and JS both resample to a power of 2 above max(N, 64),
+        # so 256 samples lets the bin grid be deterministic on both
+        # sides — bit-identical bin frequencies.
+        t_fft = np.linspace(0.0, 1.0, 256)
+        act = np.sin(2.0 * np.pi * 5.0 * t_fft)
+        # Reference is unused by the dominant-frequency live scorer
+        # (declared peaks come from spec params, not from ref FFT). Keep
+        # it short so signal range computations stay stable.
+        ref = act.copy()
+        return _traj(t_fft, ref, t_fft, act)
     raise ValueError(f"unknown mode: {mode}")
 
 
@@ -123,6 +136,15 @@ _PARITY_CASES: list[dict[str, Any]] = [
     {"mode": "range",  "verdict": "fail", "params": {"min_value": 0.0, "max_value": 1.0}},
     {"mode": "points", "verdict": "pass", "params": {"tolerance": 1e-3, "points": []}},
     {"mode": "points", "verdict": "fail", "params": {"tolerance": 1e-3, "points": []}},
+    # Dominant-frequency: act is a pure 5 Hz tone. Pass case declares
+    # the right peak; fail case declares 12 Hz which isn't there. Python
+    # and JS both resample to a power of 2 above max(N, 64) before the
+    # FFT (comparator.py:_compute_fft_spectrum / interactive.js:_fftRadix2),
+    # so bin frequencies are bit-identical across implementations.
+    {"mode": "dominant-frequency", "verdict": "pass",
+     "params": {"peaks": [{"freq": 5.0, "tolerance": 0.5, "tolerance_mode": "abs"}]}},
+    {"mode": "dominant-frequency", "verdict": "fail",
+     "params": {"peaks": [{"freq": 12.0, "tolerance": 0.5, "tolerance_mode": "abs"}]}},
 ]
 
 
@@ -162,6 +184,12 @@ def _python_verdict(case: dict) -> bool:
             rt, rv, at, av,
             points=params.get("points") or [],
             tolerance=params["tolerance"],
+        )
+        return bool(result.passed)
+    if mode == "dominant-frequency":
+        result = cmp._compare_dominant_frequency(
+            rt, rv, at, av,
+            peaks=params.get("peaks") or [],
         )
         return bool(result.passed)
     raise ValueError(f"unknown mode: {mode}")

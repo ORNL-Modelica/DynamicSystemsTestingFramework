@@ -910,6 +910,12 @@ def _compare_dominant_frequency(
     act_values: np.ndarray,
     peaks: Optional[list[dict]] = None,
 ) -> VariableComparison:
+    # parity-test: live-preview JS counterpart at
+    # src/dstf/reporting/templates/interactive.js MODE_SCORERS['dominant-frequency']
+    # (around line 276). Both sides resample to a power of 2 above
+    # max(N, 64) before the FFT so bin frequencies are bit-identical,
+    # which is what makes the parity feasible at all. Drift is caught
+    # by tests/test_scorer_parity.py.
     """Compare declared frequency peaks between reference and actual (4.C.2).
 
     Takes a list of user-declared peaks of the form::
