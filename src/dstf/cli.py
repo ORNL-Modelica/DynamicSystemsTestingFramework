@@ -1295,19 +1295,41 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "or the directory containing it. Overrides auto-discovery.",
     )
 
+    # Parent parsers for flag groups shared across subcommands. argparse
+    # merges these via parents=[...] on add_parser; each subcommand inherits
+    # only the groups that apply, keeping --help output identical to the
+    # pre-refactor inline form while eliminating duplication.
+    filter_parent = argparse.ArgumentParser(add_help=False)
+    filter_parent.add_argument("--filter", type=str, help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id")
+    filter_parent.add_argument("--package", type=str, help="Filter by package prefix")
+
+    compare_parent = argparse.ArgumentParser(add_help=False)
+    compare_parent.add_argument("--tolerance", type=float, help="Override comparison tolerance")
+    compare_parent.add_argument("--default-points", action="store_true", help="Use points mode (with empty points list) as the default for variables without an explicit ``mode`` override.")
+
+    report_parent = argparse.ArgumentParser(add_help=False)
+    report_parent.add_argument(
+        "--report-format", choices=["console", "junit", "html"],
+        default="console", help="Output format for test report",
+    )
+    report_parent.add_argument(
+        "--report", action="store_true",
+        help="Generate HTML report suite with index page and per-test reports",
+    )
+
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # discover
-    p_discover = subparsers.add_parser(
-        "discover", help="Discover and list all test models"
+    subparsers.add_parser(
+        "discover", parents=[filter_parent],
+        help="Discover and list all test models",
     )
-    p_discover.add_argument("--filter", type=str, help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id")
-    p_discover.add_argument("--package", type=str, help="Filter by package prefix")
 
     # run
-    p_run = subparsers.add_parser("run", help="Run tests in Dymola")
-    p_run.add_argument("--filter", type=str, help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id")
-    p_run.add_argument("--package", type=str, help="Filter by package prefix")
+    p_run = subparsers.add_parser(
+        "run", parents=[filter_parent, compare_parent, report_parent],
+        help="Run tests in Dymola",
+    )
     p_run.add_argument(
         "-i", "--interactive", nargs="?", const="all", default=None,
         metavar="FILTER",
@@ -1330,19 +1352,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                        help="(--batch only) Tests per Dymola session (default: all-per-worker). Small values (3-5) give better load balancing and crash isolation but reload the library more often.")
     p_run.add_argument("--batch", action="store_true",
                        help="Use the legacy batched script runner (Dymola .mos / OpenModelica subprocess) instead of the default persistent-worker mode. Falls back to this automatically if the backend's Python interface (Dymola DymolaInterface or OMPython) can't be loaded.")
-    p_run.add_argument("--tolerance", type=float, help="Override comparison tolerance")
-    p_run.add_argument("--default-points", action="store_true", help="Use points mode (with empty points list) as the default for variables without an explicit ``mode`` override.")
     p_run.add_argument(
         "--timeout", type=int, default=None,
         help="Per-test timeout in seconds (default: 60)",
-    )
-    p_run.add_argument(
-        "--report-format", choices=["console", "junit", "html"],
-        default="console", help="Output format for test report",
-    )
-    p_run.add_argument(
-        "--report", action="store_true",
-        help="Generate HTML report suite with index page and per-test reports",
     )
     p_run.add_argument(
         "--merge", action="store_true",
@@ -1359,31 +1371,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     # compare
-    p_compare = subparsers.add_parser(
-        "compare", help="Compare last results against references"
-    )
-    p_compare.add_argument("--filter", type=str, help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id")
-    p_compare.add_argument("--package", type=str, help="Filter by package prefix")
-    p_compare.add_argument("--tolerance", type=float, help="Override comparison tolerance")
-    p_compare.add_argument("--default-points", action="store_true", help="Use points mode (with empty points list) as the default for variables without an explicit ``mode`` override.")
-    p_compare.add_argument(
-        "--report-format", choices=["console", "junit", "html"],
-        default="console",
-    )
-    p_compare.add_argument(
-        "--report", action="store_true",
-        help="Generate HTML report suite with index page and per-test reports",
+    subparsers.add_parser(
+        "compare", parents=[filter_parent, compare_parent, report_parent],
+        help="Compare last results against references",
     )
 
     # export
-    p_export = subparsers.add_parser("export", help="Export reference data")
+    p_export = subparsers.add_parser(
+        "export", parents=[filter_parent],
+        help="Export reference data",
+    )
     p_export.add_argument(
         "--format", choices=["json", "csv"], default="json",
         help="Export format",
     )
     p_export.add_argument("--output", type=str, help="Output file path")
-    p_export.add_argument("--filter", type=str, help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id")
-    p_export.add_argument("--package", type=str, help="Filter by package prefix")
 
     # manifest
     p_manifest = subparsers.add_parser(
