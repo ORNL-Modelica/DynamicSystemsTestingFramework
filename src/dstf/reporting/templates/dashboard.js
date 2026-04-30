@@ -8,12 +8,27 @@
   const headers = document.querySelectorAll('#results-table thead tr:first-child th[data-sort]');
   const colFilters = document.querySelectorAll('input.col-filter');
 
-  // ---- Filter (status buttons + per-column text) ----
-  // Status pills are multi-toggle: "All" clears the selection; any other
-  // button toggles its status in/out of an active Set. Empty set means
-  // show everything (functionally equivalent to "All" being on).
+  // ---- Filter (status pills + per-column text) ----
+  // Counter pills are dual-purpose: they show the count AND act as filter
+  // toggles. Click a pill to add its status to the filter set; click again
+  // to remove. Click Total to clear all filters. Empty set = show all.
+  // Pills with zero count are disabled (no-op on click).
   const activeStatuses = new Set();
   const colFilterValues = {};
+
+  // Maps the pill key (counter category) to the row data-status value(s)
+  // it should match. Most are direct; warnings is a cross-cut that
+  // checks any row with sortWarnings>0 regardless of pass/fail outcome.
+  const PILL_TO_STATUSES = {
+    queued:     ['queued'],
+    running:    ['running'],
+    passed:     ['pass'],
+    failed:     ['fail'],
+    sim_failed: ['sim-fail'],
+    no_ref:     ['no-ref'],
+    timed_out:  ['timed-out'],
+    warnings:   ['__warnings__'],   // sentinel handled below
+  };
 
   // Convert a per-column filter string to a matcher. If the input contains
   // glob metacharacters (* or ?), build a case-insensitive regex from the
@@ -33,12 +48,12 @@
 
   function statusMatches(rowStatus, sortWarnings) {
     if (activeStatuses.size === 0) return true;
-    for (const s of activeStatuses) {
-      if (s === 'warn' && sortWarnings > 0) return true;
-      // "fail" lumps in timed-out so a single click of Failed surfaces
-      // both genuine compare-fails and timeouts.
-      if (s === 'fail' && (rowStatus === 'fail' || rowStatus === 'timed-out')) return true;
-      if (s === rowStatus) return true;
+    for (const pill of activeStatuses) {
+      const targets = PILL_TO_STATUSES[pill] || [pill];
+      for (const t of targets) {
+        if (t === '__warnings__' && sortWarnings > 0) return true;
+        if (t === rowStatus) return true;
+      }
     }
     return false;
   }
@@ -66,27 +81,26 @@
     });
   }
 
-  function syncFilterButtonStates() {
-    const allBtn = document.querySelector('.filter-bar button[data-status="all"]');
-    document.querySelectorAll('.filter-bar button[data-status]').forEach(b => {
-      const s = b.dataset.status;
-      if (s === 'all') {
-        b.classList.toggle('active', activeStatuses.size === 0);
-      } else {
-        b.classList.toggle('active', activeStatuses.has(s));
-      }
+  function syncPillStates() {
+    document.querySelectorAll('.counter[data-pill]').forEach(p => {
+      const key = p.dataset.pill;
+      p.classList.toggle('active', activeStatuses.has(key));
     });
   }
 
-  window.filterRows = function(status, btn) {
-    if (status === 'all') {
+  // Pill click handler. Total clears all filters; other pills toggle
+  // their key in/out of the active set. Disabled pills (zero count)
+  // are inert.
+  window.togglePill = function(key, el) {
+    if (el && el.classList.contains('disabled')) return;
+    if (key === 'total') {
       activeStatuses.clear();
-    } else if (activeStatuses.has(status)) {
-      activeStatuses.delete(status);
+    } else if (activeStatuses.has(key)) {
+      activeStatuses.delete(key);
     } else {
-      activeStatuses.add(status);
+      activeStatuses.add(key);
     }
-    syncFilterButtonStates();
+    syncPillStates();
     applyFilters();
   };
 
@@ -160,16 +174,11 @@
   }
 
   // ---- Counters + progress bar (rendered from status snapshot) ----
-  // The counters reflect the current row population. During a live run
-  // status_class only takes the values queued/running/pass/fail/timed-out
-  // (sim_failed and no_ref need a comparison phase to produce). After
-  // comparison sidecars overlay row status_class with sim-fail/no-ref,
-  // those pills come alive. Pills with zero count still render so the
-  // user sees the full set and can spot the moment an outcome appears.
+  // Each pill is a clickable filter toggle. Disabled pills (zero count)
+  // stay rendered so the user sees the full set and can spot the moment
+  // an outcome appears. Total acts as the clear-all button.
   function renderCounters(counts, total) {
     const cn = document.getElementById('counters');
-    // Display order chosen so transient (queued/running) come first,
-    // then outcomes (passed → failures), then warnings + total at end.
     const order = [
       ['queued',     'queued'],
       ['running',    'running'],
@@ -182,10 +191,17 @@
     ];
     let html = '';
     for (const [k, label] of order) {
-      html += `<div class="counter ${k}"><div class="label">${label}</div>` +
-              `<div class="value">${counts[k] || 0}</div></div>`;
+      const n = counts[k] || 0;
+      const disabled = n === 0 ? ' disabled' : '';
+      const active = activeStatuses.has(k) ? ' active' : '';
+      html += `<div class="counter ${k}${disabled}${active}" data-pill="${k}" ` +
+              `onclick="togglePill('${k}', this)">` +
+              `<div class="label">${label}</div>` +
+              `<div class="value">${n}</div></div>`;
     }
-    html += `<div class="counter total"><div class="label">Total</div>` +
+    html += `<div class="counter total" data-pill="total" ` +
+            `onclick="togglePill('total', this)" title="Clear all filters">` +
+            `<div class="label">Total</div>` +
             `<div class="value">${total}</div></div>`;
     cn.innerHTML = html;
 

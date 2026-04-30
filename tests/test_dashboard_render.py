@@ -122,8 +122,9 @@ def test_render_final_strips_refresh(tmp_path):
     assert "DASHBOARD_MODE = 'final'" in out
 
 
-def test_dashboard_template_has_filter_buttons(tmp_path):
-    """Status filter buttons must appear in the rendered HTML."""
+def test_dashboard_template_has_pill_toggles(tmp_path):
+    """Counter pills are clickable filter toggles. The pill-click handler
+    name + the PILL_TO_STATUSES map must both be in the rendered JS."""
     snapshot = {
         "total": 0, "elapsed": 0.0, "eta_seconds": None,
         "counts": {}, "tests": [], "updated_at": 0.0,
@@ -131,11 +132,10 @@ def test_dashboard_template_has_filter_buttons(tmp_path):
     _write_status_json(tmp_path, snapshot)
     render_live(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert 'filterRows(\'all\'' in out
-    assert 'filterRows(\'fail\'' in out
-    assert 'filterRows(\'sim-fail\'' in out
-    assert 'filterRows(\'no-ref\'' in out
-    assert 'filterRows(\'pass\'' in out
+    assert "togglePill" in out  # click handler defined + wired on each pill
+    assert "PILL_TO_STATUSES" in out  # pill key → row status_class map
+    # The "filter-bar" row of buttons no longer exists — pills handle it
+    assert "class=\"filter-bar\"" not in out
 
 
 def test_dashboard_template_has_sort_hooks(tmp_path):
