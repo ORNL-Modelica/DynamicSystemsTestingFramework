@@ -254,6 +254,13 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         comparisons = compare_all(scope_tests, results, store, config.tolerance, config.default_points)
 
+        # Always refresh the unified dashboard before any --report work.
+        # Without --report the per-test sidecars don't exist, so the
+        # post-comparison columns stay dashed; the live snapshot is
+        # frozen at the moment compare_all finished.
+        from .reporting.dashboard_render import render_final
+        render_final(config.work_dir)
+
         if args.report:
             return _generate_report_suite(comparisons, results, scope_tests, store, config)
 
@@ -314,6 +321,13 @@ def cmd_compare(args: argparse.Namespace) -> int:
     _write_id_mapping(store, config)
     results = runner.read_last_results(tests)
     comparisons = compare_all(tests, results, store, config.tolerance, config.default_points)
+
+    # Always refresh the unified dashboard, even without --report. Without
+    # per-test sidecars (no --report run yet), the post-run columns stay
+    # dashed and the page reads as a "live" snapshot frozen at the moment
+    # comparison finished.
+    from .reporting.dashboard_render import render_final
+    render_final(config.work_dir)
 
     if getattr(args, "report", False):
         return _generate_report_suite(comparisons, results, tests, store, config)
@@ -1197,12 +1211,21 @@ def _print_detail(comp) -> None:
 
 
 def _generate_report_suite(comparisons, results, tests, store, config) -> int:
-    """Generate per-test HTML reports and an index page."""
-    from .reporting.plot_comparison import generate_report_suite, open_in_browser
+    """Generate per-test reports + refresh the unified dashboard.
 
-    index_path = generate_report_suite(comparisons, results, tests, store, config)
-    print(f"Report suite written to {index_path.parent}")
-    open_in_browser(index_path)
+    generate_report_suite (in plot_comparison) writes per-test
+    interactive.html + comparison_data.json sidecars under
+    work_dir/reports/. dashboard_render.render_final then reads
+    those sidecars and produces the top-level work_dir/dashboard.html.
+    """
+    from .reporting.plot_comparison import generate_report_suite, open_in_browser
+    from .reporting.dashboard_render import render_final
+
+    generate_report_suite(comparisons, results, tests, store, config)
+    render_final(config.work_dir)
+    dashboard_path = config.work_dir / "dashboard.html"
+    print(f"Report: {dashboard_path}")
+    open_in_browser(dashboard_path)
 
     n_failed = sum(1 for c in comparisons if not c.passed)
     return 1 if n_failed else 0
