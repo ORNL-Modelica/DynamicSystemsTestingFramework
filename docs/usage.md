@@ -258,6 +258,17 @@ uv run dstf --config testing.json run -i
 | `v` | Add variable patterns to track (updates test_spec.json) |
 | `q` | Quit interactive review |
 
+### Live progress + final report
+
+DSTF writes a single `dashboard.html` to your `work_dir` that serves as both the live progress page during a run and the final report after comparison.
+
+- **During a run**: the page polls `status.json` every 2s and updates rows in place (no full reload, scroll position survives). A "Refresh now" button forces an immediate fetch.
+- **After comparison**: the same page is re-rendered in final mode — the JS poll loop is dropped, and post-comparison columns are populated (Worst NRMSE, Variables, Warnings, Translate / Sim / Total wall times). Add `--report` for per-test interactive deep dives at `reports/test_NNNN/interactive.html` accessible from the Model column links.
+
+The dashboard supports status filter buttons, per-column text filtering, and a 3-state sort cycle (none → sorted → reverse → none) on every column. Numeric columns sort descending first (largest first when triaging failures); text columns sort ascending first.
+
+The **Resolution** column shows where each test's simulation parameters came from: `annotation` (from the `experiment(...)` annotation in the .mo file), `test_spec` (overridden in test_spec.json), or `mixed` (some fields from each — hover to see the per-field breakdown). This is the resolution-explainer for the two-layer contract documented above.
+
 ### `compare` — Re-compare without simulating
 
 Uses the last simulation results (from `testing_output/`) and compares against current references. Useful after changing tolerances or updating references externally.

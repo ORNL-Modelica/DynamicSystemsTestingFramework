@@ -57,12 +57,12 @@ uv run dstf --config testing.json run -i failed
 # Accept all results as new baselines
 uv run dstf --config testing.json run --accept
 
-# Generate HTML report with per-test plots (interactive Plotly)
+# Generate per-test interactive deep-dive plots. The unified dashboard.html always exists; --report adds reports/test_NNNN/interactive.html plots per test.
 uv run dstf --config testing.json run --report ./reports
 
 # Parallel run with small-batch queue dispatch
 uv run dstf --config testing.json run --parallel 4 --batch-size 3
-# Live progress: open work_dir/dashboard.html (auto-refreshes every 2s; URL printed on start)
+# Live progress + final report: work_dir/dashboard.html (one page; JS-fetches status.json every 2s during the run, becomes the static report after compare)
 
 # Filter accepts: glob, comma-separated list, or @file (one pattern per line, # comments)
 uv run dstf --config testing.json run --filter "Foo.A,Foo.B"
