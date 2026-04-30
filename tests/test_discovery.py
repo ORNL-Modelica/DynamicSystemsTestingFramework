@@ -303,3 +303,51 @@ class TestDiscoverTests:
         assert simple.metric_tree_spec is not None, (
             "metric_tree_spec from test_spec.metrics must survive the merge"
         )
+
+
+def test_field_sources_records_annotation_default():
+    """A test discovered only via Modelica annotation has field_sources='annotation'."""
+    from dstf.discovery.recognizer import RecognizerResult
+    from dstf.discovery.test_registry import (
+        _build_test_model_from_recognizer_results,
+    )
+
+    r = RecognizerResult(
+        model_id="MyLib.Foo",
+        stop_time=10.0,
+        tolerance=1e-5,
+        method="Dassl",
+    )
+    model = _build_test_model_from_recognizer_results("MyLib.Foo", [r])
+    assert model.field_sources["stop_time"] == "annotation"
+    assert model.field_sources["tolerance"] == "annotation"
+    assert model.field_sources["method"] == "annotation"
+
+
+def test_field_sources_records_spec_override():
+    """When spec overrides annotation, field_sources flips to 'test_spec'."""
+    import json
+    import tempfile
+    from pathlib import Path
+    from dstf.config import Config
+    from dstf.discovery.test_registry import discover_tests
+
+    spec = {
+        "tests": [{
+            "model": "MyLib.Foo",
+            "variables": ["x"],
+            "simulation": {"stop_time": 999.0},
+        }],
+    }
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        # Stub package.mo so Config.__post_init__ short-circuits the
+        # find_package_dir parent-walk (which on WSL trips on unreadable
+        # Windows-mount artifacts at the filesystem root).
+        (td / "package.mo").write_text('package MyLib end MyLib;')
+        spec_path = td / "test_spec.json"
+        spec_path.write_text(json.dumps(spec))
+        config = Config(source_path=td, test_spec_file=spec_path)
+        tests = discover_tests(config)
+    assert len(tests) == 1
+    assert tests[0].field_sources["stop_time"] == "test_spec"

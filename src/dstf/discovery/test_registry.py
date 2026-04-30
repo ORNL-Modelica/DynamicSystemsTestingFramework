@@ -63,6 +63,13 @@ class TestModel:
     # test (e.g., ["dymola-via-fmpy"]). Placeholder for 4.B.
     requested_baselines: list[str] = field(default_factory=list)
 
+    # Per-field provenance: where the value came from.
+    # Keys: "stop_time", "tolerance", "method", "number_of_intervals",
+    # "output_interval". Values: "annotation", "test_spec", "default".
+    # Populated during recognizer + spec merge so the dashboard's
+    # resolution-explainer column can show "stop_time: 10 (annotation)".
+    field_sources: dict[str, str] = field(default_factory=dict)
+
     # Where this test was defined: "unit_tests", "spec", "both"
     source: str = "unit_tests"
 
@@ -105,14 +112,19 @@ def _build_test_model_from_recognizer_results(
             model.error_expected = r.error_expected
         if r.stop_time is not None:
             model.stop_time = r.stop_time
+            model.field_sources["stop_time"] = "annotation"
         if r.tolerance is not None:
             model.tolerance = r.tolerance
+            model.field_sources["tolerance"] = "annotation"
         if r.method is not None:
             model.method = r.method
+            model.field_sources["method"] = "annotation"
         if r.number_of_intervals is not None:
             model.number_of_intervals = r.number_of_intervals
+            model.field_sources["number_of_intervals"] = "annotation"
         if r.output_interval is not None:
             model.output_interval = r.output_interval
+            model.field_sources["output_interval"] = "annotation"
         if r.simulate_only is not None:
             model.simulate_only = r.simulate_only
         if r.requested_fmu_export is not None:
@@ -185,21 +197,24 @@ def discover_tests(config: Config) -> list[TestModel]:
     # Merge spec tests
     for model_id, spec_test in spec_tests.items():
         if model_id in merged:
-            # Both sources — merge variable patterns, spec params override
             existing = merged[model_id]
             existing.variable_patterns = spec_test.variable_patterns
             existing.source = "both"
-            # Spec simulation params override experiment annotation (if explicitly set)
             if spec_test.stop_time != DEFAULT_STOP_TIME:
                 existing.stop_time = spec_test.stop_time
+                existing.field_sources["stop_time"] = "test_spec"
             if spec_test.tolerance != DEFAULT_TOLERANCE:
                 existing.tolerance = spec_test.tolerance
+                existing.field_sources["tolerance"] = "test_spec"
             if spec_test.method != DEFAULT_METHOD:
                 existing.method = spec_test.method
+                existing.field_sources["method"] = "test_spec"
             if spec_test.number_of_intervals is not None:
                 existing.number_of_intervals = spec_test.number_of_intervals
+                existing.field_sources["number_of_intervals"] = "test_spec"
             if spec_test.output_interval is not None:
                 existing.output_interval = spec_test.output_interval
+                existing.field_sources["output_interval"] = "test_spec"
             if spec_test.comparison_tolerance is not None:
                 existing.comparison_tolerance = spec_test.comparison_tolerance
             if spec_test.variable_overrides:
@@ -209,7 +224,9 @@ def discover_tests(config: Config) -> list[TestModel]:
             if spec_test.metric_tree_spec is not None:
                 existing.metric_tree_spec = spec_test.metric_tree_spec
         else:
-            # Spec-only test
+            for fname in ("stop_time", "tolerance", "method",
+                          "number_of_intervals", "output_interval"):
+                spec_test.field_sources.setdefault(fname, "test_spec")
             merged[model_id] = spec_test
 
     # Sort by model_id for consistent ordering
