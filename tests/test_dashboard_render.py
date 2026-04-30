@@ -86,8 +86,8 @@ def test_build_context_final_with_comparisons(tmp_path):
 
 
 def test_render_live_writes_dashboard_html(tmp_path):
-    """render_live writes dashboard.html and it contains the auto-refresh
-    JS-fetch hook, not <meta http-equiv='refresh'>."""
+    """render_live writes dashboard.html with the meta-refresh tag and the
+    DASHBOARD_MODE='live' marker."""
     snapshot = {
         "total": 1, "elapsed": 0.0, "eta_seconds": None,
         "counts": {"queued": 1, "running": 0, "passed": 0,
@@ -102,8 +102,8 @@ def test_render_live_writes_dashboard_html(tmp_path):
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "<title>" in out
     assert "Lib.A" in out
-    assert 'http-equiv="refresh"' not in out
-    assert "DASHBOARD_MODE" in out  # JS fetch hook bootstrap
+    assert '<meta http-equiv="refresh" content="2">' in out
+    assert "DASHBOARD_MODE = 'live'" in out
 
 
 def test_render_final_strips_refresh(tmp_path):
@@ -165,8 +165,10 @@ def test_dashboard_template_has_per_column_filter(tmp_path):
     assert 'data-col-filter="model"' in out
 
 
-def test_live_mode_includes_fetch_loop(tmp_path):
-    """In live mode, the fetch loop bootstrap must be present."""
+def test_live_mode_uses_meta_refresh(tmp_path):
+    """Live mode must include the auto-refresh meta tag — it's what drives
+    the dashboard's auto-refresh on file:// URLs (JS fetch is blocked there
+    in Chrome/Edge for security reasons; meta-refresh is unaffected)."""
     snapshot = {
         "total": 0, "elapsed": 0.0, "eta_seconds": None,
         "counts": {}, "tests": [], "updated_at": 0.0,
@@ -174,13 +176,12 @@ def test_live_mode_includes_fetch_loop(tmp_path):
     _write_status_json(tmp_path, snapshot)
     render_live(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert "setInterval" in out
-    assert "fetch('status.json')" in out
-    assert "function refreshNow()" not in out  # window.refreshNow assignment, not function decl
-    assert "refreshNow" in out  # but the symbol exists
+    assert '<meta http-equiv="refresh" content="2">' in out
+    assert "DASHBOARD_MODE = 'live'" in out
 
 
-def test_final_mode_skips_fetch_loop(tmp_path):
+def test_final_mode_strips_meta_refresh(tmp_path):
+    """Final mode must NOT auto-refresh — the page is now static."""
     snapshot = {
         "total": 0, "elapsed": 0.0, "eta_seconds": None,
         "counts": {}, "tests": [], "updated_at": 0.0,
@@ -188,6 +189,10 @@ def test_final_mode_skips_fetch_loop(tmp_path):
     _write_status_json(tmp_path, snapshot)
     render_final(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    # Match the actual tag, not the substring (the JS comment mentions
+    # the tag literally for documentation, which would false-positive a
+    # naive substring check).
+    assert '<meta http-equiv="refresh"' not in out
     assert "DASHBOARD_MODE = 'final'" in out
 
 

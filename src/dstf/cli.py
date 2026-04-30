@@ -203,6 +203,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         ref_id = store.index.get_id(test.model_id)
         if ref_id:
             runner.ref_id_map[test.model_id] = f"ref_{ref_id}"
+
+    # Open the unified dashboard *before* the run starts so the user sees
+    # live progress as tests register. The first ProgressReporter.register
+    # call will overwrite this initial empty page; subsequent meta-refresh
+    # ticks pick up updates. Final mode lands at the same URL after compare.
+    config.work_dir.mkdir(parents=True, exist_ok=True)
+    from .reporting.dashboard_render import render_live
+    from .reporting.plot_comparison import open_in_browser
+    render_live(config.work_dir)
+    open_in_browser(config.work_dir / "dashboard.html")
+
     try:
         manifests = runner.run_tests(tests)
     except RuntimeError as exc:
