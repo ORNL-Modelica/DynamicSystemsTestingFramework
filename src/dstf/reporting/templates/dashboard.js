@@ -126,26 +126,11 @@
     th.addEventListener('click', () => sortBy(th));
   });
 
-  function sortBy(th) {
+  // Apply a specific direction to a column. Used by both the interactive
+  // sortBy cycle and the localStorage-restored sort on page reload.
+  function applySort(th, dir) {
     const key = th.dataset.key;
     const kind = th.dataset.sort;  // 'num' or 'text'
-    const firstClick = (kind === 'num') ? 'desc' : 'asc';
-
-    let dir;
-    if (lastSorted.th === th) {
-      // Cycle: firstClick → opposite → none → firstClick → ...
-      // The null-state has to restart the cycle, otherwise the third click
-      // gets stuck at null and the column never sorts again.
-      if (lastSorted.dir === null) {
-        dir = firstClick;
-      } else if (lastSorted.dir === firstClick) {
-        dir = (firstClick === 'asc') ? 'desc' : 'asc';
-      } else {
-        dir = null;
-      }
-    } else {
-      dir = firstClick;
-    }
 
     headers.forEach(h => h.classList.remove('sorted-asc', 'sorted-desc'));
     if (dir) th.classList.add('sorted-' + dir);
@@ -153,7 +138,6 @@
 
     const rows = Array.from(tbody.querySelectorAll('tr'));
     if (dir === null) {
-      // Natural order: sort by data-sort-test (insertion order proxy)
       rows.sort((a, b) => {
         const at = a.dataset.sortTest || a.dataset.sortModel || '';
         const bt = b.dataset.sortTest || b.dataset.sortModel || '';
@@ -177,6 +161,28 @@
       });
     }
     rows.forEach(r => tbody.appendChild(r));
+  }
+
+  function sortBy(th) {
+    const kind = th.dataset.sort;
+    const firstClick = (kind === 'num') ? 'desc' : 'asc';
+    let dir;
+    if (lastSorted.th === th) {
+      // Cycle: firstClick → opposite → none → firstClick → ...
+      // The null-state has to restart the cycle, otherwise the third click
+      // gets stuck at null and the column never sorts again.
+      if (lastSorted.dir === null) {
+        dir = firstClick;
+      } else if (lastSorted.dir === firstClick) {
+        dir = (firstClick === 'asc') ? 'desc' : 'asc';
+      } else {
+        dir = null;
+      }
+    } else {
+      dir = firstClick;
+    }
+    applySort(th, dir);
+    persistState();
   }
 
   // ---- Counters + progress bar (rendered from status snapshot) ----
@@ -346,9 +352,79 @@
     flashSaveStatus();
   };
 
-  // Initial sync: zero-selection state hides the footer.
-  // applyFilters already calls syncSelectionUI on every filter change.
-  syncSelectionUI();
+  // ---- Persistence: survive meta-refresh page reloads ----
+  // Live mode reloads the entire page every 2s via the meta-refresh tag,
+  // which would otherwise wipe the user's filter/selection/sort state.
+  // localStorage is keyed by origin + path so each dashboard.html gets
+  // its own scope. Failures (private mode, quota, blocked) fall through
+  // silently — the dashboard still works without persistence, just resets
+  // each tick.
+  const STATE_KEY = 'dstf-dashboard-v1:' + location.pathname;
+
+  function loadState() {
+    try { return JSON.parse(localStorage.getItem(STATE_KEY)) || {}; }
+    catch (e) { return {}; }
+  }
+  function persistState() {
+    try {
+      localStorage.setItem(STATE_KEY, JSON.stringify({
+        activeStatuses: Array.from(activeStatuses),
+        colFilterValues: { ...colFilterValues },
+        selection: selectedRows().map(r => r.dataset.model),
+        sort: lastSorted.th
+          ? { key: lastSorted.th.dataset.key, dir: lastSorted.dir }
+          : null,
+      }));
+    } catch (e) { /* quota / blocked / private mode — non-fatal */ }
+  }
+
+  // Hook persistState into the state-change handlers. We extend the
+  // existing window functions (defined above) so callers don't have to
+  // know about persistence — every UI action already routes through
+  // these handlers.
+  const _togglePill = window.togglePill;
+  window.togglePill = function(k, el) { _togglePill(k, el); persistState(); };
+  const _toggleAllVisible = window.toggleAllVisible;
+  window.toggleAllVisible = function(c) { _toggleAllVisible(c); persistState(); };
+  const _onRowToggle = window.onRowToggle;
+  window.onRowToggle = function(cb) { _onRowToggle(cb); persistState(); };
+  const _clearSelection = window.clearSelection;
+  window.clearSelection = function() { _clearSelection(); persistState(); };
+  colFilters.forEach(inp => inp.addEventListener('input', persistState));
+
+  // Restore saved state on page load. Order: filters first (so the
+  // selection step's tristate header reflects the right visible-row
+  // population), then selection, then sort.
+  (function restoreState() {
+    const s = loadState();
+    if (s.activeStatuses && Array.isArray(s.activeStatuses)) {
+      for (const k of s.activeStatuses) activeStatuses.add(k);
+      syncPillStates();
+    }
+    if (s.colFilterValues && typeof s.colFilterValues === 'object') {
+      Object.assign(colFilterValues, s.colFilterValues);
+      colFilters.forEach(inp => {
+        const k = inp.dataset.colFilter;
+        if (s.colFilterValues[k]) inp.value = s.colFilterValues[k];
+      });
+    }
+    // Re-render counters so the active class on pills reflects the
+    // restored set (initial render happened before restore).
+    renderCounters(initialCountsFromRows(), DASHBOARD_TOTAL);
+    applyFilters();
+
+    if (s.selection && Array.isArray(s.selection)) {
+      const wantSet = new Set(s.selection);
+      Array.from(tbody.querySelectorAll('tr')).forEach(row => {
+        if (wantSet.has(row.dataset.model)) setRowSelected(row, true);
+      });
+    }
+    if (s.sort && s.sort.key) {
+      const th = document.querySelector(`th[data-key="${s.sort.key}"]`);
+      if (th) applySort(th, s.sort.dir);
+    }
+    syncSelectionUI();
+  })();
 
   // Live mode is driven by an http-equiv refresh meta tag in the Jinja
   // template — the browser does a full reload every 2s, which works
