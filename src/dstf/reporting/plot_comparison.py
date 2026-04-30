@@ -929,6 +929,9 @@ def generate_comparison_plots(
     artifact_files: tuple[tuple[str, str], ...] = (),
     max_embedded_samples: int = 2000,
     overlays: Optional[list] = None,
+    status_text: Optional[str] = None,
+    status_class: Optional[str] = None,
+    ref_id: Optional[str] = None,
 ) -> Optional[Path]:
     """Render this test's interactive.html (Plotly) + comparison_data.json sidecar.
 
@@ -963,6 +966,9 @@ def generate_comparison_plots(
     # can read them without parsing the heavy variable arrays.
     context["summary"] = {
         "model_id": model_id,
+        "status_text": status_text,
+        "status_class": status_class,
+        "ref_id": ref_id,
         "worst_nrmse": (max((v.nrmse for v in comparisons), default=None)
                         if comparisons else None),
         "n_vars": len(comparisons) if comparisons else 0,
@@ -1178,6 +1184,9 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         artifact_files=args.get("artifact_files", ()),
         max_embedded_samples=args.get("max_embedded_samples", 2000),
         overlays=args.get("overlays"),
+        status_text=args.get("status_text"),
+        status_class=args.get("status_class"),
+        ref_id=args.get("ref_id"),
     )
     render_elapsed = _time.monotonic() - t0
     return {

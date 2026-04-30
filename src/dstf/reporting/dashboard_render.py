@@ -69,9 +69,26 @@ def _enrich_row_from_comparison(row: dict, comp: dict) -> None:
         "worst_nrmse", "n_vars", "n_vars_passed", "n_warnings",
         "translation_wall", "sim_wall", "total_wall",
         "ref_id", "field_sources",
+        # Comparison-derived status overrides live-mode status when present.
+        # The compare phase distinguishes pass / fail / sim-fail / no-ref;
+        # live mode only knows passed / failed / timed_out.
+        "status_text", "status_class",
     ):
         if key in summary:
             row[key] = summary[key]
+
+
+# Live-mode TestStatus.status (queued/running/passed/failed/timed_out) →
+# (uppercase pretty status_text, filter-vocab status_class). Filter-vocab
+# matches the buttons in dashboard.html (pass/fail/sim-fail/no-ref/queued/
+# running/timed-out) so a single filter applies live and final.
+_LIVE_STATUS_MAP = {
+    "queued":    ("QUEUED",    "queued"),
+    "running":   ("RUNNING",   "running"),
+    "passed":    ("PASS",      "pass"),
+    "failed":    ("FAIL",      "fail"),
+    "timed_out": ("TIMED OUT", "timed-out"),
+}
 
 
 def build_dashboard_context(work_dir: Path, mode: str) -> dict:
@@ -90,15 +107,20 @@ def build_dashboard_context(work_dir: Path, mode: str) -> dict:
 
     rows = []
     for t in snapshot.get("tests", []):
+        raw_status = t.get("status", "queued")
+        status_text, status_class = _LIVE_STATUS_MAP.get(
+            raw_status, (raw_status.upper(), raw_status.replace("_", "-")),
+        )
         row = {
             "test_key": t.get("test_key"),
             "model_id": t.get("model_id"),
-            "status_text": t.get("status", "queued"),
-            "status_class": t.get("status", "queued").replace("_", "-"),
+            "status_text": status_text,
+            "status_class": status_class,
             "elapsed": t.get("elapsed"),
             "worker_id": t.get("worker_id"),
             "report_dir": t.get("report_dir") or t.get("test_key"),
             "phase": t.get("phase"),
+            "detail": t.get("detail"),
             # Post-run fields default to None; populated below in final mode
             "worst_nrmse": None,
             "n_vars": None,

@@ -41,9 +41,14 @@ def test_build_context_live_only(tmp_path):
     assert ctx["auto_refresh"] is True
     assert len(ctx["tests"]) == 2
     row_a = next(r for r in ctx["tests"] if r["model_id"] == "Lib.A")
-    assert row_a["status_text"] == "passed"
+    # Live-mode normalization: passed → ("PASS", "pass"); running → ("RUNNING", "running")
+    assert row_a["status_text"] == "PASS"
+    assert row_a["status_class"] == "pass"
     assert row_a["worst_nrmse"] is None
     assert row_a["n_vars"] is None
+    row_b = next(r for r in ctx["tests"] if r["model_id"] == "Lib.B")
+    assert row_b["status_text"] == "RUNNING"
+    assert row_b["status_class"] == "running"
 
 
 def test_build_context_final_with_comparisons(tmp_path):

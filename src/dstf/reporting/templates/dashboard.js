@@ -15,10 +15,14 @@
   function applyFilters() {
     Array.from(tbody.querySelectorAll('tr')).forEach(row => {
       let visible = true;
-      // Status filter
+      // Status filter. "fail" lumps in timed-out so a single click of the
+      // Failed button surfaces both genuine compare-fails and timeouts.
       if (activeStatus !== 'all') {
         if (activeStatus === 'warn') {
           visible = parseInt(row.dataset.sortWarnings || '0') > 0;
+        } else if (activeStatus === 'fail') {
+          visible = (row.dataset.status === 'fail'
+                     || row.dataset.status === 'timed-out');
         } else {
           visible = row.dataset.status === activeStatus;
         }
@@ -116,10 +120,10 @@
     const order = ['queued', 'running', 'passed', 'failed', 'timed_out'];
     let html = '';
     for (const k of order) {
-      html += `<div class="counter"><div class="label">${k}</div>` +
+      html += `<div class="counter ${k}"><div class="label">${k}</div>` +
               `<div class="value">${counts[k] || 0}</div></div>`;
     }
-    html += `<div class="counter"><div class="label">Total</div>` +
+    html += `<div class="counter total"><div class="label">Total</div>` +
             `<div class="value">${total}</div></div>`;
     cn.innerHTML = html;
 
@@ -132,13 +136,21 @@
       `<span class="b-running" style="width:${pct(counts.running || 0)}%"></span>`;
   }
 
-  // Initial render from inline data (read from data-* on tbody rows)
+  // Initial render from inline data (read from data-* on tbody rows).
+  // Rows use the filter-vocab status_class (pass/fail/sim-fail/no-ref/
+  // timed-out/queued/running) but the counters use the live-snapshot key
+  // names (queued/running/passed/failed/timed_out) so the JS-rendered
+  // pills match what status.json carries during a run. Map between them.
   function initialCountsFromRows() {
     const counts = { queued: 0, running: 0, passed: 0, failed: 0, timed_out: 0 };
     Array.from(tbody.querySelectorAll('tr')).forEach(row => {
       const s = row.dataset.status;
-      if (s in counts) counts[s]++;
-      else if (s === 'sim-fail') counts.failed++;
+      if      (s === 'pass')      counts.passed++;
+      else if (s === 'fail')      counts.failed++;
+      else if (s === 'sim-fail')  counts.failed++;
+      else if (s === 'timed-out') counts.timed_out++;
+      else if (s === 'queued')    counts.queued++;
+      else if (s === 'running')   counts.running++;
     });
     return counts;
   }
