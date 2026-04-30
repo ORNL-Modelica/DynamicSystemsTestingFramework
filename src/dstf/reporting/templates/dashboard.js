@@ -168,8 +168,10 @@
       // Re-render the cells inline (cheaper than full row replacement)
       const cells = row.querySelectorAll('td');
       cells[2].innerHTML = `<span class="${status}">${t.status || 'queued'}</span>`;
-      cells[3].textContent = (t.worker_id != null) ? `W${t.worker_id}` : '—';
-      cells[4].textContent = (t.elapsed != null) ? t.elapsed.toFixed(1) : '—';
+      // cells[3] = Resolution column (rendered server-side; field_sources
+      // doesn't change per status update so leave it intact)
+      cells[4].textContent = (t.worker_id != null) ? `W${t.worker_id}` : '—';
+      cells[5].textContent = (t.elapsed != null) ? t.elapsed.toFixed(1) : '—';
     }
 
     async function poll() {

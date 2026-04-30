@@ -125,7 +125,10 @@ class DymolaRunner(SimulatorRunner):
         manifest_map, test_items = assign_test_keys(self.config.work_dir, tests)
         for test, test_key in test_items:
             report_dir = self.ref_id_map.get(test.model_id) or test_key
-            self.progress.register(test_key, test.model_id, report_dir=report_dir)
+            self.progress.register(
+                test_key, test.model_id, report_dir=report_dir,
+                field_sources=test.field_sources,
+            )
 
         manifest = BatchManifest(
             batch_id=0,

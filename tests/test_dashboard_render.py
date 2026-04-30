@@ -223,3 +223,27 @@ def test_render_final_picks_up_real_sidecar_shape(tmp_path):
     assert row["n_vars_passed"] == 3
     assert row["n_warnings"] == 1
     assert row["ref_id"] == "ref_0042"
+
+
+def test_resolution_column_shows_provenance(tmp_path):
+    """field_sources from status.json (or sidecar) flows into row cells."""
+    snapshot = {
+        "total": 1, "elapsed": 5.0, "eta_seconds": None,
+        "counts": {"queued": 0, "running": 0, "passed": 1,
+                   "failed": 0, "timed_out": 0},
+        "tests": [{
+            "test_key": "test_0001", "model_id": "Lib.A",
+            "status": "passed", "elapsed": 2.0, "worker_id": 0,
+            "report_dir": "test_0001",
+            "field_sources": {
+                "stop_time": "test_spec",
+                "tolerance": "annotation",
+            },
+        }],
+        "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "test_spec" in out
+    assert "Resolution" in out

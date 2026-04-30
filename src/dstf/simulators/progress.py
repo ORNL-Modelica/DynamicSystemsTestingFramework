@@ -16,7 +16,7 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +32,9 @@ class TestStatus:
     worker_id: Optional[int] = None
     report_dir: Optional[str] = None  # e.g., "ref_0042" or "test_0005" — matches generate_report_suite naming
     phase: Optional[str] = None  # "translating" / "simulating" / ... while status == "running"
+    # Per-field provenance, plumbed from TestModel.field_sources via register().
+    # Surfaced in the dashboard's Resolution column.
+    field_sources: dict = field(default_factory=dict)
 
 
 class ProgressReporter:
@@ -48,10 +51,19 @@ class ProgressReporter:
         self._tests: dict[str, TestStatus] = {}
         self._start_time = time.monotonic()
 
-    def register(self, test_key: str, model_id: str, report_dir: Optional[str] = None) -> None:
+    def register(
+        self,
+        test_key: str,
+        model_id: str,
+        report_dir: Optional[str] = None,
+        field_sources: Optional[dict] = None,
+    ) -> None:
         with self._lock:
             self._tests[test_key] = TestStatus(
-                test_key=test_key, model_id=model_id, report_dir=report_dir,
+                test_key=test_key,
+                model_id=model_id,
+                report_dir=report_dir,
+                field_sources=field_sources or {},
             )
         self._write()
 

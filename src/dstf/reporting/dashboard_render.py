@@ -108,7 +108,7 @@ def build_dashboard_context(work_dir: Path, mode: str) -> dict:
             "sim_wall": None,
             "total_wall": None,
             "ref_id": None,
-            "field_sources": {},
+            "field_sources": t.get("field_sources") or {},
         }
         if mode == "final" and row["report_dir"]:
             comp = _read_comparison_sidecar(work_dir, row["report_dir"])

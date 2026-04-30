@@ -70,6 +70,7 @@ a:hover { text-decoration: underline; }
   <th data-sort="text" data-key="test">Test</th>
   <th data-sort="text" data-key="model">Model</th>
   <th data-sort="text" data-key="status">Status</th>
+  <th data-sort="text" data-key="resolution" title="Provenance of stop_time / tolerance / method / number_of_intervals / output_interval — annotation, test_spec, or default">Resolution</th>
   <th data-sort="text" data-key="worker">Worker</th>
   <th data-sort="num" data-key="elapsed">Elapsed (s)</th>
   <th data-sort="num" data-key="nrmse">Worst NRMSE</th>
@@ -83,6 +84,7 @@ a:hover { text-decoration: underline; }
   <th><input class="col-filter" data-col-filter="test" placeholder="filter…"></th>
   <th><input class="col-filter" data-col-filter="model" placeholder="filter…"></th>
   <th><input class="col-filter" data-col-filter="status" placeholder="filter…"></th>
+  <th><input class="col-filter" data-col-filter="resolution" placeholder="filter…"></th>
   <th><input class="col-filter" data-col-filter="worker" placeholder="filter…"></th>
   <th></th><th></th><th></th><th></th><th></th><th></th><th></th>
 </tr>
@@ -97,6 +99,7 @@ a:hover { text-decoration: underline; }
     data-sort-test="{{ t.test_key or '' }}"
     data-sort-model="{{ t.model_id }}"
     data-sort-status="{{ t.status_text }}"
+    data-sort-resolution="{% if t.field_sources %}{{ t.field_sources.values()|list|unique|join(',') }}{% endif %}"
     data-sort-worker="{{ t.worker_id if t.worker_id is not none else -1 }}"
     data-sort-elapsed="{{ t.elapsed if t.elapsed is not none else -1 }}"
     data-sort-nrmse="{{ t.worst_nrmse if t.worst_nrmse is not none else -1 }}"
@@ -108,6 +111,16 @@ a:hover { text-decoration: underline; }
   <td>{% if t.test_key %}<a href="{{ t.test_key }}/">{{ t.test_key }}</a>{% else %}—{% endif %}</td>
   <td>{% if t.report_dir %}<a href="reports/{{ t.report_dir }}/interactive.html">{{ t.model_id }}</a>{% else %}{{ t.model_id }}{% endif %}</td>
   <td><span class="{{ t.status_class }}">{{ t.status_text }}</span></td>
+  <td>
+    {% if t.field_sources %}
+      {% set src_set = t.field_sources.values()|list|unique|list %}
+      {% if src_set|length == 1 %}
+        <span title="all fields from {{ src_set[0] }}">{{ src_set[0] }}</span>
+      {% else %}
+        <span title="{% for k, v in t.field_sources.items() %}{{ k }}: {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}">mixed</span>
+      {% endif %}
+    {% else %}—{% endif %}
+  </td>
   <td>{% if t.worker_id is not none %}W{{ t.worker_id }}{% else %}—{% endif %}</td>
   <td>{% if t.elapsed is not none %}{{ "%.1f"|format(t.elapsed) }}{% else %}—{% endif %}</td>
   <td>{% if t.worst_nrmse is not none %}{{ "%.4e"|format(t.worst_nrmse) }}{% else %}—{% endif %}</td>
