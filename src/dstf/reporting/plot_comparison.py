@@ -1199,30 +1199,6 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
     }
 
 
-def _build_rerun_prefix(config) -> str:
-    """Build the CLI prefix for rerun commands in the HTML report.
-
-    Produces e.g. `dstf --config "/abs/path/testing.json" run` so
-    the appended ` --filter ... --merge --report` works from any CWD. Prefers
-    --config when available; otherwise falls back to --source-path (+ optional
-    --reference-root when it isn't under the source directory).
-    """
-    def q(p) -> str:
-        s = str(p)
-        return f'"{s}"' if " " in s else s
-
-    if getattr(config, "config_file", None):
-        return f"dstf --config {q(config.config_file)} run"
-
-    parts = ["dstf"]
-    if getattr(config, "source_path", None):
-        parts += ["--source-path", q(config.source_path)]
-    if getattr(config, "reference_root", None):
-        parts += ["--reference-root", q(config.reference_root)]
-    parts.append("run")
-    return " ".join(parts)
-
-
 def generate_report_suite(
     comparisons: list,
     results: dict,
@@ -1230,14 +1206,15 @@ def generate_report_suite(
     store,
     config,
 ) -> Path:
-    """Generate per-test comparison reports and an index page.
+    """Generate per-test comparison reports.
 
     Per-test report rendering runs on a thread pool sized by config.parallel.
     The hot work is Plotly trace JSON serialization + comparison_data.json
     dump + decimation; numpy/json release the GIL well enough that threads
     give a meaningful speedup without the pickling cost of a process pool.
 
-    Returns the path to the index HTML file.
+    Returns the path to the unified dashboard HTML file (rendered separately
+    by ``dashboard_render.render_final``).
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import time as _time
@@ -1303,22 +1280,10 @@ def generate_report_suite(
                 _print_progress(completed, total_reports, short, "ok")
         index_tests = [results_by_model[args["model_id"]] for args in work]
 
-    # Build index context
-    n_total = len(comparisons)
-    index_context = {
-        "title": "Test Report",
-        "n_passed": sum(1 for t in index_tests if t["status_class"] == "pass"),
-        "n_failed": sum(1 for t in index_tests if t["status_class"] == "fail"),
-        "n_sim_failed": sum(1 for t in index_tests if t["status_class"] == "sim-fail"),
-        "n_no_ref": sum(1 for t in index_tests if t["status_class"] == "no-ref"),
-        "n_warnings": sum(1 for t in index_tests if t["n_warnings"] > 0),
-        "n_total": n_total,
-        "tests": index_tests,
-        "rerun_prefix": _build_rerun_prefix(config),
-    }
-
-    index_path = report_dir / "index.html"
-    _render_template("index.html", index_context, index_path)
+    # Per-test interactive.html + comparison_data.json sidecars are
+    # written above. The unified work_dir/dashboard.html is rendered
+    # by cli._generate_report_suite via dashboard_render.render_final;
+    # the standalone index.html that used to live here is retired.
 
     # Phase timing — exposes whether parallelism is helping
     wall = _time.monotonic() - report_wall_start
@@ -1332,7 +1297,7 @@ def generate_report_suite(
             f"Report phase: {wall:.0f}s wall, {total_work:.0f}s total work, "
             f"{speedup:.1f}x parallel speedup (avg {avg:.1f}s/test, slowest {slowest:.1f}s)"
         )
-    return index_path
+    return config.work_dir / "dashboard.html"
 
 
 def open_in_browser(path: Path) -> None:
