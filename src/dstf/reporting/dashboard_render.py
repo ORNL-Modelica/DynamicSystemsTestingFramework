@@ -58,14 +58,20 @@ def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> Optional[dict]:
 
 
 def _enrich_row_from_comparison(row: dict, comp: dict) -> None:
-    """Copy post-run fields from a per-test comparison_data.json into a row."""
+    """Copy post-run fields from a per-test comparison_data.json into a row.
+
+    The sidecar puts row-summary fields under a `summary` block alongside
+    the per-variable context. Fall back to top-level for backward compat
+    with sidecars written before the summary block was added.
+    """
+    summary = comp.get("summary", comp)
     for key in (
         "worst_nrmse", "n_vars", "n_vars_passed", "n_warnings",
         "translation_wall", "sim_wall", "total_wall",
         "ref_id", "field_sources",
     ):
-        if key in comp:
-            row[key] = comp[key]
+        if key in summary:
+            row[key] = summary[key]
 
 
 def build_dashboard_context(work_dir: Path, mode: str) -> dict:

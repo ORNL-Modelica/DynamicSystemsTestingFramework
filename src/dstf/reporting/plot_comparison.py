@@ -957,6 +957,28 @@ def generate_comparison_plots(
     # in-memory context that flows into interactive.html — the sidecar
     # stays untouched.
     data_path = plot_dir / "comparison_data.json"
+    # Summary block for the unified dashboard. The full context dict is
+    # the per-variable rendering input; the dashboard only needs row-level
+    # summary fields, exposed under "summary" so build_dashboard_context
+    # can read them without parsing the heavy variable arrays.
+    context["summary"] = {
+        "model_id": model_id,
+        "worst_nrmse": (max((v.nrmse for v in comparisons), default=None)
+                        if comparisons else None),
+        "n_vars": len(comparisons) if comparisons else 0,
+        "n_vars_passed": (sum(1 for v in comparisons if v.passed)
+                          if comparisons else 0),
+        "n_warnings": len(warnings) if warnings else 0,
+        "translation_wall": (cur_stats.get("timing", {}).get("translation_wall")
+                             if isinstance(cur_stats, dict) else None),
+        "sim_wall": (cur_stats.get("timing", {}).get("sim_wall")
+                     if isinstance(cur_stats, dict) else None),
+        "total_wall": (cur_stats.get("timing", {}).get("total_wall")
+                       if isinstance(cur_stats, dict) else None),
+        "field_sources": (test_model.field_sources
+                          if test_model and hasattr(test_model, "field_sources")
+                          else {}),
+    }
     data_path.write_text(json.dumps(context, indent=2, default=str), encoding="utf-8")
 
     # Decimate trajectory arrays embedded into interactive.html. This

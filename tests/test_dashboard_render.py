@@ -184,3 +184,42 @@ def test_final_mode_skips_fetch_loop(tmp_path):
     render_final(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "DASHBOARD_MODE = 'final'" in out
+
+
+def test_render_final_picks_up_real_sidecar_shape(tmp_path):
+    """The sidecar emitted by generate_comparison_plots includes the
+    summary fields (worst_nrmse, n_vars, etc.) at the top level so
+    build_dashboard_context can read them without unwrapping."""
+    snapshot = {
+        "total": 1, "elapsed": 5.0, "eta_seconds": None,
+        "counts": {"queued": 0, "running": 0, "passed": 1,
+                   "failed": 0, "timed_out": 0},
+        "tests": [{"test_key": "test_0001", "model_id": "Lib.A",
+                   "status": "passed", "elapsed": 2.0,
+                   "worker_id": 0, "report_dir": "test_0001"}],
+        "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    test_dir = tmp_path / "reports" / "test_0001"
+    test_dir.mkdir(parents=True)
+    # Sidecar shape after the patch — summary fields under a `summary`
+    # block alongside the existing rendering context fields
+    (test_dir / "comparison_data.json").write_text(json.dumps({
+        "model_id": "Lib.A",
+        "summary": {
+            "worst_nrmse": 1.2e-5,
+            "n_vars": 3,
+            "n_vars_passed": 3,
+            "n_warnings": 1,
+            "translation_wall": 0.5,
+            "sim_wall": 1.5,
+            "total_wall": 2.0,
+            "ref_id": "ref_0042",
+        },
+    }))
+    ctx = build_dashboard_context(tmp_path, mode="final")
+    row = ctx["tests"][0]
+    assert row["worst_nrmse"] == 1.2e-5
+    assert row["n_vars_passed"] == 3
+    assert row["n_warnings"] == 1
+    assert row["ref_id"] == "ref_0042"
