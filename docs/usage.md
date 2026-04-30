@@ -85,6 +85,9 @@ Modelica match types: `component-instantiation` (`component_name`), `extends` (`
       "simulation": {
         "stop_time": 100,
         "tolerance": 1e-4,
+        "method": "Dassl",
+        "number_of_intervals": 500,
+        "output_interval": null,
         "timeout": 60
       },
       "comparison": {
@@ -95,13 +98,14 @@ Modelica match types: `component-instantiation` (`component_name`), `extends` (`
       }
     },
     {
-      "model": "MyLib.Examples.AnotherTest",
-      "variables": ["*"],
-      "simulation": {"stop_time": 500}
+      "model": "MyLib.Examples.MinimalTest",
+      "variables": ["*"]
     }
   ]
 }
 ```
+
+The first entry shows every field `simulation` accepts; the second shows the minimum (everything else falls through to the annotation, then to backend defaults). All `simulation.*` fields are optional.
 
 Variable patterns support `*` and `?` wildcards. `["*"]` tracks all non-parameter variables. `[]` (empty list) simulates without tracking variables.
 
@@ -119,6 +123,21 @@ Variable patterns support `*` and `?` wildcards. `["*"]` tracks all non-paramete
 **FMU backend only**: add an `"fmu": "path/to/Model.fmu"` field (path relative to the spec file) to point at a prebuilt FMU.
 
 **MetricTree**: add a top-level `"metrics"` block to author an explicit pass/fail tree — see `docs/extensibility.md` §6 for the schema.
+
+#### Two-layer contract: annotation vs `test_spec.json`
+
+Modelica simulation parameters resolve from two layers, in order:
+
+1. **`experiment(...)` annotation** on the model — the source-of-truth defaults the model author encoded. Recognized fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals` (or `__Dymola_NumberOfIntervals`), `Interval` (→ `output_interval`).
+2. **`simulation.*` block in `test_spec.json`** — per-test override. Any field set here wins over the annotation.
+
+Resolution rule: **user omits the field → annotation if present, else simulator default. User provides the field → it is used.** No third layer; no per-field "force annotation" toggle (delete the override to defer to the annotation).
+
+Use case for the two layers: a model author can write `experiment(StopTime=100)` so the model demos cleanly in Dymola/OMEdit, then set `simulation.stop_time = 10` in `test_spec.json` so CI runs fast — no need to edit the source.
+
+**Known gap**: `StartTime` from the annotation is not honored — every backend assumes `t=0`. Authoring `StartTime=5.0` in the annotation will be silently ignored. If you need a non-zero start, file an issue with the use case.
+
+**Components.UnitTests** (the in-source `n=N, x={...}` block) is a **discovery marker** carrying the variable list only. It deliberately does not carry simulation parameters — those live in the annotation (model-author-facing, editor-honored) or in `test_spec.json` (test-author-facing, override-only). Keeping the third layer out is what makes the contract teachable.
 
 ### Multiple named baselines
 

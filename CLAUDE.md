@@ -127,7 +127,7 @@ Reference results are partitioned by `<reference_root>/<SimulatorBackend>/<os>/`
 
 ### test_spec.json format
 
-Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`. Minimal entries need only `model` and `variables`:
+Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`. Minimal entries need only `model` and `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. Full contract details in `docs/usage.md`.
 
 ```json
 {
