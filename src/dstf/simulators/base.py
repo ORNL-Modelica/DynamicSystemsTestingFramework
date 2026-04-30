@@ -92,6 +92,15 @@ class TestRunResult:
     # Phase breakdown (captured by the persistent runner; None in batch mode)
     translation_wall: Optional[float] = None
     sim_wall: Optional[float] = None
+    # Set by persistent workers when the test run left the worker process
+    # dead (we called close()). The dispatch loop uses this to decide
+    # whether the next restart should count against the budget — workers
+    # killed for benign reasons (timeout, post-timeout disk-rescue) get a
+    # fresh start without ticking the bound. Independent of `timed_out`
+    # and `success`: a disk-rescued test can have success=True AND
+    # worker_killed=True (the .mat was written just before the watchdog
+    # killed Dymola).
+    worker_killed: bool = False
 
 
 # Variables to exclude when resolving "*" or glob patterns (Dymola internals, etc.)
@@ -1013,11 +1022,12 @@ class PersistentRunnerBase(SimulatorRunner):
                 return False
 
         def _worker_loop(w: "Worker"):
-            # Track whether the previous test on this worker timed out, so
-            # the next iteration's _try_restart can skip the budget tick.
-            # A timeout means we deliberately hard-killed a healthy worker;
-            # the next test deserves a fresh slate.
-            last_was_timeout = False
+            # Track whether the previous test left the worker dead for a
+            # benign reason (we deliberately hard-killed it after a per-
+            # test timeout, or it was disk-rescued post-timeout). Such
+            # restarts shouldn't count against the worker's permanent-
+            # broken budget — the worker was healthy, the test was slow.
+            prev_killed_worker = False
             while True:
                 item = work_queue.get()
                 if item is None:
@@ -1026,14 +1036,14 @@ class PersistentRunnerBase(SimulatorRunner):
                 test, test_key = item
                 try:
                     if not w.is_alive():
-                        if not _try_restart(w, count_against_budget=not last_was_timeout):
+                        if not _try_restart(w, count_against_budget=not prev_killed_worker):
                             _record(test, test_key, TestRunResult(
                                 model_id=test.model_id, test_key=test_key,
                                 success=False, elapsed=0.0,
                                 error_message="Worker dead; restart exhausted",
                             ))
                             continue
-                        last_was_timeout = False  # consumed by this restart
+                        prev_killed_worker = False  # consumed by this restart
                     if self.progress is not None:
                         self.progress.on_start(test_key, worker_id=w.worker_id)
                     timeout = float(
@@ -1048,11 +1058,12 @@ class PersistentRunnerBase(SimulatorRunner):
                     # worker has demonstrably recovered. Consecutive *real*
                     # worker deaths (translation broke / RPC dead) still
                     # accumulate to ``max_restarts_per_worker`` and trip
-                    # restart-exhausted. Timeouts are tracked separately
-                    # via last_was_timeout so they don't poison the counter.
-                    if tr.success:
+                    # restart-exhausted. Benign worker kills (timeout,
+                    # post-timeout disk-rescue) flow through prev_killed_worker
+                    # so they don't poison the counter.
+                    if tr.success and not tr.worker_killed:
                         w._n_restarts = 0  # type: ignore[attr-defined]
-                    last_was_timeout = bool(tr.timed_out)
+                    prev_killed_worker = bool(tr.timed_out or tr.worker_killed)
                 finally:
                     work_queue.task_done()
 
