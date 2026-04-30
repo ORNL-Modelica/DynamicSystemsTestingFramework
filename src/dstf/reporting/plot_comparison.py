@@ -930,7 +930,7 @@ def generate_comparison_plots(
     max_embedded_samples: int = 2000,
     overlays: Optional[list] = None,
 ) -> Optional[Path]:
-    """Generate per-variable comparison PNGs and an HTML viewer.
+    """Render this test's interactive.html (Plotly) + comparison_data.json sidecar.
 
     Returns the path to the rendered interactive.html.
     """
@@ -1211,7 +1211,8 @@ def generate_report_suite(
     """Generate per-test comparison reports and an index page.
 
     Per-test report rendering runs on a thread pool sized by config.parallel.
-    matplotlib's Agg backend releases the GIL during PNG rendering, so threads
+    The hot work is Plotly trace JSON serialization + comparison_data.json
+    dump + decimation; numpy/json release the GIL well enough that threads
     give a meaningful speedup without the pickling cost of a process pool.
 
     Returns the path to the index HTML file.

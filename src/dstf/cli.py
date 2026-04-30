@@ -1371,9 +1371,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     # compare
-    subparsers.add_parser(
+    p_compare = subparsers.add_parser(
         "compare", parents=[filter_parent, compare_parent, report_parent],
         help="Compare last results against references",
+    )
+    p_compare.add_argument(
+        "--parallel", type=int,
+        help="Threads for --report rendering (Plotly serialization + JSON sidecar dump). "
+             "Comparison itself is fast; this is the post-comparison report suite. Default: 1.",
     )
 
     # export
