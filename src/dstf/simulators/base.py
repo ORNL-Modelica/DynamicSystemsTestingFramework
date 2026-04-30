@@ -963,21 +963,47 @@ class PersistentRunnerBase(SimulatorRunner):
                     timed_out=tr.timed_out,
                 )
 
-        def _try_restart(w: "Worker") -> bool:
+        def _try_restart(w: "Worker", count_against_budget: bool = True) -> bool:
+            """Bring the worker back up after a death.
+
+            ``count_against_budget`` distinguishes two scenarios:
+
+            * **True** (default): worker died because something is genuinely
+              wrong with it (translation returned False with no diagnostic
+              log; RPC error; start() failure on a previous iteration). The
+              counter increments; after ``max_restarts_per_worker`` such
+              consecutive failures, we declare the worker permanently dead.
+            * **False**: worker died because the dispatch loop hard-killed
+              it after a per-test *timeout*. The worker was healthy when
+              the test started — it actively translated/simulated for the
+              full timeout budget. Restart is just to bring up a fresh
+              process; the count of "consecutive worker deaths" should not
+              tick up. This avoids a known cascade where 3 slow tests in
+              a row exhaust the budget and synthesize ~290 fake failures
+              for the rest of the queue.
+            """
             n_restarts = getattr(w, "_n_restarts", 0)
-            if n_restarts >= self.max_restarts_per_worker:
+            if count_against_budget and n_restarts >= self.max_restarts_per_worker:
                 return False
-            n_restarts += 1
-            w._n_restarts = n_restarts  # type: ignore[attr-defined]
+            if count_against_budget:
+                n_restarts += 1
+                w._n_restarts = n_restarts  # type: ignore[attr-defined]
             t0 = time.monotonic()
             try:
                 w.start()
-                print(
-                    f"  Worker {w.worker_id}: restarted "
-                    f"({time.monotonic() - t0:.1f}s, attempt {n_restarts}/"
-                    f"{self.max_restarts_per_worker})",
-                    file=sys.stderr,
-                )
+                if count_against_budget:
+                    print(
+                        f"  Worker {w.worker_id}: restarted "
+                        f"({time.monotonic() - t0:.1f}s, attempt {n_restarts}/"
+                        f"{self.max_restarts_per_worker})",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"  Worker {w.worker_id}: restarted post-timeout "
+                        f"({time.monotonic() - t0:.1f}s — not counted)",
+                        file=sys.stderr,
+                    )
                 return True
             except Exception as exc:
                 print(
@@ -987,6 +1013,11 @@ class PersistentRunnerBase(SimulatorRunner):
                 return False
 
         def _worker_loop(w: "Worker"):
+            # Track whether the previous test on this worker timed out, so
+            # the next iteration's _try_restart can skip the budget tick.
+            # A timeout means we deliberately hard-killed a healthy worker;
+            # the next test deserves a fresh slate.
+            last_was_timeout = False
             while True:
                 item = work_queue.get()
                 if item is None:
@@ -995,13 +1026,14 @@ class PersistentRunnerBase(SimulatorRunner):
                 test, test_key = item
                 try:
                     if not w.is_alive():
-                        if not _try_restart(w):
+                        if not _try_restart(w, count_against_budget=not last_was_timeout):
                             _record(test, test_key, TestRunResult(
                                 model_id=test.model_id, test_key=test_key,
                                 success=False, elapsed=0.0,
                                 error_message="Worker dead; restart exhausted",
                             ))
                             continue
+                        last_was_timeout = False  # consumed by this restart
                     if self.progress is not None:
                         self.progress.on_start(test_key, worker_id=w.worker_id)
                     timeout = float(
@@ -1012,18 +1044,15 @@ class PersistentRunnerBase(SimulatorRunner):
                         test, test_key, timeout, progress=self.progress,
                     )
                     _record(test, test_key, tr)
-                    # Reset the restart counter on success — it measures
-                    # *consecutive* worker deaths (i.e., "is this worker
-                    # permanently broken"), not lifetime accumulation.
-                    # Without the reset, sporadic timeouts spread across
-                    # a long run kill the worker for good once they sum
-                    # to ``max_restarts_per_worker``, and every remaining
-                    # test fails with "Worker dead; restart exhausted"
-                    # regardless of whether they would have run fine.
-                    # Observed on TRANSFORM/Dymola/Linux 2026-04-29:
-                    # 4 sporadic timeouts → 305 cascading failures.
+                    # Reset the restart counter on a successful test — the
+                    # worker has demonstrably recovered. Consecutive *real*
+                    # worker deaths (translation broke / RPC dead) still
+                    # accumulate to ``max_restarts_per_worker`` and trip
+                    # restart-exhausted. Timeouts are tracked separately
+                    # via last_was_timeout so they don't poison the counter.
                     if tr.success:
                         w._n_restarts = 0  # type: ignore[attr-defined]
+                    last_was_timeout = bool(tr.timed_out)
                 finally:
                     work_queue.task_done()
 
