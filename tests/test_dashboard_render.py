@@ -158,3 +158,29 @@ def test_dashboard_template_has_per_column_filter(tmp_path):
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert 'class="col-filter"' in out
     assert 'data-col-filter="model"' in out
+
+
+def test_live_mode_includes_fetch_loop(tmp_path):
+    """In live mode, the fetch loop bootstrap must be present."""
+    snapshot = {
+        "total": 0, "elapsed": 0.0, "eta_seconds": None,
+        "counts": {}, "tests": [], "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "setInterval" in out
+    assert "fetch('status.json')" in out
+    assert "function refreshNow()" not in out  # window.refreshNow assignment, not function decl
+    assert "refreshNow" in out  # but the symbol exists
+
+
+def test_final_mode_skips_fetch_loop(tmp_path):
+    snapshot = {
+        "total": 0, "elapsed": 0.0, "eta_seconds": None,
+        "counts": {}, "tests": [], "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_final(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "DASHBOARD_MODE = 'final'" in out
