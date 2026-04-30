@@ -305,6 +305,40 @@ class DymolaWorker(Worker):
                     pass
                 elapsed = time.monotonic() - start
                 self._n_tests_run += 1
+
+                # Worker-health probe: a real translation failure always
+                # writes a non-trivial translation_log.txt (parse errors,
+                # license messages, etc. — typically hundreds of bytes).
+                # An empty / missing / very small log paired with a False
+                # return from translateModel is the signature of a
+                # broken-worker state we've seen on Dymola/Linux after a
+                # watchdog kill — the worker is alive enough to respond
+                # to RPCs but silently rejects every translateModel.
+                # Without this probe each broken-worker test wastes ~40s
+                # waiting for translateModel to time out internally, and
+                # the cascade silently fails every remaining test.
+                # Closing the worker here forces the dispatch loop's
+                # next iteration to call _try_restart, escalating to a
+                # real recovery attempt (or exhausting the budget if the
+                # broken state is permanent).
+                log_path = test_dir / "translation_log.txt"
+                if (not log_path.exists()) or log_path.stat().st_size < 50:
+                    try:
+                        self.close(grace=1.0)
+                    except Exception:
+                        pass
+                    return TestRunResult(
+                        model_id=test.model_id,
+                        test_key=test_key,
+                        success=False,
+                        elapsed=elapsed,
+                        error_message=(
+                            "Worker broken: translateModel returned False with "
+                            "no diagnostic log (forcing restart)"
+                        ),
+                        translation_wall=translation_wall,
+                    )
+
                 return TestRunResult(
                     model_id=test.model_id,
                     test_key=test_key,

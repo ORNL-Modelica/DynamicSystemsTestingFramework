@@ -998,6 +998,18 @@ class PersistentRunnerBase(SimulatorRunner):
                         test, test_key, timeout, progress=self.progress,
                     )
                     _record(test, test_key, tr)
+                    # Reset the restart counter on success — it measures
+                    # *consecutive* worker deaths (i.e., "is this worker
+                    # permanently broken"), not lifetime accumulation.
+                    # Without the reset, sporadic timeouts spread across
+                    # a long run kill the worker for good once they sum
+                    # to ``max_restarts_per_worker``, and every remaining
+                    # test fails with "Worker dead; restart exhausted"
+                    # regardless of whether they would have run fine.
+                    # Observed on TRANSFORM/Dymola/Linux 2026-04-29:
+                    # 4 sporadic timeouts → 305 cascading failures.
+                    if tr.success:
+                        w._n_restarts = 0  # type: ignore[attr-defined]
                 finally:
                     work_queue.task_done()
 
