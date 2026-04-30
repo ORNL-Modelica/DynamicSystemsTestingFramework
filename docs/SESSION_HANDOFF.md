@@ -14,6 +14,8 @@
 
 **Cross-OS validation**: User confirmed Windows + Linux runs both work end-to-end this session. Linux Dymola via the `/usr/local/bin/dymola` wrapper script (the bare `bin64/dymola` binary fails because it bypasses the `LD_LIBRARY_PATH` setup the wrapper does — DEBT marker added at the worker construction site).
 
+**TRANSFORM-on-Dymola-Linux validation (post-D90)**: 326-test suite runs at **97% pass rate** (319 pass / 4 fail / 3 timeout) with the resilience fixes from D90 in place. The 7 problem tests cluster as 3 real per-test timeouts (CIET_nureth, IRIS_Default_Teststandalone, HumTest — these models legitimately exceed their per-test budgets on this Linux Dymola) plus 4 collateral failures (the test immediately after each timeout sees a transient broken-worker state, which the health probe detects and forces a restart). Without D90's fixes the same suite produced 21/305/4 — a single timeout cascaded into 305 silent failures. The "84 license-tier failures" diagnosed during the pre-D90 lucky run were *not* actual Dymola license-capacity issues; they were the broken-worker cascade replaying stale cached error log content (the first model that genuinely hit license-tier limits left its message in Dymola's log buffer, which subsequent broken-worker `savelog` calls re-dumped). With proper worker recovery, all 84 tests translate cleanly.
+
 ---
 
 ## Session arc
