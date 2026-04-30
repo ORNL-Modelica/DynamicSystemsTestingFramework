@@ -209,9 +209,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     # call will overwrite this initial empty page; subsequent meta-refresh
     # ticks pick up updates. Final mode lands at the same URL after compare.
     config.work_dir.mkdir(parents=True, exist_ok=True)
-    from .reporting.dashboard_render import render_live
+    from .reporting.dashboard_render import render_live, build_rerun_prefix
     from .reporting.plot_comparison import open_in_browser
-    render_live(config.work_dir)
+    render_live(config.work_dir, rerun_prefix=build_rerun_prefix(config))
     open_in_browser(config.work_dir / "dashboard.html")
 
     try:
@@ -269,8 +269,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         # Without --report the per-test sidecars don't exist, so the
         # post-comparison columns stay dashed; the live snapshot is
         # frozen at the moment compare_all finished.
-        from .reporting.dashboard_render import render_final
-        render_final(config.work_dir)
+        from .reporting.dashboard_render import render_final, build_rerun_prefix
+        render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
 
         if args.report:
             return _generate_report_suite(comparisons, results, scope_tests, store, config)
@@ -337,8 +337,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # per-test sidecars (no --report run yet), the post-run columns stay
     # dashed and the page reads as a "live" snapshot frozen at the moment
     # comparison finished.
-    from .reporting.dashboard_render import render_final
-    render_final(config.work_dir)
+    from .reporting.dashboard_render import render_final, build_rerun_prefix
+    render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
 
     if getattr(args, "report", False):
         return _generate_report_suite(comparisons, results, tests, store, config)
@@ -1230,10 +1230,10 @@ def _generate_report_suite(comparisons, results, tests, store, config) -> int:
     those sidecars and produces the top-level work_dir/dashboard.html.
     """
     from .reporting.plot_comparison import generate_report_suite, open_in_browser
-    from .reporting.dashboard_render import render_final
+    from .reporting.dashboard_render import render_final, build_rerun_prefix
 
     generate_report_suite(comparisons, results, tests, store, config)
-    render_final(config.work_dir)
+    render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
     dashboard_path = config.work_dir / "dashboard.html"
     print(f"Report: {dashboard_path}")
     open_in_browser(dashboard_path)

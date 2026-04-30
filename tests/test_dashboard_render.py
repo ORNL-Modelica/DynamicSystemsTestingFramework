@@ -122,6 +122,52 @@ def test_render_final_strips_refresh(tmp_path):
     assert "DASHBOARD_MODE = 'final'" in out
 
 
+def test_rerun_prefix_flows_to_template(tmp_path):
+    """rerun_prefix from the snapshot (or kwarg override) must end up in the
+    rendered HTML so the dashboard's JS rerun-command builder can use it."""
+    snapshot = {
+        "total": 0, "elapsed": 0.0, "eta_seconds": None,
+        "counts": {}, "tests": [], "updated_at": 0.0,
+        "rerun_prefix": 'dstf --config "/some/path/testing.json" run',
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "RERUN_PREFIX" in out
+    assert '/some/path/testing.json' in out
+
+
+def test_rerun_prefix_kwarg_overrides_snapshot(tmp_path):
+    """Explicit rerun_prefix kwarg wins over status.json's value."""
+    snapshot = {
+        "total": 0, "elapsed": 0.0, "eta_seconds": None,
+        "counts": {}, "tests": [], "updated_at": 0.0,
+        "rerun_prefix": "dstf STALE run",
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path, rerun_prefix="dstf FRESH run")
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "FRESH" in out
+    assert "STALE" not in out
+
+
+def test_dashboard_has_selection_ui(tmp_path):
+    """Selection column + sticky footer + rerun-command hooks must be in
+    the rendered output."""
+    snapshot = {
+        "total": 0, "elapsed": 0.0, "eta_seconds": None,
+        "counts": {}, "tests": [], "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert 'id="sel-all"' in out  # header tristate checkbox
+    assert 'class="sel-footer"' in out  # sticky footer container
+    assert "toggleAllVisible" in out  # JS handler wired
+    assert "buildRerunCommand" in out  # command-building helper exists
+    assert "downloadFilter" in out  # download .txt button handler
+
+
 def test_dashboard_template_has_pill_toggles(tmp_path):
     """Counter pills are clickable filter toggles. The pill-click handler
     name + the PILL_TO_STATUSES map must both be in the rendered JS."""

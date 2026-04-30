@@ -91,7 +91,32 @@ _LIVE_STATUS_MAP = {
 }
 
 
-def build_dashboard_context(work_dir: Path, mode: str) -> dict:
+def build_rerun_prefix(config) -> str:
+    """Build the CLI prefix the dashboard uses in its rerun-command builder.
+
+    Produces e.g. `dstf --config "/abs/path/testing.json" run` so the
+    dashboard JS can append ` --filter ... --merge --report` and the
+    user can paste the result into any terminal regardless of CWD.
+    Prefers --config when available; otherwise falls back to
+    --source-path (+ optional --reference-root).
+    """
+    def q(p) -> str:
+        s = str(p)
+        return f'"{s}"' if " " in s else s
+
+    if getattr(config, "config_file", None):
+        return f"dstf --config {q(config.config_file)} run"
+
+    parts = ["dstf"]
+    if getattr(config, "source_path", None):
+        parts += ["--source-path", q(config.source_path)]
+    if getattr(config, "reference_root", None):
+        parts += ["--reference-root", q(config.reference_root)]
+    parts.append("run")
+    return " ".join(parts)
+
+
+def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[str] = None) -> dict:
     """Build the Jinja context for dashboard.html.
 
     mode='live' — auto_refresh=True, post-run fields stay None
@@ -147,6 +172,12 @@ def build_dashboard_context(work_dir: Path, mode: str) -> dict:
                 _enrich_row_from_comparison(row, comp)
         rows.append(row)
 
+    # rerun_prefix precedence: explicit kwarg > snapshot's prefix > "dstf run"
+    # fallback. The kwarg path lets the CLI override the snapshot prefix even
+    # when status.json was written by a prior run with a different config
+    # (e.g. dstf compare reading work_dir from a different invocation).
+    prefix = rerun_prefix or snapshot.get("rerun_prefix") or "dstf run"
+
     return {
         "mode": mode,
         "auto_refresh": mode == "live",
@@ -156,6 +187,7 @@ def build_dashboard_context(work_dir: Path, mode: str) -> dict:
         "eta_seconds": snapshot.get("eta_seconds"),
         "counts": snapshot.get("counts", {}),
         "tests": rows,
+        "rerun_prefix": prefix,
         "updated_at": snapshot.get("updated_at", time.time()),
     }
 
@@ -185,18 +217,18 @@ def _atomic_write(path: Path, text: str) -> None:
         raise last_err
 
 
-def _render(work_dir: Path, mode: str) -> None:
-    ctx = build_dashboard_context(work_dir, mode=mode)
+def _render(work_dir: Path, mode: str, rerun_prefix: Optional[str] = None) -> None:
+    ctx = build_dashboard_context(work_dir, mode=mode, rerun_prefix=rerun_prefix)
     template = _env.get_template("dashboard.html")
     html = template.render(**ctx)
     _atomic_write(work_dir / "dashboard.html", html)
 
 
-def render_live(work_dir: Path) -> None:
-    """Render dashboard.html in live mode (JS-fetch loop active)."""
-    _render(work_dir, mode="live")
+def render_live(work_dir: Path, rerun_prefix: Optional[str] = None) -> None:
+    """Render dashboard.html in live mode (auto-refreshes via meta tag)."""
+    _render(work_dir, mode="live", rerun_prefix=rerun_prefix)
 
 
-def render_final(work_dir: Path) -> None:
-    """Render dashboard.html in final mode (fetch loop stripped, sidecars merged)."""
-    _render(work_dir, mode="final")
+def render_final(work_dir: Path, rerun_prefix: Optional[str] = None) -> None:
+    """Render dashboard.html in final mode (refresh stripped, sidecars merged)."""
+    _render(work_dir, mode="final", rerun_prefix=rerun_prefix)

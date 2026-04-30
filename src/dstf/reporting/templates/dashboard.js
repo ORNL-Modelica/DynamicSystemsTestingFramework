@@ -79,6 +79,12 @@
       }
       row.style.display = visible ? '' : 'none';
     });
+    // Filter changes shift which rows are visible, which affects the
+    // tristate header checkbox + the "(M hidden by filter)" hint in the
+    // footer. The selection itself doesn't change here — filters never
+    // touch ticks. syncSelectionUI is hoisted (function declaration) so
+    // forward-reference is fine even though it's defined further down.
+    if (typeof syncSelectionUI === 'function') syncSelectionUI();
   }
 
   function syncPillStates() {
@@ -239,6 +245,110 @@
     return counts;
   }
   renderCounters(initialCountsFromRows(), DASHBOARD_TOTAL);
+
+  // ---- Selection (per-row checkbox + header tristate + sticky footer) ----
+  // Selection persists across filter changes ("curated basket" model). The
+  // header checkbox is tristate and toggles only currently-visible rows.
+  // Hidden-but-selected rows stay selected; the footer surfaces the count.
+  const footer = document.getElementById('sel-footer');
+  const selAllBox = document.getElementById('sel-all');
+  const selCount = document.getElementById('sel-count');
+  const hiddenHint = document.getElementById('sel-hidden-hint');
+  const cmdOut = document.getElementById('cmd-out');
+
+  function visibleRows() {
+    return Array.from(tbody.querySelectorAll('tr')).filter(r => r.style.display !== 'none');
+  }
+  function selectedRows() {
+    return Array.from(tbody.querySelectorAll('tr.row-selected'));
+  }
+  function setRowSelected(row, selected) {
+    row.classList.toggle('row-selected', selected);
+    const cb = row.querySelector('input.row-sel');
+    if (cb) cb.checked = selected;
+  }
+
+  window.toggleAllVisible = function(checked) {
+    visibleRows().forEach(r => setRowSelected(r, checked));
+    syncSelectionUI();
+  };
+  window.onRowToggle = function(cb) {
+    cb.closest('tr').classList.toggle('row-selected', cb.checked);
+    syncSelectionUI();
+  };
+  window.clearSelection = function() {
+    selectedRows().forEach(r => setRowSelected(r, false));
+    syncSelectionUI();
+  };
+
+  function buildRerunCommand(modelIds) {
+    if (!modelIds.length) return '';
+    if (modelIds.length <= 3) {
+      return `${RERUN_PREFIX} --filter "${modelIds.join(',')}" --merge --report`;
+    }
+    return `${RERUN_PREFIX} --filter @selected.txt --merge --report`;
+  }
+
+  function syncSelectionUI() {
+    const sel = selectedRows();
+    const vis = visibleRows();
+    const visSel = vis.filter(r => r.classList.contains('row-selected'));
+
+    selCount.textContent = sel.length;
+    const hiddenSel = sel.length - visSel.length;
+    hiddenHint.textContent = hiddenSel > 0 ? ` (${hiddenSel} hidden by filter)` : '';
+
+    // Tristate header checkbox: checked if all visible are selected,
+    // indeterminate if some, unchecked if none.
+    selAllBox.checked = vis.length > 0 && visSel.length === vis.length;
+    selAllBox.indeterminate = visSel.length > 0 && visSel.length < vis.length;
+
+    footer.classList.toggle('shown', sel.length > 0);
+    document.body.classList.toggle('has-selection', sel.length > 0);
+
+    const ids = sel.map(r => r.dataset.model);
+    cmdOut.value = buildRerunCommand(ids);
+  }
+
+  function flashSaveStatus() {
+    const el = document.getElementById('save-status');
+    el.classList.add('shown');
+    setTimeout(() => el.classList.remove('shown'), 1200);
+  }
+  function copyToClipboard(text) {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(flashSaveStatus, () => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  }
+  function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); flashSaveStatus(); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+  window.copyCommand = function() {
+    const ids = selectedRows().map(r => r.dataset.model);
+    copyToClipboard(buildRerunCommand(ids));
+  };
+  window.downloadFilter = function() {
+    const ids = selectedRows().map(r => r.dataset.model);
+    if (!ids.length) return;
+    const blob = new Blob([ids.join('\n') + '\n'], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'selected.txt';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+    flashSaveStatus();
+  };
+
+  // Initial sync: zero-selection state hides the footer.
+  // applyFilters already calls syncSelectionUI on every filter change.
+  syncSelectionUI();
 
   // Live mode is driven by an http-equiv refresh meta tag in the Jinja
   // template — the browser does a full reload every 2s, which works

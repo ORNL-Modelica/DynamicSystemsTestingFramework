@@ -43,9 +43,14 @@ class ProgressReporter:
     Writes status.json + dashboard.html to work_dir on every state change.
     """
 
-    def __init__(self, work_dir: Path, total: int):
+    def __init__(self, work_dir: Path, total: int, rerun_prefix: Optional[str] = None):
         self.work_dir = work_dir
         self.total = total
+        # Stashed for inclusion in status.json so the dashboard's rerun-
+        # command builder produces an absolute-path command that works
+        # from any CWD. Computed by callers via dashboard_render.build_
+        # rerun_prefix(config).
+        self.rerun_prefix = rerun_prefix
         self._lock = threading.Lock()
         self._write_lock = threading.Lock()
         self._tests: dict[str, TestStatus] = {}
@@ -124,6 +129,7 @@ class ProgressReporter:
             "eta_seconds": eta,
             "counts": counts,
             "tests": tests,
+            "rerun_prefix": self.rerun_prefix,
             "updated_at": time.time(),
         }
 

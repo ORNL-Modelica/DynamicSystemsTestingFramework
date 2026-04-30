@@ -55,8 +55,38 @@ tr.timed-out td { background: #f3e5f5; }
 .status-badge.running   { background: #2196F3; }
 .warn { color: #ff9800; font-weight: 600; }
 .detail-cell { max-width: 30em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #666; font-size: 0.8em; }
+.sel-col { width: 28px; text-align: center; cursor: default; }
+.sel-col input { cursor: pointer; }
+table th.sel-col { cursor: default; }
+table th.sel-col:hover { background: #f5f5f5; }
+tr.row-selected td { background: #e3f2fd !important; }
 a { color: #1976D2; text-decoration: none; }
 a:hover { text-decoration: underline; }
+
+/* Sticky footer: hidden when 0 selected. */
+.sel-footer {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: white; border-top: 2px solid #1976D2;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.1);
+  padding: 0.6em 1.2em; font-size: 0.85em;
+  display: none;  /* shown by JS when selection.size > 0 */
+  align-items: center; gap: 0.8em; flex-wrap: wrap;
+  z-index: 10;
+}
+.sel-footer.shown { display: flex; }
+.sel-footer .count { font-weight: 600; color: #1976D2; }
+.sel-footer .count .hidden-hint { color: #888; font-weight: normal; font-size: 0.9em; margin-left: 0.4em; }
+.sel-footer button { padding: 0.35em 0.8em; border: 1px solid #ccc; border-radius: 3px; background: white; cursor: pointer; font-size: 0.85em; }
+.sel-footer button:hover { background: #f0f0f0; }
+.sel-footer button.btn-primary { background: #1976D2; color: white; border-color: #1976D2; }
+.sel-footer button.btn-primary:hover { background: #1565C0; }
+.sel-footer .cmd-out { flex: 1; min-width: 16em; font-family: monospace; font-size: 0.8em; padding: 0.3em 0.5em; border: 1px solid #ccc; border-radius: 3px; background: #fafafa; }
+.sel-footer .save-status { color: #4CAF50; font-size: 0.82em; display: none; }
+.sel-footer .save-status.shown { display: inline; }
+.sel-footer .help-link { color: #888; font-size: 0.78em; margin-left: auto; }
+.sel-footer .help-link:hover { color: #1976D2; }
+/* Pad the bottom of body so the table's last row isn't hidden under the footer when it's open. */
+body.has-selection { padding-bottom: 5em; }
 </style>
 </head>
 <body>
@@ -72,6 +102,7 @@ a:hover { text-decoration: underline; }
 <table id="results-table">
 <thead>
 <tr>
+  <th class="sel-col" title="Select all visible / clear"><input type="checkbox" id="sel-all" onclick="toggleAllVisible(this.checked)"></th>
   <th data-sort="text" data-key="test">Test</th>
   <th data-sort="text" data-key="ref">Reference</th>
   <th data-sort="text" data-key="model">Model</th>
@@ -88,6 +119,7 @@ a:hover { text-decoration: underline; }
   <th data-sort="text" data-key="detail">Message</th>
 </tr>
 <tr class="filter-row">
+  <th class="sel-col"></th>
   <th><input class="col-filter" data-col-filter="test" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)"></th>
   <th><input class="col-filter" data-col-filter="ref" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)"></th>
   <th><input class="col-filter" data-col-filter="model" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)"></th>
@@ -121,6 +153,7 @@ a:hover { text-decoration: underline; }
     data-sort-sim="{{ t.sim_wall if t.sim_wall is not none else -1 }}"
     data-sort-total="{{ t.total_wall if t.total_wall is not none else -1 }}"
     data-sort-detail="{{ t.detail or '' }}">
+  <td class="sel-col"><input type="checkbox" class="row-sel" onchange="onRowToggle(this)"></td>
   <td>{% if t.test_key %}<a href="{{ t.test_key }}/">{{ t.test_key }}</a>{% else %}—{% endif %}</td>
   <td>{% if t.ref_file %}<a href="{{ t.ref_file }}" title="Open reference JSON">{{ t.ref_id }}</a>{% elif t.ref_id %}{{ t.ref_id }}{% else %}—{% endif %}</td>
   <td>{% if t.report_dir %}<a href="reports/{{ t.report_dir }}/interactive.html">{{ t.model_id }}</a>{% else %}{{ t.model_id }}{% endif %}</td>
@@ -149,9 +182,22 @@ a:hover { text-decoration: underline; }
 </tbody>
 </table>
 
+<div class="sel-footer" id="sel-footer">
+  <span class="count">
+    <span id="sel-count">0</span> selected<span class="hidden-hint" id="sel-hidden-hint"></span>
+  </span>
+  <button id="btn-clear-sel" onclick="clearSelection()">Clear</button>
+  <button id="btn-download-txt" onclick="downloadFilter()">Download .txt</button>
+  <button class="btn-primary" id="btn-copy-cmd" onclick="copyCommand()">Copy rerun command</button>
+  <span class="save-status" id="save-status">Copied!</span>
+  <input class="cmd-out" id="cmd-out" readonly placeholder="Selection produces a rerun command here…">
+  <a class="help-link" href="#" onclick="event.preventDefault();alert('--merge keeps prior results on disk; --report regenerates a full HTML report covering all tests (not just the filtered subset). Drop --merge to focus the report on only the rerun tests.')" title="What do --merge and --report do?">?</a>
+</div>
+
 <script>
 const DASHBOARD_MODE = '{{ mode }}';
 const DASHBOARD_TOTAL = {{ total }};
+const RERUN_PREFIX = {{ rerun_prefix | tojson }};
 {% include 'dashboard.js' %}
 </script>
 </body>

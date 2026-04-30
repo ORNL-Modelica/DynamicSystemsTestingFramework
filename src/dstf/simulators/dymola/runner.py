@@ -117,7 +117,11 @@ class DymolaRunner(SimulatorRunner):
         total = len(tests)
 
         from ..progress import ProgressReporter
-        self.progress = ProgressReporter(self.config.work_dir, total)
+        from ...reporting.dashboard_render import build_rerun_prefix
+        self.progress = ProgressReporter(
+            self.config.work_dir, total,
+            rerun_prefix=build_rerun_prefix(self.config),
+        )
 
         # Assign test_keys (reuse existing from prior runs if present —
         # supports incremental workflow where the manifest accumulates).

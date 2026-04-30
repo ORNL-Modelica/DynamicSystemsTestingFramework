@@ -528,7 +528,11 @@ class SimulatorRunner(ABC):
         total = len(tests)
 
         from .progress import ProgressReporter
-        self.progress = ProgressReporter(self.config.work_dir, total)
+        from ..reporting.dashboard_render import build_rerun_prefix
+        self.progress = ProgressReporter(
+            self.config.work_dir, total,
+            rerun_prefix=build_rerun_prefix(self.config),
+        )
 
         # Assign test_keys (reuse existing from prior runs if present — supports
         # incremental workflows where the manifest accumulates known tests).
@@ -811,7 +815,11 @@ class PersistentRunnerBase(SimulatorRunner):
         total = len(tests)
 
         from .progress import ProgressReporter
-        self.progress = ProgressReporter(self.config.work_dir, total)
+        from ..reporting.dashboard_render import build_rerun_prefix
+        self.progress = ProgressReporter(
+            self.config.work_dir, total,
+            rerun_prefix=build_rerun_prefix(self.config),
+        )
 
         manifest_map, test_items = assign_test_keys(self.config.work_dir, tests)
         for test, test_key in test_items:
