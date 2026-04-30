@@ -115,3 +115,46 @@ def test_render_final_strips_refresh(tmp_path):
     render_final(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "DASHBOARD_MODE = 'final'" in out
+
+
+def test_dashboard_template_has_filter_buttons(tmp_path):
+    """Status filter buttons must appear in the rendered HTML."""
+    snapshot = {
+        "total": 0, "elapsed": 0.0, "eta_seconds": None,
+        "counts": {}, "tests": [], "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert 'filterRows(\'all\'' in out
+    assert 'filterRows(\'fail\'' in out
+    assert 'filterRows(\'sim-fail\'' in out
+    assert 'filterRows(\'no-ref\'' in out
+    assert 'filterRows(\'pass\'' in out
+
+
+def test_dashboard_template_has_sort_hooks(tmp_path):
+    """Each sortable column header must have data-sort and data-key attrs."""
+    snapshot = {
+        "total": 0, "elapsed": 0.0, "eta_seconds": None,
+        "counts": {}, "tests": [], "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert 'data-sort="text" data-key="model"' in out
+    assert 'data-sort="num" data-key="nrmse"' in out
+    assert 'data-sort="num" data-key="elapsed"' in out
+
+
+def test_dashboard_template_has_per_column_filter(tmp_path):
+    """Per-column text filter inputs must be present below headers."""
+    snapshot = {
+        "total": 0, "elapsed": 0.0, "eta_seconds": None,
+        "counts": {}, "tests": [], "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert 'class="col-filter"' in out
+    assert 'data-col-filter="model"' in out
