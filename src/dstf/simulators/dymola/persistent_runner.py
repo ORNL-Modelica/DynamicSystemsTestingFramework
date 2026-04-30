@@ -163,6 +163,29 @@ class _suppress_stderr_noise:
         return False  # don't suppress exceptions — noise window expires naturally
 
 
+def _classify_translation_error(log_path: Path) -> str:
+    """Best-effort classification of a Dymola translation failure.
+
+    The full ``translation_log.txt`` is preserved as a per-test artifact;
+    this helper extracts the most actionable summary line for the
+    dashboard / per-test-report ``error_message`` field. Falls back to
+    the generic "Translation failed" for unrecognized patterns. Pattern
+    list grows organically — when a TRANSFORM run on a new platform
+    surfaces a recurring failure category, add a clause here so users
+    don't have to crack open the log file just to read the headline.
+    """
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "Translation failed"
+    if "model is too complex for the current license" in text:
+        return "Translation failed: license tier too small for this model"
+    lower = text.lower()
+    if "class not found" in lower or "could not find class" in lower:
+        return "Translation failed: missing class / undeclared dependency"
+    return "Translation failed"
+
+
 class DymolaWorker(Worker):
     """One live Dymola process wrapped as a test runner."""
 
@@ -287,7 +310,9 @@ class DymolaWorker(Worker):
                     test_key=test_key,
                     success=False,
                     elapsed=elapsed,
-                    error_message="Translation failed",
+                    error_message=_classify_translation_error(
+                        test_dir / "translation_log.txt"
+                    ),
                     translation_wall=translation_wall,
                 )
 
