@@ -12,12 +12,15 @@ h1 { margin-bottom: 0.2em; font-size: 1.4em; }
 .counter { background: white; border: 1px solid #ddd; border-left-width: 4px; border-radius: 4px; padding: 0.4em 0.8em; min-width: 90px; }
 .counter .label { font-size: 0.7em; color: #888; text-transform: uppercase; }
 .counter .value { font-size: 1.3em; font-weight: 600; }
-.counter.queued    { border-left-color: #888;    } .counter.queued .value    { color: #555;    }
-.counter.running   { border-left-color: #2196F3; } .counter.running .value   { color: #1976D2; }
-.counter.passed    { border-left-color: #4CAF50; } .counter.passed .value    { color: #2E7D32; }
-.counter.failed    { border-left-color: #f44336; } .counter.failed .value    { color: #C62828; }
-.counter.timed_out { border-left-color: #9C27B0; } .counter.timed_out .value { color: #6A1B9A; }
-.counter.total     { border-left-color: #555;    }
+.counter.queued     { border-left-color: #888;    } .counter.queued .value     { color: #555;    }
+.counter.running    { border-left-color: #2196F3; } .counter.running .value    { color: #1976D2; }
+.counter.passed     { border-left-color: #4CAF50; } .counter.passed .value     { color: #2E7D32; }
+.counter.failed     { border-left-color: #f44336; } .counter.failed .value     { color: #C62828; }
+.counter.sim_failed { border-left-color: #d32f2f; } .counter.sim_failed .value { color: #B71C1C; }
+.counter.no_ref     { border-left-color: #FF9800; } .counter.no_ref .value     { color: #E65100; }
+.counter.warnings   { border-left-color: #ff9800; } .counter.warnings .value   { color: #E65100; }
+.counter.timed_out  { border-left-color: #9C27B0; } .counter.timed_out .value  { color: #6A1B9A; }
+.counter.total      { border-left-color: #555;    }
 .bar { height: 14px; background: #eee; border-radius: 7px; overflow: hidden; margin-bottom: 1em; display: flex; }
 .bar span { display: block; height: 100%; }
 .bar .b-passed { background: #4CAF50; }
@@ -33,7 +36,7 @@ th { background: #f5f5f5; position: sticky; top: 0; cursor: pointer; user-select
 th:hover { background: #e8e8e8; }
 th.sorted-asc::after { content: " ▲"; color: #1976D2; font-size: 0.85em; }
 th.sorted-desc::after { content: " ▼"; color: #1976D2; font-size: 0.85em; }
-input.col-filter { width: 100%; padding: 2px 4px; font-size: 0.78em; border: 1px solid #ccc; border-radius: 2px; }
+input.col-filter { box-sizing: border-box; width: 100%; padding: 2px 4px; font-size: 0.78em; border: 1px solid #ccc; border-radius: 2px; }
 tr.queued td    { color: #888; }
 tr.running td   { background: #e3f2fd; font-weight: 500; }
 tr.pass td      { background: #f1f8e9; }
@@ -78,7 +81,7 @@ a:hover { text-decoration: underline; }
 <thead>
 <tr>
   <th data-sort="text" data-key="test">Test</th>
-  <th data-sort="text" data-key="ref">Ref</th>
+  <th data-sort="text" data-key="ref">Reference</th>
   <th data-sort="text" data-key="model">Model</th>
   <th data-sort="text" data-key="status">Status</th>
   <th data-sort="text" data-key="resolution" title="Provenance of stop_time / tolerance / method / number_of_intervals / output_interval — annotation, test_spec, or default">Resolution</th>
@@ -127,7 +130,7 @@ a:hover { text-decoration: underline; }
     data-sort-total="{{ t.total_wall if t.total_wall is not none else -1 }}"
     data-sort-detail="{{ t.detail or '' }}">
   <td>{% if t.test_key %}<a href="{{ t.test_key }}/">{{ t.test_key }}</a>{% else %}—{% endif %}</td>
-  <td>{{ t.ref_id or "—" }}</td>
+  <td>{% if t.ref_file %}<a href="{{ t.ref_file }}" title="Open reference JSON">{{ t.ref_id }}</a>{% elif t.ref_id %}{{ t.ref_id }}{% else %}—{% endif %}</td>
   <td>{% if t.report_dir %}<a href="reports/{{ t.report_dir }}/interactive.html">{{ t.model_id }}</a>{% else %}{{ t.model_id }}{% endif %}</td>
   <td><span class="status-badge {{ t.status_class }}">{{ t.status_text }}</span></td>
   <td>

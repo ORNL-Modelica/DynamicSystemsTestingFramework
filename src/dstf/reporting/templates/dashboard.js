@@ -119,12 +119,29 @@
   }
 
   // ---- Counters + progress bar (rendered from status snapshot) ----
+  // The counters reflect the current row population. During a live run
+  // status_class only takes the values queued/running/pass/fail/timed-out
+  // (sim_failed and no_ref need a comparison phase to produce). After
+  // comparison sidecars overlay row status_class with sim-fail/no-ref,
+  // those pills come alive. Pills with zero count still render so the
+  // user sees the full set and can spot the moment an outcome appears.
   function renderCounters(counts, total) {
     const cn = document.getElementById('counters');
-    const order = ['queued', 'running', 'passed', 'failed', 'timed_out'];
+    // Display order chosen so transient (queued/running) come first,
+    // then outcomes (passed → failures), then warnings + total at end.
+    const order = [
+      ['queued',     'queued'],
+      ['running',    'running'],
+      ['passed',     'passed'],
+      ['failed',     'failed'],
+      ['sim_failed', 'sim failed'],
+      ['no_ref',     'no baseline'],
+      ['timed_out',  'timed out'],
+      ['warnings',   'warnings'],
+    ];
     let html = '';
-    for (const k of order) {
-      html += `<div class="counter ${k}"><div class="label">${k}</div>` +
+    for (const [k, label] of order) {
+      html += `<div class="counter ${k}"><div class="label">${label}</div>` +
               `<div class="value">${counts[k] || 0}</div></div>`;
     }
     html += `<div class="counter total"><div class="label">Total</div>` +
@@ -142,19 +159,25 @@
 
   // Initial render from inline data (read from data-* on tbody rows).
   // Rows use the filter-vocab status_class (pass/fail/sim-fail/no-ref/
-  // timed-out/queued/running) but the counters use the live-snapshot key
-  // names (queued/running/passed/failed/timed_out) so the JS-rendered
-  // pills match what status.json carries during a run. Map between them.
+  // timed-out/queued/running). The counter keys use underscored variants
+  // so the JS class names + CSS rules stay sane. Warnings cross-cuts
+  // status — any row with sortWarnings>0 contributes regardless of its
+  // pass/fail outcome.
   function initialCountsFromRows() {
-    const counts = { queued: 0, running: 0, passed: 0, failed: 0, timed_out: 0 };
+    const counts = {
+      queued: 0, running: 0, passed: 0, failed: 0,
+      sim_failed: 0, no_ref: 0, timed_out: 0, warnings: 0,
+    };
     Array.from(tbody.querySelectorAll('tr')).forEach(row => {
       const s = row.dataset.status;
       if      (s === 'pass')      counts.passed++;
       else if (s === 'fail')      counts.failed++;
-      else if (s === 'sim-fail')  counts.failed++;
+      else if (s === 'sim-fail')  counts.sim_failed++;
+      else if (s === 'no-ref')    counts.no_ref++;
       else if (s === 'timed-out') counts.timed_out++;
       else if (s === 'queued')    counts.queued++;
       else if (s === 'running')   counts.running++;
+      if (parseInt(row.dataset.sortWarnings || '0') > 0) counts.warnings++;
     });
     return counts;
   }

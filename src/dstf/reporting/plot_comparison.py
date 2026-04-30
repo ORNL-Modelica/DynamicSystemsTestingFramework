@@ -969,6 +969,9 @@ def generate_comparison_plots(
         "status_text": status_text,
         "status_class": status_class,
         "ref_id": ref_id,
+        # file:// URL so the dashboard's Reference column can hyperlink
+        # directly to the stored reference JSON.
+        "ref_file": ref_file.as_uri() if ref_file else None,
         "worst_nrmse": (max((v.nrmse for v in comparisons), default=None)
                         if comparisons else None),
         "n_vars": len(comparisons) if comparisons else 0,

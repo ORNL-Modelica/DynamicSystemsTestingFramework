@@ -68,7 +68,7 @@ def _enrich_row_from_comparison(row: dict, comp: dict) -> None:
     for key in (
         "worst_nrmse", "n_vars", "n_vars_passed", "n_warnings",
         "translation_wall", "sim_wall", "total_wall",
-        "ref_id", "field_sources",
+        "ref_id", "ref_file", "field_sources",
         # Comparison-derived status overrides live-mode status when present.
         # The compare phase distinguishes pass / fail / sim-fail / no-ref;
         # live mode only knows passed / failed / timed_out.
@@ -111,6 +111,14 @@ def build_dashboard_context(work_dir: Path, mode: str) -> dict:
         status_text, status_class = _LIVE_STATUS_MAP.get(
             raw_status, (raw_status.upper(), raw_status.replace("_", "-")),
         )
+        # Live-mode ref_id can be derived from report_dir when it follows
+        # the "ref_NNNN" naming (set by cmd_run pre-populating
+        # runner.ref_id_map). For tests without a baseline yet, report_dir
+        # is the live test_key and ref_id stays None.
+        live_ref_id = None
+        rd = t.get("report_dir") or ""
+        if rd.startswith("ref_"):
+            live_ref_id = rd
         row = {
             "test_key": t.get("test_key"),
             "model_id": t.get("model_id"),
@@ -121,6 +129,8 @@ def build_dashboard_context(work_dir: Path, mode: str) -> dict:
             "report_dir": t.get("report_dir") or t.get("test_key"),
             "phase": t.get("phase"),
             "detail": t.get("detail"),
+            "ref_id": live_ref_id,
+            "ref_file": None,  # Populated from sidecar in final mode
             # Post-run fields default to None; populated below in final mode
             "worst_nrmse": None,
             "n_vars": None,
@@ -129,7 +139,6 @@ def build_dashboard_context(work_dir: Path, mode: str) -> dict:
             "translation_wall": None,
             "sim_wall": None,
             "total_wall": None,
-            "ref_id": None,
             "field_sources": t.get("field_sources") or {},
         }
         if mode == "final" and row["report_dir"]:
