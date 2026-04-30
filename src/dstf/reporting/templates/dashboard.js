@@ -9,30 +9,54 @@
   const colFilters = document.querySelectorAll('input.col-filter');
 
   // ---- Filter (status buttons + per-column text) ----
-  let activeStatus = 'all';
+  // Status pills are multi-toggle: "All" clears the selection; any other
+  // button toggles its status in/out of an active Set. Empty set means
+  // show everything (functionally equivalent to "All" being on).
+  const activeStatuses = new Set();
   const colFilterValues = {};
 
+  // Convert a per-column filter string to a matcher. If the input contains
+  // glob metacharacters (* or ?), build a case-insensitive regex from the
+  // glob; otherwise fall back to plain case-insensitive substring match.
+  // This way "Freq" still works for naive users while *.Freq* / Lib.* etc.
+  // power-users get glob semantics matching the CLI's --filter behavior.
+  function patternMatcher(q) {
+    if (!q) return null;
+    if (!q.includes('*') && !q.includes('?')) {
+      const needle = q.toLowerCase();
+      return (val) => (val || '').toLowerCase().indexOf(needle) !== -1;
+    }
+    const escaped = q.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp('^' + escaped.replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i');
+    return (val) => regex.test(val || '');
+  }
+
+  function statusMatches(rowStatus, sortWarnings) {
+    if (activeStatuses.size === 0) return true;
+    for (const s of activeStatuses) {
+      if (s === 'warn' && sortWarnings > 0) return true;
+      // "fail" lumps in timed-out so a single click of Failed surfaces
+      // both genuine compare-fails and timeouts.
+      if (s === 'fail' && (rowStatus === 'fail' || rowStatus === 'timed-out')) return true;
+      if (s === rowStatus) return true;
+    }
+    return false;
+  }
+
   function applyFilters() {
+    // Compile per-column matchers once per filter event (cheap; rebuilt
+    // when any input changes via the input event handler below).
+    const matchers = {};
+    for (const [col, q] of Object.entries(colFilterValues)) {
+      const m = patternMatcher(q);
+      if (m) matchers[col] = m;
+    }
     Array.from(tbody.querySelectorAll('tr')).forEach(row => {
-      let visible = true;
-      // Status filter. "fail" lumps in timed-out so a single click of the
-      // Failed button surfaces both genuine compare-fails and timeouts.
-      if (activeStatus !== 'all') {
-        if (activeStatus === 'warn') {
-          visible = parseInt(row.dataset.sortWarnings || '0') > 0;
-        } else if (activeStatus === 'fail') {
-          visible = (row.dataset.status === 'fail'
-                     || row.dataset.status === 'timed-out');
-        } else {
-          visible = row.dataset.status === activeStatus;
-        }
-      }
-      // Per-column text filter
+      const sortWarnings = parseInt(row.dataset.sortWarnings || '0');
+      let visible = statusMatches(row.dataset.status, sortWarnings);
       if (visible) {
-        for (const [col, q] of Object.entries(colFilterValues)) {
-          if (!q) continue;
-          const val = (row.dataset[col] || '').toLowerCase();
-          if (val.indexOf(q.toLowerCase()) === -1) {
+        for (const [col, match] of Object.entries(matchers)) {
+          if (!match(row.dataset[col])) {
             visible = false;
             break;
           }
@@ -42,10 +66,27 @@
     });
   }
 
+  function syncFilterButtonStates() {
+    const allBtn = document.querySelector('.filter-bar button[data-status="all"]');
+    document.querySelectorAll('.filter-bar button[data-status]').forEach(b => {
+      const s = b.dataset.status;
+      if (s === 'all') {
+        b.classList.toggle('active', activeStatuses.size === 0);
+      } else {
+        b.classList.toggle('active', activeStatuses.has(s));
+      }
+    });
+  }
+
   window.filterRows = function(status, btn) {
-    document.querySelectorAll('.filter-bar button').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    activeStatus = status;
+    if (status === 'all') {
+      activeStatuses.clear();
+    } else if (activeStatuses.has(status)) {
+      activeStatuses.delete(status);
+    } else {
+      activeStatuses.add(status);
+    }
+    syncFilterButtonStates();
     applyFilters();
   };
 
