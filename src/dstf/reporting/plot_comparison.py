@@ -1180,7 +1180,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
 def _build_rerun_prefix(config) -> str:
     """Build the CLI prefix for rerun commands in the HTML report.
 
-    Produces e.g. `modelica-testing --config "/abs/path/testing.json" run` so
+    Produces e.g. `dstf --config "/abs/path/testing.json" run` so
     the appended ` --filter ... --merge --report` works from any CWD. Prefers
     --config when available; otherwise falls back to --source-path (+ optional
     --reference-root when it isn't under the source directory).
@@ -1190,9 +1190,9 @@ def _build_rerun_prefix(config) -> str:
         return f'"{s}"' if " " in s else s
 
     if getattr(config, "config_file", None):
-        return f"modelica-testing --config {q(config.config_file)} run"
+        return f"dstf --config {q(config.config_file)} run"
 
-    parts = ["modelica-testing"]
+    parts = ["dstf"]
     if getattr(config, "source_path", None):
         parts += ["--source-path", q(config.source_path)]
     if getattr(config, "reference_root", None):

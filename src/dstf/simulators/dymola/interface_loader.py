@@ -124,7 +124,7 @@ def _cache_root() -> Path:
         root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     else:
         root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    return root / "modelica-testing" / "dymola-interface"
+    return root / "dstf" / "dymola-interface"
 
 
 def _cache_signature(archive: Path) -> str:

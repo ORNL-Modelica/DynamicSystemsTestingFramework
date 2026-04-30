@@ -3758,7 +3758,7 @@ function renderLeaf(leaf, container, opts) {
   if (leaf.cli_authoritative) {
     const badge = document.createElement('span');
     badge.className = 'cli-authoritative';
-    badge.title = 'Edits reflected after running modelica-testing run';
+    badge.title = 'Edits reflected after running dstf run';
     badge.textContent = 'CLI-authoritative';
     header.appendChild(badge);
   }
