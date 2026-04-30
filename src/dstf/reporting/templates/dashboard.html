@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+</head>
+<body>
+<h1>{{ title }}</h1>
+<table id="results-table">
+<thead><tr>
+  <th>Test</th><th>Model</th><th>Status</th><th>Worker</th><th>Elapsed</th>
+  <th>NRMSE</th><th>Vars</th><th>Warnings</th>
+  <th>Translate (s)</th><th>Sim (s)</th><th>Total (s)</th>
+</tr></thead>
+<tbody>
+{% for t in tests %}
+<tr data-status="{{ t.status_class }}">
+  <td>{{ t.test_key or "—" }}</td>
+  <td>{{ t.model_id }}</td>
+  <td>{{ t.status_text }}</td>
+  <td>{% if t.worker_id is not none %}W{{ t.worker_id }}{% else %}—{% endif %}</td>
+  <td>{% if t.elapsed is not none %}{{ "%.1f"|format(t.elapsed) }}s{% else %}—{% endif %}</td>
+  <td>{% if t.worst_nrmse is not none %}{{ "%.4e"|format(t.worst_nrmse) }}{% else %}—{% endif %}</td>
+  <td>{% if t.n_vars is not none %}{{ t.n_vars_passed }}/{{ t.n_vars }}{% else %}—{% endif %}</td>
+  <td>{% if t.n_warnings is not none %}{{ t.n_warnings }}{% else %}—{% endif %}</td>
+  <td>{% if t.translation_wall is not none %}{{ "%.2f"|format(t.translation_wall) }}{% else %}—{% endif %}</td>
+  <td>{% if t.sim_wall is not none %}{{ "%.2f"|format(t.sim_wall) }}{% else %}—{% endif %}</td>
+  <td>{% if t.total_wall is not none %}{{ "%.2f"|format(t.total_wall) }}{% else %}—{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+<script>
+const DASHBOARD_MODE = '{{ mode }}';
+// fetch-loop bootstrap added in Phase 3
+</script>
+</body>
+</html>
