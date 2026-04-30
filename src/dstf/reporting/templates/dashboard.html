@@ -55,6 +55,12 @@ tr.timed-out td { background: #f3e5f5; }
 .status-badge.running   { background: #2196F3; }
 .warn { color: #ff9800; font-weight: 600; }
 .detail-cell { max-width: 30em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #666; font-size: 0.8em; }
+/* The Model column is the runaway-width offender — long fully-qualified
+ * model IDs (e.g. Lib.Sub.Sub.Sub.SomeTest) push every column to the right.
+ * Truncate to a sensible width with ellipsis; full ID is in the title= attr
+ * for hover, and clicking the link still navigates to the per-test report. */
+.model-cell { max-width: 28em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-cell a { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 .sel-col { width: 28px; text-align: center; cursor: default; }
 .sel-col input { cursor: pointer; }
 table th.sel-col { cursor: default; }
@@ -156,7 +162,7 @@ body.has-selection { padding-bottom: 5em; }
   <td class="sel-col"><input type="checkbox" class="row-sel" onchange="onRowToggle(this)"></td>
   <td>{% if t.test_key %}<a href="{{ t.test_key }}/">{{ t.test_key }}</a>{% else %}—{% endif %}</td>
   <td>{% if t.ref_file %}<a href="{{ t.ref_file }}" title="Open reference JSON">{{ t.ref_id }}</a>{% elif t.ref_id %}{{ t.ref_id }}{% else %}—{% endif %}</td>
-  <td>{% if t.report_dir %}<a href="reports/{{ t.report_dir }}/interactive.html">{{ t.model_id }}</a>{% else %}{{ t.model_id }}{% endif %}</td>
+  <td class="model-cell" title="{{ t.model_id }}">{% if t.report_dir %}<a href="reports/{{ t.report_dir }}/interactive.html">{{ t.model_id }}</a>{% else %}{{ t.model_id }}{% endif %}</td>
   <td><span class="status-badge {{ t.status_class }}">{{ t.status_text }}</span></td>
   <td>
     {% if t.field_sources %}
