@@ -638,8 +638,13 @@ class DymolaWorker(Worker):
 
             # Even after a watchdog kill, the simulation may have completed
             # and written dsres.mat just before/during the kill. Trust disk.
+            # Either way the worker is dead now — flag worker_killed=True so
+            # the dispatch loop knows the next restart is benign-bench, not
+            # bound-budget-counted (we deliberately killed a healthy worker
+            # because the *test* was slow, not the worker).
             disk_result = self._evaluate_from_disk(test, test_key, elapsed)
             if disk_result.success:
+                disk_result.worker_killed = True
                 return disk_result
 
             return TestRunResult(
@@ -649,6 +654,7 @@ class DymolaWorker(Worker):
                 elapsed=elapsed,
                 error_message=f"Timed out after {timeout:.0f}s",
                 timed_out=True,
+                worker_killed=True,
             )
 
         if exc_box[0] is not None:
@@ -657,7 +663,10 @@ class DymolaWorker(Worker):
             # anyway — Dymola often crashes/disconnects after writing the result.
             # Both close() calls are wrapped in the urlopen-noise suppression so
             # stale RPC retries during teardown don't spam the terminal — same
-            # pattern as the timeout path above.
+            # pattern as the timeout path above. Worker exceptions DO count
+            # against the restart budget — they signal a real worker-side
+            # malfunction (RPC dropped, etc.), so worker_killed stays False
+            # and the dispatch loop ticks the budget on the next restart.
             elapsed = time.monotonic() - start_ts
             disk_result = self._evaluate_from_disk(test, test_key, elapsed)
             if disk_result.success:
