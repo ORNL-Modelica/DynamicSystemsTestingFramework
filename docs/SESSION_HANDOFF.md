@@ -1,139 +1,172 @@
-# Session handoff — v1.0-cleanliness sweep + dashboard/report unification + Linux-Dymola cascade fix
+# Session handoff — stale-state fix + dashboard UX polish + CLI cleanup + 100% TRANSFORM Linux Dymola
 
-**Date**: 2026-04-30
-**Covers**: five arcs over one session — modelica-testing CLI sweep + CLI subcommand parity (`1780121`–`ac7417b`); annotation ↔ test_spec.json contract docs (`b0124ad`); dashboard + report unification (`b6053e1`–`2a8f7da`, 11 commits); dashboard UX polish from two rounds of feedback (`aede963`–`334b060`, 7 commits) + a third round including live-ticking elapsed/wall-clock and a Model-column ellipsis fix (`0d4dad9`, `008f920`); **Linux Dymola timeout cascade root-cause + fix** (`2a7e338`, `2c5f1d3`, `389eb32`) + per-test 240s timeout overrides + 6 new Linux Dymola baselines committed in TRANSFORM-UnitTests (`6ad1765`, `3829103`).
-**State at HEAD** (commit `008f920`):
-- **860 tests passing + 3 expected optional-dep skips, 0 regressions** (full suite runs in ~4½ min on Linux WSL). +18 over the prior 842 baseline.
-- **TRANSFORM-on-Dymola-Linux 100% achievable** (326/326): cascade fix landed; the 5 legitimately-slow tests (NSSS, IRIS×2, HumTest, PbLiTest2) plus CIET_nureth now have 240s timeout overrides and Linux Dymola baselines accepted.
+**Date**: 2026-05-01
+**Covers**: 5 user-reported issues addressed in 4 commits on top of prior session HEAD `a9be593`. Plus field-verification of the stale-state fix on TRANSFORM (326/326 PASS, up from 319/326 in the prior session).
+
+**State at HEAD** (commit `a79241d`):
+- **861 unit tests passing + 3 expected skips, 0 regressions** (full suite ~4½ min on Linux WSL).
+- **TRANSFORM-on-Dymola-Linux: 326/326 PASS** (44-min wall, 0 failed, 0 timed out, 0 cascade events). Prior session's 97.85% with 5 timeouts is now 100% — the stale-state fix + cascade fix + 240s timeout overrides + accepted Linux Dymola baselines together produce a clean run.
+- **ModelicaTestingLib gains Linux Dymola baselines** — 11 ref_NNNN.json (SimulateOnlyTest stores no ref). Demo library now has all four partitions: Dymola/{windows,linux} + OpenModelica/linux.
 - **5 simulator backends, 3 test libraries** unchanged.
-- **One unified `dashboard.html` replaces both the live-progress page and the post-run index** — single Jinja template + `dashboard.js` module fed by `status.json` (live, JS-fetched every 2s, scroll-preserving) and per-test `comparison_data.json` sidecars (final). New **Resolution** column surfaces per-field provenance (`annotation` / `test_spec` / `mixed`) so users can answer "where did this stop_time come from?" without docs lookup.
-- **`--report` flag narrows in scope** — controls only per-test `interactive.html` deep dives now. The unified dashboard always exists; `cmd_run` and `cmd_compare` always trigger `dashboard_render.render_final` after comparison.
-- **Standalone `index.html` template retired** along with the inline `_DASHBOARD_TEMPLATE` f-string in `progress.py` (~125 LOC) and the `_build_rerun_prefix` dead-code path. ProgressReporter narrowed to status.json-only writes; rendering delegates through `reporting/dashboard_render.py`.
-- **CLI flag-group dedup via argparse parent parsers** — `filter_parent` (`--filter` / `--package`), `compare_parent` (`--tolerance` / `--default-points`), `report_parent` (`--report` / `--report-format`). Future shared flags (e.g. eventual `--parallel` on more subcommands) cost one line each instead of N.
-- **Annotation contract is now teachable** — `docs/usage.md` has a "Two-layer contract" section + kitchen-sink test_spec.json example showing every `simulation.*` field. Audit corrected the prior bullet: `_parse_experiment` already covered 5 of 6 standard fields (StopTime, Tolerance, `__Dymola_Algorithm`, NumberOfIntervals, Interval); spec_parser already handled per-test `method` overrides. Only documentation + Resolution-column visibility were missing.
-- **All four user-facing `modelica-testing` strings retired** — rerun-command builder, spec-update copy, badge tooltip, internal cache path (`~/.cache/dstf/dymola-interface/`). Six interactive_*.hash goldens regenerated for the visible spec-update copy change.
-- **Dashboard battle-tested via three rounds of user feedback (Windows + Linux)** — colored status badges, fixed filter-button vocab mismatch, restored Reference + Detail columns, meta-refresh fallback (replaces non-functional JS-fetch on file:// URLs), 3-state sort cycle restart, auto-open at start of run. Then: Reference column hyperlinks to ref JSON, glob filter support, multi-toggle pills, sim_failed/no_ref/warnings counter pills, pills-as-toggles (filter-bar row deleted), per-row checkbox column + sticky footer with Copy-rerun-command + Download-selected-txt, and **localStorage persistence so filter / selection / sort survive the 2s meta-refresh ticks** (caught when an active "running" filter got wiped on each tick mid-run). Round 3: Model-column truncation with ellipsis + tooltip to fix horizontal scroll, and **JS-driven live-ticking elapsed clock + wall-time** in both header and per-row Elapsed cells (the server-side snapshot only writes on test state changes, so quiet stretches looked frozen — JS now ticks every 1s using SNAPSHOT_WALL/SNAPSHOT_ELAPSED anchors stamped into the page).
-
-**Inherited state from prior session (D88–D90, commit `5d72bd6` baseline)**:
-- **All five live-preview comparison modes JS↔Python parity-tested** — `nrmse`, `tube`, `range`, `points`, `dominant-frequency`. Sixth (`event-timing`) stays CLI-authoritative. Test at `tests/test_scorer_parity.py`.
-- **Persistent-worker abstraction extracted** — `Worker` ABC + `PersistentRunnerBase` template in `simulators/base.py`; persistent runners shrank ~50%; new persistent backends are ~30 LOC.
-- **CLI runner selection is registry-driven** — `persistent_runner_cls()` + `preflight()` classmethod hooks. Zero backend-name strings in `cli.py:_get_runner`.
-- **Capability declarations validated at `@register`** — stale flags TypeError at module-import.
-- **`comparator.py` + `plot_comparison.py` split** into focused modules.
-
-**Cross-OS validation (this session)**: TRANSFORM-UnitTests verified on Windows side end-to-end against current HEAD — no regressions in the v1.0-cleanliness sweep, dashboard unification, or the round-3/round-4 polish. Linux side: Dymola, OpenModelica (--batch), Julia/MTK, Python all smoke-tested locally against ModelicaTestingLib via the unified dashboard. OpenModelica persistent + FMPy not exercised here (OMPython + fmpy not installed on this WSL host).
-
-**Cross-OS validation (inherited from D88-D90)**: Windows + Linux both work end-to-end. Linux Dymola via the `/usr/local/bin/dymola` wrapper script (the bare `bin64/dymola` binary fails because it bypasses the `LD_LIBRARY_PATH` setup the wrapper does — DEBT marker at the worker construction site).
-
-**TRANSFORM-on-Dymola-Linux re-characterization (this session, HEAD `2c5f1d3`)**: 326-test suite via persistent worker, parallel=1, 60s/test timeout. **319 PASS (97.85%) + 5 TIMEOUTs + 2 worker-broken events + 0 restart-exhausted**. Run wall time ≈ 20 min for sim + ~98s for report generation.
-
-**Diagnosis history** (three iterations):
-
-1. **Prior session's diagnosis (incorrect)**: claimed the 84 license-tier failures were "broken-worker cascade replaying stale cached error log content." Wrong — the messages are real Dymola license errors, verifiable in the per-test `translation_log.txt` files.
-
-2. **First run this session (when license was unavailable, HEAD `0d4dad9`)**: hit 242 PASS / 84 license-tier-FAIL / 0 cascade. The 84 failures DID correspond to real "Error: the model is too complex for the current license" messages because the user's licensed Dymola tier had a feature gap that day.
-
-3. **Second run this session (after license came back, HEAD `0d4dad9`)** reproduced the user's actual reported issue: **23 PASS + 3 TIMEOUTs (NSSS_Test, IRIS_Default_Teststandalone, IRIS_Default_Test) consumed the 3-attempt restart budget, then test_0027 hit a real worker-broken state, then 297 synthetic "Worker dead; restart exhausted" cascade failures**.
-
-**Root cause**: timeouts counted against the persistent-worker restart budget. D90's reset-on-success only fired on successful tests — three slow tests in a row consumed the budget without ever giving the counter a chance to reset, even though the worker was healthy throughout (we hard-killed it after the per-test timeout).
-
-**Fix (commits `2a7e338` + `2c5f1d3`)**:
-- New `TestRunResult.worker_killed: bool` field. Set whenever the worker called `close()` during `run_test_with_timeout` for benign reasons (timeout, disk-rescue post-timeout). Worker-exception and Worker-broken-translation-log paths leave it `False` since those are real worker malfunctions.
-- `_try_restart` accepts `count_against_budget: bool`. When True (default, real worker death), increments the budget counter. When False (post-timeout/post-disk-rescue restart), brings up a fresh worker without ticking the bound.
-- Dispatch loop tracks `prev_killed_worker` from the previous iteration's `tr.timed_out or tr.worker_killed`. Real worker malfunctions still trip the bound after `max_restarts_per_worker=3` consecutive failures — that's still the right behavior for genuinely-broken workers (license server permanently down, Dymola process wedged, etc.).
-
-**Verification**: third run after the fix produced the 97.85% pass rate above. The cascade scenario is gone. Two genuine worker-broken events (test_0027, test_0054) each ticked counter to 1/3, then recovered when the next test passed. Four post-timeout restarts (not counted) absorbed the 3 known-slow tests + an extra disk-rescued one without consuming any budget.
 
 ---
 
-## Session arc
+## What landed
 
-Four arcs over one session. Each is a multi-commit unit on `main`:
-
-| Arc | Range | Theme |
+| Commit | Issue | Change |
 |---|---|---|
-| **v1.0-cleanliness sweep** | `1780121` → `ac7417b` (3 commits) | **Stale CLI references + flag-group dedup.** Four user-facing `modelica-testing` strings replaced with `dstf` (rerun-command builder, spec-update copy, badge tooltip, internal cache path); 6 interactive HTML goldens regenerated for the visible spec-update copy change. Three duplicated argparse flag groups extracted to `add_help=False` parent parsers — `--filter`/`--package` deduped across discover/run/compare/export, `--tolerance`/`--default-points` across run/compare, `--report-format`/`--report` across run/compare. Side effect: `dstf compare`'s `--report-format` picked up its missing help string (single source of truth means this drift can't recur). `dstf compare --parallel` exposed (parallelism infra was already present in `generate_report_suite` ThreadPoolExecutor; only the flag plumbing was missing). Two stale matplotlib docstrings updated to reflect the post-Stage-5 reality (PNGs were retired ages ago; the parallelism rationale is now Plotly JSON serialization + sidecar dump + decimation). |
-| **Annotation contract docs** | `b0124ad` (1 commit) | **Two-layer contract documentation + scope correction.** Audit revealed the original priority bullet was overscoped: `_parse_experiment` already parses 5 of 6 standard fields (StopTime, Tolerance, `__Dymola_Algorithm`, NumberOfIntervals, Interval); `spec_parser` already handles `simulation.{stop_time, tolerance, method, number_of_intervals, output_interval, timeout}`; tests at `test_discovery.py:206` exercise the per-test method override end-to-end. Real gap was *documentation* + Resolution column visibility (deferred to dashboard arc). Added "Two-layer contract" section to `docs/usage.md`: annotation provides defaults, `simulation.*` block in test_spec.json overrides; user omits → annotation if present, else simulator default; user provides → it's used. Kitchen-sink test_spec.json example expanded to show every `simulation.*` field. CLAUDE.md got brief contract paragraph. **Decided not to plumb `StartTime`** through 5 backends — most tests start at t=0, per-backend cost is high; gap is documented. |
-| **Dashboard + report unification** | `b6053e1` → `2a8f7da` (11 commits including the plan doc `ac1a87b`) | **One progressively-enriching page replaces two.** Followed a written plan at `docs/superpowers/plans/2026-04-30-dashboard-report-unification.md` (TDD-shaped, 11 tasks across 7 phases). Built bottom-up: TestModel `field_sources` provenance plumbing (Task 1) → new `dashboard_render.py` module reading `status.json` + per-test `comparison_data.json` sidecars (Task 2) → rich Jinja template with sortable headers, status-button + per-column text filter (Task 3) → vanilla JS module with 3-state sort cycle (desc-first numeric, asc-first text), `setInterval(fetch('status.json'))` every 2s with DOM-only updates preserving scroll, "Refresh now" button (Task 4) → ProgressReporter delegates to dashboard_render, `_DASHBOARD_TEMPLATE` f-string deleted (Task 5) → per-test sidecar `summary` block plumbing (Task 6) → CLI always calls `render_final` after comparison regardless of `--report` (Task 7) → standalone `index.html` template retired plus `_build_rerun_prefix` dead code (Task 8) → Resolution column wired end-to-end through TestStatus + register() callsites + template + dashboard_render (Task 9) → full validation gauntlet 857/3/0 + smoke against ModelicaTestingLib OpenModelica (Task 10) → docs (Task 11). Net production-code LOC roughly flat (~+30) — new template/JS/render module additions balanced by f-string + index.html deletions. |
-| **Dashboard UX polish (2 rounds of feedback)** | `aede963` → `334b060` (7 commits) | **Caught real bugs the plan didn't anticipate, plus design refinements.** Round 1 fixes after Windows verification: status_class vocab mismatch (live `passed`/`failed` vs filter `pass`/`fail` — buttons did nothing) → introduced `_LIVE_STATUS_MAP` to normalize; status badges were plain text → added colored `.status-badge` CSS; lost `Ref` and `Detail` columns from the old templates → restored both; counter pills were uncolored → added per-status border + value colors; meta-refresh fallback (JS fetch silently blocked on `file://` URLs in Chrome/Edge — auto-refresh + Refresh-now button were both no-ops in practice) → reverted to `<meta http-equiv="refresh">`; sort cycle stuck at null after 3 clicks → added cycle restart at firstClick; auto-open dashboard at start of `cmd_run` (not end). **Round 2** refinements: Reference column renamed and hyperlinked to ref JSON (file:// URL via `Path.as_uri()`); per-column filter input overflow → CSS `box-sizing: border-box`; new `SIM_FAILED` / `NO_REF` / `WARNINGS` counter pills; **counter pills became dual-purpose filter toggles** (the separate filter-bar row deleted entirely — one UI element does the work of two); per-column text filter gained glob support (`*`/`?` → regex; substring otherwise); status pills became multi-toggle (Failed + Sim-Failed simultaneously, Total clears all); restored the **rerun helpers** in a sticky footer (per-row checkboxes, tristate header select-all-visible, Download `selected.txt`, Copy rerun command, live preview, hidden-by-filter hint) — design confirmed via grill (filters and selection fully decoupled, persisted-basket model). **Final polish**: `localStorage` persistence so filter/selection/sort survive the 2s meta-refresh ticks (caught when an active "running" filter got wiped on each tick mid-run). |
+| `c6e8a04` | #5 stale-state | `_wipe_stale_state_for_scope` in cli.py: `cmd_run` wipes `<work_dir>/reports/<report_dir>/` AND `<work_dir>/<test_key>/` for in-scope tests; `cmd_compare` wipes only the report dir (preserves sim outputs to re-evaluate). Defensive guards in `dashboard_render._enrich_row_from_comparison`: skip enrichment if `summary["model_id"] != row["model_id"]` OR `summary["written_at"] < snapshot["start_wall"]`. Both fire stderr warnings so silent overrides become visible. Sidecar's `summary` block now stamps `written_at` + re-affirms `model_id`. 10 new tests. |
+| `da47515` | #1 + #2 + #3 dashboard UX | (1) `#sticky-chrome` wraps h1 + status bar + progress bar + counter pills; thead's two rows stack via `--chrome-height` + `--header-row-height` CSS variables driven by `ResizeObserver`. (2) Drag handles on every header th update `th.style.width`; for Model + Detail (truncated columns) drag also updates `--col-w-<key>` so the td's max-width follows. Widths persist to localStorage alongside filter / selection / sort. (3) meta-refresh `2s → 5s` + status-bar copy + JS comments + tests. |
+| `93d2a81` | #4 CLI cleanup | `dstf --version` (-V) reading `importlib.metadata`; symmetric `check-openmodelica` + `check-julia` subcommands (probe OMPython + omc binary; probe `julia --version`); `--simulator` / `--simulator-path` / `--work-dir` added to `compare` (filling the asymmetry vs `run`); `--report` help fixed to match unified-dashboard reality; `soft-check` action help explicit about why there's no `add` (D66 — soft_checks come from `import-baseline` only); removed bogus `manifest rebuild` from `docs/usage.md` (the index is built fresh on every command run, nothing to rebuild). |
+| `a79241d` | NO_REF observation | After the user ran ModelicaTestingLib on Linux Dymola and saw NO_REF for every test (except SimulateOnlyTest), diagnosis confirmed it wasn't a regression — `Dymola/linux/` partition simply didn't exist for that demo lib (only `Dymola/windows/` was committed). `--accept` produced 11 baselines; re-run shows 12/12 PASS in the dashboard. |
 
-| **Linux Dymola cascade fix** | `2a7e338` → `2c5f1d3` (2 commits) | **Persistent-worker restart budget hardening — the user's actual reported issue.** Reproduced "Worker dead; restart exhausted" cascade on TRANSFORM-UnitTests Linux Dymola: 23 PASS, then 3 consecutive timeouts on legitimately-slow tests (NSSS, IRIS×2) consumed the 3-attempt restart budget, then test_0027 hit a real worker-broken state, then 297 synthetic failures for the rest of the queue. Diagnosis: D90's reset-on-success only fires after a *successful test* — three consecutive timeouts never get a successful test between them, so the counter accumulates even though the worker was healthy throughout (we hard-killed it after the per-test timeout). Fix: new `TestRunResult.worker_killed: bool` field set by the worker whenever it called `close()` for benign reasons (timeout-kill or post-timeout disk-rescue); `_try_restart(count_against_budget: bool)` parameter on the dispatch side, with the loop tracking `prev_killed_worker` from the previous iteration's flags. Real worker malfunctions (translation returned False with empty log; RPC errors) leave `worker_killed=False` and still tick the bound. End-to-end verification on TRANSFORM produces 319/326 PASS (97.85%) with zero cascade events. |
-
-Total: 24 commits across the five arcs. Each arc's commits have per-step rationale messages; refer to `git log` for the full audit trail.
+Total: **5 user-reported issues + 1 demo-lib gap closed in 4 commits.**
 
 ---
 
-## Dev env (unchanged from previous handoff)
+## Stale-state fix — the bug + design
+
+**The bug** (root cause): `cmd_run` never wiped `<work_dir>/reports/<report_dir>/` before re-running tests. Stale `comparison_data.json` sidecars from a prior `--report` run persisted on disk. The dashboard's `_enrich_row_from_comparison()` then copied their `status_text` / `status_class` into the fresh row — overriding a passing sim with the prior run's FAIL verdict. Exact reproduction of the user's reported `check_Alphas_F1D` symptom.
+
+**Two-layer fix**:
+
+1. **Wipe contract**. `_wipe_stale_state_for_scope(config, tests, ref_id_map, *, wipe_sim_dirs)` clears per-test sim and report dirs for the tests this invocation is about to (re-)process. Out-of-scope tests' dirs are untouched — that's what makes `--merge` and `--rerun` keep working. Replaces the inconsistent per-runner wipes (Dymola batch + Dymola persistent + OM persistent had them; Julia, Python, FMPy, OM batch did not — stale-state risk on 4 of 7 paths).
+2. **Defensive double-entry bookkeeping** at the dashboard enricher. `summary.model_id` mismatch with `row.model_id` (bookkeeping drift) → skip + warn. `summary.written_at < snapshot.start_wall` (stale sidecar from before this run started) → skip + warn. Sidecars without `written_at` (legacy) pass through normally.
+
+**Field verification** on TRANSFORM Linux Dymola, 4 scenarios:
+
+| Scenario | Outcome |
+|---|---|
+| Fresh run with `--report` (3 tests) | All sidecars stamped with `model_id` + `written_at`; dashboard reads correctly |
+| Inject stale sidecar (older `written_at` claiming FAIL) | Timestamp guard fires; dashboard shows live PASS, not planted FAIL |
+| Re-run with stale sidecar present | Wipe clears it; fresh sidecar replaces; both sim_dir + report_dir rebuilt |
+| Inject wrong-model sidecar (bookkeeping drift) | Model_id guard fires; row stays PASS |
+
+Then **full TRANSFORM 326-test rerun**: 326/326 PASS, 0 failed, 0 timed out, 0 cascade events.
+
+---
+
+## Dashboard UX polish
+
+Three issues, one commit (`da47515`):
+
+**Sticky chrome (#1)** — h1 + status-bar + progress-bar + counter-pills wrapped in `#sticky-chrome` at `top: 0`. Two thead rows stack below at `top: var(--chrome-height)` and `top: var(--chrome-height) + var(--header-row-height)`. JS `ResizeObserver` on `#sticky-chrome` keeps the variables fresh as counter pills wrap or chrome content changes.
+
+**Resizable columns (#2)** — `<span class="col-resize-handle">` on the right edge of every header th. mousedown starts a drag that updates `th.style.width`; for the Model + Detail columns (which use ellipsis truncation), drag also updates `--col-w-<key>` so the td's max-width follows. The hardcoded `max-width: 28em` cap on `.model-cell` is gone — users who want to read long fully-qualified model IDs drag the Model column wider. Widths persist to localStorage alongside filter / selection / sort.
+
+**Refresh interval (#3)** — meta-refresh `content="2"` → `content="5"`. Two seconds was interrupting users mid-interaction; five seconds is still tight enough for live feedback.
+
+---
+
+## CLI cleanup
+
+Six fixes in `93d2a81`, applied from the audit's punch list:
+
+- `dstf --version` (-V) via `importlib.metadata.version("dstf")`. Pyproject.toml stays the source-of-truth.
+- `dstf check-openmodelica` and `dstf check-julia` for symmetry with `check-dymola`. OM probe describes OMPython availability + `omc` binary; Julia probe checks `julia --version`. Useful for diagnosing persistent-worker preflight failures.
+- `compare` gains `--simulator`, `--simulator-path`, `--work-dir` (already on `run`).
+- `--report` help text matches unified-dashboard reality (dashboard always renders; flag only controls per-test deep dives).
+- `soft-check` action help explicit about D66's intentional add-via-import-baseline-only design.
+- Removed `manifest rebuild` from `docs/usage.md` (the index is built fresh on every command run; nothing to rebuild).
+
+---
+
+## NO_REF on ModelicaTestingLib + Linux Dymola — diagnosis + fix
+
+User ran `dstf --config examples/.../testing.json run --report` on Linux Dymola and saw NO_REF for every test (except SimulateOnlyTest). Diagnosis: not a regression — `Dymola/linux/` partition simply didn't exist in the demo lib. Only `Dymola/windows/` was committed; TRANSFORM had been given Linux Dymola baselines during the prior cascade-fix arc, but ModelicaTestingLib hadn't. `--accept` on Linux Dymola produced 11 baselines (`a79241d`). Re-run shows 12/12 PASS.
+
+**Lesson**: when adding a new OS or backend, demo libraries need their own `--accept` pass, not just project libraries. Reference partitioning is enforced; cross-partition fallback is not done by design (different backends produce different solver outputs).
+
+---
+
+## Cross-OS validation (this session)
+
+- **Linux WSL Dymola**: TRANSFORM 326/326 PASS verified end-to-end at HEAD `a79241d`. ModelicaTestingLib 12/12 PASS with newly-accepted baselines.
+- **Windows side**: not exercised this session. The dashboard / CLI changes are file-IO + JS / argparse — no platform-specific code paths added. Should match Linux behavior.
+- **OpenModelica + FMPy + Julia**: not exercised this session (no env access). The wipe contract + sidecar guards are backend-agnostic; the runner-internal wipes are unchanged so persistent OM behavior is preserved.
+
+---
+
+## Pre-session sanity
 
 ```bash
-# One-time setup
-uv pip install -e ".[dev]"           # adds scipy now (Python e2e tests need it)
-uv pip install pytest-playwright     # JS↔Python parity tests need this
-uv run playwright install chromium   # ~120 MB; first time only
+git log --oneline -10                                         # HEAD = a79241d
+uv run pytest -q --ignore=tests/test_interactive_html_snapshot.py   # expect 861 passed + 3 skipped
+export PATH="$HOME/.juliaup/bin:$PATH" && uv run pytest -q     # same on Julia-installed envs
+
+# Smoke each backend; verify dashboard.html exists at <work_dir>/dashboard.html, opens in browser:
+uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --simulator Dymola
+uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --simulator OpenModelica
+uv run dstf --config examples/julia/JuliaMtkTestingLib/Resources/ReferenceResults/testing.json run
+uv run dstf --config examples/python/PythonTestingLib/Resources/ReferenceResults/testing.json run
+uv run dstf --config examples/fmu/testing.json run
+
+# New diagnostic commands:
+uv run dstf --version
+uv run dstf check-openmodelica
+uv run dstf check-julia
 ```
 
-scipy moved into `[dev]` extras this session — was previously implicit on miniforge's pytest, but `uv run pytest` on a clean `.venv` would fail the `_scipy_available` subprocess check. New users can now do the standard `uv pip install -e ".[dev]"` and get the full suite running.
+Working tree clean. Filter / selection / sort / column widths all persist via localStorage keyed on file path.
 
 ---
 
-## Backends (5, all production)
+## Candidate next moves
 
-Unchanged from prior session — but the persistent-worker plumbing under each is significantly cleaner now:
+Roadmap items #1–#6 + #8 closed. **#7 (capabilities) still pending** — Dyad, Julia recognizer, MTK FMU export, experiment alignment. None touched this session.
 
-| Backend | Class | Persistent runner | Worker class | Capability flags |
-|---|---|---|---|---|
-| **Dymola** | `DymolaRunner` | `PersistentDymolaRunner` | `DymolaWorker` | PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT |
-| **OpenModelica** | `OpenModelicaRunner` | `PersistentOpenModelicaRunner` | `OpenModelicaWorker` | PERSISTENT_WORKERS, BATCH_FALLBACK |
-| **Julia/MTK** | `JuliaRunner` | `PersistentJuliaRunner` | `JuliaWorker` | PERSISTENT_WORKERS, BATCH_FALLBACK |
-| **FMPy** | `FmpyRunner` | — | — | PERSISTENT_WORKERS |
-| **Python** | `PythonRunner` | — | — | BATCH_FALLBACK |
+### Top-of-stack candidates
 
-The persistent runners all subclass `PersistentRunnerBase` (in `simulators/base.py`); their workers subclass `Worker` (same module). The orchestration template owns startup/dispatch/teardown; backends fill in `worker_cls`, `backend_label`, `make_worker`, optional `setup_before_workers`, `preflight`, `starting_workers_message`. See `docs/extensibility.md` §3 "Persistent-worker contract" — the canonical worked example is `PersistentOpenModelicaRunner` (smallest of the three).
+**A-tier (closing-out housekeeping)**
 
-Capability honesty validator at `simulators/__init__.py:_validate_capabilities` enforces that declared flags have matching method overrides. Stale flags fail at module-import time (TypeError) instead of later `NotImplementedError`.
+- **Strip the redundant in-runner rmtrees** — DymolaRunner (runner.py:147-150), DymolaWorker (persistent_runner.py:282-283), OpenModelicaWorker (persistent_runner.py:304-305) all wipe `test_dir` themselves. cmd_run's centralized wipe makes them defensive duplicates. **Decision deferred this session: keep them.** Tightening the run_tests contract (callers MUST pre-wipe) for ~10 LOC is not net-positive — the in-runner wipes are O(0) on already-empty dirs and protect against any future caller of `runner.run_tests` outside cmd_run. Could revisit if test_openmodelica_persistent.py:619 (the one direct caller) gets refactored.
+- **Sim-dir model_id stamping (B4)** — originally scoped as "stamp model_id into simulation_artifacts.json" but that file doesn't exist. Inventing a new `.dstf-test-meta.json` to defend against theoretical sim-dir bookkeeping drift is unjustified — cmd_run wipe + sidecar model_id guard + batch_manifest's stable test_key→model_id mapping cover the vectors we know about. Re-scope only if a real bookkeeping-drift case appears.
+
+**B-tier (#7 capabilities — each is its own session)**
+
+- **Julia source recognizer** (~1 day) — auto-discover Julia tests from `.jl` files, mirroring the Modelica recognizer. Closes a real D81 gap that's been pending since the rename.
+- **MTK FMU export via `ModelingToolkit.generate_fmu`** (~1 day) — wires Julia into the `Capability.FMU_EXPORT` cross-backend chain.
+- **Dyad validation** (~½ day) — port a sample Dyad test, confirm the existing MTK runner handles it (it should — Dyad compiles to MTK).
+- **Experiment-data alignment preprocessing** (ideas.md #57, ~3-5 days) — needs a concrete user use case before scoping; pure capability work without a driving need is bait for over-engineering.
+
+**C-tier (smaller follow-ups)**
+
+- **Dymola batch FMU export** (`TODO(batch-fmu-export)` marker). ~30-50 LOC `.mos` script work; deferred until a batch-only codebase needs it.
+- **Persistent-worker Python** (ideas.md #58). Mirrors Julia D77→D78. Defer until perf ceiling hits.
+- **OM FMU export** via `buildModelFMU`.
+- **`_find_top_n_peaks` JS parity** (~30 min) — closes the last scoring-related JS↔Python drift surface.
+- **`reference_store.py` review** (~1-2 hr) — 933 lines but coordinated; less obvious clean seam.
+- **Visual-regression Playwright screenshots**.
+- **Phase 9 dataset types** (E-tier foundational): Events / Spectrum / Distribution / Scalars / Field.
 
 ---
 
-## Reporter-as-IDE — feature complete + parity-tested
-
-Status unchanged from prior session, but the **JS scorer drift surface is now mechanically tested**:
-
-* `tests/test_scorer_parity.py` — 1 playwright test, 10 fixtures (5 modes × 2 verdicts each). Renders synthetic ref/act trajectories into `interactive.html`, runs the actual `_compare_*` Python functions for the authoritative verdict, evaluates `MODE_SCORERS[mode](leaf)` from JS via `page.evaluate()`, asserts every leaf agrees. Disagreements are reported per-leaf so a single failure surfaces full-extent drift.
-* Cross-reference markers at every Python↔JS scorer pair: `comparator.py` `_compare_*` sites point at the JS line; `interactive.js` `MODE_SCORERS` entries point at the Python function. `git grep parity-test` finds them all.
-* vision.md "Live preview policy" updated — D75-D76 added the FFT scorer; the doc had said `dominant-frequency` was CLI-authoritative, but JS has had a live FFT scorer since then. Doc now reflects reality.
-
-Drift-detection has teeth: deliberately mistuning the JS NRMSE scorer (`nrmse < tol * 0.001`) makes the test fail with `"nrmse (pass): Python=True, JS=False — params={'tolerance': 0.01}"`. Same for `dominant-frequency`. Restoring the JS makes it pass.
-
----
-
-## Plan-quality lessons (carried forward from prior sessions + this session)
+## Plan-quality lessons (carried forward)
 
 Worth carrying forward:
 
-1. **Audit before scoping.** This session corrected two grilling-derived priority bullets after audit: the annotation-contract bullet claimed `_parse_experiment` only handled StopTime+Tolerance (false — covered 5 of 6 standard fields already); the `--parallel`-on-compare bullet implied threading work (false — `generate_report_suite` already had ThreadPoolExecutor; only the flag plumbing was missing). Lesson: when a priority is presented as "implement X," the first move is a `grep` + targeted read to confirm X doesn't exist. Two arcs in this session collapsed from "implement" to "document" or "plumb one line" once the audit landed.
+1. **Audit before scoping.** Two B-tier tasks this session collapsed when audited: B4 (stamp simulation_artifacts.json) was scoped against a phantom file; B3 (strip redundant rmtrees) was scoped as ~20 LOC savings but the real cost is contract tightening, not LOC. Lesson: when a follow-up is presented as "we should also do X," the first move is `grep` + targeted read to confirm X is real and the cost story holds.
 
-2. **Read the vision/usage docs before recommending architectural alternatives.** From D88-D89: pitched Pyodide / hybrid-server alternatives without reading `vision.md:98-110` which explicitly forbids server-mode and pins a 5 MB embedded payload budget. Treat documented design constraints as load-bearing.
+2. **NO_REF is correct, not a bug.** When the user reported "NO_REF for every test," reflexive impulse was to look for a regression in the wipe code. Real diagnosis: the demo lib simply lacked Linux Dymola baselines. Lesson: when behavior looks wrong, check the data first (does the partition exist?), the code second.
 
-3. **Verify "this mirrors that" claims by searching for the counterpart.** From D88-D89: pitched extending parity testing to `MODE_PLOT_CONTRIBUTIONS` thinking it mirrored Python; turns out no Python counterpart exists. First action when proposing a parity test: `grep` for the named Python counterpart.
+3. **Multi-layer defense is cheap on simple cases.** The stale-state fix layers wipe + timestamp guard + model_id guard. Each is ~5-10 lines. Together they make the bug literally unable to recur silently — even if a future code path bypasses the wipe, two independent guards catch it. Cheap insurance.
 
-4. **Sentinel-as-default is a bug, not a style choice.** From D88-D89: `Config.simulator = "Dymola"` collapsed two semantically-distinct cases. Future audits: any field where the default is a non-`None` literal that gets compared against in resolution logic deserves a re-think.
+4. **Field verification > unit verification.** Unit tests proved the bug fix. The 4-scenario field check (real Dymola subprocess, real sidecars, hand-injected stale state) caught no new bugs but built confidence the integration was correct. Then the full 326-test TRANSFORM rerun closed the loop end-to-end.
 
-5. **Capability declarations need mechanical enforcement.** From D88-D89: `Capability.FMU_EXPORT` on `DymolaRunner` was declared but unimplemented at the batch level. The `@register` validator catches it at module-import time.
-
-6. **TDD-shaped subagent dispatch works for plan execution.** This session's dashboard-unification arc dispatched 11 fresh subagents through `docs/superpowers/plans/2026-04-30-dashboard-report-unification.md`. Each task: failing test, minimal implementation, green test, commit. Two real bugs caught by subagents during execution that the plan didn't anticipate: (a) Jinja recursion on a literal `{% include %}` in a JS comment when the JS itself was rendered as a Jinja template; (b) JS cell-index drift when a new column was inserted, breaking live-mode polling. Both fixed in-flight. Lesson: subagent autonomy on TDD-shaped tasks catches bugs the planner won't see, but the parent agent must read the diff (not just the agent's summary) to verify what landed.
+5. **Carried from prior sessions**: TDD-shaped subagent dispatch works for plan execution; capability declarations need mechanical enforcement; sentinel-as-default is a bug not a style choice; read vision/usage docs before recommending architectural alternatives.
 
 ---
 
 ## Known limitations (deferred by design)
 
-Updated from prior session:
+Updated from prior session — no new entries this session:
 
 | Item | Why | Workaround |
 |---|---|---|
 | Event-timing live JS scorer | Event-pairing algorithm non-trivial; CLI authoritative | Pill shows CLI result until next CLI rerun |
-| **Dymola batch FMU export** | `translateModelFMU` works in persistent mode (via `DymolaInterface`); the `.mos`-driven batch path is declared as a capability but not yet wired. `TODO(batch-fmu-export)` marker in `DymolaRunner.export_fmu`. | Use persistent mode (drop `--batch`) for cross-backend chains; or contribute the `.mos`-script implementation (~30-50 LOC) |
-| **`_find_top_n_peaks` JS↔Python parity** | Used for "Detect peaks from reference" UX in dominant-frequency authoring. Drift = different default peak suggestions in UI vs CLI. **Doesn't affect actual test verdicts.** Authoring-UX correctness only. | Skip until a real drift case appears |
-| **`renderModeControlsHtmlJs` parity** | HTML-string parity testing is brittle (whitespace, attribute order). Python schema is the source of truth; JS is "a dumb walker" per its own comment. | Trust the Python golden-file snapshots |
+| **Dymola batch FMU export** | `.mos`-script implementation pending; persistent mode works via DymolaInterface | Use persistent mode (drop `--batch`) for cross-backend chains |
+| `_find_top_n_peaks` JS↔Python parity | Authoring-UX correctness only; doesn't affect verdicts | Skip until a real drift case appears |
+| `renderModeControlsHtmlJs` parity | HTML-string parity testing is brittle | Trust Python golden-file snapshots |
 | Tube per-point-per-side width modes | JS UI stores; polygon uses global mode | Use synced mode |
 | Window brush one-shot per activation | UX choice | Click brush again to redo |
 | Multi-select wrap in tree editor | Deferred | Wrap single, then move siblings |
@@ -143,98 +176,20 @@ Updated from prior session:
 | Bug 3 reproduction (Plotly autorange-stuck) | Doesn't reproduce via state-mutation path | Characterization test guards current behavior |
 | Points mode live edge mirror during drag | Plotly doesn't fire `plotly_relayouting` for shape edits | Snap-on-release accepted |
 | ModelicaTestingLib EventTest / IntervalTest / NoUnitTest / SimulateOnlyTest on Julia | Deferred | — |
-| **`Dymola/linux/` TRANSFORM baseline gaps when license unavailable** | Some test runs hit Dymola license-tier failures (`"Error: the model is too complex for the current license"`) when the license server has a temporary feature-set issue. Not a framework bug — the per-test `translation_log.txt` carries the real Dymola error. | When this happens, retry after the license server recovers; or skip-list specific tests in test_spec.json. |
-
----
-
-## Pre-session sanity
-
-```bash
-git log --oneline -25                                         # HEAD = 334b060; back through 5d72bd6 (prior baseline)
-uv run pytest -q --ignore=tests/test_interactive_html.py      # expect 860 passed + 3 skipped, 0 failures
-export PATH="$HOME/.juliaup/bin:$PATH" && uv run pytest -q    # same on Julia-installed envs
-
-# Smoke tests (each should produce PASS + a unified dashboard.html in work_dir
-# that auto-opens in browser at the start of the run):
-uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --simulator Dymola
-uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceResults/testing.json run --simulator OpenModelica
-uv run dstf --config examples/julia/JuliaMtkTestingLib/Resources/ReferenceResults/testing.json run
-uv run dstf --config examples/python/PythonTestingLib/Resources/ReferenceResults/testing.json run
-uv run dstf --config examples/fmu/testing.json run   # requires reference-fmus-binaries/
-```
-
-**Working tree should be clean.** The dashboard sits at `<work_dir>/dashboard.html`; `--report` adds per-test deep dives at `<work_dir>/reports/<test>/interactive.html`. Filter / selection / sort state is persisted to `localStorage` keyed by file path, so the page survives the 2s meta-refresh ticks during a live run without losing UI state.
-
----
-
-## Candidate next moves
-
-User's roadmap (`#1`-`#8` from the D80-D87 session) is intact; this session was orthogonal cleanup. Status:
-
-| # | Item | Status |
-|---|---|---|
-| 1 | DSTF rename | ✓ D81 |
-| 2 | Range metric bugs + cross-metric standardization | ✓ Range-fix arc |
-| 3 | Event-timing HTML editor | ✓ D82 |
-| 4 | Final-only → point-based | ✓ D84 |
-| 5 | Baseline-free NO_REF short-circuit | ✓ D83 |
-| 6 | Code review / tech-debt review | ✓ D86 + D87 + this session (D88+D89) |
-| 7 | New capabilities (experiment alignment, Dyad, Julia recognizer, FMU export matrix) | **pending** |
-| 8 | Docs cleanup throughout | ✓ commit `397c4d6` |
-
-### Next session — top-of-stack candidates
-
-**User-requested next-session priorities** (confirmed via grill 2026-04-30)
-
-* **Unify dashboard + report into one progressively-enriching page** ✅ landed in commits `b6053e1` → `334b060` (18 commits including the plan doc, the Task-1-through-Task-11 implementation, and 7 follow-up polish commits from two rounds of Windows-verification feedback). One Jinja `dashboard.html` + `dashboard.js` module replaces the inline `_DASHBOARD_TEMPLATE` f-string in `progress.py` and the standalone `index.html` template. **Live mode**: meta-refresh every 2s (JS-fetch was tried first but is silently blocked on `file://` URLs in Chrome/Edge); auto-opens at start of `cmd_run`; localStorage persists filter/selection/sort across the refresh ticks. **Filtering**: counter pills are dual-purpose (informational + clickable filter toggles, multi-select; Total clears all); pills with 0 count are disabled; per-column text filter with glob support (`*`/`?`); 3-state sort cycle (desc-first numeric, asc-first text). **Selection + rerun**: per-row checkboxes + tristate select-all-visible header; sticky footer hidden when 0 selected, contains Download `selected.txt` + Copy-rerun-command (auto-switches to `--filter @selected.txt` form for >3 selections); selection persists across filter changes. **Resolution column**: per-field provenance (`annotation` / `test_spec` / `mixed`) — closes the resolution-explainer sub-item. **Reference column**: hyperlinks to the underlying ref JSON via `file://` URL. 860 tests pass, 0 regressions. See `docs/superpowers/plans/2026-04-30-dashboard-report-unification.md` for the original plan.
-
-* **Audit + replace stale `modelica-testing` CLI references** ✅ landed in commits `1780121` + `6696b93` + `ac7417b`. Four user-facing strings replaced; `~/.cache/modelica-testing/` → `~/.cache/dstf/`; argparse parent parsers extracted (`filter_parent`, `compare_parent`, `report_parent`); `dstf compare` got `--parallel` (parallelism infra was already present in `generate_report_suite`); two stale matplotlib docstrings updated to reflect post-Stage-5 reality.
-
-* **Tighten the annotation ↔ test_spec.json contract** — partially landed; remainder is dashboard-bound. **Audit corrected the original bullet**: sub-items 1 + 4 were *already done in tree* (`_parse_experiment` already parses StopTime, Tolerance, `__Dymola_Algorithm`, NumberOfIntervals, Interval; `simulation.method` already overrides on per-test basis — tests at `test_discovery.py:206` exercise it end-to-end). The honest remaining scope: (a) **document the two-layer contract** in `docs/usage.md` + `CLAUDE.md` ✅ landed, (b) **expand the kitchen-sink example** in `docs/usage.md` to show every `simulation.*` field ✅ landed, (c) **resolution-explainer** — a column in the unified dashboard (or `--explain` flag) showing provenance per field (`stop_time: 10 (annotation)` vs `stop_time: 10 (test_spec)`) — defer to the dashboard unification arc since it lives there. **Decided not to plumb `StartTime`** through 5 backends — most tests start at t=0, the per-backend cost is high, and the gap is now documented. Grilling outcome stands: do NOT extend `Components.UnitTests` with simulation parameters; do NOT add per-field booleans or `null`-as-sentinel.
-
-**A-tier (concrete user need this session)**
-
-* **Validate against `TRANSFORM-UnitTests`** ✅ confirmed by user on Windows side at HEAD `334b060`. No regressions observed in the v1.0-cleanliness sweep, dashboard unification, or polish rounds. The dashboard's new sortable/filterable UI + Copy-rerun-command made triage faster than the prior multi-page workflow.
-
-* **Investigate Linux Dymola timeouts.** ✅ Characterized AND **fixed** this session. TRANSFORM 326-test run now produces **319 PASS (97.85%) + 5 TIMEOUTs + 2 worker-broken / 0 restart-exhausted** at HEAD `2c5f1d3`. Root cause: the persistent-worker restart budget was being consumed by per-test *timeouts* (we deliberately killed a healthy worker because the test was slow), even though the worker itself was fine. Three consecutive slow tests (NSSS_Test, IRIS_Default_Teststandalone, IRIS_Default_Test) exhausted the 3-attempt budget → next genuine worker-broken event tripped restart-exhausted → 297 synthetic cascade-failures for the rest of the queue. Fix: timeouts and post-timeout disk-rescues now flag `TestRunResult.worker_killed=True`, and the dispatch loop's `_try_restart(count_against_budget=...)` skips the budget tick for those. Real worker malfunctions (translation broken with empty log; RPC errors) still count, so genuinely-broken workers still hit the bound. See commits `2a7e338` (dispatch-side) + `2c5f1d3` (Dymola worker-side) for the full diff.
-
-**B-tier (recommended starts for #7 capabilities)**
-
-Same list as D87 handoff — none of these were touched this session:
-
-* **Experiment-data alignment preprocessing** (ideas.md #57). ~3-5 days. Needs a concrete user use case.
-* **MTK FMU export** via `ModelingToolkit.generate_fmu` (~1 day). Wires Julia into the `Capability.FMU_EXPORT` cross-backend chain.
-* **Dyad validation** (~½ day). Port one Dyad sample.
-* **Julia source recognizer** (~1 day). Auto-discover Julia tests from `.jl` files.
-
-**Smaller follow-ups (C / D-tier)**
-
-* **`Dymola/linux/` baselines** — couples to A-tier item above; once timeouts are understood, accept.
-* **CLI subcommand parity + standardization** (ideas.md #62). Concrete known gap: `dstf compare` has no `--parallel` and runs serially even when the user has cores. Wider audit warranted across all subcommands. Hard constraint: same-or-reduction LOC; the right mechanism is argparse parent parsers (`parents=[...]`) so flag groups dedupe across subcommands. ~½ day, net-negative LOC.
-* **Dymola batch FMU export** (`TODO(batch-fmu-export)`). ~30-50 LOC `.mos` script work; deferred until a batch-only codebase actually needs it.
-* **Persistent-worker Python** (ideas.md #58). Mirrors Julia D77→D78. Defer until perf ceiling hits.
-* **Live edge mirror for box-resize drag** (D85 follow-up). Snap-on-release UX is acceptable today; revisit if any user actually misses live mirror.
-* **`check-openmodelica` / `check-julia` CLI subcommands**. Symmetric with `check-dymola`.
-* **OM FMU export** via `buildModelFMU`.
-* **`_find_top_n_peaks` JS parity** (~30 min) — closes the last scoring-related JS↔Python drift surface, but only matters for the "Detect peaks from reference" UX feature.
-* **`reference_store.py` review** (~1-2 hr) — 933 lines but coordinated; less clear there's a clean seam without first reading carefully.
-* **Visual-regression Playwright screenshots**.
-* **Phase 9 dataset types** (E-tier foundational): Events / Spectrum / Distribution / Scalars / Field.
 
 ---
 
 ## Starter prompt for the next session
 
-> Resuming DSTF (Dynamic Systems Testing Framework) at commit `008f920` on `main`. The previous session was a 5-arc pass: v1.0-cleanliness, dashboard unification, 3 rounds of dashboard polish (including JS-driven live-ticking elapsed clock + wall time), **and a Linux-Dymola persistent-worker cascade fix** that took TRANSFORM-on-Linux from a 7% pass rate (cascade-failing) to 100% achievable (cascade fix + per-test 240s overrides for the 5 legitimately-slow tests + 6 new Linux Dymola baselines accepted in the TRANSFORM-UnitTests repo):
+> Resuming DSTF (Dynamic Systems Testing Framework) at commit `a79241d` on `main`. Prior session was a 4-commit closeout pass on user-reported issues:
 >
-> - **860 unit tests pass + 3 expected skips, 0 regressions.** Inherited JS↔Python scorer parity infrastructure from D88-D89 stays green.
-> - **One unified `dashboard.html`** replaces both the old f-string live-progress page and the standalone `index.html`. Single Jinja template + `dashboard.js` module fed by `status.json` (live, meta-refresh every 2s) and per-test `comparison_data.json` sidecars (final). **localStorage** persists filter/selection/sort across the refresh ticks. **Counter pills are dual-purpose** (informational + clickable filter toggles, multi-select; Total clears all). **Per-column text filter** with substring or glob (`*`/`?`). **3-state sort cycle** (desc-first numeric, asc-first text). **Per-row checkboxes** + tristate select-all-visible header + sticky footer with Download `selected.txt` + Copy-rerun-command (auto-switches to `--filter @selected.txt` for >3 selections). Selection persists across filter changes. **Resolution column** shows per-field provenance. **Reference column** hyperlinks to ref JSON.
-> - **`--report` semantics narrowed** — controls only per-test interactive deep dives now. The unified dashboard always exists; auto-opens at start of `cmd_run`; `cmd_run` and `cmd_compare` both call `dashboard_render.render_final` after comparison regardless of `--report`.
-> - **CLI flag-group dedup via argparse parent parsers** (filter / compare / report). `dstf compare --parallel` exposed.
-> - **Annotation contract documented** in `docs/usage.md` (two-layer: annotation defaults, `simulation.*` overrides). `StartTime` deliberately not plumbed (documented gap).
-> - **All four user-facing `modelica-testing` strings retired** plus the `~/.cache/modelica-testing/` cache path (renamed to `~/.cache/dstf/`).
-> - **TRANSFORM-UnitTests verified on Windows** at HEAD — no regressions.
+> - **Stale-state bug fixed and field-verified** — `cmd_run` now wipes `<work_dir>/reports/<report_dir>/` + `<work_dir>/<test_key>/` for in-scope tests; `cmd_compare` wipes only the report dir. Sidecars carry `written_at` + `model_id`; the dashboard enricher refuses stale or mismatched sidecars (warns to stderr). 4 field scenarios + full 326-test TRANSFORM Linux Dymola = 100% PASS.
+> - **Dashboard UX**: sticky chrome (h1 + status + bar + counters) stays visible while scrolling; thead stacks below via ResizeObserver-driven `--chrome-height`. Drag handles on every header th resize columns; widths persist in localStorage. Refresh interval 2s → 5s.
+> - **CLI**: `--version`, `check-openmodelica`, `check-julia`, `--simulator`/`--simulator-path`/`--work-dir` added to `compare`, stale `--report` help fixed, bogus `manifest rebuild` removed from docs.
+> - **Demo-lib gap closed**: ModelicaTestingLib gained 11 Linux Dymola baselines (it had only Windows Dymola + Linux OpenModelica before). All four partitions now populated.
 >
-> Roadmap items #1-#6 + #8 still closed. #7 (capabilities — Dyad, Julia recognizer, MTK FMU export, experiment alignment) still pending. **A-tier next move**: characterizing Linux Dymola timeouts (the dashboard's new NRMSE / wall-time sortable columns + Failed/Timed-out filter pills make triage much easier than before).
+> 861 unit tests pass + 3 expected skips; 0 regressions. TRANSFORM Linux Dymola: 326/326 PASS, up from prior session's 319/326 (97.85%). Working tree clean.
 >
-> Pre-session sanity: `git log --oneline -25`, `uv run pytest -q --ignore=tests/test_interactive_html.py` (expect 860 passed + 3 skipped). Smoke each backend; verify the dashboard.html exists at `<work_dir>/dashboard.html` and auto-opens in the browser.
+> Pending: roadmap #7 (capabilities) — Julia recognizer, MTK FMU export, Dyad validation, experiment alignment. Each is a separate session.
+>
+> Pre-session sanity: `git log --oneline -10`, `uv run pytest -q --ignore=tests/test_interactive_html_snapshot.py` (expect 861 passed + 3 skipped). Smoke each backend; verify `dashboard.html` exists, sticky chrome stays visible while scrolling, drag-resize on the Model column persists across the 5s meta-refresh tick.
