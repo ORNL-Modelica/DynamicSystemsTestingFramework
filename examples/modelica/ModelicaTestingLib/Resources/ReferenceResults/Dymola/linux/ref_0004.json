@@ -1,0 +1,128 @@
+{
+  "model_id": "ModelicaTestingLib.Examples.IntervalTest",
+  "test_id": "0004",
+  "status": "active",
+  "date_added": "2026-05-01T15:32:50.072065+00:00",
+  "last_updated": "2026-05-01T15:32:50.072065+00:00",
+  "simulation": {
+    "stop_time": 10.0,
+    "tolerance": 1e-06,
+    "method": "Dassl",
+    "number_of_intervals": null,
+    "output_interval": 0.5
+  },
+  "statistics": {
+    "simulation": {
+      "cpu_time_integration": 0.00096,
+      "result_points": 22,
+      "accepted_steps": 25,
+      "f_evaluations": 25,
+      "jacobian_evaluations": 24,
+      "state_events": 0,
+      "step_events": 0,
+      "model_time_events": 0,
+      "input_time_events": 0
+    },
+    "translation": {
+      "scalar_unknowns": 2,
+      "scalar_equations": 2,
+      "original_components": 2,
+      "original_variables": 3,
+      "original_unknowns_scalars": 2,
+      "differentiated_variables": 1,
+      "original_equations": 2,
+      "nontrivial_equations": 2,
+      "constants": 1,
+      "outputs": 2,
+      "continuous_time_states": 1,
+      "time_varying_variables": 1,
+      "alias_variables": 1,
+      "mixed_systems": 0,
+      "numerical_jacobians": 0,
+      "nonlinear": [],
+      "nonlinear_after_manipulation": [],
+      "linear": [],
+      "linear_after_manipulation": [],
+      "state_names": [
+        "x"
+      ]
+    },
+    "timing": {
+      "translation_wall": 2.93,
+      "sim_wall": 0.1,
+      "other_wall": 0.07,
+      "total_wall": 3.1
+    },
+    "CPUtime": 0.005507,
+    "EventCounter": 3.0
+  },
+  "diagnostics": [
+    {
+      "name": "CPUtime",
+      "final": 0.0055069997906684875,
+      "min": 0.002652999944984913,
+      "max": 0.0055069997906684875
+    },
+    {
+      "name": "EventCounter",
+      "final": 3.0,
+      "min": 2.0,
+      "max": 3.0
+    }
+  ],
+  "n_vars": 1,
+  "time": [
+    0.0,
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+    3.5,
+    4.0,
+    4.5,
+    5.0,
+    5.5,
+    6.0,
+    6.5,
+    7.0,
+    7.5,
+    8.0,
+    8.5,
+    9.0,
+    9.5,
+    10.0,
+    10.0
+  ],
+  "variables": [
+    {
+      "index": 1,
+      "name": "x",
+      "values": [
+        0.0,
+        0.5,
+        1.0,
+        1.5,
+        2.0,
+        2.5,
+        3.0,
+        3.5,
+        4.0,
+        4.5,
+        5.0,
+        5.5,
+        6.0,
+        6.5,
+        7.0,
+        7.5,
+        8.0,
+        8.5,
+        9.0,
+        9.5,
+        10.0,
+        10.0
+      ]
+    }
+  ]
+}
