@@ -301,6 +301,8 @@ class OpenModelicaWorker(Worker):
         wall-time splits come from the record's ``timeFrontend`` / etc.
         """
         test_dir = self.config.work_dir / test_key
+        # Defensive duplicate of cmd_run's central wipe (D91); kept here so a
+        # direct caller of run_tests outside cmd_run still gets clean state.
         if test_dir.exists():
             shutil.rmtree(test_dir)
         test_dir.mkdir(parents=True, exist_ok=True)

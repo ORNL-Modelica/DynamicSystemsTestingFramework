@@ -278,7 +278,9 @@ class DymolaWorker(Worker):
         time them independently and emit per-phase progress events.
         """
         test_dir = self.config.work_dir / test_key
-        # Fresh dir each time — prevents stale dsres.mat / dslog.txt bleed-through
+        # Fresh dir each time — prevents stale dsres.mat / dslog.txt bleed-through.
+        # Defensive duplicate of cmd_run's central wipe (D91); kept here so a
+        # direct caller of run_tests outside cmd_run still gets clean state.
         if test_dir.exists():
             shutil.rmtree(test_dir)
         test_dir.mkdir(parents=True, exist_ok=True)

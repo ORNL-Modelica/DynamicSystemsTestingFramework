@@ -143,6 +143,11 @@ class DymolaRunner(SimulatorRunner):
 
         # Clean and recreate per-test directories ONLY for tests being run
         # this batch (preserves prior dirs for tests not in this run).
+        # Note (D91): cmd_run.cli now centrally wipes in-scope test_dirs
+        # before runner.run_tests; this in-runner wipe is a defensive
+        # duplicate that protects against future callers of run_tests
+        # outside cmd_run (e.g., direct test harness calls). Cheap (rmtree
+        # on empty) and self-documenting at the point freshness matters.
         import shutil
         for test, test_key in test_items:
             test_dir = self.config.work_dir / test_key
