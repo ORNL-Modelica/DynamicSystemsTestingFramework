@@ -2,13 +2,28 @@
 <html>
 <head>
 <meta charset="utf-8">
-{% if auto_refresh %}<meta http-equiv="refresh" content="2">{% endif %}
+{% if auto_refresh %}<meta http-equiv="refresh" content="5">{% endif %}
 <title>{{ title }} — {{ total }} tests</title>
 <style>
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; margin: 1.5em; background: #fafafa; color: #333; }
 h1 { margin-bottom: 0.2em; font-size: 1.4em; }
 .status-bar { font-size: 0.85em; color: #666; margin-bottom: 1em; }
 .counters { display: flex; gap: 0.6em; flex-wrap: wrap; margin-bottom: 1em; }
+/* Sticky top region: h1 + status-bar + progress bar + counter pills stay
+ * visible as the table body scrolls. The thead rows below stack at
+ * `top: var(--chrome-height)` and `top: var(--chrome-height) + var(--header-row-height)`,
+ * with both variables updated by a ResizeObserver in dashboard.js so
+ * counter-pill wrapping (or any future chrome content) doesn't desync the offsets. */
+#sticky-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: #fafafa;
+  margin-left: -1.5em;
+  margin-right: -1.5em;
+  padding: 0 1.5em 0.6em;
+  border-bottom: 1px solid #ddd;
+}
 .counter { background: white; border: 1px solid #ddd; border-left-width: 4px; border-radius: 4px; padding: 0.4em 0.8em; min-width: 90px; cursor: pointer; user-select: none; transition: background 0.1s, box-shadow 0.1s; }
 .counter:hover { background: #f5f5f5; }
 .counter.disabled { cursor: default; opacity: 0.5; }
@@ -33,7 +48,32 @@ h1 { margin-bottom: 0.2em; font-size: 1.4em; }
 .bar .b-running { background: #2196F3; }
 table { border-collapse: collapse; width: 100%; background: white; font-size: 0.85em; }
 th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; }
-th { background: #f5f5f5; position: sticky; top: 0; cursor: pointer; user-select: none; }
+th { background: #f5f5f5; cursor: pointer; user-select: none; position: relative; }
+/* Drag handle on the right edge of each header th. Drives a JS-driven
+ * width override via dashboard.js; widths persist to localStorage so they
+ * survive meta-refresh ticks. The handle is a thin invisible strip
+ * (visible cursor only) so it doesn't visually clutter the header bar. */
+.col-resize-handle {
+  position: absolute; top: 0; right: -3px; bottom: 0;
+  width: 6px; cursor: col-resize; z-index: 5;
+  user-select: none;
+}
+.col-resize-handle:hover { background: rgba(25, 118, 210, 0.2); }
+th.resizing { background: #e3f2fd; }
+/* Two thead rows stack below the sticky chrome. Header row sits at the
+ * chrome's bottom edge; filter row sits below the header row. CSS variables
+ * are kept fresh by the ResizeObserver in dashboard.js (fallback hard-coded
+ * sizes are sane defaults if JS is disabled or hasn't run yet). */
+thead tr:first-child th {
+  position: sticky;
+  top: var(--chrome-height, 140px);
+  z-index: 40;
+}
+thead tr.filter-row th {
+  position: sticky;
+  top: calc(var(--chrome-height, 140px) + var(--header-row-height, 28px));
+  z-index: 40;
+}
 th:hover { background: #e8e8e8; }
 th.sorted-asc::after { content: " ▲"; color: #1976D2; font-size: 0.85em; }
 th.sorted-desc::after { content: " ▼"; color: #1976D2; font-size: 0.85em; }
@@ -54,12 +94,21 @@ tr.timed-out td { background: #f3e5f5; }
 .status-badge.queued    { background: #888;    }
 .status-badge.running   { background: #2196F3; }
 .warn { color: #ff9800; font-weight: 600; }
-.detail-cell { max-width: 30em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #666; font-size: 0.8em; }
-/* The Model column is the runaway-width offender — long fully-qualified
- * model IDs (e.g. Lib.Sub.Sub.Sub.SomeTest) push every column to the right.
- * Truncate to a sensible width with ellipsis; full ID is in the title= attr
- * for hover, and clicking the link still navigates to the per-test report. */
-.model-cell { max-width: 28em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-cell {
+  max-width: var(--col-w-detail, 30em);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #666; font-size: 0.8em;
+}
+/* Model column truncation. Default ellipsis at 28em so long fully-qualified
+ * IDs don't push the rest of the table off-screen. Users can drag the
+ * column-resize handle on any header th to widen any column; for the
+ * Model column, dragging updates --col-w-model so the td's max-width
+ * follows. Widths persist via localStorage across meta-refresh ticks.
+ * The full model ID is always in the td's title= attr for hover. */
+.model-cell {
+  max-width: var(--col-w-model, 28em);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .model-cell a { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 .sel-col { width: 28px; text-align: center; cursor: default; }
 .sel-col input { cursor: pointer; }
@@ -96,9 +145,10 @@ body.has-selection { padding-bottom: 5em; }
 </style>
 </head>
 <body>
+<div id="sticky-chrome">
 <h1>{{ title }}</h1>
 <div class="status-bar">
-  {% if auto_refresh %}Auto-refreshing every 2s ·
+  {% if auto_refresh %}Auto-refreshing every 5s ·
     elapsed <span id="header-elapsed">{{ "%.0f"|format(elapsed) }}s</span> ·
     <span id="header-wall">…</span>
   {% else %}Final report · {{ total }} tests · ran for {{ "%.0f"|format(elapsed) }}s · finished
@@ -108,25 +158,26 @@ body.has-selection { padding-bottom: 5em; }
 
 <div class="bar" id="progress-bar"></div>
 <div class="counters" id="counters" title="Click a pill to toggle its filter; click Total to clear"></div>
+</div>
 
 <table id="results-table">
 <thead>
 <tr>
   <th class="sel-col" title="Select all visible / clear"><input type="checkbox" id="sel-all" onclick="toggleAllVisible(this.checked)"></th>
-  <th data-sort="text" data-key="test">Test</th>
-  <th data-sort="text" data-key="ref">Reference</th>
-  <th data-sort="text" data-key="model">Model</th>
-  <th data-sort="text" data-key="status">Status</th>
-  <th data-sort="text" data-key="resolution" title="Provenance of stop_time / tolerance / method / number_of_intervals / output_interval — annotation, test_spec, or default">Resolution</th>
-  <th data-sort="text" data-key="worker">Worker</th>
-  <th data-sort="num" data-key="elapsed">Elapsed (s)</th>
-  <th data-sort="num" data-key="nrmse">Worst NRMSE</th>
-  <th data-sort="num" data-key="vars">Variables</th>
-  <th data-sort="num" data-key="warnings">Warnings</th>
-  <th data-sort="num" data-key="translate">Translate (s)</th>
-  <th data-sort="num" data-key="sim">Sim (s)</th>
-  <th data-sort="num" data-key="total">Total (s)</th>
-  <th data-sort="text" data-key="detail">Message</th>
+  <th data-sort="text" data-key="test">Test<span class="col-resize-handle"></span></th>
+  <th data-sort="text" data-key="ref">Reference<span class="col-resize-handle"></span></th>
+  <th data-sort="text" data-key="model">Model<span class="col-resize-handle"></span></th>
+  <th data-sort="text" data-key="status">Status<span class="col-resize-handle"></span></th>
+  <th data-sort="text" data-key="resolution" title="Provenance of stop_time / tolerance / method / number_of_intervals / output_interval — annotation, test_spec, or default">Resolution<span class="col-resize-handle"></span></th>
+  <th data-sort="text" data-key="worker">Worker<span class="col-resize-handle"></span></th>
+  <th data-sort="num" data-key="elapsed">Elapsed (s)<span class="col-resize-handle"></span></th>
+  <th data-sort="num" data-key="nrmse">Worst NRMSE<span class="col-resize-handle"></span></th>
+  <th data-sort="num" data-key="vars">Variables<span class="col-resize-handle"></span></th>
+  <th data-sort="num" data-key="warnings">Warnings<span class="col-resize-handle"></span></th>
+  <th data-sort="num" data-key="translate">Translate (s)<span class="col-resize-handle"></span></th>
+  <th data-sort="num" data-key="sim">Sim (s)<span class="col-resize-handle"></span></th>
+  <th data-sort="num" data-key="total">Total (s)<span class="col-resize-handle"></span></th>
+  <th data-sort="text" data-key="detail">Message<span class="col-resize-handle"></span></th>
 </tr>
 <tr class="filter-row">
   <th class="sel-col"></th>

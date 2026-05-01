@@ -102,7 +102,7 @@ def test_render_live_writes_dashboard_html(tmp_path):
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "<title>" in out
     assert "Lib.A" in out
-    assert '<meta http-equiv="refresh" content="2">' in out
+    assert '<meta http-equiv="refresh" content="5">' in out
     assert "DASHBOARD_MODE = 'live'" in out
 
 
@@ -222,7 +222,7 @@ def test_live_mode_uses_meta_refresh(tmp_path):
     _write_status_json(tmp_path, snapshot)
     render_live(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert '<meta http-equiv="refresh" content="2">' in out
+    assert '<meta http-equiv="refresh" content="5">' in out
     assert "DASHBOARD_MODE = 'live'" in out
 
 
@@ -425,6 +425,52 @@ def test_sidecar_without_written_at_passes_guard(tmp_path):
     row = ctx["tests"][0]
     assert row["worst_nrmse"] == 0.05  # Legacy sidecar enriched normally
     assert row["n_vars"] == 3
+
+
+def test_column_resize_handles_present(tmp_path):
+    """Each header th has a resize handle so users can drag columns wider.
+    JS wires mousedown on the handle to a drag callback; widths persist
+    to localStorage alongside filter / selection / sort.
+    """
+    snapshot = {
+        "total": 0, "elapsed": 0.0, "eta_seconds": None,
+        "counts": {}, "tests": [], "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert 'class="col-resize-handle"' in out
+    # JS plumbing
+    assert "startColResize" in out
+    assert "applyColWidth" in out
+    # CSS variable hookup for truncated columns
+    assert "--col-w-model" in out
+    assert "--col-w-detail" in out
+    # Persist alongside other UI state
+    assert "colWidths" in out
+
+
+def test_sticky_chrome_wraps_top_region(tmp_path):
+    """The whole top region (h1 + status bar + progress bar + counter pills)
+    must be wrapped in #sticky-chrome so it stays visible while scrolling.
+    Thead sticks below it via CSS variables fed by a ResizeObserver.
+    """
+    snapshot = {
+        "total": 0, "elapsed": 0.0, "eta_seconds": None,
+        "counts": {}, "tests": [], "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_live(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    # Wrapper exists
+    assert 'id="sticky-chrome"' in out
+    # CSS rules for the sticky stacking
+    assert "#sticky-chrome" in out
+    assert "--chrome-height" in out
+    assert "--header-row-height" in out
+    # JS measurement hook
+    assert "updateChromeHeight" in out
+    assert "ResizeObserver" in out
 
 
 def test_resolution_column_shows_provenance(tmp_path):

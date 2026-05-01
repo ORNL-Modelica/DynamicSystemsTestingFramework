@@ -8,6 +8,92 @@
   const headers = document.querySelectorAll('#results-table thead tr:first-child th[data-sort]');
   const colFilters = document.querySelectorAll('input.col-filter');
 
+  // ---- Column resize (drag handles on header th's) ----
+  // Each header th has a `<span class="col-resize-handle">` strip on its
+  // right edge; mousedown there starts a drag that updates th.style.width
+  // (the table inherits from the header in auto-layout so tds follow).
+  // For the Model + Detail columns, dragging also updates the
+  // `--col-w-<key>` CSS variable so .model-cell / .detail-cell's
+  // max-width tracks the new column width — without this, the td's
+  // ellipsis-truncation cap would override the resize.
+  // Widths persist to localStorage so they survive the 5s meta-refresh
+  // ticks; restored on page load alongside filter / selection / sort.
+  const colWidths = {};  // {key: '500px'} — populated by drag + restore
+
+  function applyColWidth(th, width) {
+    th.style.width = width;
+    th.style.minWidth = width;
+    const key = th.dataset.key;
+    if (key) {
+      colWidths[key] = width;
+      // Mirror to a CSS variable so cells with max-width truncation
+      // (Model, Detail) widen along with the th. Cells without
+      // truncation just respect the th's width via auto-layout.
+      document.documentElement.style.setProperty('--col-w-' + key, width);
+    }
+  }
+
+  function startColResize(e, th) {
+    e.preventDefault();
+    e.stopPropagation();  // Don't trigger the th's click-to-sort handler
+    const startX = e.clientX;
+    const startWidth = th.offsetWidth;
+    th.classList.add('resizing');
+    document.body.style.cursor = 'col-resize';
+
+    function onMove(ev) {
+      const delta = ev.clientX - startX;
+      const newWidth = Math.max(40, startWidth + delta);
+      applyColWidth(th, newWidth + 'px');
+    }
+    function onUp() {
+      th.classList.remove('resizing');
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      persistState();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  document.querySelectorAll('.col-resize-handle').forEach(handle => {
+    handle.addEventListener('mousedown', e => {
+      const th = handle.closest('th');
+      if (th) startColResize(e, th);
+    });
+    // Eat clicks so they don't bubble up to the th's sort handler
+    handle.addEventListener('click', e => e.stopPropagation());
+  });
+
+  // ---- Sticky-chrome height tracking ----
+  // The chrome (h1 + status bar + progress bar + counter pills) is sticky
+  // at top:0; the two thead rows stack below it via CSS variables. The
+  // chrome's height varies (counter pills wrap on narrow viewports, header
+  // copy length differs between live and final modes), so we measure it
+  // and feed --chrome-height + --header-row-height to CSS. Fallback values
+  // in the CSS rules cover the brief moment before the first measurement.
+  function updateChromeHeight() {
+    const chrome = document.getElementById('sticky-chrome');
+    const headerRow = document.querySelector('#results-table thead tr:first-child');
+    if (chrome) {
+      document.documentElement.style.setProperty(
+        '--chrome-height', chrome.offsetHeight + 'px',
+      );
+    }
+    if (headerRow) {
+      document.documentElement.style.setProperty(
+        '--header-row-height', headerRow.offsetHeight + 'px',
+      );
+    }
+  }
+  updateChromeHeight();
+  if (typeof ResizeObserver !== 'undefined') {
+    const chrome = document.getElementById('sticky-chrome');
+    if (chrome) new ResizeObserver(updateChromeHeight).observe(chrome);
+  }
+  window.addEventListener('resize', updateChromeHeight);
+
   // ---- Filter (status pills + per-column text) ----
   // Counter pills are dual-purpose: they show the count AND act as filter
   // toggles. Click a pill to add its status to the filter set; click again
@@ -353,7 +439,7 @@
   };
 
   // ---- Persistence: survive meta-refresh page reloads ----
-  // Live mode reloads the entire page every 2s via the meta-refresh tag,
+  // Live mode reloads the entire page every 5s via the meta-refresh tag,
   // which would otherwise wipe the user's filter/selection/sort state.
   // localStorage is keyed by origin + path so each dashboard.html gets
   // its own scope. Failures (private mode, quota, blocked) fall through
@@ -374,6 +460,7 @@
         sort: lastSorted.th
           ? { key: lastSorted.th.dataset.key, dir: lastSorted.dir }
           : null,
+        colWidths: { ...colWidths },
       }));
     } catch (e) { /* quota / blocked / private mode — non-fatal */ }
   }
@@ -423,11 +510,17 @@
       const th = document.querySelector(`th[data-key="${s.sort.key}"]`);
       if (th) applySort(th, s.sort.dir);
     }
+    if (s.colWidths && typeof s.colWidths === 'object') {
+      for (const [key, width] of Object.entries(s.colWidths)) {
+        const th = document.querySelector(`#results-table thead tr:first-child th[data-key="${key}"]`);
+        if (th) applyColWidth(th, width);
+      }
+    }
     syncSelectionUI();
   })();
 
   // Live mode is driven by an http-equiv refresh meta tag in the Jinja
-  // template — the browser does a full reload every 2s, which works
+  // template — the browser does a full reload every 5s, which works
   // correctly on file:// URLs. We tried JS-fetch first; it's silently
   // blocked on file:// in Chrome/Edge for security reasons (CORS), so the
   // fetch path was non-functional in practice. Final mode strips the
