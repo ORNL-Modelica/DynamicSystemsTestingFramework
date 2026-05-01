@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -57,14 +58,60 @@ def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> Optional[dict]:
         return None
 
 
-def _enrich_row_from_comparison(row: dict, comp: dict) -> None:
+def _enrich_row_from_comparison(
+    row: dict,
+    comp: dict,
+    snapshot_start_wall: Optional[float],
+) -> bool:
     """Copy post-run fields from a per-test comparison_data.json into a row.
 
     The sidecar puts row-summary fields under a `summary` block alongside
     the per-variable context. Fall back to top-level for backward compat
     with sidecars written before the summary block was added.
+
+    Two defensive guards prevent stale sidecars from overriding fresh
+    verdicts (D91 — see ``cli._wipe_stale_state_for_scope``):
+
+    1. **model_id mismatch.** If the sidecar's ``summary.model_id`` doesn't
+       match the row's ``model_id``, the sidecar belongs to a different
+       test (bookkeeping drift between batch_manifest and reports/) — skip
+       enrichment entirely.
+    2. **Stale timestamp.** If the sidecar's ``summary.written_at`` is
+       older than the snapshot's ``start_wall`` (i.e., written before this
+       run started), the sidecar is from a prior run that the wipe failed
+       to clear (or from a code path that bypasses the wipe). Skip
+       enrichment so the live-mode verdict (from the fresh sim) wins.
+
+    Returns True when enrichment was applied; False when guarded off.
+    Both guards print a one-line warning to stderr so silent overrides
+    are visible.
     """
     summary = comp.get("summary", comp)
+
+    sidecar_model_id = summary.get("model_id")
+    expected_model_id = row.get("model_id")
+    if sidecar_model_id and expected_model_id and sidecar_model_id != expected_model_id:
+        print(
+            f"# WARN: sidecar model_id mismatch (expected {expected_model_id!r}, "
+            f"sidecar has {sidecar_model_id!r}); ignoring enrichment.",
+            file=sys.stderr,
+        )
+        return False
+
+    written_at = summary.get("written_at")
+    if (
+        snapshot_start_wall is not None
+        and written_at is not None
+        and written_at < snapshot_start_wall
+    ):
+        print(
+            f"# WARN: stale sidecar for {expected_model_id!r} "
+            f"(written_at={written_at} < start_wall={snapshot_start_wall}); "
+            f"ignoring enrichment.",
+            file=sys.stderr,
+        )
+        return False
+
     for key in (
         "worst_nrmse", "n_vars", "n_vars_passed", "n_warnings",
         "translation_wall", "sim_wall", "total_wall",
@@ -76,6 +123,7 @@ def _enrich_row_from_comparison(row: dict, comp: dict) -> None:
     ):
         if key in summary:
             row[key] = summary[key]
+    return True
 
 
 # Live-mode TestStatus.status (queued/running/passed/failed/timed_out) →
@@ -130,6 +178,13 @@ def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[st
         "counts": {}, "tests": [], "updated_at": 0.0,
     }
 
+    # Wall-clock anchor for the stale-sidecar guard. Sidecars written
+    # before this run's start are ignored by `_enrich_row_from_comparison`
+    # so a prior run's verdict can't override the current run's sim result.
+    # Falls back to None when status.json predates the field — guard
+    # silently passes through (legacy sidecars never get filtered).
+    snapshot_start_wall = snapshot.get("start_wall")
+
     rows = []
     for t in snapshot.get("tests", []):
         raw_status = t.get("status", "queued")
@@ -170,7 +225,7 @@ def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[st
         if mode == "final" and row["report_dir"]:
             comp = _read_comparison_sidecar(work_dir, row["report_dir"])
             if comp:
-                _enrich_row_from_comparison(row, comp)
+                _enrich_row_from_comparison(row, comp, snapshot_start_wall)
         rows.append(row)
 
     # rerun_prefix precedence: explicit kwarg > snapshot's prefix > "dstf run"

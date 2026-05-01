@@ -281,6 +281,152 @@ def test_render_final_picks_up_real_sidecar_shape(tmp_path):
     assert row["ref_id"] == "ref_0042"
 
 
+def test_stale_sidecar_ignored_by_timestamp(tmp_path):
+    """A sidecar written before the run's start_wall must not enrich the row.
+
+    Repro of the user-reported bug: cmd_run wrote sidecars with FAIL last
+    week; this run shows passed in status.json. Without the timestamp
+    guard, _enrich_row_from_comparison would override 'pass' with 'fail'.
+    """
+    snapshot = {
+        "total": 1, "elapsed": 5.0, "eta_seconds": None,
+        "counts": {"queued": 0, "running": 0, "passed": 1,
+                   "failed": 0, "timed_out": 0},
+        "start_wall": 1_000_000.0,  # Run started AT this epoch
+        "tests": [{"test_key": "test_0001", "model_id": "Lib.A",
+                   "status": "passed", "elapsed": 2.0,
+                   "worker_id": 0, "report_dir": "test_0001"}],
+        "updated_at": 1_000_005.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    test_dir = tmp_path / "reports" / "test_0001"
+    test_dir.mkdir(parents=True)
+    (test_dir / "comparison_data.json").write_text(json.dumps({
+        "model_id": "Lib.A",
+        "summary": {
+            "model_id": "Lib.A",
+            "written_at": 999_999.0,  # ONE SECOND BEFORE start_wall — stale
+            "status_text": "FAIL",
+            "status_class": "fail",
+            "worst_nrmse": 999.0,
+        },
+    }))
+    ctx = build_dashboard_context(tmp_path, mode="final")
+    row = ctx["tests"][0]
+    # Live-mode 'passed' must win — the stale sidecar is ignored
+    assert row["status_text"] == "PASS"
+    assert row["status_class"] == "pass"
+    # Sidecar's worst_nrmse must NOT have been copied
+    assert row["worst_nrmse"] is None
+
+
+def test_fresh_sidecar_overrides_status(tmp_path):
+    """A sidecar written AFTER start_wall is fresh and must enrich the row.
+
+    Validates the guard isn't over-zealous — comparison verdict from the
+    current run still wins over live-mode's 'passed' (since the compare
+    phase distinguishes pass vs fail vs no-ref vs sim-fail).
+    """
+    snapshot = {
+        "total": 1, "elapsed": 5.0, "eta_seconds": None,
+        "counts": {"queued": 0, "running": 0, "passed": 1,
+                   "failed": 0, "timed_out": 0},
+        "start_wall": 1_000_000.0,
+        "tests": [{"test_key": "test_0001", "model_id": "Lib.A",
+                   "status": "passed", "elapsed": 2.0,
+                   "worker_id": 0, "report_dir": "test_0001"}],
+        "updated_at": 1_000_010.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    test_dir = tmp_path / "reports" / "test_0001"
+    test_dir.mkdir(parents=True)
+    (test_dir / "comparison_data.json").write_text(json.dumps({
+        "model_id": "Lib.A",
+        "summary": {
+            "model_id": "Lib.A",
+            "written_at": 1_000_010.0,  # AFTER start_wall — fresh
+            "status_text": "FAIL",
+            "status_class": "fail",
+            "worst_nrmse": 0.05,
+        },
+    }))
+    ctx = build_dashboard_context(tmp_path, mode="final")
+    row = ctx["tests"][0]
+    # Fresh sidecar's compare verdict wins over live-mode's 'passed'
+    assert row["status_text"] == "FAIL"
+    assert row["status_class"] == "fail"
+    assert row["worst_nrmse"] == 0.05
+
+
+def test_model_id_mismatch_sidecar_ignored(tmp_path):
+    """A sidecar whose summary.model_id doesn't match the row's model_id
+    is treated as bookkeeping drift and ignored. Defends against a future
+    case where batch_manifest's test_NNNN -> model_id mapping disagrees
+    with what's on disk in reports/<report_dir>/.
+    """
+    snapshot = {
+        "total": 1, "elapsed": 5.0, "eta_seconds": None,
+        "counts": {"queued": 0, "running": 0, "passed": 1,
+                   "failed": 0, "timed_out": 0},
+        "start_wall": 1_000_000.0,
+        "tests": [{"test_key": "test_0001", "model_id": "Lib.A",
+                   "status": "passed", "elapsed": 2.0,
+                   "worker_id": 0, "report_dir": "test_0001"}],
+        "updated_at": 1_000_005.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    test_dir = tmp_path / "reports" / "test_0001"
+    test_dir.mkdir(parents=True)
+    (test_dir / "comparison_data.json").write_text(json.dumps({
+        # Sidecar belongs to a DIFFERENT model — bookkeeping drift
+        "model_id": "Lib.B",
+        "summary": {
+            "model_id": "Lib.B",
+            "written_at": 1_000_010.0,  # Fresh, but for the wrong model
+            "status_text": "FAIL",
+            "status_class": "fail",
+            "worst_nrmse": 999.0,
+        },
+    }))
+    ctx = build_dashboard_context(tmp_path, mode="final")
+    row = ctx["tests"][0]
+    assert row["status_text"] == "PASS"  # Mismatched sidecar ignored
+    assert row["worst_nrmse"] is None
+
+
+def test_sidecar_without_written_at_passes_guard(tmp_path):
+    """Legacy sidecars (written before D91 added the written_at stamp)
+    don't have the timestamp field. The guard must not silently drop them
+    — that would regress every existing post-D91 cache.
+    """
+    snapshot = {
+        "total": 1, "elapsed": 5.0, "eta_seconds": None,
+        "counts": {"queued": 0, "running": 0, "passed": 1,
+                   "failed": 0, "timed_out": 0},
+        "start_wall": 1_000_000.0,
+        "tests": [{"test_key": "test_0001", "model_id": "Lib.A",
+                   "status": "passed", "elapsed": 2.0,
+                   "worker_id": 0, "report_dir": "test_0001"}],
+        "updated_at": 1_000_005.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    test_dir = tmp_path / "reports" / "test_0001"
+    test_dir.mkdir(parents=True)
+    (test_dir / "comparison_data.json").write_text(json.dumps({
+        "model_id": "Lib.A",
+        "summary": {
+            "model_id": "Lib.A",
+            # No written_at — predates the guard
+            "worst_nrmse": 0.05,
+            "n_vars": 3,
+        },
+    }))
+    ctx = build_dashboard_context(tmp_path, mode="final")
+    row = ctx["tests"][0]
+    assert row["worst_nrmse"] == 0.05  # Legacy sidecar enriched normally
+    assert row["n_vars"] == 3
+
+
 def test_resolution_column_shows_provenance(tmp_path):
     """field_sources from status.json (or sidecar) flows into row cells."""
     snapshot = {

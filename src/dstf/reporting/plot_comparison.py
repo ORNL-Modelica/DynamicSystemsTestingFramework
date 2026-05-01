@@ -964,8 +964,15 @@ def generate_comparison_plots(
     # the per-variable rendering input; the dashboard only needs row-level
     # summary fields, exposed under "summary" so build_dashboard_context
     # can read them without parsing the heavy variable arrays.
+    # `written_at` + `model_id` form a defensive double-entry-bookkeeping
+    # check for the dashboard's enricher: stale sidecars from a prior run
+    # (written_at < snapshot start_wall) and bookkeeping drift (sidecar's
+    # model_id ≠ row's model_id) are both filtered out so they can't
+    # override a fresh verdict.
+    import time as _time
     context["summary"] = {
         "model_id": model_id,
+        "written_at": _time.time(),
         "status_text": status_text,
         "status_class": status_class,
         "ref_id": ref_id,

@@ -90,6 +90,60 @@ def _write_id_mapping(store, config) -> None:
     mapping_path.write_text(json.dumps(mapping, indent=2) + "\n", encoding="utf-8")
 
 
+def _wipe_stale_state_for_scope(
+    config,
+    tests: list,
+    ref_id_map: dict,
+    *,
+    wipe_sim_dirs: bool,
+) -> None:
+    """Clear per-test report sidecars (and optionally sim work dirs) for
+    the tests this invocation is about to (re-)process.
+
+    A run cleans its own footprint so a prior run's stale state cannot
+    bleed through. Out-of-scope tests' directories are left untouched —
+    that's what makes ``--merge`` and ``--rerun`` work.
+
+    Two layers of state to clear:
+
+    1. Per-test report dir at ``<work_dir>/reports/<report_dir>/``. Holds
+       the ``comparison_data.json`` sidecar (read by the dashboard's
+       enricher) and ``interactive.html``. ``report_dir`` is ``ref_NNNN``
+       when a baseline exists for the model, else ``test_NNNN``.
+
+    2. Per-test sim work dir at ``<work_dir>/<test_key>/``. Holds the
+       runner's outputs (.mat, log, dsfinal, etc.). ``wipe_sim_dirs=True``
+       only for ``cmd_run`` — ``cmd_compare`` reads these dirs to
+       re-evaluate prior sims and must not erase them.
+
+    test_key for an in-scope test is read from the persistent
+    ``batch_manifest.json``. Tests not yet in the manifest (first-time
+    runs) have nothing to wipe — the runner will create a fresh dir.
+    """
+    import shutil
+
+    manifest_path = config.work_dir / "batch_manifest.json"
+    if manifest_path.exists():
+        from .simulators import BatchManifest
+        manifest = BatchManifest.load(manifest_path).manifest
+        model_to_key = {entry["model_id"]: tk for tk, entry in manifest.items()}
+    else:
+        model_to_key = {}
+
+    reports_root = config.work_dir / "reports"
+    for test in tests:
+        test_key = model_to_key.get(test.model_id)
+        report_dir = ref_id_map.get(test.model_id) or test_key
+        if wipe_sim_dirs and test_key:
+            sim_dir = config.work_dir / test_key
+            if sim_dir.exists():
+                shutil.rmtree(sim_dir)
+        if report_dir:
+            rep_dir = reports_root / report_dir
+            if rep_dir.exists():
+                shutil.rmtree(rep_dir)
+
+
 def cmd_discover(args: argparse.Namespace) -> int:
     """Discover and list all test models."""
     config = _build_config(args)
@@ -204,11 +258,20 @@ def cmd_run(args: argparse.Namespace) -> int:
         if ref_id:
             runner.ref_id_map[test.model_id] = f"ref_{ref_id}"
 
+    # Clean each in-scope test's prior footprint before running. Without
+    # this, a prior run's stale `comparison_data.json` sidecar could bleed
+    # through `_enrich_row_from_comparison` and override a fresh sim's
+    # verdict in the dashboard. Out-of-scope tests are untouched so
+    # `--merge` and `--rerun` keep working.
+    config.work_dir.mkdir(parents=True, exist_ok=True)
+    _wipe_stale_state_for_scope(
+        config, tests, runner.ref_id_map, wipe_sim_dirs=True,
+    )
+
     # Open the unified dashboard *before* the run starts so the user sees
     # live progress as tests register. The first ProgressReporter.register
     # call will overwrite this initial empty page; subsequent meta-refresh
     # ticks pick up updates. Final mode lands at the same URL after compare.
-    config.work_dir.mkdir(parents=True, exist_ok=True)
     from .reporting.dashboard_render import render_live, build_rerun_prefix
     from .reporting.plot_comparison import open_in_browser
     render_live(config.work_dir, rerun_prefix=build_rerun_prefix(config))
@@ -330,6 +393,20 @@ def cmd_compare(args: argparse.Namespace) -> int:
     runner = _get_runner(config)
     store = ReferenceStore(config)
     _write_id_mapping(store, config)
+
+    # Pre-compute ref_id_map so the wipe + downstream report rendering can
+    # find each test's `ref_NNNN/` report dir. Compare reads prior sim
+    # outputs from disk, so the sim work dirs must NOT be wiped here —
+    # only the (now-stale) per-test report sidecars + HTML.
+    for test in tests:
+        ref_id = store.index.get_id(test.model_id)
+        if ref_id:
+            runner.ref_id_map[test.model_id] = f"ref_{ref_id}"
+    config.work_dir.mkdir(parents=True, exist_ok=True)
+    _wipe_stale_state_for_scope(
+        config, tests, runner.ref_id_map, wipe_sim_dirs=False,
+    )
+
     results = runner.read_last_results(tests)
     comparisons = compare_all(tests, results, store, config.tolerance, config.default_points)
 
