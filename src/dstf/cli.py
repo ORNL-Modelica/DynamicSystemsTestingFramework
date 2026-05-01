@@ -443,6 +443,63 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 
 
+def cmd_check_openmodelica(args: argparse.Namespace) -> int:
+    """Diagnose OMPython availability + the `omc` binary."""
+    from .simulators.openmodelica.session_loader import describe_om_session
+    import shutil as _shutil
+
+    info = describe_om_session()
+    omc_path = _shutil.which("omc")
+
+    print("OpenModelica diagnostic")
+    print("=======================")
+    print(f"  OMPython installed: {info['ompython_installed']}")
+    print(f"  OMPython version:   {info['version'] or '(unknown)'}")
+    print(f"  Import ok:          {info['import_ok']}")
+    if info["error"]:
+        print(f"  Error:              {info['error']}")
+    print(f"  omc binary:         {omc_path or '(not on PATH)'}")
+
+    ok = info["import_ok"] and bool(omc_path)
+    if ok:
+        print("\nOK — persistent-worker OpenModelica is ready.")
+        return 0
+    print("\nFAIL — fix one of:")
+    if not info["import_ok"]:
+        print("  - Install OMPython:   uv pip install -e \".[om]\"")
+    if not omc_path:
+        print("  - Install OpenModelica and ensure `omc` is on PATH")
+    print("Or run with --batch to use the omc-script fallback (still needs omc on PATH).")
+    return 1
+
+
+def cmd_check_julia(args: argparse.Namespace) -> int:
+    """Diagnose the `julia` binary on PATH."""
+    import shutil as _shutil
+    import subprocess as _subprocess
+
+    julia_path = _shutil.which("julia")
+    print("Julia diagnostic")
+    print("================")
+    print(f"  julia binary: {julia_path or '(not on PATH)'}")
+    if not julia_path:
+        print("\nFAIL — install Julia from https://julialang.org/downloads/ "
+              "(or via `juliaup`).")
+        return 1
+    try:
+        out = _subprocess.run(
+            [julia_path, "--version"], capture_output=True, text=True, timeout=10,
+        )
+        print(f"  version:      {out.stdout.strip() or '(no output)'}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  version probe failed: {exc}")
+        return 1
+    print("\nOK — julia is invocable.")
+    print("Note: first run on a project pays a multi-minute MTK / OrdinaryDiffEq "
+          "JIT compile (subsequent runs hit the cache).")
+    return 0
+
+
 def cmd_check_dymola(args: argparse.Namespace) -> int:
     """Diagnose discovery of Dymola's Python interface."""
     from .simulators.dymola.interface_loader import describe_dymola_interface
@@ -1380,9 +1437,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     tests can introspect subcommands and flags without dispatching, and
     so :func:`main` stays a thin parse-and-dispatch shell.
     """
+    from . import __version__ as _dstf_version
     parser = argparse.ArgumentParser(
         prog="dstf",
         description="Dynamic Systems Testing Framework — regression & unit testing for time-dependent system behavior",
+    )
+    parser.add_argument(
+        "--version", "-V", action="version", version=f"%(prog)s {_dstf_version}",
+        help="Print the installed dstf version and exit.",
     )
     parser.add_argument(
         "--source-path", type=str, default=None,
@@ -1425,7 +1487,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     report_parent.add_argument(
         "--report", action="store_true",
-        help="Generate HTML report suite with index page and per-test reports",
+        help="Render per-test interactive deep-dive reports under "
+             "<work_dir>/reports/<test>/. The unified <work_dir>/dashboard.html "
+             "always renders regardless of this flag — it just doesn't link to "
+             "per-test pages without --report.",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -1486,6 +1551,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "compare", parents=[filter_parent, compare_parent, report_parent],
         help="Compare last results against references",
     )
+    p_compare.add_argument(
+        "--simulator", type=str,
+        help="Simulator name (e.g., 'Dymola 2025'). Affects which "
+             "<reference_root>/<Backend>/<os>/ partition is read.",
+    )
+    p_compare.add_argument(
+        "--simulator-path", type=str,
+        help="Absolute path to simulator executable (overrides config). "
+             "Mainly affects which backend identity is used for partition lookup.",
+    )
+    p_compare.add_argument("--work-dir", type=str, help="Working directory containing prior run outputs")
     p_compare.add_argument(
         "--parallel", type=int,
         help="Threads for --report rendering (Plotly serialization + JSON sidecar dump). "
@@ -1575,7 +1651,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_soft.add_argument(
         "action", choices=["list", "remove"],
         help="'list': show soft_checks. 'remove': deregister. "
-             "Use 'import-baseline' to add a soft_check from another system's primary.",
+             "Note: there is no `soft-check add` — by design, soft_checks are "
+             "added only via `import-baseline` (D66 baseline-role split: "
+             "soft_checks come from another regression system's primary, not "
+             "from local user input).",
     )
     p_soft.add_argument("model_id", nargs="?")
     p_soft.add_argument("name", nargs="?")
@@ -1609,10 +1688,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Actually perform the moves (default is dry-run)",
     )
 
-    # check-dymola — diagnostic for the Dymola Python interface loader
+    # check-* — backend diagnostic commands (symmetric across Dymola / OM / Julia)
     subparsers.add_parser(
         "check-dymola",
         help="Locate and load Dymola's Python interface; report what was found",
+    )
+    subparsers.add_parser(
+        "check-openmodelica",
+        help="Probe OMPython + the `omc` binary; report whether the OM stack is ready",
+    )
+    subparsers.add_parser(
+        "check-julia",
+        help="Probe the `julia` binary on PATH; report version and readiness",
     )
 
     return parser
@@ -1636,6 +1723,8 @@ _COMMANDS = {
     "export-schema": cmd_export_schema,
     "migrate-baselines": cmd_migrate_baselines,
     "check-dymola": cmd_check_dymola,
+    "check-openmodelica": cmd_check_openmodelica,
+    "check-julia": cmd_check_julia,
 }
 
 

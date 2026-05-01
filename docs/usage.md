@@ -318,9 +318,12 @@ uv run dstf --config testing.json manifest show --show-obsolete
 # Delete reference files for obsolete tests
 uv run dstf --config testing.json manifest cleanup
 
-# Rebuild manifest from currently discovered tests
-uv run dstf --config testing.json manifest rebuild
+# Write the ref ID → model ID mapping to the work directory
+uv run dstf --config testing.json manifest dump
 ```
+
+(The reference index is rebuilt automatically on every command — there's
+no separate "rebuild" subcommand because there's nothing to rebuild.)
 
 ### `add` — Add test to spec
 
