@@ -98,8 +98,12 @@ body.has-selection { padding-bottom: 5em; }
 <body>
 <h1>{{ title }}</h1>
 <div class="status-bar">
-  {% if auto_refresh %}Auto-refreshing every 2s · elapsed {{ "%.0f"|format(elapsed) }}s
-  {% else %}Final report · {{ total }} tests{% endif %}
+  {% if auto_refresh %}Auto-refreshing every 2s ·
+    elapsed <span id="header-elapsed">{{ "%.0f"|format(elapsed) }}s</span> ·
+    <span id="header-wall">…</span>
+  {% else %}Final report · {{ total }} tests · ran for {{ "%.0f"|format(elapsed) }}s · finished
+    <span id="header-wall-final">…</span>
+  {% endif %}
 </div>
 
 <div class="bar" id="progress-bar"></div>
@@ -158,7 +162,8 @@ body.has-selection { padding-bottom: 5em; }
     data-sort-translate="{{ t.translation_wall if t.translation_wall is not none else -1 }}"
     data-sort-sim="{{ t.sim_wall if t.sim_wall is not none else -1 }}"
     data-sort-total="{{ t.total_wall if t.total_wall is not none else -1 }}"
-    data-sort-detail="{{ t.detail or '' }}">
+    data-sort-detail="{{ t.detail or '' }}"
+    data-started-wall="{{ t.started_wall or '' }}">
   <td class="sel-col"><input type="checkbox" class="row-sel" onchange="onRowToggle(this)"></td>
   <td>{% if t.test_key %}<a href="{{ t.test_key }}/">{{ t.test_key }}</a>{% else %}—{% endif %}</td>
   <td>{% if t.ref_file %}<a href="{{ t.ref_file }}" title="Open reference JSON">{{ t.ref_id }}</a>{% elif t.ref_id %}{{ t.ref_id }}{% else %}—{% endif %}</td>
@@ -175,7 +180,7 @@ body.has-selection { padding-bottom: 5em; }
     {% else %}—{% endif %}
   </td>
   <td>{% if t.worker_id is not none %}W{{ t.worker_id }}{% else %}—{% endif %}</td>
-  <td>{% if t.elapsed is not none %}{{ "%.1f"|format(t.elapsed) }}{% else %}—{% endif %}</td>
+  <td class="elapsed-cell">{% if t.elapsed is not none %}{{ "%.1f"|format(t.elapsed) }}{% else %}—{% endif %}</td>
   <td>{% if t.worst_nrmse is not none %}{{ "%.4e"|format(t.worst_nrmse) }}{% else %}—{% endif %}</td>
   <td>{% if t.n_vars is not none %}{{ t.n_vars_passed }}/{{ t.n_vars }}{% else %}—{% endif %}</td>
   <td>{% if t.n_warnings is not none and t.n_warnings > 0 %}<span class="warn">{{ t.n_warnings }}</span>{% elif t.n_warnings is not none %}0{% else %}—{% endif %}</td>
@@ -204,6 +209,15 @@ body.has-selection { padding-bottom: 5em; }
 const DASHBOARD_MODE = '{{ mode }}';
 const DASHBOARD_TOTAL = {{ total }};
 const RERUN_PREFIX = {{ rerun_prefix | tojson }};
+// Wall-clock anchors for the live-tick header + per-row elapsed.
+// SNAPSHOT_WALL = epoch seconds when the server wrote this snapshot.
+// SNAPSHOT_ELAPSED = run elapsed at that moment.
+// Live elapsed = SNAPSHOT_ELAPSED + (Date.now()/1000 - SNAPSHOT_WALL),
+// which keeps ticking between meta-refresh tick that doesn't itself
+// fire on every UI update (the server only re-snapshots on test
+// state changes, so quiet stretches would otherwise look frozen).
+const SNAPSHOT_WALL = {{ updated_at }};
+const SNAPSHOT_ELAPSED = {{ elapsed }};
 {% include 'dashboard.js' %}
 </script>
 </body>

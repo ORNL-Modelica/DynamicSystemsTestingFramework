@@ -432,4 +432,45 @@
   // blocked on file:// in Chrome/Edge for security reasons (CORS), so the
   // fetch path was non-functional in practice. Final mode strips the
   // refresh tag at template-render time and the page becomes static.
+
+  // ---- Live elapsed tick (header + per-row "running for Ns") ----
+  // The server only writes a fresh snapshot on test state changes. Between
+  // those, meta-refresh would just show the same stale "elapsed Xs". We
+  // tick a JS-side counter every 1s so the header elapsed + running-test
+  // cells advance smoothly, regardless of when the snapshot was last
+  // touched. Final mode does a single render of the wall time and stops
+  // (no ticking — the report is static).
+  function fmtClock(epochSeconds) {
+    return new Date(epochSeconds * 1000).toLocaleTimeString();
+  }
+  function fmtSeconds(s) {
+    return s.toFixed(1) + 's';
+  }
+  function tickLiveElapsed() {
+    const nowEpoch = Date.now() / 1000;
+    const liveRunElapsed = SNAPSHOT_ELAPSED + (nowEpoch - SNAPSHOT_WALL);
+    const headerEl = document.getElementById('header-elapsed');
+    if (headerEl) headerEl.textContent = liveRunElapsed.toFixed(0) + 's';
+    const wallEl = document.getElementById('header-wall');
+    if (wallEl) wallEl.textContent = fmtClock(nowEpoch);
+    // Per-row: any row currently in 'running' status with a started_wall
+    // gets its elapsed cell live-updated to (now - started_wall).
+    Array.from(tbody.querySelectorAll('tr[data-status="running"]')).forEach(row => {
+      const startedWall = parseFloat(row.dataset.startedWall);
+      if (!isNaN(startedWall)) {
+        const cell = row.querySelector('td.elapsed-cell');
+        if (cell) cell.textContent = fmtSeconds(nowEpoch - startedWall);
+      }
+    });
+  }
+  if (DASHBOARD_MODE === 'live') {
+    tickLiveElapsed();
+    setInterval(tickLiveElapsed, 1000);
+  } else {
+    // Final mode: render the finish wall-clock once. The header copy
+    // shows "ran for Xs · finished HH:MM:SS"; we just need to fill in
+    // the time-of-finish from the snapshot's updated_at.
+    const finalEl = document.getElementById('header-wall-final');
+    if (finalEl) finalEl.textContent = fmtClock(SNAPSHOT_WALL);
+  }
 })();

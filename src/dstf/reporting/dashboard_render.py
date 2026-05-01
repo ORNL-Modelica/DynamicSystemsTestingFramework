@@ -150,6 +150,7 @@ def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[st
             "status_text": status_text,
             "status_class": status_class,
             "elapsed": t.get("elapsed"),
+            "started_wall": t.get("started_wall"),  # epoch — JS uses for live "running for Ns"
             "worker_id": t.get("worker_id"),
             "report_dir": t.get("report_dir") or t.get("test_key"),
             "phase": t.get("phase"),
@@ -189,6 +190,13 @@ def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[st
         "tests": rows,
         "rerun_prefix": prefix,
         "updated_at": snapshot.get("updated_at", time.time()),
+        # Wall-clock anchor for the dashboard's live elapsed clock. JS reads
+        # SNAPSHOT_WALL (= updated_at, when the snapshot was written) and
+        # SNAPSHOT_ELAPSED (= elapsed at that moment) to compute a live-
+        # ticking elapsed = SNAPSHOT_ELAPSED + (Date.now()/1000 - SNAPSHOT_WALL).
+        # This works between meta-refresh ticks (when the snapshot is stale)
+        # and right after a refresh (when it's fresh).
+        "start_wall": snapshot.get("start_wall"),
     }
 
 

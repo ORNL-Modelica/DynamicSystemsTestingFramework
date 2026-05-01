@@ -26,7 +26,8 @@ class TestStatus:
     test_key: str
     model_id: str
     status: str = "queued"  # queued | running | passed | failed | timed_out
-    started_at: Optional[float] = None
+    started_at: Optional[float] = None  # time.monotonic — for accurate elapsed computation
+    started_wall: Optional[float] = None  # time.time (epoch) — for JS to compute live "running for Ns"
     elapsed: Optional[float] = None
     detail: Optional[str] = None
     worker_id: Optional[int] = None
@@ -55,6 +56,11 @@ class ProgressReporter:
         self._write_lock = threading.Lock()
         self._tests: dict[str, TestStatus] = {}
         self._start_time = time.monotonic()
+        # Wall-clock anchor (epoch seconds). Sent into status.json so the
+        # dashboard JS can compute live "elapsed = now - start_wall" between
+        # meta-refresh ticks (otherwise the header elapsed appears frozen at
+        # whatever it was when the last test state-change wrote the snapshot).
+        self._start_wall = time.time()
 
     def register(
         self,
@@ -78,6 +84,7 @@ class ProgressReporter:
             if ts is not None:
                 ts.status = "running"
                 ts.started_at = time.monotonic()
+                ts.started_wall = time.time()
                 ts.worker_id = worker_id
                 ts.phase = None
         self._write()
@@ -130,6 +137,7 @@ class ProgressReporter:
             "counts": counts,
             "tests": tests,
             "rerun_prefix": self.rerun_prefix,
+            "start_wall": self._start_wall,
             "updated_at": time.time(),
         }
 
