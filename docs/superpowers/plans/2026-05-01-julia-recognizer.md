@@ -107,37 +107,142 @@ Register multiple recognizers for `source_type="julia"`: one for marker comments
 
 ## Research findings
 
-> Fill this in during the research phase of the next session before committing to a design.
+> Filled in 2026-05-01 by three parallel research agents (MTK/SciML, Dyad/JuliaSim, Test.jl ecosystem) plus a local audit of `examples/julia/JuliaMtkTestingLib`.
 
-### MTK conventions
+### Current DSTF convention (audit)
 
-_(to be filled in)_
+Each `.jl` example exports a single `build_mtk_system()` returning `(sys, u0, ps)`. The runner does `include(user_file)` then `Base.invokelatest(build_mtk_system)` (`src/dstf/simulators/julia/run_persistent.jl:34-46`). The `.jl` file carries **zero metadata** — model_id, stop_time, tolerance, and variables-to-track all live in `test_spec.json`. Variables collected = `unknowns(sys) ∪ observed(sys)` (everything MTK exposes). Compared to the Modelica recognizer (`mo_parser.py:300`), which extracts `UnitTests(n, x, errorExpected)` + `experiment(StopTime, Tolerance)` directly from the source, the Julia path has no extraction surface — the function name identifies the file as test-eligible, but nothing else can be inferred from the source alone.
 
-### Dyad conventions
+### MTK / SciML conventions
 
-_(to be filled in)_
+**One dominant pattern** across SciML/ModelingToolkit.jl, SciML/ModelingToolkitStandardLibrary.jl, SciML/ModelingToolkitNeuralNets.jl, and SciML/OrdinaryDiffEq.jl:
+
+```
+test/runtests.jl  →  @safetestset "label" begin include("file.jl") end
+                ↓
+test/<area>/<file>.jl  →  @testset "name" begin
+                            @named src = Constant(k = 2); ...; sys = mtkcompile(iosys)
+                            prob = ODEProblem(sys, ..., (0.0, 10.0))
+                            sol = solve(prob, Rodas4())
+                            @test sol.retcode == Success
+                            @test sol[src.output.u][end] ≈ 2 atol = 1.0e-3
+                          end
+```
+([MTKStdLib runtests.jl](https://github.com/SciML/ModelingToolkitStandardLibrary.jl/blob/main/test/runtests.jl), [Blocks/sources.jl](https://github.com/SciML/ModelingToolkitStandardLibrary.jl/blob/main/test/Blocks/sources.jl))
+
+System construction is **inline inside the `@testset`** — there is no `build_X()` helper-function convention. Helper functions exist only for synthetic ground-truth (e.g. `lotka_true()` in MTKNeuralNets), not the system-under-test.
+
+**Assertions** (in prevalence order):
+1. `@test sol.retcode == Success` (often the only assertion).
+2. Scalar `≈` against hand-written literals at endpoints/indices: `@test sol[s.mass.flange.v][end] ≈ -0.1*10 atol=1.0e-3`.
+3. Structural checks: `@test length(equations(sys)) == 2`, `@test_call`, `@test_skip`.
+
+**Baseline files: zero.** No CSV/JLD2/JSON/MAT reference data lives alongside any SciML test directory. OrdinaryDiffEq's `test/regression/` checks tolerance-vs-analytic-solution, not snapshot diffs ([ode_dense_tests.jl](https://github.com/SciML/OrdinaryDiffEq.jl/blob/master/test/regression/ode_dense_tests.jl)). No `@regression_test` macro exists in any SciML repo. The only third-party regression package is [RegressionTests.jl](https://juliapackages.com/p/regressiontests) (general-purpose A/B benchmarking, not used by SciML).
+
+**Implication for DSTF:** the `build_mtk_system()` convention is a **DSTF-only invention** — MTK practice doesn't follow it, and there is no MTK-blessed convention for DSTF to inherit. DSTF would be introducing snapshot/baseline regression to a community whose status quo is "solver returned Success and the endpoint matches a hand-written number."
+
+### Dyad / JuliaSim
+
+Dyad has its **own** first-class regression-testing framework, integrated into the Dyad compiler. Tests are declared as metadata blocks **inside `.dyad` source files**:
+
+```
+metadata {"Dyad": {"tests": {"case1": {"stop": 10, "expect": {"initial": {"T": 320}}}}}}
+```
+([Dyad Syntax manual](https://help.juliahub.com/dyad/stable/manual/syntax.html), [Getting Started](https://help.juliahub.com/dyad/dev/tutorials/getting-started.html))
+
+The Dyad compiler auto-generates a Julia `@testset` from that metadata; users run via `Pkg.test`. Per the [JuliaCon 2025 talk](https://pretalx.com/juliacon-2025/talk/WYUASV/) the compiler is "capable of automatically creating reference trajectories for regression testing." The on-disk format/path for those reference trajectories is **not publicly documented** — likely internal to the Dyad compiler. JuliaSim's umbrella product no longer ships a separate testing framework; Dyad is the DSL front-end as of Dec 2025 ([Dyad 2.0 announcement](https://juliahub.com/blog/december-2025-newsletter)).
+
+Real `.dyad` examples: [DyadLang/TranslatedComponents](https://github.com/DyadLang/TranslatedComponents) (Modelica Std Lib ported via LLM), [DyadModelOptimizer.jl/dyad](https://github.com/DyadLang/DyadModelOptimizer.jl/tree/main/dyad).
+
+**Implication for DSTF:** Dyad's testing model (metadata-in-source + Pkg.test execution + compiler-managed baselines) is incompatible with DSTF's external-harness model. Don't try to integrate today. But the metadata blocks are parseable JSON and could become a *secondary* recognizer later (translate `tests.<case>.stop` → `stop_time`, `expect.initial` → points-mode leaf at t=0, `expect.signals` → variables-to-track). Treat Dyad as a Phase-2 recognizer, not the primary path.
 
 ### Test.jl introspection
 
-_(to be filled in)_
+**Key discovery: [TestItems.jl / TestItemRunner.jl](https://juliapackages.com/p/testitemrunner)** uses `@testitem` instead of `@testset`, with explicitly **syntactic discovery** ("test item detection is based on syntactic analysis, with no code from your package being run"). Used by VS Code's Julia extension. If users adopt TestItemRunner, DSTF gets static discovery for free — no tree-sitter, no Julia subprocess.
+
+Standard `@testset` (stdlib Test.jl) has **no static introspection API** — `DefaultTestSet` is built as a side effect of `runtests`. Four syntactic forms (`begin`, `for`, `let`, `call`) and Julia's overloaded `end` keyword (closes `function`/`if`/`for`/`while`/`let`/`module`/`do`/`a[end]`) make Python regex viable for **enumerating testset names** (~85% confidence on well-formed code) but **unreliable for delimiting bodies** (~50%, breaks on `let`-form, triple-quoted descriptions, nested `end`-closing constructs, custom testset types).
+
+**ReferenceTests.jl** ([repo](https://github.com/JuliaTesting/ReferenceTests.jl)) — `@test_reference "filename" expr`, files in `test/references/`. Format-by-extension (.txt/.png/.sha256). Could surface alongside DSTF as a *companion* baseline role, but it's unit-test-grade scalar/image fixtures, not time-series with tolerance trees — wrong shape for DSTF's primary baselines.
+
+**ReTest.jl / InlineTest.jl** — registers testsets at module-load, still requires Julia subprocess. **JuliaSyntax.jl / CSTParser.jl** — no Python bindings. **[tree-sitter-julia](https://github.com/tree-sitter/tree-sitter-julia)** via [py-tree-sitter](https://tree-sitter.github.io/py-tree-sitter/) is the only Python-resident option for proper Julia AST parsing — feasible but heavy for what we need.
+
+**Implication for DSTF:** parsing real-world MTK `@testset` blocks isn't useful even if we could do it cleanly — the bodies contain inline `ODEProblem(..., (0.0, 10.0))` and hand-written `@test` literals, none of which translate to DSTF's `(variables, stop_time, tolerance)` triple without DSTF-specific markers anyway. Static `@testset`-name enumeration is regex-tractable but a thin payoff. `@testitem` is structurally aligned with what we need (static discovery + named scope) and worth supporting as a first-class signal if a library opts in.
 
 ### Decision
 
-_(to be filled in)_
+**Recommendation: Option A (marker comment) as the primary recognizer, layered with two future hooks.**
+
+The pre-research recommendation was Option C (`@testset` parsing). Research kills it: real MTK `@testset` bodies have no extractable simulation metadata — the community style is "construct system inline, assert on hand-written numeric literals." Even if we parsed `@testset` boundaries via tree-sitter, the testsets don't carry the data DSTF needs.
+
+The pivot: since **MTK has no convention DSTF can inherit, DSTF must define one**. The question becomes: marker comment, helper-function name, macro, or Julia-side package?
+
+| Option | Verdict | Why |
+|---|---|---|
+| A — marker comment (`# DSTF: stop_time=..., variables=[...]`) | **Adopt as primary** | Zero Julia deps, parses in milliseconds, works regardless of how the user structures the rest of the file, easy to layer on existing MTK code without refactoring. |
+| B — `build_mtk_system()` function-name | **Keep as fallback** | The current convention works; recognizer can detect `function build_mtk_system(` to identify the file as test-eligible *and* read the marker comment for params. One-test-per-file is a real limitation; address by allowing multiple `build_*()` functions per file each preceded by its own DSTF marker. |
+| C — `@testset` parsing | **Reject** | Body extraction needs tree-sitter-julia; payoff is thin since MTK testsets carry no DSTF-relevant metadata anyway. |
+| D — `DSTFRegression.jl` Julia package | **Reject for MVP** | Release-engineering burden; DSTF currently ships zero Julia-side artifacts. Reconsider in Phase 2 if users want type-checked metadata. |
+| E — multi-recognizer hybrid (A + B + future Dyad) | **Adopt as final shape** | Same code skeleton as the Modelica/JSON recognizer merge in `discovery/test_registry.py`. Marker-comment recognizer is primary; current `build_mtk_system()` shape stays supported via the same recognizer reading the function definition; future Dyad metadata recognizer slots in alongside. |
+
+**Concrete shape for the bundled Julia recognizer:**
+
+1. Parse leading-comment block at the top of the `.jl` file for `# DSTF: key=value, key=[...]` lines (similar to the Python-recognizer convention or `pyproject.toml` `[tool.dstf]` block — pick one and document).
+2. Detect at least one `function build_mtk_system(` (or `function build_<name>()` for multi-test-per-file) to confirm test-eligibility.
+3. Derive `model_id` from filename + parent-package name (`Examples/Constant.jl` in `JuliaMtkTestingLib` → `JuliaMtkTestingLib.Examples.Constant`, mirroring the Modelica `within` + class-name composition).
+4. Emit `RecognizerResult` with the same fields the Modelica recognizer fills (`model_id`, `source_file`, `n_vars`, `x_expressions`, `stop_time`, `tolerance`).
+
+**Future hooks (post-MVP):**
+- A `BundledDyadRecognizer` for `.dyad` files that parses `metadata.Dyad.tests.*` blocks. Translates `stop` → `stop_time`, `expect.initial` → points-mode leaf at t=0, `expect.signals` → variables-to-track.
+- An optional `@testitem` recognizer if users adopt TestItemRunner — pure-syntactic, regex-tractable since `@testitem` doesn't have the `end`-overloading footguns of `@testset`.
+- Surface ReferenceTests.jl files (under `test/references/`) as a companion baseline role — plot-only overlay, doesn't replace primary baseline.
+
+**Existing examples:** `JuliaMtkTestingLib/Examples/*.jl` keeps working without edits — recognizer treats the bare `build_mtk_system()` as a sentinel and pulls sim params from the existing `test_spec.json` (since the merge order is "spec wins over recognizer," the migration is zero-risk). To opt **into** marker-comment-driven discovery without test_spec.json, users add `# DSTF: stop_time=10.0, variables=["x"], tolerance=1e-6` at the top of their file.
 
 ---
 
-## Implementation tasks (pending research)
+## Implementation tasks (post-research)
 
-> Concrete tasks emerge after research. Sketch:
->
-> 1. Add `BundledJuliaRecognizer` to `src/dstf/discovery/julia_parser.py` (mirroring `mo_parser.py`'s shape).
-> 2. Register for `source_type="julia"` at module import.
-> 3. Wire into `test_registry.discover_tests()` — should be automatic via the `_REGISTRY` walk if `applies_to` is set correctly.
-> 4. Add `tests/test_julia_recognizer.py`.
-> 5. Update `docs/extensibility.md` + `docs/usage.md`.
-> 6. D-log entry.
-> 7. Smoke test: run `JuliaMtkTestingLib` end-to-end with test_spec.json renamed; expect identical results.
+Concrete after research. Order:
+
+1. **`src/dstf/discovery/julia_parser.py`** (new file, mirrors `mo_parser.py`):
+   - `_strip_julia_literals()` — strip `#`-line comments, `#= ... =#` block comments, `"..."`/`"""..."""` strings to avoid false positives in docstrings/prose.
+   - `_parse_dstf_marker(text) -> Optional[DstfMarker]` — extract leading-comment block of the form `# DSTF: stop_time=10.0, tolerance=1e-6, variables=["x", "v"]`. Single-line variant required for MVP; multi-line `# DSTF:` continuation block can land later.
+   - `_extract_module_name(path, project_root) -> str` — derive `model_id` from filename + project structure: `JuliaMtkTestingLib/Examples/Constant.jl` (with `Project.toml` at `JuliaMtkTestingLib/`) → `JuliaMtkTestingLib.Examples.Constant`.
+   - `_has_build_function(text) -> bool` — confirm at least one `function build_mtk_system(` or `function build_<name>()` exists (sentinel for "this `.jl` is a DSTF-eligible test").
+   - `parse_jl_file(path) -> Optional[JuliaParseResult]` — orchestrates above; returns `None` if no `build_*()` function found.
+   - `BundledJuliaRecognizer(Recognizer)`:
+     - `applies_to = frozenset({"julia"})`
+     - Translates `JuliaParseResult` → `RecognizerResult` with the same fields the Modelica recognizer fills.
+   - `register(BundledJuliaRecognizer())` at module import.
+
+2. **`src/dstf/discovery/__init__.py`** — import `julia_parser` so the registration side-effect runs (mirrors how `mo_parser` is currently imported).
+
+3. **`src/dstf/discovery/test_registry.py`** — verify the existing `discover_tests()` walk finds `.jl` files when `source_type="julia"`. Today it scans `.mo`; extend the file-pattern selector or add a `source_type → glob` map. Likely a 5-line change.
+
+4. **`tests/test_julia_recognizer.py`** (new file):
+   - Recognizes a representative `.jl` file with a `# DSTF: ...` marker.
+   - Recognizes a `build_mtk_system()`-only file with **no** marker (current convention) → emits result with `model_id`+`source_file` only; sim params filled from `test_spec.json` later.
+   - Skips a `.jl` file with no `build_*()` function.
+   - Skips when the marker keyword appears only inside a string/docstring.
+   - Merge with `test_spec.json` — spec wins over recognizer.
+   - Performance: 100 synthetic `.jl` files discovered in < 5s.
+
+5. **`examples/julia/JuliaMtkTestingLib/Examples/*.jl`** — leave existing files **unchanged** for the regression smoke test. Optionally add one new file (`MarkerExample.jl`) demonstrating the `# DSTF:` syntax for documentation.
+
+6. **`examples/julia/JuliaMtkTestingLib/Resources/ReferenceResults/test_spec.json`** — rename to `test_spec.json.bak` for the smoke test, confirm `dstf discover` still finds the 8 tests via the recognizer alone, then restore.
+
+7. **Documentation:**
+   - `docs/extensibility.md` — new "Julia recognizer" section under §3 (Persistent-worker contract is §3 currently — add as §4 or interleave).
+   - `docs/usage.md` — "Discovering Julia tests" example with the marker-comment syntax.
+   - `docs/decisions.md` — D92 (or whatever's next): "Julia recognizer convention — marker comment + build_*() sentinel; rejected `@testset` parsing because real MTK testsets carry no DSTF-relevant metadata; deferred Dyad recognizer to Phase 2."
+
+8. **Smoke test (manual):** `uv run dstf --config examples/julia/JuliaMtkTestingLib/Resources/ReferenceResults/testing.json discover` with `test_spec.json` renamed; expect 8 tests found by the recognizer alone, with sim params either marker-derived or default-filled.
+
+**Out of scope for this PR (Phase 2 candidates):**
+- `BundledDyadRecognizer` for `.dyad` metadata blocks.
+- `@testitem` recognizer for TestItemRunner adopters.
+- ReferenceTests.jl companion-baseline integration.
+- Multi-test-per-file via multiple `build_<name>()` + paired marker comments (the parser hooks should leave room, but full multi-test isn't required for MVP).
 
 ---
 
