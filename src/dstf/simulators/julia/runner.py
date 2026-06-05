@@ -11,6 +11,7 @@ MTK + OrdinaryDiffEq); subsequent runs are seconds per test. A persistent-
 worker path (via ``JuliaCall`` or a stdin-driven long-lived Julia process)
 is a future enhancement once the batch path is proven.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,7 +21,6 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -54,16 +54,17 @@ class JuliaConfig:
     live in (``config.source_path``). That way a user ships a self-contained
     Julia project with MTK pinned.
     """
+
     julia_binary: Path
     project_dir: Path
 
     @classmethod
-    def from_config(cls, config: Config) -> "JuliaConfig":
+    def from_config(cls, config: Config) -> JuliaConfig:
         # Config.simulator_path is already resolved in __post_init__ via the
         # simulators map + PATH fallback. If that lookup didn't produce
         # anything (e.g., user omitted the path and PATH doesn't include
         # julia), try shutil.which() once more before giving up.
-        resolved: Optional[Path] = None
+        resolved: Path | None = None
         if config.simulator_path:
             p = Path(config.simulator_path).expanduser()
             if p.exists():
@@ -86,12 +87,14 @@ class JuliaConfig:
 class JuliaRunner(SimulatorRunner):
     """Subprocess-per-test Julia/MTK runner."""
 
-    capabilities = frozenset({
-        Capability.BATCH_FALLBACK,  # subprocess-per-test (this class)
-        Capability.PERSISTENT_WORKERS,  # via PersistentJuliaRunner (D78)
-        # Deliberately absent:
-        #   FMU_EXPORT — MTK.generate_fmu deferred
-    })
+    capabilities = frozenset(
+        {
+            Capability.BATCH_FALLBACK,  # subprocess-per-test (this class)
+            Capability.PERSISTENT_WORKERS,  # via PersistentJuliaRunner (D78)
+            # Deliberately absent:
+            #   FMU_EXPORT — MTK.generate_fmu deferred
+        }
+    )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
     artifact_files = (
         ("result.json", "Simulation result (time + variables)"),
@@ -110,6 +113,7 @@ class JuliaRunner(SimulatorRunner):
     @classmethod
     def persistent_runner_cls(cls):
         from .persistent_runner import PersistentJuliaRunner
+
         return PersistentJuliaRunner
 
     # ------------------------------------------------------------------
@@ -179,12 +183,19 @@ class JuliaRunner(SimulatorRunner):
             msg = f"Julia simulation exceeded {timeout}s timeout"
             if self.progress:
                 self.progress.on_finish(
-                    test_key, success=False, elapsed=elapsed,
-                    detail=msg, timed_out=True,
+                    test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    detail=msg,
+                    timed_out=True,
                 )
             return TestRunResult(
-                model_id=test.model_id, test_key=test_key, success=False,
-                elapsed=elapsed, error_message=msg, sim_wall=elapsed,
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                elapsed=elapsed,
+                error_message=msg,
+                sim_wall=elapsed,
                 timed_out=True,
             )
 
@@ -198,15 +209,22 @@ class JuliaRunner(SimulatorRunner):
             # to the raw stderr tail.
             err = _read_failure_error(result_path) or (
                 (proc.stderr or "").strip().splitlines()[-1]
-                if proc.stderr else f"julia returned {proc.returncode}"
+                if proc.stderr
+                else f"julia returned {proc.returncode}"
             )
             if self.progress:
                 self.progress.on_finish(
-                    test_key, success=False, elapsed=elapsed, detail=err,
+                    test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    detail=err,
                 )
             return TestRunResult(
-                model_id=test.model_id, test_key=test_key, success=False,
-                elapsed=elapsed, error_message=f"Julia simulation failed: {err}",
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                elapsed=elapsed,
+                error_message=f"Julia simulation failed: {err}",
                 sim_wall=elapsed,
             )
 
@@ -214,8 +232,11 @@ class JuliaRunner(SimulatorRunner):
             self.progress.on_finish(test_key, success=True, elapsed=elapsed)
 
         return TestRunResult(
-            model_id=test.model_id, test_key=test_key, success=True,
-            elapsed=elapsed, sim_wall=elapsed,
+            model_id=test.model_id,
+            test_key=test_key,
+            success=True,
+            elapsed=elapsed,
+            sim_wall=elapsed,
             statistics={"simulation": {"wall_time": elapsed}},
         )
 
@@ -232,7 +253,8 @@ class JuliaRunner(SimulatorRunner):
         result_path = self.config.work_dir / test_key / self.RESULT_FILENAME
         if not result_path.exists():
             return TestResult(
-                model_id=test.model_id, success=False,
+                model_id=test.model_id,
+                success=False,
                 error_message=f"No Julia result at {result_path} (did simulation run?)",
                 statistics=run_result.statistics if run_result else None,
             )
@@ -242,14 +264,16 @@ class JuliaRunner(SimulatorRunner):
                 payload = json.load(f)
         except (OSError, json.JSONDecodeError) as exc:
             return TestResult(
-                model_id=test.model_id, success=False,
+                model_id=test.model_id,
+                success=False,
                 error_message=f"Failed to parse {result_path.name}: {exc}",
                 statistics=run_result.statistics if run_result else None,
             )
 
         if not payload.get("success", False):
             return TestResult(
-                model_id=test.model_id, success=False,
+                model_id=test.model_id,
+                success=False,
                 error_message=payload.get("error", "Julia driver reported failure"),
                 statistics=run_result.statistics if run_result else None,
             )
@@ -275,7 +299,9 @@ class JuliaRunner(SimulatorRunner):
         ]
 
         return TestResult(
-            model_id=test.model_id, success=True, variables=variables,
+            model_id=test.model_id,
+            success=True,
+            variables=variables,
             diagnostics=[],
             statistics=run_result.statistics if run_result else None,
         )
@@ -285,7 +311,8 @@ class JuliaRunner(SimulatorRunner):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _resolve_julia_source(test: TestModel, config: Config) -> Optional[Path]:
+
+def _resolve_julia_source(test: TestModel, config: Config) -> Path | None:
     """Resolve the user's ``.jl`` file.
 
     Priority: ``test.source_file`` (spec_parser fills this when the entry
@@ -302,7 +329,7 @@ def _resolve_julia_source(test: TestModel, config: Config) -> Optional[Path]:
     return None
 
 
-def _read_failure_error(result_path: Path) -> Optional[str]:
+def _read_failure_error(result_path: Path) -> str | None:
     """If the driver wrote a failure JSON, pull its 'error' message."""
     if not result_path.exists():
         return None

@@ -4,21 +4,19 @@ import numpy as np
 import pytest
 
 from dstf.comparison.comparator import (
-    VariableComparison,
-    StructuralWarning,
+    _check_structural_changes,
+    _compare_points,
+    _compare_trajectories,
+    _dedup_time_series,
     _find_event_boundaries,
     _split_segments,
-    _dedup_time_series,
-    _compare_trajectories,
-    _compare_points,
-    _check_structural_changes,
 )
 from dstf.simulators.base import TestResult
-
 
 # ---------------------------------------------------------------------------
 # Event boundary detection
 # ---------------------------------------------------------------------------
+
 
 class TestFindEventBoundaries:
     def test_no_events(self):
@@ -54,6 +52,7 @@ class TestFindEventBoundaries:
 # ---------------------------------------------------------------------------
 # Segment splitting
 # ---------------------------------------------------------------------------
+
 
 class TestSplitSegments:
     def test_no_boundaries(self):
@@ -96,6 +95,7 @@ class TestSplitSegments:
 # Deduplication
 # ---------------------------------------------------------------------------
 
+
 class TestDedupTimeSeries:
     def test_keep_first(self):
         t = np.array([0.0, 1.0, 1.0, 2.0])
@@ -129,6 +129,7 @@ class TestDedupTimeSeries:
 # ---------------------------------------------------------------------------
 # Trajectory comparison (NRMSE)
 # ---------------------------------------------------------------------------
+
 
 class TestCompareTrajectories:
     """Tests for the core NRMSE comparison with event handling."""
@@ -168,8 +169,12 @@ class TestCompareTrajectories:
 
     def test_identical_triple_time_points(self):
         """Identical signals with triple time points (Dymola format) => NRMSE = 0."""
-        t = np.array([0.0, 1.0, 2.0, 2.0, 2.0, 3.0, 5.0, 5.0, 5.0, 6.0, 8.0, 8.0, 8.0, 9.0, 10.0])
-        v = np.array([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0])
+        t = np.array(
+            [0.0, 1.0, 2.0, 2.0, 2.0, 3.0, 5.0, 5.0, 5.0, 6.0, 8.0, 8.0, 8.0, 9.0, 10.0]
+        )
+        v = np.array(
+            [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0]
+        )
         vc = _compare_trajectories(t, v, t, v, 1e-4)
         assert vc.passed is True
         assert vc.nrmse == 0.0
@@ -223,7 +228,7 @@ class TestCompareTrajectories:
         of ~1.4e-8, well within tolerance.
         """
         t = np.array([0.0, 1.0])
-        ref_v = np.array([37e9, 37e9])               # float64
+        ref_v = np.array([37e9, 37e9])  # float64
         act_v = np.array([np.float32(37e9)] * 2).astype(np.float64)  # 36999999488.0
         vc = _compare_trajectories(t, ref_v, t, act_v, 1e-4)
         assert vc.is_constant == True
@@ -282,36 +287,41 @@ class TestCompareTrajectories:
 # Final value comparison
 # ---------------------------------------------------------------------------
 
+
 class TestCompareFinalValues:
     """Coverage for `_compare_points` in its empty-points / final-only branch."""
 
     _t = np.array([0.0, 1.0])
 
     def test_identical(self):
-        vc = _compare_points(self._t, np.array([1.0, 1.0]),
-                             self._t, np.array([1.0, 1.0]),
-                             tolerance=1e-4)
+        vc = _compare_points(
+            self._t, np.array([1.0, 1.0]), self._t, np.array([1.0, 1.0]), tolerance=1e-4
+        )
         assert vc.passed is True
         assert vc.nrmse == 0.0
 
     def test_different(self):
-        vc = _compare_points(self._t, np.array([1.0, 1.0]),
-                             self._t, np.array([1.1, 1.1]),
-                             tolerance=1e-4)
+        vc = _compare_points(
+            self._t, np.array([1.0, 1.0]), self._t, np.array([1.1, 1.1]), tolerance=1e-4
+        )
         assert vc.passed is False
         assert vc.nrmse == pytest.approx(0.1)
 
     def test_zero_reference(self):
         """Near-zero reference still measures absolute delta."""
-        vc = _compare_points(self._t, np.array([0.0, 0.0]),
-                             self._t, np.array([0.0001, 0.0001]),
-                             tolerance=1e-4)
+        vc = _compare_points(
+            self._t,
+            np.array([0.0, 0.0]),
+            self._t,
+            np.array([0.0001, 0.0001]),
+            tolerance=1e-4,
+        )
         assert vc.passed is False
 
     def test_both_zero(self):
-        vc = _compare_points(self._t, np.array([0.0, 0.0]),
-                             self._t, np.array([0.0, 0.0]),
-                             tolerance=1e-4)
+        vc = _compare_points(
+            self._t, np.array([0.0, 0.0]), self._t, np.array([0.0, 0.0]), tolerance=1e-4
+        )
         assert vc.passed is True
         assert vc.nrmse == 0.0
 
@@ -320,12 +330,15 @@ class TestCompareFinalValues:
 # Structural change detection
 # ---------------------------------------------------------------------------
 
+
 class TestStructuralChanges:
     def test_no_changes(self):
-        ref = {"statistics": {
-            "translation": {"continuous_time_states": 4, "nonlinear": "3, 1"},
-            "EventCounter": 42,
-        }}
+        ref = {
+            "statistics": {
+                "translation": {"continuous_time_states": 4, "nonlinear": "3, 1"},
+                "EventCounter": 42,
+            }
+        }
         result = TestResult(
             model_id="Test",
             success=True,
@@ -340,7 +353,8 @@ class TestStructuralChanges:
     def test_continuous_states_change(self):
         ref = {"statistics": {"translation": {"continuous_time_states": 4}}}
         result = TestResult(
-            model_id="Test", success=True,
+            model_id="Test",
+            success=True,
             statistics={"translation": {"continuous_time_states": 6}},
         )
         warnings = _check_structural_changes(ref, result)
@@ -350,7 +364,8 @@ class TestStructuralChanges:
     def test_nonlinear_change(self):
         ref = {"statistics": {"translation": {"nonlinear_count": 3}}}
         result = TestResult(
-            model_id="Test", success=True,
+            model_id="Test",
+            success=True,
             statistics={"translation": {"nonlinear_count": 5}},
         )
         warnings = _check_structural_changes(ref, result)
@@ -362,7 +377,8 @@ class TestStructuralChanges:
     def test_event_counter_change(self):
         ref = {"statistics": {"EventCounter": 42}}
         result = TestResult(
-            model_id="Test", success=True,
+            model_id="Test",
+            success=True,
             statistics={"EventCounter": 50},
         )
         warnings = _check_structural_changes(ref, result)
@@ -387,14 +403,15 @@ class TestStructuralChanges:
 # Tolerance resolution
 # ---------------------------------------------------------------------------
 
+from pathlib import Path
+
 from dstf.comparison.comparator import (
-    compare_test,
     _compare_tube,
     _interpolate_tube_widths,
+    compare_test,
 )
 from dstf.discovery.test_registry import TestModel
 from dstf.simulators.base import VariableResult
-from pathlib import Path
 
 
 def _make_test(comparison_tolerance=None, variable_overrides=None):
@@ -498,6 +515,7 @@ class TestToleranceResolution:
 # Tube interpolation
 # ---------------------------------------------------------------------------
 
+
 class TestTubeInterpolation:
     def test_single_point_constant(self):
         """Single control point applies everywhere (legacy abs format)."""
@@ -559,6 +577,7 @@ class TestTubeInterpolation:
 # Tube comparison
 # ---------------------------------------------------------------------------
 
+
 class TestTubeComparison:
     def test_constant_tube_passes(self):
         """Signal inside constant tube passes."""
@@ -567,7 +586,10 @@ class TestTubeComparison:
         act_values = np.array([101.0, 199.0, 302.0])  # Within ±5
 
         vc = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {"tube_width_mode": "band", "tube_abs": 5.0},
         )
         assert vc.passed
@@ -581,7 +603,10 @@ class TestTubeComparison:
         act_values = np.array([100.0, 200.0, 310.0])  # Last point outside ±5
 
         vc = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {"tube_width_mode": "band", "tube_abs": 5.0},
         )
         assert not vc.passed
@@ -598,7 +623,10 @@ class TestTubeComparison:
         act_values = np.array([104.0, 1040.0])
 
         vc = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {"tube_width_mode": "rel", "tube_rel": 0.05},
         )
         assert vc.passed
@@ -611,7 +639,10 @@ class TestTubeComparison:
         act_values = np.array([3.0, 104.0])  # Within ±5 at zero, ±5% at t=1
 
         vc = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {"tube_width_mode": "rel", "tube_rel": 0.05, "tube_min_width": 5.0},
         )
         assert vc.passed
@@ -624,7 +655,10 @@ class TestTubeComparison:
         act_values = np.array([10.5, 10.5, 18.0])
 
         vc = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {
                 "tube_width_mode": "band",
                 "tube_points": [
@@ -646,7 +680,10 @@ class TestTubeComparison:
         act_values = np.array([12.0, 10.0, 10.0])  # 2.0 offset at tight end
 
         vc = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {
                 "tube_width_mode": "band",
                 "tube_points": [
@@ -667,7 +704,10 @@ class TestTubeComparison:
         act_values = np.array([1.0, 11.0])
 
         vc = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {"tube_width_mode": "band", "tube_abs": 5.0},
         )
         assert vc.nrmse > 0
@@ -675,13 +715,15 @@ class TestTubeComparison:
 
     def test_tube_via_compare_test(self):
         """Tube mode dispatched correctly via compare_test."""
-        test = _make_test(variable_overrides={
-            "x": {
-                "mode": "tube",
-                "tube_width_mode": "band",
-                "tube_abs": 0.01,
-            },
-        })
+        test = _make_test(
+            variable_overrides={
+                "x": {
+                    "mode": "tube",
+                    "tube_width_mode": "band",
+                    "tube_abs": 0.01,
+                },
+            }
+        )
         result, ref = _make_result_and_ref(offset=0.005)
         comp = compare_test(test, result, ref, default_tolerance=1e-4)
         assert comp.passed
@@ -697,7 +739,10 @@ class TestTubeComparison:
 
         # Upper allows 5, lower allows 1 → passes (signal is above)
         vc = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {
                 "tube_width_mode": "band",
                 "tube_points": [
@@ -716,7 +761,10 @@ class TestTubeComparison:
 
         # Upper allows 5, lower allows 1 → fails (3 > 1 below)
         vc = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {
                 "tube_width_mode": "band",
                 "tube_points": [
@@ -736,7 +784,10 @@ class TestTubeComparison:
         act_values = np.array([101.0, 1010.0])
 
         vc = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {
                 "tube_width_mode": "rel",
                 "tube_rel": 0.02,
@@ -752,14 +803,20 @@ class TestTubeComparison:
 
         # Rel mode: at t=0, ref=0 → rel width = 0. Without floor, fails
         vc_no_floor = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {"tube_width_mode": "rel", "tube_rel": 0.02},
         )
         assert not vc_no_floor.passed
 
         # With min_width floor of 1.0
         vc_floor = _compare_tube(
-            ref_time, ref_values, ref_time, act_values,
+            ref_time,
+            ref_values,
+            ref_time,
+            act_values,
             {"tube_width_mode": "rel", "tube_rel": 0.02, "tube_min_width": 1.0},
         )
         assert vc_floor.passed
@@ -771,14 +828,13 @@ class TestTubeComparison:
 # ---------------------------------------------------------------------------
 
 from dstf.comparison.modes import (
-    resolve_mode,
-    NrmseMode,
-    TubeMode,
-    PointsMode,
     NrmseConfig,
-    TubeConfig,
+    NrmseMode,
     PointsConfig,
-    ComparisonMode,
+    PointsMode,
+    TubeConfig,
+    TubeMode,
+    resolve_mode,
 )
 
 
@@ -906,43 +962,49 @@ class TestModeCompare:
 
     def test_nrmse_mode_pass(self):
         mode = NrmseMode(NrmseConfig(tolerance=0.01))
-        vc = mode.compare(self.ref_time, self.ref_values,
-                          self.ref_time, self.act_values_close)
+        vc = mode.compare(
+            self.ref_time, self.ref_values, self.ref_time, self.act_values_close
+        )
         assert vc.passed
         assert vc.mode == "nrmse"
 
     def test_nrmse_mode_fail(self):
         mode = NrmseMode(NrmseConfig(tolerance=1e-4))
-        vc = mode.compare(self.ref_time, self.ref_values,
-                          self.ref_time, self.act_values_far)
+        vc = mode.compare(
+            self.ref_time, self.ref_values, self.ref_time, self.act_values_far
+        )
         assert not vc.passed
 
     def test_tube_mode_pass(self):
         mode = TubeMode(TubeConfig(tube_width_mode="band", tube_abs=1.0))
-        vc = mode.compare(self.ref_time, self.ref_values,
-                          self.ref_time, self.act_values_close)
+        vc = mode.compare(
+            self.ref_time, self.ref_values, self.ref_time, self.act_values_close
+        )
         assert vc.passed
         assert vc.mode == "tube"
         assert vc.tube_points_inside == 1.0
 
     def test_tube_mode_fail(self):
         mode = TubeMode(TubeConfig(tube_width_mode="band", tube_abs=0.001))
-        vc = mode.compare(self.ref_time, self.ref_values,
-                          self.ref_time, self.act_values_far)
+        vc = mode.compare(
+            self.ref_time, self.ref_values, self.ref_time, self.act_values_far
+        )
         assert not vc.passed
         assert vc.tube_points_inside < 1.0
 
     def test_default_points_mode_pass(self):
         mode = PointsMode(PointsConfig(tolerance=0.01))
-        vc = mode.compare(self.ref_time, self.ref_values,
-                          self.ref_time, self.act_values_close)
+        vc = mode.compare(
+            self.ref_time, self.ref_values, self.ref_time, self.act_values_close
+        )
         assert vc.passed
         assert vc.mode == "points"
 
     def test_default_points_mode_fail(self):
         mode = PointsMode(PointsConfig(tolerance=1e-6))
-        vc = mode.compare(self.ref_time, self.ref_values,
-                          self.ref_time, self.act_values_far)
+        vc = mode.compare(
+            self.ref_time, self.ref_values, self.ref_time, self.act_values_far
+        )
         assert not vc.passed
 
 
@@ -951,11 +1013,15 @@ class TestCompareTestWithModes:
 
     def test_default_points_flag_does_not_override_tube(self):
         """Bug fix: default_points=True must not override mode='tube'."""
-        test = _make_test(variable_overrides={
-            "x": {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.01},
-        })
+        test = _make_test(
+            variable_overrides={
+                "x": {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.01},
+            }
+        )
         result, ref = _make_result_and_ref(offset=0.005)
-        comp = compare_test(test, result, ref, default_tolerance=1e-4, default_points=True)
+        comp = compare_test(
+            test, result, ref, default_tolerance=1e-4, default_points=True
+        )
         assert comp.passed
         assert comp.variables[0].mode == "tube"
 
@@ -965,13 +1031,16 @@ class TestCompareTestWithModes:
         result, ref = _make_result_and_ref(offset=0.005)
         # default_points compares only last values: ref=3.0, act=3.005
         # relative error = 0.005/3.0 ≈ 0.00167, tolerance=0.01 → pass
-        comp = compare_test(test, result, ref, default_tolerance=0.01, default_points=True)
+        comp = compare_test(
+            test, result, ref, default_tolerance=0.01, default_points=True
+        )
         assert comp.passed
 
 
 # ---------------------------------------------------------------------------
 # Baseline-free short-circuit (idea #59 / D83)
 # ---------------------------------------------------------------------------
+
 
 class _NoBaselineStore:
     """Minimal ReferenceStore stand-in: no references on disk."""
@@ -1006,9 +1075,11 @@ class TestBaselineFreeNoRef:
         """Range leaf, signal in bounds, no baseline → PASS (not NO_REF)."""
         from dstf.comparison.comparator import compare_all
 
-        test = _make_test(variable_overrides={
-            "x": {"mode": "range", "min_value": 0.0, "max_value": 2.0},
-        })
+        test = _make_test(
+            variable_overrides={
+                "x": {"mode": "range", "min_value": 0.0, "max_value": 2.0},
+            }
+        )
         result = _result_only(np.array([0.1, 0.5, 1.0, 1.5, 1.9]))
         comps = compare_all([test], {test.model_id: result}, _NoBaselineStore())
 
@@ -1026,9 +1097,11 @@ class TestBaselineFreeNoRef:
         """Range leaf, signal exceeds max, no baseline → FAIL."""
         from dstf.comparison.comparator import compare_all
 
-        test = _make_test(variable_overrides={
-            "x": {"mode": "range", "min_value": 0.0, "max_value": 1.0},
-        })
+        test = _make_test(
+            variable_overrides={
+                "x": {"mode": "range", "min_value": 0.0, "max_value": 1.0},
+            }
+        )
         result = _result_only(np.array([0.1, 0.5, 1.0, 1.5, 2.0]))  # exceeds 1.0
         comps = compare_all([test], {test.model_id: result}, _NoBaselineStore())
 
@@ -1045,18 +1118,28 @@ class TestBaselineFreeNoRef:
         """
         from dstf.comparison.comparator import compare_all
 
-        test = _make_test(variable_overrides={
-            "x": {"mode": "range", "min_value": 0.0, "max_value": 2.0},
-            "y": {"tolerance": 1e-4},  # default NRMSE — needs a reference
-        })
+        test = _make_test(
+            variable_overrides={
+                "x": {"mode": "range", "min_value": 0.0, "max_value": 2.0},
+                "y": {"tolerance": 1e-4},  # default NRMSE — needs a reference
+            }
+        )
         result = TestResult(
             model_id="Test.Model",
             success=True,
             variables=[
-                VariableResult(index=1, name="x", time=np.linspace(0, 1, 5),
-                               values=np.array([0.1, 0.5, 1.0, 1.5, 1.9])),
-                VariableResult(index=2, name="y", time=np.linspace(0, 1, 5),
-                               values=np.array([0.0, 0.25, 0.5, 0.75, 1.0])),
+                VariableResult(
+                    index=1,
+                    name="x",
+                    time=np.linspace(0, 1, 5),
+                    values=np.array([0.1, 0.5, 1.0, 1.5, 1.9]),
+                ),
+                VariableResult(
+                    index=2,
+                    name="y",
+                    time=np.linspace(0, 1, 5),
+                    values=np.array([0.0, 0.25, 0.5, 0.75, 1.0]),
+                ),
             ],
         )
         comps = compare_all([test], {test.model_id: result}, _NoBaselineStore())
@@ -1076,18 +1159,21 @@ class TestBaselineFreeNoRef:
         # samples, Modelica convention).
         t = np.array([0.0, 0.1, 0.2, 0.3, 0.3, 0.5, 0.7, 0.7, 1.0])
         v = np.array([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0])
-        test = _make_test(variable_overrides={
-            "x": {
-                "mode": "event-timing",
-                "events": [
-                    {"time": 0.3, "tolerance": 0.01},
-                    {"time": 0.7, "tolerance": 0.01},
-                ],
-                "count_must_match": True,
-            },
-        })
+        test = _make_test(
+            variable_overrides={
+                "x": {
+                    "mode": "event-timing",
+                    "events": [
+                        {"time": 0.3, "tolerance": 0.01},
+                        {"time": 0.7, "tolerance": 0.01},
+                    ],
+                    "count_must_match": True,
+                },
+            }
+        )
         result = TestResult(
-            model_id="Test.Model", success=True,
+            model_id="Test.Model",
+            success=True,
             variables=[VariableResult(index=1, name="x", time=t, values=v)],
         )
         comps = compare_all([test], {test.model_id: result}, _NoBaselineStore())
@@ -1106,9 +1192,11 @@ class TestBaselineFreeNoRef:
         """
         from dstf.comparison.comparator import compare_all
 
-        test = _make_test(variable_overrides={
-            "x": {"mode": "event-timing", "time_tolerance": 0.01},
-        })
+        test = _make_test(
+            variable_overrides={
+                "x": {"mode": "event-timing", "time_tolerance": 0.01},
+            }
+        )
         result = _result_only(np.array([0.0, 0.1, 0.2, 0.3, 0.4]))
         comps = compare_all([test], {test.model_id: result}, _NoBaselineStore())
 
@@ -1127,6 +1215,7 @@ class TestPointsDeclaredPath:
         # ref(4)=4, ref(5)=5. Linear ramp y = t. Act has small offset
         # around t=2 to test pass/fail at a specific point.
         import numpy as np
+
         ref_t = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
         ref_v = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
         act_t = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
@@ -1136,20 +1225,24 @@ class TestPointsDeclaredPath:
     def test_implicit_final_check_unchanged(self):
         """Empty points list → behaves identically to legacy final-only."""
         from dstf.comparison.comparator import _compare_points
+
         ref_t, ref_v, act_t, act_v = self._make_traj()
-        result = _compare_points(ref_t, ref_v, act_t, act_v,
-                                 points=None, tolerance=0.01)
+        result = _compare_points(
+            ref_t, ref_v, act_t, act_v, points=None, tolerance=0.01
+        )
         # act[-1] = 5.001, ref[-1] = 5.0, delta = 0.001 < 0.01 → PASS.
         assert result.passed
         assert result.diagnostics["delta"] == pytest.approx(0.001)
 
     def test_single_ref_relative_point_passes(self):
         from dstf.comparison.comparator import _compare_points
+
         ref_t, ref_v, act_t, act_v = self._make_traj()
         # Point at t=3: target = ref(3) = 3.0; act(3) = 3.001; delta = 0.001.
         # Tolerance 0.01 → PASS.
-        result = _compare_points(ref_t, ref_v, act_t, act_v,
-                                 points=[{"time": 3.0}], tolerance=0.01)
+        result = _compare_points(
+            ref_t, ref_v, act_t, act_v, points=[{"time": 3.0}], tolerance=0.01
+        )
         assert result.passed
         assert result.diagnostics["scored_points"] == 1
         assert result.diagnostics["worst_delta"] == pytest.approx(0.001)
@@ -1157,9 +1250,11 @@ class TestPointsDeclaredPath:
     def test_single_ref_relative_point_fails(self):
         """Point at t=2 hits the 0.05 act offset → exceeds 0.01 tolerance."""
         from dstf.comparison.comparator import _compare_points
+
         ref_t, ref_v, act_t, act_v = self._make_traj()
-        result = _compare_points(ref_t, ref_v, act_t, act_v,
-                                 points=[{"time": 2.0}], tolerance=0.01)
+        result = _compare_points(
+            ref_t, ref_v, act_t, act_v, points=[{"time": 2.0}], tolerance=0.01
+        )
         assert not result.passed
         assert result.diagnostics["worst_delta"] == pytest.approx(0.05, abs=1e-9)
 
@@ -1169,14 +1264,19 @@ class TestPointsDeclaredPath:
         reads it for absolute-value points.
         """
         import numpy as np
+
         from dstf.comparison.comparator import _compare_points
+
         # Empty ref arrays: an absolute-value point should still score.
         ref_t = np.array([])
         ref_v = np.array([])
         act_t = np.array([0.0, 1.0, 2.0, 3.0])
         act_v = np.array([0.0, 1.0, 2.0, 3.0])
         result = _compare_points(
-            ref_t, ref_v, act_t, act_v,
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
             points=[{"time": 2.0, "value": 2.0, "tolerance": 0.01}],
             tolerance=1.0,
         )
@@ -1187,11 +1287,15 @@ class TestPointsDeclaredPath:
         """A wider per-point tolerance lets a point pass that the
         global tolerance would fail."""
         from dstf.comparison.comparator import _compare_points
+
         ref_t, ref_v, act_t, act_v = self._make_traj()
         # Point at t=2: delta=0.05. Global tolerance=0.01 (would fail);
         # per-point tolerance=0.1 (passes).
         result = _compare_points(
-            ref_t, ref_v, act_t, act_v,
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
             points=[{"time": 2.0, "tolerance": 0.1}],
             tolerance=0.01,
         )
@@ -1200,17 +1304,24 @@ class TestPointsDeclaredPath:
     def test_relative_tolerance_mode(self):
         """tolerance_mode='rel' scales tol by |target|."""
         from dstf.comparison.comparator import _compare_points
+
         ref_t, ref_v, act_t, act_v = self._make_traj()
         # Point at t=4: target=ref(4)=4.0; act(4)=4.001; delta=0.001.
         # rel-tolerance 0.001 → limit = 0.001 * 4 = 0.004 → PASS.
         # rel-tolerance 0.0001 → limit = 0.0001 * 4 = 0.0004 → FAIL.
         passing = _compare_points(
-            ref_t, ref_v, act_t, act_v,
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
             points=[{"time": 4.0, "tolerance": 0.001, "tolerance_mode": "rel"}],
             tolerance=0.01,
         )
         failing = _compare_points(
-            ref_t, ref_v, act_t, act_v,
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
             points=[{"time": 4.0, "tolerance": 0.0001, "tolerance_mode": "rel"}],
             tolerance=0.01,
         )
@@ -1221,10 +1332,14 @@ class TestPointsDeclaredPath:
         """time: null sentinel = the trace's final time (act_time[-1]
         when ref_time is empty, else ref_time[-1])."""
         from dstf.comparison.comparator import _compare_points
+
         ref_t, ref_v, act_t, act_v = self._make_traj()
         # Point at time=null: target = ref(5) = 5.0; act(5) = 5.001; delta=0.001.
         result = _compare_points(
-            ref_t, ref_v, act_t, act_v,
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
             points=[{"time": None, "tolerance": 0.01}],
             tolerance=0.01,
         )
@@ -1234,11 +1349,15 @@ class TestPointsDeclaredPath:
     def test_multiple_points_all_must_match(self):
         """A leaf with 3 points fails if any one fails."""
         from dstf.comparison.comparator import _compare_points
+
         ref_t, ref_v, act_t, act_v = self._make_traj()
         # t=1 (delta=0.001 ✓), t=2 (delta=0.05 ✗), t=3 (delta=0.001 ✓).
         # Tolerance 0.01 → overall FAIL.
         result = _compare_points(
-            ref_t, ref_v, act_t, act_v,
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
             points=[{"time": 1.0}, {"time": 2.0}, {"time": 3.0}],
             tolerance=0.01,
         )
@@ -1252,7 +1371,9 @@ class TestPointsDeclaredPath:
         target at t=3 exactly but hits it at t=2.95.
         """
         import numpy as np
+
         from dstf.comparison.comparator import _compare_points
+
         # ref doesn't matter — point has explicit value.
         ref_t = np.array([0.0, 5.0])
         ref_v = np.array([0.0, 0.0])
@@ -1260,9 +1381,13 @@ class TestPointsDeclaredPath:
         act_t = np.array([0.0, 2.5, 2.9, 2.95, 3.0, 3.5, 5.0])
         act_v = np.array([0.0, 20.0, 28.0, 30.0, 32.0, 35.0, 40.0])
         result = _compare_points(
-            ref_t, ref_v, act_t, act_v,
-            points=[{"time": 3.0, "value": 30.0,
-                     "tolerance": 0.5, "time_tolerance": 0.2}],
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
+            points=[
+                {"time": 3.0, "value": 30.0, "tolerance": 0.5, "time_tolerance": 0.2}
+            ],
             tolerance=0.01,
         )
         # At t=3.0, act is 32 (delta=2 > 0.5). Strict-time would FAIL.
@@ -1273,16 +1398,22 @@ class TestPointsDeclaredPath:
     def test_time_tolerance_fails_when_act_misses_box(self):
         """If the act curve never enters the box, point fails."""
         import numpy as np
+
         from dstf.comparison.comparator import _compare_points
+
         ref_t = np.array([0.0, 5.0])
         ref_v = np.array([0.0, 0.0])
         # act stays well above 30 across the whole [2.8, 3.2] window.
         act_t = np.array([0.0, 2.8, 3.0, 3.2, 5.0])
         act_v = np.array([0.0, 35.0, 36.0, 37.0, 40.0])
         result = _compare_points(
-            ref_t, ref_v, act_t, act_v,
-            points=[{"time": 3.0, "value": 30.0,
-                     "tolerance": 0.5, "time_tolerance": 0.2}],
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
+            points=[
+                {"time": 3.0, "value": 30.0, "tolerance": 0.5, "time_tolerance": 0.2}
+            ],
             tolerance=0.01,
         )
         assert not result.passed
@@ -1292,20 +1423,29 @@ class TestPointsDeclaredPath:
     def test_time_tolerance_zero_degenerates_to_strict_time(self):
         """time_tolerance=0 must behave identically to a single-point check."""
         import numpy as np
+
         from dstf.comparison.comparator import _compare_points
+
         ref_t = np.array([0.0, 5.0])
         ref_v = np.array([0.0, 0.0])
         act_t = np.array([0.0, 2.5, 3.0, 5.0])
         act_v = np.array([0.0, 28.0, 32.0, 40.0])
         # act(3.0) = 32, target = 30, delta = 2 > 0.5 → FAIL with strict time.
         with_xtol = _compare_points(
-            ref_t, ref_v, act_t, act_v,
-            points=[{"time": 3.0, "value": 30.0,
-                     "tolerance": 0.5, "time_tolerance": 0.0}],
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
+            points=[
+                {"time": 3.0, "value": 30.0, "tolerance": 0.5, "time_tolerance": 0.0}
+            ],
             tolerance=0.01,
         )
         without_xtol = _compare_points(
-            ref_t, ref_v, act_t, act_v,
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
             points=[{"time": 3.0, "value": 30.0, "tolerance": 0.5}],
             tolerance=0.01,
         )
@@ -1321,7 +1461,9 @@ class TestPointsDeclaredPath:
         [t_lo, t_hi] PLUS at the interpolated endpoints t_lo and t_hi
         — so we don't miss a curve entering between samples."""
         import numpy as np
+
         from dstf.comparison.comparator import _compare_points
+
         ref_t = np.array([0.0, 5.0])
         ref_v = np.array([0.0, 0.0])
         # Sparse act samples that bracket the target box.
@@ -1332,9 +1474,13 @@ class TestPointsDeclaredPath:
         act_t = np.array([0.0, 2.0, 4.0, 5.0])
         act_v = np.array([0.0, 20.0, 40.0, 50.0])
         result = _compare_points(
-            ref_t, ref_v, act_t, act_v,
-            points=[{"time": 3.0, "value": 30.0,
-                     "tolerance": 1.0, "time_tolerance": 0.5}],
+            ref_t,
+            ref_v,
+            act_t,
+            act_v,
+            points=[
+                {"time": 3.0, "value": 30.0, "tolerance": 1.0, "time_tolerance": 0.5}
+            ],
             tolerance=0.01,
         )
         # Linear interp at t=3 gives act=30, delta=0 → PASS.

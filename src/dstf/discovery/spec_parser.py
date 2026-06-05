@@ -3,14 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
-from ..config import (
-    Config,
-    DEFAULT_METHOD,
-    DEFAULT_STOP_TIME,
-    DEFAULT_TOLERANCE,
-)
 from .test_registry import TestModel
 
 logger = logging.getLogger(__name__)
@@ -102,7 +95,8 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
             if not source_path_resolved.exists():
                 logger.warning(
                     "Test '%s' references missing source file: %s",
-                    model_id, source_path_resolved,
+                    model_id,
+                    source_path_resolved,
                 )
             source_file = source_path_resolved
 
@@ -144,8 +138,10 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
         metrics_raw = entry.get("metrics")
         if metrics_raw is not None:
             from ..comparison.tree_spec import parse_metric_tree
+
             test.metric_tree_spec = parse_metric_tree(
-                metrics_raw, _path=f"tests[{model_id}].metrics",
+                metrics_raw,
+                _path=f"tests[{model_id}].metrics",
             )
 
         tests.append(test)
@@ -165,7 +161,7 @@ def add_to_test_spec(
     and overwrite was not set.
     """
     # Load existing or create new
-    data = {"tests": []}
+    data: dict = {"tests": []}
     if spec_path.exists():
         try:
             data = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -201,7 +197,7 @@ def update_test_variables(
     additional_patterns: list[str],
 ) -> None:
     """Add variable patterns to an existing test entry, or create a new one."""
-    data = {"tests": []}
+    data: dict = {"tests": []}
     if spec_path.exists():
         try:
             data = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -221,10 +217,12 @@ def update_test_variables(
             break
 
     if not found:
-        data["tests"].append({
-            "model": model_id,
-            "variables": sorted(additional_patterns),
-        })
+        data["tests"].append(
+            {
+                "model": model_id,
+                "variables": sorted(additional_patterns),
+            }
+        )
 
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -241,7 +239,7 @@ def update_test_comparison(
 
     update_data format: {"model": "...", "comparison": {"tolerance": 0.05, ...}}
     """
-    data = {"tests": []}
+    data: dict = {"tests": []}
     if spec_path.exists():
         try:
             data = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -265,10 +263,12 @@ def update_test_comparison(
             break
 
     if not found:
-        data["tests"].append({
-            "model": model_id,
-            "comparison": comparison,
-        })
+        data["tests"].append(
+            {
+                "model": model_id,
+                "comparison": comparison,
+            }
+        )
 
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

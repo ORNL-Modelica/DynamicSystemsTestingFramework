@@ -6,18 +6,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from dstf.config import Config
+from dstf.discovery.test_registry import TestModel
+from dstf.simulators.base import TestResult, VariableResult
 from dstf.storage.reference_store import (
-    Baseline,
     PRIMARY_BASELINE,
-    RefIndex,
+    Baseline,
     ReferenceStore,
+    RefIndex,
     _downsample,
     _extract_baselines,
 )
-from dstf.simulators.base import TestResult, VariableResult
-from dstf.discovery.test_registry import TestModel
-from dstf.config import Config
-
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -25,6 +24,7 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 # ---------------------------------------------------------------------------
 # RefIndex (in-memory index built from ref files)
 # ---------------------------------------------------------------------------
+
 
 class TestRefIndex:
     def _write_ref(self, ref_dir, test_id, model_id, status="active"):
@@ -142,6 +142,7 @@ class TestRefIndex:
 # Downsampling
 # ---------------------------------------------------------------------------
 
+
 class TestDownsample:
     def test_short_series_unchanged(self):
         """Series shorter than max points passes through."""
@@ -175,6 +176,7 @@ class TestDownsample:
 # ReferenceStore (store + load round-trip)
 # ---------------------------------------------------------------------------
 
+
 class TestReferenceStore:
     def _make_test_model(self, model_id="ModelicaTestingLib.Examples.Test1"):
         return TestModel(
@@ -197,7 +199,9 @@ class TestReferenceStore:
                 VariableResult(index=2, time=time, values=np.cos(time), name="y"),
             ],
             diagnostics=[
-                VariableResult(index=1, time=time, values=np.linspace(0, 1, 101), name="CPUtime"),
+                VariableResult(
+                    index=1, time=time, values=np.linspace(0, 1, 101), name="CPUtime"
+                ),
             ],
             statistics={"CPUtime": 1.0, "EventCounter": 5},
         )
@@ -432,6 +436,7 @@ class TestReferenceStore:
 # Baseline view (Phase 1.7a: read-side unified interface)
 # ---------------------------------------------------------------------------
 
+
 class TestBaselineView:
     """Legacy flat files and forward multi-baseline files must present the
     same ``Baseline`` view to readers."""
@@ -469,7 +474,8 @@ class TestBaselineView:
         flat = {
             "date_added": "2026-01-15T10:00:00+00:00",
             "last_updated": "2026-01-15T10:00:00+00:00",
-            "time": [], "variables": [],
+            "time": [],
+            "variables": [],
         }
         b = _extract_baselines(flat)[PRIMARY_BASELINE]
         assert "captured_at" in b.provenance
@@ -492,7 +498,9 @@ class TestBaselineView:
                         "citation": "Internal report XYZ",
                     },
                     "time": [0.0, 0.5, 1.0],
-                    "variables": [{"index": 1, "name": "x", "values": [0.0, 0.6, 1.05]}],
+                    "variables": [
+                        {"index": 1, "name": "x", "values": [0.0, 0.6, 1.05]}
+                    ],
                 },
                 "analytical": {
                     "provenance": {"origin": "closed-form"},
@@ -519,12 +527,18 @@ class TestBaselineView:
             "time": [0.0],
             "variables": [],
             "baselines": {
-                "primary": {"simulation": {"stop_time": 999.0}, "time": [], "variables": []},
+                "primary": {
+                    "simulation": {"stop_time": 999.0},
+                    "time": [],
+                    "variables": [],
+                },
             },
         }
         baselines = _extract_baselines(data)
         assert set(baselines.keys()) == {"primary"}
-        assert baselines["primary"].simulation["stop_time"] == 10.0  # from flat, not nested
+        assert (
+            baselines["primary"].simulation["stop_time"] == 10.0
+        )  # from flat, not nested
 
     def test_get_baseline_returns_primary_by_default(self, sample_models_dir, tmp_path):
         """End-to-end: store a ref, then read it back via the Baseline view."""
@@ -565,7 +579,9 @@ class TestBaselineView:
         assert store.list_baseline_names("MyLib.Nonexistent") == []
         assert store.get_baseline("MyLib.Nonexistent") is None
 
-    def test_store_reference_preserves_additional_baselines(self, sample_models_dir, tmp_path):
+    def test_store_reference_preserves_additional_baselines(
+        self, sample_models_dir, tmp_path
+    ):
         """Accepting new primary results must not wipe out non-primary baselines."""
         config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
@@ -580,7 +596,10 @@ class TestBaselineView:
         data = json.loads(ref_file.read_text(encoding="utf-8"))
         data["baselines"] = {
             "experiment": {
-                "provenance": {"origin": "rig-run-2024-03-15", "citation": "Report XYZ"},
+                "provenance": {
+                    "origin": "rig-run-2024-03-15",
+                    "citation": "Report XYZ",
+                },
                 "time": [0.0, 0.5, 1.0],
                 "variables": [{"index": 1, "name": "x", "values": [0.0, 0.5, 1.0]}],
             }
@@ -592,9 +611,14 @@ class TestBaselineView:
 
         data_after = json.loads(ref_file.read_text(encoding="utf-8"))
         assert "experiment" in data_after.get("baselines", {})
-        assert data_after["baselines"]["experiment"]["provenance"]["citation"] == "Report XYZ"
+        assert (
+            data_after["baselines"]["experiment"]["provenance"]["citation"]
+            == "Report XYZ"
+        )
 
-    def test_store_reference_drops_accidental_primary_under_baselines(self, sample_models_dir, tmp_path):
+    def test_store_reference_drops_accidental_primary_under_baselines(
+        self, sample_models_dir, tmp_path
+    ):
         """On rewrite, any 'primary' entry under 'baselines' is dropped (flat fields are authoritative)."""
         config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store = ReferenceStore(config)
@@ -610,4 +634,3 @@ class TestBaselineView:
         data_after = json.loads(ref_file.read_text(encoding="utf-8"))
         # Either the baselines key is absent, or it exists but has no primary entry
         assert "primary" not in data_after.get("baselines", {})
-

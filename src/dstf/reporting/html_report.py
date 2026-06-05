@@ -51,7 +51,8 @@ def generate_html_report(
                     '<table class="details"><tr><th>Variable</th>'
                     "<th>NRMSE</th><th>Range</th><th>Max Abs Err</th>"
                     "<th>At Time</th><th>Ref Final</th><th>Act Final</th></tr>"
-                    + "".join(detail_rows) + "</table>"
+                    + "".join(detail_rows)
+                    + "</table>"
                 )
         elif comp.error_message:
             details = f"<em>{html.escape(comp.error_message)}</em>"
@@ -66,20 +67,17 @@ def generate_html_report(
             )
             details += (
                 '<table class="warnings"><tr><th>Field</th>'
-                "<th>Reference</th><th>Current</th></tr>"
-                + warn_rows + "</table>"
+                "<th>Reference</th><th>Current</th></tr>" + warn_rows + "</table>"
             )
 
         model = html.escape(comp.model_id)
-        rows.append(
-            f"<tr><td>{status}</td><td>{model}</td><td>{details}</td></tr>"
-        )
+        rows.append(f"<tr><td>{status}</td><td>{model}</td><td>{details}</td></tr>")
 
     page = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Modelica Test Report</title>
+<title>DSTF Test Report</title>
 <style>
 body {{ font-family: monospace; margin: 2em; }}
 table {{ border-collapse: collapse; width: 100%; }}
@@ -92,7 +90,7 @@ th {{ background: #f0f0f0; }}
 </style>
 </head>
 <body>
-<h1>Modelica Test Report</h1>
+<h1>DSTF Test Report</h1>
 <div class="summary">
 <strong>{n_passed}</strong> passed,
 <strong>{n_failed}</strong> failed,

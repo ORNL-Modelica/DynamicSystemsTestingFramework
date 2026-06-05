@@ -18,7 +18,6 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -26,13 +25,19 @@ class TestStatus:
     test_key: str
     model_id: str
     status: str = "queued"  # queued | running | passed | failed | timed_out
-    started_at: Optional[float] = None  # time.monotonic — for accurate elapsed computation
-    started_wall: Optional[float] = None  # time.time (epoch) — for JS to compute live "running for Ns"
-    elapsed: Optional[float] = None
-    detail: Optional[str] = None
-    worker_id: Optional[int] = None
-    report_dir: Optional[str] = None  # e.g., "ref_0042" or "test_0005" — matches generate_report_suite naming
-    phase: Optional[str] = None  # "translating" / "simulating" / ... while status == "running"
+    started_at: float | None = None  # time.monotonic — for accurate elapsed computation
+    started_wall: float | None = (
+        None  # time.time (epoch) — for JS to compute live "running for Ns"
+    )
+    elapsed: float | None = None
+    detail: str | None = None
+    worker_id: int | None = None
+    report_dir: str | None = (
+        None  # e.g., "ref_0042" or "test_0005" — matches generate_report_suite naming
+    )
+    phase: str | None = (
+        None  # "translating" / "simulating" / ... while status == "running"
+    )
     # Per-field provenance, plumbed from TestModel.field_sources via register().
     # Surfaced in the dashboard's Resolution column.
     field_sources: dict = field(default_factory=dict)
@@ -44,7 +49,7 @@ class ProgressReporter:
     Writes status.json + dashboard.html to work_dir on every state change.
     """
 
-    def __init__(self, work_dir: Path, total: int, rerun_prefix: Optional[str] = None):
+    def __init__(self, work_dir: Path, total: int, rerun_prefix: str | None = None):
         self.work_dir = work_dir
         self.total = total
         # Stashed for inclusion in status.json so the dashboard's rerun-
@@ -66,8 +71,8 @@ class ProgressReporter:
         self,
         test_key: str,
         model_id: str,
-        report_dir: Optional[str] = None,
-        field_sources: Optional[dict] = None,
+        report_dir: str | None = None,
+        field_sources: dict | None = None,
     ) -> None:
         with self._lock:
             self._tests[test_key] = TestStatus(
@@ -78,7 +83,7 @@ class ProgressReporter:
             )
         self._write()
 
-    def on_start(self, test_key: str, worker_id: Optional[int] = None) -> None:
+    def on_start(self, test_key: str, worker_id: int | None = None) -> None:
         with self._lock:
             ts = self._tests.get(test_key)
             if ts is not None:
@@ -101,7 +106,7 @@ class ProgressReporter:
         test_key: str,
         success: bool,
         elapsed: float,
-        detail: Optional[str] = None,
+        detail: str | None = None,
         timed_out: bool = False,
     ) -> None:
         with self._lock:
@@ -158,7 +163,7 @@ class ProgressReporter:
         # Retry replace on Windows — antivirus, search indexer, browser
         # previews, and Explorer can briefly lock either the tmp or the
         # target file and cause WinError 5/32. Short backoff usually clears it.
-        last_err: Optional[OSError] = None
+        last_err: OSError | None = None
         for delay in (0, 0.05, 0.1, 0.2, 0.5):
             if delay:
                 time.sleep(delay)
@@ -189,7 +194,8 @@ class ProgressReporter:
         writes; the page rendering lives in reporting/dashboard_render.py
         so the live and final pages share one template.
         """
-        from ..reporting.dashboard_render import render_live, render_final
+        from ..reporting.dashboard_render import render_final, render_live
+
         if mode == "live":
             render_live(self.work_dir)
         else:

@@ -21,14 +21,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from .comparator import VariableComparison
-
 
 # ---------------------------------------------------------------------------
 # Uniform metric result (combinator output shape)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class MetricResult:
@@ -52,15 +52,16 @@ class MetricResult:
     """
 
     passed: bool
-    score: Optional[float]
+    score: float | None
     label: str = ""
     diagnostics: dict[str, Any] = field(default_factory=dict)
-    children: list["MetricResult"] = field(default_factory=list)
+    children: list[MetricResult] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
 # Combinator protocol
 # ---------------------------------------------------------------------------
+
 
 class Combinator(ABC):
     """Strategy interface for combining child metric results into one."""
@@ -69,8 +70,7 @@ class Combinator(ABC):
     name: str = ""
 
     @abstractmethod
-    def combine(self, children: list[MetricResult]) -> MetricResult:
-        ...
+    def combine(self, children: list[MetricResult]) -> MetricResult: ...
 
 
 class AndCombinator(Combinator):
@@ -134,7 +134,7 @@ class KOfNCombinator(Combinator):
         passed = n_passed >= self.k
         scores = [c.score for c in children if c.score is not None]
         # Heuristic: score = K-th best child score (or worst if K > len).
-        score: Optional[float]
+        score: float | None
         if not scores:
             score = None
         else:
@@ -196,7 +196,11 @@ class WeightedCombinator(Combinator):
                 },
                 children=list(children),
             )
-        weighted_sum = sum(w * c.score for w, c in zip(self.weights, children))
+        # Weighted children are numeric leaves; a missing score contributes 0.
+        weighted_sum = sum(
+            w * (c.score if c.score is not None else 0.0)
+            for w, c in zip(self.weights, children)
+        )
         passed = (
             weighted_sum < self.threshold
             if self.direction == "less"
@@ -230,7 +234,9 @@ class WarnCombinator(Combinator):
 
     def combine(self, children: list[MetricResult]) -> MetricResult:
         if len(children) != 1:
-            raise ValueError(f"warn combinator expects exactly 1 child, got {len(children)}")
+            raise ValueError(
+                f"warn combinator expects exactly 1 child, got {len(children)}"
+            )
         child = children[0]
         # Surface child's failure (if any) as a warning in diagnostics; parent
         # passes regardless. Score is intentionally None — a warn branch does
@@ -248,6 +254,7 @@ class WarnCombinator(Combinator):
 # ---------------------------------------------------------------------------
 # Leaf adapter + implicit-tree construction
 # ---------------------------------------------------------------------------
+
 
 def leaf_from_variable(vc: VariableComparison) -> MetricResult:
     """Adapt a per-variable ``VariableComparison`` to a leaf ``MetricResult``.

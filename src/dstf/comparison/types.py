@@ -10,7 +10,7 @@ historical-import compatibility, but new code should prefer
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -37,6 +37,7 @@ class VariableComparison:
     bag for metric-specific extras (e.g. event-timing deltas, spectral
     peaks) that future metrics may attach without widening the schema.
     """
+
     index: int
     name: str
     passed: bool
@@ -51,9 +52,9 @@ class VariableComparison:
     tolerance_used: float = 0.0  # The tolerance threshold applied for this variable
     mode: str = "nrmse"  # Comparison mode: "nrmse" or "tube"
     # Tube-specific metrics (populated when mode="tube")
-    tube_points_inside: Optional[float] = None  # Fraction of points inside tube (0-1)
-    tube_worst_violation: Optional[float] = None  # Largest violation (absolute)
-    tube_worst_violation_time: Optional[float] = None  # Time of worst violation
+    tube_points_inside: float | None = None  # Fraction of points inside tube (0-1)
+    tube_worst_violation: float | None = None  # Largest violation (absolute)
+    tube_worst_violation_time: float | None = None  # Time of worst violation
     # Open-ended structured extras — future metrics attach here instead of
     # growing this dataclass (event-timing, spectral, domain-specific scores).
     diagnostics: dict = field(default_factory=dict)
@@ -62,6 +63,7 @@ class VariableComparison:
 @dataclass
 class StructuralWarning:
     """Warning about structural changes between reference and current run."""
+
     field: str
     reference_value: str
     current_value: str
@@ -70,16 +72,17 @@ class StructuralWarning:
 @dataclass
 class TestComparison:
     """Comparison result for a full test model."""
+
     model_id: str
     passed: bool
-    test_id: Optional[str] = None  # ref file ID (e.g., "0001")
+    test_id: str | None = None  # ref file ID (e.g., "0001")
     variables: list[VariableComparison] = field(default_factory=list)
     warnings: list[StructuralWarning] = field(default_factory=list)
-    error_message: Optional[str] = None
+    error_message: str | None = None
     sim_success: bool = True
     has_reference: bool = True
     # Phase 3.1: MetricTree root for this test. Today populated as the
     # implicit flat-AND over per-variable comparisons (matches `passed`
     # exactly). Phase 3.2+ replaces with user-authored trees from
     # test_spec.json. None when no comparison ran (sim failure, no baseline).
-    metric_tree: Optional["MetricResult"] = None
+    metric_tree: MetricResult | None = None

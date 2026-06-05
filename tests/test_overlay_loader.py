@@ -5,14 +5,12 @@ Soft_checks come from the reference store; companions come from external
 companion file that has moved or is unparseable must not fail the
 report render.
 """
+
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
-
-import pytest
 
 from dstf.reporting.overlay_loader import (
     Overlay,
@@ -28,8 +26,8 @@ class _FakeCompanion:
     name: str
     kind: str
     format: str = "json"
-    path: Optional[str] = None
-    data_file: Optional[str] = None
+    path: str | None = None
+    data_file: str | None = None
     provenance: dict = field(default_factory=dict)
 
 
@@ -48,7 +46,9 @@ class _FakeStore:
     dragging the real ReferenceStore + on-disk ref file format in.
     """
 
-    def __init__(self, ref_dir: Path, soft_checks=None, companions=None, companion_dir=None):
+    def __init__(
+        self, ref_dir: Path, soft_checks=None, companions=None, companion_dir=None
+    ):
         self.ref_dir = ref_dir
         self._soft_checks = soft_checks or {}
         self._companions = companions or {}
@@ -110,12 +110,16 @@ class TestSoftCheckLoading:
 class TestCompanionJSON:
     def test_loads_json_with_time_plus_variables(self, tmp_path):
         data_file = tmp_path / "ext.json"
-        data_file.write_text(json.dumps({
-            "time": [0.0, 1.0, 2.0],
-            "variables": [
-                {"name": "h", "values": [1.0, 2.0, 3.0]},
-            ],
-        }))
+        data_file.write_text(
+            json.dumps(
+                {
+                    "time": [0.0, 1.0, 2.0],
+                    "variables": [
+                        {"name": "h", "values": [1.0, 2.0, 3.0]},
+                    ],
+                }
+            )
+        )
         companion = _FakeCompanion(
             name="analytical",
             kind="external",
@@ -132,10 +136,14 @@ class TestCompanionJSON:
     def test_relative_path_resolved_against_ref_dir(self, tmp_path):
         data_file = tmp_path / "companions" / "analytical.json"
         data_file.parent.mkdir()
-        data_file.write_text(json.dumps({
-            "time": [0.0, 1.0],
-            "variables": [{"name": "h", "values": [0.1, 0.9]}],
-        }))
+        data_file.write_text(
+            json.dumps(
+                {
+                    "time": [0.0, 1.0],
+                    "variables": [{"name": "h", "values": [0.1, 0.9]}],
+                }
+            )
+        )
         companion = _FakeCompanion(
             name="analytical",
             kind="external",
@@ -176,10 +184,14 @@ class TestCompanionJSON:
         co_dir = tmp_path / "companions_dir"
         co_dir.mkdir()
         data_file = co_dir / "rig.data.json"
-        data_file.write_text(json.dumps({
-            "time": [0.0, 1.0],
-            "variables": [{"name": "h", "values": [0.0, 1.0]}],
-        }))
+        data_file.write_text(
+            json.dumps(
+                {
+                    "time": [0.0, 1.0],
+                    "variables": [{"name": "h", "values": [0.0, 1.0]}],
+                }
+            )
+        )
         companion = _FakeCompanion(
             name="rig",
             kind="frozen",
@@ -187,7 +199,9 @@ class TestCompanionJSON:
             data_file="rig.data.json",
         )
         store = _FakeStore(
-            tmp_path, companions={"rig": companion}, companion_dir=co_dir,
+            tmp_path,
+            companions={"rig": companion},
+            companion_dir=co_dir,
         )
         overlays = load_overlays(store, "M")
         assert overlays[0].status == "loaded"
@@ -215,7 +229,10 @@ class TestCompanionCSV:
         csv_file = tmp_path / "rig.csv"
         csv_file.write_text("time,h\n0.0,1.0\nnot-a-number,0.5\n2.0,3.0\n")
         companion = _FakeCompanion(
-            name="rig", kind="external", format="csv", path=str(csv_file),
+            name="rig",
+            kind="external",
+            format="csv",
+            path=str(csv_file),
         )
         store = _FakeStore(tmp_path, companions={"rig": companion})
         overlays = load_overlays(store, "M")
@@ -227,7 +244,10 @@ class TestCompanionCSV:
         csv_file = tmp_path / "empty.csv"
         csv_file.write_text("")
         companion = _FakeCompanion(
-            name="empty", kind="external", format="csv", path=str(csv_file),
+            name="empty",
+            kind="external",
+            format="csv",
+            path=str(csv_file),
         )
         store = _FakeStore(tmp_path, companions={"empty": companion})
         overlays = load_overlays(store, "M")
@@ -242,7 +262,9 @@ class TestAttachOverlaysToTrajectories:
         ]
         overlays = [
             Overlay(
-                name="experiment", role="soft_check", status="loaded",
+                name="experiment",
+                role="soft_check",
+                status="loaded",
                 variables={
                     "h": OverlayVariable(time=[0, 1, 2], values=[1, 0.5, 0.1]),
                 },
@@ -257,8 +279,12 @@ class TestAttachOverlaysToTrajectories:
     def test_skips_non_loaded_overlays(self):
         trajectories = [{"name": "h"}]
         overlays = [
-            Overlay(name="missing_one", role="companion", status="missing",
-                    variables={"h": OverlayVariable(time=[], values=[])}),
+            Overlay(
+                name="missing_one",
+                role="companion",
+                status="missing",
+                variables={"h": OverlayVariable(time=[], values=[])},
+            ),
         ]
         attach_overlays_to_trajectories(trajectories, overlays)
         assert trajectories[0]["overlays"] == []
@@ -276,8 +302,10 @@ class TestAttachOverlaysToTrajectories:
         ]
         overlays = [
             Overlay(
-                name="OpenModelica/linux", role="companion",
-                kind="sibling-backend", status="loaded",
+                name="OpenModelica/linux",
+                role="companion",
+                kind="sibling-backend",
+                status="loaded",
                 variables={
                     "h": OverlayVariable(time=[0, 1, 2], values=[1, 0.6, 0.1]),
                 },
@@ -297,10 +325,19 @@ class TestAttachOverlaysToTrajectories:
 class TestOverlaySummary:
     def test_surfaces_missing_and_invalid(self):
         overlays = [
-            Overlay(name="rig", role="companion", kind="external",
-                    status="missing", note="file not found"),
-            Overlay(name="experiment", role="soft_check", status="loaded",
-                    variables={"h": OverlayVariable(time=[0], values=[1])}),
+            Overlay(
+                name="rig",
+                role="companion",
+                kind="external",
+                status="missing",
+                note="file not found",
+            ),
+            Overlay(
+                name="experiment",
+                role="soft_check",
+                status="loaded",
+                variables={"h": OverlayVariable(time=[0], values=[1])},
+            ),
         ]
         rows = overlay_summary(overlays)
         assert len(rows) == 2
@@ -338,22 +375,30 @@ class TestStoreExceptionsSwallowed:
 # Sibling-backend auto-companions
 # ---------------------------------------------------------------------------
 
+
 class _FakeConfigForSibling:
     """Minimum surface load_sibling_backend_overlays touches."""
+
     def __init__(self, reference_root, simulator_backend, os_name):
         self.reference_root = reference_root
         self.simulator_backend = simulator_backend
         self.os_name = os_name
 
 
-def _write_ref(dir_path: Path, stem: str, model_id: str, varname: str = "h", status: str = "active"):
+def _write_ref(
+    dir_path: Path, stem: str, model_id: str, varname: str = "h", status: str = "active"
+):
     dir_path.mkdir(parents=True, exist_ok=True)
-    (dir_path / f"{stem}.json").write_text(json.dumps({
-        "model_id": model_id,
-        "status": status,
-        "time": [0.0, 0.5, 1.0],
-        "variables": [{"name": varname, "values": [1.0, 0.5, 0.0]}],
-    }))
+    (dir_path / f"{stem}.json").write_text(
+        json.dumps(
+            {
+                "model_id": model_id,
+                "status": status,
+                "time": [0.0, 0.5, 1.0],
+                "variables": [{"name": varname, "values": [1.0, 0.5, 0.0]}],
+            }
+        )
+    )
 
 
 class TestSiblingBackendOverlays:
@@ -364,12 +409,14 @@ class TestSiblingBackendOverlays:
         from dstf.reporting.overlay_loader import (
             _sibling_backend_index,
         )
+
         _sibling_backend_index.cache_clear()
 
     def test_discovers_peer_backend_ref(self, tmp_path):
         from dstf.reporting.overlay_loader import (
             load_sibling_backend_overlays,
         )
+
         # Dymola/windows has a ref for model M; current partition is
         # OpenModelica/linux (which may or may not have its own).
         _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
@@ -388,6 +435,7 @@ class TestSiblingBackendOverlays:
         from dstf.reporting.overlay_loader import (
             load_sibling_backend_overlays,
         )
+
         # Only the current partition has a ref — nothing to overlay.
         _write_ref(tmp_path / "OpenModelica" / "linux", "ref_0001", "M")
         cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
@@ -397,8 +445,8 @@ class TestSiblingBackendOverlays:
         from dstf.reporting.overlay_loader import (
             load_sibling_backend_overlays,
         )
-        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M",
-                   status="obsolete")
+
+        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M", status="obsolete")
         cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
         assert load_sibling_backend_overlays(cfg, "M") == []
 
@@ -406,6 +454,7 @@ class TestSiblingBackendOverlays:
         from dstf.reporting.overlay_loader import (
             load_sibling_backend_overlays,
         )
+
         _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
         _write_ref(tmp_path / "FMPy" / "linux", "ref_0001", "M")
         cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
@@ -417,12 +466,14 @@ class TestSiblingBackendOverlays:
         """load_overlays without a config must behave identically to the
         old API — no auto-discovery."""
         from dstf.reporting.overlay_loader import load_overlays
+
         _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
         store = _FakeStore(tmp_path / "OpenModelica" / "linux")
         assert load_overlays(store, "M") == []
 
     def test_load_overlays_integrates_sibling_when_config_passed(self, tmp_path):
         from dstf.reporting.overlay_loader import load_overlays
+
         _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
         store = _FakeStore(tmp_path / "OpenModelica" / "linux")
         cfg = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")

@@ -7,7 +7,6 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -25,8 +24,8 @@ from ..base import (
     _print_run_header,
     resolve_variable_patterns,
 )
-from .log_parser import parse_dslog
 from ..common.mat_reader import list_result_mat_variables, read_result_mat
+from .log_parser import parse_dslog
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +33,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class DymolaConfig:
     """Dymola-specific settings extracted from the universal Config."""
+
     show_ide: bool = False
     simulator_setup: list[str] = field(default_factory=list)
     diagnostic_variables: list[str] = field(
@@ -60,16 +60,18 @@ class DymolaRunner(SimulatorRunner):
     startup overhead for large test suites.
     """
 
-    capabilities = frozenset({
-        Capability.PERSISTENT_WORKERS,  # DymolaInterface-based workers (default)
-        Capability.BATCH_FALLBACK,      # .mos script runner (--batch flag)
-        Capability.FMU_EXPORT,          # via translateModelFMU; persistent path
-                                        # implements it natively. Batch-mode
-                                        # export is declared (so cross-backend
-                                        # chains run for batch-only codebases)
-                                        # but the actual .mos-driven export path
-                                        # is not yet wired — see export_fmu().
-    })
+    capabilities = frozenset(
+        {
+            Capability.PERSISTENT_WORKERS,  # DymolaInterface-based workers (default)
+            Capability.BATCH_FALLBACK,  # .mos script runner (--batch flag)
+            Capability.FMU_EXPORT,  # via translateModelFMU; persistent path
+            # implements it natively. Batch-mode
+            # export is declared (so cross-backend
+            # chains run for batch-only codebases)
+            # but the actual .mos-driven export path
+            # is not yet wired — see export_fmu().
+        }
+    )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
     artifact_files = (
         ("dslog.txt", "Simulation log"),
@@ -87,6 +89,7 @@ class DymolaRunner(SimulatorRunner):
     @classmethod
     def persistent_runner_cls(cls):
         from .persistent_runner import PersistentDymolaRunner
+
         return PersistentDymolaRunner
 
     def export_fmu(self, test: TestModel, output_dir: Path) -> Path:
@@ -116,21 +119,26 @@ class DymolaRunner(SimulatorRunner):
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         total = len(tests)
 
-        from ..progress import ProgressReporter
         from ...reporting.dashboard_render import build_rerun_prefix
+        from ..progress import ProgressReporter
+
         self.progress = ProgressReporter(
-            self.config.work_dir, total,
+            self.config.work_dir,
+            total,
             rerun_prefix=build_rerun_prefix(self.config),
         )
 
         # Assign test_keys (reuse existing from prior runs if present —
         # supports incremental workflow where the manifest accumulates).
         from ..base import assign_test_keys
+
         manifest_map, test_items = assign_test_keys(self.config.work_dir, tests)
         for test, test_key in test_items:
             report_dir = self.ref_id_map.get(test.model_id) or test_key
             self.progress.register(
-                test_key, test.model_id, report_dir=report_dir,
+                test_key,
+                test.model_id,
+                report_dir=report_dir,
                 field_sources=test.field_sources,
             )
 
@@ -149,6 +157,7 @@ class DymolaRunner(SimulatorRunner):
         # outside cmd_run (e.g., direct test harness calls). Cheap (rmtree
         # on empty) and self-documenting at the point freshness matters.
         import shutil
+
         for test, test_key in test_items:
             test_dir = self.config.work_dir / test_key
             if test_dir.exists():
@@ -171,11 +180,14 @@ class DymolaRunner(SimulatorRunner):
             batch_size = math.ceil(total / n_workers)
         batches = []
         for i in range(0, total, batch_size):
-            batches.append(test_items[i:i + batch_size])
+            batches.append(test_items[i : i + batch_size])
 
         _print_run_header(
-            total, f"in {len(batches)} batch(es) of up to {batch_size}",
-            n_workers, self.config.timeout, self.config.work_dir,
+            total,
+            f"in {len(batches)} batch(es) of up to {batch_size}",
+            n_workers,
+            self.config.timeout,
+            self.config.work_dir,
             timeout_per_test=True,
         )
 
@@ -187,7 +199,12 @@ class DymolaRunner(SimulatorRunner):
             offset = 0
             for batch in batches:
                 results = self._run_batch(
-                    batch, startup_path, shutdown_path, offset, total, worker_id=0,
+                    batch,
+                    startup_path,
+                    shutdown_path,
+                    offset,
+                    total,
+                    worker_id=0,
                 )
                 all_results.extend(results)
                 offset += len(batch)
@@ -196,8 +213,9 @@ class DymolaRunner(SimulatorRunner):
             # batch as they become free (natural load balancing + crash isolation).
             # worker_id attribution comes from the thread name so the dashboard can
             # group tests by actual worker slot rather than batch index.
+            import re
+            import threading
             from concurrent.futures import ThreadPoolExecutor, as_completed
-            import threading, re
 
             def _worker_slot() -> int:
                 m = re.search(r"(\d+)$", threading.current_thread().name)
@@ -205,8 +223,12 @@ class DymolaRunner(SimulatorRunner):
 
             def _run(batch, offset):
                 return self._run_batch(
-                    batch, startup_path, shutdown_path,
-                    offset, total, worker_id=_worker_slot(),
+                    batch,
+                    startup_path,
+                    shutdown_path,
+                    offset,
+                    total,
+                    worker_id=_worker_slot(),
                 )
 
             offset = 0
@@ -247,7 +269,7 @@ class DymolaRunner(SimulatorRunner):
         shutdown_path: Path,
         index_offset: int,
         total: int,
-        worker_id: Optional[int] = None,
+        worker_id: int | None = None,
     ) -> list[TestRunResult]:
         """Run a batch of tests in a single Dymola session."""
         work_dir = self.config.work_dir
@@ -267,10 +289,13 @@ class DymolaRunner(SimulatorRunner):
 
         # Calculate total timeout: per-test timeout * number of tests + startup overhead
         startup_overhead = 120  # seconds for library loading
-        total_timeout = sum(
-            t.timeout if t.timeout is not None else self.config.timeout
-            for t, _ in test_items
-        ) + startup_overhead
+        total_timeout = (
+            sum(
+                t.timeout if t.timeout is not None else self.config.timeout
+                for t, _ in test_items
+            )
+            + startup_overhead
+        )
 
         # Run the batch
         start_time = time.monotonic()
@@ -298,34 +323,43 @@ class DymolaRunner(SimulatorRunner):
             results = []
             per_elapsed = batch_elapsed / len(test_items)
             for test, test_key in test_items:
-                results.append(TestRunResult(
-                    model_id=test.model_id,
-                    test_key=test_key,
-                    success=False,
-                    elapsed=per_elapsed,
-                    error_message=f"Batch timed out after {total_timeout}s",
-                    timed_out=True,
-                ))
+                results.append(
+                    TestRunResult(
+                        model_id=test.model_id,
+                        test_key=test_key,
+                        success=False,
+                        elapsed=per_elapsed,
+                        error_message=f"Batch timed out after {total_timeout}s",
+                        timed_out=True,
+                    )
+                )
                 if self.progress is not None:
                     self.progress.on_finish(
-                        test_key, success=False, elapsed=per_elapsed,
-                        detail="Batch timed out", timed_out=True,
+                        test_key,
+                        success=False,
+                        elapsed=per_elapsed,
+                        detail="Batch timed out",
+                        timed_out=True,
                     )
             return results
 
         except FileNotFoundError:
             results = []
             for test, test_key in test_items:
-                results.append(TestRunResult(
-                    model_id=test.model_id,
-                    test_key=test_key,
-                    success=False,
-                    elapsed=0.0,
-                    error_message=f"Dymola not found: {self.config.simulator_path}",
-                ))
+                results.append(
+                    TestRunResult(
+                        model_id=test.model_id,
+                        test_key=test_key,
+                        success=False,
+                        elapsed=0.0,
+                        error_message=f"Dymola not found: {self.config.simulator_path}",
+                    )
+                )
                 if self.progress is not None:
                     self.progress.on_finish(
-                        test_key, success=False, elapsed=0.0,
+                        test_key,
+                        success=False,
+                        elapsed=0.0,
                         detail="Dymola not found",
                     )
             return results
@@ -333,6 +367,7 @@ class DymolaRunner(SimulatorRunner):
         # Evaluate results per test: check if .mat file was produced
         results = []
         from ..base import _print_progress
+
         for i, (test, test_key) in enumerate(test_items):
             test_dir = work_dir / test_key
             mat_path = test_dir / "dsres.mat"
@@ -351,7 +386,9 @@ class DymolaRunner(SimulatorRunner):
                     for key, value in translation_stats.items():
                         if key not in statistics:
                             statistics[key] = value
-                        elif isinstance(value, dict) and isinstance(statistics[key], dict):
+                        elif isinstance(value, dict) and isinstance(
+                            statistics[key], dict
+                        ):
                             statistics[key].update(value)
                         else:
                             statistics[key] = value
@@ -362,7 +399,9 @@ class DymolaRunner(SimulatorRunner):
             if translation_log.exists():
                 try:
                     tlog = translation_log.read_text(encoding="utf-8", errors="replace")
-                    if "Translation aborted" in tlog or tlog.strip().endswith("= false"):
+                    if "Translation aborted" in tlog or tlog.strip().endswith(
+                        "= false"
+                    ):
                         translation_failed = True
                 except OSError:
                     pass
@@ -374,9 +413,10 @@ class DymolaRunner(SimulatorRunner):
             # incrementally, so a killed/aborted sim can leave a partial file.
             dsfinal_path = test_dir / "dsfinal.txt"
             sim_completed = False
-            completion_msg: Optional[str] = None
+            completion_msg: str | None = None
             if not translation_failed and mat_path.exists() and dsfinal_path.exists():
                 from ..common.mat_reader import read_mat_time_extents
+
                 extents = read_mat_time_extents(mat_path)
                 stop_time = float(test.stop_time)
                 if extents is not None:
@@ -394,19 +434,26 @@ class DymolaRunner(SimulatorRunner):
             per_elapsed = batch_elapsed / len(test_items)
             if sim_completed:
                 _print_progress(
-                    index_offset + i + 1, total, label, "ok",
+                    index_offset + i + 1,
+                    total,
+                    label,
+                    "ok",
                     elapsed=per_elapsed,
                 )
-                results.append(TestRunResult(
-                    model_id=test.model_id,
-                    test_key=test_key,
-                    success=True,
-                    elapsed=per_elapsed,
-                    statistics=statistics,
-                ))
+                results.append(
+                    TestRunResult(
+                        model_id=test.model_id,
+                        test_key=test_key,
+                        success=True,
+                        elapsed=per_elapsed,
+                        statistics=statistics,
+                    )
+                )
                 if self.progress is not None:
                     self.progress.on_finish(
-                        test_key, success=True, elapsed=per_elapsed,
+                        test_key,
+                        success=True,
+                        elapsed=per_elapsed,
                     )
             else:
                 if translation_failed:
@@ -421,7 +468,9 @@ class DymolaRunner(SimulatorRunner):
                 dslog_path = test_dir / "dslog.txt"
                 if dslog_path.exists():
                     try:
-                        log_text = dslog_path.read_text(encoding="utf-8", errors="replace")
+                        log_text = dslog_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
                         if "ERROR" in log_text or "error" in log_text:
                             lines = log_text.strip().split("\n")
                             msg = msg + " | " + " | ".join(lines[-3:])
@@ -429,20 +478,28 @@ class DymolaRunner(SimulatorRunner):
                         pass
 
                 _print_progress(
-                    index_offset + i + 1, total, label, "FAIL",
-                    elapsed=per_elapsed, detail=msg[:80],
-                )
-                results.append(TestRunResult(
-                    model_id=test.model_id,
-                    test_key=test_key,
-                    success=False,
+                    index_offset + i + 1,
+                    total,
+                    label,
+                    "FAIL",
                     elapsed=per_elapsed,
-                    error_message=msg,
-                    statistics=statistics,
-                ))
+                    detail=msg[:80],
+                )
+                results.append(
+                    TestRunResult(
+                        model_id=test.model_id,
+                        test_key=test_key,
+                        success=False,
+                        elapsed=per_elapsed,
+                        error_message=msg,
+                        statistics=statistics,
+                    )
+                )
                 if self.progress is not None:
                     self.progress.on_finish(
-                        test_key, success=False, elapsed=per_elapsed,
+                        test_key,
+                        success=False,
+                        elapsed=per_elapsed,
                         detail=msg[:120],
                     )
 
@@ -452,14 +509,20 @@ class DymolaRunner(SimulatorRunner):
         self,
         test: TestModel,
         test_key: str,
-        run_result: Optional[TestRunResult],
+        run_result: TestRunResult | None,
     ) -> TestResult:
-        stats = dict(run_result.statistics) if run_result and run_result.statistics else None
+        stats = (
+            dict(run_result.statistics)
+            if run_result and run_result.statistics
+            else None
+        )
         # Surface phase-timing breakdown so it appears in reports.
         # All values are wall-clock seconds captured on the Python side —
         # distinct from Dymola's own CPU-time stats (which cover just
         # integration work, not our full test pipeline).
-        if run_result and (run_result.translation_wall is not None or run_result.sim_wall is not None):
+        if run_result and (
+            run_result.translation_wall is not None or run_result.sim_wall is not None
+        ):
             # Ordered: translation → simulation → other → total (rough
             # operation order). Rounded to 2 decimals at storage time so
             # the on-disk reference JSON stays clean.
@@ -469,7 +532,9 @@ class DymolaRunner(SimulatorRunner):
             if run_result.sim_wall is not None:
                 timing["sim_wall"] = round(run_result.sim_wall, 2)
             if run_result.elapsed:
-                t_acct = (run_result.translation_wall or 0.0) + (run_result.sim_wall or 0.0)
+                t_acct = (run_result.translation_wall or 0.0) + (
+                    run_result.sim_wall or 0.0
+                )
                 other = max(0.0, run_result.elapsed - t_acct)
                 timing["other_wall"] = round(other, 2)
                 timing["total_wall"] = round(run_result.elapsed, 2)
@@ -490,7 +555,9 @@ class DymolaRunner(SimulatorRunner):
         # Phase 1: Get variable names (fast — reads only the name matrix)
         # Then resolve patterns to determine which variables we actually need.
         needed_vars = _compute_needed_variables(
-            mat_path, test, self.dymola_config.diagnostic_variables,
+            mat_path,
+            test,
+            self.dymola_config.diagnostic_variables,
         )
 
         # Phase 2: Load only needed variables from the .mat file
@@ -504,7 +571,9 @@ class DymolaRunner(SimulatorRunner):
             )
 
         variables, diagnostics = _extract_variables(
-            mat_data, test, self.dymola_config.diagnostic_variables,
+            mat_data,
+            test,
+            self.dymola_config.diagnostic_variables,
         )
 
         # Add diagnostic final values to statistics
@@ -528,6 +597,7 @@ class DymolaRunner(SimulatorRunner):
 # ---------------------------------------------------------------------------
 # .mos script generation
 # ---------------------------------------------------------------------------
+
 
 def _generate_startup_mos(config: Config, dymola_config: DymolaConfig) -> Path:
     """Generate startup.mos: load dependencies, main library, and setup commands."""
@@ -603,11 +673,11 @@ def _generate_test_mos(
     parts.append('resultFile="dsres"')
 
     lines = [
-        f'// {test.model_id}',
+        f"// {test.model_id}",
         f'cd("{test_dir.as_posix()}");',
-        f'clearlog();',
-        f'simulateModel({",".join(parts)});',
-        f'savelog("translation_log.txt");',
+        "clearlog();",
+        f"simulateModel({','.join(parts)});",
+        'savelog("translation_log.txt");',
     ]
 
     script_path = test_dir / "simulate.mos"
@@ -628,7 +698,7 @@ def _generate_batch_mos(
         f'RunScript("{startup_path.as_posix()}");',
     ]
 
-    for test, test_key in test_items:
+    for _test, test_key in test_items:
         test_mos = work_dir / test_key / "simulate.mos"
         lines.append(f'RunScript("{test_mos.as_posix()}");')
 
@@ -643,11 +713,12 @@ def _generate_batch_mos(
 # Result extraction
 # ---------------------------------------------------------------------------
 
+
 def _compute_needed_variables(
     mat_path: Path,
     test: TestModel,
     diagnostic_vars: list[str] = None,
-) -> Optional[set[str]]:
+) -> set[str] | None:
     """Determine which variables need to be extracted from a .mat file.
 
     Returns a set of variable names, or None to load everything (fallback).
@@ -709,14 +780,17 @@ def _extract_variables(
                     expr = f"{test.x_expressions[0]}[{i}]"
                 else:
                     expr = f"x[{i}]"
-                results.append(VariableResult(index=idx, time=time, values=values, name=expr))
+                results.append(
+                    VariableResult(index=idx, time=time, values=values, name=expr)
+                )
                 seen_names.add(var_name)
                 seen_names.add(expr)
                 idx += 1
             else:
                 logger.warning(
                     "Variable %s not found in simulation output for %s",
-                    var_name, test.model_id,
+                    var_name,
+                    test.model_id,
                 )
 
     # 2. Pattern-based variables (source = "spec" or "both")
@@ -728,7 +802,9 @@ def _extract_variables(
                 continue
             if var_name in mat_data:
                 time, values = mat_data[var_name]
-                results.append(VariableResult(index=idx, time=time, values=values, name=var_name))
+                results.append(
+                    VariableResult(index=idx, time=time, values=values, name=var_name)
+                )
                 seen_names.add(var_name)
                 idx += 1
 
@@ -738,9 +814,14 @@ def _extract_variables(
     for var_name in diagnostic_vars:
         if var_name in mat_data:
             time, values = mat_data[var_name]
-            diagnostics.append(VariableResult(
-                index=diag_idx, time=time, values=values, name=var_name,
-            ))
+            diagnostics.append(
+                VariableResult(
+                    index=diag_idx,
+                    time=time,
+                    values=values,
+                    name=var_name,
+                )
+            )
             diag_idx += 1
 
     return results, diagnostics

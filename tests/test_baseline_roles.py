@@ -5,6 +5,7 @@ APIs. Covers the three-role separation at the persistence level:
 primary (existing), soft_checks (scored with ``against:`` inside ``warn``),
 companions (plot-only overlays, never scored against).
 """
+
 from __future__ import annotations
 
 import json
@@ -17,7 +18,6 @@ from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
 from dstf.simulators.base import TestResult, VariableResult
 from dstf.storage.reference_store import (
-    Companion,
     ReferenceStore,
 )
 
@@ -57,6 +57,7 @@ def store_with_primary(sample_models_dir, tmp_path):
 # Soft_checks
 # ---------------------------------------------------------------------------
 
+
 class TestSoftCheckStorage:
     def test_empty_by_default(self, store_with_primary):
         store, test = store_with_primary
@@ -65,8 +66,10 @@ class TestSoftCheckStorage:
     def test_add_creates_file_in_subdir(self, store_with_primary):
         store, test = store_with_primary
         ok = store.add_soft_check(
-            test.model_id, "experiment",
-            time=[0.0, 1.0, 2.0], variables=[{"index": 1, "name": "x", "values": [0.0, 0.5, 0.9]}],
+            test.model_id,
+            "experiment",
+            time=[0.0, 1.0, 2.0],
+            variables=[{"index": 1, "name": "x", "values": [0.0, 0.5, 0.9]}],
             provenance={"source": "rig-A"},
         )
         assert ok is True
@@ -81,8 +84,10 @@ class TestSoftCheckStorage:
     def test_get_roundtrip(self, store_with_primary):
         store, test = store_with_primary
         store.add_soft_check(
-            test.model_id, "cross-check",
-            time=[0.0, 1.0], variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            test.model_id,
+            "cross-check",
+            time=[0.0, 1.0],
+            variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
         )
         soft_checks = store.get_soft_checks(test.model_id)
         assert "cross-check" in soft_checks
@@ -92,8 +97,10 @@ class TestSoftCheckStorage:
         """The combined baseline view (for comparator) covers primary + soft_checks."""
         store, test = store_with_primary
         store.add_soft_check(
-            test.model_id, "experiment",
-            time=[0.0, 1.0], variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
+            test.model_id,
+            "experiment",
+            time=[0.0, 1.0],
+            variables=[{"index": 1, "name": "x", "values": [0.0, 1.0]}],
         )
         baselines = store.get_baselines(test.model_id)
         assert set(baselines) == {"primary", "experiment"}
@@ -101,8 +108,10 @@ class TestSoftCheckStorage:
     def test_remove(self, store_with_primary):
         store, test = store_with_primary
         store.add_soft_check(
-            test.model_id, "foo",
-            time=[0.0], variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            test.model_id,
+            "foo",
+            time=[0.0],
+            variables=[{"index": 1, "name": "x", "values": [0.0]}],
         )
         assert store.remove_soft_check(test.model_id, "foo") is True
         assert store.get_soft_checks(test.model_id) == {}
@@ -112,12 +121,16 @@ class TestSoftCheckStorage:
     def test_overwrite_false_refuses_existing(self, store_with_primary):
         store, test = store_with_primary
         store.add_soft_check(
-            test.model_id, "foo",
-            time=[0.0], variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            test.model_id,
+            "foo",
+            time=[0.0],
+            variables=[{"index": 1, "name": "x", "values": [0.0]}],
         )
         ok = store.add_soft_check(
-            test.model_id, "foo",
-            time=[1.0], variables=[{"index": 1, "name": "x", "values": [1.0]}],
+            test.model_id,
+            "foo",
+            time=[1.0],
+            variables=[{"index": 1, "name": "x", "values": [1.0]}],
             overwrite=False,
         )
         assert ok is False
@@ -128,16 +141,20 @@ class TestSoftCheckStorage:
         store, test = store_with_primary
         with pytest.raises(ValueError, match="primary"):
             store.add_soft_check(
-                test.model_id, "primary",
-                time=[0.0], variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                test.model_id,
+                "primary",
+                time=[0.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0]}],
             )
 
     def test_empty_name_rejected(self, store_with_primary):
         store, test = store_with_primary
         with pytest.raises(ValueError, match="non-empty"):
             store.add_soft_check(
-                test.model_id, "",
-                time=[0.0], variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                test.model_id,
+                "",
+                time=[0.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0]}],
             )
 
     def test_without_primary_raises(self, sample_models_dir, tmp_path):
@@ -145,14 +162,17 @@ class TestSoftCheckStorage:
         store = ReferenceStore(config)
         with pytest.raises(FileNotFoundError, match="primary"):
             store.add_soft_check(
-                "Nonexistent.Test", "foo",
-                time=[0.0], variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                "Nonexistent.Test",
+                "foo",
+                time=[0.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0]}],
             )
 
 
 # ---------------------------------------------------------------------------
 # Companions
 # ---------------------------------------------------------------------------
+
 
 class TestCompanionStorage:
     def test_empty_by_default(self, store_with_primary):
@@ -164,7 +184,8 @@ class TestCompanionStorage:
         external = tmp_path / "rig_data.csv"
         external.write_text("time,value\n0,0\n1,1\n")
         ok = store.add_companion(
-            test.model_id, "rig",
+            test.model_id,
+            "rig",
             path=external,
             provenance={"campaign": "2026-Q1"},
         )
@@ -261,30 +282,41 @@ class TestCompanionStorage:
 # Cross-role namespace
 # ---------------------------------------------------------------------------
 
+
 class TestRoleNamespace:
-    def test_soft_check_rejects_companion_name_collision(self, store_with_primary, tmp_path):
+    def test_soft_check_rejects_companion_name_collision(
+        self, store_with_primary, tmp_path
+    ):
         store, test = store_with_primary
         src = tmp_path / "data.csv"
         src.write_text("x\n1\n")
         store.add_companion(test.model_id, "shared-name", path=src)
         with pytest.raises(ValueError, match="companion"):
             store.add_soft_check(
-                test.model_id, "shared-name",
-                time=[0.0], variables=[{"index": 1, "name": "x", "values": [0.0]}],
+                test.model_id,
+                "shared-name",
+                time=[0.0],
+                variables=[{"index": 1, "name": "x", "values": [0.0]}],
             )
 
-    def test_companion_rejects_soft_check_name_collision(self, store_with_primary, tmp_path):
+    def test_companion_rejects_soft_check_name_collision(
+        self, store_with_primary, tmp_path
+    ):
         store, test = store_with_primary
         store.add_soft_check(
-            test.model_id, "shared-name",
-            time=[0.0], variables=[{"index": 1, "name": "x", "values": [0.0]}],
+            test.model_id,
+            "shared-name",
+            time=[0.0],
+            variables=[{"index": 1, "name": "x", "values": [0.0]}],
         )
         src = tmp_path / "data.csv"
         src.write_text("x\n1\n")
         with pytest.raises(ValueError, match="soft_check"):
             store.add_companion(test.model_id, "shared-name", path=src)
 
-    def test_companions_not_returned_by_get_baselines(self, store_with_primary, tmp_path):
+    def test_companions_not_returned_by_get_baselines(
+        self, store_with_primary, tmp_path
+    ):
         """Companions are plot-only — never visible to the comparator via
         get_baselines (which feeds the tree's ``against:`` lookup)."""
         store, test = store_with_primary

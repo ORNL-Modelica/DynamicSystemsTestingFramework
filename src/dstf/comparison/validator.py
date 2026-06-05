@@ -16,11 +16,12 @@ respect those semantics at spec-load time:
 Callers supply a ``BaselineRegistry`` (a mapping of known names to
 their role) so validation is context-aware per test.
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Optional
 
 from .tree_spec import CombinatorSpec, LeafSpec, SpecNode
 
@@ -40,7 +41,7 @@ class ValidationError:
         return f"{self.path}: {self.message}"
 
 
-BaselineRoleLookup = Callable[[str], Optional[BaselineRole]]
+BaselineRoleLookup = Callable[[str], BaselineRole | None]
 
 
 def validate_tree(
@@ -61,11 +62,13 @@ def validate_tree(
 
     # Tree-level rule: at least one primary leaf outside warn.
     if not _has_primary_outside_warn(tree, role_of):
-        errors.append(ValidationError(
-            _path,
-            "tree has no leaf targeting 'primary' outside a 'warn' combinator — "
-            "every tree must carry at least one hard regression anchor",
-        ))
+        errors.append(
+            ValidationError(
+                _path,
+                "tree has no leaf targeting 'primary' outside a 'warn' combinator — "
+                "every tree must carry at least one hard regression anchor",
+            )
+        )
     return errors
 
 
@@ -94,29 +97,35 @@ def _check_leaf(
 ) -> None:
     role = role_of(leaf.against)
     if role is None:
-        errors.append(ValidationError(
-            path,
-            f"leaf targets unknown baseline {leaf.against!r}; "
-            f"ensure the baseline exists as primary, a registered soft_check, "
-            f"or check for a typo",
-        ))
+        errors.append(
+            ValidationError(
+                path,
+                f"leaf targets unknown baseline {leaf.against!r}; "
+                f"ensure the baseline exists as primary, a registered soft_check, "
+                f"or check for a typo",
+            )
+        )
         return
     if role is BaselineRole.COMPANION:
-        errors.append(ValidationError(
-            path,
-            f"leaf targets companion {leaf.against!r}; companions are "
-            f"plot-only overlays and cannot be scored against. Use a "
-            f"soft_check (via import-baseline) if you need cross-check "
-            f"semantics",
-        ))
+        errors.append(
+            ValidationError(
+                path,
+                f"leaf targets companion {leaf.against!r}; companions are "
+                f"plot-only overlays and cannot be scored against. Use a "
+                f"soft_check (via import-baseline) if you need cross-check "
+                f"semantics",
+            )
+        )
         return
     if role is BaselineRole.SOFT_CHECK and not in_warn:
-        errors.append(ValidationError(
-            path,
-            f"leaf targets soft_check {leaf.against!r} without a 'warn' "
-            f"ancestor; soft_checks are advisory only and must be "
-            f"warn-wrapped so they cannot hard-fail the test",
-        ))
+        errors.append(
+            ValidationError(
+                path,
+                f"leaf targets soft_check {leaf.against!r} without a 'warn' "
+                f"ancestor; soft_checks are advisory only and must be "
+                f"warn-wrapped so they cannot hard-fail the test",
+            )
+        )
         return
 
 
@@ -132,8 +141,7 @@ def _has_primary_outside_warn(
     if isinstance(node, CombinatorSpec):
         child_in_warn = in_warn or node.combinator == "warn"
         return any(
-            _has_primary_outside_warn(c, role_of, child_in_warn)
-            for c in node.children
+            _has_primary_outside_warn(c, role_of, child_in_warn) for c in node.children
         )
     return False
 
@@ -141,6 +149,7 @@ def _has_primary_outside_warn(
 # ---------------------------------------------------------------------------
 # Convenience role-lookup factories
 # ---------------------------------------------------------------------------
+
 
 def role_lookup_from_store(store, model_id: str) -> BaselineRoleLookup:
     """Build a role-lookup for ``store``'s view of ``model_id``.
@@ -152,7 +161,7 @@ def role_lookup_from_store(store, model_id: str) -> BaselineRoleLookup:
     soft_check_names = set(store.get_soft_checks(model_id).keys())
     companion_names = set(store.get_companions(model_id).keys())
 
-    def lookup(name: str) -> Optional[BaselineRole]:
+    def lookup(name: str) -> BaselineRole | None:
         if name == "primary":
             return BaselineRole.PRIMARY
         if name in soft_check_names:
@@ -165,14 +174,14 @@ def role_lookup_from_store(store, model_id: str) -> BaselineRoleLookup:
 
 
 def role_lookup_from_names(
-    soft_checks: list[str] = (),
-    companions: list[str] = (),
+    soft_checks: Sequence[str] = (),
+    companions: Sequence[str] = (),
 ) -> BaselineRoleLookup:
     """Build a role-lookup from explicit name lists (testing-friendly)."""
     sc = set(soft_checks)
     co = set(companions)
 
-    def lookup(name: str) -> Optional[BaselineRole]:
+    def lookup(name: str) -> BaselineRole | None:
         if name == "primary":
             return BaselineRole.PRIMARY
         if name in sc:

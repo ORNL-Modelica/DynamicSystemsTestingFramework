@@ -12,6 +12,7 @@ with the previously kept point and the next bucket's centroid.
 Reference: Sveinn Steinarsson, "Downsampling Time Series for Visual
 Representation" (MSc thesis, 2013).
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -86,7 +87,7 @@ def decimate_pair(
         return time, values
     if not len(time) or not len(values):
         return list(time), list(values)
-    t_out, v_out = lttb(np.asarray(time, dtype=np.float64),
-                        np.asarray(values, dtype=np.float64),
-                        n_out)
+    t_out, v_out = lttb(
+        np.asarray(time, dtype=np.float64), np.asarray(values, dtype=np.float64), n_out
+    )
     return t_out.tolist(), v_out.tolist()

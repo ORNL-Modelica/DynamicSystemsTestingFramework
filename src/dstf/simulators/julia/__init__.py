@@ -20,8 +20,9 @@ Not yet supported:
   * Persistent workers.
   * Per-test ``start_values`` overrides (user authors inside the ``.jl``).
 """
+
 from __future__ import annotations
 
-from .runner import JuliaRunner, JuliaConfig  # noqa: F401
+from .runner import JuliaConfig, JuliaRunner  # noqa: F401
 
 __all__ = ["JuliaRunner", "JuliaConfig"]

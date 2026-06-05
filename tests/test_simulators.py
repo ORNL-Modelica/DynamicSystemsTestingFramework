@@ -5,12 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dstf.simulators.dymola.log_parser import parse_dslog
-from dstf.simulators.common.mat_reader import read_result_mat
-from dstf.simulators.dymola.runner import _extract_variables
-from dstf.simulators.base import resolve_variable_patterns, _pattern_to_regex
 from dstf.discovery.test_registry import TestModel
-
+from dstf.simulators.base import _pattern_to_regex, resolve_variable_patterns
+from dstf.simulators.common.mat_reader import read_result_mat
+from dstf.simulators.dymola.log_parser import parse_dslog
+from dstf.simulators.dymola.runner import _extract_variables
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SAMPLE_MAT = FIXTURES_DIR / "results" / "Dymola" / "dsres.mat"
@@ -19,6 +18,7 @@ SAMPLE_MAT = FIXTURES_DIR / "results" / "Dymola" / "dsres.mat"
 # ---------------------------------------------------------------------------
 # dslog.txt parser
 # ---------------------------------------------------------------------------
+
 
 class TestLogParser:
     def test_parse_fixture(self, sample_dslog):
@@ -130,7 +130,9 @@ class TestLogParser:
 
         # State names: 60 static states, no garbage
         assert len(t["state_names"]) == 60
-        assert t["state_names"][0] == "pipe_nParallel.pipe.flowModel.firstOrder_dps_K[1].y"
+        assert (
+            t["state_names"][0] == "pipe_nParallel.pipe.flowModel.firstOrder_dps_K[1].y"
+        )
         assert t["state_names"][-1] == "pipe_single.wall.Us[1, 10]"
         # Should NOT contain dynamic state selection text
         assert all("From set" not in s for s in t["state_names"])
@@ -146,6 +148,7 @@ class TestLogParser:
 # ---------------------------------------------------------------------------
 # MAT reader
 # ---------------------------------------------------------------------------
+
 
 class TestMatReader:
     def test_read_returns_dict(self):
@@ -169,7 +172,9 @@ class TestMatReader:
         # x and y are time series (from data_2), not parameters
         for name in ["x", "y", "unitTests.x[1]"]:
             time, values = data[name]
-            assert len(time) == len(values), f"{name}: time={len(time)}, values={len(values)}"
+            assert len(time) == len(values), (
+                f"{name}: time={len(time)}, values={len(values)}"
+            )
             assert len(time) > 2  # Should have many points
 
     def test_parameter_is_constant(self):
@@ -209,6 +214,7 @@ class TestMatReader:
 # Diagnostic variable extraction
 # ---------------------------------------------------------------------------
 
+
 class TestDiagnosticExtraction:
     def _make_test(self):
         return TestModel(
@@ -226,7 +232,9 @@ class TestDiagnosticExtraction:
         mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
         variables, diagnostics = _extract_variables(
-            mat_data, test, ["CPUtime", "EventCounter"],
+            mat_data,
+            test,
+            ["CPUtime", "EventCounter"],
         )
         diag_names = [d.name for d in diagnostics]
         assert "CPUtime" in diag_names
@@ -237,7 +245,9 @@ class TestDiagnosticExtraction:
         mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
         variables, diagnostics = _extract_variables(
-            mat_data, test, ["CPUtime", "EventCounter"],
+            mat_data,
+            test,
+            ["CPUtime", "EventCounter"],
         )
         var_names = [v.name for v in variables]
         assert "CPUtime" not in var_names
@@ -249,7 +259,9 @@ class TestDiagnosticExtraction:
         test = self._make_test()
         # "x" exists in the mat data — treating it as diagnostic
         variables, diagnostics = _extract_variables(
-            mat_data, test, ["x"],
+            mat_data,
+            test,
+            ["x"],
         )
         diag_names = [d.name for d in diagnostics]
         assert "x" in diag_names
@@ -259,7 +271,9 @@ class TestDiagnosticExtraction:
         mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
         variables, diagnostics = _extract_variables(
-            mat_data, test, ["NonExistentVar"],
+            mat_data,
+            test,
+            ["NonExistentVar"],
         )
         assert len(diagnostics) == 0
 
@@ -274,6 +288,7 @@ class TestDiagnosticExtraction:
 # ---------------------------------------------------------------------------
 # Variable pattern matching
 # ---------------------------------------------------------------------------
+
 
 class TestVariablePatterns:
     """Tests for resolve_variable_patterns and _pattern_to_regex."""
@@ -317,6 +332,7 @@ class TestVariablePatterns:
     def test_pattern_to_regex_dots(self):
         """Dots in patterns are escaped (literal, not regex any-char)."""
         import re
+
         pattern = _pattern_to_regex("pipe.T[1]")
         assert re.match(pattern, "pipe.T[1]")
         assert not re.match(pattern, "pipeXT[1]")  # dot shouldn't match X
@@ -334,10 +350,10 @@ class TestVariablePatterns:
 
 from dstf.simulators import (
     _REGISTRY,
-    register,
-    get_runner,
-    _import_builtin_backend,
     SimulatorRunner,
+    _import_builtin_backend,
+    get_runner,
+    register,
 )
 
 
@@ -349,6 +365,7 @@ class TestSimulatorRegistry:
 
     def test_register_decorator(self):
         """@register adds a class to the registry."""
+
         @register("TestBackend")
         class _TestRunner(SimulatorRunner):
             def read_result(self, test, test_key, run_result):

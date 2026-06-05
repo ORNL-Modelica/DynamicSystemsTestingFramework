@@ -17,11 +17,18 @@ from dstf.comparison.metric_tree import (
 def _vc(name="x", passed=True, nrmse=0.001, mode="nrmse", tube_inside=None):
     """Shortcut for building a test VariableComparison."""
     return VariableComparison(
-        index=1, name=name, passed=passed,
-        nrmse=nrmse, rmse=nrmse, signal_range=1.0,
-        max_abs_error=nrmse, max_abs_error_time=0.0,
-        reference_final=0.0, actual_final=0.0,
-        tolerance_used=0.01, mode=mode,
+        index=1,
+        name=name,
+        passed=passed,
+        nrmse=nrmse,
+        rmse=nrmse,
+        signal_range=1.0,
+        max_abs_error=nrmse,
+        max_abs_error_time=0.0,
+        reference_final=0.0,
+        actual_final=0.0,
+        tolerance_used=0.01,
+        mode=mode,
         tube_points_inside=tube_inside,
     )
 
@@ -29,6 +36,7 @@ def _vc(name="x", passed=True, nrmse=0.001, mode="nrmse", tube_inside=None):
 # ---------------------------------------------------------------------------
 # Leaf adapter
 # ---------------------------------------------------------------------------
+
 
 class TestLeafFromVariable:
     def test_nrmse_leaf_uses_nrmse_score(self):
@@ -57,6 +65,7 @@ class TestLeafFromVariable:
 # AND / OR
 # ---------------------------------------------------------------------------
 
+
 class TestAndCombinator:
     def test_all_pass_passes(self):
         children = [
@@ -71,8 +80,8 @@ class TestAndCombinator:
 
     def test_one_failing_fails(self):
         children = [
-            MetricResult(passed=True,  score=0.01, label="a"),
-            MetricResult(passed=False, score=0.5,  label="b"),
+            MetricResult(passed=True, score=0.01, label="a"),
+            MetricResult(passed=False, score=0.5, label="b"),
         ]
         r = AndCombinator().combine(children)
         assert not r.passed
@@ -87,8 +96,8 @@ class TestAndCombinator:
 class TestOrCombinator:
     def test_any_pass_passes(self):
         children = [
-            MetricResult(passed=False, score=0.5,  label="a"),
-            MetricResult(passed=True,  score=0.01, label="b"),
+            MetricResult(passed=False, score=0.5, label="a"),
+            MetricResult(passed=True, score=0.01, label="b"),
         ]
         r = OrCombinator().combine(children)
         assert r.passed
@@ -112,20 +121,23 @@ class TestOrCombinator:
 # K-of-N
 # ---------------------------------------------------------------------------
 
+
 class TestKOfNCombinator:
     def test_meets_threshold_passes(self):
         children = [
-            MetricResult(passed=True,  score=0.01, label="a"),
-            MetricResult(passed=True,  score=0.02, label="b"),
-            MetricResult(passed=False, score=0.5,  label="c"),
+            MetricResult(passed=True, score=0.01, label="a"),
+            MetricResult(passed=True, score=0.02, label="b"),
+            MetricResult(passed=False, score=0.5, label="c"),
         ]
         r = KOfNCombinator(k=2).combine(children)
         assert r.passed
         assert r.diagnostics == {"k": 2, "n": 3, "n_passed": 2}
 
     def test_below_threshold_fails(self):
-        children = [MetricResult(passed=True, score=0.01, label="a"),
-                    MetricResult(passed=False, score=0.5, label="b")]
+        children = [
+            MetricResult(passed=True, score=0.01, label="a"),
+            MetricResult(passed=False, score=0.5, label="b"),
+        ]
         r = KOfNCombinator(k=2).combine(children)
         assert not r.passed
 
@@ -137,6 +149,7 @@ class TestKOfNCombinator:
 # ---------------------------------------------------------------------------
 # warn
 # ---------------------------------------------------------------------------
+
 
 class TestWarnCombinator:
     def test_passes_even_when_child_fails(self):
@@ -156,28 +169,29 @@ class TestWarnCombinator:
         with pytest.raises(ValueError):
             WarnCombinator().combine([])
         with pytest.raises(ValueError):
-            WarnCombinator().combine([
-                MetricResult(passed=True, score=None, label="a"),
-                MetricResult(passed=True, score=None, label="b"),
-            ])
+            WarnCombinator().combine(
+                [
+                    MetricResult(passed=True, score=None, label="a"),
+                    MetricResult(passed=True, score=None, label="b"),
+                ]
+            )
 
 
 # ---------------------------------------------------------------------------
 # Implicit tree (degenerate flat AND, matches current pass/fail semantics)
 # ---------------------------------------------------------------------------
 
+
 class TestImplicitAndTree:
     def test_all_pass(self):
-        vcs = [_vc("a", passed=True, nrmse=0.001),
-               _vc("b", passed=True, nrmse=0.002)]
+        vcs = [_vc("a", passed=True, nrmse=0.001), _vc("b", passed=True, nrmse=0.002)]
         r = implicit_and_tree(vcs)
         assert r.passed
         assert r.score == pytest.approx(0.001)  # min of children's nrmse
         assert len(r.children) == 2
 
     def test_one_fails_tree_fails(self):
-        vcs = [_vc("a", passed=True, nrmse=0.001),
-               _vc("b", passed=False, nrmse=0.5)]
+        vcs = [_vc("a", passed=True, nrmse=0.001), _vc("b", passed=False, nrmse=0.5)]
         r = implicit_and_tree(vcs)
         assert not r.passed
         assert r.diagnostics["n_failed"] == 1

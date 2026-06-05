@@ -4,6 +4,7 @@ Decimation is visual-only: it affects what ``interactive.html`` embeds
 for Plotly rendering, not pass/fail scoring or stored baselines. These
 tests check the algorithmic contract, not rendering.
 """
+
 from __future__ import annotations
 
 import numpy as np

@@ -26,38 +26,30 @@ toml, failed `using`), the runner raises RuntimeError and the CLI falls
 back to the batch runner with a stderr notice — same pattern as Dymola
 and OpenModelica.
 """
+
 from __future__ import annotations
 
 import json
 import logging
-import os
 import queue
-import signal
 import subprocess
-import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..base import (
-    BatchManifest,
     Capability,
     PersistentRunnerBase,
     TestRunResult,
     Worker,
-    assign_test_keys,
 )
 from .runner import JuliaConfig, JuliaRunner, _resolve_julia_source
 
 logger = logging.getLogger(__name__)
 
-_PERSISTENT_DRIVER_PATH = (
-    Path(__file__).resolve().parent / "run_persistent.jl"
-)
+_PERSISTENT_DRIVER_PATH = Path(__file__).resolve().parent / "run_persistent.jl"
 
 # Max seconds to wait for a worker's startup "ready" pulse. MTK +
 # OrdinaryDiffEq precompiled-cache load takes ~15-40s; allow plenty.
@@ -79,12 +71,12 @@ class JuliaWorker(Worker):
     def __init__(self, worker_id: int, config: Config, julia_cfg: JuliaConfig):
         super().__init__(worker_id, config)
         self.julia_cfg = julia_cfg
-        self.proc: Optional[subprocess.Popen] = None
+        self.proc: subprocess.Popen | None = None
         self._stdout_q: queue.Queue[str] = queue.Queue()
         self._stderr_buf: list[str] = []
-        self._stdout_thread: Optional[threading.Thread] = None
-        self._stderr_thread: Optional[threading.Thread] = None
-        self._pid: Optional[int] = None
+        self._stdout_thread: threading.Thread | None = None
+        self._stderr_thread: threading.Thread | None = None
+        self._pid: int | None = None
 
     # ---------------------------------------------------------------
 
@@ -142,7 +134,7 @@ class JuliaWorker(Worker):
         test: TestModel,
         test_key: str,
         timeout: float,
-        progress: Optional[object] = None,
+        progress: object | None = None,
     ) -> TestRunResult:
         """Dispatch one test, wait ``timeout`` seconds for the response.
 
@@ -156,13 +148,17 @@ class JuliaWorker(Worker):
         """
         if self.proc is None or self.proc.poll() is not None:
             return TestRunResult(
-                model_id=test.model_id, test_key=test_key, success=False,
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
                 error_message="Julia worker not running",
             )
         user_file = _resolve_julia_source(test, self.config)
         if user_file is None or not user_file.exists():
             return TestRunResult(
-                model_id=test.model_id, test_key=test_key, success=False,
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
                 error_message=(
                     f"Julia source not found for {test.model_id}. "
                     f"Ensure the test_spec.json 'source' field resolves to a .jl file."
@@ -187,7 +183,9 @@ class JuliaWorker(Worker):
             self.proc.stdin.flush()
         except (BrokenPipeError, OSError) as exc:
             return TestRunResult(
-                model_id=test.model_id, test_key=test_key, success=False,
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
                 error_message=f"Julia worker stdin broken: {exc}",
                 elapsed=time.monotonic() - wall_start,
             )
@@ -200,11 +198,15 @@ class JuliaWorker(Worker):
                 elapsed = time.monotonic() - wall_start
                 # Persist the stderr tail for diagnosis.
                 (test_dir / "julia_stderr.txt").write_text(
-                    self._stderr_tail(30), encoding="utf-8",
+                    self._stderr_tail(30),
+                    encoding="utf-8",
                 )
                 return TestRunResult(
-                    model_id=test.model_id, test_key=test_key, success=False,
-                    elapsed=elapsed, sim_wall=elapsed,
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    sim_wall=elapsed,
                     error_message=f"Julia simulation exceeded {timeout}s timeout",
                     timed_out=True,
                 )
@@ -215,11 +217,15 @@ class JuliaWorker(Worker):
                 if self.proc.poll() is not None:
                     elapsed = time.monotonic() - wall_start
                     (test_dir / "julia_stderr.txt").write_text(
-                        self._stderr_tail(30), encoding="utf-8",
+                        self._stderr_tail(30),
+                        encoding="utf-8",
                     )
                     return TestRunResult(
-                        model_id=test.model_id, test_key=test_key, success=False,
-                        elapsed=elapsed, sim_wall=elapsed,
+                        model_id=test.model_id,
+                        test_key=test_key,
+                        success=False,
+                        elapsed=elapsed,
+                        sim_wall=elapsed,
                         error_message="Julia worker crashed mid-test",
                     )
                 continue
@@ -236,7 +242,9 @@ class JuliaWorker(Worker):
             if resp.get("test_key") != test_key:
                 logger.debug(
                     "worker %d: test_key mismatch %s != %s; ignoring",
-                    self.worker_id, resp.get("test_key"), test_key,
+                    self.worker_id,
+                    resp.get("test_key"),
+                    test_key,
                 )
                 continue
             elapsed = time.monotonic() - wall_start
@@ -252,8 +260,11 @@ class JuliaWorker(Worker):
                     encoding="utf-8",
                 )
                 return TestRunResult(
-                    model_id=test.model_id, test_key=test_key, success=True,
-                    elapsed=elapsed, sim_wall=sim_wall,
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=True,
+                    elapsed=elapsed,
+                    sim_wall=sim_wall,
                     statistics={"simulation": {"wall_time": sim_wall}},
                 )
             # status == "fail" (or anything else)
@@ -263,9 +274,14 @@ class JuliaWorker(Worker):
                 encoding="utf-8",
             )
             return TestRunResult(
-                model_id=test.model_id, test_key=test_key, success=False,
-                elapsed=elapsed, sim_wall=sim_wall,
-                error_message=(err.splitlines()[0] if err else "Julia simulation failed"),
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                elapsed=elapsed,
+                sim_wall=sim_wall,
+                error_message=(
+                    err.splitlines()[0] if err else "Julia simulation failed"
+                ),
             )
 
     # ---------------------------------------------------------------
@@ -342,6 +358,7 @@ class JuliaWorker(Worker):
         # spawn children in our driver, but defensive).
         try:
             import psutil
+
             p = psutil.Process(self.proc.pid)
             for child in p.children(recursive=True):
                 try:
@@ -360,6 +377,7 @@ class JuliaWorker(Worker):
 # Runner
 # ---------------------------------------------------------------------------
 
+
 class PersistentJuliaRunner(PersistentRunnerBase, JuliaRunner):
     """Persistent-worker Julia runner.
 
@@ -370,10 +388,12 @@ class PersistentJuliaRunner(PersistentRunnerBase, JuliaRunner):
     override.
     """
 
-    capabilities = frozenset({
-        Capability.PERSISTENT_WORKERS,
-        Capability.BATCH_FALLBACK,
-    })
+    capabilities = frozenset(
+        {
+            Capability.PERSISTENT_WORKERS,
+            Capability.BATCH_FALLBACK,
+        }
+    )
 
     worker_cls = JuliaWorker
     backend_label = "Julia"
@@ -384,6 +404,7 @@ class PersistentJuliaRunner(PersistentRunnerBase, JuliaRunner):
         # (toml errors, missing packages, MTK compile failures) still
         # bubble up from worker.start() inside run_tests.
         import shutil
+
         if not shutil.which("julia"):
             raise RuntimeError(
                 "Julia binary not found on PATH. The persistent-worker Julia "

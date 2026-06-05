@@ -9,6 +9,7 @@ can serve as a test source. The companion ``ConstantCsv.py`` is the
 "no simulator at all" half that proves the backend abstraction is not
 secretly shaped around ODE simulation.
 """
+
 from __future__ import annotations
 
 import numpy as np

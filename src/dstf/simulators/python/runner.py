@@ -12,6 +12,7 @@ A persistent-worker path (long-lived Python subprocess with stdin-JSON
 dispatch) is a future enhancement if per-test overhead becomes an issue
 — mirrors the D77 → D78 Julia progression.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,7 +22,6 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -54,11 +54,12 @@ class PythonConfig:
     scripts import (scipy, pandas, ...). The framework does not manage
     the user's environment — pick a ``python`` that has their deps.
     """
+
     python_binary: Path
 
     @classmethod
-    def from_config(cls, config: Config) -> "PythonConfig":
-        resolved: Optional[Path] = None
+    def from_config(cls, config: Config) -> PythonConfig:
+        resolved: Path | None = None
         if config.simulator_path:
             p = Path(config.simulator_path).expanduser()
             if p.exists():
@@ -73,7 +74,7 @@ class PythonConfig:
             raise RuntimeError(
                 "Python binary not found. Ensure 'python' or 'python3' is on "
                 "PATH, or set an explicit path under testing.json's "
-                "'simulators' map, e.g. {\"Python\": [\"/path/to/venv/bin/python\"]}."
+                '\'simulators\' map, e.g. {"Python": ["/path/to/venv/bin/python"]}.'
             )
         return cls(python_binary=resolved)
 
@@ -82,14 +83,16 @@ class PythonConfig:
 class PythonRunner(SimulatorRunner):
     """Subprocess-per-test Python runner."""
 
-    capabilities = frozenset({
-        Capability.BATCH_FALLBACK,
-        # Deliberately absent:
-        #   PERSISTENT_WORKERS — stdin-driven long-lived Python process deferred.
-        #   FMU_EXPORT — not meaningful for arbitrary Python scripts.
-        #   EXPERIMENT_INGEST — a PythonRunner can both simulate and ingest;
-        #     the flag is backend-level so we don't declare either role.
-    })
+    capabilities = frozenset(
+        {
+            Capability.BATCH_FALLBACK,
+            # Deliberately absent:
+            #   PERSISTENT_WORKERS — stdin-driven long-lived Python process deferred.
+            #   FMU_EXPORT — not meaningful for arbitrary Python scripts.
+            #   EXPERIMENT_INGEST — a PythonRunner can both simulate and ingest;
+            #     the flag is backend-level so we don't declare either role.
+        }
+    )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
     artifact_files = (
         ("result.json", "Simulation result (time + variables)"),
@@ -167,12 +170,19 @@ class PythonRunner(SimulatorRunner):
             msg = f"Python execution exceeded {timeout}s timeout"
             if self.progress:
                 self.progress.on_finish(
-                    test_key, success=False, elapsed=elapsed,
-                    detail=msg, timed_out=True,
+                    test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    detail=msg,
+                    timed_out=True,
                 )
             return TestRunResult(
-                model_id=test.model_id, test_key=test_key, success=False,
-                elapsed=elapsed, error_message=msg, sim_wall=elapsed,
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                elapsed=elapsed,
+                error_message=msg,
+                sim_wall=elapsed,
                 timed_out=True,
             )
 
@@ -183,15 +193,22 @@ class PythonRunner(SimulatorRunner):
         if proc.returncode != 0:
             err = _read_failure_error(result_path) or (
                 (proc.stderr or "").strip().splitlines()[-1]
-                if proc.stderr else f"python returned {proc.returncode}"
+                if proc.stderr
+                else f"python returned {proc.returncode}"
             )
             if self.progress:
                 self.progress.on_finish(
-                    test_key, success=False, elapsed=elapsed, detail=err,
+                    test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    detail=err,
                 )
             return TestRunResult(
-                model_id=test.model_id, test_key=test_key, success=False,
-                elapsed=elapsed, error_message=f"Python execution failed: {err}",
+                model_id=test.model_id,
+                test_key=test_key,
+                success=False,
+                elapsed=elapsed,
+                error_message=f"Python execution failed: {err}",
                 sim_wall=elapsed,
             )
 
@@ -199,8 +216,11 @@ class PythonRunner(SimulatorRunner):
             self.progress.on_finish(test_key, success=True, elapsed=elapsed)
 
         return TestRunResult(
-            model_id=test.model_id, test_key=test_key, success=True,
-            elapsed=elapsed, sim_wall=elapsed,
+            model_id=test.model_id,
+            test_key=test_key,
+            success=True,
+            elapsed=elapsed,
+            sim_wall=elapsed,
             statistics={"simulation": {"wall_time": elapsed}},
         )
 
@@ -217,7 +237,8 @@ class PythonRunner(SimulatorRunner):
         result_path = self.config.work_dir / test_key / self.RESULT_FILENAME
         if not result_path.exists():
             return TestResult(
-                model_id=test.model_id, success=False,
+                model_id=test.model_id,
+                success=False,
                 error_message=(
                     f"No Python result at {result_path} (did execution run?)"
                 ),
@@ -229,17 +250,17 @@ class PythonRunner(SimulatorRunner):
                 payload = json.load(f)
         except (OSError, json.JSONDecodeError) as exc:
             return TestResult(
-                model_id=test.model_id, success=False,
+                model_id=test.model_id,
+                success=False,
                 error_message=f"Failed to parse {result_path.name}: {exc}",
                 statistics=run_result.statistics if run_result else None,
             )
 
         if not payload.get("success", False):
             return TestResult(
-                model_id=test.model_id, success=False,
-                error_message=payload.get(
-                    "error", "Python driver reported failure"
-                ),
+                model_id=test.model_id,
+                success=False,
+                error_message=payload.get("error", "Python driver reported failure"),
                 statistics=run_result.statistics if run_result else None,
             )
 
@@ -257,16 +278,16 @@ class PythonRunner(SimulatorRunner):
                 index=i + 1,
                 name=name,
                 time=time_arr,
-                values=np.asarray(
-                    payload["variables"][name], dtype=np.float64
-                ),
+                values=np.asarray(payload["variables"][name], dtype=np.float64),
             )
             for i, name in enumerate(requested)
             if name in payload["variables"]
         ]
 
         return TestResult(
-            model_id=test.model_id, success=True, variables=variables,
+            model_id=test.model_id,
+            success=True,
+            variables=variables,
             diagnostics=[],
             statistics=run_result.statistics if run_result else None,
         )
@@ -276,7 +297,8 @@ class PythonRunner(SimulatorRunner):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _resolve_python_source(test: TestModel, config: Config) -> Optional[Path]:
+
+def _resolve_python_source(test: TestModel, config: Config) -> Path | None:
     """Resolve the user's ``.py`` file.
 
     Priority: ``test.source_file`` (spec_parser fills this when the entry
@@ -292,7 +314,7 @@ def _resolve_python_source(test: TestModel, config: Config) -> Optional[Path]:
     return None
 
 
-def _read_failure_error(result_path: Path) -> Optional[str]:
+def _read_failure_error(result_path: Path) -> str | None:
     """If the driver wrote a failure JSON, pull its 'error' message."""
     if not result_path.exists():
         return None

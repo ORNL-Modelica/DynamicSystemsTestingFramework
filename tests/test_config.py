@@ -8,12 +8,11 @@ import pytest
 
 from dstf.config import (
     Config,
+    detect_os,
+    find_package_dir,
     load_config_file,
     read_package_name,
-    find_package_dir,
-    detect_os,
 )
-
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -21,6 +20,7 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 # ---------------------------------------------------------------------------
 # Utility functions
 # ---------------------------------------------------------------------------
+
 
 class TestUtilityFunctions:
     def test_detect_os(self):
@@ -65,6 +65,7 @@ class TestUtilityFunctions:
 # ---------------------------------------------------------------------------
 # Config dataclass
 # ---------------------------------------------------------------------------
+
 
 class TestConfig:
     def test_explicit_source_path(self, sample_models_dir):
@@ -166,10 +167,14 @@ class TestConfig:
         (lib_dir / "package.mo").write_text("package Lib end Lib;")
         cfg_dir = tmp_path / "Resources" / "ReferenceResults"
         cfg_dir.mkdir(parents=True)
-        (cfg_dir / "testing.json").write_text(json.dumps({
-            "source_path": str(lib_dir),
-            "simulator": "OpenModelica",
-        }))
+        (cfg_dir / "testing.json").write_text(
+            json.dumps(
+                {
+                    "source_path": str(lib_dir),
+                    "simulator": "OpenModelica",
+                }
+            )
+        )
         config = Config(
             config_file=str(cfg_dir / "testing.json"),
             simulator="Dymola",  # CLI says Dymola
@@ -230,12 +235,14 @@ class TestAutoDetectSimulator:
 
     def test_looks_like_path_linux(self):
         from dstf.config import _looks_like_path
+
         assert _looks_like_path("/usr/bin/omc")
         assert not _looks_like_path("omc")
         assert not _looks_like_path("dymola.exe")
 
     def test_looks_like_path_windows(self):
         from dstf.config import _looks_like_path
+
         assert _looks_like_path("C:\\Program Files\\Dymola.exe")
         assert _looks_like_path("D:/some/path")
         assert not _looks_like_path("Dymola")
@@ -256,7 +263,7 @@ class TestAutoDetectSimulator:
             "Dymola": [
                 "C:\\nope\\dymola.exe",  # pinned path, doesn't exist
             ],
-            "OpenModelica": ["omc"],     # bare name → PATH lookup
+            "OpenModelica": ["omc"],  # bare name → PATH lookup
         }
         name, path = _auto_detect_simulator(simulators)
         assert name == "OpenModelica"
@@ -283,6 +290,7 @@ class TestAutoDetectSimulator:
 
     def test_auto_detect_none_if_nothing_resolves(self, tmp_path, monkeypatch):
         from dstf.config import _auto_detect_simulator
+
         # Empty PATH and bogus paths — nothing resolves.
         monkeypatch.setenv("PATH", str(tmp_path))
         simulators = {
@@ -305,13 +313,17 @@ class TestAutoDetectSimulator:
 
         cfg_dir = tmp_path / "Resources" / "ReferenceResults"
         cfg_dir.mkdir(parents=True)
-        (cfg_dir / "testing.json").write_text(json.dumps({
-            "source_path": str(lib_dir),
-            "simulators": {
-                "Dymola": ["C:\\nope\\dymola.exe"],  # pinned, missing
-                "OpenModelica": ["omc"],             # PATH lookup → hits fake
-            },
-        }))
+        (cfg_dir / "testing.json").write_text(
+            json.dumps(
+                {
+                    "source_path": str(lib_dir),
+                    "simulators": {
+                        "Dymola": ["C:\\nope\\dymola.exe"],  # pinned, missing
+                        "OpenModelica": ["omc"],  # PATH lookup → hits fake
+                    },
+                }
+            )
+        )
         config = Config(config_file=str(cfg_dir / "testing.json"))
         assert config.simulator == "OpenModelica"
         assert config.simulator_path == str(fake_omc)
@@ -324,10 +336,14 @@ class TestAutoDetectSimulator:
         (lib_dir / "package.mo").write_text("package Lib end Lib;")
         cfg_dir = tmp_path / "Resources" / "ReferenceResults"
         cfg_dir.mkdir(parents=True)
-        (cfg_dir / "testing.json").write_text(json.dumps({
-            "source_path": str(lib_dir),
-            "simulator": "Dymola",
-            "simulators": {"Dymola": ["C:\\nope\\dymola.exe"]},
-        }))
+        (cfg_dir / "testing.json").write_text(
+            json.dumps(
+                {
+                    "source_path": str(lib_dir),
+                    "simulator": "Dymola",
+                    "simulators": {"Dymola": ["C:\\nope\\dymola.exe"]},
+                }
+            )
+        )
         config = Config(config_file=str(cfg_dir / "testing.json"))
         assert config.simulator == "Dymola"

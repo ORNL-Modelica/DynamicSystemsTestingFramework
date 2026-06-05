@@ -1,0 +1,51 @@
+# Quality floor (D88): lint + type-check + the hardware-free test suite +
+# coverage ratchet. Runs on a clean ubuntu runner with NO simulators —
+# Dymola / Julia / OpenModelica / fmpy tests skip cleanly, Playwright is
+# deselected. Independent of the FMPy end-to-end job (docs/PHASE_2_5_CI_PLAN.md),
+# which stays deferred on its own cost trade-off.
+name: quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # NOTE: pin to the latest stable tags before relying on this in anger.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      # `uv sync` provisions a Python matching requires-python (>=3.10),
+      # creates .venv from uv.lock, and installs the project + dev extra.
+      # Tools are then run via `uv run` so they resolve against that venv —
+      # no PATH / interpreter ambiguity.
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff lint
+        run: uv run ruff check
+
+      - name: Ruff format check
+        run: uv run ruff format --check
+
+      - name: Mypy (core modules)
+        run: uv run mypy
+
+      - name: Pytest + coverage ratchet
+        # fail_under (66%) lives in pyproject [tool.coverage.report]. Deselect
+        # every backend-dependent marker: this runner has no simulators, and
+        # not all such tests self-skip — the Julia smoke tests, for instance,
+        # shell out to `dstf run` and fail when no Julia worker can start.
+        # Playwright is import-skipped at collection but deselected too.
+        run: >
+          uv run pytest -q
+          -m "not playwright and not dymola and not fmpy and not ompython and not julia and not reference_fmus"
+          --cov=dstf --cov-report=term-missing

@@ -14,11 +14,9 @@ here for live-edit recompute. Drift is caught by
 
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 
-from .types import VariableComparison, _EPS
+from .types import _EPS, VariableComparison
 
 
 def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
@@ -119,8 +117,12 @@ def _compare_trajectories(
     # Deduplicate actual time series for clean interpolation.
     # For pre-event segments (ending at an event), use first value at duplicate times.
     # For post-event segments (starting at an event), use last value.
-    act_time_pre, act_values_pre = _dedup_time_series(act_time, act_values, keep="first")
-    act_time_post, act_values_post = _dedup_time_series(act_time, act_values, keep="last")
+    act_time_pre, act_values_pre = _dedup_time_series(
+        act_time, act_values, keep="first"
+    )
+    act_time_post, act_values_post = _dedup_time_series(
+        act_time, act_values, keep="last"
+    )
 
     # Compare piecewise: interpolate actual onto each reference segment
     all_abs_errors = []
@@ -131,7 +133,7 @@ def _compare_trajectories(
         if len(seg_time) == 0:
             continue
 
-        is_last_segment = (seg_idx == n_segments - 1)
+        is_last_segment = seg_idx == n_segments - 1
 
         if is_last_segment or n_segments == 1:
             # Last (or only) segment: no event at end, use post-event for start
@@ -152,17 +154,23 @@ def _compare_trajectories(
 
     if not all_abs_errors:
         return VariableComparison(
-            index=0, name="", passed=True,
-            nrmse=0.0, rmse=0.0, signal_range=0.0,
-            max_abs_error=0.0, max_abs_error_time=0.0,
-            reference_final=0.0, actual_final=0.0,
+            index=0,
+            name="",
+            passed=True,
+            nrmse=0.0,
+            rmse=0.0,
+            signal_range=0.0,
+            max_abs_error=0.0,
+            max_abs_error_time=0.0,
+            reference_final=0.0,
+            actual_final=0.0,
         )
 
     # Concatenate all segment errors for aggregate metrics
     abs_error = np.concatenate(all_abs_errors)
     error_times = np.concatenate(all_ref_times)
 
-    rmse = float(np.sqrt(np.mean(abs_error ** 2)))
+    rmse = float(np.sqrt(np.mean(abs_error**2)))
 
     # Max absolute error and its location
     max_abs_idx = int(np.argmax(abs_error))
@@ -202,7 +210,7 @@ def _compare_trajectories(
         max_abs_error_time=max_abs_error_time,
         reference_final=ref_final,
         actual_final=act_final,
-        is_constant=is_constant,
+        is_constant=bool(is_constant),
     )
 
 
@@ -273,7 +281,7 @@ def _compare_points(
     ref_values: np.ndarray,
     act_time: np.ndarray,
     act_values: np.ndarray,
-    points: Optional[list[dict]] = None,
+    points: list[dict] | None = None,
     tolerance: float = 1e-4,
 ) -> VariableComparison:
     # parity-test: live-preview JS counterpart at
@@ -298,8 +306,11 @@ def _compare_points(
         # Implicit final-only — legacy behavior.
         if len(ref_values) == 0 or len(act_values) == 0:
             return VariableComparison(
-                index=0, name="", passed=False,
-                nrmse=float("inf"), rmse=float("inf"),
+                index=0,
+                name="",
+                passed=False,
+                nrmse=float("inf"),
+                rmse=float("inf"),
                 signal_range=0.0,
                 max_abs_error=float("inf"),
                 max_abs_error_time=0.0,
@@ -313,19 +324,26 @@ def _compare_points(
         delta = abs(act_final - ref_final)
         passed = delta < tolerance
         return VariableComparison(
-            index=0, name="", passed=passed,
-            nrmse=delta, rmse=delta, signal_range=0.0,
+            index=0,
+            name="",
+            passed=passed,
+            nrmse=delta,
+            rmse=delta,
+            signal_range=0.0,
             max_abs_error=delta,
             max_abs_error_time=float(ref_time[-1]) if len(ref_time) else 0.0,
-            reference_final=ref_final, actual_final=act_final,
+            reference_final=ref_final,
+            actual_final=act_final,
             mode="points",
             diagnostics={"tolerance": tolerance, "delta": delta},
         )
 
     # Declared-points path.
     trace_end = (
-        float(ref_time[-1]) if len(ref_time)
-        else float(act_time[-1]) if len(act_time)
+        float(ref_time[-1])
+        if len(ref_time)
+        else float(act_time[-1])
+        if len(act_time)
         else 0.0
     )
     scored = 0
@@ -334,10 +352,7 @@ def _compare_points(
     worst_t = 0.0
     for point in points:
         t = point.get("time")
-        if t is None:
-            t = trace_end
-        else:
-            t = float(t)
+        t = trace_end if t is None else float(t)
         # Resolve target.
         explicit_value = point.get("value")
         if explicit_value is not None:
@@ -364,7 +379,11 @@ def _compare_points(
             # Fully clipped (time outside trajectory + box doesn't reach in).
             continue
         delta, t_at_min = _min_delta_in_box(
-            act_time, act_values, t_lo, t_hi, target,
+            act_time,
+            act_values,
+            t_lo,
+            t_hi,
+            target,
         )
         scored += 1
         if delta > worst_delta:
@@ -375,9 +394,14 @@ def _compare_points(
 
     passed = scored > 0 and failed == 0
     return VariableComparison(
-        index=0, name="", passed=passed,
-        nrmse=worst_delta, rmse=worst_delta, signal_range=0.0,
-        max_abs_error=worst_delta, max_abs_error_time=worst_t,
+        index=0,
+        name="",
+        passed=passed,
+        nrmse=worst_delta,
+        rmse=worst_delta,
+        signal_range=0.0,
+        max_abs_error=worst_delta,
+        max_abs_error_time=worst_t,
         reference_final=float(ref_values[-1]) if len(ref_values) else float("nan"),
         actual_final=float(act_values[-1]) if len(act_values) else float("nan"),
         mode="points",
@@ -466,8 +490,7 @@ def _compare_tube(
     tube_width_mode = tube_config.get("tube_width_mode")
     if tube_width_mode not in ("band", "rel", "abs"):
         raise ValueError(
-            f"tube_width_mode must be 'band', 'rel', or 'abs'; "
-            f"got {tube_width_mode!r}"
+            f"tube_width_mode must be 'band', 'rel', or 'abs'; got {tube_width_mode!r}"
         )
     min_width = tube_config.get("tube_min_width", 0.0)
 
@@ -475,7 +498,9 @@ def _compare_tube(
     if tube_points:
         interpolation = tube_config.get("tube_interpolation", "linear")
         raw_upper, raw_lower = _interpolate_tube_widths(
-            ref_time, tube_points, interpolation,
+            ref_time,
+            tube_points,
+            interpolation,
         )
     else:
         # Constant-tube shorthand — only 'band' and 'rel' supported.
@@ -534,7 +559,7 @@ def _compare_tube(
     # NRMSE for reporting (always based on actual vs reference difference)
     diff = act_interp - ref_values
     abs_error = np.abs(diff)
-    rmse = float(np.sqrt(np.mean(abs_error ** 2)))
+    rmse = float(np.sqrt(np.mean(abs_error**2)))
     signal_range = float(np.max(ref_values) - np.min(ref_values))
     is_constant = signal_range < _EPS
     if is_constant:
@@ -561,7 +586,7 @@ def _compare_tube(
         max_abs_error_time=max_abs_error_time,
         reference_final=ref_final,
         actual_final=act_final,
-        is_constant=is_constant,
+        is_constant=bool(is_constant),
         mode="tube",
         tube_points_inside=fraction_inside,
         tube_worst_violation=worst_violation,
@@ -572,8 +597,8 @@ def _compare_tube(
 def _compare_range(
     act_time: np.ndarray,
     act_values: np.ndarray,
-    min_value: Optional[float],
-    max_value: Optional[float],
+    min_value: float | None,
+    max_value: float | None,
 ) -> VariableComparison:
     # parity-test: live-preview JS counterpart at
     # src/dstf/reporting/templates/interactive.js MODE_SCORERS['range']
@@ -616,13 +641,13 @@ def _compare_range(
         # larger = farther out of bounds"). nrmse/rmse are overloaded here for
         # reporting uniformity.
         nrmse=max_violation,
-        rmse=float(np.sqrt(np.mean(violations ** 2))) if n_total > 0 else 0.0,
+        rmse=float(np.sqrt(np.mean(violations**2))) if n_total > 0 else 0.0,
         signal_range=act_range,
         max_abs_error=max_violation,
         max_abs_error_time=worst_time,
         reference_final=float("nan"),
         actual_final=act_final,
-        is_constant=act_range < _EPS,
+        is_constant=bool(act_range < _EPS),
         mode="range",
         # Repurpose the tube fields for consistent reporting — "inside" reads
         # as "inside bounds" here.
@@ -640,7 +665,7 @@ def _compare_event_timing(
     act_time: np.ndarray,
     time_tolerance: float = 1e-3,
     count_must_match: bool = True,
-    declared_events: Optional[list[dict]] = None,
+    declared_events: list[dict] | None = None,
 ) -> VariableComparison:
     """Compare event instants between reference and actual signals (4.C.1).
 
@@ -682,10 +707,16 @@ def _compare_event_timing(
         passed = max_delta <= time_tolerance and (counts_match or not count_must_match)
 
         return VariableComparison(
-            index=0, name="", passed=passed,
-            nrmse=max_delta, rmse=max_delta, signal_range=0.0,
-            max_abs_error=max_delta, max_abs_error_time=delta_at,
-            reference_final=float("nan"), actual_final=float("nan"),
+            index=0,
+            name="",
+            passed=passed,
+            nrmse=max_delta,
+            rmse=max_delta,
+            signal_range=0.0,
+            max_abs_error=max_delta,
+            max_abs_error_time=delta_at,
+            reference_final=float("nan"),
+            actual_final=float("nan"),
             mode="event-timing",
             diagnostics={
                 "ref_event_count": len(ref_events),
@@ -707,7 +738,8 @@ def _compare_event_timing(
     all_matched = True
     for e in declared_events:
         target = float(e["time"])
-        tol = float(e.get("tolerance") if e.get("tolerance") is not None else time_tolerance)
+        _tol = e.get("tolerance")
+        tol = float(_tol if _tol is not None else time_tolerance)
         # Find nearest unclaimed actual event within tolerance.
         best_idx = -1
         best_d = float("inf")
@@ -729,10 +761,16 @@ def _compare_event_timing(
     passed = all_matched and (counts_match or not count_must_match)
 
     return VariableComparison(
-        index=0, name="", passed=passed,
-        nrmse=max_delta, rmse=max_delta, signal_range=0.0,
-        max_abs_error=max_delta, max_abs_error_time=delta_at,
-        reference_final=float("nan"), actual_final=float("nan"),
+        index=0,
+        name="",
+        passed=passed,
+        nrmse=max_delta,
+        rmse=max_delta,
+        signal_range=0.0,
+        max_abs_error=max_delta,
+        max_abs_error_time=delta_at,
+        reference_final=float("nan"),
+        actual_final=float("nan"),
         mode="event-timing",
         diagnostics={
             "ref_event_count": declared_count,
@@ -745,7 +783,8 @@ def _compare_event_timing(
 
 
 def _compute_fft_spectrum(
-    t: np.ndarray, v: np.ndarray,
+    t: np.ndarray,
+    v: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return (freqs, magnitude) for a time-series via uniform-grid FFT.
 
@@ -757,6 +796,7 @@ def _compute_fft_spectrum(
     index-PASS vs per-test-FAIL disagreement).
     """
     import math
+
     if len(t) == 0:
         return np.array([]), np.array([])
     n0 = max(len(t), 64)
@@ -795,9 +835,8 @@ def _find_top_n_peaks(
     if len(freqs) < 3 or n_peaks < 1:
         return []
     interior = np.arange(1, len(spectrum) - 1)
-    is_peak = (
-        (spectrum[interior] > spectrum[interior - 1])
-        & (spectrum[interior] > spectrum[interior + 1])
+    is_peak = (spectrum[interior] > spectrum[interior - 1]) & (
+        spectrum[interior] > spectrum[interior + 1]
     )
     peak_idx = interior[is_peak]
     floor = max(min_frequency, 0.0)
@@ -805,7 +844,7 @@ def _find_top_n_peaks(
     if len(peak_idx) == 0:
         return []
     sorted_by_amp = peak_idx[np.argsort(-spectrum[peak_idx])]
-    top_n = sorted_by_amp[: n_peaks]
+    top_n = sorted_by_amp[:n_peaks]
     top_n_sorted = top_n[np.argsort(freqs[top_n])]
     return [(float(freqs[i]), float(spectrum[i])) for i in top_n_sorted]
 
@@ -815,7 +854,7 @@ def _find_strongest_peak_in_window(
     spectrum: np.ndarray,
     lo: float,
     hi: float,
-) -> Optional[tuple[float, float]]:
+) -> tuple[float, float] | None:
     """Return the ``(freq, amplitude)`` of the strongest local maximum in
     ``[lo, hi]``, or ``None`` if no local maximum exists in that window.
 
@@ -827,9 +866,8 @@ def _find_strongest_peak_in_window(
         return None
     interior = np.arange(1, len(spectrum) - 1)
     in_window = (freqs[interior] >= lo) & (freqs[interior] <= hi)
-    is_local_max = (
-        (spectrum[interior] > spectrum[interior - 1])
-        & (spectrum[interior] > spectrum[interior + 1])
+    is_local_max = (spectrum[interior] > spectrum[interior - 1]) & (
+        spectrum[interior] > spectrum[interior + 1]
     )
     candidate_idx = interior[in_window & is_local_max]
     if len(candidate_idx) == 0:
@@ -848,7 +886,7 @@ def _compare_dominant_frequency(
     ref_values: np.ndarray,
     act_time: np.ndarray,
     act_values: np.ndarray,
-    peaks: Optional[list[dict]] = None,
+    peaks: list[dict] | None = None,
 ) -> VariableComparison:
     # parity-test: live-preview JS counterpart at
     # src/dstf/reporting/templates/interactive.js MODE_SCORERS['dominant-frequency']
@@ -887,10 +925,16 @@ def _compare_dominant_frequency(
     # (baseline-free path, idea #59 / D83).
     if len(act_values) < 4:
         return VariableComparison(
-            index=0, name="", passed=False,
-            nrmse=float("inf"), rmse=0.0, signal_range=0.0,
-            max_abs_error=0.0, max_abs_error_time=0.0,
-            reference_final=float("nan"), actual_final=float("nan"),
+            index=0,
+            name="",
+            passed=False,
+            nrmse=float("inf"),
+            rmse=0.0,
+            signal_range=0.0,
+            max_abs_error=0.0,
+            max_abs_error_time=0.0,
+            reference_final=float("nan"),
+            actual_final=float("nan"),
             mode="dominant-frequency",
             diagnostics={"reason": "signal too short for FFT (need >=4 samples)"},
         )
@@ -898,10 +942,16 @@ def _compare_dominant_frequency(
     has_ref = len(ref_values) >= 4
     if not has_ref and not peaks:
         return VariableComparison(
-            index=0, name="", passed=False,
-            nrmse=float("inf"), rmse=0.0, signal_range=0.0,
-            max_abs_error=0.0, max_abs_error_time=0.0,
-            reference_final=float("nan"), actual_final=float("nan"),
+            index=0,
+            name="",
+            passed=False,
+            nrmse=float("inf"),
+            rmse=0.0,
+            signal_range=0.0,
+            max_abs_error=0.0,
+            max_abs_error_time=0.0,
+            reference_final=float("nan"),
+            actual_final=float("nan"),
             mode="dominant-frequency",
             diagnostics={"reason": "signal too short for FFT (need >=4 samples)"},
         )
@@ -934,10 +984,16 @@ def _compare_dominant_frequency(
     peaks = peaks or []
     if not peaks:
         return VariableComparison(
-            index=0, name="", passed=False,
-            nrmse=float("inf"), rmse=0.0, signal_range=0.0,
-            max_abs_error=0.0, max_abs_error_time=0.0,
-            reference_final=float("nan"), actual_final=float("nan"),
+            index=0,
+            name="",
+            passed=False,
+            nrmse=float("inf"),
+            rmse=0.0,
+            signal_range=0.0,
+            max_abs_error=0.0,
+            max_abs_error_time=0.0,
+            reference_final=float("nan"),
+            actual_final=float("nan"),
             mode="dominant-frequency",
             diagnostics={
                 "reason": (
@@ -970,15 +1026,17 @@ def _compare_dominant_frequency(
 
         match = _find_strongest_peak_in_window(act_freqs, act_spectrum, lo, hi)
         if match is None:
-            paired.append({
-                "declared_hz": f_decl,
-                "matched_hz": None,
-                "delta": None,
-                "passed": False,
-                "tolerance": tol,
-                "tolerance_mode": mode,
-                "reason": "no peak in tolerance window",
-            })
+            paired.append(
+                {
+                    "declared_hz": f_decl,
+                    "matched_hz": None,
+                    "delta": None,
+                    "passed": False,
+                    "tolerance": tol,
+                    "tolerance_mode": mode,
+                    "reason": "no peak in tolerance window",
+                }
+            )
             all_passed = False
             max_rel_err = float("inf")
         else:
@@ -989,18 +1047,22 @@ def _compare_dominant_frequency(
                 max_rel_err = rel_err
             if delta > max_delta:
                 max_delta = delta
-            paired.append({
-                "declared_hz": f_decl,
-                "matched_hz": matched_hz,
-                "delta": delta,
-                "passed": True,  # match-in-window guarantees pass for this peak
-                "tolerance": tol,
-                "tolerance_mode": mode,
-            })
+            paired.append(
+                {
+                    "declared_hz": f_decl,
+                    "matched_hz": matched_hz,
+                    "delta": delta,
+                    "passed": True,  # match-in-window guarantees pass for this peak
+                    "tolerance": tol,
+                    "tolerance_mode": mode,
+                }
+            )
 
     act_range = float(np.max(act_values) - np.min(act_values))
     return VariableComparison(
-        index=0, name="", passed=all_passed,
+        index=0,
+        name="",
+        passed=all_passed,
         nrmse=max_rel_err,  # repurposed as "max relative error across declared peaks"
         rmse=max_rel_err,
         signal_range=act_range,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
@@ -12,9 +11,7 @@ from dstf.discovery.recognizer import (
     Recognizer,
     RecognizerResult,
     get_recognizers,
-    register,
 )
-
 
 PROJECT_ROOT = Path(__file__).parent.parent
 SAMPLE_DIR = PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib"
@@ -54,8 +51,11 @@ class TestBundledRecognizer:
     def test_bundled_extracts_simple_test(self):
         from dstf.discovery import mo_parser  # noqa: F401
 
-        recs = [r for r in get_recognizers("modelica")
-                if r.name == "modelica:bundled-unit-tests"]
+        recs = [
+            r
+            for r in get_recognizers("modelica")
+            if r.name == "modelica:bundled-unit-tests"
+        ]
         assert len(recs) == 1
         rec = recs[0]
 
@@ -71,8 +71,11 @@ class TestBundledRecognizer:
     def test_bundled_returns_none_for_non_test_file(self):
         from dstf.discovery import mo_parser  # noqa: F401
 
-        recs = [r for r in get_recognizers("modelica")
-                if r.name == "modelica:bundled-unit-tests"]
+        recs = [
+            r
+            for r in get_recognizers("modelica")
+            if r.name == "modelica:bundled-unit-tests"
+        ]
         rec = recs[0]
         assert rec.recognize(SAMPLE_DIR / "Examples" / "NoUnitTest.mo") is None
 
@@ -86,7 +89,7 @@ class _StubRecognizer(Recognizer):
         self._model_id = model_id
         self._fields = fields
 
-    def recognize(self, source_file: Path) -> Optional[RecognizerResult]:
+    def recognize(self, source_file: Path) -> RecognizerResult | None:
         # Match only files whose stem ends with the model's short name
         short = self._model_id.rsplit(".", 1)[-1]
         if source_file.stem != short:
@@ -110,8 +113,11 @@ class TestRegistryMerge:
             _build_test_model_from_recognizer_results,
         )
 
-        bundled = [r for r in get_recognizers("modelica")
-                   if r.name == "modelica:bundled-unit-tests"][0]
+        bundled = [
+            r
+            for r in get_recognizers("modelica")
+            if r.name == "modelica:bundled-unit-tests"
+        ][0]
         bundled_result = bundled.recognize(SAMPLE_DIR / "Examples" / "SimpleTest.mo")
         assert bundled_result.stop_time == 10.0
 
@@ -121,7 +127,8 @@ class TestRegistryMerge:
         )
 
         merged = _build_test_model_from_recognizer_results(
-            bundled_result.model_id, [bundled_result, user_result],
+            bundled_result.model_id,
+            [bundled_result, user_result],
         )
         assert merged.stop_time == 99.0
         # Bundled-only fields survive

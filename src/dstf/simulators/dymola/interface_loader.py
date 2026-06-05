@@ -26,7 +26,6 @@ import shutil
 import sys
 import zipfile
 from pathlib import Path
-from typing import Optional
 
 
 def _dymola_sort_key(path: Path) -> tuple:
@@ -36,7 +35,9 @@ def _dymola_sort_key(path: Path) -> tuple:
     'Dymola 2024x Refresh 1' and sorts descending.
     """
     name = str(path)
-    m = re.search(r"Dymola[\s_]?(\d{4})x(?:[\s_]+Refresh[\s_]*(\d+))?", name, re.IGNORECASE)
+    m = re.search(
+        r"Dymola[\s_]?(\d{4})x(?:[\s_]+Refresh[\s_]*(\d+))?", name, re.IGNORECASE
+    )
     if not m:
         return (0, 0, name)
     year = int(m.group(1))
@@ -74,7 +75,7 @@ def _find_python_interface_dirs() -> list[Path]:
     return found
 
 
-def _archive_in_dir(d: Path) -> Optional[Path]:
+def _archive_in_dir(d: Path) -> Path | None:
     """Find a dymola .whl or .egg inside a python_interface directory."""
     wheels = sorted(d.glob("dymola-*.whl"), reverse=True)
     if wheels:
@@ -89,8 +90,8 @@ def _archive_in_dir(d: Path) -> Optional[Path]:
 
 
 def find_dymola_interface_archive(
-    override: Optional[Path] = None,
-) -> Optional[Path]:
+    override: Path | None = None,
+) -> Path | None:
     """Find the Dymola Python interface archive. Returns the Path or None.
 
     Accepts either a direct archive path or a directory containing one.
@@ -186,10 +187,10 @@ Fix one of:
 
 
 _cached_class = None
-_cached_path: Optional[Path] = None
+_cached_path: Path | None = None
 
 
-def load_dymola_interface(override_path: Optional[Path] = None):
+def load_dymola_interface(override_path: Path | None = None):
     """Load and return the DymolaInterface class. Cached after first call."""
     global _cached_class, _cached_path
     if _cached_class is not None:
@@ -200,7 +201,9 @@ def load_dymola_interface(override_path: Optional[Path] = None):
         raise RuntimeError(_NOT_FOUND_MESSAGE.format(bases=bases or "(none)"))
     _cached_path = _prepare_sys_path(archive)
     try:
-        from dymola.dymola_interface import DymolaInterface  # type: ignore[import-not-found]
+        from dymola.dymola_interface import (
+            DymolaInterface,  # type: ignore[import-not-found]
+        )
     except ImportError as e:
         raise RuntimeError(
             f"Found Dymola interface archive at {archive}, but `import dymola` failed: {e}\n"
@@ -211,7 +214,7 @@ def load_dymola_interface(override_path: Optional[Path] = None):
     return DymolaInterface
 
 
-def describe_dymola_interface(override_path: Optional[Path] = None) -> dict:
+def describe_dymola_interface(override_path: Path | None = None) -> dict:
     """Run the loader in a reporting mode — no raises. Useful for diagnostics."""
     archive = find_dymola_interface_archive(override_path)
     info: dict = {
@@ -228,7 +231,10 @@ def describe_dymola_interface(override_path: Optional[Path] = None) -> dict:
         return info
     try:
         info["sys_path_entry"] = str(_prepare_sys_path(archive))
-        from dymola.dymola_interface import DymolaInterface  # type: ignore[import-not-found]
+        from dymola.dymola_interface import (
+            DymolaInterface,  # type: ignore[import-not-found]
+        )
+
         info["import_ok"] = True
         info["dymola_interface_module"] = DymolaInterface.__module__
     except Exception as e:  # pragma: no cover — diagnostic helper

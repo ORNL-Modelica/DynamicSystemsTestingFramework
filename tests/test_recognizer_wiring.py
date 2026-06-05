@@ -16,7 +16,6 @@ from dstf.discovery.json_recognizer import (
 )
 from dstf.discovery.test_registry import discover_tests
 
-
 PROJECT_ROOT = Path(__file__).parent.parent
 SAMPLE_LIB = PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib"
 
@@ -45,6 +44,7 @@ def _write_testing_json(config_dir: Path, source_path_rel: str, **extra) -> Path
 # Config loads recognizers from testing.json
 # ---------------------------------------------------------------------------
 
+
 class TestConfigLoadsRecognizers:
     def test_no_recognizers_defaults_to_empty(self, tmp_path):
         lib = _make_lib(tmp_path)
@@ -60,11 +60,14 @@ class TestConfigLoadsRecognizers:
         cfg_dir = tmp_path / "refs"
         cfg_dir.mkdir()
         cfg_path = _write_testing_json(
-            cfg_dir, "../TestLib",
-            recognizers=[{
-                "name": "test:icons",
-                "match": {"type": "extends", "class_pattern": "*Icons.Example"},
-            }],
+            cfg_dir,
+            "../TestLib",
+            recognizers=[
+                {
+                    "name": "test:icons",
+                    "match": {"type": "extends", "class_pattern": "*Icons.Example"},
+                }
+            ],
         )
         config = Config(config_file=str(cfg_path))
         assert len(config.recognizers) == 1
@@ -76,7 +79,8 @@ class TestConfigLoadsRecognizers:
         cfg_dir = tmp_path / "refs"
         cfg_dir.mkdir()
         cfg_path = _write_testing_json(
-            cfg_dir, "../TestLib",
+            cfg_dir,
+            "../TestLib",
             disable_bundled=["modelica:bundled-unit-tests"],
         )
         config = Config(config_file=str(cfg_path))
@@ -87,7 +91,8 @@ class TestConfigLoadsRecognizers:
         cfg_dir = tmp_path / "refs"
         cfg_dir.mkdir()
         cfg_path = _write_testing_json(
-            cfg_dir, "../TestLib",
+            cfg_dir,
+            "../TestLib",
             recognizers=[{"name": "bad", "match": {"type": "no-such-type"}}],
         )
         with pytest.raises(RecognizerSpecError, match="unknown match type"):
@@ -97,6 +102,7 @@ class TestConfigLoadsRecognizers:
 # ---------------------------------------------------------------------------
 # Discovery picks up user recognizers + respects disable_bundled
 # ---------------------------------------------------------------------------
+
 
 class TestDiscoveryWiring:
     def _add_extends_test_model(self, lib: Path) -> str:
@@ -128,15 +134,24 @@ class TestDiscoveryWiring:
         cfg_dir = tmp_path / "refs"
         cfg_dir.mkdir()
         cfg_path = _write_testing_json(
-            cfg_dir, "../TestLib",
-            recognizers=[{
-                "name": "test:icons-example",
-                "match": {"type": "extends", "class_pattern": "*Icons.Example"},
-                "fields": {
-                    "stop_time": {"from": "experiment-annotation", "name": "StopTime"},
-                    "tolerance": {"from": "experiment-annotation", "name": "Tolerance"},
-                },
-            }],
+            cfg_dir,
+            "../TestLib",
+            recognizers=[
+                {
+                    "name": "test:icons-example",
+                    "match": {"type": "extends", "class_pattern": "*Icons.Example"},
+                    "fields": {
+                        "stop_time": {
+                            "from": "experiment-annotation",
+                            "name": "StopTime",
+                        },
+                        "tolerance": {
+                            "from": "experiment-annotation",
+                            "name": "Tolerance",
+                        },
+                    },
+                }
+            ],
         )
         config = Config(config_file=str(cfg_path))
         tests = discover_tests(config)
@@ -153,11 +168,14 @@ class TestDiscoveryWiring:
         cfg_dir = tmp_path / "refs"
         cfg_dir.mkdir()
         cfg_path = _write_testing_json(
-            cfg_dir, "../TestLib",
-            recognizers=[{
-                "name": "test:icons-example",
-                "match": {"type": "extends", "class_pattern": "*Icons.Example"},
-            }],
+            cfg_dir,
+            "../TestLib",
+            recognizers=[
+                {
+                    "name": "test:icons-example",
+                    "match": {"type": "extends", "class_pattern": "*Icons.Example"},
+                }
+            ],
         )
         config = Config(config_file=str(cfg_path))
         tests = discover_tests(config)
@@ -173,11 +191,14 @@ class TestDiscoveryWiring:
         cfg_dir = tmp_path / "refs"
         cfg_dir.mkdir()
         cfg_path = _write_testing_json(
-            cfg_dir, "../TestLib",
-            recognizers=[{
-                "name": "test:icons-example",
-                "match": {"type": "extends", "class_pattern": "*Icons.Example"},
-            }],
+            cfg_dir,
+            "../TestLib",
+            recognizers=[
+                {
+                    "name": "test:icons-example",
+                    "match": {"type": "extends", "class_pattern": "*Icons.Example"},
+                }
+            ],
             disable_bundled=["modelica:bundled-unit-tests"],
         )
         config = Config(config_file=str(cfg_path))
@@ -198,17 +219,20 @@ class TestDiscoveryWiring:
         cfg_dir = tmp_path / "refs"
         cfg_dir.mkdir()
         cfg_path = _write_testing_json(
-            cfg_dir, "../TestLib",
-            recognizers=[{
-                "name": "user:tighter-tolerance",
-                "match": {
-                    "type": "component-instantiation",
-                    "component_name": "UnitTests",
-                },
-                "fields": {
-                    "tolerance": {"from": "constant", "value": 9.99e-9},
-                },
-            }],
+            cfg_dir,
+            "../TestLib",
+            recognizers=[
+                {
+                    "name": "user:tighter-tolerance",
+                    "match": {
+                        "type": "component-instantiation",
+                        "component_name": "UnitTests",
+                    },
+                    "fields": {
+                        "tolerance": {"from": "constant", "value": 9.99e-9},
+                    },
+                }
+            ],
         )
         config = Config(config_file=str(cfg_path))
         tests = discover_tests(config)

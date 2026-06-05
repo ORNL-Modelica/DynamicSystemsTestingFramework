@@ -18,13 +18,13 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
 from ..config import Config
 from ..discovery.test_registry import TestModel
-from ..simulators import TestResult, VariableResult
+from ..simulators import TestResult
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +130,7 @@ def _extract_baselines(data: dict) -> dict[str, Baseline]:
             )
     return out
 
+
 # Pattern matching ref_NNNN.json filenames
 _REF_FILE_PATTERN = re.compile(r"^ref_(\d{4,})\.json$")
 
@@ -180,8 +181,8 @@ class Companion:
     name: str
     kind: str  # "external" | "frozen"
     format: str  # "csv" | "json"
-    path: Optional[str] = None  # absolute path for external
-    data_file: Optional[str] = None  # basename for frozen (sibling of metadata)
+    path: str | None = None  # absolute path for external
+    data_file: str | None = None  # basename for frozen (sibling of metadata)
     provenance: dict = field(default_factory=dict)
 
 
@@ -194,8 +195,8 @@ class RefIndex:
 
     def __init__(self, ref_dir: Path):
         self.ref_dir = ref_dir
-        self._by_model: dict[str, str] = {}      # model_id -> test_id
-        self._by_id: dict[str, dict] = {}         # test_id -> {model_id, status}
+        self._by_model: dict[str, str] = {}  # model_id -> test_id
+        self._by_id: dict[str, dict] = {}  # test_id -> {model_id, status}
         self._loaded = False
 
     def _scan(self):
@@ -236,12 +237,12 @@ class RefIndex:
         if not self._loaded:
             self._scan()
 
-    def get_id(self, model_id: str) -> Optional[str]:
+    def get_id(self, model_id: str) -> str | None:
         """Look up the numeric ID for a model. Returns None if not found."""
         self._ensure_loaded()
         return self._by_model.get(model_id)
 
-    def get_model_id(self, test_id: str) -> Optional[str]:
+    def get_model_id(self, test_id: str) -> str | None:
         """Look up the model ID for a numeric test ID."""
         self._ensure_loaded()
         entry = self._by_id.get(test_id)
@@ -302,14 +303,14 @@ class ReferenceStore:
     def _ensure_dir(self):
         self.ref_dir.mkdir(parents=True, exist_ok=True)
 
-    def _ref_file_for_model(self, model_id: str) -> Optional[Path]:
+    def _ref_file_for_model(self, model_id: str) -> Path | None:
         """Get the reference file path for a model. Returns None if not indexed."""
         test_id = self._index.get_id(model_id)
         if test_id is None:
             return None
         return self.ref_dir / RefIndex.ref_filename(test_id)
 
-    def get_reference(self, model_id: str) -> Optional[dict]:
+    def get_reference(self, model_id: str) -> dict | None:
         """Load reference data for a model. Returns None if not found.
 
         Returns the raw dict as stored on disk. Most callers should prefer
@@ -347,7 +348,7 @@ class ReferenceStore:
         self,
         model_id: str,
         name: str = PRIMARY_BASELINE,
-    ) -> Optional[Baseline]:
+    ) -> Baseline | None:
         """Return one named baseline for a model, or None if not found.
 
         Defaults to ``"primary"`` — which is what every existing caller
@@ -366,7 +367,7 @@ class ReferenceStore:
     # wrapping — soft_checks never hard-fail.
     # ------------------------------------------------------------------
 
-    def _soft_check_dir_for(self, model_id: str) -> Optional[Path]:
+    def _soft_check_dir_for(self, model_id: str) -> Path | None:
         ref_file = self._ref_file_for_model(model_id)
         if ref_file is None:
             return None
@@ -408,10 +409,10 @@ class ReferenceStore:
         time: list[float],
         variables: list[dict],
         *,
-        diagnostics: Optional[list[dict]] = None,
-        provenance: Optional[dict] = None,
-        simulation: Optional[dict] = None,
-        statistics: Optional[dict] = None,
+        diagnostics: list[dict] | None = None,
+        provenance: dict | None = None,
+        simulation: dict | None = None,
+        statistics: dict | None = None,
         overwrite: bool = True,
     ) -> bool:
         """Register a soft_check baseline for a model.
@@ -488,7 +489,7 @@ class ReferenceStore:
     # (copied into ref storage).
     # ------------------------------------------------------------------
 
-    def _companion_dir_for(self, model_id: str) -> Optional[Path]:
+    def _companion_dir_for(self, model_id: str) -> Path | None:
         ref_file = self._ref_file_for_model(model_id)
         if ref_file is None:
             return None
@@ -509,7 +510,9 @@ class ReferenceStore:
             try:
                 entry = json.loads(meta_file.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as e:
-                logger.warning("Skipping unreadable companion meta %s: %s", meta_file, e)
+                logger.warning(
+                    "Skipping unreadable companion meta %s: %s", meta_file, e
+                )
                 continue
             # Skip the sibling data file if it has a .json data extension
             # — companion metadata is always the file matching the name
@@ -533,8 +536,8 @@ class ReferenceStore:
         name: str,
         path: Path,
         *,
-        format: Optional[str] = None,
-        provenance: Optional[dict] = None,
+        format: str | None = None,
+        provenance: dict | None = None,
     ) -> bool:
         """Register an external file as a companion (pointer only, no copy).
 
@@ -569,7 +572,7 @@ class ReferenceStore:
         path_str = str(path)
         fmt = format or _infer_companion_format(path_str)
 
-        meta = {
+        meta: dict[str, Any] = {
             "kind": "external",
             "format": fmt,
             "path": path_str,
@@ -588,7 +591,8 @@ class ReferenceStore:
                 "companion %r registered but path %r is not currently readable "
                 "(external companions are pointer-only; reporter will degrade "
                 "gracefully if the file stays missing)",
-                name, path_str,
+                name,
+                path_str,
             )
         return True
 
@@ -627,7 +631,7 @@ class ReferenceStore:
         shutil.copyfile(src, dst)
 
         meta_file = co_dir / f"{name}.json"
-        meta = {
+        meta: dict[str, Any] = {
             "kind": "frozen",
             "format": co.format,
             "data_file": data_basename,
@@ -690,11 +694,13 @@ class ReferenceStore:
         variables = []
         for var in result.variables:
             _, values_list = _downsample(shared_time, var.values)
-            variables.append({
-                "index": var.index,
-                "name": var.name,
-                "values": values_list,
-            })
+            variables.append(
+                {
+                    "index": var.index,
+                    "name": var.name,
+                    "values": values_list,
+                }
+            )
 
         now = datetime.now(timezone.utc).isoformat()
         date_added = now
@@ -709,7 +715,7 @@ class ReferenceStore:
             unique_times = len(np.unique(shared_time))
             n_intervals = max(unique_times - 1, 1)
 
-        ref_data = {
+        ref_data: dict[str, Any] = {
             "model_id": test.model_id,
             "test_id": test_id,
             "status": "active",
@@ -725,7 +731,7 @@ class ReferenceStore:
         }
 
         # Comparison settings (per-test and per-variable tolerances)
-        comparison = {}
+        comparison: dict[str, Any] = {}
         if test.comparison_tolerance is not None:
             comparison["tolerance"] = test.comparison_tolerance
         if test.variable_overrides:
@@ -735,7 +741,10 @@ class ReferenceStore:
             existing_comp = existing["comparison"]
             if "tolerance" not in comparison and "tolerance" in existing_comp:
                 comparison["tolerance"] = existing_comp["tolerance"]
-            if "variable_overrides" not in comparison and "variable_overrides" in existing_comp:
+            if (
+                "variable_overrides" not in comparison
+                and "variable_overrides" in existing_comp
+            ):
                 comparison["variable_overrides"] = existing_comp["variable_overrides"]
         if comparison:
             ref_data["comparison"] = comparison
@@ -780,9 +789,7 @@ class ReferenceStore:
             if extras:
                 ref_data["baselines"] = extras
 
-        ref_file.write_text(
-            json.dumps(ref_data, indent=2) + "\n", encoding="utf-8"
-        )
+        ref_file.write_text(json.dumps(ref_data, indent=2) + "\n", encoding="utf-8")
 
         return True
 
@@ -810,9 +817,7 @@ class ReferenceStore:
         try:
             data = json.loads(ref_file.read_text(encoding="utf-8"))
             data["status"] = status
-            ref_file.write_text(
-                json.dumps(data, indent=2) + "\n", encoding="utf-8"
-            )
+            ref_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             # Update in-memory index
             test_id = self._index.get_id(model_id)
             if test_id and test_id in self._index._by_id:
@@ -838,9 +843,7 @@ class ReferenceStore:
                 all_refs[model_id] = ref
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(all_refs, indent=2) + "\n", encoding="utf-8"
-        )
+        output_path.write_text(json.dumps(all_refs, indent=2) + "\n", encoding="utf-8")
 
     def export_csv(self, output_path: Path):
         """Export a summary CSV of all references."""
@@ -849,25 +852,36 @@ class ReferenceStore:
 
         with open(output_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "test_id", "model_id", "status", "n_vars", "stop_time",
-                "tolerance", "method", "date_added", "last_updated",
-            ])
+            writer.writerow(
+                [
+                    "test_id",
+                    "model_id",
+                    "status",
+                    "n_vars",
+                    "stop_time",
+                    "tolerance",
+                    "method",
+                    "date_added",
+                    "last_updated",
+                ]
+            )
             for model_id in models:
                 ref = self.get_reference(model_id)
                 if ref:
                     sim = ref.get("simulation", {})
-                    writer.writerow([
-                        ref.get("test_id", ""),
-                        model_id,
-                        ref.get("status", "active"),
-                        ref.get("n_vars", ""),
-                        sim.get("stop_time", ""),
-                        sim.get("tolerance", ""),
-                        sim.get("method", ""),
-                        ref.get("date_added", ""),
-                        ref.get("last_updated", ""),
-                    ])
+                    writer.writerow(
+                        [
+                            ref.get("test_id", ""),
+                            model_id,
+                            ref.get("status", "active"),
+                            ref.get("n_vars", ""),
+                            sim.get("stop_time", ""),
+                            sim.get("tolerance", ""),
+                            sim.get("method", ""),
+                            ref.get("date_added", ""),
+                            ref.get("last_updated", ""),
+                        ]
+                    )
 
     def cleanup_obsolete(self) -> int:
         """Remove reference files with status 'obsolete'."""
@@ -902,7 +916,7 @@ def _downsample(
     for i in range(1, n):
         if time[i] == time[i - 1]:
             event_indices.add(i - 1)  # pre-event
-            event_indices.add(i)      # post-event
+            event_indices.add(i)  # post-event
 
     # Fill remaining budget with evenly spaced indices
     remaining = max_points - len(event_indices)

@@ -32,10 +32,10 @@ class _FakeConfig:
 
 def _seed_batch_manifest(work_dir, mapping: dict[str, str]) -> None:
     """Write a batch_manifest.json mapping test_key -> {model_id, ref_id}."""
-    manifest = {tk: {"model_id": mid, "ref_id": None}
-                for tk, mid in mapping.items()}
+    manifest = {tk: {"model_id": mid, "ref_id": None} for tk, mid in mapping.items()}
     (work_dir / "batch_manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8",
+        json.dumps(manifest),
+        encoding="utf-8",
     )
 
 
@@ -90,10 +90,13 @@ def test_wipe_preserves_out_of_scope_dirs(tmp_path):
     what makes --merge work — partial reruns still produce a
     full-suite report covering the un-rerun tests.
     """
-    _seed_batch_manifest(tmp_path, {
-        "test_0001": "Lib.A",
-        "test_0002": "Lib.B",
-    })
+    _seed_batch_manifest(
+        tmp_path,
+        {
+            "test_0001": "Lib.A",
+            "test_0002": "Lib.B",
+        },
+    )
     _seed_dir(tmp_path / "test_0001")
     _seed_dir(tmp_path / "test_0002")
     _seed_dir(tmp_path / "reports" / "ref_0001")
@@ -101,7 +104,7 @@ def test_wipe_preserves_out_of_scope_dirs(tmp_path):
 
     _wipe_stale_state_for_scope(
         _FakeConfig(tmp_path),
-        [_FakeTest("Lib.A")],   # Only A in scope
+        [_FakeTest("Lib.A")],  # Only A in scope
         ref_id_map={"Lib.A": "ref_0001", "Lib.B": "ref_0002"},
         wipe_sim_dirs=True,
     )

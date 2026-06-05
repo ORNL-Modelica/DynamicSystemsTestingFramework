@@ -74,3 +74,14 @@ htmlcov/
 .cursorignore
 .cursorindexingignore
 .claude/settings.local.json
+
+# Test fixtures named like Dymola artifacts are real, committed test data —
+# the artifact patterns above (dslog.txt, *.mat, ...) must not swallow them.
+# (results/Dymola/dslog.txt + dsres.mat were already force-added; this keeps
+# the results_additional/ dslog fixture tracked too. Big generated fixtures —
+# dsfinal.txt, dsin.txt, dsmodel.c — stay ignored: no test references them.)
+!tests/fixtures/**/dslog.txt
+
+# Soul-System session state (event log, handoff cursors) — machine/session
+# local, not project source. Accidentally tracked once via `git add -A`.
+.soul/

@@ -22,7 +22,8 @@ class TestOpenModelicaConfig:
         from dstf.simulators.openmodelica.runner import (
             OpenModelicaConfig,
         )
-        (tmp_path / "package.mo").write_text('package Lib end Lib;')
+
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
         cfg = Config(
             source_path=tmp_path,
             reference_root=tmp_path / "refs",
@@ -43,7 +44,7 @@ class TestOpenModelicaRunnerUnit:
             OpenModelicaRunner,
         )
 
-        (tmp_path / "package.mo").write_text('package Lib end Lib;')
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
         cfg = Config(
             source_path=tmp_path,
             reference_root=tmp_path / "refs",
@@ -58,6 +59,7 @@ class TestOpenModelicaRunnerUnit:
         from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
+
         assert OpenModelicaRunner.capabilities == frozenset(
             {Capability.BATCH_FALLBACK, Capability.PERSISTENT_WORKERS},
         )
@@ -66,6 +68,7 @@ class TestOpenModelicaRunnerUnit:
         from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
+
         names = [name for name, _ in OpenModelicaRunner.artifact_files]
         assert "simulate.mos" in names
         assert "result_res.mat" in names
@@ -75,7 +78,9 @@ class TestOpenModelicaRunnerUnit:
             assert "{" not in n and "}" not in n
 
     def test_run_single_test_writes_mos_and_calls_omc(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         """Subprocess invoked with omc + simulate.mos in test_dir,
         stdout captured to omc_stdout.txt, run_result reflects parsed output."""
@@ -83,7 +88,7 @@ class TestOpenModelicaRunnerUnit:
             OpenModelicaRunner,
         )
 
-        (tmp_path / "package.mo").write_text('package Lib end Lib;')
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
         cfg = Config(
             source_path=tmp_path,
             reference_root=tmp_path / "refs",
@@ -103,18 +108,18 @@ class TestOpenModelicaRunnerUnit:
 
         # Synthetic omc stdout: a well-formed SimulationResult record.
         stdout_synth = (
-            'record SimulationResult\n'
+            "record SimulationResult\n"
             '    resultFile = "/tmp/somewhere/result_res.mat",\n'
             '    simulationOptions = "...",\n'
             '    messages = "The simulation finished successfully.",\n'
-            '    timeFrontend = 0.1,\n'
-            '    timeBackend = 0.05,\n'
-            '    timeSimCode = 0.01,\n'
-            '    timeTemplates = 0.02,\n'
-            '    timeCompile = 0.9,\n'
-            '    timeSimulation = 0.03,\n'
-            '    timeTotal = 1.11\n'
-            'end SimulationResult;\n'
+            "    timeFrontend = 0.1,\n"
+            "    timeBackend = 0.05,\n"
+            "    timeSimCode = 0.01,\n"
+            "    timeTemplates = 0.02,\n"
+            "    timeCompile = 0.9,\n"
+            "    timeSimulation = 0.03,\n"
+            "    timeTotal = 1.11\n"
+            "end SimulationResult;\n"
         )
 
         # The runner checks that result_res.mat EXISTS in the test dir before
@@ -123,8 +128,9 @@ class TestOpenModelicaRunnerUnit:
             (Path(cwd) / "result_res.mat").write_bytes(b"\x00")
             captured_call["cmd"] = list(cmd)
             captured_call["cwd"] = cwd
-            return CompletedProcess(args=cmd, returncode=0,
-                                    stdout=stdout_synth, stderr="")
+            return CompletedProcess(
+                args=cmd, returncode=0, stdout=stdout_synth, stderr=""
+            )
 
         captured_call: dict = {}
         monkeypatch.setattr(
@@ -132,10 +138,11 @@ class TestOpenModelicaRunnerUnit:
             fake_run,
         )
 
-        result = runner.run_single_test(test, test_key="test_0001",
-                                        index=1, total=1)
+        result = runner.run_single_test(test, test_key="test_0001", index=1, total=1)
         # Subprocess invocation
-        assert captured_call["cmd"][0].endswith("omc") or captured_call["cmd"][0] == "omc"
+        assert (
+            captured_call["cmd"][0].endswith("omc") or captured_call["cmd"][0] == "omc"
+        )
         assert captured_call["cmd"][1] == "simulate.mos"
         # stdout file written
         stdout_path = cfg.work_dir / "test_0001" / "omc_stdout.txt"
@@ -157,7 +164,8 @@ class TestOpenModelicaRunnerUnit:
         from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
-        (tmp_path / "package.mo").write_text('package Lib end Lib;')
+
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
         cfg = Config(
             source_path=tmp_path,
             reference_root=tmp_path / "refs",
@@ -175,32 +183,32 @@ class TestOpenModelicaRunnerUnit:
             stop_time=1.0,
         )
         stdout_synth = (
-            'Error: Class Lib.DoesNotExist not found.\n'
-            'record SimulationResult\n'
+            "Error: Class Lib.DoesNotExist not found.\n"
+            "record SimulationResult\n"
             '    resultFile = "",\n'
             '    simulationOptions = "...",\n'
             '    messages = "Simulation Failed. Model: Lib.DoesNotExist does not exist!",\n'
-            '    timeFrontend = 0.0,\n'
-            '    timeBackend = 0.0,\n'
-            '    timeSimCode = 0.0,\n'
-            '    timeTemplates = 0.0,\n'
-            '    timeCompile = 0.0,\n'
-            '    timeSimulation = 0.0,\n'
-            '    timeTotal = 0.0\n'
-            'end SimulationResult;\n'
+            "    timeFrontend = 0.0,\n"
+            "    timeBackend = 0.0,\n"
+            "    timeSimCode = 0.0,\n"
+            "    timeTemplates = 0.0,\n"
+            "    timeCompile = 0.0,\n"
+            "    timeSimulation = 0.0,\n"
+            "    timeTotal = 0.0\n"
+            "end SimulationResult;\n"
         )
 
         def fake_run(cmd, cwd, capture_output, text, timeout):
-            return CompletedProcess(args=cmd, returncode=0,
-                                    stdout=stdout_synth, stderr="")
+            return CompletedProcess(
+                args=cmd, returncode=0, stdout=stdout_synth, stderr=""
+            )
 
         monkeypatch.setattr(
             "dstf.simulators.openmodelica.runner.subprocess.run",
             fake_run,
         )
 
-        result = runner.run_single_test(test, test_key="test_0001",
-                                        index=1, total=1)
+        result = runner.run_single_test(test, test_key="test_0001", index=1, total=1)
         assert result.success is False
         assert result.error_message
         low = result.error_message.lower()
@@ -250,7 +258,10 @@ class TestOpenModelicaIntegration:
             source="spec",
         )
         run_result = runner.run_single_test(
-            test, test_key="test_0001", index=1, total=1,
+            test,
+            test_key="test_0001",
+            index=1,
+            total=1,
         )
         assert run_result.success is True, run_result.error_message
         assert run_result.translation_wall is not None
@@ -263,11 +274,11 @@ class TestOpenModelicaIntegration:
 
     def test_variable_filter_shrinks_mat(self, tmp_path):
         """variableFilter keeps the MAT small (one var request ⇒ few names)."""
-        from dstf.simulators.openmodelica.runner import (
-            OpenModelicaRunner,
-        )
         from dstf.simulators.common.mat_reader import (
             list_result_mat_variables,
+        )
+        from dstf.simulators.openmodelica.runner import (
+            OpenModelicaRunner,
         )
 
         (tmp_path / "package.mo").write_text("package EmptyLib end EmptyLib;")
@@ -305,6 +316,7 @@ class TestOpenModelicaIntegration:
         from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
+
         (tmp_path / "package.mo").write_text("package EmptyLib end EmptyLib;")
         cfg = Config(
             source_path=tmp_path,
@@ -340,9 +352,10 @@ class TestOpenModelicaIntegration:
         variable the fixture's variableFilter allowed through.
         """
         from dstf.simulators.common.mat_reader import (
-            read_result_mat,
             list_result_mat_variables,
+            read_result_mat,
         )
+
         fixture = FIXTURES / "pid_controller_res.mat"
         names = list_result_mat_variables(fixture)
         assert names is not None

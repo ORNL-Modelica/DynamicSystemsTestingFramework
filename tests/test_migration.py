@@ -4,22 +4,19 @@ Exercises the `migrate-baselines` CLI shape and confirms that tree leaves
 with `against: <soft_check_name>` continue to evaluate identically before
 and after the migration (i.e., the on-disk move doesn't change scoring).
 """
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-import numpy as np
-import pytest
-
 from dstf.config import Config
-from dstf.discovery.test_registry import TestModel
-from dstf.simulators.base import TestResult, VariableResult
 from dstf.storage.reference_store import ReferenceStore
 
 
-def _write_legacy_ref(ref_dir: Path, test_id: str, model_id: str,
-                      named: dict[str, dict]) -> Path:
+def _write_legacy_ref(
+    ref_dir: Path, test_id: str, model_id: str, named: dict[str, dict]
+) -> Path:
     """Write a pre-D66 flat ref file with a `baselines` dict."""
     ref_dir.mkdir(parents=True, exist_ok=True)
     data = {
@@ -41,18 +38,24 @@ def _write_legacy_ref(ref_dir: Path, test_id: str, model_id: str,
 def _run_migrate(ref_root: Path, apply: bool = True) -> None:
     """Invoke the migration walk directly (bypass CLI config resolution)."""
     from dstf.cli import migrate_baselines_tree
+
     migrate_baselines_tree(ref_root, apply)
 
 
 class TestMigrateBaselines:
     def test_dry_run_does_not_move(self, tmp_path):
         ref_dir = tmp_path
-        _write_legacy_ref(ref_dir, "0001", "Lib.Test", {
-            "experiment": {
-                "time": [0.0, 1.0],
-                "variables": [{"index": 1, "name": "x", "values": [0.1, 0.9]}],
-            }
-        })
+        _write_legacy_ref(
+            ref_dir,
+            "0001",
+            "Lib.Test",
+            {
+                "experiment": {
+                    "time": [0.0, 1.0],
+                    "variables": [{"index": 1, "name": "x", "values": [0.1, 0.9]}],
+                }
+            },
+        )
         _run_migrate(ref_dir, apply=False)
         # Legacy dict still in primary file, no soft_checks dir
         data = json.loads((ref_dir / "ref_0001.json").read_text())
@@ -61,17 +64,22 @@ class TestMigrateBaselines:
 
     def test_apply_moves_baselines_to_soft_check_subdir(self, tmp_path):
         ref_dir = tmp_path
-        _write_legacy_ref(ref_dir, "0001", "Lib.Test", {
-            "experiment": {
-                "time": [0.0, 1.0],
-                "variables": [{"index": 1, "name": "x", "values": [0.1, 0.9]}],
-                "provenance": {"source": "rig-A"},
+        _write_legacy_ref(
+            ref_dir,
+            "0001",
+            "Lib.Test",
+            {
+                "experiment": {
+                    "time": [0.0, 1.0],
+                    "variables": [{"index": 1, "name": "x", "values": [0.1, 0.9]}],
+                    "provenance": {"source": "rig-A"},
+                },
+                "analytical": {
+                    "time": [0.0, 1.0],
+                    "variables": [{"index": 1, "name": "x", "values": [0.2, 0.8]}],
+                },
             },
-            "analytical": {
-                "time": [0.0, 1.0],
-                "variables": [{"index": 1, "name": "x", "values": [0.2, 0.8]}],
-            }
-        })
+        )
         _run_migrate(ref_dir, apply=True)
 
         # Primary file no longer has the dict
@@ -89,12 +97,17 @@ class TestMigrateBaselines:
 
     def test_apply_preserves_primary_flat_fields(self, tmp_path):
         ref_dir = tmp_path
-        _write_legacy_ref(ref_dir, "0001", "Lib.Test", {
-            "experiment": {
-                "time": [0.0, 1.0],
-                "variables": [{"index": 1, "name": "x", "values": [0.1, 0.9]}],
-            }
-        })
+        _write_legacy_ref(
+            ref_dir,
+            "0001",
+            "Lib.Test",
+            {
+                "experiment": {
+                    "time": [0.0, 1.0],
+                    "variables": [{"index": 1, "name": "x", "values": [0.1, 0.9]}],
+                }
+            },
+        )
         _run_migrate(ref_dir, apply=True)
         data = json.loads((ref_dir / "ref_0001.json").read_text())
         # Primary survives intact
@@ -112,12 +125,17 @@ class TestMigrateBaselines:
     def test_already_migrated_file_unchanged(self, tmp_path):
         """Running migration a second time is a no-op (nothing to move)."""
         ref_dir = tmp_path
-        _write_legacy_ref(ref_dir, "0001", "Lib.Test", {
-            "experiment": {
-                "time": [0.0, 1.0],
-                "variables": [{"index": 1, "name": "x", "values": [0.1, 0.9]}],
-            }
-        })
+        _write_legacy_ref(
+            ref_dir,
+            "0001",
+            "Lib.Test",
+            {
+                "experiment": {
+                    "time": [0.0, 1.0],
+                    "variables": [{"index": 1, "name": "x", "values": [0.1, 0.9]}],
+                }
+            },
+        )
         _run_migrate(ref_dir, apply=True)
         before = (ref_dir / "soft_checks" / "ref_0001" / "experiment.json").read_text()
         _run_migrate(ref_dir, apply=True)
@@ -129,7 +147,9 @@ class TestPostMigrationScoring:
     """Soft_checks targeted via `against:` must score identically to what
     the pre-migration `baselines` dict produced."""
 
-    def test_get_baselines_returns_migrated_soft_checks(self, tmp_path, sample_models_dir):
+    def test_get_baselines_returns_migrated_soft_checks(
+        self, tmp_path, sample_models_dir
+    ):
         """After migration, `get_baselines` (the comparator lookup) sees
         the same names it did pre-migration."""
         # Config derives reference_dir = reference_root / <backend> / <os>,
@@ -138,12 +158,17 @@ class TestPostMigrationScoring:
         ref_root = tmp_path / "refs"
         config = Config(source_path=sample_models_dir, reference_root=ref_root)
         ref_dir = config.reference_dir
-        _write_legacy_ref(ref_dir, "0001", "Lib.Test", {
-            "experiment": {
-                "time": [0.0, 1.0, 2.0],
-                "variables": [{"index": 1, "name": "x", "values": [0.1, 0.5, 0.9]}],
-            }
-        })
+        _write_legacy_ref(
+            ref_dir,
+            "0001",
+            "Lib.Test",
+            {
+                "experiment": {
+                    "time": [0.0, 1.0, 2.0],
+                    "variables": [{"index": 1, "name": "x", "values": [0.1, 0.5, 0.9]}],
+                }
+            },
+        )
         store = ReferenceStore(config)
 
         # Pre-migration: experiment visible via flat-baselines-read
@@ -160,5 +185,7 @@ class TestPostMigrationScoring:
         assert "experiment" in baselines_after
         # Trajectory equality — the data survived the move intact
         assert baselines_before["experiment"].time == baselines_after["experiment"].time
-        assert (baselines_before["experiment"].variables[0]["values"]
-                == baselines_after["experiment"].variables[0]["values"])
+        assert (
+            baselines_before["experiment"].variables[0]["values"]
+            == baselines_after["experiment"].variables[0]["values"]
+        )

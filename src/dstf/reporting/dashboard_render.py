@@ -21,10 +21,8 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _env = Environment(
@@ -33,7 +31,7 @@ _env = Environment(
 )
 
 
-def _read_status(work_dir: Path) -> Optional[dict]:
+def _read_status(work_dir: Path) -> dict | None:
     p = work_dir / "status.json"
     if not p.exists():
         return None
@@ -43,7 +41,7 @@ def _read_status(work_dir: Path) -> Optional[dict]:
         return None
 
 
-def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> Optional[dict]:
+def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:
     """Read per-test comparison_data.json if present.
 
     Per-test reports are at <work_dir>/reports/<report_dir>/comparison_data.json
@@ -61,7 +59,7 @@ def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> Optional[dict]:
 def _enrich_row_from_comparison(
     row: dict,
     comp: dict,
-    snapshot_start_wall: Optional[float],
+    snapshot_start_wall: float | None,
 ) -> bool:
     """Copy post-run fields from a per-test comparison_data.json into a row.
 
@@ -113,13 +111,21 @@ def _enrich_row_from_comparison(
         return False
 
     for key in (
-        "worst_nrmse", "n_vars", "n_vars_passed", "n_warnings",
-        "translation_wall", "sim_wall", "total_wall",
-        "ref_id", "ref_file", "field_sources",
+        "worst_nrmse",
+        "n_vars",
+        "n_vars_passed",
+        "n_warnings",
+        "translation_wall",
+        "sim_wall",
+        "total_wall",
+        "ref_id",
+        "ref_file",
+        "field_sources",
         # Comparison-derived status overrides live-mode status when present.
         # The compare phase distinguishes pass / fail / sim-fail / no-ref;
         # live mode only knows passed / failed / timed_out.
-        "status_text", "status_class",
+        "status_text",
+        "status_class",
     ):
         if key in summary:
             row[key] = summary[key]
@@ -131,10 +137,10 @@ def _enrich_row_from_comparison(
 # matches the buttons in dashboard.html (pass/fail/sim-fail/no-ref/queued/
 # running/timed-out) so a single filter applies live and final.
 _LIVE_STATUS_MAP = {
-    "queued":    ("QUEUED",    "queued"),
-    "running":   ("RUNNING",   "running"),
-    "passed":    ("PASS",      "pass"),
-    "failed":    ("FAIL",      "fail"),
+    "queued": ("QUEUED", "queued"),
+    "running": ("RUNNING", "running"),
+    "passed": ("PASS", "pass"),
+    "failed": ("FAIL", "fail"),
     "timed_out": ("TIMED OUT", "timed-out"),
 }
 
@@ -148,6 +154,7 @@ def build_rerun_prefix(config) -> str:
     Prefers --config when available; otherwise falls back to
     --source-path (+ optional --reference-root).
     """
+
     def q(p) -> str:
         s = str(p)
         return f'"{s}"' if " " in s else s
@@ -164,7 +171,9 @@ def build_rerun_prefix(config) -> str:
     return " ".join(parts)
 
 
-def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[str] = None) -> dict:
+def build_dashboard_context(
+    work_dir: Path, mode: str, rerun_prefix: str | None = None
+) -> dict:
     """Build the Jinja context for dashboard.html.
 
     mode='live' — auto_refresh=True, post-run fields stay None
@@ -174,8 +183,12 @@ def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[st
     decide whether to start the fetch loop.
     """
     snapshot = _read_status(work_dir) or {
-        "total": 0, "elapsed": 0.0, "eta_seconds": None,
-        "counts": {}, "tests": [], "updated_at": 0.0,
+        "total": 0,
+        "elapsed": 0.0,
+        "eta_seconds": None,
+        "counts": {},
+        "tests": [],
+        "updated_at": 0.0,
     }
 
     # Wall-clock anchor for the stale-sidecar guard. Sidecars written
@@ -189,7 +202,8 @@ def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[st
     for t in snapshot.get("tests", []):
         raw_status = t.get("status", "queued")
         status_text, status_class = _LIVE_STATUS_MAP.get(
-            raw_status, (raw_status.upper(), raw_status.replace("_", "-")),
+            raw_status,
+            (raw_status.upper(), raw_status.replace("_", "-")),
         )
         # Live-mode ref_id can be derived from report_dir when it follows
         # the "ref_NNNN" naming (set by cmd_run pre-populating
@@ -205,7 +219,9 @@ def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[st
             "status_text": status_text,
             "status_class": status_class,
             "elapsed": t.get("elapsed"),
-            "started_wall": t.get("started_wall"),  # epoch — JS uses for live "running for Ns"
+            "started_wall": t.get(
+                "started_wall"
+            ),  # epoch — JS uses for live "running for Ns"
             "worker_id": t.get("worker_id"),
             "report_dir": t.get("report_dir") or t.get("test_key"),
             "phase": t.get("phase"),
@@ -263,7 +279,7 @@ def _atomic_write(path: Path, text: str) -> None:
     """
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     tmp.write_text(text, encoding="utf-8")
-    last_err: Optional[OSError] = None
+    last_err: OSError | None = None
     for delay in (0, 0.05, 0.1, 0.2, 0.5):
         if delay:
             time.sleep(delay)
@@ -280,18 +296,18 @@ def _atomic_write(path: Path, text: str) -> None:
         raise last_err
 
 
-def _render(work_dir: Path, mode: str, rerun_prefix: Optional[str] = None) -> None:
+def _render(work_dir: Path, mode: str, rerun_prefix: str | None = None) -> None:
     ctx = build_dashboard_context(work_dir, mode=mode, rerun_prefix=rerun_prefix)
     template = _env.get_template("dashboard.html")
     html = template.render(**ctx)
     _atomic_write(work_dir / "dashboard.html", html)
 
 
-def render_live(work_dir: Path, rerun_prefix: Optional[str] = None) -> None:
+def render_live(work_dir: Path, rerun_prefix: str | None = None) -> None:
     """Render dashboard.html in live mode (auto-refreshes via meta tag)."""
     _render(work_dir, mode="live", rerun_prefix=rerun_prefix)
 
 
-def render_final(work_dir: Path, rerun_prefix: Optional[str] = None) -> None:
+def render_final(work_dir: Path, rerun_prefix: str | None = None) -> None:
     """Render dashboard.html in final mode (refresh stripped, sidecars merged)."""
     _render(work_dir, mode="final", rerun_prefix=rerun_prefix)

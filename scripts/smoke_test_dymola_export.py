@@ -26,7 +26,6 @@ every Dymola install.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -43,6 +42,7 @@ def _load_dymola_interface():
     """
     try:
         from dymola.dymola_interface import DymolaInterface
+
         return DymolaInterface
     except ImportError:
         pass
@@ -58,6 +58,7 @@ def _load_dymola_interface():
             sys.path.insert(0, d)
             try:
                 from dymola.dymola_interface import DymolaInterface  # type: ignore
+
                 return DymolaInterface
             except ImportError:
                 continue
@@ -75,7 +76,7 @@ def main() -> int:
     parser.add_argument(
         "--library",
         help="Absolute path to a Modelica library package.mo (or directory "
-             "containing one). Default: Modelica Standard Library (always loaded).",
+        "containing one). Default: Modelica Standard Library (always loaded).",
     )
     parser.add_argument(
         "--model",
@@ -88,7 +89,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    out_dir = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="fmu_smoke_"))
+    out_dir = (
+        Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="fmu_smoke_"))
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"[info] Output directory: {out_dir}")
 
@@ -114,7 +117,9 @@ def main() -> int:
                 lib_path = lib_pkg
             print(f"[step 3] openModel({lib_path})...")
             if not dymola.openModel(str(lib_path)):
-                print(f"[FAIL] openModel returned False. Dymola log: {dymola.getLastErrorLog()}")
+                print(
+                    f"[FAIL] openModel returned False. Dymola log: {dymola.getLastErrorLog()}"
+                )
                 return 4
         else:
             print("[step 3] skipped (no --library; relying on MSL auto-load)")
@@ -124,9 +129,11 @@ def main() -> int:
             print(f"[FAIL] cd returned False. Dymola log: {dymola.getLastErrorLog()}")
             return 5
 
-        print(f"[step 5] translateModelFMU({args.model}, "
-              f"storeResult=False, modelName='', fmiVersion='2', fmiType='all', "
-              f"includeSource=False, includeImage=0)...")
+        print(
+            f"[step 5] translateModelFMU({args.model}, "
+            f"storeResult=False, modelName='', fmiVersion='2', fmiType='all', "
+            f"includeSource=False, includeImage=0)..."
+        )
         try:
             result = dymola.translateModelFMU(
                 args.model,
@@ -139,9 +146,11 @@ def main() -> int:
             )
         except TypeError as exc:
             print(f"[FAIL] translateModelFMU signature mismatch: {exc}")
-            print("       This is the kwarg-compatibility risk D65 called out. "
-                  "Update DymolaWorker.export_fmu's call site to match this "
-                  "Dymola version's accepted kwargs.")
+            print(
+                "       This is the kwarg-compatibility risk D65 called out. "
+                "Update DymolaWorker.export_fmu's call site to match this "
+                "Dymola version's accepted kwargs."
+            )
             return 6
         except Exception as exc:
             print(f"[FAIL] translateModelFMU threw: {exc}")
@@ -150,9 +159,11 @@ def main() -> int:
 
         print(f"[step 6] translateModelFMU returned: {result!r}")
         if not result:
-            print("[FAIL] translateModelFMU returned empty string — typically means "
-                  "license is missing the FMI export option, OR the model failed to "
-                  "translate. Check the Dymola log for details.")
+            print(
+                "[FAIL] translateModelFMU returned empty string — typically means "
+                "license is missing the FMI export option, OR the model failed to "
+                "translate. Check the Dymola log for details."
+            )
             print(f"       Dymola log: {dymola.getLastErrorLog()}")
             return 8
 
@@ -165,13 +176,17 @@ def main() -> int:
 
         candidates = list(out_dir.glob("*.fmu"))
         if candidates:
-            print(f"[PASS-with-note] Expected {fmu_path} but found: {candidates}. "
-                  f"The glob-fallback in DymolaWorker.export_fmu handles this. "
-                  f"Dymola's basename convention may differ from test assumptions.")
+            print(
+                f"[PASS-with-note] Expected {fmu_path} but found: {candidates}. "
+                f"The glob-fallback in DymolaWorker.export_fmu handles this. "
+                f"Dymola's basename convention may differ from test assumptions."
+            )
             return 0
 
-        print(f"[FAIL] translateModelFMU claimed success but no .fmu in {out_dir}. "
-              f"returned={result!r}")
+        print(
+            f"[FAIL] translateModelFMU claimed success but no .fmu in {out_dir}. "
+            f"returned={result!r}"
+        )
         return 9
 
     finally:

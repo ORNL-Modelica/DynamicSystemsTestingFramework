@@ -16,7 +16,6 @@ import pytest
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
 
-
 # ---------------------------------------------------------------------------
 # FakeSession + fixtures
 # ---------------------------------------------------------------------------
@@ -155,7 +154,9 @@ class TestWorkerStartup:
         assert any("loadModel(Modelica)" in c for c in fake.calls)
         assert any("package.mo" in c and "loadFile" in c for c in fake.calls)
         # MSL appears before main library load
-        idx_msl = next(i for i, c in enumerate(fake.calls) if "loadModel(Modelica)" in c)
+        idx_msl = next(
+            i for i, c in enumerate(fake.calls) if "loadModel(Modelica)" in c
+        )
         idx_lib = next(i for i, c in enumerate(fake.calls) if "package.mo" in c)
         assert idx_msl < idx_lib
 
@@ -190,10 +191,12 @@ class TestWorkerStartup:
         cfg = _make_config(tmp_path, dependencies=["Modelica"])
         om_cfg = OpenModelicaConfig.from_config(cfg)
         # Simulate loadFile(package.mo) failing
-        fake = FakeSession(responses={
-            'loadFile("': lambda e: False,
-            "getErrorString": "[library.mo:1:1-1:1] Error: Package syntax error",
-        })
+        fake = FakeSession(
+            responses={
+                'loadFile("': lambda e: False,
+                "getErrorString": "[library.mo:1:1-1:1] Error: Package syntax error",
+            }
+        )
         worker = OpenModelicaWorker(0, cfg, om_cfg, lambda: fake)
         with pytest.raises(RuntimeError, match="failed to load library"):
             worker.start()
@@ -234,9 +237,7 @@ class TestWorkerStartup:
         fake = FakeSession()
         worker = OpenModelicaWorker(0, cfg, om_cfg, lambda: fake)
         worker.start()
-        assert any(
-            'setCommandLineOptions("--std=3.3")' in c for c in fake.calls
-        )
+        assert any('setCommandLineOptions("--std=3.3")' in c for c in fake.calls)
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +289,8 @@ class TestWorkerRunTest:
             return record
 
         worker, fake, cfg = self._bootstrap_worker(
-            tmp_path, responses={"simulate(": fake_simulate},
+            tmp_path,
+            responses={"simulate(": fake_simulate},
         )
         result = worker.run_test(test, "test_0001")
 
@@ -305,7 +307,9 @@ class TestWorkerRunTest:
         """The sendExpression("simulate(...)") string contains kwargs
         produced by build_simulate_args — tolerance / method / stopTime etc."""
         test = _make_test(
-            stop_time=5.0, tolerance=1e-8, method="Dassl",
+            stop_time=5.0,
+            tolerance=1e-8,
+            method="Dassl",
             number_of_intervals=100,
         )
         test_dir = tmp_path / "work" / "test_0001"
@@ -319,13 +323,18 @@ class TestWorkerRunTest:
             return {
                 "resultFile": str(test_dir / "result_res.mat"),
                 "messages": "ok",
-                "timeFrontend": 0.0, "timeBackend": 0.0, "timeSimCode": 0.0,
-                "timeTemplates": 0.0, "timeCompile": 0.0, "timeSimulation": 0.0,
+                "timeFrontend": 0.0,
+                "timeBackend": 0.0,
+                "timeSimCode": 0.0,
+                "timeTemplates": 0.0,
+                "timeCompile": 0.0,
+                "timeSimulation": 0.0,
                 "timeTotal": 0.0,
             }
 
         worker, fake, _ = self._bootstrap_worker(
-            tmp_path, responses={"simulate(": fake_simulate},
+            tmp_path,
+            responses={"simulate(": fake_simulate},
         )
         worker.run_test(test, "test_0001")
 
@@ -347,8 +356,12 @@ class TestWorkerRunTest:
             return {
                 "resultFile": "",
                 "messages": "Simulation Failed. Model: Demo.Example.A does not exist!",
-                "timeFrontend": 0.0, "timeBackend": 0.0, "timeSimCode": 0.0,
-                "timeTemplates": 0.0, "timeCompile": 0.0, "timeSimulation": 0.0,
+                "timeFrontend": 0.0,
+                "timeBackend": 0.0,
+                "timeSimCode": 0.0,
+                "timeTemplates": 0.0,
+                "timeCompile": 0.0,
+                "timeSimulation": 0.0,
                 "timeTotal": 0.0,
             }
 
@@ -377,7 +390,8 @@ class TestWorkerRunTest:
             raise RuntimeError("ZMQ connection dropped")
 
         worker, _, _ = self._bootstrap_worker(
-            tmp_path, responses={"simulate(": boom},
+            tmp_path,
+            responses={"simulate(": boom},
         )
         result = worker.run_test(test, "test_0001")
         assert result.success is True
@@ -390,7 +404,8 @@ class TestWorkerRunTest:
             raise RuntimeError("ZMQ connection dropped")
 
         worker, _, _ = self._bootstrap_worker(
-            tmp_path, responses={"simulate(": boom},
+            tmp_path,
+            responses={"simulate(": boom},
         )
         result = worker.run_test(test, "test_0001")
         assert result.success is False
@@ -464,8 +479,12 @@ class TestHelpers:
         rec = {
             "resultFile": "/tmp/result_res.mat",
             "messages": "The simulation finished successfully.",
-            "timeFrontend": 0.1, "timeBackend": 0.2, "timeSimCode": 0.05,
-            "timeTemplates": 0.03, "timeCompile": 0.4, "timeSimulation": 0.6,
+            "timeFrontend": 0.1,
+            "timeBackend": 0.2,
+            "timeSimCode": 0.05,
+            "timeTemplates": 0.03,
+            "timeCompile": 0.4,
+            "timeSimulation": 0.6,
             "timeTotal": 1.38,
         }
         parsed = _parsed_from_record(rec, error_notices=[])
@@ -499,7 +518,7 @@ class TestHelpers:
 
         text = _synthesize_stdout_artifact(
             worker_id=3,
-            simulate_expr='simulate(Foo.Bar, stopTime=1.0)',
+            simulate_expr="simulate(Foo.Bar, stopTime=1.0)",
             returned_record={
                 "resultFile": "/x.mat",
                 "timeFrontend": 0.1,
@@ -528,10 +547,13 @@ class TestCLISelectionWiring:
         from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
+
         assert issubclass(PersistentOpenModelicaRunner, OpenModelicaRunner)
 
     def test_get_runner_selects_persistent_when_ompython_available(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         """CLI _get_runner(persistent=True) picks PersistentOpenModelicaRunner
         when load_omc_session() succeeds (OMPython installed)."""
@@ -550,7 +572,10 @@ class TestCLISelectionWiring:
         assert isinstance(runner, PersistentOpenModelicaRunner)
 
     def test_get_runner_aborts_when_ompython_missing(
-        self, tmp_path, monkeypatch, capsys,
+        self,
+        tmp_path,
+        monkeypatch,
+        capsys,
     ):
         """load_omc_session raising RuntimeError → CLI prints a unified
         error and exits 1 (no silent fallback to batch)."""
@@ -574,7 +599,9 @@ class TestCLISelectionWiring:
         assert "--batch" in stderr
 
     def test_get_runner_batch_mode_never_selects_persistent(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         from dstf import cli as cli_mod
         from dstf.simulators.openmodelica.persistent_runner import (
@@ -590,7 +617,9 @@ class TestCLISelectionWiring:
         assert not isinstance(runner, PersistentOpenModelicaRunner)
 
     def test_run_tests_raises_when_all_workers_fail_to_start(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         """Regression for a bug where the persistent runner printed
         ``"All workers failed to start. Aborting."`` but then *returned* the
@@ -627,6 +656,7 @@ class TestCLISelectionWiring:
 def _ompython_available() -> bool:
     try:
         import OMPython  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -713,4 +743,5 @@ def _write_stub_mat(path: Path, *, stop_time: float) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     import shutil as _sh
+
     _sh.copy(_FIXTURE_MAT, path)

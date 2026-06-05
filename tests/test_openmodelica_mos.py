@@ -5,8 +5,8 @@ from pathlib import Path
 from dstf.discovery.test_registry import TestModel
 from dstf.simulators.openmodelica.mos_generator import (
     build_simulate_mos,
-    classify_dependency,
     build_variable_filter,
+    classify_dependency,
 )
 
 
@@ -32,7 +32,10 @@ class TestClassifyDependency:
         assert classify_dependency("Modelica") == ("loadModel", "Modelica")
 
     def test_bare_dotted_name(self):
-        assert classify_dependency("Modelica.Blocks") == ("loadModel", "Modelica.Blocks")
+        assert classify_dependency("Modelica.Blocks") == (
+            "loadModel",
+            "Modelica.Blocks",
+        )
 
     def test_path_with_slash(self):
         kind, arg = classify_dependency("/abs/path/to/Lib")
@@ -60,6 +63,7 @@ class TestBuildVariableFilter:
         )
         # Must match time, the requested vars, and the diagnostics.
         import re
+
         pat = re.compile(regex)
         assert pat.fullmatch("time")
         assert pat.fullmatch("x")
@@ -73,6 +77,7 @@ class TestBuildVariableFilter:
         """Names like 'pipe.T[1]' contain regex metacharacters — must be escaped."""
         regex = build_variable_filter(patterns=["pipe.T[1]"], diagnostic_vars=[])
         import re
+
         pat = re.compile(regex)
         assert pat.fullmatch("pipe.T[1]")
         # The '.' must be literal, not "any char".
@@ -82,6 +87,7 @@ class TestBuildVariableFilter:
         """Pattern 'pipe.T*' must match 'pipe.T[1]', 'pipe.Tabc', etc."""
         regex = build_variable_filter(patterns=["pipe.T*"], diagnostic_vars=[])
         import re
+
         pat = re.compile(regex)
         assert pat.fullmatch("pipe.T[1]")
         assert pat.fullmatch("pipe.Tabc")
@@ -97,6 +103,7 @@ class TestBuildVariableFilter:
     def test_empty_patterns_produces_time_only_matcher(self):
         regex = build_variable_filter(patterns=[], diagnostic_vars=[])
         import re
+
         pat = re.compile(regex)
         assert pat.fullmatch("time")
         assert not pat.fullmatch("anything_else")
@@ -135,7 +142,7 @@ class TestBuildSimulateMos:
             test_dir=Path("/tmp/test_0001"),
             library_package_mo=Path("/lib/package.mo"),
             dependencies=[],
-            simulator_setup=["setDebugFlags(\"foo\")"],
+            simulator_setup=['setDebugFlags("foo")'],
             diagnostic_vars=[],
         )
         setup_pos = mos.index('setDebugFlags("foo")')

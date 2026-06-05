@@ -28,26 +28,19 @@ come from the returned ``SimulationResult`` record.
 from __future__ import annotations
 
 import logging
-import queue
 import shutil
-import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..base import (
-    BatchManifest,
     PersistentRunnerBase,
     TestRunResult,
     Worker,
-    _print_progress,
-    assign_test_keys,
 )
 from ..common.mat_reader import read_mat_time_extents
-from .log_parser import ParsedOmcOutput, _TIMING_KEYS, parse_omc_stdout
+from .log_parser import _TIMING_KEYS, ParsedOmcOutput, parse_omc_stdout
 from .mos_generator import build_simulate_args, classify_dependency
 from .runner import OpenModelicaConfig, OpenModelicaRunner
 from .session_loader import load_omc_session
@@ -93,7 +86,7 @@ def _raw_get_error_string(session) -> str:
     return s.replace('\\"', '"').replace("\\\\", "\\")
 
 
-def _raw_send_simulate(session, expr: str) -> tuple[Optional[dict], str]:
+def _raw_send_simulate(session, expr: str) -> tuple[dict | None, str]:
     """Run ``simulate(...)``, parse the echoed record via the regex parser.
 
     Returns ``(record_dict_or_None, raw_string)``. Uses the existing
@@ -122,7 +115,7 @@ def _raw_send_simulate(session, expr: str) -> tuple[Optional[dict], str]:
 
 
 def _parsed_from_record(
-    rec: Optional[dict],
+    rec: dict | None,
     error_notices: list[str],
 ) -> ParsedOmcOutput:
     """Build a :class:`ParsedOmcOutput` from OMPython's returned dict.
@@ -157,7 +150,7 @@ def _parsed_from_record(
 def _synthesize_stdout_artifact(
     worker_id: int,
     simulate_expr: str,
-    returned_record: Optional[dict],
+    returned_record: dict | None,
     error_string: str,
 ) -> str:
     """Render a text document equivalent to ``omc_stdout.txt`` so the report's
@@ -271,7 +264,9 @@ class OpenModelicaWorker(Worker):
             except Exception as exc:  # pragma: no cover
                 logger.warning(
                     "Worker %s: setup command %r raised: %s",
-                    self.worker_id, cmd, exc,
+                    self.worker_id,
+                    cmd,
+                    exc,
                 )
 
     def _exec(self, expr: str) -> bool:
@@ -322,9 +317,9 @@ class OpenModelicaWorker(Worker):
         simulate_expr = f"simulate({test.model_id}, {', '.join(sim_args)})"
 
         start = time.monotonic()
-        translation_wall: Optional[float] = None
-        sim_wall: Optional[float] = None
-        record_dict: Optional[dict] = None
+        translation_wall: float | None = None
+        sim_wall: float | None = None
+        record_dict: dict | None = None
         try:
             test_dir_fwd = str(test_dir).replace("\\", "/")
             # cd() returns the new cwd as a quoted string — raw mode is fine.
@@ -334,7 +329,8 @@ class OpenModelicaWorker(Worker):
                 progress.on_phase(test_key, "translating")
 
             record_dict, _raw_simulate_response = _raw_send_simulate(
-                self.session, simulate_expr,
+                self.session,
+                simulate_expr,
             )
         except Exception as exc:
             elapsed = time.monotonic() - start
@@ -378,13 +374,18 @@ class OpenModelicaWorker(Worker):
         try:
             (test_dir / OpenModelicaRunner.STDOUT_FILENAME).write_text(
                 _synthesize_stdout_artifact(
-                    self.worker_id, simulate_expr, record_dict, error_string,
+                    self.worker_id,
+                    simulate_expr,
+                    record_dict,
+                    error_string,
                 ),
                 encoding="utf-8",
             )
         except OSError as exc:  # pragma: no cover
             logger.debug(
-                "Worker %s: stdout artifact write failed: %s", self.worker_id, exc,
+                "Worker %s: stdout artifact write failed: %s",
+                self.worker_id,
+                exc,
             )
 
         if progress is not None:
@@ -520,6 +521,7 @@ class OpenModelicaWorker(Worker):
         if not self.pids:
             return
         import psutil
+
         for pid in list(self.pids):
             try:
                 p = psutil.Process(pid)
@@ -543,8 +545,8 @@ class OpenModelicaWorker(Worker):
         timeout or worker-level exception, :meth:`is_alive` is False and
         the worker must be restarted before another test is dispatched.
         """
-        result_box: list[Optional[TestRunResult]] = [None]
-        exc_box: list[Optional[BaseException]] = [None]
+        result_box: list[TestRunResult | None] = [None]
+        exc_box: list[BaseException | None] = [None]
         start_ts = time.monotonic()
 
         def _runner():
@@ -554,7 +556,9 @@ class OpenModelicaWorker(Worker):
                 exc_box[0] = e
 
         t = threading.Thread(
-            target=_runner, daemon=True, name=f"om-exec-{self.worker_id}",
+            target=_runner,
+            daemon=True,
+            name=f"om-exec-{self.worker_id}",
         )
         t.start()
         t.join(timeout)
@@ -619,6 +623,7 @@ class PersistentOpenModelicaRunner(PersistentRunnerBase, OpenModelicaRunner):
         # effect here without also having to re-bind this module's
         # already-imported reference.
         from .session_loader import load_omc_session as _load
+
         _load()
 
     def setup_before_workers(self) -> None:
@@ -628,5 +633,8 @@ class PersistentOpenModelicaRunner(PersistentRunnerBase, OpenModelicaRunner):
 
     def make_worker(self, worker_id: int) -> OpenModelicaWorker:
         return OpenModelicaWorker(
-            worker_id, self.config, self.om_config, self._session_cls,
+            worker_id,
+            self.config,
+            self.om_config,
+            self._session_cls,
         )

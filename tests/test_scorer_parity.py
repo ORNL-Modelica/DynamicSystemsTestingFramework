@@ -23,11 +23,13 @@ To extend: add a (mode, verdict, ref, act, params) row to ``_PARITY_CASES``
 in this file. The same row drives both the Python truth and the JS
 verdict, so adding a case is a one-place edit.
 """
+
 from __future__ import annotations
 
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
 import pytest
@@ -36,10 +38,13 @@ pytest.importorskip("playwright.sync_api")
 
 from playwright.sync_api import Page, sync_playwright
 
-
 _JS_SRC = (
     Path(__file__).resolve().parents[1]
-    / "src" / "dstf" / "reporting" / "templates" / "interactive.js"
+    / "src"
+    / "dstf"
+    / "reporting"
+    / "templates"
+    / "interactive.js"
 )
 _TEMPLATE_DIR = _JS_SRC.parent
 
@@ -128,12 +133,38 @@ def _traj(rt: np.ndarray, rv: np.ndarray, at: np.ndarray, av: np.ndarray) -> dic
 # verdict comes from evaluating ``MODE_SCORERS[mode](leaf)`` in Playwright.
 # Verdicts must match.
 _PARITY_CASES: list[dict[str, Any]] = [
-    {"mode": "nrmse",  "verdict": "pass", "params": {"tolerance": 1e-2}},
-    {"mode": "nrmse",  "verdict": "fail", "params": {"tolerance": 1e-3}},
-    {"mode": "tube",   "verdict": "pass", "params": {"tube_width_mode": "rel", "tube_rel": 0.05, "tube_abs": 0, "tube_min_width": 0}},
-    {"mode": "tube",   "verdict": "fail", "params": {"tube_width_mode": "rel", "tube_rel": 0.05, "tube_abs": 0, "tube_min_width": 0}},
-    {"mode": "range",  "verdict": "pass", "params": {"min_value": 0.0, "max_value": 1.0}},
-    {"mode": "range",  "verdict": "fail", "params": {"min_value": 0.0, "max_value": 1.0}},
+    {"mode": "nrmse", "verdict": "pass", "params": {"tolerance": 1e-2}},
+    {"mode": "nrmse", "verdict": "fail", "params": {"tolerance": 1e-3}},
+    {
+        "mode": "tube",
+        "verdict": "pass",
+        "params": {
+            "tube_width_mode": "rel",
+            "tube_rel": 0.05,
+            "tube_abs": 0,
+            "tube_min_width": 0,
+        },
+    },
+    {
+        "mode": "tube",
+        "verdict": "fail",
+        "params": {
+            "tube_width_mode": "rel",
+            "tube_rel": 0.05,
+            "tube_abs": 0,
+            "tube_min_width": 0,
+        },
+    },
+    {
+        "mode": "range",
+        "verdict": "pass",
+        "params": {"min_value": 0.0, "max_value": 1.0},
+    },
+    {
+        "mode": "range",
+        "verdict": "fail",
+        "params": {"min_value": 0.0, "max_value": 1.0},
+    },
     {"mode": "points", "verdict": "pass", "params": {"tolerance": 1e-3, "points": []}},
     {"mode": "points", "verdict": "fail", "params": {"tolerance": 1e-3, "points": []}},
     # Dominant-frequency: act is a pure 5 Hz tone. Pass case declares
@@ -141,10 +172,18 @@ _PARITY_CASES: list[dict[str, Any]] = [
     # and JS both resample to a power of 2 above max(N, 64) before the
     # FFT (comparator.py:_compute_fft_spectrum / interactive.js:_fftRadix2),
     # so bin frequencies are bit-identical across implementations.
-    {"mode": "dominant-frequency", "verdict": "pass",
-     "params": {"peaks": [{"freq": 5.0, "tolerance": 0.5, "tolerance_mode": "abs"}]}},
-    {"mode": "dominant-frequency", "verdict": "fail",
-     "params": {"peaks": [{"freq": 12.0, "tolerance": 0.5, "tolerance_mode": "abs"}]}},
+    {
+        "mode": "dominant-frequency",
+        "verdict": "pass",
+        "params": {"peaks": [{"freq": 5.0, "tolerance": 0.5, "tolerance_mode": "abs"}]},
+    },
+    {
+        "mode": "dominant-frequency",
+        "verdict": "fail",
+        "params": {
+            "peaks": [{"freq": 12.0, "tolerance": 0.5, "tolerance_mode": "abs"}]
+        },
+    },
 ]
 
 
@@ -177,18 +216,26 @@ def _python_verdict(case: dict) -> bool:
     if mode == "range":
         # _compare_range signature: (act_time, act_values, min_value, max_value)
         # range is baseline-free — uses only act + bounds from params.
-        result = cmp._compare_range(at, av, params.get("min_value"), params.get("max_value"))
+        result = cmp._compare_range(
+            at, av, params.get("min_value"), params.get("max_value")
+        )
         return bool(result.passed)
     if mode == "points":
         result = cmp._compare_points(
-            rt, rv, at, av,
+            rt,
+            rv,
+            at,
+            av,
             points=params.get("points") or [],
             tolerance=params["tolerance"],
         )
         return bool(result.passed)
     if mode == "dominant-frequency":
         result = cmp._compare_dominant_frequency(
-            rt, rv, at, av,
+            rt,
+            rv,
+            at,
+            av,
             peaks=params.get("peaks") or [],
         )
         return bool(result.passed)
@@ -225,9 +272,13 @@ def _build_leaf(idx: int, case: dict, expected: bool) -> dict:
         "label": var,
         "name": var,
         "mode_effective": case["mode"],
-        "nrmse": 0.0, "rmse": 0.0, "signal_range": 1.0,
-        "max_abs_error": 0.0, "max_abs_error_time": 0.0,
-        "reference_final": 0.0, "actual_final": 0.0,
+        "nrmse": 0.0,
+        "rmse": 0.0,
+        "signal_range": 1.0,
+        "max_abs_error": 0.0,
+        "max_abs_error_time": 0.0,
+        "reference_final": 0.0,
+        "actual_final": 0.0,
         "is_constant": False,
         "tolerance_used": case["params"].get("tolerance", 1e-4),
         "score_display": "",
@@ -328,7 +379,9 @@ def parity_page(tmp_path, playwright_browser) -> Iterator[tuple[Page, list[bool]
     html_path, expected = _render_report(tmp_path)
     context = playwright_browser.new_context()
     page = context.new_page()
-    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.on(
+        "pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False)
+    )
     page.goto(html_path.as_uri())
     page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
     yield page, expected
@@ -387,6 +440,6 @@ def test_js_scorers_agree_with_python(parity_page):
                 f"— params={case['params']}"
             )
 
-    assert not disagreements, (
-        "Python <-> JS scorer drift detected:\n  " + "\n  ".join(disagreements)
+    assert not disagreements, "Python <-> JS scorer drift detected:\n  " + "\n  ".join(
+        disagreements
     )

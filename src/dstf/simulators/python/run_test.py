@@ -18,6 +18,7 @@ or on failure:
 Exceptions are caught so the framework always gets a structured result
 rather than a process-level crash.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -42,12 +43,14 @@ def _load_user_module(user_file: Path):
 
 def _write_failure(result_path: Path, message: str) -> None:
     result_path.write_text(
-        json.dumps({
-            "success": False,
-            "error": message,
-            "time": [],
-            "variables": {},
-        }),
+        json.dumps(
+            {
+                "success": False,
+                "error": message,
+                "time": [],
+                "variables": {},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -88,9 +91,7 @@ def main(argv: list[str]) -> int:
             raise ValueError("'variables' must be a dict of name -> list[float]")
 
         time_list = list(payload["time"])
-        variables = {
-            str(k): list(v) for k, v in payload["variables"].items()
-        }
+        variables = {str(k): list(v) for k, v in payload["variables"].items()}
         for name, values in variables.items():
             if len(values) != len(time_list):
                 raise ValueError(
@@ -99,16 +100,16 @@ def main(argv: list[str]) -> int:
                 )
 
         result_path.write_text(
-            json.dumps({
-                "success": True,
-                "time": time_list,
-                "variables": variables,
-            }),
+            json.dumps(
+                {
+                    "success": True,
+                    "time": time_list,
+                    "variables": variables,
+                }
+            ),
             encoding="utf-8",
         )
-        print(
-            f"OK: {len(variables)} variables, {len(time_list)} time points"
-        )
+        print(f"OK: {len(variables)} variables, {len(time_list)} time points")
         return 0
     except BaseException:
         tb = traceback.format_exc()

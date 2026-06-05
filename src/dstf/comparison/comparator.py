@@ -23,14 +23,19 @@ should import them from :mod:`.types` and :mod:`.algorithms` directly.
 """
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ..discovery.test_registry import TestModel
 from ..simulators import TestResult
 from ..storage.reference_store import ReferenceStore
-from .algorithms import (
+
+# Re-export facade (see module docstring): modes/tree_eval/metric_tree and the
+# test suite import the per-mode algorithm functions from here, not from
+# .algorithms directly. comparator.py does not call them itself, so they read
+# as unused — keep the noqa to preserve the public import surface.
+from .algorithms import (  # noqa: F401
     _compare_dominant_frequency,
     _compare_event_timing,
     _compare_points,
@@ -51,14 +56,13 @@ from .types import (
     StructuralWarning,
     TestComparison,
     VariableComparison,
-    _EPS,
 )
 
 if TYPE_CHECKING:
     # Annotation-only — runtime import is inside compare_test() to break the
     # comparator <-> metric_tree cycle (metric_tree imports VariableComparison
     # from .types).
-    from .metric_tree import MetricResult
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +80,15 @@ def _check_structural_changes(
     checks = [
         ("translation.continuous_time_states", "Continuous states"),
         ("translation.nonlinear_count", "Nonlinear system count"),
-        ("translation.nonlinear_after_manipulation_max", "Nonlinear max size (after manipulation)"),
+        (
+            "translation.nonlinear_after_manipulation_max",
+            "Nonlinear max size (after manipulation)",
+        ),
         ("translation.linear_count", "Linear system count"),
-        ("translation.linear_after_manipulation_max", "Linear max size (after manipulation)"),
+        (
+            "translation.linear_after_manipulation_max",
+            "Linear max size (after manipulation)",
+        ),
         ("translation.scalar_unknowns", "Scalar unknowns"),
         ("translation.scalar_equations", "Scalar equations"),
         ("translation.numerical_jacobians", "Numerical Jacobians"),
@@ -98,11 +108,13 @@ def _check_structural_changes(
         if ref_val is None or cur_val is None:
             continue
         if str(ref_val) != str(cur_val):
-            warnings.append(StructuralWarning(
-                field=label,
-                reference_value=str(ref_val),
-                current_value=str(cur_val),
-            ))
+            warnings.append(
+                StructuralWarning(
+                    field=label,
+                    reference_value=str(ref_val),
+                    current_value=str(cur_val),
+                )
+            )
 
     return warnings
 
@@ -128,8 +140,8 @@ def compare_test(
             comparison) instead of full NRMSE. Variables with
             ``mode: "tube"`` are *not* affected.
     """
-    from .modes import resolve_mode
     from .metric_tree import implicit_and_tree
+    from .modes import resolve_mode
     from .tree_eval import collect_leaf_variables, evaluate_spec
 
     ref_test_id = reference.get("test_id")
@@ -148,6 +160,7 @@ def compare_test(
     # and the whole baseline machinery. The sim already succeeded above.
     if test.simulate_only:
         from .metric_tree import MetricResult
+
         leaf = MetricResult(
             passed=True,
             score=None,
@@ -186,6 +199,7 @@ def compare_test(
     if test.metric_tree_spec is not None:
         from ..storage.reference_store import _extract_baselines
         from .tree_eval import BaselineView
+
         var_results_by_name = {v.name: v for v in result.variables if v.name}
         # Load primary from the flat ref file; merge in soft_checks from the
         # `soft_checks/ref_NNNN/` subdir when a store is supplied (D66). Leaves
@@ -256,18 +270,22 @@ def compare_test(
                 vc.tolerance_used = tolerance
                 comparisons.append(vc)
                 continue
-            comparisons.append(VariableComparison(
-                index=var_result.index,
-                name=var_result.name,
-                passed=False,
-                nrmse=float("inf"),
-                rmse=float("inf"),
-                signal_range=0.0,
-                max_abs_error=float("inf"),
-                max_abs_error_time=0.0,
-                reference_final=float("nan"),
-                actual_final=float(var_result.values[-1]) if len(var_result.values) > 0 else float("nan"),
-            ))
+            comparisons.append(
+                VariableComparison(
+                    index=var_result.index,
+                    name=var_result.name,
+                    passed=False,
+                    nrmse=float("inf"),
+                    rmse=float("inf"),
+                    signal_range=0.0,
+                    max_abs_error=float("inf"),
+                    max_abs_error_time=0.0,
+                    reference_final=float("nan"),
+                    actual_final=float(var_result.values[-1])
+                    if len(var_result.values) > 0
+                    else float("nan"),
+                )
+            )
             continue
 
         if shared_ref_time is not None:
@@ -299,7 +317,8 @@ def compare_test(
 
 
 def _test_is_baseline_free(
-    test: TestModel, default_tolerance: float,
+    test: TestModel,
+    default_tolerance: float,
 ) -> bool:
     """Does every leaf in ``test``'s metric tree score without a reference?
 
@@ -314,8 +333,8 @@ def _test_is_baseline_free(
     legacy NO_REF behavior. There's no partial-run support.
     """
     from .modes import resolve_mode
-    from .tree_spec import CombinatorSpec, LeafSpec
     from .tree_eval import _leaf_override_dict
+    from .tree_spec import LeafSpec
 
     # User-authored spec tree: walk every leaf and resolve its mode.
     if test.metric_tree_spec is not None:
@@ -372,18 +391,21 @@ def compare_all(
 ) -> list[TestComparison]:
     """Compare all test results against stored references."""
     import sys as _sys
+
     print(f"Comparing {len(tests)} tests against references...", file=_sys.stderr)
     comparisons = []
 
     for test in tests:
         result = results.get(test.model_id)
         if result is None:
-            comparisons.append(TestComparison(
-                model_id=test.model_id,
-                passed=False,
-                sim_success=False,
-                error_message="No simulation results found",
-            ))
+            comparisons.append(
+                TestComparison(
+                    model_id=test.model_id,
+                    passed=False,
+                    sim_success=False,
+                    error_message="No simulation results found",
+                )
+            )
             continue
 
         reference = store.get_reference(test.model_id)
@@ -403,16 +425,20 @@ def compare_all(
             and not test.simulate_only
             and not _test_is_baseline_free(test, default_tolerance)
         ):
-            comparisons.append(TestComparison(
-                model_id=test.model_id,
-                passed=True,
-                has_reference=False,
-                error_message="No reference baseline stored",
-            ))
+            comparisons.append(
+                TestComparison(
+                    model_id=test.model_id,
+                    passed=True,
+                    has_reference=False,
+                    error_message="No reference baseline stored",
+                )
+            )
             continue
 
         comp = compare_test(
-            test, result, reference if reference is not None else {},
+            test,
+            result,
+            reference if reference is not None else {},
             default_tolerance=default_tolerance,
             default_points=default_points,
             store=store,

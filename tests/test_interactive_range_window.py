@@ -11,25 +11,23 @@ Covers:
 Pattern mirrors tests/test_interactive_playwright.py — the _render_report
 helper + fixture context are imported from there.
 """
-from __future__ import annotations
 
-import json
-from pathlib import Path
+from __future__ import annotations
 
 import pytest
 
 pytest.importorskip("playwright.sync_api")
 
-from playwright.sync_api import Page
 
 from test_interactive_playwright import (  # noqa: E402
-    _fixture_context, _leaf, _render_report, playwright_browser,
+    _fixture_context,
+    _render_report,
 )
-
 
 # ---------------------------------------------------------------------------
 # Task 1: _sliceLeafTrajectory helper
 # ---------------------------------------------------------------------------
+
 
 def test_slice_leaf_trajectory_no_window_returns_full(tmp_path, playwright_browser):
     """With no window set, the helper returns trajectory arrays unchanged."""
@@ -60,7 +58,8 @@ def test_slice_leaf_trajectory_no_window_returns_full(tmp_path, playwright_brows
 
 
 def test_slice_leaf_trajectory_with_window_clips_both_arrays(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Setting window.start/end clips both ref and act arrays inclusively."""
     html_path = _render_report(tmp_path)
@@ -120,6 +119,7 @@ def test_slice_leaf_trajectory_open_ended_window(tmp_path, playwright_browser):
 # Task 2: range + tube JS scorers respect window
 # ---------------------------------------------------------------------------
 
+
 def _context_with_windowed_range(window_start, window_end, min_value, max_value):
     """Custom fixture: range leaf on variable 'h' with a narrow window,
     and a trajectory that VIOLATES bounds OUTSIDE the window but stays
@@ -143,23 +143,31 @@ def _context_with_windowed_range(window_start, window_end, min_value, max_value)
     # Override h's trajectory: sine wave with amplitude 1 but narrow
     # window at the zero-crossing where |x| < 0.1.
     import numpy as np
+
     t = np.linspace(0, 6.283, 100).tolist()  # [0, 2π]
     vals = [float(np.sin(x)) for x in t]
     ctx["variables_by_name"]["h"]["trajectory"] = {
-        "index": 1, "name": "h",
-        "act_time": t, "act_values": vals,
-        "ref_time": t, "ref_values": vals,
+        "index": 1,
+        "name": "h",
+        "act_time": t,
+        "act_values": vals,
+        "ref_time": t,
+        "ref_values": vals,
     }
-    ctx["trajectories"] = [ctx["variables_by_name"][k]["trajectory"]
-                           for k in ctx["variables_by_name"]]
+    ctx["trajectories"] = [
+        ctx["variables_by_name"][k]["trajectory"] for k in ctx["variables_by_name"]
+    ]
     return ctx
 
 
 def _render_with_context(tmp_path, ctx):
     """Like _render_report, but accepts a custom context."""
     import shutil
+
     from jinja2 import Environment, FileSystemLoader
+
     from test_interactive_playwright import _JS_SRC, _TEMPLATE_DIR
+
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
@@ -169,15 +177,18 @@ def _render_with_context(tmp_path, ctx):
 
 
 def test_range_scorer_respects_window_passes_when_bounds_ok_in_window(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Sine wave [0, 2π] has |x| up to 1.0 overall but |x| < 0.1 near π.
     With bounds [-0.1, 0.1] and window around π: in-window ✓, out-of-
     window ✗. Scorer must respect window → PASS.
     """
     ctx = _context_with_windowed_range(
-        window_start=3.04, window_end=3.24,  # ~π ± 0.1 rad
-        min_value=-0.1, max_value=0.1,
+        window_start=3.04,
+        window_end=3.24,  # ~π ± 0.1 rad
+        min_value=-0.1,
+        max_value=0.1,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
@@ -198,15 +209,18 @@ def test_range_scorer_respects_window_passes_when_bounds_ok_in_window(
 
 
 def test_range_scorer_fails_when_in_window_violates_bounds(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Regression guard: narrow window that crosses π/2 (where sin = 1).
     With bounds [-0.1, 0.1] and window around π/2: in-window ✗.
     Scorer must FAIL — ensures we didn't break the fail-path.
     """
     ctx = _context_with_windowed_range(
-        window_start=1.47, window_end=1.67,  # ~π/2 ± 0.1 rad (sin ≈ 1)
-        min_value=-0.1, max_value=0.1,
+        window_start=1.47,
+        window_end=1.67,  # ~π/2 ± 0.1 rad (sin ≈ 1)
+        min_value=-0.1,
+        max_value=0.1,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
@@ -246,16 +260,21 @@ def test_tube_scorer_respects_window(tmp_path, playwright_browser):
     # outside (ref=1) → width=0.005 < 0.008 offset → FAIL;
     # inside (ref=2) → width=0.010 > 0.008 offset → PASS.
     import numpy as np
+
     t = np.linspace(0, 3, 50).tolist()
     ref = [2.0 if 1.0 <= x <= 2.0 else 1.0 for x in t]
     act = [r + 0.008 for r in ref]
     ctx["variables_by_name"]["v"]["trajectory"] = {
-        "index": 1, "name": "v",
-        "act_time": t, "act_values": act,
-        "ref_time": t, "ref_values": ref,
+        "index": 1,
+        "name": "v",
+        "act_time": t,
+        "act_values": act,
+        "ref_time": t,
+        "ref_values": ref,
     }
-    ctx["trajectories"] = [ctx["variables_by_name"][k]["trajectory"]
-                           for k in ctx["variables_by_name"]]
+    ctx["trajectories"] = [
+        ctx["variables_by_name"][k]["trajectory"] for k in ctx["variables_by_name"]
+    ]
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
@@ -273,6 +292,7 @@ def test_tube_scorer_respects_window(tmp_path, playwright_browser):
 # ---------------------------------------------------------------------------
 # Task 3: nrmse + final-only live scorers respect window
 # ---------------------------------------------------------------------------
+
 
 def test_default_points_window_edits_rescore_in_browser(tmp_path, playwright_browser):
     """Final-only scorer should use the windowed final value, not the
@@ -323,16 +343,21 @@ def test_nrmse_window_edits_rescore_in_browser(tmp_path, playwright_browser):
     # Tailor the trajectory: ref and act identical in [1, 3], very
     # different in [0, 1].
     import numpy as np
+
     t = np.linspace(0, 3, 50).tolist()
     ref = [1 - 0.3 * x for x in t]
     act = [(r + 0.5) if x < 1.0 else r for x, r in zip(t, ref)]
     ctx["variables_by_name"]["h"]["trajectory"] = {
-        "index": 1, "name": "h",
-        "act_time": t, "act_values": act,
-        "ref_time": t, "ref_values": ref,
+        "index": 1,
+        "name": "h",
+        "act_time": t,
+        "act_values": act,
+        "ref_time": t,
+        "ref_values": ref,
     }
-    ctx["trajectories"] = [ctx["variables_by_name"][k]["trajectory"]
-                           for k in ctx["variables_by_name"]]
+    ctx["trajectories"] = [
+        ctx["variables_by_name"][k]["trajectory"] for k in ctx["variables_by_name"]
+    ]
     # First render with window [0, 1] — expect FAIL.
     ctx["tree_view"]["children"][0]["window"] = {"start": 0.0, "end": 1.0}
     ctx["tree_view"]["children"][0]["window_values"] = {"start": 0.0, "end": 1.0}
@@ -365,6 +390,7 @@ def test_nrmse_window_edits_rescore_in_browser(tmp_path, playwright_browser):
 # ---------------------------------------------------------------------------
 # Task 4: Range plot decorator respects window (dual-style gray/red)
 # ---------------------------------------------------------------------------
+
 
 def test_range_plot_dual_style_when_window_set(tmp_path, playwright_browser):
     """When a range leaf has both window endpoints, the plot contribution
@@ -434,7 +460,8 @@ def test_range_plot_dual_style_when_window_set(tmp_path, playwright_browser):
 
 
 def test_range_emits_invisible_trace_anchors_for_autorange(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Plotly autorange ignores shape coordinates — only trace data
     drives the y-axis reset range. To make double-click reset include
@@ -448,10 +475,12 @@ def test_range_emits_invisible_trace_anchors_for_autorange(
     # Bound far above the trajectory's [-0.01, 1.1] envelope so the
     # autorange difference is observable. min_value left at -0.01.
     ctx["tree_view"]["children"][1]["params"] = {
-        "min_value": -0.01, "max_value": 5.0,
+        "min_value": -0.01,
+        "max_value": 5.0,
     }
     ctx["tree_view"]["children"][1]["mode_values"] = {
-        "min_value": -0.01, "max_value": 5.0,
+        "min_value": -0.01,
+        "max_value": 5.0,
     }
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
@@ -490,6 +519,7 @@ def test_range_emits_invisible_trace_anchors_for_autorange(
 # Task 5: Bug 3 — plot y-range resets after bound-edit sequence
 # ---------------------------------------------------------------------------
 
+
 def test_range_yaxis_resets_after_bound_contract(tmp_path, playwright_browser):
     """Sequence: render with max_value=0.5 -> edit to 5.0 -> edit back
     to 0.5. The y-axis range after the final edit should reflect the
@@ -505,10 +535,12 @@ def test_range_yaxis_resets_after_bound_contract(tmp_path, playwright_browser):
     # Set a narrow max_value so the initial plot range is tight.
     # Override both params and mode_values — mode_values wins on init.
     ctx["tree_view"]["children"][1]["params"] = {
-        "min_value": -0.01, "max_value": 0.5,
+        "min_value": -0.01,
+        "max_value": 0.5,
     }
     ctx["tree_view"]["children"][1]["mode_values"] = {
-        "min_value": -0.01, "max_value": 0.5,
+        "min_value": -0.01,
+        "max_value": 0.5,
     }
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
@@ -563,19 +595,27 @@ def test_range_yaxis_resets_after_bound_contract(tmp_path, playwright_browser):
 # Task 6: cross-metric window-edit sweep (regression matrix)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("metric,initial_pass,after_narrow_pass", [
-    # (metric_name, pass_with_no_window, pass_with_narrow_window_at_pi/2)
-    # Each fixture is shaped so the full trace and the narrow window
-    # [1.47, 1.67] give DIFFERENT pass states (except final-only, where
-    # the point is that toggling the window does NOT flip a passing
-    # scorer — guards against false failures leaking in).
-    ("nrmse", False, True),      # full-range NRMSE big; in-window NRMSE = 0
-    ("points", True, True),      # final values agree; both pass
-    ("range", False, True),      # out-of-window violates; in-window ok
-    ("tube", False, True),       # tight tube fails full trace; ok in window
-])
+
+@pytest.mark.parametrize(
+    "metric,initial_pass,after_narrow_pass",
+    [
+        # (metric_name, pass_with_no_window, pass_with_narrow_window_at_pi/2)
+        # Each fixture is shaped so the full trace and the narrow window
+        # [1.47, 1.67] give DIFFERENT pass states (except final-only, where
+        # the point is that toggling the window does NOT flip a passing
+        # scorer — guards against false failures leaking in).
+        ("nrmse", False, True),  # full-range NRMSE big; in-window NRMSE = 0
+        ("points", True, True),  # final values agree; both pass
+        ("range", False, True),  # out-of-window violates; in-window ok
+        ("tube", False, True),  # tight tube fails full trace; ok in window
+    ],
+)
 def test_window_edit_rescores_every_mode(
-    tmp_path, playwright_browser, metric, initial_pass, after_narrow_pass,
+    tmp_path,
+    playwright_browser,
+    metric,
+    initial_pass,
+    after_narrow_pass,
 ):
     """Matrix test: for each window-aware mode, toggling the window must
     update the pass pill. Guards against a future contributor adding a
@@ -594,6 +634,7 @@ def test_window_edit_rescores_every_mode(
     the scorer a clear 2× margin to decide on.
     """
     import numpy as np
+
     ctx = _fixture_context()
     # Rewire the primary leaf to the parameterized metric on variable 'h'.
     leaf = ctx["tree_view"]["children"][0]
@@ -653,12 +694,16 @@ def test_window_edit_rescores_every_mode(
         ref = [2.0 if in_window(x) else 1.0 for x in t]
         act = [r + 0.008 for r in ref]
     ctx["variables_by_name"]["h"]["trajectory"] = {
-        "index": 1, "name": "h",
-        "act_time": t, "act_values": act,
-        "ref_time": t, "ref_values": ref,
+        "index": 1,
+        "name": "h",
+        "act_time": t,
+        "act_values": act,
+        "ref_time": t,
+        "ref_values": ref,
     }
-    ctx["trajectories"] = [ctx["variables_by_name"][k]["trajectory"]
-                           for k in ctx["variables_by_name"]]
+    ctx["trajectories"] = [
+        ctx["variables_by_name"][k]["trajectory"] for k in ctx["variables_by_name"]
+    ]
 
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()

@@ -27,37 +27,49 @@ def generate_junit_report(
         suite_comps = suites[suite_name]
         n_tests = len(suite_comps)
         n_failures = sum(
-            1 for c in suite_comps
-            if not c.passed and c.sim_success and c.has_reference
+            1 for c in suite_comps if not c.passed and c.sim_success and c.has_reference
         )
-        n_errors = sum(
-            1 for c in suite_comps
-            if not c.sim_success
-        )
+        n_errors = sum(1 for c in suite_comps if not c.sim_success)
 
-        suite_elem = ET.SubElement(root, "testsuite", {
-            "name": suite_name,
-            "tests": str(n_tests),
-            "failures": str(n_failures),
-            "errors": str(n_errors),
-        })
+        suite_elem = ET.SubElement(
+            root,
+            "testsuite",
+            {
+                "name": suite_name,
+                "tests": str(n_tests),
+                "failures": str(n_failures),
+                "errors": str(n_errors),
+            },
+        )
 
         for comp in suite_comps:
-            tc = ET.SubElement(suite_elem, "testcase", {
-                "name": comp.model_id,
-                "classname": suite_name,
-            })
+            tc = ET.SubElement(
+                suite_elem,
+                "testcase",
+                {
+                    "name": comp.model_id,
+                    "classname": suite_name,
+                },
+            )
 
             if not comp.sim_success:
-                ET.SubElement(tc, "error", {
-                    "message": comp.error_message or "Simulation failed",
-                    "type": "SimulationError",
-                })
+                ET.SubElement(
+                    tc,
+                    "error",
+                    {
+                        "message": comp.error_message or "Simulation failed",
+                        "type": "SimulationError",
+                    },
+                )
             elif not comp.has_reference:
                 # No baseline — not an error, just a skipped test
-                ET.SubElement(tc, "skipped", {
-                    "message": "No reference baseline stored",
-                })
+                ET.SubElement(
+                    tc,
+                    "skipped",
+                    {
+                        "message": "No reference baseline stored",
+                    },
+                )
             elif not comp.passed:
                 msgs = []
                 for var in comp.variables:
@@ -70,10 +82,14 @@ def generate_junit_report(
                             f"ref_final={var.reference_final:.6e}, "
                             f"act_final={var.actual_final:.6e}"
                         )
-                fail = ET.SubElement(tc, "failure", {
-                    "message": f"{len(msgs)} variable(s) exceeded tolerance",
-                    "type": "RegressionFailure",
-                })
+                fail = ET.SubElement(
+                    tc,
+                    "failure",
+                    {
+                        "message": f"{len(msgs)} variable(s) exceeded tolerance",
+                        "type": "RegressionFailure",
+                    },
+                )
                 fail.text = "\n".join(msgs)
 
         total_tests += n_tests

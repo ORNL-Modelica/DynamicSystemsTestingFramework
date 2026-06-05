@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from ..config import (
-    Config,
     DEFAULT_METHOD,
     DEFAULT_STOP_TIME,
     DEFAULT_TOLERANCE,
+    Config,
 )
 from .recognizer import RecognizerResult, get_recognizers
 
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 @dataclass
 class TestModel:
     """A fully resolved test model with all metadata needed for simulation."""
+
     model_id: str
     source_file: Path
     source_package: str
@@ -26,22 +27,22 @@ class TestModel:
     n_vars: int
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""
-    x_reference: Optional[list[float]] = None
+    x_reference: list[float] | None = None
     error_expected: float = 1e-6
     stop_time: float = DEFAULT_STOP_TIME
     tolerance: float = DEFAULT_TOLERANCE
     method: str = DEFAULT_METHOD
-    number_of_intervals: Optional[int] = None
-    output_interval: Optional[float] = None
+    number_of_intervals: int | None = None
+    output_interval: float | None = None
     result_file: str = ""
-    timeout: Optional[int] = None  # Per-test timeout override (seconds)
+    timeout: int | None = None  # Per-test timeout override (seconds)
 
     # External spec: variable patterns (may include globs like "medium.T*" or "*")
     # These are resolved against actual .mat variable names after simulation.
     variable_patterns: list[str] = field(default_factory=list)
 
     # Comparison settings (per-test and per-variable overrides)
-    comparison_tolerance: Optional[float] = None  # Overrides config.tolerance
+    comparison_tolerance: float | None = None  # Overrides config.tolerance
     variable_overrides: dict[str, dict] = field(default_factory=dict)
     # variable_overrides format: {"var_name": {"tolerance": 0.1}, ...}
 
@@ -75,7 +76,8 @@ class TestModel:
 
 
 def _build_test_model_from_recognizer_results(
-    model_id: str, results: list[RecognizerResult],
+    model_id: str,
+    results: list[RecognizerResult],
 ) -> TestModel:
     """Merge per-recognizer results for one model into a TestModel.
 
@@ -161,8 +163,11 @@ def discover_tests(config: Config) -> list[TestModel]:
     ut_tests: dict[str, TestModel] = {}
     if config.source_type == "modelica":
         library_dir = config.library_dir
-        bundled = [r for r in get_recognizers("modelica")
-                   if r.name not in config.disabled_bundled]
+        bundled = [
+            r
+            for r in get_recognizers("modelica")
+            if r.name not in config.disabled_bundled
+        ]
         user = [r for r in config.recognizers if "modelica" in r.applies_to]
         recognizers = bundled + user
 
@@ -177,13 +182,15 @@ def discover_tests(config: Config) -> list[TestModel]:
 
         for model_id, results in per_model.items():
             ut_tests[model_id] = _build_test_model_from_recognizer_results(
-                model_id, results,
+                model_id,
+                results,
             )
 
     # Step 2: Load external test spec (if configured)
     spec_tests: dict[str, TestModel] = {}
     if config.test_spec_file and config.test_spec_file.exists():
         from .spec_parser import parse_test_spec
+
         for test in parse_test_spec(config.test_spec_file):
             spec_tests[test.model_id] = test
 
@@ -224,8 +231,13 @@ def discover_tests(config: Config) -> list[TestModel]:
             if spec_test.metric_tree_spec is not None:
                 existing.metric_tree_spec = spec_test.metric_tree_spec
         else:
-            for fname in ("stop_time", "tolerance", "method",
-                          "number_of_intervals", "output_interval"):
+            for fname in (
+                "stop_time",
+                "tolerance",
+                "method",
+                "number_of_intervals",
+                "output_interval",
+            ):
                 spec_test.field_sources.setdefault(fname, "test_spec")
             merged[model_id] = spec_test
 

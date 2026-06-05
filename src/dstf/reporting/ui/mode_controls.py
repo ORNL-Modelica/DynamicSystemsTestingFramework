@@ -13,14 +13,16 @@ and produces:
 Per D66 the :class:`ComparisonMode` ABC stays pure compute — no UI coupling
 on the mode class. The bridge lives here instead, keyed on mode name.
 """
+
 from __future__ import annotations
 
 import dataclasses
 import html
+import types
 import typing
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Union
-
+from typing import Any, Union
 
 # ---------------------------------------------------------------------------
 # Schema types
@@ -39,19 +41,19 @@ class FieldSpec:
     type: str  # one of FIELD_TYPES
     default: Any = None
     optional: bool = False
-    choices: Optional[list[str]] = None
-    label: Optional[str] = None
-    help: Optional[str] = None
+    choices: list[str] | None = None
+    label: str | None = None
+    help: str | None = None
     # UI hints for number inputs. ``ui_max`` is a soft cap — if the
     # current value exceeds it, the rendered input's max becomes
     # ``max(ui_max, current_value)`` so edits aren't clamped down.
-    ui_min: Optional[float] = None
-    ui_max: Optional[float] = None
+    ui_min: float | None = None
+    ui_max: float | None = None
 
 
 @dataclass
 class Schema:
-    mode: Optional[str] = None
+    mode: str | None = None
     fields: list[FieldSpec] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -65,7 +67,8 @@ class Schema:
 # Introspection
 # ---------------------------------------------------------------------------
 
-def derive_schema(config_cls: type, *, mode: Optional[str] = None) -> Schema:
+
+def derive_schema(config_cls: type, *, mode: str | None = None) -> Schema:
     """Inspect a dataclass and return its UI schema.
 
     Handles ``float``, ``int``, ``bool``, ``str``, ``Optional[X]``,
@@ -88,27 +91,31 @@ def derive_schema(config_cls: type, *, mode: Optional[str] = None) -> Schema:
         kind, optional, choices = _classify_type(hint)
         default = _field_default(f)
         meta = f.metadata or {}
-        fields_out.append(FieldSpec(
-            name=f.name,
-            type=kind,
-            default=default,
-            optional=optional,
-            choices=choices,
-            label=meta.get("label") or _titleize(f.name),
-            help=meta.get("help"),
-            ui_min=meta.get("ui_min"),
-            ui_max=meta.get("ui_max"),
-        ))
+        fields_out.append(
+            FieldSpec(
+                name=f.name,
+                type=kind,
+                default=default,
+                optional=optional,
+                choices=choices,
+                label=meta.get("label") or _titleize(f.name),
+                help=meta.get("help"),
+                ui_min=meta.get("ui_min"),
+                ui_max=meta.get("ui_max"),
+            )
+        )
     return Schema(mode=mode, fields=fields_out)
 
 
-def _classify_type(hint: Any) -> tuple[str, bool, Optional[list[str]]]:
+def _classify_type(hint: Any) -> tuple[str, bool, list[str] | None]:
     """Return (field_kind, optional, choices-if-enum) for a type hint."""
     origin = typing.get_origin(hint)
     args = typing.get_args(hint)
 
-    # Optional[X] == Union[X, None] — unwrap, mark optional, recurse.
-    if origin is Union and type(None) in args:
+    # Optional[X] — unwrap, mark optional, recurse. Accept both spellings:
+    # typing.Optional/Union[X, None] (origin is typing.Union) and the PEP 604
+    # form X | None (origin is types.UnionType on 3.10+).
+    if origin in (Union, types.UnionType) and type(None) in args:
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
             inner_kind, _, choices = _classify_type(non_none[0])
@@ -153,12 +160,13 @@ def _titleize(name: str) -> str:
 # Renderer
 # ---------------------------------------------------------------------------
 
+
 def render_schema_html(
     schema: Schema,
     *,
-    mode: Optional[str] = None,
-    variable: Optional[str] = None,
-    values: Optional[dict[str, Any]] = None,
+    mode: str | None = None,
+    variable: str | None = None,
+    values: dict[str, Any] | None = None,
 ) -> str:
     """Render a :class:`Schema` to an HTML form fragment.
 
@@ -178,9 +186,7 @@ def render_schema_html(
 
     return (
         f'<div class="mode-controls" data-mode="{mode_attr}" '
-        f'data-variable="{var_attr}">'
-        + "".join(rows)
-        + "</div>"
+        f'data-variable="{var_attr}">' + "".join(rows) + "</div>"
     )
 
 
@@ -195,7 +201,7 @@ def _render_field(f: FieldSpec, value: Any) -> str:
             selected = " selected" if str(value) == choice else ""
             options.append(
                 f'<option value="{html.escape(choice)}"{selected}>'
-                f'{html.escape(choice)}</option>'
+                f"{html.escape(choice)}</option>"
             )
         # Optional enums get a leading blank so the user can unset.
         if f.optional:
@@ -203,7 +209,7 @@ def _render_field(f: FieldSpec, value: Any) -> str:
             options.insert(0, f'<option value=""{blank_selected}>(unset)</option>')
         return (
             f'<label class="mc-field mc-enum"{help_attr}>'
-            f'<span>{label}</span>'
+            f"<span>{label}</span>"
             f'<select data-field="{name_attr}">'
             + "".join(options)
             + "</select></label>"
@@ -214,11 +220,11 @@ def _render_field(f: FieldSpec, value: Any) -> str:
         return (
             f'<label class="mc-field mc-bool"{help_attr}>'
             f'<input type="checkbox" data-field="{name_attr}"{checked}>'
-            f'<span>{label}</span></label>'
+            f"<span>{label}</span></label>"
         )
 
     if f.type in ("float", "int"):
-        step = 'any' if f.type == "float" else '1'
+        step = "any" if f.type == "float" else "1"
         val_attr = "" if value is None else f' value="{html.escape(str(value))}"'
         min_attr = ""
         max_attr = ""
@@ -239,9 +245,9 @@ def _render_field(f: FieldSpec, value: Any) -> str:
                 max_attr = f' max="{html.escape(str(effective_max))}"'
         return (
             f'<label class="mc-field mc-{f.type}"{help_attr}>'
-            f'<span>{label}</span>'
+            f"<span>{label}</span>"
             f'<input type="number" step="{step}" data-field="{name_attr}"'
-            f'{min_attr}{max_attr}{val_attr}>'
+            f"{min_attr}{max_attr}{val_attr}>"
             "</label>"
         )
 
@@ -249,7 +255,7 @@ def _render_field(f: FieldSpec, value: Any) -> str:
         val_attr = "" if value is None else f' value="{html.escape(str(value))}"'
         return (
             f'<label class="mc-field mc-str"{help_attr}>'
-            f'<span>{label}</span>'
+            f"<span>{label}</span>"
             f'<input type="text" data-field="{name_attr}"{val_attr}>'
             "</label>"
         )
@@ -257,16 +263,17 @@ def _render_field(f: FieldSpec, value: Any) -> str:
     # Passthrough: complex type — raw JSON textarea. Value serialized best-
     # effort; edits are not introspected, just round-tripped.
     import json as _json
+
     try:
         raw = _json.dumps(value, default=str) if value is not None else ""
     except Exception:
         raw = ""
     return (
         f'<label class="mc-field mc-passthrough"{help_attr}>'
-        f'<span>{label}</span>'
+        f"<span>{label}</span>"
         f'<textarea data-field="{name_attr}" '
         'data-passthrough="true" rows="2">'
-        f'{html.escape(raw)}</textarea></label>'
+        f"{html.escape(raw)}</textarea></label>"
     )
 
 
@@ -302,7 +309,7 @@ class PlotContribution:
     traces: list[dict] = field(default_factory=list)
     shapes: list[dict] = field(default_factory=list)
     annotations: list[dict] = field(default_factory=list)
-    secondary_panel: Optional[str] = None  # e.g. "spectrum" for dominant-frequency
+    secondary_panel: str | None = None  # e.g. "spectrum" for dominant-frequency
 
 
 #: A mode's plot-contribution function takes the leaf's config values dict
@@ -317,8 +324,8 @@ class ModeUI:
     name: str
     config_cls: type
     schema: Schema
-    custom_renderer: Optional[CustomRenderer] = None
-    plot_contribution: Optional[PlotContributionFn] = None
+    custom_renderer: CustomRenderer | None = None
+    plot_contribution: PlotContributionFn | None = None
     # Marker that the mode has a JS-side interactive plot editor
     # registered under ``MODE_PLOT_EDITORS[name]``. Python-side is just
     # the declaration; the editor itself lives in the template JS
@@ -327,17 +334,24 @@ class ModeUI:
     # the single Python registry (recommender, schema export, etc.).
     has_plot_editor: bool = False
 
-    def render(self, *, variable: Optional[str] = None,
-               values: Optional[dict[str, Any]] = None) -> str:
+    def render(
+        self, *, variable: str | None = None, values: dict[str, Any] | None = None
+    ) -> str:
         if self.custom_renderer is not None:
             return self.custom_renderer(
-                self.schema, mode=self.name, variable=variable, values=values,
+                self.schema,
+                mode=self.name,
+                variable=variable,
+                values=values,
             )
         return render_schema_html(
-            self.schema, mode=self.name, variable=variable, values=values,
+            self.schema,
+            mode=self.name,
+            variable=variable,
+            values=values,
         )
 
-    def contribute_to_plot(self, values: dict[str, Any]) -> Optional[PlotContribution]:
+    def contribute_to_plot(self, values: dict[str, Any]) -> PlotContribution | None:
         """Return the leaf's static plot contribution, or ``None``.
 
         Stage-1 stub — Stage 2 implements per-mode contributions
@@ -355,8 +369,8 @@ def register_mode_ui(
     name: str,
     config_cls: type,
     *,
-    custom_renderer: Optional[CustomRenderer] = None,
-    plot_contribution: Optional[PlotContributionFn] = None,
+    custom_renderer: CustomRenderer | None = None,
+    plot_contribution: PlotContributionFn | None = None,
     has_plot_editor: bool = False,
 ) -> ModeUI:
     """Register a mode's UI. Returns the :class:`ModeUI` for test/inspection."""
@@ -373,7 +387,7 @@ def register_mode_ui(
     return entry
 
 
-def get_mode_ui(name: str) -> Optional[ModeUI]:
+def get_mode_ui(name: str) -> ModeUI | None:
     """Return the registered ModeUI for ``name`` or None if not registered."""
     return _REGISTRY.get(name)
 
@@ -398,12 +412,13 @@ def emit_mode_schemas() -> dict[str, dict]:
 # Window controls — universal cross-mode suffix (idea #46 UI surfacing)
 # ---------------------------------------------------------------------------
 
+
 def render_window_controls_html(
-    variable: Optional[str] = None,
-    values: Optional[dict[str, Any]] = None,
+    variable: str | None = None,
+    values: dict[str, Any] | None = None,
     *,
-    time_start: Optional[float] = None,
-    time_end: Optional[float] = None,
+    time_start: float | None = None,
+    time_end: float | None = None,
 ) -> str:
     """Render the universal window inputs for a tree-backed leaf.
 
@@ -428,11 +443,11 @@ def render_window_controls_html(
     end_attr = "" if end is None else f' value="{html.escape(str(end))}"'
     start_ph = (
         f' placeholder="{html.escape(f"{time_start:g}")}"'
-        if time_start is not None else ''
+        if time_start is not None
+        else ""
     )
     end_ph = (
-        f' placeholder="{html.escape(f"{time_end:g}")}"'
-        if time_end is not None else ''
+        f' placeholder="{html.escape(f"{time_end:g}")}"' if time_end is not None else ""
     )
     return (
         f'<div class="window-controls" data-variable="{var_attr}" '
@@ -440,11 +455,11 @@ def render_window_controls_html(
         '<span class="wc-label">Window:</span>'
         f'<label class="wc-field"><span>start</span>'
         f'<input type="number" step="any" data-field="window_start"{start_attr}{start_ph}>'
-        '</label>'
+        "</label>"
         f'<label class="wc-field"><span>end</span>'
         f'<input type="number" step="any" data-field="window_end"{end_attr}{end_ph}>'
-        '</label>'
-        '</div>'
+        "</label>"
+        "</div>"
     )
 
 
@@ -452,13 +467,14 @@ def render_window_controls_html(
 # Bundled registrations — six comparison modes
 # ---------------------------------------------------------------------------
 
+
 def _register_bundled() -> None:
     """Register the six built-in modes' UI at import time."""
     from ...comparison.modes import (
         DominantFrequencyConfig,
         EventTimingConfig,
-        PointsConfig,
         NrmseConfig,
+        PointsConfig,
         RangeConfig,
         TubeConfig,
     )

@@ -48,9 +48,10 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 from .mo_parser import (
     _extract_balanced_braces,
@@ -68,32 +69,36 @@ class RecognizerSpecError(ValueError):
 
 # Fields a JSON spec can write into a RecognizerResult. Keep in sync with
 # RecognizerResult dataclass (model_id and source_file are filled implicitly).
-_VALID_FIELDS = frozenset({
-    "n_vars",
-    "x_expressions",
-    "x_raw",
-    "x_reference",
-    "error_expected",
-    "stop_time",
-    "tolerance",
-    "method",
-    "number_of_intervals",
-    "output_interval",
-    # PTA.4 — richer-contract fields
-    "simulate_only",
-    "requested_fmu_export",
-    "requested_baselines",
-})
+_VALID_FIELDS = frozenset(
+    {
+        "n_vars",
+        "x_expressions",
+        "x_raw",
+        "x_reference",
+        "error_expected",
+        "stop_time",
+        "tolerance",
+        "method",
+        "number_of_intervals",
+        "output_interval",
+        # PTA.4 — richer-contract fields
+        "simulate_only",
+        "requested_fmu_export",
+        "requested_baselines",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Match contexts
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ComponentMatch:
     """A component-instantiation match. Carries the parameter-list text so
     the `parameter` field source can extract from it."""
+
     component_class: str
     instance_name: str
     param_text: str
@@ -102,18 +107,21 @@ class ComponentMatch:
 @dataclass
 class ExtendsMatch:
     """An extends match."""
+
     extended_class: str
 
 
 @dataclass
 class ClassNameMatch:
     """A class-name-glob match (PTA-follow.3)."""
+
     qualified_name: str
 
 
 @dataclass
 class AnnotationMatch:
     """A generic-annotation match: the matched annotation's param text."""
+
     annotation_name: str
     param_text: str
 
@@ -126,10 +134,11 @@ class CompositeMatch:
     `parameter` needs a ComponentMatch) traverse the composite via
     :func:`_find_match`.
     """
+
     matches: list
 
 
-MatchContext = Union[ComponentMatch, ExtendsMatch, CompositeMatch]
+MatchContext = ComponentMatch | ExtendsMatch | CompositeMatch
 
 
 def _find_match(match: MatchContext, type_):
@@ -149,7 +158,9 @@ def _find_match(match: MatchContext, type_):
 # matches provide. Composite types (all-of / any-of) inherit the union of
 # allowed sources across their children — see _allowed_sources_for.
 _MATCH_TYPE_ALLOWED_FIELD_SOURCES = {
-    "component-instantiation": frozenset({"parameter", "constant", "experiment-annotation", "annotation"}),
+    "component-instantiation": frozenset(
+        {"parameter", "constant", "experiment-annotation", "annotation"}
+    ),
     "extends": frozenset({"constant", "experiment-annotation", "annotation"}),
     "class-name-glob": frozenset({"constant", "experiment-annotation", "annotation"}),
 }
@@ -179,7 +190,7 @@ def _allowed_sources_for(match_spec: dict) -> frozenset[str]:
 # Match interpreter registry
 # ---------------------------------------------------------------------------
 
-_MatchFn = Callable[[str, dict], Optional[MatchContext]]
+_MatchFn = Callable[[str, dict], MatchContext | None]
 _MATCH_INTERPRETERS: dict[str, _MatchFn] = {}
 
 
@@ -187,18 +198,19 @@ def _register_match(type_name: str):
     def deco(fn: _MatchFn) -> _MatchFn:
         _MATCH_INTERPRETERS[type_name] = fn
         return fn
+
     return deco
 
 
 @_register_match("component-instantiation")
-def _match_component_instantiation(content: str, spec: dict) -> Optional[ComponentMatch]:
+def _match_component_instantiation(content: str, spec: dict) -> ComponentMatch | None:
     full = spec["component_name"]
     segments = full.split(".")
     # Try fully qualified, then progressively shorter tail-suffixes — most
     # specific first so longer matches win when alternatives overlap.
     tails = [".".join(segments[i:]) for i in range(len(segments))]
     pattern_str = "|".join(re.escape(t) for t in tails)
-    pattern = re.compile(rf'\b(?:{pattern_str})\s+(\w+)\s*\(', re.DOTALL)
+    pattern = re.compile(rf"\b(?:{pattern_str})\s+(\w+)\s*\(", re.DOTALL)
     # Strip annotations + string literals so prose mentioning the
     # component class doesn't false-trigger. Offsets inside the stripped
     # content stay valid for param-text extraction (block comments get
@@ -223,19 +235,19 @@ def _match_component_instantiation(content: str, spec: dict) -> Optional[Compone
     return ComponentMatch(
         component_class=matched_class,
         instance_name=instance_name,
-        param_text=stripped[paren_open + 1:end],
+        param_text=stripped[paren_open + 1 : end],
     )
 
 
 @_register_match("extends")
-def _match_extends(content: str, spec: dict) -> Optional[ExtendsMatch]:
+def _match_extends(content: str, spec: dict) -> ExtendsMatch | None:
     pattern_glob = spec["class_pattern"]
     # Strip comments + string literals first — prose like "extends
     # ModelicaTestingLib.Icons.Example" inside a doc annotation would
     # otherwise register as a real extends, misidentifying icon classes
     # as tests.
     stripped = _strip_modelica_literals(content)
-    for m in re.finditer(r'\bextends\s+([\w.]+)', stripped):
+    for m in re.finditer(r"\bextends\s+([\w.]+)", stripped):
         extended = m.group(1)
         if fnmatch.fnmatchcase(extended, pattern_glob):
             return ExtendsMatch(extended_class=extended)
@@ -246,8 +258,8 @@ def _match_extends(content: str, spec: dict) -> Optional[ExtendsMatch]:
 # so prose inside a Documentation annotation doesn't trigger false matches
 # on ``extends``, ``UnitTests(...)``, etc.
 _MODELICA_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
-_MODELICA_LINE_COMMENT = re.compile(r'//[^\n]*')
-_MODELICA_BLOCK_COMMENT = re.compile(r'/\*[\s\S]*?\*/')
+_MODELICA_LINE_COMMENT = re.compile(r"//[^\n]*")
+_MODELICA_BLOCK_COMMENT = re.compile(r"/\*[\s\S]*?\*/")
 
 
 def _strip_modelica_literals(content: str) -> str:
@@ -266,7 +278,7 @@ def _strip_modelica_literals(content: str) -> str:
 
 
 @_register_match("class-name-glob")
-def _match_class_name_glob(content: str, spec: dict) -> Optional[ClassNameMatch]:
+def _match_class_name_glob(content: str, spec: dict) -> ClassNameMatch | None:
     """Match a class whose fully qualified name matches an fnmatch glob."""
     pattern_glob = spec["class_pattern"]
     within = _extract_within(content)
@@ -280,7 +292,7 @@ def _match_class_name_glob(content: str, spec: dict) -> Optional[ClassNameMatch]
 
 
 @_register_match("all-of")
-def _match_all_of(content: str, spec: dict) -> Optional[CompositeMatch]:
+def _match_all_of(content: str, spec: dict) -> CompositeMatch | None:
     """All child matchers must match; result aggregates all child contexts."""
     matches = []
     for child_spec in spec.get("matchers", []):
@@ -295,7 +307,7 @@ def _match_all_of(content: str, spec: dict) -> Optional[CompositeMatch]:
 
 
 @_register_match("any-of")
-def _match_any_of(content: str, spec: dict) -> Optional[CompositeMatch]:
+def _match_any_of(content: str, spec: dict) -> CompositeMatch | None:
     """First matching child wins; result wraps just that child."""
     for child_spec in spec.get("matchers", []):
         child_fn = _MATCH_INTERPRETERS.get(child_spec.get("type"))
@@ -319,6 +331,7 @@ def _register_field(source_name: str):
     def deco(fn: _FieldFn) -> _FieldFn:
         _FIELD_INTERPRETERS[source_name] = fn
         return fn
+
     return deco
 
 
@@ -345,13 +358,13 @@ def _coerce_scalar(raw: str) -> Any:
 def _extract_param_value(param_text: str, name: str, shape: str) -> Any:
     """Extract a parameter value of the given shape from a parameter list."""
     if shape == "array":
-        m = re.search(rf'\b{re.escape(name)}\s*=\s*\{{', param_text)
+        m = re.search(rf"\b{re.escape(name)}\s*=\s*\{{", param_text)
         if not m:
             return None
         raw = _extract_balanced_braces(param_text, m.end() - 1)
         return _parse_x_expressions(raw)
     if shape == "array_floats":
-        m = re.search(rf'\b{re.escape(name)}\s*=\s*\{{', param_text)
+        m = re.search(rf"\b{re.escape(name)}\s*=\s*\{{", param_text)
         if not m:
             return None
         raw = _extract_balanced_braces(param_text, m.end() - 1)
@@ -360,7 +373,7 @@ def _extract_param_value(param_text: str, name: str, shape: str) -> Any:
     m = re.search(rf'\b{re.escape(name)}\s*=\s*"([^"]*)"', param_text)
     if m:
         return m.group(1)
-    m = re.search(rf'\b{re.escape(name)}\s*=\s*([^,\s)]+)', param_text)
+    m = re.search(rf"\b{re.escape(name)}\s*=\s*([^,\s)]+)", param_text)
     if not m:
         return None
     return _coerce_scalar(m.group(1))
@@ -371,7 +384,9 @@ def _field_parameter(content: str, match: MatchContext, spec: dict) -> Any:
     cm = _find_match(match, ComponentMatch)
     if cm is None:
         return None  # composite that didn't include a component-instantiation
-    return _extract_param_value(cm.param_text, spec["name"], spec.get("shape", "scalar"))
+    return _extract_param_value(
+        cm.param_text, spec["name"], spec.get("shape", "scalar")
+    )
 
 
 @_register_field("constant")
@@ -389,7 +404,7 @@ def _field_annotation(content: str, match: MatchContext, spec: dict) -> Any:
     """
     ann_name = spec["annotation"]
     m = re.search(
-        rf'\b{re.escape(ann_name)}\s*\(',
+        rf"\b{re.escape(ann_name)}\s*\(",
         content,
     )
     if not m:
@@ -406,13 +421,13 @@ def _field_annotation(content: str, match: MatchContext, spec: dict) -> Any:
             if depth == 0:
                 end = i
                 break
-    param_text = content[paren_open + 1:end]
+    param_text = content[paren_open + 1 : end]
     return _extract_param_value(param_text, spec["name"], spec.get("shape", "scalar"))
 
 
 @_register_field("experiment-annotation")
 def _field_experiment_annotation(content: str, match: MatchContext, spec: dict) -> Any:
-    m = re.search(r'experiment\s*\(([^)]*)\)', content)
+    m = re.search(r"experiment\s*\(([^)]*)\)", content)
     if not m:
         return None
     name = spec["name"]
@@ -437,6 +452,7 @@ def _field_experiment_annotation(content: str, match: MatchContext, spec: dict) 
 # ---------------------------------------------------------------------------
 # JsonRecognizer + parser
 # ---------------------------------------------------------------------------
+
 
 class JsonRecognizer(Recognizer):
     """Recognizer configured by a JSON spec."""
@@ -463,11 +479,9 @@ class JsonRecognizer(Recognizer):
             fnmatch.fnmatchcase(rel, g) for g in self._paths_include
         ):
             return False
-        if any(fnmatch.fnmatchcase(rel, g) for g in self._paths_exclude):
-            return False
-        return True
+        return not any(fnmatch.fnmatchcase(rel, g) for g in self._paths_exclude)
 
-    def recognize(self, source_file: Path) -> Optional[RecognizerResult]:
+    def recognize(self, source_file: Path) -> RecognizerResult | None:
         try:
             content = source_file.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -544,17 +558,13 @@ def parse_recognizer_spec(spec: dict) -> Recognizer:
         raise RecognizerSpecError("recognizer spec missing required field 'name'")
     name = spec["name"]
     if "match" not in spec:
-        raise RecognizerSpecError(
-            f"recognizer '{name}' missing required field 'match'"
-        )
+        raise RecognizerSpecError(f"recognizer '{name}' missing required field 'match'")
     match = spec["match"]
     _validate_match_spec(name, match)
     match_type = match["type"]
     fields = spec.get("fields", {})
     if not isinstance(fields, dict):
-        raise RecognizerSpecError(
-            f"recognizer '{name}' fields must be a dict"
-        )
+        raise RecognizerSpecError(f"recognizer '{name}' fields must be a dict")
     allowed_sources = _allowed_sources_for(match)
     for fname, fspec in fields.items():
         if fname not in _VALID_FIELDS:

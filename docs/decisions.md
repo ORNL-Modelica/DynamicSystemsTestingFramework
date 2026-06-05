@@ -2335,3 +2335,119 @@ count.
   (control-point list with synced/unsynced modes, asymmetric tube
   support), not a declared-list editor. Different abstraction
   candidate.
+
+## D88: Quality-floor hardening — ruff + tiered mypy + coverage ratchet + CI (2026-06-05)
+
+- **What**: Establish the project's first static-analysis / coverage /
+  CI quality floor, and close the highest-risk test gaps it surfaced.
+  Decided via a `grill-with-docs` session; this entry is the spec, and
+  it is being executed in the same session.
+- **Why**: 18.5k src LOC carried **zero** lint, type-check, or coverage
+  tooling (dev deps were just `pytest` + `scipy`). On a codebase that
+  size, the cheapest, highest-leverage hardening is the quality floor
+  that doesn't exist yet — and you can't sensibly choose *which* tests
+  to add, or refactor safely, without first measuring where coverage
+  is thin. Sequencing was therefore locked as **quality floor → measure
+  → targeted tests**, ahead of any architecture-refactor pass.
+
+### Coverage baseline that drove the scoping (measured this session)
+
+`pytest-cov` over the hardware-free suite: **58% total**, but the
+headline is deflated by un-runnable simulator code. The real shape:
+
+- **Domain core well-covered**: `comparison/` 81–98%, `discovery/`
+  77–97%, `storage/reference_store.py` 84%.
+- **Hardware-gated (uncovered because the simulator isn't in CI, not a
+  test gap)**: Dymola 19/21%, Julia 0%, FMPy 30%, Python runner 26%,
+  `cross_backend` 0%, `base.py` 47%. These are `omit`-ed from the
+  metric so the number reflects CI-runnable code.
+- **The genuine gap — pure, testable, externally-contracted code at
+  0%**: `reporting/junit_report.py` (JUnit XML is a contract with
+  external CI), `reporting/console_report.py`, `reporting/html_report.py`;
+  plus `plot_comparison.py` 11%, `cli.py` 26%, `patch_apply.py` 77%.
+
+### Decisions (locked)
+
+1. **Lint/format — ruff.** Big-bang `ruff format` over the whole tree
+   as one isolated commit, SHA recorded in `.git-blame-ignore-revs` so
+   `git blame` skips it (neutralizes the only downside). Curated rule
+   set `F,B,E,W,I,UP,SIM` with safe auto-fixes — **not** `--select ALL`
+   (buries real bugs in style noise), **not** format-on-touch (leaves
+   mixed style, can't enforce in CI).
+2. **Types — mypy, tiered not whole-codebase.** Scoped to the
+   typed-dataclass core (`comparison/`, `discovery/`, `storage/`,
+   `config.py`) on a lenient baseline with `ignore_missing_imports` for
+   the optional backend libs (`fmpy`, `OMPython`, Dymola interface,
+   `julia`). The registry/strategy dispatch, Dymola-logger
+   monkey-patching, and JSON-dict glue have poor type signal — left
+   lenient/excluded. Ratchet outward only if it earns its keep.
+3. **Coverage — pytest-cov with a ratchet floor.** `omit` the
+   hardware-gated execution paths; set `--cov-fail-under` at the
+   post-test baseline minus ~2% (no-backsliding gate, not an
+   aspirational target).
+4. **CI — wire the quality floor now.** New `quality.yml` (lint + mypy
+   + ~730 hardware-free tests + coverage) on push/PR; ~1–2 min/run, no
+   simulators. The **FMPy e2e** CI (`PHASE_2_5_CI_PLAN.md`) stays
+   deferred exactly as before — independent concern, cost-gated on
+   private-repo minutes. Plus `.pre-commit-config.yaml` for local
+   feedback.
+5. **Tests this pass — close the 0% formatters.** Write
+   `junit_report` / `console_report` / `html_report` suites (+
+   `patch_apply` edge cases) **before** locking the ratchet, so it
+   captures the higher baseline. Bounded scope — not a general
+   coverage campaign.
+
+### Explicitly deferred (named, not forgotten)
+
+- **JS quality floor.** `interactive.js` (4,774 LOC — the single
+  largest file, reporter-as-IDE engine, only 5 Playwright tests, and
+  its `buildPatchData` output is an RFC-6902 contract with
+  `patch_apply.py`) is the least-hardened surface. Deferred to its own
+  grill because the toolchain choice (ESLint + vitest + c8 vs.
+  expanding the in-pytest Playwright net) drags a node ecosystem into a
+  `uv`/Python repo and deserves dedicated scoping.
+- `cli.py` (26%) and `plot_comparison.py` (11%) coverage — larger,
+  lower-ROI (matplotlib rendering is awkward to test).
+- Architecture-refactor pass (`improve-codebase-architecture`) — the
+  original prompt; intentionally sequenced *after* the safety net.
+
+### As-built (2026-06-05)
+
+Shipped on branch `chore/quality-floor` in 5 commits (config → format →
+lint → types → tests → CI). Outcomes vs spec:
+
+- **ruff**: whole-tree format (1 commit, in `.git-blame-ignore-revs`) +
+  575 lint findings → 0. Real bugs beyond style: dead code removed
+  (`spec_path`, `pos`); 5 B904 exception-chains; and **a latent UI bug** —
+  `mode_controls._classify_type` only recognized `typing.Union`, so any
+  mode-config field written in PEP-604 `X | None` form silently lost its
+  `optional` flag in the reporter. Now accepts `types.UnionType` too.
+- **mypy** (tiered: comparison/discovery/storage/config): 22 → 0. Notably
+  4 `numpy.bool` values passed where `builtins.bool` expected (would
+  serialize oddly into baseline JSON), now `bool()`-wrapped.
+- **Re-export hazard**: F401 stripped `comparator.py`'s algorithm-function
+  re-exports (a documented facade consumed by modes/tree_eval/tests);
+  restored under `# noqa: F401`. Lesson: facade modules need the noqa or
+  an `__all__` before an import-cleanup sweep.
+- **Coverage**: 58% → **68%** on the hardware-free suite after the
+  omit-list. junit_report 0→100%, html_report 0→100%, console_report
+  0→97%, patch_apply 77→86%. +30 tests (737 → 767). Ratchet `fail_under
+  = 66` in `[tool.coverage.report]`.
+- **CI**: `.github/workflows/quality.yml` (lint + format-check + mypy +
+  hardware-free pytest + coverage) on push/PR; `.pre-commit-config.yaml`
+  for local parity. FMPy e2e (`PHASE_2_5_CI_PLAN.md`) untouched.
+- **JS quality floor deferred** to its own grill (interactive.js, 4.7k LOC).
+- Follow-up noted: `html_report.py` hard-codes the title "Modelica Test
+  Report" — stale post-D81 rename (fixed → "DSTF Test Report").
+
+**CI confirmed green** (2026-06-05): `quality` workflow passes on
+`pull_request` in ~30s — all steps (uv sync → ruff lint → ruff format
+check → mypy → pytest + 66% coverage ratchet). Took three iterations on
+the runner: fixed a PEP-668 `--system` install error (→ `uv sync` +
+`uv run`), then two failures the local `-m "not playwright"` filter had
+masked — Julia smoke tests that shell out to `dstf run` instead of
+self-skipping (→ deselect all backend markers), and a `.gitignore`
+artifact pattern (`dslog.txt`) that had been silently excluding a
+committed test fixture, so its test could never have passed on a fresh
+clone (→ negation + track the fixture). Both genuine bugs CI surfaced
+that local runs could not.

@@ -17,8 +17,8 @@ unreliable (``res`` isn't in scope for the follow-up prints).
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from ...discovery.test_registry import TestModel
 from ..base import _pattern_to_regex
@@ -33,9 +33,7 @@ def classify_dependency(entry: str) -> tuple[str, str]:
     """
     # Path-like if it contains a separator, ends in .mo, or resolves to an
     # existing file.
-    looks_like_path = (
-        "/" in entry or "\\" in entry or entry.endswith(".mo")
-    )
+    looks_like_path = "/" in entry or "\\" in entry or entry.endswith(".mo")
     if not looks_like_path:
         return ("loadModel", entry)
 
@@ -131,14 +129,18 @@ def build_simulate_args(
     if test.number_of_intervals is not None:
         args.append(f"numberOfIntervals={int(test.number_of_intervals)}")
     elif test.output_interval is not None and test.output_interval > 0:
-        n_intervals = max(1, int(round(float(test.stop_time) / float(test.output_interval))))
+        n_intervals = max(
+            1, int(round(float(test.stop_time) / float(test.output_interval)))
+        )
         args.append(f"numberOfIntervals={n_intervals}")
     args.append(f"tolerance={float(test.tolerance)!r}")
     args.append(_format_sim_kwarg("method", (test.method or "dassl").lower()))
     args.append('outputFormat="mat"')
     args.append('fileNamePrefix="result"')
     var_filter = build_variable_filter(
-        test.variable_patterns, diagnostic_vars, extra_names=extra_filter_names,
+        test.variable_patterns,
+        diagnostic_vars,
+        extra_names=extra_filter_names,
     )
     args.append(_format_sim_kwarg("variableFilter", var_filter))
     return args
@@ -161,6 +163,7 @@ def build_simulate_mos(
     with forward slashes (OM accepts them on Windows too, and it sidesteps
     Modelica string-escaping of backslashes).
     """
+
     def fwd(path: Path) -> str:
         return str(path).replace("\\", "/")
 
@@ -173,7 +176,7 @@ def build_simulate_mos(
             lines.append(f"loadModel({arg});")
         else:
             lines.append(f'loadFile("{arg}");')
-        lines.append('getErrorString();')
+        lines.append("getErrorString();")
 
     # Main library
     lines.append(f'loadFile("{fwd(library_package_mo)}");')

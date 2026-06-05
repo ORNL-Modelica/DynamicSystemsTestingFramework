@@ -59,32 +59,32 @@ def _validate_capabilities(cls: type[SimulatorRunner], name: str) -> None:
     are not checked — too implicit to assert mechanically.
     """
     caps = cls.capabilities
-    if Capability.FMU_EXPORT in caps:
-        if cls.export_fmu is SimulatorRunner.export_fmu:
-            raise TypeError(
-                f"@register('{name}'): {cls.__name__} declares "
-                f"Capability.FMU_EXPORT but does not override export_fmu(). "
-                f"Either implement the method or drop the capability flag."
-            )
-    if Capability.BATCH_FALLBACK in caps:
-        if (
-            cls.run_tests is SimulatorRunner.run_tests
-            and cls.run_single_test is SimulatorRunner.run_single_test
-        ):
-            raise TypeError(
-                f"@register('{name}'): {cls.__name__} declares "
-                f"Capability.BATCH_FALLBACK but overrides neither "
-                f"run_tests() nor run_single_test(). Implement one or "
-                f"drop the capability flag."
-            )
-    if Capability.PERSISTENT_WORKERS in caps:
-        if cls.persistent_runner_cls is SimulatorRunner.persistent_runner_cls:
-            raise TypeError(
-                f"@register('{name}'): {cls.__name__} declares "
-                f"Capability.PERSISTENT_WORKERS but does not override "
-                f"persistent_runner_cls(). Return your PersistentRunner "
-                f"class (lazy-imported) or drop the capability flag."
-            )
+    if Capability.FMU_EXPORT in caps and cls.export_fmu is SimulatorRunner.export_fmu:
+        raise TypeError(
+            f"@register('{name}'): {cls.__name__} declares "
+            f"Capability.FMU_EXPORT but does not override export_fmu(). "
+            f"Either implement the method or drop the capability flag."
+        )
+    if Capability.BATCH_FALLBACK in caps and (
+        cls.run_tests is SimulatorRunner.run_tests
+        and cls.run_single_test is SimulatorRunner.run_single_test
+    ):
+        raise TypeError(
+            f"@register('{name}'): {cls.__name__} declares "
+            f"Capability.BATCH_FALLBACK but overrides neither "
+            f"run_tests() nor run_single_test(). Implement one or "
+            f"drop the capability flag."
+        )
+    if (
+        Capability.PERSISTENT_WORKERS in caps
+        and cls.persistent_runner_cls is SimulatorRunner.persistent_runner_cls
+    ):
+        raise TypeError(
+            f"@register('{name}'): {cls.__name__} declares "
+            f"Capability.PERSISTENT_WORKERS but does not override "
+            f"persistent_runner_cls(). Return your PersistentRunner "
+            f"class (lazy-imported) or drop the capability flag."
+        )
 
 
 def register(name: str):
@@ -95,14 +95,16 @@ def register(name: str):
     ``ImportError`` (via ``TypeError``) at module-import time rather
     than a confusing ``NotImplementedError`` mid-run.
     """
+
     def decorator(cls: type[SimulatorRunner]) -> type[SimulatorRunner]:
         _validate_capabilities(cls, name)
         _REGISTRY[name] = cls
         return cls
+
     return decorator
 
 
-def get_runner(config: "Config") -> SimulatorRunner:
+def get_runner(config: Config) -> SimulatorRunner:
     """Instantiate the simulator backend specified in *config*.
 
     Backends self-register via the ``@register`` decorator.  Importing the
@@ -111,7 +113,7 @@ def get_runner(config: "Config") -> SimulatorRunner:
     return get_runner_class(config)(config)
 
 
-def get_runner_class(config: "Config") -> type[SimulatorRunner]:
+def get_runner_class(config: Config) -> type[SimulatorRunner]:
     """Return the runner *class* for the config's backend, without instantiating.
 
     Useful for reading class-level attributes (e.g. ``artifact_files``) from
@@ -143,4 +145,5 @@ def _import_builtin_backend(name: str) -> None:
     module = builtins.get(name)
     if module:
         import importlib
+
         importlib.import_module(module, package=__name__)

@@ -20,30 +20,22 @@ preserved untouched.
 from __future__ import annotations
 
 import logging
-import queue
-import re
 import shutil
-import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..base import (
-    BatchManifest,
     PersistentRunnerBase,
     TestRunResult,
     Worker,
-    _print_progress,
-    assign_test_keys,
 )
-from .log_parser import parse_dslog
 from ..common.mat_reader import read_mat_time_extents
-from .runner import DymolaRunner, DymolaConfig
 from .interface_loader import load_dymola_interface
+from .log_parser import parse_dslog
+from .runner import DymolaConfig, DymolaRunner
 
 logger = logging.getLogger(__name__)
 
@@ -126,14 +118,18 @@ def _install_dymola_log_filter() -> None:
     if _dymola_logger_patched:
         return
     try:
-        from dymola.dymola_interface_internal import DymolaLogger  # type: ignore[import-not-found]
+        from dymola.dymola_interface_internal import (
+            DymolaLogger,  # type: ignore[import-not-found]
+        )
     except ImportError:
         return  # interface not loaded yet; will be retried on next call
     orig = DymolaLogger._PrintMessage
 
     def _filtered_print(level, msg):
         text = str(msg)
-        if time.monotonic() < _suppress_until and any(p in text for p in _NOISE_PATTERNS):
+        if time.monotonic() < _suppress_until and any(
+            p in text for p in _NOISE_PATTERNS
+        ):
             return
         orig(level, msg)
 
@@ -228,7 +224,9 @@ class DymolaWorker(Worker):
         # (a subprocess.Popen). Fall back to an empty set if the attribute
         # ever moves — kill-by-pid just becomes best-effort in that case.
         proc = getattr(self.dymola, "_dymola_process", None)
-        self.pids = {proc.pid} if proc is not None and getattr(proc, "pid", None) else set()
+        self.pids = (
+            {proc.pid} if proc is not None and getattr(proc, "pid", None) else set()
+        )
 
         # Establish working directory
         self.dymola.cd(str(self.config.work_dir))
@@ -286,8 +284,8 @@ class DymolaWorker(Worker):
         test_dir.mkdir(parents=True, exist_ok=True)
 
         start = time.monotonic()
-        translation_wall: Optional[float] = None
-        sim_wall: Optional[float] = None
+        translation_wall: float | None = None
+        sim_wall: float | None = None
         try:
             self.dymola.cd(str(test_dir))
             self.dymola.clearlog()
@@ -442,8 +440,7 @@ class DymolaWorker(Worker):
             )
         except Exception as exc:
             raise RuntimeError(
-                f"DymolaInterface.translateModelFMU failed for "
-                f"{test.model_id}: {exc}"
+                f"DymolaInterface.translateModelFMU failed for {test.model_id}: {exc}"
             ) from exc
         if not result:
             raise RuntimeError(
@@ -509,7 +506,7 @@ class DymolaWorker(Worker):
         mat_path = test_dir / "dsres.mat"
         dsfinal_path = test_dir / "dsfinal.txt"
         success = False
-        completion_msg: Optional[str] = None
+        completion_msg: str | None = None
         if not translation_failed and mat_path.exists() and dsfinal_path.exists():
             extents = read_mat_time_extents(mat_path)
             stop_time = float(test.stop_time)
@@ -573,6 +570,7 @@ class DymolaWorker(Worker):
         self.dymola = None
         if d is not None:
             done = threading.Event()
+
             def _try():
                 try:
                     d.close()
@@ -580,6 +578,7 @@ class DymolaWorker(Worker):
                     pass
                 finally:
                     done.set()
+
             t = threading.Thread(target=_try, daemon=True)
             t.start()
             done.wait(grace)
@@ -590,6 +589,7 @@ class DymolaWorker(Worker):
         if not self.pids:
             return
         import psutil
+
         for pid in list(self.pids):
             try:
                 p = psutil.Process(pid)
@@ -614,8 +614,8 @@ class DymolaWorker(Worker):
         After a timeout or worker-level exception, `self.dymola` is None and
         the worker must be restarted before further tests are dispatched.
         """
-        result_box: list[Optional[TestRunResult]] = [None]
-        exc_box: list[Optional[BaseException]] = [None]
+        result_box: list[TestRunResult | None] = [None]
+        exc_box: list[BaseException | None] = [None]
         start_ts = time.monotonic()
 
         def _runner():
@@ -624,7 +624,9 @@ class DymolaWorker(Worker):
             except BaseException as e:
                 exc_box[0] = e
 
-        t = threading.Thread(target=_runner, daemon=True, name=f"dym-exec-{self.worker_id}")
+        t = threading.Thread(
+            target=_runner, daemon=True, name=f"dym-exec-{self.worker_id}"
+        )
         t.start()
         t.join(timeout)
 
@@ -702,14 +704,19 @@ class DymolaWorker(Worker):
             self.dymola.ExecuteCommand(cmd)
         except Exception as exc:  # pragma: no cover — diagnostic path
             logger.warning(
-                "Worker %s: setting '%s' raised: %s", self.worker_id, cmd, exc,
+                "Worker %s: setting '%s' raised: %s",
+                self.worker_id,
+                cmd,
+                exc,
             )
             return
         err = self._last_error()
         if err and ("Error" in err or "error:" in err.lower()):
             logger.warning(
                 "Worker %s: setting '%s' reported: %s",
-                self.worker_id, cmd, err.strip()[:200],
+                self.worker_id,
+                cmd,
+                err.strip()[:200],
             )
 
     def _last_error(self) -> str:
@@ -720,6 +727,7 @@ class DymolaWorker(Worker):
 
 
 # ---------------------------------------------------------------------------
+
 
 class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
     """Dymola runner using persistent DymolaInterface workers + a queue.
@@ -743,6 +751,7 @@ class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
         # ``interface_loader.load_dymola_interface`` and have the patch
         # take effect here.
         from .interface_loader import load_dymola_interface as _load
+
         _load(config.dymola_interface_path)
 
     def setup_before_workers(self) -> None:
@@ -760,7 +769,10 @@ class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
 
     def make_worker(self, worker_id: int) -> DymolaWorker:
         return DymolaWorker(
-            worker_id, self.config, self.dymola_config, self._di_cls,
+            worker_id,
+            self.config,
+            self.dymola_config,
+            self._di_cls,
         )
 
     def export_fmu(self, test: TestModel, output_dir: Path) -> Path:

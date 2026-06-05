@@ -7,7 +7,6 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +58,12 @@ def _detect_backend(simulator_name: str) -> str:
 def detect_os() -> str:
     """Detect the current OS for reference result partitioning."""
     system = platform.system().lower()
-    if system == "linux":
-        return "linux"
-    elif system == "darwin":
-        return "macos"
-    elif system == "windows":
-        return "windows"
-    return system
+    return {"linux": "linux", "darwin": "macos", "windows": "windows"}.get(
+        system, system
+    )
 
 
-def find_package_dir(start: Optional[Path] = None) -> Path:
+def find_package_dir(start: Path | None = None) -> Path:
     """Find a Modelica package directory containing package.mo.
 
     If start is a directory containing package.mo, returns it directly.
@@ -102,7 +97,7 @@ def read_package_name(package_dir: Path) -> str:
     if not pkg_file.exists():
         raise FileNotFoundError(f"No package.mo in {package_dir}")
     text = pkg_file.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r'package\s+(\w+)', text)
+    m = re.search(r"package\s+(\w+)", text)
     if m:
         return m.group(1)
     raise ValueError(f"Could not parse package name from {pkg_file}")
@@ -137,7 +132,7 @@ def _create_default_config(config_dir: Path, library_name: str) -> dict:
 def _resolve_simulator_path(
     simulators_config: dict[str, list[str]],
     simulator_name: str,
-) -> Optional[str]:
+) -> str | None:
     """Resolve a simulator executable path from the simulators config.
 
     Looks up the named entry and returns the first path that exists on disk.
@@ -156,7 +151,7 @@ def _resolve_simulator_path(
 
 def _auto_detect_simulator(
     simulators_config: dict[str, list[str]],
-) -> Optional[tuple[str, str]]:
+) -> tuple[str, str] | None:
     """Pick the first simulator in ``simulators_config`` whose binary resolves.
 
     Resolution order per candidate entry:
@@ -215,9 +210,7 @@ def _looks_like_path(entry: str) -> bool:
     """
     if entry.startswith("/"):
         return True
-    if _WINDOWS_DRIVE_RE.match(entry):
-        return True
-    return False
+    return bool(_WINDOWS_DRIVE_RE.match(entry))
 
 
 @dataclass
@@ -237,10 +230,10 @@ class Config:
     # Path to the source location for the library being tested.
     # For source_type == "modelica": the directory containing package.mo.
     # For other source types: the FMU directory / Julia script / CSV file / etc.
-    source_path: Optional[Path] = None
+    source_path: Path | None = None
 
     # Reference results location (can be a separate repo/directory)
-    reference_root: Optional[Path] = None
+    reference_root: Path | None = None
 
     # Simulator selection. ``None`` means "not explicitly chosen" — the
     # post-init resolution then consults testing.json's ``simulator`` key,
@@ -248,36 +241,42 @@ class Config:
     # ``"Dymola"`` as the historical default. A non-None value (typically
     # from a CLI ``--simulator`` flag) is treated as authoritative and is
     # NOT overridden by anything from testing.json.
-    simulator: Optional[str] = None
-    simulator_path: Optional[str] = None
+    simulator: str | None = None
+    simulator_path: str | None = None
     show_ide: bool = False
-    simulator_setup: list[str] = field(default_factory=list)  # Commands run after loading libraries
+    simulator_setup: list[str] = field(
+        default_factory=list
+    )  # Commands run after loading libraries
 
     # OS override (auto-detected if not set)
-    os_name: Optional[str] = None
+    os_name: str | None = None
 
     # Paths to dependency library roots
     dependencies: list[str] = field(default_factory=list)
 
     # Simulation / comparison
     parallel: int = 1
-    batch_size: Optional[int] = None  # tests per Dymola session; None = ceil(total/parallel) (one big batch per worker)
+    batch_size: int | None = (
+        None  # tests per Dymola session; None = ceil(total/parallel) (one big batch per worker)
+    )
     tolerance: float = DEFAULT_COMPARISON_TOLERANCE
     default_points: bool = False
     timeout: int = 60
 
     # Output
-    work_dir: Optional[Path] = None
+    work_dir: Path | None = None
 
     # Optional override for Dymola's Python interface archive (dymola.egg or dymola-*.whl).
     # If unset, auto-discovers under platform install roots.
-    dymola_interface_path: Optional[Path] = None
+    dymola_interface_path: Path | None = None
 
     # Test spec file (external test definitions)
-    test_spec_file: Optional[Path] = None
+    test_spec_file: Path | None = None
 
     # Diagnostic variables: auto-captured from simulation, shown in reports but not compared
-    diagnostic_variables: list[str] = field(default_factory=lambda: ["CPUtime", "EventCounter"])
+    diagnostic_variables: list[str] = field(
+        default_factory=lambda: ["CPUtime", "EventCounter"]
+    )
 
     # Phase 6.0 — interactive.html payload budget. LTTB-decimates trajectories
     # embedded for Plotly rendering; full-resolution arrays remain on disk in
@@ -300,10 +299,10 @@ class Config:
     disabled_bundled: list[str] = field(default_factory=list)
 
     # Config file path
-    config_file: Optional[Path] = None
+    config_file: Path | None = None
 
     # Resolved (set during __post_init__)
-    library_name: Optional[str] = None
+    library_name: str | None = None
 
     def __post_init__(self):
         # Resolve reference root early — needed for config file search
@@ -323,7 +322,7 @@ class Config:
                 search_dirs.insert(0, self.reference_root)
             if self.source_path is not None:
                 pkg = Path(self.source_path).resolve()
-                search_dirs.insert(0, pkg)        # package dir
+                search_dirs.insert(0, pkg)  # package dir
                 search_dirs.insert(0, pkg.parent)  # repo root
             for search_dir in search_dirs:
                 file_config = load_config_file(search_dir)
@@ -373,9 +372,8 @@ class Config:
                 self.source_path if self.source_path else Path.cwd()
             )
             if self.library_name is None:
-                self.library_name = (
-                    file_config.get("library_name")
-                    or (config_found_dir.name if config_found_dir else repo_root.name)
+                self.library_name = file_config.get("library_name") or (
+                    config_found_dir.name if config_found_dir else repo_root.name
                 )
 
         # If no config was found yet (source_path wasn't available for search),
@@ -437,6 +435,7 @@ class Config:
         # take precedence; testing.json fills in if Config wasn't given any.
         if not self.recognizers and "recognizers" in file_config:
             from .discovery.json_recognizer import parse_recognizer_spec
+
             self.recognizers = [
                 parse_recognizer_spec(spec) for spec in file_config["recognizers"]
             ]
@@ -504,8 +503,11 @@ class Config:
             else:
                 sim_dir = self.simulator.replace(" ", "_")
                 self.work_dir = (
-                    Path.cwd() / "testing_output"
-                    / self.library_name / sim_dir / self.os_name
+                    Path.cwd()
+                    / "testing_output"
+                    / self.library_name
+                    / sim_dir
+                    / self.os_name
                 )
         else:
             self.work_dir = Path(self.work_dir).resolve()
@@ -513,6 +515,7 @@ class Config:
     @property
     def simulator_backend(self) -> str:
         """The simulator backend type (e.g., 'Dymola' from 'Dymola 2025')."""
+        assert self.simulator is not None  # resolved in __post_init__
         return _detect_backend(self.simulator)
 
     @property
@@ -522,10 +525,12 @@ class Config:
         Modelica-source convenience accessor; for source_type == "modelica" this
         is identical to ``source_path``.
         """
+        assert self.source_path is not None  # resolved in __post_init__
         return self.source_path
 
     @property
     def reference_dir(self) -> Path:
         """Reference results directory, partitioned by simulator backend and OS."""
+        assert self.reference_root is not None  # resolved in __post_init__
+        assert self.os_name is not None  # resolved in __post_init__
         return self.reference_root / self.simulator_backend / self.os_name
-

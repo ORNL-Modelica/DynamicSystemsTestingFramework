@@ -68,7 +68,7 @@ def _download(url: str) -> bytes:
             return resp.read()
     except Exception as exc:
         print(f"ERROR: download failed: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
 
 
 def _extract(zip_bytes: bytes, output_dir: Path) -> list[str]:
