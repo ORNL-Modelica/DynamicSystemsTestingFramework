@@ -10,6 +10,7 @@ then run once:
 First run will precompile MTK + OrdinaryDiffEq (several minutes);
 subsequent runs are seconds.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -24,7 +25,9 @@ def _julia_available() -> bool:
         return False
     project = (
         Path(__file__).resolve().parents[1]
-        / "examples" / "julia" / "JuliaMtkTestingLib"
+        / "examples"
+        / "julia"
+        / "JuliaMtkTestingLib"
     )
     return (project / "Manifest.toml").exists()
 
@@ -36,8 +39,7 @@ pytestmark = pytest.mark.skipif(
 
 
 _EXAMPLES_DIR = (
-    Path(__file__).resolve().parents[1]
-    / "examples" / "julia" / "JuliaMtkTestingLib"
+    Path(__file__).resolve().parents[1] / "examples" / "julia" / "JuliaMtkTestingLib"
 )
 _CONFIG = _EXAMPLES_DIR / "Resources" / "ReferenceResults" / "testing.json"
 
@@ -47,6 +49,7 @@ def test_julia_runner_registered():
     """The Julia runner registers when its submodule is imported."""
     from dstf.simulators import get_runner_class
     from dstf.config import Config
+
     cfg = Config(config_file=_CONFIG)
     cls = get_runner_class(cfg)
     assert cls.__name__ == "JuliaRunner"
@@ -59,11 +62,21 @@ def test_julia_simple_ramp_smoke(tmp_path):
     subprocess → read_result → comparator)."""
     # First run — no baseline yet, so test reports NO_REF but simulation succeeds.
     result = subprocess.run(
-        ["uv", "run", "dstf",
-         "--config", str(_CONFIG),
-         "run", "--filter", "*SimpleRamp",
-         "--work-dir", str(tmp_path / "wd1")],
-        capture_output=True, text=True, timeout=600,
+        [
+            "uv",
+            "run",
+            "dstf",
+            "--config",
+            str(_CONFIG),
+            "run",
+            "--filter",
+            "*SimpleRamp",
+            "--work-dir",
+            str(tmp_path / "wd1"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     assert result.returncode == 0, result.stderr
     # Result JSON exists on disk.
@@ -76,20 +89,28 @@ def test_julia_frequency_declared_peak_matches(tmp_path):
     """The Frequency sample is a 1 Hz sinusoid; declared peak at 1 Hz with
     15% rel tolerance should match on self-regression."""
     # Need a baseline first.
-    baseline_dir = (
-        _EXAMPLES_DIR / "Resources" / "ReferenceResults" / "Julia" / "linux"
-    )
+    baseline_dir = _EXAMPLES_DIR / "Resources" / "ReferenceResults" / "Julia" / "linux"
     if not any(baseline_dir.glob("ref_*.json")):
         pytest.skip(
             "No Julia baselines committed under JuliaMtkTestingLib/ReferenceResults; "
             "run `dstf --config examples/julia/testing.json run --accept` first"
         )
     result = subprocess.run(
-        ["uv", "run", "dstf",
-         "--config", str(_CONFIG),
-         "run", "--filter", "*Frequency",
-         "--work-dir", str(tmp_path / "wd2")],
-        capture_output=True, text=True, timeout=600,
+        [
+            "uv",
+            "run",
+            "dstf",
+            "--config",
+            str(_CONFIG),
+            "run",
+            "--filter",
+            "*Frequency",
+            "--work-dir",
+            str(tmp_path / "wd2"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     assert result.returncode == 0, result.stderr
     assert "PASS" in result.stdout, result.stdout

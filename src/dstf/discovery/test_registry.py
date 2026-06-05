@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 @dataclass
 class TestModel:
     """A fully resolved test model with all metadata needed for simulation."""
+
     model_id: str
     source_file: Path
     source_package: str
@@ -75,7 +76,8 @@ class TestModel:
 
 
 def _build_test_model_from_recognizer_results(
-    model_id: str, results: list[RecognizerResult],
+    model_id: str,
+    results: list[RecognizerResult],
 ) -> TestModel:
     """Merge per-recognizer results for one model into a TestModel.
 
@@ -161,8 +163,11 @@ def discover_tests(config: Config) -> list[TestModel]:
     ut_tests: dict[str, TestModel] = {}
     if config.source_type == "modelica":
         library_dir = config.library_dir
-        bundled = [r for r in get_recognizers("modelica")
-                   if r.name not in config.disabled_bundled]
+        bundled = [
+            r
+            for r in get_recognizers("modelica")
+            if r.name not in config.disabled_bundled
+        ]
         user = [r for r in config.recognizers if "modelica" in r.applies_to]
         recognizers = bundled + user
 
@@ -177,13 +182,15 @@ def discover_tests(config: Config) -> list[TestModel]:
 
         for model_id, results in per_model.items():
             ut_tests[model_id] = _build_test_model_from_recognizer_results(
-                model_id, results,
+                model_id,
+                results,
             )
 
     # Step 2: Load external test spec (if configured)
     spec_tests: dict[str, TestModel] = {}
     if config.test_spec_file and config.test_spec_file.exists():
         from .spec_parser import parse_test_spec
+
         for test in parse_test_spec(config.test_spec_file):
             spec_tests[test.model_id] = test
 
@@ -224,8 +231,13 @@ def discover_tests(config: Config) -> list[TestModel]:
             if spec_test.metric_tree_spec is not None:
                 existing.metric_tree_spec = spec_test.metric_tree_spec
         else:
-            for fname in ("stop_time", "tolerance", "method",
-                          "number_of_intervals", "output_interval"):
+            for fname in (
+                "stop_time",
+                "tolerance",
+                "method",
+                "number_of_intervals",
+                "output_interval",
+            ):
                 spec_test.field_sources.setdefault(fname, "test_spec")
             merged[model_id] = spec_test
 

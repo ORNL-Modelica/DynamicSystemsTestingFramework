@@ -271,7 +271,9 @@ class OpenModelicaWorker(Worker):
             except Exception as exc:  # pragma: no cover
                 logger.warning(
                     "Worker %s: setup command %r raised: %s",
-                    self.worker_id, cmd, exc,
+                    self.worker_id,
+                    cmd,
+                    exc,
                 )
 
     def _exec(self, expr: str) -> bool:
@@ -334,7 +336,8 @@ class OpenModelicaWorker(Worker):
                 progress.on_phase(test_key, "translating")
 
             record_dict, _raw_simulate_response = _raw_send_simulate(
-                self.session, simulate_expr,
+                self.session,
+                simulate_expr,
             )
         except Exception as exc:
             elapsed = time.monotonic() - start
@@ -378,13 +381,18 @@ class OpenModelicaWorker(Worker):
         try:
             (test_dir / OpenModelicaRunner.STDOUT_FILENAME).write_text(
                 _synthesize_stdout_artifact(
-                    self.worker_id, simulate_expr, record_dict, error_string,
+                    self.worker_id,
+                    simulate_expr,
+                    record_dict,
+                    error_string,
                 ),
                 encoding="utf-8",
             )
         except OSError as exc:  # pragma: no cover
             logger.debug(
-                "Worker %s: stdout artifact write failed: %s", self.worker_id, exc,
+                "Worker %s: stdout artifact write failed: %s",
+                self.worker_id,
+                exc,
             )
 
         if progress is not None:
@@ -520,6 +528,7 @@ class OpenModelicaWorker(Worker):
         if not self.pids:
             return
         import psutil
+
         for pid in list(self.pids):
             try:
                 p = psutil.Process(pid)
@@ -554,7 +563,9 @@ class OpenModelicaWorker(Worker):
                 exc_box[0] = e
 
         t = threading.Thread(
-            target=_runner, daemon=True, name=f"om-exec-{self.worker_id}",
+            target=_runner,
+            daemon=True,
+            name=f"om-exec-{self.worker_id}",
         )
         t.start()
         t.join(timeout)
@@ -619,6 +630,7 @@ class PersistentOpenModelicaRunner(PersistentRunnerBase, OpenModelicaRunner):
         # effect here without also having to re-bind this module's
         # already-imported reference.
         from .session_loader import load_omc_session as _load
+
         _load()
 
     def setup_before_workers(self) -> None:
@@ -628,5 +640,8 @@ class PersistentOpenModelicaRunner(PersistentRunnerBase, OpenModelicaRunner):
 
     def make_worker(self, worker_id: int) -> OpenModelicaWorker:
         return OpenModelicaWorker(
-            worker_id, self.config, self.om_config, self._session_cls,
+            worker_id,
+            self.config,
+            self.om_config,
+            self._session_cls,
         )

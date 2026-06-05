@@ -1,4 +1,5 @@
 """Tests for reporting/schema_export.py — JSON-Schema emission (6.4.5)."""
+
 from __future__ import annotations
 
 import json
@@ -25,8 +26,14 @@ class TestSchemaBuilder:
         from dstf.reporting.schema_export import build_schema
 
         defs = build_schema()["$defs"]
-        for mode in ["mode_nrmse", "mode_tube", "mode_points", "mode_range",
-                     "mode_event_timing", "mode_dominant_frequency"]:
+        for mode in [
+            "mode_nrmse",
+            "mode_tube",
+            "mode_points",
+            "mode_range",
+            "mode_event_timing",
+            "mode_dominant_frequency",
+        ]:
             assert mode in defs, f"Missing mode definition: {mode}"
 
     def test_tube_mode_has_literal_width_mode(self):
@@ -55,10 +62,12 @@ class TestSchemaBuilder:
         assert "combinator" in defs
         assert "tree_node" in defs
         # tree_node is a oneOf of leaf | combinator
-        assert defs["tree_node"] == {"oneOf": [
-            {"$ref": "#/$defs/leaf"},
-            {"$ref": "#/$defs/combinator"},
-        ]}
+        assert defs["tree_node"] == {
+            "oneOf": [
+                {"$ref": "#/$defs/leaf"},
+                {"$ref": "#/$defs/combinator"},
+            ]
+        }
 
     def test_leaf_allows_window(self):
         from dstf.reporting.schema_export import build_schema
@@ -74,7 +83,8 @@ class TestCli:
     def test_cli_emits_to_stdout(self, tmp_path):
         result = subprocess.run(
             [sys.executable, "-m", "dstf", "export-schema"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0
         schema = json.loads(result.stdout)
@@ -83,9 +93,9 @@ class TestCli:
     def test_cli_writes_to_output_file(self, tmp_path):
         out = tmp_path / "schema.json"
         result = subprocess.run(
-            [sys.executable, "-m", "dstf",
-             "export-schema", "--output", str(out)],
-            capture_output=True, text=True,
+            [sys.executable, "-m", "dstf", "export-schema", "--output", str(out)],
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0
         assert out.exists()
@@ -98,6 +108,7 @@ def test_event_timing_schema_includes_events_as_passthrough():
     the interactive HTML gets a raw-JSON fallback renderer *and* can be
     overridden by the JS-side MODE_PLOT_EDITORS table UI."""
     from dstf.reporting.ui.mode_controls import emit_mode_schemas
+
     schemas = emit_mode_schemas()
     event_timing = schemas.get("event-timing")
     assert event_timing is not None, "event-timing schema missing"

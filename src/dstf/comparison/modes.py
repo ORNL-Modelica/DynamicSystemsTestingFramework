@@ -34,6 +34,7 @@ from .comparator import (
 # Abstract base
 # ---------------------------------------------------------------------------
 
+
 class ComparisonMode(ABC):
     """Strategy interface for variable comparison."""
 
@@ -73,9 +74,11 @@ class ComparisonMode(ABC):
 # Mode configs
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class NrmseConfig:
     """Configuration for NRMSE comparison."""
+
     tolerance: float = field(
         default=1e-4,
         metadata={
@@ -98,6 +101,7 @@ class TubeConfig:
     `Literal[...]` choices feed the reporter's auto-derived UI
     (reporting/ui/mode_controls.py).
     """
+
     tube_width_mode: Optional[Literal["band", "rel", "abs"]] = field(
         default=None,
         metadata={
@@ -178,6 +182,7 @@ class PointsConfig:
     target value, per-point tolerance, and per-point time-tolerance.
     See docs/superpowers/specs/2026-04-24-points-mode-design.md.
     """
+
     points: Optional[list[dict]] = field(
         default=None,
         metadata={
@@ -211,6 +216,7 @@ class RangeConfig:
     At least one of ``min_value`` or ``max_value`` must be set. Bounds
     are declared in the spec itself — reference data is not consulted.
     """
+
     min_value: Optional[float] = field(
         default=None,
         metadata={
@@ -245,6 +251,7 @@ class EventTimingConfig:
     must find a nearest actual event within its own tolerance window.
     Mirrors the dominant-frequency declared-peaks semantics (D75).
     """
+
     time_tolerance: float = field(
         default=1e-3,
         metadata={
@@ -296,6 +303,7 @@ class DominantFrequencyConfig:
     surfaces a table editor + a "Detect peaks from reference" button
     that bootstraps the list from the reference spectrum's top-N peaks.
     """
+
     peaks: Optional[list[dict]] = field(
         default=None,
         metadata={
@@ -315,6 +323,7 @@ class DominantFrequencyConfig:
 # Mode implementations
 # ---------------------------------------------------------------------------
 
+
 class NrmseMode(ComparisonMode):
     """Piecewise NRMSE comparison with event boundary handling."""
 
@@ -327,7 +336,11 @@ class NrmseMode(ComparisonMode):
 
     def compare(self, ref_time, ref_values, act_time, act_values):
         return _compare_trajectories(
-            ref_time, ref_values, act_time, act_values, self.config.tolerance,
+            ref_time,
+            ref_values,
+            act_time,
+            act_values,
+            self.config.tolerance,
         )
 
 
@@ -343,7 +356,11 @@ class TubeMode(ComparisonMode):
 
     def compare(self, ref_time, ref_values, act_time, act_values):
         return _compare_tube(
-            ref_time, ref_values, act_time, act_values, self.config.to_dict(),
+            ref_time,
+            ref_values,
+            act_time,
+            act_values,
+            self.config.to_dict(),
         )
 
 
@@ -363,7 +380,10 @@ class PointsMode(ComparisonMode):
 
     def compare(self, ref_time, ref_values, act_time, act_values):
         return _compare_points(
-            ref_time, ref_values, act_time, act_values,
+            ref_time,
+            ref_values,
+            act_time,
+            act_values,
             points=self.config.points,
             tolerance=self.config.tolerance,
         )
@@ -392,7 +412,8 @@ class EventTimingMode(ComparisonMode):
 
     def compare(self, ref_time, ref_values, act_time, act_values):
         return _compare_event_timing(
-            ref_time, act_time,
+            ref_time,
+            act_time,
             time_tolerance=self.config.time_tolerance,
             count_must_match=self.config.count_must_match,
             declared_events=self.config.events,
@@ -417,7 +438,10 @@ class DominantFrequencyMode(ComparisonMode):
 
     def compare(self, ref_time, ref_values, act_time, act_values):
         return _compare_dominant_frequency(
-            ref_time, ref_values, act_time, act_values,
+            ref_time,
+            ref_values,
+            act_time,
+            act_values,
             peaks=self.config.peaks,
         )
 
@@ -450,8 +474,10 @@ class RangeMode(ComparisonMode):
 
     def compare(self, ref_time, ref_values, act_time, act_values):
         return _compare_range(
-            act_time, act_values,
-            self.config.min_value, self.config.max_value,
+            act_time,
+            act_values,
+            self.config.min_value,
+            self.config.max_value,
         )
 
     def is_baseline_free(self) -> bool:
@@ -464,10 +490,16 @@ class RangeMode(ComparisonMode):
 # Factory: resolve override dict → ComparisonMode
 # ---------------------------------------------------------------------------
 
-_TUBE_KEYS = frozenset({
-    "tube_width_mode", "tube_abs", "tube_rel",
-    "tube_min_width", "tube_points", "tube_interpolation",
-})
+_TUBE_KEYS = frozenset(
+    {
+        "tube_width_mode",
+        "tube_abs",
+        "tube_rel",
+        "tube_min_width",
+        "tube_points",
+        "tube_interpolation",
+    }
+)
 
 
 def resolve_mode(
@@ -502,28 +534,36 @@ def resolve_mode(
         # MetricTree leaf params) and the shorthand ``min`` / ``max`` kept
         # for compatibility with early-phase specs. The canonical form wins
         # if both are present.
-        return RangeMode(RangeConfig(
-            min_value=var_override.get("min_value", var_override.get("min")),
-            max_value=var_override.get("max_value", var_override.get("max")),
-        ))
+        return RangeMode(
+            RangeConfig(
+                min_value=var_override.get("min_value", var_override.get("min")),
+                max_value=var_override.get("max_value", var_override.get("max")),
+            )
+        )
 
     if mode_name == "event-timing":
-        return EventTimingMode(EventTimingConfig(
-            time_tolerance=var_override.get("time_tolerance", 1e-3),
-            count_must_match=var_override.get("count_must_match", True),
-            events=var_override.get("events"),
-        ))
+        return EventTimingMode(
+            EventTimingConfig(
+                time_tolerance=var_override.get("time_tolerance", 1e-3),
+                count_must_match=var_override.get("count_must_match", True),
+                events=var_override.get("events"),
+            )
+        )
 
     if mode_name == "dominant-frequency":
-        return DominantFrequencyMode(DominantFrequencyConfig(
-            peaks=var_override.get("peaks"),
-        ))
+        return DominantFrequencyMode(
+            DominantFrequencyConfig(
+                peaks=var_override.get("peaks"),
+            )
+        )
 
     if mode_name == "points" or (not mode_name and default_points):
-        return PointsMode(PointsConfig(
-            points=var_override.get("points"),
-            tolerance=tolerance,
-        ))
+        return PointsMode(
+            PointsConfig(
+                points=var_override.get("points"),
+                tolerance=tolerance,
+            )
+        )
 
     # Default: NRMSE
     return NrmseMode(NrmseConfig(tolerance=tolerance))

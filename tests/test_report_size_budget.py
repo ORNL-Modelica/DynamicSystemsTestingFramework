@@ -5,6 +5,7 @@ decimation helper, renders the interactive template, and asserts the
 output stays under the ~5 MB budget. Also verifies that decimation does
 NOT leak into the data artifact (comparison_data.json shape).
 """
+
 from __future__ import annotations
 
 import json
@@ -134,7 +135,9 @@ def _render_interactive(context: dict) -> str:
 
     from jinja2 import Environment, FileSystemLoader
 
-    tpl_dir = Path(__file__).resolve().parents[1] / "src" / "dstf" / "reporting" / "templates"
+    tpl_dir = (
+        Path(__file__).resolve().parents[1] / "src" / "dstf" / "reporting" / "templates"
+    )
     env = Environment(loader=FileSystemLoader(str(tpl_dir)), autoescape=True)
     template = env.get_template("interactive.html")
     return template.render(**context)

@@ -52,6 +52,7 @@ class BaselineView:
     ref_vars_by_name: dict[str, dict]
     shared_ref_time: Optional[np.ndarray] = None
 
+
 # Spec-level metric names → the discriminator value in the override dict
 # consumed by resolve_mode. NRMSE is the default there (no "mode" key).
 _METRIC_TO_MODE_KEY = {
@@ -104,7 +105,9 @@ def collect_leaf_variables(tree: MetricResult) -> list[VariableComparison]:
 
 
 def flatten_evaluation(
-    tree: MetricResult, *, root: str = "/metrics",
+    tree: MetricResult,
+    *,
+    root: str = "/metrics",
 ) -> dict[str, dict]:
     """Flatten an evaluated MetricResult tree into a ``{path: {...}}`` dict.
 
@@ -123,7 +126,9 @@ def flatten_evaluation(
 
 
 def _flatten_evaluation(
-    node: MetricResult, path: str, out: dict[str, dict],
+    node: MetricResult,
+    path: str,
+    out: dict[str, dict],
 ) -> None:
     entry = {
         "passed": bool(node.passed),
@@ -187,6 +192,7 @@ def to_view(tree: MetricResult) -> dict:
 # Internals
 # ---------------------------------------------------------------------------
 
+
 def _walk_leaves(node: MetricResult, out: list[VariableComparison]) -> None:
     if not node.children:
         vc = node.diagnostics.get("variable")
@@ -236,11 +242,15 @@ def _evaluate_leaf(
     if var_result is None:
         # Missing actual result is always a hard fail — no mode can score
         # without the actual trajectory.
-        return leaf_from_variable(_missing_variable_comparison(leaf.variable, var_result))
+        return leaf_from_variable(
+            _missing_variable_comparison(leaf.variable, var_result)
+        )
 
     if ref_var is None:
         if not mode.is_baseline_free():
-            return leaf_from_variable(_missing_variable_comparison(leaf.variable, var_result))
+            return leaf_from_variable(
+                _missing_variable_comparison(leaf.variable, var_result)
+            )
         ref_time = np.array([])
         ref_values = np.array([])
     else:
@@ -260,10 +270,16 @@ def _evaluate_leaf(
     if leaf.window_start is not None or leaf.window_end is not None:
         if len(ref_time) > 0:
             ref_time, ref_values = _slice_window(
-                ref_time, ref_values, leaf.window_start, leaf.window_end,
+                ref_time,
+                ref_values,
+                leaf.window_start,
+                leaf.window_end,
             )
         act_time, act_values = _slice_window(
-            act_time, act_values, leaf.window_start, leaf.window_end,
+            act_time,
+            act_values,
+            leaf.window_start,
+            leaf.window_end,
         )
 
     vc = mode.compare(ref_time, ref_values, act_time, act_values)
@@ -283,8 +299,10 @@ def _evaluate_leaf(
 
 
 def _slice_window(
-    t: np.ndarray, v: np.ndarray,
-    start: Optional[float], end: Optional[float],
+    t: np.ndarray,
+    v: np.ndarray,
+    start: Optional[float],
+    end: Optional[float],
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return ``(t, v)`` restricted to ``[start, end]`` (inclusive).
 

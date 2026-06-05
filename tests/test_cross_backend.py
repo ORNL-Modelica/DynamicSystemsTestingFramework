@@ -24,6 +24,7 @@ REFERENCE_FMUS_DIR = PROJECT_ROOT / "examples" / "fmu" / "reference-fmus-binarie
 def _fmpy_available() -> bool:
     try:
         import fmpy  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -53,14 +54,15 @@ def _seed_primary_baseline(store_dir: Path, model_id: str) -> None:
         "variables": [{"index": 1, "name": "h", "values": [1.0, 0.5]}],
     }
     (sim_dir / "ref_0001.json").write_text(
-        json.dumps(ref, indent=2), encoding="utf-8",
+        json.dumps(ref, indent=2),
+        encoding="utf-8",
     )
 
 
 def _make_chain_test(model_id: str = "BouncingBall") -> TestModel:
     return TestModel(
         model_id=model_id,
-        source_file=Path(""),     # set by chain to the exported FMU
+        source_file=Path(""),  # set by chain to the exported FMU
         source_package="",
         short_name=model_id,
         n_vars=1,

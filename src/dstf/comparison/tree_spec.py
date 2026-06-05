@@ -27,10 +27,16 @@ from dataclasses import dataclass, field
 from typing import Optional, Union
 
 VALID_COMBINATORS = frozenset({"and", "or", "k-of-n", "warn", "weighted"})
-VALID_METRICS = frozenset({
-    "nrmse", "tube", "points", "range",
-    "event-timing", "dominant-frequency",
-})
+VALID_METRICS = frozenset(
+    {
+        "nrmse",
+        "tube",
+        "points",
+        "range",
+        "event-timing",
+        "dominant-frequency",
+    }
+)
 
 
 class MetricSpecError(ValueError):
@@ -148,7 +154,10 @@ def collect_variables(spec: SpecNode) -> list[str]:
 
 
 def leaves_for_variable(
-    spec: SpecNode, variable: str, *, root: str = "/metrics",
+    spec: SpecNode,
+    variable: str,
+    *,
+    root: str = "/metrics",
 ) -> list[tuple[LeafSpec, str]]:
     """Return ``(leaf, json_pointer)`` pairs for every leaf targeting ``variable``.
 
@@ -157,13 +166,15 @@ def leaves_for_variable(
     membership touches that variable.
     """
     return [
-        (leaf, path) for leaf, path in _walk_leaves_with_paths(spec, root)
+        (leaf, path)
+        for leaf, path in _walk_leaves_with_paths(spec, root)
         if leaf.variable == variable
     ]
 
 
 def _walk_leaves_with_paths(
-    node: SpecNode, path: str,
+    node: SpecNode,
+    path: str,
 ):
     if isinstance(node, LeafSpec):
         yield node, path
@@ -202,28 +213,34 @@ def spec_to_view(
 
 
 def _spec_to_view_recursive(
-    node: SpecNode, path: str, eval_by_path: dict[str, dict],
+    node: SpecNode,
+    path: str,
+    eval_by_path: dict[str, dict],
 ) -> dict:
     view: dict = {"path": path}
     if isinstance(node, LeafSpec):
-        view.update({
-            "kind": "leaf",
-            "metric": node.metric,
-            "variable": node.variable,
-            "params": dict(node.params),
-            "against": node.against,
-            "window": _window_view(node),
-            "children": [],
-        })
+        view.update(
+            {
+                "kind": "leaf",
+                "metric": node.metric,
+                "variable": node.variable,
+                "params": dict(node.params),
+                "against": node.against,
+                "window": _window_view(node),
+                "children": [],
+            }
+        )
     else:
-        view.update({
-            "kind": "combinator",
-            "combinator": node.combinator,
-            "children": [
-                _spec_to_view_recursive(c, f"{path}/children/{i}", eval_by_path)
-                for i, c in enumerate(node.children)
-            ],
-        })
+        view.update(
+            {
+                "kind": "combinator",
+                "combinator": node.combinator,
+                "children": [
+                    _spec_to_view_recursive(c, f"{path}/children/{i}", eval_by_path)
+                    for i, c in enumerate(node.children)
+                ],
+            }
+        )
         if node.combinator == "k-of-n":
             view["k"] = node.k
         if node.combinator == "weighted":
@@ -305,9 +322,7 @@ def parse_metric_tree(raw: dict, _path: str = "metrics") -> SpecNode:
     or semantic problem (unknown combinator, missing field, wrong type).
     """
     if not isinstance(raw, dict):
-        raise MetricSpecError(
-            f"{_path}: expected an object, got {type(raw).__name__}"
-        )
+        raise MetricSpecError(f"{_path}: expected an object, got {type(raw).__name__}")
 
     has_combinator = "combinator" in raw
     has_metric = "metric" in raw
@@ -317,8 +332,7 @@ def parse_metric_tree(raw: dict, _path: str = "metrics") -> SpecNode:
         )
     if not has_combinator and not has_metric:
         raise MetricSpecError(
-            f"{_path}: node must have either 'combinator' (internal) "
-            f"or 'metric' (leaf)"
+            f"{_path}: node must have either 'combinator' (internal) or 'metric' (leaf)"
         )
 
     if has_combinator:
@@ -415,15 +429,12 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
     metric = raw["metric"]
     if not isinstance(metric, str) or metric not in VALID_METRICS:
         raise MetricSpecError(
-            f"{path}.metric: unknown metric {metric!r}; "
-            f"valid: {sorted(VALID_METRICS)}"
+            f"{path}.metric: unknown metric {metric!r}; valid: {sorted(VALID_METRICS)}"
         )
 
     variable = raw.get("variable")
     if not isinstance(variable, str) or not variable:
-        raise MetricSpecError(
-            f"{path}.variable: required string field"
-        )
+        raise MetricSpecError(f"{path}.variable: required string field")
 
     # ``against`` picks which named baseline the leaf scores against.
     # Defaults to "primary"; must be a non-empty string if present.
@@ -450,18 +461,26 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
             window_start = float(window_raw["start"])
         if "end" in window_raw:
             window_end = float(window_raw["end"])
-        if (window_start is not None and window_end is not None
-                and window_end <= window_start):
+        if (
+            window_start is not None
+            and window_end is not None
+            and window_end <= window_start
+        ):
             raise MetricSpecError(
                 f"{path}.window: end ({window_end}) must be > start ({window_start})"
             )
 
     # Everything else is metric-specific params (tolerance, tube_rel, ...).
     params = {
-        k: v for k, v in raw.items()
+        k: v
+        for k, v in raw.items()
         if k not in {"metric", "variable", "against", "window"}
     }
     return LeafSpec(
-        metric=metric, variable=variable, params=params, against=against,
-        window_start=window_start, window_end=window_end,
+        metric=metric,
+        variable=variable,
+        params=params,
+        against=against,
+        window_start=window_start,
+        window_end=window_end,
     )

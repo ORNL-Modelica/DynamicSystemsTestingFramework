@@ -13,6 +13,7 @@ below one plot per unique variable. Fixtures build a single-leaf tree
 view per mode; the golden hashes confirm the per-mode render path
 exercises its registry entry end-to-end.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -57,9 +58,14 @@ def _trajectory(name: str, n: int = 50) -> dict:
     }
 
 
-def _leaf(mode: str, mode_values: dict, *, path: str = "/metrics/children/0",
-          mode_controls_html: str = "",
-          window_controls_html: str = "") -> dict:
+def _leaf(
+    mode: str,
+    mode_values: dict,
+    *,
+    path: str = "/metrics/children/0",
+    mode_controls_html: str = "",
+    window_controls_html: str = "",
+) -> dict:
     metric = _MODE_TO_METRIC[mode]
     cli_auth = metric in ("event-timing", "dominant-frequency")
     return {
@@ -100,13 +106,19 @@ def _leaf(mode: str, mode_values: dict, *, path: str = "/metrics/children/0",
 
 def _build_context(mode: str) -> dict:
     from dstf.reporting.ui.mode_controls import (
-        get_mode_ui, render_window_controls_html,
+        get_mode_ui,
+        render_window_controls_html,
     )
 
     mode_values_map = {
         "nrmse": {"tolerance": 1e-4},
-        "tube": {"tube_width_mode": "rel", "tube_abs": 0.0, "tube_rel": 0.02,
-                 "tube_min_width": 0.0, "tube_interpolation": "linear"},
+        "tube": {
+            "tube_width_mode": "rel",
+            "tube_abs": 0.0,
+            "tube_rel": 0.02,
+            "tube_min_width": 0.0,
+            "tube_interpolation": "linear",
+        },
         "points": {"tolerance": 1e-4},
         "range": {"min_value": -1.0, "max_value": 1.0},
         "event-timing": {"time_tolerance": 1e-3, "count_must_match": True},
@@ -117,8 +129,9 @@ def _build_context(mode: str) -> dict:
     controls_html = ui.render(variable="x", values=values) if ui else ""
     window_html = render_window_controls_html(variable="x", values={})
 
-    leaf = _leaf(mode, values, mode_controls_html=controls_html,
-                 window_controls_html=window_html)
+    leaf = _leaf(
+        mode, values, mode_controls_html=controls_html, window_controls_html=window_html
+    )
     tree_view = {
         "kind": "combinator",
         "combinator": "and",
@@ -170,7 +183,9 @@ def _build_context(mode: str) -> dict:
 def _render_interactive(context: dict) -> str:
     from jinja2 import Environment, FileSystemLoader
 
-    tpl_dir = Path(__file__).resolve().parents[1] / "src" / "dstf" / "reporting" / "templates"
+    tpl_dir = (
+        Path(__file__).resolve().parents[1] / "src" / "dstf" / "reporting" / "templates"
+    )
     env = Environment(loader=FileSystemLoader(str(tpl_dir)), autoescape=True)
     return env.get_template("interactive.html").render(**context)
 
@@ -182,15 +197,19 @@ def _render_interactive(context: dict) -> str:
 _NOISE_PATTERNS = [
     # Stage-5 extraction: per-report data lives in window.MT_REPORT, which
     # contains the bulky inline JSON blobs — strip the whole block.
-    re.compile(r'window\.MT_REPORT\s*=\s*\{.*?\};', re.DOTALL),
+    re.compile(r"window\.MT_REPORT\s*=\s*\{.*?\};", re.DOTALL),
     re.compile(r'value="[0-9eE.+\-]+"'),  # strip embedded numeric defaults
-    re.compile(r'>[0-9]+\.[0-9]+e[+\-]?[0-9]+<'),  # stringified floats inside tags
+    re.compile(r">[0-9]+\.[0-9]+e[+\-]?[0-9]+<"),  # stringified floats inside tags
 ]
 
 
 _JS_PATH = (
     Path(__file__).resolve().parents[1]
-    / "src" / "dstf" / "reporting" / "templates" / "interactive.js"
+    / "src"
+    / "dstf"
+    / "reporting"
+    / "templates"
+    / "interactive.js"
 )
 
 
@@ -202,7 +221,7 @@ def _structural_hash(html: str) -> str:
     stripped = html
     for pat in _NOISE_PATTERNS:
         stripped = pat.sub("", stripped)
-    stripped = re.sub(r'\s+', ' ', stripped).strip()
+    stripped = re.sub(r"\s+", " ", stripped).strip()
     return hashlib.sha256(stripped.encode("utf-8")).hexdigest()
 
 
@@ -252,7 +271,9 @@ def test_every_mode_fixture_contains_its_leaf_metric_in_data():
     for mode, sig in metric_signatures.items():
         ctx = _build_context(mode)
         html = _render_interactive(ctx)
-        assert sig in html, f"Mode {mode!r} rendered HTML missing leaf signature {sig!r}"
+        assert sig in html, (
+            f"Mode {mode!r} rendered HTML missing leaf signature {sig!r}"
+        )
 
 
 def test_html_loads_interactive_js():
@@ -270,11 +291,19 @@ def test_interactive_js_exports_required_globals():
     Playwright."""
     js = _read_js()
     for symbol in [
-        "MODEL_ID", "TREE_VIEW", "VARIABLES_BY_NAME", "MODE_SCHEMAS",
-        "leafState", "WORKING_TREE", "activeLeafPath",
-        "MODE_PLOT_CONTRIBUTIONS", "MODE_PLOT_EDITORS",
-        "activateLeaf", "deactivateLeaf",
-        "buildPatchData", "nodeToSpec",
+        "MODEL_ID",
+        "TREE_VIEW",
+        "VARIABLES_BY_NAME",
+        "MODE_SCHEMAS",
+        "leafState",
+        "WORKING_TREE",
+        "activeLeafPath",
+        "MODE_PLOT_CONTRIBUTIONS",
+        "MODE_PLOT_EDITORS",
+        "activateLeaf",
+        "deactivateLeaf",
+        "buildPatchData",
+        "nodeToSpec",
         "buildWindowBrushControl",
     ]:
         assert symbol in js, f"interactive.js missing expected symbol {symbol!r}"
@@ -285,8 +314,17 @@ def test_plot_contribution_registry_present_in_js():
     assert "MODE_PLOT_CONTRIBUTIONS" in js
     # Task 6 of the points-mode plan replaced 'final-only' with 'points'
     # (diamond marker + translucent tolerance box per declared point).
-    for key in ["nrmse", "points", "range", "tube", "event-timing", "dominant-frequency"]:
-        assert f"'{key}'" in js, f"Contribution entry {key!r} missing from interactive.js"
+    for key in [
+        "nrmse",
+        "points",
+        "range",
+        "tube",
+        "event-timing",
+        "dominant-frequency",
+    ]:
+        assert f"'{key}'" in js, (
+            f"Contribution entry {key!r} missing from interactive.js"
+        )
 
 
 def test_plot_editor_registry_wires_tube_and_range():

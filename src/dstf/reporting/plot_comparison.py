@@ -25,14 +25,14 @@ def _sanitize_filename(name: str) -> str:
     punctuation, and removes any remaining filesystem-unsafe characters.
     """
     # Collapse all whitespace (newlines, spaces, tabs) into single underscore
-    name = re.sub(r'\s+', '_', name)
+    name = re.sub(r"\s+", "_", name)
     # Replace common Modelica punctuation
     name = name.replace("[", "_").replace("]", "").replace(".", "_")
     name = name.replace(",", "_").replace("(", "").replace(")", "")
     # Remove anything that's not alphanumeric, underscore, or hyphen
-    name = re.sub(r'[^\w\-]', '', name)
+    name = re.sub(r"[^\w\-]", "", name)
     # Collapse multiple underscores
-    name = re.sub(r'_+', '_', name).strip('_')
+    name = re.sub(r"_+", "_", name).strip("_")
     return name
 
 
@@ -69,17 +69,20 @@ def _build_stats_section(
         ref_val = _format_value(ref_cat.get(key, ""))
         cur_val = _format_value(cur_cat.get(key, ""))
         changed = ref_val != cur_val and ref_val and cur_val
-        rows.append({
-            "label": key.replace("_", " ").title(),
-            "current": cur_val,
-            "reference": ref_val,
-            "changed": changed,
-        })
+        rows.append(
+            {
+                "label": key.replace("_", " ").title(),
+                "current": cur_val,
+                "reference": ref_val,
+                "changed": changed,
+            }
+        )
     return {"title": title, "rows": rows}
 
 
 def _extract_mode_values(
-    vc: VariableComparison, mode: str,
+    vc: VariableComparison,
+    mode: str,
     spec_params: Optional[dict] = None,
 ) -> dict:
     """Produce the per-mode config-value dict for the UI panel + JS scorer.
@@ -143,8 +146,9 @@ def _extract_mode_values(
         }
     if mode == "dominant-frequency":
         return {
-            "peaks": list(pick("peaks", default=None)
-                          or diag.get("peaks_declared") or []),
+            "peaks": list(
+                pick("peaks", default=None) or diag.get("peaks_declared") or []
+            ),
         }
     return {}
 
@@ -260,50 +264,65 @@ def _augment_tree_view(
         var_label = vc.name or view.get("variable", "")
         score_display, criterion = _leaf_score_display(vc)
         bounds = (time_bounds_by_variable or {}).get(var_label)
-        t_start, t_end = (bounds if bounds else (None, None))
-        view.update({
-            "mode_effective": mode,  # runtime mode (e.g., "points"); not the spec metric
-            "name": var_label,
-            "nrmse": float(vc.nrmse),
-            "rmse": float(vc.rmse),
-            "signal_range": float(vc.signal_range),
-            "max_abs_error": float(vc.max_abs_error),
-            "max_abs_error_time": float(vc.max_abs_error_time),
-            "reference_final": float(vc.reference_final),
-            "actual_final": float(vc.actual_final),
-            "is_constant": bool(vc.is_constant),
-            "tolerance_used": float(vc.tolerance_used),
-            "score_display": score_display,
-            "criterion": criterion,
-            "tube_points_inside": (
-                float(vc.tube_points_inside) if vc.tube_points_inside is not None else None
-            ),
-            "tube_worst_violation": (
-                float(vc.tube_worst_violation) if vc.tube_worst_violation is not None else None
-            ),
-            "tube_worst_violation_time": (
-                float(vc.tube_worst_violation_time) if vc.tube_worst_violation_time is not None else None
-            ),
-            "mode_values": mode_values,
-            "mode_controls_html": _render_mode_controls(var_label, mode, mode_values),
-            "window_controls_html": _render_window_controls(
-                var_label, window_values,
-                time_start=t_start, time_end=t_end,
-            ),
-            "window_values": window_values,
-            # Dominant-frequency now has a live JS scorer (D75) — only
-            # event-timing remains CLI-authoritative (event pairing stays
-            # Python-side).
-            "cli_authoritative": mode == "event-timing",
-            # Dominant-frequency leaves carry their spectrum arrays so the
-            # reporter's editor-slot subplot can render without recomputing.
-            # Empty dict for other modes; the JS editor short-circuits.
-            "spectrum": _extract_spectrum(vc) if mode == "dominant-frequency" else None,
-        })
+        t_start, t_end = bounds if bounds else (None, None)
+        view.update(
+            {
+                "mode_effective": mode,  # runtime mode (e.g., "points"); not the spec metric
+                "name": var_label,
+                "nrmse": float(vc.nrmse),
+                "rmse": float(vc.rmse),
+                "signal_range": float(vc.signal_range),
+                "max_abs_error": float(vc.max_abs_error),
+                "max_abs_error_time": float(vc.max_abs_error_time),
+                "reference_final": float(vc.reference_final),
+                "actual_final": float(vc.actual_final),
+                "is_constant": bool(vc.is_constant),
+                "tolerance_used": float(vc.tolerance_used),
+                "score_display": score_display,
+                "criterion": criterion,
+                "tube_points_inside": (
+                    float(vc.tube_points_inside)
+                    if vc.tube_points_inside is not None
+                    else None
+                ),
+                "tube_worst_violation": (
+                    float(vc.tube_worst_violation)
+                    if vc.tube_worst_violation is not None
+                    else None
+                ),
+                "tube_worst_violation_time": (
+                    float(vc.tube_worst_violation_time)
+                    if vc.tube_worst_violation_time is not None
+                    else None
+                ),
+                "mode_values": mode_values,
+                "mode_controls_html": _render_mode_controls(
+                    var_label, mode, mode_values
+                ),
+                "window_controls_html": _render_window_controls(
+                    var_label,
+                    window_values,
+                    time_start=t_start,
+                    time_end=t_end,
+                ),
+                "window_values": window_values,
+                # Dominant-frequency now has a live JS scorer (D75) — only
+                # event-timing remains CLI-authoritative (event pairing stays
+                # Python-side).
+                "cli_authoritative": mode == "event-timing",
+                # Dominant-frequency leaves carry their spectrum arrays so the
+                # reporter's editor-slot subplot can render without recomputing.
+                # Empty dict for other modes; the JS editor short-circuits.
+                "spectrum": _extract_spectrum(vc)
+                if mode == "dominant-frequency"
+                else None,
+            }
+        )
         return
     for child in view.get("children", []):
         _augment_tree_view(
-            child, comparisons_by_path,
+            child,
+            comparisons_by_path,
             time_bounds_by_variable=time_bounds_by_variable,
         )
 
@@ -368,8 +387,10 @@ def _render_window_controls(
     from .ui.mode_controls import render_window_controls_html
 
     return render_window_controls_html(
-        variable=variable, values=values,
-        time_start=time_start, time_end=time_end,
+        variable=variable,
+        values=values,
+        time_start=time_start,
+        time_end=time_end,
     )
 
 
@@ -412,6 +433,7 @@ def _build_ref_info(
 
     if ref_data and ref_data.get("test_id"):
         from ..storage.reference_store import RefIndex
+
         ref_filename = RefIndex.ref_filename(ref_data["test_id"])
         row = {"label": "Reference File", "value": ref_filename}
         if ref_file and ref_file.exists():
@@ -419,18 +441,23 @@ def _build_ref_info(
         ref_info.append(row)
 
     if test_dir and test_dir.exists():
-        ref_info.append({
-            "label": "Test Directory",
-            "value": test_dir.name,
-            "link": test_dir.resolve().as_uri(),
-        })
+        ref_info.append(
+            {
+                "label": "Test Directory",
+                "value": test_dir.name,
+                "link": test_dir.resolve().as_uri(),
+            }
+        )
 
-    ref_info.append({
-        "label": "Tracked Variables",
-        "value": f"{len(comparisons)} current" + (
-            f" / {ref_data.get('n_vars', '?')} reference" if ref_data else ""
-        ) if comparisons else "",
-    })
+    ref_info.append(
+        {
+            "label": "Tracked Variables",
+            "value": f"{len(comparisons)} current"
+            + (f" / {ref_data.get('n_vars', '?')} reference" if ref_data else "")
+            if comparisons
+            else "",
+        }
+    )
     return ref_info
 
 
@@ -453,12 +480,14 @@ def _build_sim_params(test_model, ref_sim: dict) -> list:
         ref_str = _format_value(ref_val) if ref_val is not None else ""
         cur_str = _format_value(cur_val) if cur_val is not None else ""
         if ref_str or cur_str:
-            sim_params.append({
-                "label": label,
-                "current": cur_str,
-                "reference": ref_str,
-                "changed": cur_str != "" and ref_str != "" and cur_str != ref_str,
-            })
+            sim_params.append(
+                {
+                    "label": label,
+                    "current": cur_str,
+                    "reference": ref_str,
+                    "changed": cur_str != "" and ref_str != "" and cur_str != ref_str,
+                }
+            )
     return sim_params
 
 
@@ -510,7 +539,9 @@ def _build_statistics_sections(ref_stats: dict, cur_stats: dict) -> list:
         ref_scalars = {k: v for k, v in ref_stats.items() if not isinstance(v, dict)}
         cur_scalars = {k: v for k, v in cur_stats.items() if not isinstance(v, dict)}
         if ref_scalars or cur_scalars:
-            section = _build_stats_section("Simulation Statistics", ref_scalars, cur_scalars)
+            section = _build_stats_section(
+                "Simulation Statistics", ref_scalars, cur_scalars
+            )
             if section:
                 statistics_sections.append(section)
     return statistics_sections
@@ -544,14 +575,16 @@ def _build_trajectories(
                     act_var = v
                     break
             ref_var = ref_vars_by_idx.get(vc.index)
-            trajectories.append({
-                "index": vc.index,
-                "name": vc.name or f"x[{vc.index}]",
-                "act_time": act_var.time.tolist() if act_var else [],
-                "act_values": act_var.values.tolist() if act_var else [],
-                "ref_time": ref_time_list,
-                "ref_values": ref_var["values"] if ref_var else [],
-            })
+            trajectories.append(
+                {
+                    "index": vc.index,
+                    "name": vc.name or f"x[{vc.index}]",
+                    "act_time": act_var.time.tolist() if act_var else [],
+                    "act_values": act_var.values.tolist() if act_var else [],
+                    "ref_time": ref_time_list,
+                    "ref_values": ref_var["values"] if ref_var else [],
+                }
+            )
 
     diag_trajectories = []
     if result and result.diagnostics:
@@ -562,23 +595,27 @@ def _build_trajectories(
         for diag in result.diagnostics:
             ref_diag = ref_diags_by_name.get(diag.name)
             ref_values = ref_diag.get("values", []) if ref_diag else []
-            diag_trajectories.append({
-                "name": diag.name,
-                "act_time": diag.time.tolist(),
-                "act_values": diag.values.tolist(),
-                "ref_time": ref_time_list if ref_values else [],
-                "ref_values": ref_values,
-            })
+            diag_trajectories.append(
+                {
+                    "name": diag.name,
+                    "act_time": diag.time.tolist(),
+                    "act_values": diag.values.tolist(),
+                    "ref_time": ref_time_list if ref_values else [],
+                    "ref_values": ref_values,
+                }
+            )
 
     nobaseline_trajectories = []
     if not comparisons and result and result.variables:
         for var in result.variables:
-            nobaseline_trajectories.append({
-                "index": var.index,
-                "name": var.name or f"x[{var.index}]",
-                "time": var.time.tolist(),
-                "values": var.values.tolist(),
-            })
+            nobaseline_trajectories.append(
+                {
+                    "index": var.index,
+                    "name": var.name or f"x[{var.index}]",
+                    "time": var.time.tolist(),
+                    "values": var.values.tolist(),
+                }
+            )
     return trajectories, diag_trajectories, nobaseline_trajectories
 
 
@@ -607,15 +644,18 @@ def _build_diag_summaries(result, ref_data: Optional[dict]) -> list:
             ref_final = float(ref_entry["values"][-1])
         else:
             ref_final = None
-        diag_summaries.append({
-            "name": diag.name,
-            "current": _format_value(cur_final) if cur_final is not None else "",
-            "reference": _format_value(ref_final) if ref_final is not None else "",
-            "changed": (
-                cur_final is not None and ref_final is not None
-                and cur_final != ref_final
-            ),
-        })
+        diag_summaries.append(
+            {
+                "name": diag.name,
+                "current": _format_value(cur_final) if cur_final is not None else "",
+                "reference": _format_value(ref_final) if ref_final is not None else "",
+                "changed": (
+                    cur_final is not None
+                    and ref_final is not None
+                    and cur_final != ref_final
+                ),
+            }
+        )
     return diag_summaries
 
 
@@ -630,7 +670,7 @@ def _build_artifacts(
     if not (test_dir and test_dir.exists()):
         return []
     artifacts = []
-    for fname, label in (artifact_files or ()):
+    for fname, label in artifact_files or ():
         fpath = test_dir / fname
         if fpath.exists():
             artifacts.append({"uri": fpath.resolve().as_uri(), "label": label})
@@ -638,7 +678,9 @@ def _build_artifacts(
 
 
 def _compute_summary_flags(
-    comparisons: list, result, test_model,
+    comparisons: list,
+    result,
+    test_model,
 ) -> tuple[int, int, bool, bool]:
     """Top-level pass/fail summary flags for the report header.
 
@@ -649,23 +691,26 @@ def _compute_summary_flags(
     """
     n_passed = sum(1 for vc in comparisons if vc.passed)
     n_nobaseline = (
-        len(result.variables) if (not comparisons and result and result.variables) else 0
+        len(result.variables)
+        if (not comparisons and result and result.variables)
+        else 0
     )
     is_simulate_only = bool(test_model and getattr(test_model, "simulate_only", False))
-    sim_failed = (
-        len(comparisons) == 0 and n_nobaseline == 0 and not is_simulate_only
-    )
+    sim_failed = len(comparisons) == 0 and n_nobaseline == 0 and not is_simulate_only
     return n_passed, n_nobaseline, is_simulate_only, sim_failed
 
 
 def _build_key_stats(
-    comparisons: list, ref_stats: dict, cur_stats: dict,
+    comparisons: list,
+    ref_stats: dict,
+    cur_stats: dict,
 ) -> list:
     """Top-level summary row: worst score across leaves, plus a small
     fixed pick of structural stats (continuous states, nonlinear
     counts) and CPUtime / EventCounter. Format mirrors statistics_sections
     rows so the template renderer is uniform.
     """
+
     def _get_stat(source: dict, category: str, key: str):
         cat = source.get(category, {})
         if isinstance(cat, dict):
@@ -683,7 +728,9 @@ def _build_key_stats(
     # worst across whatever leaves they contain.
     worst_score = max((vc.nrmse for vc in comparisons), default=None)
     if worst_score is not None:
-        key_stats.append({"label": "Worst Score", "current": f"{worst_score:.4e}", "reference": ""})
+        key_stats.append(
+            {"label": "Worst Score", "current": f"{worst_score:.4e}", "reference": ""}
+        )
 
     stat_picks = [
         ("translation", "continuous_time_states", "Continuous States"),
@@ -694,12 +741,16 @@ def _build_key_stats(
         cur_val = _get_stat(cur_stats, category, key)
         ref_val = _get_stat(ref_stats, category, key)
         if cur_val is not None or ref_val is not None:
-            key_stats.append({
-                "label": label,
-                "current": _format_value(cur_val),
-                "reference": _format_value(ref_val),
-                "changed": cur_val is not None and ref_val is not None and str(cur_val) != str(ref_val),
-            })
+            key_stats.append(
+                {
+                    "label": label,
+                    "current": _format_value(cur_val),
+                    "reference": _format_value(ref_val),
+                    "changed": cur_val is not None
+                    and ref_val is not None
+                    and str(cur_val) != str(ref_val),
+                }
+            )
 
     scalar_picks = [
         ("CPUtime", "CPU Time"),
@@ -709,12 +760,16 @@ def _build_key_stats(
         cur_val = _get_scalar(cur_stats, key)
         ref_val = _get_scalar(ref_stats, key)
         if cur_val is not None or ref_val is not None:
-            key_stats.append({
-                "label": label,
-                "current": _format_value(cur_val),
-                "reference": _format_value(ref_val),
-                "changed": cur_val is not None and ref_val is not None and str(cur_val) != str(ref_val),
-            })
+            key_stats.append(
+                {
+                    "label": label,
+                    "current": _format_value(cur_val),
+                    "reference": _format_value(ref_val),
+                    "changed": cur_val is not None
+                    and ref_val is not None
+                    and str(cur_val) != str(ref_val),
+                }
+            )
     return key_stats
 
 
@@ -764,23 +819,21 @@ def _build_tree_view_and_variables(
     )
     from ..comparison.tree_eval import flatten_evaluation as _flatten_evaluation
 
-    comparison_var_names = [
-        vc.name or f"x[{vc.index}]" for vc in comparisons
-    ]
-    if test_model is not None and getattr(test_model, "metric_tree_spec", None) is not None:
+    comparison_var_names = [vc.name or f"x[{vc.index}]" for vc in comparisons]
+    if (
+        test_model is not None
+        and getattr(test_model, "metric_tree_spec", None) is not None
+    ):
         spec = test_model.metric_tree_spec
     else:
         spec = _synthesize_implicit_tree(
             comparison_var_names,
             variable_overrides=(
-                getattr(test_model, "variable_overrides", None)
-                if test_model else None
+                getattr(test_model, "variable_overrides", None) if test_model else None
             ),
         )
 
-    eval_by_path = (
-        _flatten_evaluation(metric_tree) if metric_tree is not None else {}
-    )
+    eval_by_path = _flatten_evaluation(metric_tree) if metric_tree is not None else {}
 
     # Map path → VariableComparison so _augment_tree_view can enrich each
     # leaf with render artifacts. Length mismatch = spec/eval drift; skip
@@ -798,12 +851,14 @@ def _build_tree_view_and_variables(
         ref_time = traj.get("ref_time") or traj.get("act_time") or []
         if ref_time:
             time_bounds[traj["name"]] = (
-                float(ref_time[0]), float(ref_time[-1]),
+                float(ref_time[0]),
+                float(ref_time[-1]),
             )
 
     tree_view = _spec_to_view(spec, evaluation_by_path=eval_by_path)
     _augment_tree_view(
-        tree_view, comparisons_by_path,
+        tree_view,
+        comparisons_by_path,
         time_bounds_by_variable=time_bounds,
     )
 
@@ -855,12 +910,16 @@ def _build_template_context(
     sim_params = _build_sim_params(test_model, ref_sim)
     statistics_sections = _build_statistics_sections(ref_stats, cur_stats)
     trajectories, diag_trajectories, nobaseline_trajectories = _build_trajectories(
-        comparisons, result, ref_data,
+        comparisons,
+        result,
+        ref_data,
     )
     diag_summaries = _build_diag_summaries(result, ref_data)
     artifacts = _build_artifacts(test_dir, artifact_files)
     n_passed, _n_nobaseline, is_simulate_only, sim_failed = _compute_summary_flags(
-        comparisons, result, test_model,
+        comparisons,
+        result,
+        test_model,
     )
     key_stats = _build_key_stats(comparisons, ref_stats, cur_stats)
     warning_rows = _build_warning_rows(warnings)
@@ -868,6 +927,7 @@ def _build_template_context(
     last_run_str = ""
     if last_run_at:
         from datetime import datetime
+
         last_run_str = datetime.fromtimestamp(last_run_at).isoformat(timespec="seconds")
 
     # Stamp overlays onto each trajectory by variable name. The nobaseline
@@ -877,16 +937,21 @@ def _build_template_context(
     # or invalid overlays drop off the per-plot path but stay in
     # ``overlay_rows`` so the report surfaces them as "not rendered".
     from .overlay_loader import attach_overlays_to_trajectories, overlay_summary
+
     overlays = overlays or []
     attach_overlays_to_trajectories(trajectories, overlays)
     attach_overlays_to_trajectories(nobaseline_trajectories, overlays)
     overlay_rows = overlay_summary(overlays)
 
     tree_view, variables_by_name = _build_tree_view_and_variables(
-        comparisons, test_model, metric_tree, trajectories,
+        comparisons,
+        test_model,
+        metric_tree,
+        trajectories,
     )
 
     from .ui.mode_controls import emit_mode_schemas as _emit_mode_schemas
+
     return {
         "model_id": model_id,
         "n_passed": n_passed,
@@ -911,7 +976,6 @@ def _build_template_context(
         "variables_by_name": variables_by_name,
         "mode_schemas": _emit_mode_schemas(),
     }
-
 
 
 def generate_comparison_plots(
@@ -947,10 +1011,18 @@ def generate_comparison_plots(
     # the PNGs anymore.
     cur_stats = result.statistics if result else None
     context = _build_template_context(
-        model_id, comparisons, ref_data, cur_stats,
-        test_dir, test_model, result,
-        ref_file=ref_file, warnings=warnings, last_run_at=last_run_at,
-        metric_tree=metric_tree, artifact_files=artifact_files,
+        model_id,
+        comparisons,
+        ref_data,
+        cur_stats,
+        test_dir,
+        test_model,
+        result,
+        ref_file=ref_file,
+        warnings=warnings,
+        last_run_at=last_run_at,
+        metric_tree=metric_tree,
+        artifact_files=artifact_files,
         overlays=overlays,
     )
 
@@ -970,6 +1042,7 @@ def generate_comparison_plots(
     # model_id ≠ row's model_id) are both filtered out so they can't
     # override a fresh verdict.
     import time as _time
+
     context["summary"] = {
         "model_id": model_id,
         "written_at": _time.time(),
@@ -979,21 +1052,34 @@ def generate_comparison_plots(
         # file:// URL so the dashboard's Reference column can hyperlink
         # directly to the stored reference JSON.
         "ref_file": ref_file.as_uri() if ref_file else None,
-        "worst_nrmse": (max((v.nrmse for v in comparisons), default=None)
-                        if comparisons else None),
+        "worst_nrmse": (
+            max((v.nrmse for v in comparisons), default=None) if comparisons else None
+        ),
         "n_vars": len(comparisons) if comparisons else 0,
-        "n_vars_passed": (sum(1 for v in comparisons if v.passed)
-                          if comparisons else 0),
+        "n_vars_passed": (
+            sum(1 for v in comparisons if v.passed) if comparisons else 0
+        ),
         "n_warnings": len(warnings) if warnings else 0,
-        "translation_wall": (cur_stats.get("timing", {}).get("translation_wall")
-                             if isinstance(cur_stats, dict) else None),
-        "sim_wall": (cur_stats.get("timing", {}).get("sim_wall")
-                     if isinstance(cur_stats, dict) else None),
-        "total_wall": (cur_stats.get("timing", {}).get("total_wall")
-                       if isinstance(cur_stats, dict) else None),
-        "field_sources": (test_model.field_sources
-                          if test_model and hasattr(test_model, "field_sources")
-                          else {}),
+        "translation_wall": (
+            cur_stats.get("timing", {}).get("translation_wall")
+            if isinstance(cur_stats, dict)
+            else None
+        ),
+        "sim_wall": (
+            cur_stats.get("timing", {}).get("sim_wall")
+            if isinstance(cur_stats, dict)
+            else None
+        ),
+        "total_wall": (
+            cur_stats.get("timing", {}).get("total_wall")
+            if isinstance(cur_stats, dict)
+            else None
+        ),
+        "field_sources": (
+            test_model.field_sources
+            if test_model and hasattr(test_model, "field_sources")
+            else {}
+        ),
     }
     data_path.write_text(json.dumps(context, indent=2, default=str), encoding="utf-8")
 
@@ -1088,7 +1174,9 @@ def _render_template(template_name: str, context: dict, output_path: Path) -> No
     output_path.write_text(html, encoding="utf-8")
 
 
-def _build_per_test_args(comp, results, test_lookup, store, config, manifest_meta_by_model, artifact_files=()):
+def _build_per_test_args(
+    comp, results, test_lookup, store, config, manifest_meta_by_model, artifact_files=()
+):
     """Resolve all per-test inputs needed to render that test's report."""
     from .overlay_loader import load_overlays
 
@@ -1132,6 +1220,7 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
     test_id = store.index.get_id(model_id)
     if test_id:
         from ..storage.reference_store import RefIndex
+
         ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
 
     if comp.test_id:
@@ -1143,7 +1232,9 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
 
     # Pull phase-timing breakdown out of stats if present (runner stashes it)
     cur_stats = result.statistics if result and result.statistics else {}
-    timing = cur_stats.get("timing") if isinstance(cur_stats.get("timing"), dict) else {}
+    timing = (
+        cur_stats.get("timing") if isinstance(cur_stats.get("timing"), dict) else {}
+    )
 
     return {
         "model_id": model_id,
@@ -1177,6 +1268,7 @@ def _build_per_test_args(comp, results, test_lookup, store, config, manifest_met
 def _render_one_test(args: dict, report_dir: Path) -> dict:
     """Render a single test's report. Returns the index entry."""
     import time as _time
+
     t0 = _time.monotonic()
     plot_dir = report_dir / args["report_id"]
     html_path = generate_comparison_plots(
@@ -1213,7 +1305,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         "translation_wall": args.get("translation_wall"),
         "sim_wall": args.get("sim_wall"),
         "total_wall": args.get("total_wall"),
-        "report_path": f'{args["report_id"]}/interactive.html' if html_path else None,
+        "report_path": f"{args['report_id']}/interactive.html" if html_path else None,
         "_render_elapsed": render_elapsed,
     }
 
@@ -1248,6 +1340,7 @@ def generate_report_suite(
     # no runner instantiation needed (avoids triggering the fmpy import if the
     # extra isn't installed).
     from ..simulators import get_runner_class
+
     try:
         artifact_files = tuple(get_runner_class(config).artifact_files)
     except ValueError:
@@ -1258,18 +1351,30 @@ def generate_report_suite(
     manifest_paths = sorted(config.work_dir.glob("batch_manifest.json"))
     if manifest_paths:
         from ..simulators import BatchManifest
+
         for mp in manifest_paths:
             bm = BatchManifest.load(mp)
             for tk, entry in bm.manifest.items():
-                manifest_meta_by_model.setdefault(entry["model_id"], {
-                    "test_key": tk,
-                    "last_run_at": entry.get("last_run_at"),
-                })
+                manifest_meta_by_model.setdefault(
+                    entry["model_id"],
+                    {
+                        "test_key": tk,
+                        "last_run_at": entry.get("last_run_at"),
+                    },
+                )
 
     # Resolve per-test args sequentially (cheap dict/store lookups), then
     # render reports in parallel
     work = [
-        _build_per_test_args(comp, results, test_lookup, store, config, manifest_meta_by_model, artifact_files)
+        _build_per_test_args(
+            comp,
+            results,
+            test_lookup,
+            store,
+            config,
+            manifest_meta_by_model,
+            artifact_files,
+        )
         for comp in comparisons
     ]
 
@@ -1278,6 +1383,7 @@ def generate_report_suite(
     total_reports = len(work)
 
     from ..simulators.base import _print_progress
+
     print(f"Generating {total_reports} reports (parallel={n_workers})...")
 
     if n_workers <= 1 or len(work) <= 1:
@@ -1289,8 +1395,13 @@ def generate_report_suite(
         # Preserve original test order in the index
         results_by_model: dict[str, dict] = {}
         completed = 0
-        with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="report") as pool:
-            futures = {pool.submit(_render_one_test, args, report_dir): args["model_id"] for args in work}
+        with ThreadPoolExecutor(
+            max_workers=n_workers, thread_name_prefix="report"
+        ) as pool:
+            futures = {
+                pool.submit(_render_one_test, args, report_dir): args["model_id"]
+                for args in work
+            }
             for future in as_completed(futures):
                 entry = future.result()
                 results_by_model[entry["model_id"]] = entry

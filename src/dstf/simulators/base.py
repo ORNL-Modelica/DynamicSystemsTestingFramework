@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # See docs/vision.md and docs/extensibility.md. Each backend declares what it
 # supports; framework features gate on these rather than on backend class.
 
+
 class Capability(str, Enum):
     """Declared abilities of a simulator backend."""
 
@@ -59,9 +60,11 @@ class DatasetType(str, Enum):
 # Common result types (shared across all simulator backends)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class VariableResult:
     """Time series for a single tracked variable."""
+
     index: int  # 1-based
     time: np.ndarray
     values: np.ndarray
@@ -71,6 +74,7 @@ class VariableResult:
 @dataclass
 class TestResult:
     """Results from a single test simulation."""
+
     model_id: str
     success: bool
     variables: list[VariableResult] = field(default_factory=list)
@@ -82,6 +86,7 @@ class TestResult:
 @dataclass
 class TestRunResult:
     """Result of running a single test."""
+
     model_id: str
     test_key: str
     success: bool
@@ -116,6 +121,7 @@ def _pattern_to_regex(pattern: str):
     parentheses, dots) are treated as literals.
     """
     import re as _re
+
     parts = []
     for ch in pattern:
         if ch == "*":
@@ -175,6 +181,7 @@ def resolve_variable_patterns(
 @dataclass
 class BatchManifest:
     """Maps test keys to model IDs (and optionally ref IDs) and tracks run results."""
+
     batch_id: int
     work_dir: Path
     manifest: dict[str, dict]  # test_NNNN -> {"model_id": ..., "ref_id": ...}
@@ -284,8 +291,7 @@ def _print_run_header(
     ``s/test`` rendering.
     """
     timeout_label = (
-        f"timeout={timeout_s}s/test" if timeout_per_test
-        else f"timeout={timeout_s}s"
+        f"timeout={timeout_s}s/test" if timeout_per_test else f"timeout={timeout_s}s"
     )
     parts = [f"Running {total} tests"]
     if suffix_phrase:
@@ -331,6 +337,7 @@ def _print_progress(
 # ---------------------------------------------------------------------------
 # Abstract persistent-worker interface
 # ---------------------------------------------------------------------------
+
 
 class Worker(ABC):
     """One long-lived simulator subprocess wrapped as a test-running unit.
@@ -422,6 +429,7 @@ class Worker(ABC):
 # ---------------------------------------------------------------------------
 # Abstract simulator interface
 # ---------------------------------------------------------------------------
+
 
 class SimulatorRunner(ABC):
     """Abstract interface for running simulations across backends.
@@ -538,8 +546,10 @@ class SimulatorRunner(ABC):
 
         from .progress import ProgressReporter
         from ..reporting.dashboard_render import build_rerun_prefix
+
         self.progress = ProgressReporter(
-            self.config.work_dir, total,
+            self.config.work_dir,
+            total,
             rerun_prefix=build_rerun_prefix(self.config),
         )
 
@@ -547,13 +557,14 @@ class SimulatorRunner(ABC):
         # incremental workflows where the manifest accumulates known tests).
         manifest_map, key_pairs = assign_test_keys(self.config.work_dir, tests)
         test_items = [
-            (test, test_key, i + 1)
-            for i, (test, test_key) in enumerate(key_pairs)
+            (test, test_key, i + 1) for i, (test, test_key) in enumerate(key_pairs)
         ]
         for test, test_key, _ in test_items:
             report_dir = self.ref_id_map.get(test.model_id) or test_key
             self.progress.register(
-                test_key, test.model_id, report_dir=report_dir,
+                test_key,
+                test.model_id,
+                report_dir=report_dir,
                 field_sources=test.field_sources,
             )
 
@@ -565,7 +576,10 @@ class SimulatorRunner(ABC):
         manifest.save()
 
         _print_run_header(
-            total, "", self.config.parallel, self.config.timeout,
+            total,
+            "",
+            self.config.parallel,
+            self.config.timeout,
             self.config.work_dir,
         )
 
@@ -585,7 +599,8 @@ class SimulatorRunner(ABC):
                 run_results.append(result)
                 completed += 1
                 _print_progress(
-                    completed, total,
+                    completed,
+                    total,
                     f"{test_key} {test.model_id}",
                     _result_status(result),
                     elapsed=result.elapsed,
@@ -606,7 +621,8 @@ class SimulatorRunner(ABC):
                     model_id = futures[future]
                     test_key = key_lookup.get(model_id, "")
                     _print_progress(
-                        completed, total,
+                        completed,
+                        total,
                         f"{test_key} {model_id}",
                         _result_status(result),
                         elapsed=result.elapsed,
@@ -732,6 +748,7 @@ class SimulatorRunner(ABC):
 # Persistent-worker template
 # ---------------------------------------------------------------------------
 
+
 class PersistentRunnerBase(SimulatorRunner):
     """Template-method class for persistent-worker runners.
 
@@ -825,8 +842,10 @@ class PersistentRunnerBase(SimulatorRunner):
 
         from .progress import ProgressReporter
         from ..reporting.dashboard_render import build_rerun_prefix
+
         self.progress = ProgressReporter(
-            self.config.work_dir, total,
+            self.config.work_dir,
+            total,
             rerun_prefix=build_rerun_prefix(self.config),
         )
 
@@ -834,7 +853,9 @@ class PersistentRunnerBase(SimulatorRunner):
         for test, test_key in test_items:
             report_dir = self.ref_id_map.get(test.model_id) or test_key
             self.progress.register(
-                test_key, test.model_id, report_dir=report_dir,
+                test_key,
+                test.model_id,
+                report_dir=report_dir,
                 field_sources=test.field_sources,
             )
 
@@ -847,8 +868,11 @@ class PersistentRunnerBase(SimulatorRunner):
 
         n_workers = max(1, self.config.parallel)
         _print_run_header(
-            total, f"via persistent {self.backend_label} workers",
-            n_workers, self.config.timeout, self.config.work_dir,
+            total,
+            f"via persistent {self.backend_label} workers",
+            n_workers,
+            self.config.timeout,
+            self.config.work_dir,
             timeout_per_test=True,
         )
 
@@ -961,13 +985,18 @@ class PersistentRunnerBase(SimulatorRunner):
             else:
                 detail_str = None
             _print_progress(
-                idx, total, label, status,
+                idx,
+                total,
+                label,
+                status,
                 elapsed=tr.elapsed,
                 detail=detail_str,
             )
             if self.progress is not None:
                 self.progress.on_finish(
-                    test_key, success=tr.success, elapsed=tr.elapsed,
+                    test_key,
+                    success=tr.success,
+                    elapsed=tr.elapsed,
                     detail=None if tr.success else (tr.error_message or "")[:120],
                     timed_out=tr.timed_out,
                 )
@@ -1036,22 +1065,34 @@ class PersistentRunnerBase(SimulatorRunner):
                 test, test_key = item
                 try:
                     if not w.is_alive():
-                        if not _try_restart(w, count_against_budget=not prev_killed_worker):
-                            _record(test, test_key, TestRunResult(
-                                model_id=test.model_id, test_key=test_key,
-                                success=False, elapsed=0.0,
-                                error_message="Worker dead; restart exhausted",
-                            ))
+                        if not _try_restart(
+                            w, count_against_budget=not prev_killed_worker
+                        ):
+                            _record(
+                                test,
+                                test_key,
+                                TestRunResult(
+                                    model_id=test.model_id,
+                                    test_key=test_key,
+                                    success=False,
+                                    elapsed=0.0,
+                                    error_message="Worker dead; restart exhausted",
+                                ),
+                            )
                             continue
                         prev_killed_worker = False  # consumed by this restart
                     if self.progress is not None:
                         self.progress.on_start(test_key, worker_id=w.worker_id)
                     timeout = float(
-                        test.timeout if test.timeout is not None
+                        test.timeout
+                        if test.timeout is not None
                         else self.config.timeout
                     )
                     tr = w.run_test_with_timeout(
-                        test, test_key, timeout, progress=self.progress,
+                        test,
+                        test_key,
+                        timeout,
+                        progress=self.progress,
                     )
                     _record(test, test_key, tr)
                     # Reset the restart counter on a successful test — the
@@ -1070,7 +1111,8 @@ class PersistentRunnerBase(SimulatorRunner):
         thread_prefix = self.backend_label.lower().replace(" ", "-") or "pworker"
         threads = [
             threading.Thread(
-                target=_worker_loop, args=(w,),
+                target=_worker_loop,
+                args=(w,),
                 name=f"{thread_prefix}-pworker-{w.worker_id}",
             )
             for w in live_workers
@@ -1082,7 +1124,10 @@ class PersistentRunnerBase(SimulatorRunner):
         return results
 
     def _print_run_summary(
-        self, results: list[TestRunResult], total: int, wall: float,
+        self,
+        results: list[TestRunResult],
+        total: int,
+        wall: float,
     ) -> None:
         total_work = sum(r.elapsed for r in results)
         speedup = (total_work / wall) if wall > 0 else 0.0

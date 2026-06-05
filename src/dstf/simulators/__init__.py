@@ -95,10 +95,12 @@ def register(name: str):
     ``ImportError`` (via ``TypeError``) at module-import time rather
     than a confusing ``NotImplementedError`` mid-run.
     """
+
     def decorator(cls: type[SimulatorRunner]) -> type[SimulatorRunner]:
         _validate_capabilities(cls, name)
         _REGISTRY[name] = cls
         return cls
+
     return decorator
 
 
@@ -143,4 +145,5 @@ def _import_builtin_backend(name: str) -> None:
     module = builtins.get(name)
     if module:
         import importlib
+
         importlib.import_module(module, package=__name__)

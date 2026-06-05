@@ -3,6 +3,7 @@
 Critical invariant from D66: unknown keys and hand-authored notes
 (`description`, `info`, `metadata`) must survive patch-apply round-trips.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,28 +25,49 @@ def _read_spec(path: Path) -> dict:
 class TestBasicOps:
     def test_replace_scalar_in_whitelisted_path(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]})
-        apply_patch(spec, "M", [
-            {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
-        ])
+        _write_spec(
+            spec, {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
+        )
+        apply_patch(
+            spec,
+            "M",
+            [
+                {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
+            ],
+        )
         data = _read_spec(spec)
         assert data["tests"][0]["comparison"]["tolerance"] == 1e-3
 
     def test_add_new_key(self, tmp_path):
         spec = tmp_path / "spec.json"
         _write_spec(spec, {"tests": [{"model": "M", "comparison": {}}]})
-        apply_patch(spec, "M", [
-            {"op": "add", "path": "/comparison/tolerance", "value": 0.01},
-        ])
+        apply_patch(
+            spec,
+            "M",
+            [
+                {"op": "add", "path": "/comparison/tolerance", "value": 0.01},
+            ],
+        )
         data = _read_spec(spec)
         assert data["tests"][0]["comparison"]["tolerance"] == 0.01
 
     def test_remove_key(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M", "comparison": {"tolerance": 1e-3, "info": "keep me"}}]})
-        apply_patch(spec, "M", [
-            {"op": "remove", "path": "/comparison/tolerance"},
-        ])
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {"model": "M", "comparison": {"tolerance": 1e-3, "info": "keep me"}}
+                ]
+            },
+        )
+        apply_patch(
+            spec,
+            "M",
+            [
+                {"op": "remove", "path": "/comparison/tolerance"},
+            ],
+        )
         data = _read_spec(spec)
         assert "tolerance" not in data["tests"][0]["comparison"]
         assert data["tests"][0]["comparison"]["info"] == "keep me"
@@ -53,11 +75,22 @@ class TestBasicOps:
     def test_add_nested_path_creates_intermediates(self, tmp_path):
         spec = tmp_path / "spec.json"
         _write_spec(spec, {"tests": [{"model": "M"}]})
-        apply_patch(spec, "M", [
-            {"op": "add", "path": "/comparison/variable_overrides/h/tolerance", "value": 0.01},
-        ])
+        apply_patch(
+            spec,
+            "M",
+            [
+                {
+                    "op": "add",
+                    "path": "/comparison/variable_overrides/h/tolerance",
+                    "value": 0.01,
+                },
+            ],
+        )
         data = _read_spec(spec)
-        assert data["tests"][0]["comparison"]["variable_overrides"]["h"]["tolerance"] == 0.01
+        assert (
+            data["tests"][0]["comparison"]["variable_overrides"]["h"]["tolerance"]
+            == 0.01
+        )
 
 
 class TestUnknownKeyPreservation:
@@ -65,53 +98,85 @@ class TestUnknownKeyPreservation:
 
     def test_preserves_entry_level_metadata(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {
-            "tests": [{
-                "model": "M",
-                "description": "A critical test — last modified 2024-03-15 by AB.",
-                "metadata": {"owner": "fluid-group", "priority": "high"},
-                "comparison": {"tolerance": 1e-4},
-            }],
-        })
-        apply_patch(spec, "M", [
-            {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
-        ])
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {
+                        "model": "M",
+                        "description": "A critical test — last modified 2024-03-15 by AB.",
+                        "metadata": {"owner": "fluid-group", "priority": "high"},
+                        "comparison": {"tolerance": 1e-4},
+                    }
+                ],
+            },
+        )
+        apply_patch(
+            spec,
+            "M",
+            [
+                {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
+            ],
+        )
         entry = _read_spec(spec)["tests"][0]
-        assert entry["description"] == "A critical test — last modified 2024-03-15 by AB."
+        assert (
+            entry["description"] == "A critical test — last modified 2024-03-15 by AB."
+        )
         assert entry["metadata"] == {"owner": "fluid-group", "priority": "high"}
 
     def test_preserves_comparison_level_unknown_keys(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {
-            "tests": [{
-                "model": "M",
-                "comparison": {
-                    "tolerance": 1e-4,
-                    "info": "Expect rising edge at t~2.4s",
-                    "metadata": {"rationale": "Solver defaults produce ringing"},
-                },
-            }],
-        })
-        apply_patch(spec, "M", [
-            {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
-        ])
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {
+                        "model": "M",
+                        "comparison": {
+                            "tolerance": 1e-4,
+                            "info": "Expect rising edge at t~2.4s",
+                            "metadata": {
+                                "rationale": "Solver defaults produce ringing"
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+        apply_patch(
+            spec,
+            "M",
+            [
+                {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
+            ],
+        )
         comp = _read_spec(spec)["tests"][0]["comparison"]
         assert comp["info"] == "Expect rising edge at t~2.4s"
         assert comp["metadata"] == {"rationale": "Solver defaults produce ringing"}
 
     def test_preserves_sibling_tests(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {
-            "tests": [
-                {"model": "A", "comparison": {"tolerance": 1e-4}},
-                {"model": "B", "comparison": {"tolerance": 1e-5},
-                 "metadata": {"note": "keep me untouched"}},
-                {"model": "C", "comparison": {"tolerance": 1e-6}},
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {"model": "A", "comparison": {"tolerance": 1e-4}},
+                    {
+                        "model": "B",
+                        "comparison": {"tolerance": 1e-5},
+                        "metadata": {"note": "keep me untouched"},
+                    },
+                    {"model": "C", "comparison": {"tolerance": 1e-6}},
+                ],
+            },
+        )
+        apply_patch(
+            spec,
+            "B",
+            [
+                {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
             ],
-        })
-        apply_patch(spec, "B", [
-            {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
-        ])
+        )
         data = _read_spec(spec)
         assert data["tests"][0] == {"model": "A", "comparison": {"tolerance": 1e-4}}
         assert data["tests"][1]["metadata"] == {"note": "keep me untouched"}
@@ -124,19 +189,40 @@ class TestWhitelist:
         spec = tmp_path / "spec.json"
         _write_spec(spec, {"tests": [{"model": "M", "simulation": {"stop_time": 10}}]})
         with pytest.raises(PatchError, match="whitelist"):
-            apply_patch(spec, "M", [
-                {"op": "replace", "path": "/simulation/stop_time", "value": 100},
-            ])
+            apply_patch(
+                spec,
+                "M",
+                [
+                    {"op": "replace", "path": "/simulation/stop_time", "value": 100},
+                ],
+            )
 
     def test_default_allows_comparison_and_metrics(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4},
-                                       "metrics": {"metric": "nrmse", "variable": "h",
-                                                   "tolerance": 1e-4}}]})
-        apply_patch(spec, "M", [
-            {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
-            {"op": "replace", "path": "/metrics/tolerance", "value": 1e-3},
-        ])
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {
+                        "model": "M",
+                        "comparison": {"tolerance": 1e-4},
+                        "metrics": {
+                            "metric": "nrmse",
+                            "variable": "h",
+                            "tolerance": 1e-4,
+                        },
+                    }
+                ]
+            },
+        )
+        apply_patch(
+            spec,
+            "M",
+            [
+                {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
+                {"op": "replace", "path": "/metrics/tolerance", "value": 1e-3},
+            ],
+        )
         entry = _read_spec(spec)["tests"][0]
         assert entry["comparison"]["tolerance"] == 1e-3
         assert entry["metrics"]["tolerance"] == 1e-3
@@ -146,15 +232,25 @@ class TestJsonPointerEscaping:
     def test_escape_tilde_and_slash(self, tmp_path):
         """RFC 6901: `~0` → `~`, `~1` → `/`. Order matters (~1 first)."""
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "M", "comparison": {"variable_overrides": {}}}]})
+        _write_spec(
+            spec, {"tests": [{"model": "M", "comparison": {"variable_overrides": {}}}]}
+        )
         # Variable name literally `a/b~c` escapes to `a~1b~0c`
-        apply_patch(spec, "M", [
-            {"op": "add",
-             "path": "/comparison/variable_overrides/a~1b~0c/tolerance",
-             "value": 1e-3},
-        ])
+        apply_patch(
+            spec,
+            "M",
+            [
+                {
+                    "op": "add",
+                    "path": "/comparison/variable_overrides/a~1b~0c/tolerance",
+                    "value": 1e-3,
+                },
+            ],
+        )
         data = _read_spec(spec)
-        assert data["tests"][0]["comparison"]["variable_overrides"]["a/b~c"] == {"tolerance": 1e-3}
+        assert data["tests"][0]["comparison"]["variable_overrides"]["a/b~c"] == {
+            "tolerance": 1e-3
+        }
 
 
 class TestErrorSurfacing:
@@ -168,9 +264,13 @@ class TestErrorSurfacing:
         spec = tmp_path / "spec.json"
         _write_spec(spec, {"tests": [{"model": "M", "comparison": {}}]})
         with pytest.raises(PatchError, match="not present"):
-            apply_patch(spec, "M", [
-                {"op": "replace", "path": "/comparison/does_not_exist", "value": 1},
-            ])
+            apply_patch(
+                spec,
+                "M",
+                [
+                    {"op": "replace", "path": "/comparison/does_not_exist", "value": 1},
+                ],
+            )
 
     def test_add_missing_value_rejected(self, tmp_path):
         spec = tmp_path / "spec.json"
@@ -192,11 +292,18 @@ class TestWholesaleMetricsReplace:
 
     def test_add_metrics_tree_upserts_when_absent(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{
-            "model": "M",
-            "description": "hand-authored",
-            "comparison": {"tolerance": 1e-4},
-        }]})
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {
+                        "model": "M",
+                        "description": "hand-authored",
+                        "comparison": {"tolerance": 1e-4},
+                    }
+                ]
+            },
+        )
         new_tree = {
             "combinator": "and",
             "children": [
@@ -204,9 +311,13 @@ class TestWholesaleMetricsReplace:
                 {"metric": "nrmse", "variable": "v"},
             ],
         }
-        apply_patch(spec, "M", [
-            {"op": "add", "path": "/metrics", "value": new_tree},
-        ])
+        apply_patch(
+            spec,
+            "M",
+            [
+                {"op": "add", "path": "/metrics", "value": new_tree},
+            ],
+        )
         entry = _read_spec(spec)["tests"][0]
         assert entry["metrics"] == new_tree
         assert entry["description"] == "hand-authored"
@@ -214,28 +325,44 @@ class TestWholesaleMetricsReplace:
 
     def test_add_metrics_tree_replaces_existing(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{
-            "model": "M",
-            "metrics": {"metric": "nrmse", "variable": "h"},
-            "description": "keep me",
-        }]})
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {
+                        "model": "M",
+                        "metrics": {"metric": "nrmse", "variable": "h"},
+                        "description": "keep me",
+                    }
+                ]
+            },
+        )
         new_tree = {
             "combinator": "warn",
             "children": [{"metric": "nrmse", "variable": "h"}],
         }
-        apply_patch(spec, "M", [
-            {"op": "add", "path": "/metrics", "value": new_tree},
-        ])
+        apply_patch(
+            spec,
+            "M",
+            [
+                {"op": "add", "path": "/metrics", "value": new_tree},
+            ],
+        )
         entry = _read_spec(spec)["tests"][0]
         assert entry["metrics"] == new_tree
         assert entry["description"] == "keep me"
 
     def test_add_metrics_preserves_sibling_test_entries(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [
-            {"model": "A", "metrics": {"metric": "nrmse", "variable": "x"}},
-            {"model": "B", "metrics": {"metric": "nrmse", "variable": "y"}},
-        ]})
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {"model": "A", "metrics": {"metric": "nrmse", "variable": "x"}},
+                    {"model": "B", "metrics": {"metric": "nrmse", "variable": "y"}},
+                ]
+            },
+        )
         new_tree = {
             "combinator": "and",
             "children": [
@@ -243,9 +370,13 @@ class TestWholesaleMetricsReplace:
                 {"metric": "range", "variable": "y", "min": -1, "max": 1},
             ],
         }
-        apply_patch(spec, "B", [
-            {"op": "add", "path": "/metrics", "value": new_tree},
-        ])
+        apply_patch(
+            spec,
+            "B",
+            [
+                {"op": "add", "path": "/metrics", "value": new_tree},
+            ],
+        )
         data = _read_spec(spec)
         assert data["tests"][0]["metrics"] == {"metric": "nrmse", "variable": "x"}
         assert data["tests"][1]["metrics"] == new_tree
@@ -257,13 +388,32 @@ class TestWindowPath:
 
     def test_add_window_on_root_leaf(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{
-            "model": "M",
-            "metrics": {"metric": "nrmse", "variable": "h", "tolerance": 1e-4},
-        }]})
-        apply_patch(spec, "M", [
-            {"op": "add", "path": "/metrics/window", "value": {"start": 1.0, "end": 5.0}},
-        ])
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {
+                        "model": "M",
+                        "metrics": {
+                            "metric": "nrmse",
+                            "variable": "h",
+                            "tolerance": 1e-4,
+                        },
+                    }
+                ]
+            },
+        )
+        apply_patch(
+            spec,
+            "M",
+            [
+                {
+                    "op": "add",
+                    "path": "/metrics/window",
+                    "value": {"start": 1.0, "end": 5.0},
+                },
+            ],
+        )
         metrics = _read_spec(spec)["tests"][0]["metrics"]
         assert metrics["window"] == {"start": 1.0, "end": 5.0}
         # Original fields untouched
@@ -272,21 +422,34 @@ class TestWindowPath:
 
     def test_add_window_on_nested_leaf(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{
-            "model": "M",
-            "metrics": {
-                "combinator": "and",
-                "children": [
-                    {"metric": "nrmse", "variable": "x"},
-                    {"metric": "nrmse", "variable": "y"},
-                ],
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {
+                        "model": "M",
+                        "metrics": {
+                            "combinator": "and",
+                            "children": [
+                                {"metric": "nrmse", "variable": "x"},
+                                {"metric": "nrmse", "variable": "y"},
+                            ],
+                        },
+                    }
+                ]
             },
-        }]})
-        apply_patch(spec, "M", [
-            {"op": "add",
-             "path": "/metrics/children/1/window",
-             "value": {"start": 2.0}},
-        ])
+        )
+        apply_patch(
+            spec,
+            "M",
+            [
+                {
+                    "op": "add",
+                    "path": "/metrics/children/1/window",
+                    "value": {"start": 2.0},
+                },
+            ],
+        )
         children = _read_spec(spec)["tests"][0]["metrics"]["children"]
         assert children[0] == {"metric": "nrmse", "variable": "x"}
         assert children[1]["window"] == {"start": 2.0}
@@ -295,28 +458,61 @@ class TestWindowPath:
         """'add' on a pre-existing window replaces the value (must_exist=False
         doesn't reject already-present keys — matches reporter's upsert usage)."""
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{
-            "model": "M",
-            "metrics": {"metric": "nrmse", "variable": "h",
-                        "window": {"start": 0.0, "end": 10.0}},
-        }]})
-        apply_patch(spec, "M", [
-            {"op": "add", "path": "/metrics/window", "value": {"start": 1.0, "end": 5.0}},
-        ])
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {
+                        "model": "M",
+                        "metrics": {
+                            "metric": "nrmse",
+                            "variable": "h",
+                            "window": {"start": 0.0, "end": 10.0},
+                        },
+                    }
+                ]
+            },
+        )
+        apply_patch(
+            spec,
+            "M",
+            [
+                {
+                    "op": "add",
+                    "path": "/metrics/window",
+                    "value": {"start": 1.0, "end": 5.0},
+                },
+            ],
+        )
         assert _read_spec(spec)["tests"][0]["metrics"]["window"] == {
-            "start": 1.0, "end": 5.0,
+            "start": 1.0,
+            "end": 5.0,
         }
 
     def test_remove_window(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{
-            "model": "M",
-            "metrics": {"metric": "nrmse", "variable": "h",
-                        "window": {"start": 1.0, "end": 5.0}},
-        }]})
-        apply_patch(spec, "M", [
-            {"op": "remove", "path": "/metrics/window"},
-        ])
+        _write_spec(
+            spec,
+            {
+                "tests": [
+                    {
+                        "model": "M",
+                        "metrics": {
+                            "metric": "nrmse",
+                            "variable": "h",
+                            "window": {"start": 1.0, "end": 5.0},
+                        },
+                    }
+                ]
+            },
+        )
+        apply_patch(
+            spec,
+            "M",
+            [
+                {"op": "remove", "path": "/metrics/window"},
+            ],
+        )
         metrics = _read_spec(spec)["tests"][0]["metrics"]
         assert "window" not in metrics
         assert metrics["metric"] == "nrmse"
@@ -325,10 +521,16 @@ class TestWindowPath:
 class TestMissingModel:
     def test_creates_new_entry_when_model_not_found(self, tmp_path):
         spec = tmp_path / "spec.json"
-        _write_spec(spec, {"tests": [{"model": "A", "comparison": {"tolerance": 1e-4}}]})
-        apply_patch(spec, "B", [
-            {"op": "add", "path": "/comparison/tolerance", "value": 1e-3},
-        ])
+        _write_spec(
+            spec, {"tests": [{"model": "A", "comparison": {"tolerance": 1e-4}}]}
+        )
+        apply_patch(
+            spec,
+            "B",
+            [
+                {"op": "add", "path": "/comparison/tolerance", "value": 1e-3},
+            ],
+        )
         data = _read_spec(spec)
         assert len(data["tests"]) == 2
         assert data["tests"][1]["model"] == "B"
@@ -336,9 +538,13 @@ class TestMissingModel:
 
     def test_creates_spec_file_when_missing(self, tmp_path):
         spec = tmp_path / "nonexistent.json"
-        apply_patch(spec, "B", [
-            {"op": "add", "path": "/comparison/tolerance", "value": 1e-3},
-        ])
+        apply_patch(
+            spec,
+            "B",
+            [
+                {"op": "add", "path": "/comparison/tolerance", "value": 1e-3},
+            ],
+        )
         assert spec.exists()
         data = _read_spec(spec)
         assert data["tests"][0]["model"] == "B"

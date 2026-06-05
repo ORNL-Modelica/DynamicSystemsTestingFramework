@@ -3,6 +3,7 @@
 Covers MODE_SCORERS['points'], MODE_PLOT_CONTRIBUTIONS['points'], and
 MODE_PLOT_EDITORS['points'] (Tasks 5-8 of the points-mode plan).
 """
+
 from __future__ import annotations
 
 import shutil
@@ -15,7 +16,10 @@ pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import Page
 
 from test_interactive_playwright import (
-    _fixture_context, _leaf, _render_report, playwright_browser,
+    _fixture_context,
+    _leaf,
+    _render_report,
+    playwright_browser,
 )
 
 
@@ -25,11 +29,11 @@ def _mode_controls_html_points(values: dict) -> str:
     tol = values.get("tolerance", 1e-4)
     return (
         '<div class="mode-controls" data-mode="points" data-variable="h">'
-        '<label><span>Tolerance</span>'
+        "<label><span>Tolerance</span>"
         f'<input type="number" step="any" data-field="tolerance" value="{tol}"></label>'
         '<label class="mc-field mc-passthrough">'
         '<textarea data-field="points" data-passthrough="true" rows="2"></textarea>'
-        '</label>'
+        "</label>"
         "</div>"
     )
 
@@ -54,13 +58,15 @@ def _context_with_points_leaf(points=None, tolerance=0.01):
     ref = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
     act = [0.0, 1.001, 2.05, 3.001, 4.001, 5.001]
     ctx["variables_by_name"]["h"]["trajectory"] = {
-        "index": 1, "name": "h",
-        "act_time": list(t), "act_values": list(act),
-        "ref_time": list(t), "ref_values": list(ref),
+        "index": 1,
+        "name": "h",
+        "act_time": list(t),
+        "act_values": list(act),
+        "ref_time": list(t),
+        "ref_values": list(ref),
     }
     ctx["trajectories"] = [
-        ctx["variables_by_name"][k]["trajectory"]
-        for k in ctx["variables_by_name"]
+        ctx["variables_by_name"][k]["trajectory"] for k in ctx["variables_by_name"]
     ]
     return ctx
 
@@ -69,6 +75,7 @@ def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
     """Render a custom context to interactive.html."""
     from jinja2 import Environment, FileSystemLoader
     from test_interactive_playwright import _JS_SRC, _TEMPLATE_DIR
+
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
@@ -80,6 +87,7 @@ def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
 # ---------------------------------------------------------------------------
 # Task 5: live scorer
 # ---------------------------------------------------------------------------
+
 
 def test_points_scorer_implicit_final_passes(tmp_path, playwright_browser):
     """Empty points list → implicit final-value check. Fixture's
@@ -98,7 +106,8 @@ def test_points_scorer_implicit_final_passes(tmp_path, playwright_browser):
 def test_points_scorer_declared_point_pass(tmp_path, playwright_browser):
     """Declared point at t=3 (delta 0.001) with tol 0.01 → PASS."""
     ctx = _context_with_points_leaf(
-        points=[{"time": 3.0}], tolerance=0.01,
+        points=[{"time": 3.0}],
+        tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
@@ -113,7 +122,8 @@ def test_points_scorer_declared_point_pass(tmp_path, playwright_browser):
 def test_points_scorer_declared_point_fail(tmp_path, playwright_browser):
     """Declared point at t=2 (delta 0.05) with tol 0.01 → FAIL."""
     ctx = _context_with_points_leaf(
-        points=[{"time": 2.0}], tolerance=0.01,
+        points=[{"time": 2.0}],
+        tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
@@ -126,12 +136,14 @@ def test_points_scorer_declared_point_fail(tmp_path, playwright_browser):
 
 
 def test_points_scorer_baseline_free_with_explicit_value(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Point with explicit value=2.0 at t=2: act(2)=2.05, delta=0.05.
     Tolerance 0.01 → FAIL. Confirms scorer reads explicit value over ref."""
     ctx = _context_with_points_leaf(
-        points=[{"time": 2.0, "value": 2.0}], tolerance=0.01,
+        points=[{"time": 2.0, "value": 2.0}],
+        tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
@@ -164,7 +176,8 @@ def test_points_scorer_window_clips_points(tmp_path, playwright_browser):
     """Window [3, 5] excludes the t=2 trouble point. Fixture's
     only-failing point is at t=2; with window applied → PASS."""
     ctx = _context_with_points_leaf(
-        points=[{"time": 2.0}, {"time": 4.0}], tolerance=0.01,
+        points=[{"time": 2.0}, {"time": 4.0}],
+        tolerance=0.01,
     )
     leaf = ctx["tree_view"]["children"][0]
     leaf["window"] = {"start": 3.0, "end": 5.0}
@@ -182,6 +195,7 @@ def test_points_scorer_window_clips_points(tmp_path, playwright_browser):
 # ---------------------------------------------------------------------------
 # Task 6: plot decoration (translucent box + diamond marker)
 # ---------------------------------------------------------------------------
+
 
 def test_points_plot_no_decoration_when_no_points(tmp_path, playwright_browser):
     """Empty points list → no plot contribution (the implicit final
@@ -204,7 +218,8 @@ def test_points_plot_no_decoration_when_no_points(tmp_path, playwright_browser):
 
 
 def test_points_plot_diamond_per_point_when_xtol_zero(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Two declared points, no time_tolerance → 2 diamond markers as a
     single trace (one trace with 2 (x,y) entries) + 2 zero-width
@@ -248,8 +263,7 @@ def test_points_plot_diamond_per_point_when_xtol_zero(
 def test_points_plot_box_has_width_when_xtol_set(tmp_path, playwright_browser):
     """time_tolerance=0.2 → rectangle spans [time-0.2, time+0.2]."""
     ctx = _context_with_points_leaf(
-        points=[{"time": 3.0, "value": 30.0,
-                 "tolerance": 0.5, "time_tolerance": 0.2}],
+        points=[{"time": 3.0, "value": 30.0, "tolerance": 0.5, "time_tolerance": 0.2}],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
@@ -275,6 +289,7 @@ def test_points_plot_box_has_width_when_xtol_set(tmp_path, playwright_browser):
 # Task 7: editor scaffold (table + add + delete)
 # ---------------------------------------------------------------------------
 
+
 def test_points_editor_mounts_on_leaf_click(tmp_path, playwright_browser):
     """Clicking the points leaf header mounts the editor in the
     .node-editor slot."""
@@ -282,12 +297,8 @@ def test_points_editor_mounts_on_leaf_click(tmp_path, playwright_browser):
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
-    mounted = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor'
-    ).count()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
+    mounted = page.locator('[data-path="/metrics/children/0"] .points-editor').count()
     page.close()
     assert mounted >= 1
 
@@ -304,15 +315,15 @@ def test_points_editor_renders_existing_points(tmp_path, playwright_browser):
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # Editor renders into every .node-editor slot for the leaf
     # (full-tree + per-variable mounts both have one); scope row count
     # to the first .points-editor to assert per-slot fidelity.
-    rows = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor'
-    ).first.locator('tbody tr').count()
+    rows = (
+        page.locator('[data-path="/metrics/children/0"] .points-editor')
+        .first.locator("tbody tr")
+        .count()
+    )
     page.close()
     assert rows == 2
 
@@ -320,20 +331,21 @@ def test_points_editor_renders_existing_points(tmp_path, playwright_browser):
 def test_points_editor_add_button_appends_row(tmp_path, playwright_browser):
     """+ add point appends to the table AND to leafState.params.points."""
     ctx = _context_with_points_leaf(
-        points=[{"time": 2.0}], tolerance=0.01,
+        points=[{"time": 2.0}],
+        tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     page.locator(
         '[data-path="/metrics/children/0"] .points-editor button.node-btn-add'
     ).first.click()
-    rows = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor'
-    ).first.locator('tbody tr').count()
+    rows = (
+        page.locator('[data-path="/metrics/children/0"] .points-editor')
+        .first.locator("tbody tr")
+        .count()
+    )
     state_len = page.evaluate("""
         () => (leafState['/metrics/children/0'].params.points || []).length
     """)
@@ -354,16 +366,15 @@ def test_points_editor_delete_removes_row(tmp_path, playwright_browser):
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
+        '[data-path="/metrics/children/0"] .points-editor tbody tr button.row-delete'
     ).first.click()
-    page.locator(
-        '[data-path="/metrics/children/0"] .points-editor '
-        'tbody tr button.row-delete'
-    ).first.click()
-    rows = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor'
-    ).first.locator('tbody tr').count()
+    rows = (
+        page.locator('[data-path="/metrics/children/0"] .points-editor')
+        .first.locator("tbody tr")
+        .count()
+    )
     remaining_time = page.evaluate("""
         () => {
             const pts = leafState['/metrics/children/0'].params.points || [];
@@ -379,8 +390,10 @@ def test_points_editor_delete_removes_row(tmp_path, playwright_browser):
 # Task 8: Snapshot from ref + zero-point fast-path placeholder
 # ---------------------------------------------------------------------------
 
+
 def test_points_editor_zero_point_placeholder_renders(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Empty points list → italic placeholder row shows the implicit
     final-only behavior. No regular tbody rows for now."""
@@ -388,15 +401,14 @@ def test_points_editor_zero_point_placeholder_renders(
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
-    placeholder_count = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor'
-    ).first.locator('.points-implicit-row').count()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
+    placeholder_count = (
+        page.locator('[data-path="/metrics/children/0"] .points-editor')
+        .first.locator(".points-implicit-row")
+        .count()
+    )
     placeholder_text = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor '
-        '.points-implicit-row'
+        '[data-path="/metrics/children/0"] .points-editor .points-implicit-row'
     ).first.inner_text()
     page.close()
     assert placeholder_count == 1
@@ -405,7 +417,8 @@ def test_points_editor_zero_point_placeholder_renders(
 
 
 def test_points_editor_first_add_replaces_placeholder(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Clicking + add point on an empty list removes the placeholder
     and shows a real editable row."""
@@ -413,45 +426,45 @@ def test_points_editor_first_add_replaces_placeholder(
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     page.locator(
         '[data-path="/metrics/children/0"] .points-editor button.node-btn-add'
     ).first.click()
-    placeholder_count = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor'
-    ).first.locator('.points-implicit-row').count()
-    rows = page.locator(
-        '[data-path="/metrics/children/0"] .points-editor'
-    ).first.locator('tbody tr').count()
+    placeholder_count = (
+        page.locator('[data-path="/metrics/children/0"] .points-editor')
+        .first.locator(".points-implicit-row")
+        .count()
+    )
+    rows = (
+        page.locator('[data-path="/metrics/children/0"] .points-editor')
+        .first.locator("tbody tr")
+        .count()
+    )
     page.close()
     assert placeholder_count == 0
     assert rows == 1
 
 
 def test_points_editor_snapshot_from_ref_fills_empty_value_cells(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """📸 Snapshot from ref fills value for every row where value is
     None. Rows with explicit value are untouched."""
     ctx = _context_with_points_leaf(
         points=[
-            {"time": 2.0, "tolerance": 0.01},                       # ref-relative
-            {"time": 4.0, "value": 99.0, "tolerance": 0.01},        # explicit
-            {"time": 1.0, "tolerance": 0.01},                       # ref-relative
+            {"time": 2.0, "tolerance": 0.01},  # ref-relative
+            {"time": 4.0, "value": 99.0, "tolerance": 0.01},  # explicit
+            {"time": 1.0, "tolerance": 0.01},  # ref-relative
         ],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
-    page.locator(
-        '[data-path="/metrics/children/0"] .points-editor '
-        'button.snapshot-btn'
+        '[data-path="/metrics/children/0"] .points-editor button.snapshot-btn'
     ).first.click()
     values = page.evaluate("""
         () => leafState['/metrics/children/0'].params.points.map(p => p.value)
@@ -463,7 +476,8 @@ def test_points_editor_snapshot_from_ref_fills_empty_value_cells(
 
 
 def test_points_editor_snapshot_idempotent_on_no_empty_rows(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """When all rows have explicit value, snapshot is a no-op."""
     ctx = _context_with_points_leaf(
@@ -476,12 +490,9 @@ def test_points_editor_snapshot_idempotent_on_no_empty_rows(
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
-    page.locator(
-        '[data-path="/metrics/children/0"] .points-editor '
-        'button.snapshot-btn'
+        '[data-path="/metrics/children/0"] .points-editor button.snapshot-btn'
     ).first.click()
     values = page.evaluate("""
         () => leafState['/metrics/children/0'].params.points.map(p => p.value)
@@ -494,6 +505,7 @@ def test_points_editor_snapshot_idempotent_on_no_empty_rows(
 # Shift-modifier plot interactivity (parity with tube + dom-frequency)
 # ---------------------------------------------------------------------------
 
+
 def _has_plotly(page) -> bool:
     """Match the gating used by the tube + dom-freq shift-modifier tests
     — Plotly CDN may be unreachable in some environments and the synth
@@ -502,7 +514,8 @@ def _has_plotly(page) -> bool:
 
 
 def test_points_editor_shift_click_on_plot_adds_point(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Shift+click on the plot background adds a new declared point at
     (clicked_x, clicked_y) with explicit value. Mirrors tube + dom-
@@ -517,9 +530,7 @@ def test_points_editor_shift_click_on_plot_adds_point(
     if not _has_plotly(page):
         page.close()
         pytest.skip("Plotly CDN not reachable; shift-click test skipped")
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     before = page.evaluate(
         "(leafState['/metrics/children/0'].params.points || []).length"
     )
@@ -555,7 +566,8 @@ def test_points_editor_shift_click_on_plot_adds_point(
 
 
 def test_points_box_relayout_corner_drag_resizes_symmetrically(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Plotly's native shape-drag emits plotly_relayout(ing) with only
     the dragged edges. A corner-drag of the NE corner outward fires
@@ -565,8 +577,15 @@ def test_points_box_relayout_corner_drag_resizes_symmetrically(
     User-perceived behavior: as you drag a corner outward, the
     opposite corner moves outward in lock step."""
     ctx = _context_with_points_leaf(
-        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
-                 "tolerance_mode": "abs", "time_tolerance": 1.0}],
+        points=[
+            {
+                "time": 2.5,
+                "value": 2.5,
+                "tolerance": 0.5,
+                "tolerance_mode": "abs",
+                "time_tolerance": 1.0,
+            }
+        ],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
@@ -575,9 +594,7 @@ def test_points_box_relayout_corner_drag_resizes_symmetrically(
     if not _has_plotly(page):
         page.close()
         pytest.skip("Plotly CDN not reachable; relayout test skipped")
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # User drags the NE corner from (3.5, 3.0) to (4.0, 3.5). Plotly
     # mutates only ``x1`` and ``y1`` — not x0/y0 (those edges weren't
     # grabbed). Expected: half-extents become |4.0-2.5|=1.5 in x and
@@ -597,9 +614,7 @@ def test_points_box_relayout_corner_drag_resizes_symmetrically(
             });
         }
     """)
-    pt = page.evaluate(
-        "leafState['/metrics/children/0'].params.points[0]"
-    )
+    pt = page.evaluate("leafState['/metrics/children/0'].params.points[0]")
     page.close()
     # Point center unchanged.
     assert float(pt["time"]) == pytest.approx(2.5)
@@ -611,7 +626,8 @@ def test_points_box_relayout_corner_drag_resizes_symmetrically(
 
 
 def test_points_box_edge_drag_detected_when_plotly_emits_full_snapshot(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Plotly emits all four bounds in plotly_relayout(ing) events
     even when only one edge actually moved — the unchanged edges fire
@@ -624,8 +640,15 @@ def test_points_box_edge_drag_detected_when_plotly_emits_full_snapshot(
     ctx = _context_with_points_leaf(
         # Canonical box: cx=2.5, halfX=1.0, cy=2.5, halfY=0.5
         # → bounds [1.5, 3.5] × [2.0, 3.0].
-        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
-                 "tolerance_mode": "abs", "time_tolerance": 1.0}],
+        points=[
+            {
+                "time": 2.5,
+                "value": 2.5,
+                "tolerance": 0.5,
+                "tolerance_mode": "abs",
+                "time_tolerance": 1.0,
+            }
+        ],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
@@ -634,9 +657,7 @@ def test_points_box_edge_drag_detected_when_plotly_emits_full_snapshot(
     if not _has_plotly(page):
         page.close()
         pytest.skip("Plotly CDN not reachable; relayout test skipped")
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # Simulate Plotly's verbose payload: ALL four bounds are present
     # in the event, but only x1 actually changed value (the user
     # dragged the right edge from 3.5 to 4.0). x0/y0/y1 are at their
@@ -660,9 +681,7 @@ def test_points_box_edge_drag_detected_when_plotly_emits_full_snapshot(
             });
         }
     """)
-    pt = page.evaluate(
-        "leafState['/metrics/children/0'].params.points[0]"
-    )
+    pt = page.evaluate("leafState['/metrics/children/0'].params.points[0]")
     page.close()
     # Right edge moved: dx0=0, dx1=0.5 → x1 was dragged →
     # halfX = |4.0 - 2.5| = 1.5. y unchanged → halfY = 0.5 (canonical).
@@ -671,7 +690,8 @@ def test_points_box_edge_drag_detected_when_plotly_emits_full_snapshot(
 
 
 def test_points_box_live_relayouting_event_also_triggers_resize(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """The editor listens to BOTH ``plotly_relayouting`` (live, every
     drag step) and ``plotly_relayout`` (release). The live event is
@@ -682,8 +702,15 @@ def test_points_box_live_relayouting_event_also_triggers_resize(
     symmetric. Without it the user saw "sometimes doesn't bounce
     back."""
     ctx = _context_with_points_leaf(
-        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
-                 "tolerance_mode": "abs", "time_tolerance": 1.0}],
+        points=[
+            {
+                "time": 2.5,
+                "value": 2.5,
+                "tolerance": 0.5,
+                "tolerance_mode": "abs",
+                "time_tolerance": 1.0,
+            }
+        ],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
@@ -692,9 +719,7 @@ def test_points_box_live_relayouting_event_also_triggers_resize(
     if not _has_plotly(page):
         page.close()
         pytest.skip("Plotly CDN not reachable; relayouting test skipped")
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # Fire only the LIVE event — final never comes (simulates a drag
     # that Plotly dropped the release for).
     page.evaluate("""
@@ -710,9 +735,7 @@ def test_points_box_live_relayouting_event_also_triggers_resize(
             });
         }
     """)
-    pt = page.evaluate(
-        "leafState['/metrics/children/0'].params.points[0]"
-    )
+    pt = page.evaluate("leafState['/metrics/children/0'].params.points[0]")
     page.close()
     # Right edge dragged out → time_tolerance picks up from the live
     # event even though plotly_relayout (final) never fired.
@@ -720,7 +743,8 @@ def test_points_box_live_relayouting_event_also_triggers_resize(
 
 
 def test_points_box_translation_with_floating_point_noise_preserves_tolerance(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Plotly's pixel-to-data conversion can produce per-edge deltas
     that differ by tiny floating-point noise (~1e-7) on a translation.
@@ -730,8 +754,15 @@ def test_points_box_translation_with_floating_point_noise_preserves_tolerance(
     robust to that noise."""
     ctx = _context_with_points_leaf(
         # Canonical: cx=2.5, halfX=1.0; box [1.5, 3.5] × [2.0, 3.0].
-        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
-                 "tolerance_mode": "abs", "time_tolerance": 1.0}],
+        points=[
+            {
+                "time": 2.5,
+                "value": 2.5,
+                "tolerance": 0.5,
+                "tolerance_mode": "abs",
+                "time_tolerance": 1.0,
+            }
+        ],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
@@ -740,9 +771,7 @@ def test_points_box_translation_with_floating_point_noise_preserves_tolerance(
     if not _has_plotly(page):
         page.close()
         pytest.skip("Plotly CDN not reachable; relayout test skipped")
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # Translation +0.5 in x with sub-microsecond noise on each edge —
     # not a real drag pattern, but exercises the FP-robust detection.
     # Also translate y by +0.5 with noise.
@@ -765,9 +794,7 @@ def test_points_box_translation_with_floating_point_noise_preserves_tolerance(
             });
         }
     """)
-    pt = page.evaluate(
-        "leafState['/metrics/children/0'].params.points[0]"
-    )
+    pt = page.evaluate("leafState['/metrics/children/0'].params.points[0]")
     page.close()
     # Width and height unchanged (within noise tolerance) → translation
     # → halfX and halfY preserved at canonical values.
@@ -776,7 +803,8 @@ def test_points_box_translation_with_floating_point_noise_preserves_tolerance(
 
 
 def test_points_mode_switch_abs_to_rel_preserves_visible_box_size(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Switching tolerance_mode from abs to rel must convert the
     stored value so the visible box size stays the same. Otherwise
@@ -786,29 +814,25 @@ def test_points_mode_switch_abs_to_rel_preserves_visible_box_size(
     ctx = _context_with_points_leaf(
         # target = 2.5 (explicit). abs tolerance 0.5 → ±0.5 box.
         # After switch, rel tolerance should be 0.5/2.5 = 0.2 → still ±0.5.
-        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
-                 "tolerance_mode": "abs"}],
+        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5, "tolerance_mode": "abs"}],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     page.locator(
         '[data-path="/metrics/children/0"] .points-editor select'
-    ).first.select_option('rel')
-    pt = page.evaluate(
-        "leafState['/metrics/children/0'].params.points[0]"
-    )
+    ).first.select_option("rel")
+    pt = page.evaluate("leafState['/metrics/children/0'].params.points[0]")
     page.close()
     assert pt["tolerance_mode"] == "rel"
     assert float(pt["tolerance"]) == pytest.approx(0.2)
 
 
 def test_points_mode_switch_rel_to_abs_preserves_visible_box_size(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Reverse direction: rel → abs converts via abs_tol = rel_tol *
     |target|. Same goal — keep the visible box size constant when the
@@ -816,51 +840,42 @@ def test_points_mode_switch_rel_to_abs_preserves_visible_box_size(
     ctx = _context_with_points_leaf(
         # target = 2.5. rel tolerance 0.2 → ±0.5 box.
         # After switch to abs, value should be 0.2 * 2.5 = 0.5.
-        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.2,
-                 "tolerance_mode": "rel"}],
+        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.2, "tolerance_mode": "rel"}],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     page.locator(
         '[data-path="/metrics/children/0"] .points-editor select'
-    ).first.select_option('abs')
-    pt = page.evaluate(
-        "leafState['/metrics/children/0'].params.points[0]"
-    )
+    ).first.select_option("abs")
+    pt = page.evaluate("leafState['/metrics/children/0'].params.points[0]")
     page.close()
     assert pt["tolerance_mode"] == "abs"
     assert float(pt["tolerance"]) == pytest.approx(0.5)
 
 
 def test_points_mode_switch_abs_to_rel_blocked_when_target_is_zero(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """When target ≈ 0 (e.g., sin(0)=0 — which the user actually hit),
     abs→rel conversion is undefined: rel_tol would be abs_tol/0. The
     switch is rejected; mode stays abs and the value is unchanged."""
     ctx = _context_with_points_leaf(
         # target = 0 → conversion undefined.
-        points=[{"time": 0.0, "value": 0.0, "tolerance": 0.5,
-                 "tolerance_mode": "abs"}],
+        points=[{"time": 0.0, "value": 0.0, "tolerance": 0.5, "tolerance_mode": "abs"}],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     page.locator(
         '[data-path="/metrics/children/0"] .points-editor select'
-    ).first.select_option('rel')
-    pt = page.evaluate(
-        "leafState['/metrics/children/0'].params.points[0]"
-    )
+    ).first.select_option("rel")
+    pt = page.evaluate("leafState['/metrics/children/0'].params.points[0]")
     page.close()
     # Mode reverted, tolerance untouched — box doesn't disappear.
     assert pt["tolerance_mode"] == "abs"
@@ -868,7 +883,8 @@ def test_points_mode_switch_abs_to_rel_blocked_when_target_is_zero(
 
 
 def test_points_mode_switch_abs_to_rel_blocked_when_target_is_near_zero(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Solver-near-zero values (e.g., sin(t≈0) ≈ 1e-7 from numerical
     precision) are not exactly zero but should be treated as such for
@@ -879,29 +895,27 @@ def test_points_mode_switch_abs_to_rel_blocked_when_target_is_near_zero(
     ctx = _context_with_points_leaf(
         # target = 1e-8 (solver near-zero). abs_tol = 0.5 → rel_tol
         # would be 5e7, way over the 10x sanity cap → refuse.
-        points=[{"time": 0.0, "value": 1e-8, "tolerance": 0.5,
-                 "tolerance_mode": "abs"}],
+        points=[
+            {"time": 0.0, "value": 1e-8, "tolerance": 0.5, "tolerance_mode": "abs"}
+        ],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     page.locator(
         '[data-path="/metrics/children/0"] .points-editor select'
-    ).first.select_option('rel')
-    pt = page.evaluate(
-        "leafState['/metrics/children/0'].params.points[0]"
-    )
+    ).first.select_option("rel")
+    pt = page.evaluate("leafState['/metrics/children/0'].params.points[0]")
     page.close()
     assert pt["tolerance_mode"] == "abs"
     assert float(pt["tolerance"]) == pytest.approx(0.5)
 
 
 def test_points_box_relayout_translation_snaps_back(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """When a relayout shifts the box without changing its size
     (translation), half-extents are unchanged so tolerances don't
@@ -909,8 +923,15 @@ def test_points_box_relayout_translation_snaps_back(
     effectively a 'snap back' that prevents the user from moving the
     box off-center."""
     ctx = _context_with_points_leaf(
-        points=[{"time": 2.5, "value": 2.5, "tolerance": 0.5,
-                 "tolerance_mode": "abs", "time_tolerance": 1.0}],
+        points=[
+            {
+                "time": 2.5,
+                "value": 2.5,
+                "tolerance": 0.5,
+                "tolerance_mode": "abs",
+                "time_tolerance": 1.0,
+            }
+        ],
         tolerance=0.01,
     )
     html_path = _render_with_context(tmp_path, ctx)
@@ -919,9 +940,7 @@ def test_points_box_relayout_translation_snaps_back(
     if not _has_plotly(page):
         page.close()
         pytest.skip("Plotly CDN not reachable; relayout test skipped")
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # Translate the box by (+2, +2) without resizing. Original bounds
     # were [1.5, 3.5] × [2.0, 3.0]; new bounds [3.5, 5.5] × [4.0, 5.0].
     # Half-extents preserved (1.0 in x, 0.5 in y), so the user's new
@@ -945,9 +964,7 @@ def test_points_box_relayout_translation_snaps_back(
             });
         }
     """)
-    pt = page.evaluate(
-        "leafState['/metrics/children/0'].params.points[0]"
-    )
+    pt = page.evaluate("leafState['/metrics/children/0'].params.points[0]")
     page.close()
     # Point unchanged (the listener doesn't move pt.time / pt.value).
     assert float(pt["time"]) == pytest.approx(2.5)
@@ -960,7 +977,8 @@ def test_points_box_relayout_translation_snaps_back(
 
 
 def test_points_editor_shift_right_click_removes_point(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Shift+right-click on a declared point's diamond marker removes
     it. Identifies the target by its resolved (t, y) and dispatches
@@ -978,9 +996,7 @@ def test_points_editor_shift_right_click_removes_point(
     if not _has_plotly(page):
         page.close()
         pytest.skip("Plotly CDN not reachable; shift-click test skipped")
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     ok = page.evaluate("""
         () => {
             const idx = VARIABLE_INDEX['h'];

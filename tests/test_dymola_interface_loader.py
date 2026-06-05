@@ -83,6 +83,7 @@ def test_reextracts_when_wheel_signature_changes(monkeypatch, tmp_path, fake_whe
     # test isn't a flaky race-with-filesystem-resolution.
     _write_minimal_wheel(fake_wheel, b"# generation 2: different content " * 200)
     import os, time
+
     new_mtime = time.time() + 5
     os.utime(fake_wheel, (new_mtime, new_mtime))
 
@@ -94,7 +95,9 @@ def test_reextracts_when_wheel_signature_changes(monkeypatch, tmp_path, fake_whe
 
 
 def test_reextracts_when_cache_marker_uses_old_path_only_format(
-    monkeypatch, tmp_path, fake_wheel,
+    monkeypatch,
+    tmp_path,
+    fake_wheel,
 ):
     """A cache populated by a pre-fix DSTF version has a marker containing
     just `str(archive)` — no size or mtime. Treat it as a mismatch and

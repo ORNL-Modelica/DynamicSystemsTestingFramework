@@ -43,7 +43,9 @@ def _make_worker(tmp_path: Path) -> DymolaWorker:
         diagnostic_variables=["CPUtime", "EventCounter"],
     )
     worker = DymolaWorker(
-        worker_id=99, config=config, dymola_config=dymola_config,
+        worker_id=99,
+        config=config,
+        dymola_config=dymola_config,
         dymola_interface_cls=MagicMock(),
     )
     worker.dymola = MagicMock()  # bypass start()
@@ -102,7 +104,9 @@ class TestExportFmu:
 
     def test_raises_clearly_on_dymola_exception(self, tmp_path):
         worker = _make_worker(tmp_path)
-        worker.dymola.translateModelFMU.side_effect = RuntimeError("fmi-export not licensed")
+        worker.dymola.translateModelFMU.side_effect = RuntimeError(
+            "fmi-export not licensed"
+        )
         out = tmp_path / "exports"
         out.mkdir()
         with pytest.raises(RuntimeError, match="translateModelFMU failed"):
@@ -120,9 +124,13 @@ class TestAbstractExportFmuDefault:
 
     def test_default_raises_with_helpful_message(self, tmp_path):
         from dstf.simulators.fmpy.runner import FmpyRunner
+
         # FmpyRunner doesn't declare FMU_EXPORT — base default applies
         config = SimpleNamespace(
-            source_type="fmu", simulator="FMPy", parallel=1, timeout=60,
+            source_type="fmu",
+            simulator="FMPy",
+            parallel=1,
+            timeout=60,
             work_dir=tmp_path,
         )
         # Skip if fmpy not installed — instantiation would fail before our test

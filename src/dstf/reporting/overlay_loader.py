@@ -41,6 +41,7 @@ by passing a ``config`` (with ``reference_root`` + ``simulator_backend``
 + ``os_name``) into :func:`load_overlays`; omit the config and only
 user-registered overlays are returned (existing behavior).
 """
+
 from __future__ import annotations
 
 import csv
@@ -107,13 +108,15 @@ def load_overlays(store, model_id: str, config=None) -> list[Overlay]:
 
     for name, baseline in soft_checks.items():
         ov_vars = _baseline_to_overlay_vars(baseline)
-        overlays.append(Overlay(
-            name=name,
-            role="soft_check",
-            status="loaded" if ov_vars else "invalid",
-            note="" if ov_vars else "soft_check has no variable data",
-            variables=ov_vars,
-        ))
+        overlays.append(
+            Overlay(
+                name=name,
+                role="soft_check",
+                status="loaded" if ov_vars else "invalid",
+                note="" if ov_vars else "soft_check has no variable data",
+                variables=ov_vars,
+            )
+        )
 
     # Companions: read metadata first (never opens the data file) then
     # try to load the data, catching every failure mode.
@@ -152,20 +155,24 @@ def load_sibling_backend_overlays(config, model_id: str) -> list[Overlay]:
     current_backend = getattr(config, "simulator_backend", None) or ""
     current_os = getattr(config, "os_name", None) or ""
     index = _sibling_backend_index(
-        str(reference_root), current_backend, current_os,
+        str(reference_root),
+        current_backend,
+        current_os,
     )
     matches = index.get(model_id, ())
     overlays: list[Overlay] = []
     for ref in matches:
         ov_vars = _ref_data_to_overlay_vars(ref.data)
-        overlays.append(Overlay(
-            name=f"{ref.backend}/{ref.os}",
-            role="companion",
-            kind="sibling-backend",
-            status="loaded" if ov_vars else "invalid",
-            note="" if ov_vars else "sibling ref has no variable trajectories",
-            variables=ov_vars,
-        ))
+        overlays.append(
+            Overlay(
+                name=f"{ref.backend}/{ref.os}",
+                role="companion",
+                kind="sibling-backend",
+                status="loaded" if ov_vars else "invalid",
+                note="" if ov_vars else "sibling ref has no variable trajectories",
+                variables=ov_vars,
+            )
+        )
     return overlays
 
 
@@ -214,12 +221,14 @@ def _sibling_backend_index(
                 mid = data.get("model_id")
                 if not mid:
                     continue
-                index.setdefault(mid, []).append(_SiblingRef(
-                    backend=backend_dir.name,
-                    os=os_dir.name,
-                    path=ref_file,
-                    data=data,
-                ))
+                index.setdefault(mid, []).append(
+                    _SiblingRef(
+                        backend=backend_dir.name,
+                        os=os_dir.name,
+                        path=ref_file,
+                        data=data,
+                    )
+                )
     return {k: tuple(v) for k, v in index.items()}
 
 
@@ -255,6 +264,7 @@ def _ref_data_to_overlay_vars(ref_data: dict) -> dict[str, OverlayVariable]:
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
 
 def _baseline_to_overlay_vars(baseline) -> dict[str, OverlayVariable]:
     """Flatten a :class:`Baseline` into per-variable overlay data."""
@@ -303,7 +313,10 @@ def _load_companion(store, model_id: str, companion) -> Overlay:
             vars_ = _load_json(path)
     except Exception as e:
         logger.warning(
-            "Failed to load companion %r (%s): %s", companion.name, path, e,
+            "Failed to load companion %r (%s): %s",
+            companion.name,
+            path,
+            e,
         )
         return Overlay(
             name=companion.name,
@@ -426,13 +439,15 @@ def attach_overlays_to_trajectories(
             var = ov.variables.get(name)
             if var is None:
                 continue
-            attached.append({
-                "name": ov.name,
-                "role": ov.role,
-                "kind": ov.kind,
-                "time": list(var.time),
-                "values": list(var.values),
-            })
+            attached.append(
+                {
+                    "name": ov.name,
+                    "role": ov.role,
+                    "kind": ov.kind,
+                    "time": list(var.time),
+                    "values": list(var.values),
+                }
+            )
         traj["overlays"] = attached
 
 
@@ -442,12 +457,14 @@ def overlay_summary(overlays: list[Overlay]) -> list[dict]:
     """
     out = []
     for ov in overlays:
-        out.append({
-            "name": ov.name,
-            "role": ov.role,
-            "kind": ov.kind,
-            "status": ov.status,
-            "note": ov.note,
-            "variables": sorted(ov.variables.keys()),
-        })
+        out.append(
+            {
+                "name": ov.name,
+                "role": ov.role,
+                "kind": ov.kind,
+                "status": ov.status,
+                "note": ov.note,
+                "variables": sorted(ov.variables.keys()),
+            }
+        )
     return out

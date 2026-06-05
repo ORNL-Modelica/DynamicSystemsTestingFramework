@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class OpenModelicaConfig:
     """OpenModelica-specific settings extracted from the universal Config."""
+
     omc_path: str
     simulator_setup: tuple[str, ...] = ()
     diagnostic_variables: tuple[str, ...] = ("CPUtime", "EventCounter")
@@ -76,10 +77,12 @@ class OpenModelicaConfig:
 class OpenModelicaRunner(SimulatorRunner):
     """OpenModelica backend using omc as a subprocess driver."""
 
-    capabilities = frozenset({
-        Capability.BATCH_FALLBACK,
-        Capability.PERSISTENT_WORKERS,
-    })
+    capabilities = frozenset(
+        {
+            Capability.BATCH_FALLBACK,
+            Capability.PERSISTENT_WORKERS,
+        }
+    )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
     artifact_files = (
         ("simulate.mos", "Simulation script"),
@@ -100,6 +103,7 @@ class OpenModelicaRunner(SimulatorRunner):
     @classmethod
     def persistent_runner_cls(cls):
         from .persistent_runner import PersistentOpenModelicaRunner
+
         return PersistentOpenModelicaRunner
 
     # ------------------------------------------------------------------
@@ -126,7 +130,9 @@ class OpenModelicaRunner(SimulatorRunner):
         # will exclude them from the .mat.
         extra_filter_names: list[str] = []
         if test.source in ("unit_tests", "both") and test.n_vars > 0:
-            extra_filter_names = [f"unitTests.x[{i}]" for i in range(1, test.n_vars + 1)]
+            extra_filter_names = [
+                f"unitTests.x[{i}]" for i in range(1, test.n_vars + 1)
+            ]
 
         # MSL is always required for Modelica simulation. Dymola auto-loads
         # it; OM needs an explicit loadModel(Modelica). Auto-inject if the
@@ -168,14 +174,18 @@ class OpenModelicaRunner(SimulatorRunner):
         except subprocess.TimeoutExpired as exc:
             elapsed = time.monotonic() - wall_start
             (test_dir / self.STDOUT_FILENAME).write_text(
-                (exc.stdout or "") + "\n[TimeoutExpired]\n", encoding="utf-8",
+                (exc.stdout or "") + "\n[TimeoutExpired]\n",
+                encoding="utf-8",
             )
             msg = f"omc exceeded {timeout}s timeout"
             logger.warning("Test %s: %s", test.model_id, msg)
             if self.progress:
                 self.progress.on_finish(
-                    test_key, success=False, elapsed=elapsed,
-                    detail=msg, timed_out=True,
+                    test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    detail=msg,
+                    timed_out=True,
                 )
             return TestRunResult(
                 model_id=test.model_id,
@@ -203,8 +213,10 @@ class OpenModelicaRunner(SimulatorRunner):
         if parsed.timings is not None:
             t = parsed.timings
             translation_wall = (
-                t.get("frontend", 0.0) + t.get("backend", 0.0)
-                + t.get("simcode", 0.0) + t.get("templates", 0.0)
+                t.get("frontend", 0.0)
+                + t.get("backend", 0.0)
+                + t.get("simcode", 0.0)
+                + t.get("templates", 0.0)
                 + t.get("compile", 0.0)
             )
             sim_wall = t.get("simulation")
@@ -246,7 +258,10 @@ class OpenModelicaRunner(SimulatorRunner):
 
         if self.progress:
             self.progress.on_finish(
-                test_key, success=False, elapsed=elapsed, detail=msg[:120],
+                test_key,
+                success=False,
+                elapsed=elapsed,
+                detail=msg[:120],
             )
         return TestRunResult(
             model_id=test.model_id,
@@ -269,20 +284,27 @@ class OpenModelicaRunner(SimulatorRunner):
         test_key: str,
         run_result: Optional[TestRunResult],
     ) -> TestResult:
-        stats = dict(run_result.statistics) if run_result and run_result.statistics else None
+        stats = (
+            dict(run_result.statistics)
+            if run_result and run_result.statistics
+            else None
+        )
         test_dir = self.config.work_dir / test_key
         mat_path = test_dir / self.RESULT_MAT_FILENAME
 
         # Enrich stats with wall-clock timing summary (mirrors DymolaRunner).
-        if run_result and (run_result.translation_wall is not None
-                           or run_result.sim_wall is not None):
+        if run_result and (
+            run_result.translation_wall is not None or run_result.sim_wall is not None
+        ):
             timing: dict[str, float] = {}
             if run_result.translation_wall is not None:
                 timing["translation_wall"] = round(run_result.translation_wall, 2)
             if run_result.sim_wall is not None:
                 timing["sim_wall"] = round(run_result.sim_wall, 2)
             if run_result.elapsed:
-                acct = (run_result.translation_wall or 0.0) + (run_result.sim_wall or 0.0)
+                acct = (run_result.translation_wall or 0.0) + (
+                    run_result.sim_wall or 0.0
+                )
                 timing["other_wall"] = round(max(0.0, run_result.elapsed - acct), 2)
                 timing["total_wall"] = round(run_result.elapsed, 2)
             if stats is None:
@@ -292,8 +314,9 @@ class OpenModelicaRunner(SimulatorRunner):
             stats.setdefault("timing", {}).update(timing)
 
         if not mat_path.exists():
-            msg = (run_result.error_message if run_result else None) \
-                or f"Result file not found: {mat_path}"
+            msg = (
+                run_result.error_message if run_result else None
+            ) or f"Result file not found: {mat_path}"
             return TestResult(
                 model_id=test.model_id,
                 success=False,
@@ -335,6 +358,7 @@ class OpenModelicaRunner(SimulatorRunner):
 # ---------------------------------------------------------------------------
 # Helpers (free functions for testability)
 # ---------------------------------------------------------------------------
+
 
 def _compute_needed_variables(
     mat_path: Path,
@@ -384,9 +408,14 @@ def _extract_variables(
                     label = f"{test.x_expressions[0]}[{i}]"
                 else:
                     label = f"x[{i}]"
-                results.append(VariableResult(
-                    index=idx, time=time_arr, values=values, name=label,
-                ))
+                results.append(
+                    VariableResult(
+                        index=idx,
+                        time=time_arr,
+                        values=values,
+                        name=label,
+                    )
+                )
                 seen.add(var_name)
                 seen.add(label)
                 idx += 1
@@ -400,9 +429,14 @@ def _extract_variables(
                 continue
             if var_name in mat_data:
                 time_arr, values = mat_data[var_name]
-                results.append(VariableResult(
-                    index=idx, time=time_arr, values=values, name=var_name,
-                ))
+                results.append(
+                    VariableResult(
+                        index=idx,
+                        time=time_arr,
+                        values=values,
+                        name=var_name,
+                    )
+                )
                 seen.add(var_name)
                 idx += 1
 
@@ -413,9 +447,14 @@ def _extract_variables(
     for var_name in diagnostic_vars:
         if var_name in mat_data:
             time_arr, values = mat_data[var_name]
-            diagnostics.append(VariableResult(
-                index=diag_idx, time=time_arr, values=values, name=var_name,
-            ))
+            diagnostics.append(
+                VariableResult(
+                    index=diag_idx,
+                    time=time_arr,
+                    values=values,
+                    name=var_name,
+                )
+            )
             diag_idx += 1
 
     return results, diagnostics

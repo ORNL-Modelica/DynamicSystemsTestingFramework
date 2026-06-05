@@ -37,6 +37,7 @@ class VariableComparison:
     bag for metric-specific extras (e.g. event-timing deltas, spectral
     peaks) that future metrics may attach without widening the schema.
     """
+
     index: int
     name: str
     passed: bool
@@ -62,6 +63,7 @@ class VariableComparison:
 @dataclass
 class StructuralWarning:
     """Warning about structural changes between reference and current run."""
+
     field: str
     reference_value: str
     current_value: str
@@ -70,6 +72,7 @@ class StructuralWarning:
 @dataclass
 class TestComparison:
     """Comparison result for a full test model."""
+
     model_id: str
     passed: bool
     test_id: Optional[str] = None  # ref file ID (e.g., "0001")

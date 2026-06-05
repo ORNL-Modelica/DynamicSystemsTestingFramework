@@ -44,8 +44,9 @@ class TestSimulateOnly:
     def test_passes_on_successful_sim_no_baseline_consulted(self):
         # Reference is intentionally garbage — simulate_only should ignore it.
         garbage_ref = {"test_id": "0001", "variables": [{"NONSENSE": True}]}
-        comp = compare_test(_make_test(simulate_only=True),
-                            _make_successful_result(), garbage_ref)
+        comp = compare_test(
+            _make_test(simulate_only=True), _make_successful_result(), garbage_ref
+        )
         assert comp.passed is True
         assert comp.variables == []
         assert comp.metric_tree is not None
@@ -53,8 +54,7 @@ class TestSimulateOnly:
 
     def test_fails_when_sim_fails(self):
         # Same path as any failed sim — error_message propagates, passed=False.
-        comp = compare_test(_make_test(simulate_only=True),
-                            _make_failed_result(), {})
+        comp = compare_test(_make_test(simulate_only=True), _make_failed_result(), {})
         assert comp.passed is False
         assert comp.sim_success is False
         assert "boom" in (comp.error_message or "")
@@ -63,9 +63,11 @@ class TestSimulateOnly:
         # When simulate_only is False, the ordinary per-variable comparison
         # runs — empty reference would normally produce a failure (no ref var
         # for index 1). That's the contrast we want to confirm.
-        comp = compare_test(_make_test(simulate_only=False),
-                            _make_successful_result(),
-                            {"test_id": "0001", "variables": []})
+        comp = compare_test(
+            _make_test(simulate_only=False),
+            _make_successful_result(),
+            {"test_id": "0001", "variables": []},
+        )
         # Without simulate_only, the comparator falls into per-variable mode
         # and the missing ref-variable yields a failed VariableComparison.
         assert comp.passed is False

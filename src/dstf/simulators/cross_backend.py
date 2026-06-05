@@ -77,7 +77,8 @@ def produce_dymola_via_fmpy_baseline(
     except (NotImplementedError, RuntimeError) as exc:
         logger.warning(
             "cross-backend chain: export_fmu failed for %s: %s",
-            test.model_id, exc,
+            test.model_id,
+            exc,
         )
         return False
 
@@ -88,6 +89,7 @@ def produce_dymola_via_fmpy_baseline(
     # because that uses config.simulator_backend; we just want a temporary
     # FMPy runner regardless of what the primary is.
     from .fmpy.runner import FmpyRunner
+
     fmpy_config = replace(
         config,
         simulator="FMPy",
@@ -99,7 +101,8 @@ def produce_dymola_via_fmpy_baseline(
     except ImportError as exc:
         logger.warning(
             "cross-backend chain: FMPy not installed (%s); skipping %s",
-            exc, test.model_id,
+            exc,
+            test.model_id,
         )
         return False
 
@@ -107,12 +110,16 @@ def produce_dymola_via_fmpy_baseline(
     # that doesn't collide with the primary run's keys.
     test_key = f"chain_{test.model_id.replace('.', '_')}"
     run_result = fmpy_runner.run_single_test(
-        chain_test, test_key, index=1, total=1,
+        chain_test,
+        test_key,
+        index=1,
+        total=1,
     )
     if not run_result.success:
         logger.warning(
             "cross-backend chain: FMPy sim failed for %s: %s",
-            test.model_id, run_result.error_message,
+            test.model_id,
+            run_result.error_message,
         )
         return False
 
@@ -120,7 +127,8 @@ def produce_dymola_via_fmpy_baseline(
     if not fmpy_result.success:
         logger.warning(
             "cross-backend chain: FMPy read_result failed for %s: %s",
-            test.model_id, fmpy_result.error_message,
+            test.model_id,
+            fmpy_result.error_message,
         )
         return False
 
@@ -128,7 +136,8 @@ def produce_dymola_via_fmpy_baseline(
     if not fmpy_result.variables:
         logger.warning(
             "cross-backend chain: FMPy produced no variables for %s; "
-            "skipping baseline write", test.model_id,
+            "skipping baseline write",
+            test.model_id,
         )
         return False
 
@@ -158,7 +167,8 @@ def produce_dymola_via_fmpy_baseline(
     except FileNotFoundError as exc:
         logger.warning(
             "cross-backend chain: cannot store baseline for %s: %s",
-            test.model_id, exc,
+            test.model_id,
+            exc,
         )
         return False
     return True

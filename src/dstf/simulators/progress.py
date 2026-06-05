@@ -26,13 +26,21 @@ class TestStatus:
     test_key: str
     model_id: str
     status: str = "queued"  # queued | running | passed | failed | timed_out
-    started_at: Optional[float] = None  # time.monotonic — for accurate elapsed computation
-    started_wall: Optional[float] = None  # time.time (epoch) — for JS to compute live "running for Ns"
+    started_at: Optional[float] = (
+        None  # time.monotonic — for accurate elapsed computation
+    )
+    started_wall: Optional[float] = (
+        None  # time.time (epoch) — for JS to compute live "running for Ns"
+    )
     elapsed: Optional[float] = None
     detail: Optional[str] = None
     worker_id: Optional[int] = None
-    report_dir: Optional[str] = None  # e.g., "ref_0042" or "test_0005" — matches generate_report_suite naming
-    phase: Optional[str] = None  # "translating" / "simulating" / ... while status == "running"
+    report_dir: Optional[str] = (
+        None  # e.g., "ref_0042" or "test_0005" — matches generate_report_suite naming
+    )
+    phase: Optional[str] = (
+        None  # "translating" / "simulating" / ... while status == "running"
+    )
     # Per-field provenance, plumbed from TestModel.field_sources via register().
     # Surfaced in the dashboard's Resolution column.
     field_sources: dict = field(default_factory=dict)
@@ -190,6 +198,7 @@ class ProgressReporter:
         so the live and final pages share one template.
         """
         from ..reporting.dashboard_render import render_live, render_final
+
         if mode == "live":
             render_live(self.work_dir)
         else:

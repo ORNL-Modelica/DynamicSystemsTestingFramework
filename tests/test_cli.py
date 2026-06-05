@@ -15,6 +15,7 @@ from dstf.cli import (
 @dataclass
 class FakeComparison:
     """Minimal stand-in for TestComparison for filter testing."""
+
     model_id: str = "Test.Model"
     passed: bool = True
     sim_success: bool = True
@@ -23,6 +24,7 @@ class FakeComparison:
 
 
 # --- _parse_review_filter ---
+
 
 def test_parse_filter_all():
     assert _parse_review_filter("all") == {"all"}
@@ -57,6 +59,7 @@ def test_parse_filter_partial_invalid_raises():
 
 
 # --- _should_review ---
+
 
 def test_should_review_all_matches_everything():
     comp = FakeComparison()
@@ -159,8 +162,7 @@ def test_argparse_subcommands_match_dispatch_table():
     parser = build_arg_parser()
     # subparsers action holds the subcommand registry
     subparsers_action = next(
-        a for a in parser._actions
-        if isinstance(a, argparse._SubParsersAction)
+        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
     )
     parser_commands = set(subparsers_action.choices.keys())
     dispatch_commands = set(_COMMANDS.keys())

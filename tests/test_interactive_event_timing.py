@@ -8,6 +8,7 @@ and rerun the CLI for authoritative results.
 Pattern mirrors tests/test_interactive_range_window.py — the shared
 fixture + render helpers come from test_interactive_playwright.py.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -20,7 +21,10 @@ pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import Page
 
 from test_interactive_playwright import (
-    _fixture_context, _leaf, _render_report, playwright_browser,
+    _fixture_context,
+    _leaf,
+    _render_report,
+    playwright_browser,
 )
 
 
@@ -33,13 +37,13 @@ def _mode_controls_html_event(values: dict) -> str:
     cm = "checked" if values.get("count_must_match", True) else ""
     return (
         '<div class="mode-controls" data-mode="event-timing" data-variable="h">'
-        '<label><span>Time tolerance</span>'
+        "<label><span>Time tolerance</span>"
         f'<input type="number" step="any" data-field="time_tolerance" value="{tol}"></label>'
-        f'<label><span>Counts must match</span>'
+        f"<label><span>Counts must match</span>"
         f'<input type="checkbox" data-field="count_must_match" {cm}></label>'
         '<label class="mc-field mc-passthrough">'
         '<textarea data-field="events" data-passthrough="true" rows="2"></textarea>'
-        '</label>'
+        "</label>"
         "</div>"
     )
 
@@ -67,12 +71,16 @@ def _context_with_event_timing_leaf(declared_events=None):
     t = [0.0, 0.5, 1.0, 1.0, 1.5, 2.0, 2.0, 2.5, 3.0]
     v = [0.0] * len(t)
     ctx["variables_by_name"]["h"]["trajectory"] = {
-        "index": 1, "name": "h",
-        "act_time": list(t), "act_values": list(v),
-        "ref_time": list(t), "ref_values": list(v),
+        "index": 1,
+        "name": "h",
+        "act_time": list(t),
+        "act_values": list(v),
+        "ref_time": list(t),
+        "ref_values": list(v),
     }
-    ctx["trajectories"] = [ctx["variables_by_name"][k]["trajectory"]
-                           for k in ctx["variables_by_name"]]
+    ctx["trajectories"] = [
+        ctx["variables_by_name"][k]["trajectory"] for k in ctx["variables_by_name"]
+    ]
     return ctx
 
 
@@ -80,6 +88,7 @@ def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
     """Like _render_report, but accepts a custom context."""
     from jinja2 import Environment, FileSystemLoader
     from test_interactive_playwright import _JS_SRC, _TEMPLATE_DIR
+
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
@@ -92,6 +101,7 @@ def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
 # Task 3: table + add + delete
 # ---------------------------------------------------------------------------
 
+
 def test_event_timing_editor_mounts_on_leaf_click(tmp_path, playwright_browser):
     """Clicking the event-timing leaf in the tree should mount the
     editor in its .node-editor slot — the editor-specific container
@@ -101,9 +111,7 @@ def test_event_timing_editor_mounts_on_leaf_click(tmp_path, playwright_browser):
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
     # Click the event-timing leaf's header to activate it.
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # Editor slot should contain our event-editor container.
     mounted = page.locator(
         '[data-path="/metrics/children/0"] .event-timing-editor'
@@ -117,51 +125,56 @@ def test_event_timing_editor_mounts_on_leaf_click(tmp_path, playwright_browser):
 
 
 def test_event_timing_editor_renders_existing_declared_events(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Fixture starts with two declared events; the table should show
     two rows after the editor mounts."""
-    ctx = _context_with_event_timing_leaf(declared_events=[
-        {"time": 1.0, "tolerance": 0.01},
-        {"time": 2.0},  # fallback tolerance
-    ])
+    ctx = _context_with_event_timing_leaf(
+        declared_events=[
+            {"time": 1.0, "tolerance": 0.01},
+            {"time": 2.0},  # fallback tolerance
+        ]
+    )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # Editor mounts in every .node-editor slot for the leaf; scope the
     # row count to the first mount.
-    rows = page.locator(
-        '[data-path="/metrics/children/0"] .event-timing-editor'
-    ).first.locator('tbody tr').count()
+    rows = (
+        page.locator('[data-path="/metrics/children/0"] .event-timing-editor')
+        .first.locator("tbody tr")
+        .count()
+    )
     page.close()
     assert rows == 2, f"Expected 2 rows in declared-events table, got {rows}"
 
 
 def test_event_timing_editor_add_button_appends_row(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Clicking '+ add event' should append a row and update leafState."""
-    ctx = _context_with_event_timing_leaf(declared_events=[
-        {"time": 1.0, "tolerance": 0.01},
-    ])
+    ctx = _context_with_event_timing_leaf(
+        declared_events=[
+            {"time": 1.0, "tolerance": 0.01},
+        ]
+    )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
-    page.locator(
-        '[data-path="/metrics/children/0"] .event-timing-editor '
-        'button.node-btn-add'
+        '[data-path="/metrics/children/0"] .event-timing-editor button.node-btn-add'
     ).first.click()
     # Editor mounts in every .node-editor slot for the leaf; scope the
     # row count to the first mount.
-    rows = page.locator(
-        '[data-path="/metrics/children/0"] .event-timing-editor'
-    ).first.locator('tbody tr').count()
+    rows = (
+        page.locator('[data-path="/metrics/children/0"] .event-timing-editor')
+        .first.locator("tbody tr")
+        .count()
+    )
     events_len = page.evaluate("""
         () => (leafState['/metrics/children/0'].params.events || []).length
     """)
@@ -174,29 +187,32 @@ def test_event_timing_editor_add_button_appends_row(
 
 
 def test_event_timing_editor_delete_button_removes_row(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Each row has a delete button that removes it from the table AND
     from leafState.params.events."""
-    ctx = _context_with_event_timing_leaf(declared_events=[
-        {"time": 1.0, "tolerance": 0.01},
-        {"time": 2.0, "tolerance": 0.02},
-    ])
+    ctx = _context_with_event_timing_leaf(
+        declared_events=[
+            {"time": 1.0, "tolerance": 0.01},
+            {"time": 2.0, "tolerance": 0.02},
+        ]
+    )
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # Click the first row's delete button.
     page.locator(
         '[data-path="/metrics/children/0"] .event-timing-editor '
-        'tbody tr button.row-delete'
+        "tbody tr button.row-delete"
     ).first.click()
     # Scope row count to the first mount (editor renders in every slot).
-    rows = page.locator(
-        '[data-path="/metrics/children/0"] .event-timing-editor'
-    ).first.locator('tbody tr').count()
+    rows = (
+        page.locator('[data-path="/metrics/children/0"] .event-timing-editor')
+        .first.locator("tbody tr")
+        .count()
+    )
     remaining_time = page.evaluate("""
         () => {
             const evs = leafState['/metrics/children/0'].params.events || [];
@@ -214,6 +230,7 @@ def test_event_timing_editor_delete_button_removes_row(
 # Task 4: detect button + source dropdown + live match column
 # ---------------------------------------------------------------------------
 
+
 def test_event_timing_detect_populates_from_reference(tmp_path, playwright_browser):
     """With source='ref' and the fixture's ref events at t=1.0 & t=2.0,
     clicking Detect should populate the table with 2 rows at those times."""
@@ -221,13 +238,11 @@ def test_event_timing_detect_populates_from_reference(tmp_path, playwright_brows
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # Source dropdown defaults to Reference. Click Detect.
     page.locator(
         '[data-path="/metrics/children/0"] .event-timing-editor '
-        'button.detect-events-btn'
+        "button.detect-events-btn"
     ).first.click()
     events = page.evaluate("""
         () => leafState['/metrics/children/0'].params.events.map(e => Number(e.time))
@@ -237,7 +252,8 @@ def test_event_timing_detect_populates_from_reference(tmp_path, playwright_brows
 
 
 def test_event_timing_detect_source_actual_uses_act_time(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """With source='act' and act_time holding different event times than
     ref_time, Detect should pick up the actual-side values."""
@@ -249,18 +265,16 @@ def test_event_timing_detect_source_actual_uses_act_time(
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     # Select Actual in the dropdown, then Detect. The dropdown lives in
     # every editor mount; pick the first since they share the same state.
     page.locator(
         '[data-path="/metrics/children/0"] .event-timing-editor '
-        'select.detect-source-select'
-    ).first.select_option('act')
+        "select.detect-source-select"
+    ).first.select_option("act")
     page.locator(
         '[data-path="/metrics/children/0"] .event-timing-editor '
-        'button.detect-events-btn'
+        "button.detect-events-btn"
     ).first.click()
     events = page.evaluate("""
         () => leafState['/metrics/children/0'].params.events.map(e => Number(e.time))
@@ -270,26 +284,26 @@ def test_event_timing_detect_source_actual_uses_act_time(
 
 
 def test_event_timing_match_column_shows_delta_when_matched(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Declared event at t=1.0 with tolerance=0.05; actual has event at
     t=1.02. Match column should show something containing 'matched' or
     the delta 0.02."""
-    ctx = _context_with_event_timing_leaf(declared_events=[
-        {"time": 1.0, "tolerance": 0.05},
-    ])
+    ctx = _context_with_event_timing_leaf(
+        declared_events=[
+            {"time": 1.0, "tolerance": 0.05},
+        ]
+    )
     traj = ctx["variables_by_name"]["h"]["trajectory"]
     traj["act_time"] = [0.0, 0.5, 1.02, 1.02, 1.5, 2.0, 2.0, 2.5]
     traj["act_values"] = [0.0] * len(traj["act_time"])
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     match_text = page.locator(
-        '[data-path="/metrics/children/0"] .event-timing-editor '
-        'tbody tr .match-cell'
+        '[data-path="/metrics/children/0"] .event-timing-editor tbody tr .match-cell'
     ).first.inner_text()
     page.close()
     # Match cell should indicate matched + delta around 0.02.
@@ -299,25 +313,25 @@ def test_event_timing_match_column_shows_delta_when_matched(
 
 
 def test_event_timing_match_column_shows_unmatched_when_out_of_tolerance(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Declared t=1.0 with tolerance=0.001; actual at t=1.5 (too far).
     Match cell should show unmatched indicator."""
-    ctx = _context_with_event_timing_leaf(declared_events=[
-        {"time": 1.0, "tolerance": 0.001},
-    ])
+    ctx = _context_with_event_timing_leaf(
+        declared_events=[
+            {"time": 1.0, "tolerance": 0.001},
+        ]
+    )
     traj = ctx["variables_by_name"]["h"]["trajectory"]
     traj["act_time"] = [0.0, 0.5, 1.5, 1.5, 2.5]
     traj["act_values"] = [0.0] * len(traj["act_time"])
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page()
     page.goto(html_path.as_uri())
-    page.locator(
-        '[data-path="/metrics/children/0"] > .node-header'
-    ).first.click()
+    page.locator('[data-path="/metrics/children/0"] > .node-header').first.click()
     match_text = page.locator(
-        '[data-path="/metrics/children/0"] .event-timing-editor '
-        'tbody tr .match-cell'
+        '[data-path="/metrics/children/0"] .event-timing-editor tbody tr .match-cell'
     ).first.inner_text()
     page.close()
     assert "✕" in match_text or "unmatched" in match_text.lower(), (

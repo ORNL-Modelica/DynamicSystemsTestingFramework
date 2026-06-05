@@ -9,6 +9,7 @@ from typing import Optional
 @dataclass
 class UnitTestInfo:
     """Information extracted from a UnitTests block in a .mo file."""
+
     n: int = 1
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""  # Raw text of x={...} for complex cases (cat, etc.)
@@ -19,6 +20,7 @@ class UnitTestInfo:
 @dataclass
 class ExperimentInfo:
     """Simulation parameters from experiment() annotation."""
+
     stop_time: Optional[float] = None
     tolerance: Optional[float] = None
     method: Optional[str] = None
@@ -29,6 +31,7 @@ class ExperimentInfo:
 @dataclass
 class MoParseResult:
     """Full parse result from a .mo file."""
+
     model_id: str  # Fully qualified Modelica path
     mo_file: Path
     unit_test: Optional[UnitTestInfo] = None
@@ -37,13 +40,13 @@ class MoParseResult:
 
 def _extract_within(text: str) -> str:
     """Extract the 'within' clause to get the parent package path."""
-    m = re.search(r'within\s+([\w.]+)\s*;', text)
+    m = re.search(r"within\s+([\w.]+)\s*;", text)
     return m.group(1) if m else ""
 
 
 def _extract_model_name(text: str) -> str:
     """Extract the model/class name from the definition."""
-    m = re.search(r'(?:model|block|class|package)\s+(\w+)', text)
+    m = re.search(r"(?:model|block|class|package)\s+(\w+)", text)
     return m.group(1) if m else ""
 
 
@@ -52,14 +55,14 @@ def _extract_balanced_braces(text: str, start: int) -> str:
     depth = 0
     i = start
     while i < len(text):
-        if text[i] == '{':
+        if text[i] == "{":
             depth += 1
-        elif text[i] == '}':
+        elif text[i] == "}":
             depth -= 1
             if depth == 0:
-                return text[start + 1:i]
+                return text[start + 1 : i]
         i += 1
-    return text[start + 1:]
+    return text[start + 1 :]
 
 
 def _parse_x_expressions(raw: str) -> list[str]:
@@ -70,7 +73,7 @@ def _parse_x_expressions(raw: str) -> list[str]:
     """
     # If it contains cat( or 'for', it's complex — return as single raw entry
     stripped = raw.strip()
-    if 'cat(' in stripped or ' for ' in stripped:
+    if "cat(" in stripped or " for " in stripped:
         return [stripped]
 
     # Split by commas, respecting nested brackets/parens
@@ -78,20 +81,20 @@ def _parse_x_expressions(raw: str) -> list[str]:
     depth = 0
     current = []
     for ch in stripped:
-        if ch in '({[':
+        if ch in "({[":
             depth += 1
             current.append(ch)
-        elif ch in ')}]':
+        elif ch in ")}]":
             depth -= 1
             current.append(ch)
-        elif ch == ',' and depth == 0:
-            expr = ''.join(current).strip()
+        elif ch == "," and depth == 0:
+            expr = "".join(current).strip()
             if expr:
                 expressions.append(expr)
             current = []
         else:
             current.append(ch)
-    last = ''.join(current).strip()
+    last = "".join(current).strip()
     if last:
         expressions.append(last)
 
@@ -101,15 +104,15 @@ def _parse_x_expressions(raw: str) -> list[str]:
 def _parse_float_list(raw: str) -> Optional[list[float]]:
     """Parse a simple {val1, val2, ...} list of floats."""
     try:
-        parts = raw.strip().split(',')
+        parts = raw.strip().split(",")
         return [float(p.strip()) for p in parts if p.strip()]
     except ValueError:
         return None
 
 
 _MO_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
-_MO_LINE_COMMENT = re.compile(r'//[^\n]*')
-_MO_BLOCK_COMMENT = re.compile(r'/\*[\s\S]*?\*/')
+_MO_LINE_COMMENT = re.compile(r"//[^\n]*")
+_MO_BLOCK_COMMENT = re.compile(r"/\*[\s\S]*?\*/")
 
 
 def _strip_modelica_literals(text: str) -> str:
@@ -136,8 +139,7 @@ def _parse_unit_tests(text: str) -> Optional[UnitTestInfo]:
     # surrounding model as a test.
     text = _strip_modelica_literals(text)
     pattern = re.compile(
-        r'(?:Utilities\.ErrorAnalysis\.)?UnitTests\s+\w+\s*\(',
-        re.DOTALL
+        r"(?:Utilities\.ErrorAnalysis\.)?UnitTests\s+\w+\s*\(", re.DOTALL
     )
     match = pattern.search(text)
     if not match:
@@ -148,65 +150,65 @@ def _parse_unit_tests(text: str) -> Optional[UnitTestInfo]:
     depth = 0
     end = start
     for i in range(start, len(text)):
-        if text[i] == '(':
+        if text[i] == "(":
             depth += 1
-        elif text[i] == ')':
+        elif text[i] == ")":
             depth -= 1
             if depth == 0:
                 end = i
                 break
 
-    param_text = text[start + 1:end]
+    param_text = text[start + 1 : end]
 
     info = UnitTestInfo()
 
     # Extract n=
-    m = re.search(r'\bn\s*=\s*(\d+)', param_text)
+    m = re.search(r"\bn\s*=\s*(\d+)", param_text)
     if m:
         info.n = int(m.group(1))
 
     # Extract x={...}
-    m = re.search(r'\bx\s*=\s*\{', param_text)
+    m = re.search(r"\bx\s*=\s*\{", param_text)
     if m:
         brace_start = m.end() - 1
         raw = _extract_balanced_braces(param_text, brace_start)
         info.x_raw = raw
         info.x_expressions = _parse_x_expressions(raw)
-    elif re.search(r'\bx\s*=\s*(?:cat|fill|zeros|ones|linspace)\s*\(', param_text):
+    elif re.search(r"\bx\s*=\s*(?:cat|fill|zeros|ones|linspace)\s*\(", param_text):
         # x=cat(1, ...) or x=fill(...) etc. without outer braces
-        m2 = re.search(r'\bx\s*=\s*((?:cat|fill|zeros|ones|linspace)\s*\()', param_text)
+        m2 = re.search(r"\bx\s*=\s*((?:cat|fill|zeros|ones|linspace)\s*\()", param_text)
         if m2:
-            paren_start = param_text.index('(', m2.start())
+            paren_start = param_text.index("(", m2.start())
             depth2 = 0
             end2 = paren_start
             for i in range(paren_start, len(param_text)):
-                if param_text[i] == '(':
+                if param_text[i] == "(":
                     depth2 += 1
-                elif param_text[i] == ')':
+                elif param_text[i] == ")":
                     depth2 -= 1
                     if depth2 == 0:
                         end2 = i
                         break
-            raw = param_text[m2.start() + 2:end2 + 1]  # include "func(...)"
+            raw = param_text[m2.start() + 2 : end2 + 1]  # include "func(...)"
             info.x_raw = raw.strip()
             info.x_expressions = [raw.strip()]
     else:
         # x=varName or x=some.qualified.name — bare variable reference
-        m2 = re.search(r'\bx\s*=\s*([\w.]+(?:\[[\w.,\s]+\])?)', param_text)
+        m2 = re.search(r"\bx\s*=\s*([\w.]+(?:\[[\w.,\s]+\])?)", param_text)
         if m2:
             raw = m2.group(1).strip()
             info.x_raw = raw
             info.x_expressions = [raw]
 
     # Extract x_reference={...}
-    m = re.search(r'\bx_reference\s*=\s*\{', param_text)
+    m = re.search(r"\bx_reference\s*=\s*\{", param_text)
     if m:
         brace_start = m.end() - 1
         raw = _extract_balanced_braces(param_text, brace_start)
         info.x_reference = _parse_float_list(raw)
 
     # Extract errorExpected=
-    m = re.search(r'\berrorExpected\s*=\s*([0-9eE.+-]+)', param_text)
+    m = re.search(r"\berrorExpected\s*=\s*([0-9eE.+-]+)", param_text)
     if m:
         try:
             info.error_expected = float(m.group(1))
@@ -218,7 +220,7 @@ def _parse_unit_tests(text: str) -> Optional[UnitTestInfo]:
 
 def _parse_experiment(text: str) -> Optional[ExperimentInfo]:
     """Extract experiment() annotation parameters."""
-    m = re.search(r'experiment\s*\(([^)]*)\)', text)
+    m = re.search(r"experiment\s*\(([^)]*)\)", text)
     if not m:
         return None
 
@@ -226,12 +228,12 @@ def _parse_experiment(text: str) -> Optional[ExperimentInfo]:
     info = ExperimentInfo()
 
     # StopTime (Modelica standard) or stopTime
-    m2 = re.search(r'(?:S|s)topTime\s*=\s*([0-9eE.+-]+)', param_text)
+    m2 = re.search(r"(?:S|s)topTime\s*=\s*([0-9eE.+-]+)", param_text)
     if m2:
         info.stop_time = float(m2.group(1))
 
     # Tolerance
-    m2 = re.search(r'(?:T|t)olerance\s*=\s*([0-9eE.+-]+)', param_text)
+    m2 = re.search(r"(?:T|t)olerance\s*=\s*([0-9eE.+-]+)", param_text)
     if m2:
         info.tolerance = float(m2.group(1))
 
@@ -241,14 +243,12 @@ def _parse_experiment(text: str) -> Optional[ExperimentInfo]:
         info.method = m2.group(1)
 
     # __Dymola_NumberOfIntervals or numberOfIntervals
-    m2 = re.search(
-        r'(?:__Dymola_)?[Nn]umberOfIntervals\s*=\s*(\d+)', param_text
-    )
+    m2 = re.search(r"(?:__Dymola_)?[Nn]umberOfIntervals\s*=\s*(\d+)", param_text)
     if m2:
         info.number_of_intervals = int(m2.group(1))
 
     # Interval (output interval length) — standard Modelica
-    m2 = re.search(r'(?<!\w)[Ii]nterval\s*=\s*([0-9eE.+-]+)', param_text)
+    m2 = re.search(r"(?<!\w)[Ii]nterval\s*=\s*([0-9eE.+-]+)", param_text)
     if m2:
         info.output_interval = float(m2.group(1))
 
@@ -322,7 +322,9 @@ class BundledModelicaUnitTestsRecognizer(Recognizer):
             n_vars=ut.n if ut else None,
             x_expressions=list(ut.x_expressions) if ut else [],
             x_raw=ut.x_raw if ut else "",
-            x_reference=list(ut.x_reference) if ut and ut.x_reference is not None else None,
+            x_reference=list(ut.x_reference)
+            if ut and ut.x_reference is not None
+            else None,
             error_expected=ut.error_expected if ut else None,
             stop_time=exp.stop_time if exp else None,
             tolerance=exp.tolerance if exp else None,

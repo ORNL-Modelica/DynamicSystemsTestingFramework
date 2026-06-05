@@ -28,10 +28,18 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # .mo parser
 # ---------------------------------------------------------------------------
 
+
 class TestMoParser:
     def test_parse_with_unit_tests(self):
         """Parse a .mo file that has a UnitTests component."""
-        result = parse_mo_file(PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib" / "Examples" / "SimpleTest.mo")
+        result = parse_mo_file(
+            PROJECT_ROOT
+            / "examples"
+            / "modelica"
+            / "ModelicaTestingLib"
+            / "Examples"
+            / "SimpleTest.mo"
+        )
         assert result is not None
         assert result.model_id == "ModelicaTestingLib.Examples.SimpleTest"
         assert result.unit_test is not None
@@ -40,12 +48,26 @@ class TestMoParser:
 
     def test_parse_without_unit_tests(self):
         """Parse a .mo file without UnitTests => returns None (nothing to test)."""
-        result = parse_mo_file(PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib" / "Examples" / "NoUnitTest.mo")
+        result = parse_mo_file(
+            PROJECT_ROOT
+            / "examples"
+            / "modelica"
+            / "ModelicaTestingLib"
+            / "Examples"
+            / "NoUnitTest.mo"
+        )
         assert result is None
 
     def test_parse_experiment(self):
         """Extract experiment annotation."""
-        result = parse_mo_file(PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib" / "Examples" / "SimpleTest.mo")
+        result = parse_mo_file(
+            PROJECT_ROOT
+            / "examples"
+            / "modelica"
+            / "ModelicaTestingLib"
+            / "Examples"
+            / "SimpleTest.mo"
+        )
         assert result.experiment is not None
         assert result.experiment.stop_time == 10.0
         assert result.experiment.tolerance == 1e-6
@@ -53,7 +75,14 @@ class TestMoParser:
 
     def test_parse_output_interval(self):
         """Extract Interval from experiment annotation."""
-        result = parse_mo_file(PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib" / "Examples" / "IntervalTest.mo")
+        result = parse_mo_file(
+            PROJECT_ROOT
+            / "examples"
+            / "modelica"
+            / "ModelicaTestingLib"
+            / "Examples"
+            / "IntervalTest.mo"
+        )
         assert result is not None
         assert result.experiment.output_interval == 0.5
         assert result.experiment.number_of_intervals is None
@@ -72,34 +101,34 @@ class TestMoParser:
 
     def test_bare_variable(self):
         """x=y where y is an array — bare variable without braces."""
-        text = 'Utilities.ErrorAnalysis.UnitTests unitTests(n=2, x=y)'
+        text = "Utilities.ErrorAnalysis.UnitTests unitTests(n=2, x=y)"
         info = _parse_unit_tests(text)
         assert info.x_expressions == ["y"]
         assert info.x_raw == "y"
 
     def test_bare_qualified_variable(self):
         """x=some.qualified.name — dotted path without braces."""
-        text = 'UnitTests ut(n=2, x=heatTransfer.alphas)'
+        text = "UnitTests ut(n=2, x=heatTransfer.alphas)"
         info = _parse_unit_tests(text)
         assert info.x_expressions == ["heatTransfer.alphas"]
         assert info.x_raw == "heatTransfer.alphas"
 
     def test_bare_deep_qualified_variable(self):
         """x=a.b.c.d — deeply nested dotted path."""
-        text = 'UnitTests ut(x=ductOut.port_b.C_outflow)'
+        text = "UnitTests ut(x=ductOut.port_b.C_outflow)"
         info = _parse_unit_tests(text)
         assert info.x_expressions == ["ductOut.port_b.C_outflow"]
 
     def test_bare_variable_with_x_reference(self):
         """Bare x=y doesn't interfere with x_reference parsing."""
-        text = 'UnitTests ut(n=2, x=y, x_reference={1.0, 2.0})'
+        text = "UnitTests ut(n=2, x=y, x_reference={1.0, 2.0})"
         info = _parse_unit_tests(text)
         assert info.x_expressions == ["y"]
         assert info.x_reference == [1.0, 2.0]
 
     def test_no_x_param(self):
         """UnitTests with only x_reference but no x= gives empty expressions."""
-        text = 'UnitTests ut(n=2, x_reference={1.0, 2.0})'
+        text = "UnitTests ut(n=2, x_reference={1.0, 2.0})"
         info = _parse_unit_tests(text)
         assert info.x_expressions == []
         assert info.x_reference == [1.0, 2.0]
@@ -107,7 +136,7 @@ class TestMoParser:
     def test_array_functions(self):
         """x=fill(...), x=zeros(...), etc. are captured like cat(...)."""
         for func in ("fill", "zeros", "ones", "linspace"):
-            text = f'UnitTests ut(n=3, x={func}(0, 3))'
+            text = f"UnitTests ut(n=3, x={func}(0, 3))"
             info = _parse_unit_tests(text)
             assert len(info.x_expressions) == 1
             assert info.x_expressions[0].startswith(f"{func}(")
@@ -116,6 +145,7 @@ class TestMoParser:
 # ---------------------------------------------------------------------------
 # spec_parser
 # ---------------------------------------------------------------------------
+
 
 class TestSpecParser:
     def test_parse_test_spec(self, sample_test_spec):
@@ -177,25 +207,31 @@ class TestSpecParser:
     def test_structured_simulation_and_comparison(self, tmp_path):
         """Parse the structured format with simulation and comparison sections."""
         spec_path = tmp_path / "test_spec.json"
-        spec_path.write_text(json.dumps({
-            "tests": [{
-                "model": "MyLib.Examples.HeatExchanger",
-                "variables": ["pipe.T[1]", "pump.m_flow"],
-                "simulation": {
-                    "stop_time": 1000,
-                    "tolerance": 1e-4,
-                    "method": "Esdirk45a",
-                    "number_of_intervals": 500,
-                    "timeout": 120,
-                },
-                "comparison": {
-                    "tolerance": 0.05,
-                    "variable_overrides": {
-                        "pipe.T[1]": {"tolerance": 0.1},
-                    },
-                },
-            }],
-        }))
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {
+                            "model": "MyLib.Examples.HeatExchanger",
+                            "variables": ["pipe.T[1]", "pump.m_flow"],
+                            "simulation": {
+                                "stop_time": 1000,
+                                "tolerance": 1e-4,
+                                "method": "Esdirk45a",
+                                "number_of_intervals": 500,
+                                "timeout": 120,
+                            },
+                            "comparison": {
+                                "tolerance": 0.05,
+                                "variable_overrides": {
+                                    "pipe.T[1]": {"tolerance": 0.1},
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+        )
 
         tests = parse_test_spec(spec_path)
         assert len(tests) == 1
@@ -212,9 +248,13 @@ class TestSpecParser:
     def test_minimal_spec_entry(self, tmp_path):
         """Minimal entry with just model and variables uses all defaults."""
         spec_path = tmp_path / "test_spec.json"
-        spec_path.write_text(json.dumps({
-            "tests": [{"model": "MyLib.Simple", "variables": ["x"]}],
-        }))
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "tests": [{"model": "MyLib.Simple", "variables": ["x"]}],
+                }
+            )
+        )
 
         tests = parse_test_spec(spec_path)
         assert len(tests) == 1
@@ -231,6 +271,7 @@ class TestSpecParser:
 # ---------------------------------------------------------------------------
 # test_registry (discover_tests)
 # ---------------------------------------------------------------------------
+
 
 class TestDiscoverTests:
     def test_discover_from_mo_files(self, sample_models_dir):
@@ -265,7 +306,9 @@ class TestDiscoverTests:
         assert by_id["ModelicaTestingLib.Examples.SpecOnly"].source == "spec"
 
     def test_spec_timeout_and_metrics_survive_merge_with_unittests(
-        self, sample_models_dir, tmp_path,
+        self,
+        sample_models_dir,
+        tmp_path,
     ):
         """Regression: a test discovered from both UnitTests and test_spec
         must keep the spec's ``simulation.timeout`` and ``metrics`` block.
@@ -277,16 +320,24 @@ class TestDiscoverTests:
         with an in-model UnitTests block got the default timeout instead.
         """
         spec_path = tmp_path / "test_spec.json"
-        spec_path.write_text(json.dumps({
-            "tests": [{
-                "model": "ModelicaTestingLib.Examples.SimpleTest",
-                "variables": ["x"],
-                "simulation": {"timeout": 300},
-                "metrics": {
-                    "metric": "nrmse", "variable": "x", "tolerance": 0.01,
-                },
-            }],
-        }))
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {
+                            "model": "ModelicaTestingLib.Examples.SimpleTest",
+                            "variables": ["x"],
+                            "simulation": {"timeout": 300},
+                            "metrics": {
+                                "metric": "nrmse",
+                                "variable": "x",
+                                "tolerance": 0.01,
+                            },
+                        }
+                    ],
+                }
+            )
+        )
 
         config = Config(
             source_path=sample_models_dir,
@@ -333,18 +384,20 @@ def test_field_sources_records_spec_override():
     from dstf.discovery.test_registry import discover_tests
 
     spec = {
-        "tests": [{
-            "model": "MyLib.Foo",
-            "variables": ["x"],
-            "simulation": {"stop_time": 999.0},
-        }],
+        "tests": [
+            {
+                "model": "MyLib.Foo",
+                "variables": ["x"],
+                "simulation": {"stop_time": 999.0},
+            }
+        ],
     }
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         # Stub package.mo so Config.__post_init__ short-circuits the
         # find_package_dir parent-walk (which on WSL trips on unreadable
         # Windows-mount artifacts at the filesystem root).
-        (td / "package.mo").write_text('package MyLib end MyLib;')
+        (td / "package.mo").write_text("package MyLib end MyLib;")
         spec_path = td / "test_spec.json"
         spec_path.write_text(json.dumps(spec))
         config = Config(source_path=td, test_spec_file=spec_path)

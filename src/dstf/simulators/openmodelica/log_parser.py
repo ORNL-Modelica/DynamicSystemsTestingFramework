@@ -32,6 +32,7 @@ from typing import Optional
 @dataclass
 class ParsedOmcOutput:
     """Structured view of what the runner needs from omc stdout."""
+
     success: bool
     result_file: str = ""
     messages: str = ""
@@ -56,7 +57,7 @@ _STR_FIELD_RE = re.compile(
 # Match a numeric-valued record field. Run AFTER stripping string fields from
 # the body (digits in messages would otherwise get misread).
 _NUM_FIELD_RE = re.compile(
-    r'\b(\w+)\s*=\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)',
+    r"\b(\w+)\s*=\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)",
 )
 
 # OM field name -> our internal key
@@ -80,10 +81,8 @@ _NOTICE_RE = re.compile(
 def parse_omc_stdout(text: str) -> ParsedOmcOutput:
     """Parse captured omc stdout into a ``ParsedOmcOutput``."""
     m = _RECORD_RE.search(text)
-    preamble = text if not m else text[:m.start()]
-    error_notices = [
-        mo.group(0).strip() for mo in _NOTICE_RE.finditer(preamble)
-    ]
+    preamble = text if not m else text[: m.start()]
+    error_notices = [mo.group(0).strip() for mo in _NOTICE_RE.finditer(preamble)]
 
     if not m:
         return ParsedOmcOutput(success=False, error_notices=error_notices)

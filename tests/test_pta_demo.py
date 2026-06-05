@@ -17,16 +17,21 @@ from dstf.discovery.test_registry import discover_tests
 PROJECT_ROOT = Path(__file__).parent.parent
 TESTING_JSON = (
     PROJECT_ROOT
-    / "examples" / "modelica" / "ModelicaTestingLib"
-    / "Resources" / "ReferenceResults" / "testing.json"
+    / "examples"
+    / "modelica"
+    / "ModelicaTestingLib"
+    / "Resources"
+    / "ReferenceResults"
+    / "testing.json"
 )
 
 
 def test_demo_recognizer_finds_simulate_only_model():
     config = Config(config_file=str(TESTING_JSON))
     # The demo recognizer is loaded from testing.json
-    assert any(r.name == "demo:icons-example-as-simulate-only"
-               for r in config.recognizers)
+    assert any(
+        r.name == "demo:icons-example-as-simulate-only" for r in config.recognizers
+    )
 
     tests = discover_tests(config)
     by_id = {t.model_id: t for t in tests}

@@ -102,7 +102,7 @@ def read_package_name(package_dir: Path) -> str:
     if not pkg_file.exists():
         raise FileNotFoundError(f"No package.mo in {package_dir}")
     text = pkg_file.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r'package\s+(\w+)', text)
+    m = re.search(r"package\s+(\w+)", text)
     if m:
         return m.group(1)
     raise ValueError(f"Could not parse package name from {pkg_file}")
@@ -251,7 +251,9 @@ class Config:
     simulator: Optional[str] = None
     simulator_path: Optional[str] = None
     show_ide: bool = False
-    simulator_setup: list[str] = field(default_factory=list)  # Commands run after loading libraries
+    simulator_setup: list[str] = field(
+        default_factory=list
+    )  # Commands run after loading libraries
 
     # OS override (auto-detected if not set)
     os_name: Optional[str] = None
@@ -261,7 +263,9 @@ class Config:
 
     # Simulation / comparison
     parallel: int = 1
-    batch_size: Optional[int] = None  # tests per Dymola session; None = ceil(total/parallel) (one big batch per worker)
+    batch_size: Optional[int] = (
+        None  # tests per Dymola session; None = ceil(total/parallel) (one big batch per worker)
+    )
     tolerance: float = DEFAULT_COMPARISON_TOLERANCE
     default_points: bool = False
     timeout: int = 60
@@ -277,7 +281,9 @@ class Config:
     test_spec_file: Optional[Path] = None
 
     # Diagnostic variables: auto-captured from simulation, shown in reports but not compared
-    diagnostic_variables: list[str] = field(default_factory=lambda: ["CPUtime", "EventCounter"])
+    diagnostic_variables: list[str] = field(
+        default_factory=lambda: ["CPUtime", "EventCounter"]
+    )
 
     # Phase 6.0 — interactive.html payload budget. LTTB-decimates trajectories
     # embedded for Plotly rendering; full-resolution arrays remain on disk in
@@ -323,7 +329,7 @@ class Config:
                 search_dirs.insert(0, self.reference_root)
             if self.source_path is not None:
                 pkg = Path(self.source_path).resolve()
-                search_dirs.insert(0, pkg)        # package dir
+                search_dirs.insert(0, pkg)  # package dir
                 search_dirs.insert(0, pkg.parent)  # repo root
             for search_dir in search_dirs:
                 file_config = load_config_file(search_dir)
@@ -373,9 +379,8 @@ class Config:
                 self.source_path if self.source_path else Path.cwd()
             )
             if self.library_name is None:
-                self.library_name = (
-                    file_config.get("library_name")
-                    or (config_found_dir.name if config_found_dir else repo_root.name)
+                self.library_name = file_config.get("library_name") or (
+                    config_found_dir.name if config_found_dir else repo_root.name
                 )
 
         # If no config was found yet (source_path wasn't available for search),
@@ -437,6 +442,7 @@ class Config:
         # take precedence; testing.json fills in if Config wasn't given any.
         if not self.recognizers and "recognizers" in file_config:
             from .discovery.json_recognizer import parse_recognizer_spec
+
             self.recognizers = [
                 parse_recognizer_spec(spec) for spec in file_config["recognizers"]
             ]
@@ -504,8 +510,11 @@ class Config:
             else:
                 sim_dir = self.simulator.replace(" ", "_")
                 self.work_dir = (
-                    Path.cwd() / "testing_output"
-                    / self.library_name / sim_dir / self.os_name
+                    Path.cwd()
+                    / "testing_output"
+                    / self.library_name
+                    / sim_dir
+                    / self.os_name
                 )
         else:
             self.work_dir = Path(self.work_dir).resolve()
@@ -528,4 +537,3 @@ class Config:
     def reference_dir(self) -> Path:
         """Reference results directory, partitioned by simulator backend and OS."""
         return self.reference_root / self.simulator_backend / self.os_name
-

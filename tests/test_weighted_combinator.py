@@ -60,64 +60,76 @@ class TestWeightedCombinator:
 
 class TestWeightedSpecParsing:
     def test_minimal_weighted_spec(self):
-        spec = parse_metric_tree({
-            "combinator": "weighted",
-            "threshold": 0.01,
-            "weights": [0.7, 0.3],
-            "children": [
-                {"metric": "nrmse", "variable": "h"},
-                {"metric": "nrmse", "variable": "v"},
-            ],
-        })
+        spec = parse_metric_tree(
+            {
+                "combinator": "weighted",
+                "threshold": 0.01,
+                "weights": [0.7, 0.3],
+                "children": [
+                    {"metric": "nrmse", "variable": "h"},
+                    {"metric": "nrmse", "variable": "v"},
+                ],
+            }
+        )
         assert spec.combinator == "weighted"
         assert spec.weights == [0.7, 0.3]
         assert spec.threshold == 0.01
         assert spec.direction == "less"
 
     def test_explicit_direction(self):
-        spec = parse_metric_tree({
-            "combinator": "weighted",
-            "threshold": 0.9,
-            "direction": "greater",
-            "weights": [1.0],
-            "children": [{"metric": "tube", "variable": "h"}],
-        })
+        spec = parse_metric_tree(
+            {
+                "combinator": "weighted",
+                "threshold": 0.9,
+                "direction": "greater",
+                "weights": [1.0],
+                "children": [{"metric": "tube", "variable": "h"}],
+            }
+        )
         assert spec.direction == "greater"
 
     def test_missing_weights_raises(self):
         with pytest.raises(MetricSpecError, match="requires a list of weights"):
-            parse_metric_tree({
-                "combinator": "weighted",
-                "threshold": 0.01,
-                "children": [{"metric": "nrmse", "variable": "h"}],
-            })
+            parse_metric_tree(
+                {
+                    "combinator": "weighted",
+                    "threshold": 0.01,
+                    "children": [{"metric": "nrmse", "variable": "h"}],
+                }
+            )
 
     def test_weights_length_mismatch(self):
         with pytest.raises(MetricSpecError, match="length .* must match children"):
-            parse_metric_tree({
-                "combinator": "weighted",
-                "threshold": 0.01,
-                "weights": [0.7],  # 1 weight but 2 children
-                "children": [
-                    {"metric": "nrmse", "variable": "h"},
-                    {"metric": "nrmse", "variable": "v"},
-                ],
-            })
+            parse_metric_tree(
+                {
+                    "combinator": "weighted",
+                    "threshold": 0.01,
+                    "weights": [0.7],  # 1 weight but 2 children
+                    "children": [
+                        {"metric": "nrmse", "variable": "h"},
+                        {"metric": "nrmse", "variable": "v"},
+                    ],
+                }
+            )
 
     def test_missing_threshold(self):
         with pytest.raises(MetricSpecError, match="requires 'threshold'"):
-            parse_metric_tree({
-                "combinator": "weighted",
-                "weights": [1.0],
-                "children": [{"metric": "nrmse", "variable": "h"}],
-            })
+            parse_metric_tree(
+                {
+                    "combinator": "weighted",
+                    "weights": [1.0],
+                    "children": [{"metric": "nrmse", "variable": "h"}],
+                }
+            )
 
     def test_invalid_direction(self):
         with pytest.raises(MetricSpecError, match="must be 'less' or 'greater'"):
-            parse_metric_tree({
-                "combinator": "weighted",
-                "threshold": 0.01,
-                "direction": "sideways",
-                "weights": [1.0],
-                "children": [{"metric": "nrmse", "variable": "h"}],
-            })
+            parse_metric_tree(
+                {
+                    "combinator": "weighted",
+                    "threshold": 0.01,
+                    "direction": "sideways",
+                    "weights": [1.0],
+                    "children": [{"metric": "nrmse", "variable": "h"}],
+                }
+            )

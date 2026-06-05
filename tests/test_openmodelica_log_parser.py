@@ -15,7 +15,7 @@ FIXTURES = Path(__file__).parent / "fixtures" / "results_openmodelica"
 def _synth_record(**overrides) -> str:
     """Build a fake SimulationResult record block for tests."""
     defaults = dict(
-        resultFile='/tmp/test_0001/result_res.mat',
+        resultFile="/tmp/test_0001/result_res.mat",
         simulationOptions="stopTime = 1.0",
         messages="LOG_SUCCESS | info | The simulation finished successfully.",
         timeFrontend=0.1,
@@ -28,18 +28,18 @@ def _synth_record(**overrides) -> str:
     )
     defaults.update(overrides)
     return (
-        'record SimulationResult\n'
+        "record SimulationResult\n"
         f'    resultFile = "{defaults["resultFile"]}",\n'
         f'    simulationOptions = "{defaults["simulationOptions"]}",\n'
         f'    messages = "{defaults["messages"]}",\n'
-        f'    timeFrontend = {defaults["timeFrontend"]},\n'
-        f'    timeBackend = {defaults["timeBackend"]},\n'
-        f'    timeSimCode = {defaults["timeSimCode"]},\n'
-        f'    timeTemplates = {defaults["timeTemplates"]},\n'
-        f'    timeCompile = {defaults["timeCompile"]},\n'
-        f'    timeSimulation = {defaults["timeSimulation"]},\n'
-        f'    timeTotal = {defaults["timeTotal"]}\n'
-        'end SimulationResult;\n'
+        f"    timeFrontend = {defaults['timeFrontend']},\n"
+        f"    timeBackend = {defaults['timeBackend']},\n"
+        f"    timeSimCode = {defaults['timeSimCode']},\n"
+        f"    timeTemplates = {defaults['timeTemplates']},\n"
+        f"    timeCompile = {defaults['timeCompile']},\n"
+        f"    timeSimulation = {defaults['timeSimulation']},\n"
+        f"    timeTotal = {defaults['timeTotal']}\n"
+        "end SimulationResult;\n"
     )
 
 
@@ -53,8 +53,15 @@ class TestParseSuccess:
         )
         assert parsed.result_file.endswith("result_res.mat")
         assert parsed.timings is not None
-        for k in ("frontend", "backend", "simcode", "templates",
-                  "compile", "simulation", "total"):
+        for k in (
+            "frontend",
+            "backend",
+            "simcode",
+            "templates",
+            "compile",
+            "simulation",
+            "total",
+        ):
             assert k in parsed.timings
             assert parsed.timings[k] >= 0.0
 
@@ -77,17 +84,20 @@ class TestParseSuccess:
 
 class TestParseFailure:
     def test_empty_result_file_means_failure(self):
-        p = parse_omc_stdout(_synth_record(
-            resultFile="",
-            messages="Simulation Failed. Model: X does not exist!",
-        ))
+        p = parse_omc_stdout(
+            _synth_record(
+                resultFile="",
+                messages="Simulation Failed. Model: X does not exist!",
+            )
+        )
         assert p.success is False
         assert p.result_file == ""
         assert "does not exist" in p.messages
 
     def test_error_string_before_record(self):
         text = "Error: Failed to load package Foo\n" + _synth_record(
-            resultFile="", messages="",
+            resultFile="",
+            messages="",
         )
         p = parse_omc_stdout(text)
         assert p.success is False
@@ -105,8 +115,7 @@ class TestParseMalformed:
     def test_truncated_record(self):
         """Record start but no end: graceful failure, not an exception."""
         text = (
-            "record SimulationResult\n"
-            '    resultFile = "/tmp/foo.mat",\n'
+            'record SimulationResult\n    resultFile = "/tmp/foo.mat",\n'
             # truncated — no end SimulationResult;
         )
         p = parse_omc_stdout(text)
@@ -115,11 +124,8 @@ class TestParseMalformed:
 
     def test_multiple_notices_stitched(self):
         """Pre-record Error/Warning/Notification lines are preserved."""
-        text = (
-            "Error: thing1\n"
-            "Notification: thing2\n"
-            "Warning: thing3\n"
-            + _synth_record(resultFile="/tmp/r_res.mat", messages="")
+        text = "Error: thing1\nNotification: thing2\nWarning: thing3\n" + _synth_record(
+            resultFile="/tmp/r_res.mat", messages=""
         )
         p = parse_omc_stdout(text)
         joined = "\n".join(p.error_notices)

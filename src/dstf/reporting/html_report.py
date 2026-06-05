@@ -51,7 +51,8 @@ def generate_html_report(
                     '<table class="details"><tr><th>Variable</th>'
                     "<th>NRMSE</th><th>Range</th><th>Max Abs Err</th>"
                     "<th>At Time</th><th>Ref Final</th><th>Act Final</th></tr>"
-                    + "".join(detail_rows) + "</table>"
+                    + "".join(detail_rows)
+                    + "</table>"
                 )
         elif comp.error_message:
             details = f"<em>{html.escape(comp.error_message)}</em>"
@@ -66,14 +67,11 @@ def generate_html_report(
             )
             details += (
                 '<table class="warnings"><tr><th>Field</th>'
-                "<th>Reference</th><th>Current</th></tr>"
-                + warn_rows + "</table>"
+                "<th>Reference</th><th>Current</th></tr>" + warn_rows + "</table>"
             )
 
         model = html.escape(comp.model_id)
-        rows.append(
-            f"<tr><td>{status}</td><td>{model}</td><td>{details}</td></tr>"
-        )
+        rows.append(f"<tr><td>{status}</td><td>{model}</td><td>{details}</td></tr>")
 
     page = f"""<!DOCTYPE html>
 <html>

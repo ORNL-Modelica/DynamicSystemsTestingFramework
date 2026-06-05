@@ -12,6 +12,7 @@ Emits JSON-Schema draft 2020-12 shape. Thin layer — no validation
 logic here (that lives in ``comparison/validator.py`` + parse-time).
 Downstream uses: IDE autocomplete, LLM authoring, tool handoff.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -161,7 +162,10 @@ def build_schema() -> dict:
         "required": ["model"],
         "properties": {
             "model": {"type": "string"},
-            "fmu": {"type": "string", "description": "Path to FMU (relative to config)."},
+            "fmu": {
+                "type": "string",
+                "description": "Path to FMU (relative to config).",
+            },
             "variables": {"type": "array", "items": {"type": "string"}},
             "simulation": {
                 "type": "object",
@@ -208,10 +212,12 @@ def build_schema() -> dict:
         },
         "$defs": {
             "test_entry": test_entry,
-            "tree_node": {"oneOf": [
-                {"$ref": "#/$defs/leaf"},
-                {"$ref": "#/$defs/combinator"},
-            ]},
+            "tree_node": {
+                "oneOf": [
+                    {"$ref": "#/$defs/leaf"},
+                    {"$ref": "#/$defs/combinator"},
+                ]
+            },
             "leaf": leaf_spec,
             "combinator": combinator_spec,
             **mode_defs,

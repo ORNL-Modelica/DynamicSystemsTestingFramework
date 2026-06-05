@@ -130,6 +130,7 @@ def _extract_baselines(data: dict) -> dict[str, Baseline]:
             )
     return out
 
+
 # Pattern matching ref_NNNN.json filenames
 _REF_FILE_PATTERN = re.compile(r"^ref_(\d{4,})\.json$")
 
@@ -194,8 +195,8 @@ class RefIndex:
 
     def __init__(self, ref_dir: Path):
         self.ref_dir = ref_dir
-        self._by_model: dict[str, str] = {}      # model_id -> test_id
-        self._by_id: dict[str, dict] = {}         # test_id -> {model_id, status}
+        self._by_model: dict[str, str] = {}  # model_id -> test_id
+        self._by_id: dict[str, dict] = {}  # test_id -> {model_id, status}
         self._loaded = False
 
     def _scan(self):
@@ -509,7 +510,9 @@ class ReferenceStore:
             try:
                 entry = json.loads(meta_file.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as e:
-                logger.warning("Skipping unreadable companion meta %s: %s", meta_file, e)
+                logger.warning(
+                    "Skipping unreadable companion meta %s: %s", meta_file, e
+                )
                 continue
             # Skip the sibling data file if it has a .json data extension
             # — companion metadata is always the file matching the name
@@ -588,7 +591,8 @@ class ReferenceStore:
                 "companion %r registered but path %r is not currently readable "
                 "(external companions are pointer-only; reporter will degrade "
                 "gracefully if the file stays missing)",
-                name, path_str,
+                name,
+                path_str,
             )
         return True
 
@@ -690,11 +694,13 @@ class ReferenceStore:
         variables = []
         for var in result.variables:
             _, values_list = _downsample(shared_time, var.values)
-            variables.append({
-                "index": var.index,
-                "name": var.name,
-                "values": values_list,
-            })
+            variables.append(
+                {
+                    "index": var.index,
+                    "name": var.name,
+                    "values": values_list,
+                }
+            )
 
         now = datetime.now(timezone.utc).isoformat()
         date_added = now
@@ -735,7 +741,10 @@ class ReferenceStore:
             existing_comp = existing["comparison"]
             if "tolerance" not in comparison and "tolerance" in existing_comp:
                 comparison["tolerance"] = existing_comp["tolerance"]
-            if "variable_overrides" not in comparison and "variable_overrides" in existing_comp:
+            if (
+                "variable_overrides" not in comparison
+                and "variable_overrides" in existing_comp
+            ):
                 comparison["variable_overrides"] = existing_comp["variable_overrides"]
         if comparison:
             ref_data["comparison"] = comparison
@@ -780,9 +789,7 @@ class ReferenceStore:
             if extras:
                 ref_data["baselines"] = extras
 
-        ref_file.write_text(
-            json.dumps(ref_data, indent=2) + "\n", encoding="utf-8"
-        )
+        ref_file.write_text(json.dumps(ref_data, indent=2) + "\n", encoding="utf-8")
 
         return True
 
@@ -810,9 +817,7 @@ class ReferenceStore:
         try:
             data = json.loads(ref_file.read_text(encoding="utf-8"))
             data["status"] = status
-            ref_file.write_text(
-                json.dumps(data, indent=2) + "\n", encoding="utf-8"
-            )
+            ref_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             # Update in-memory index
             test_id = self._index.get_id(model_id)
             if test_id and test_id in self._index._by_id:
@@ -838,9 +843,7 @@ class ReferenceStore:
                 all_refs[model_id] = ref
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(all_refs, indent=2) + "\n", encoding="utf-8"
-        )
+        output_path.write_text(json.dumps(all_refs, indent=2) + "\n", encoding="utf-8")
 
     def export_csv(self, output_path: Path):
         """Export a summary CSV of all references."""
@@ -849,25 +852,36 @@ class ReferenceStore:
 
         with open(output_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "test_id", "model_id", "status", "n_vars", "stop_time",
-                "tolerance", "method", "date_added", "last_updated",
-            ])
+            writer.writerow(
+                [
+                    "test_id",
+                    "model_id",
+                    "status",
+                    "n_vars",
+                    "stop_time",
+                    "tolerance",
+                    "method",
+                    "date_added",
+                    "last_updated",
+                ]
+            )
             for model_id in models:
                 ref = self.get_reference(model_id)
                 if ref:
                     sim = ref.get("simulation", {})
-                    writer.writerow([
-                        ref.get("test_id", ""),
-                        model_id,
-                        ref.get("status", "active"),
-                        ref.get("n_vars", ""),
-                        sim.get("stop_time", ""),
-                        sim.get("tolerance", ""),
-                        sim.get("method", ""),
-                        ref.get("date_added", ""),
-                        ref.get("last_updated", ""),
-                    ])
+                    writer.writerow(
+                        [
+                            ref.get("test_id", ""),
+                            model_id,
+                            ref.get("status", "active"),
+                            ref.get("n_vars", ""),
+                            sim.get("stop_time", ""),
+                            sim.get("tolerance", ""),
+                            sim.get("method", ""),
+                            ref.get("date_added", ""),
+                            ref.get("last_updated", ""),
+                        ]
+                    )
 
     def cleanup_obsolete(self) -> int:
         """Remove reference files with status 'obsolete'."""
@@ -902,7 +916,7 @@ def _downsample(
     for i in range(1, n):
         if time[i] == time[i - 1]:
             event_indices.add(i - 1)  # pre-event
-            event_indices.add(i)      # post-event
+            event_indices.add(i)  # post-event
 
     # Fill remaining budget with evenly spaced indices
     remaining = max_points - len(event_indices)

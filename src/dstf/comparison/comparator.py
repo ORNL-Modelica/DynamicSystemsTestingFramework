@@ -76,9 +76,15 @@ def _check_structural_changes(
     checks = [
         ("translation.continuous_time_states", "Continuous states"),
         ("translation.nonlinear_count", "Nonlinear system count"),
-        ("translation.nonlinear_after_manipulation_max", "Nonlinear max size (after manipulation)"),
+        (
+            "translation.nonlinear_after_manipulation_max",
+            "Nonlinear max size (after manipulation)",
+        ),
         ("translation.linear_count", "Linear system count"),
-        ("translation.linear_after_manipulation_max", "Linear max size (after manipulation)"),
+        (
+            "translation.linear_after_manipulation_max",
+            "Linear max size (after manipulation)",
+        ),
         ("translation.scalar_unknowns", "Scalar unknowns"),
         ("translation.scalar_equations", "Scalar equations"),
         ("translation.numerical_jacobians", "Numerical Jacobians"),
@@ -98,11 +104,13 @@ def _check_structural_changes(
         if ref_val is None or cur_val is None:
             continue
         if str(ref_val) != str(cur_val):
-            warnings.append(StructuralWarning(
-                field=label,
-                reference_value=str(ref_val),
-                current_value=str(cur_val),
-            ))
+            warnings.append(
+                StructuralWarning(
+                    field=label,
+                    reference_value=str(ref_val),
+                    current_value=str(cur_val),
+                )
+            )
 
     return warnings
 
@@ -148,6 +156,7 @@ def compare_test(
     # and the whole baseline machinery. The sim already succeeded above.
     if test.simulate_only:
         from .metric_tree import MetricResult
+
         leaf = MetricResult(
             passed=True,
             score=None,
@@ -186,6 +195,7 @@ def compare_test(
     if test.metric_tree_spec is not None:
         from ..storage.reference_store import _extract_baselines
         from .tree_eval import BaselineView
+
         var_results_by_name = {v.name: v for v in result.variables if v.name}
         # Load primary from the flat ref file; merge in soft_checks from the
         # `soft_checks/ref_NNNN/` subdir when a store is supplied (D66). Leaves
@@ -256,18 +266,22 @@ def compare_test(
                 vc.tolerance_used = tolerance
                 comparisons.append(vc)
                 continue
-            comparisons.append(VariableComparison(
-                index=var_result.index,
-                name=var_result.name,
-                passed=False,
-                nrmse=float("inf"),
-                rmse=float("inf"),
-                signal_range=0.0,
-                max_abs_error=float("inf"),
-                max_abs_error_time=0.0,
-                reference_final=float("nan"),
-                actual_final=float(var_result.values[-1]) if len(var_result.values) > 0 else float("nan"),
-            ))
+            comparisons.append(
+                VariableComparison(
+                    index=var_result.index,
+                    name=var_result.name,
+                    passed=False,
+                    nrmse=float("inf"),
+                    rmse=float("inf"),
+                    signal_range=0.0,
+                    max_abs_error=float("inf"),
+                    max_abs_error_time=0.0,
+                    reference_final=float("nan"),
+                    actual_final=float(var_result.values[-1])
+                    if len(var_result.values) > 0
+                    else float("nan"),
+                )
+            )
             continue
 
         if shared_ref_time is not None:
@@ -299,7 +313,8 @@ def compare_test(
 
 
 def _test_is_baseline_free(
-    test: TestModel, default_tolerance: float,
+    test: TestModel,
+    default_tolerance: float,
 ) -> bool:
     """Does every leaf in ``test``'s metric tree score without a reference?
 
@@ -372,18 +387,21 @@ def compare_all(
 ) -> list[TestComparison]:
     """Compare all test results against stored references."""
     import sys as _sys
+
     print(f"Comparing {len(tests)} tests against references...", file=_sys.stderr)
     comparisons = []
 
     for test in tests:
         result = results.get(test.model_id)
         if result is None:
-            comparisons.append(TestComparison(
-                model_id=test.model_id,
-                passed=False,
-                sim_success=False,
-                error_message="No simulation results found",
-            ))
+            comparisons.append(
+                TestComparison(
+                    model_id=test.model_id,
+                    passed=False,
+                    sim_success=False,
+                    error_message="No simulation results found",
+                )
+            )
             continue
 
         reference = store.get_reference(test.model_id)
@@ -403,16 +421,20 @@ def compare_all(
             and not test.simulate_only
             and not _test_is_baseline_free(test, default_tolerance)
         ):
-            comparisons.append(TestComparison(
-                model_id=test.model_id,
-                passed=True,
-                has_reference=False,
-                error_message="No reference baseline stored",
-            ))
+            comparisons.append(
+                TestComparison(
+                    model_id=test.model_id,
+                    passed=True,
+                    has_reference=False,
+                    error_message="No reference baseline stored",
+                )
+            )
             continue
 
         comp = compare_test(
-            test, result, reference if reference is not None else {},
+            test,
+            result,
+            reference if reference is not None else {},
             default_tolerance=default_tolerance,
             default_points=default_points,
             store=store,

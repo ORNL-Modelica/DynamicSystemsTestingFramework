@@ -81,17 +81,17 @@ class FmpyRunner(SimulatorRunner):
     cross-backend verification.
     """
 
-    capabilities = frozenset({
-        Capability.PERSISTENT_WORKERS,  # FMPy instances are cheap to keep alive
-        # Deliberately absent:
-        #   BATCH_FALLBACK — FMPy *is* the Python path; no script fallback exists
-        #   FMU_EXPORT — FMPy consumes FMUs, doesn't produce them
-        #   EXPERIMENT_INGEST — not applicable
-    })
-    produced_datasets = frozenset({DatasetType.TIME_SERIES})
-    artifact_files = (
-        ("result.npz", "Result file"),
+    capabilities = frozenset(
+        {
+            Capability.PERSISTENT_WORKERS,  # FMPy instances are cheap to keep alive
+            # Deliberately absent:
+            #   BATCH_FALLBACK — FMPy *is* the Python path; no script fallback exists
+            #   FMU_EXPORT — FMPy consumes FMUs, doesn't produce them
+            #   EXPERIMENT_INGEST — not applicable
+        }
     )
+    produced_datasets = frozenset({DatasetType.TIME_SERIES})
+    artifact_files = (("result.npz", "Result file"),)
 
     #: Filename used for the on-disk structured-array cache per test.
     RESULT_FILENAME = "result.npz"
@@ -105,7 +105,7 @@ class FmpyRunner(SimulatorRunner):
         except ImportError as exc:
             raise ImportError(
                 "The FMPy backend requires the optional 'fmpy' extra: "
-                "uv pip install -e \".[fmpy]\""
+                'uv pip install -e ".[fmpy]"'
             ) from exc
 
     # ------------------------------------------------------------------
@@ -155,7 +155,7 @@ class FmpyRunner(SimulatorRunner):
             solver = _SOLVER_MAP.get(test.method, "CVode")
             sim_kwargs = {
                 "filename": str(fmu_path),
-                "validate": False,       # trust Reference-FMUs; validate adds startup cost
+                "validate": False,  # trust Reference-FMUs; validate adds startup cost
                 "stop_time": test.stop_time,
                 "solver": solver,
                 "relative_tolerance": test.tolerance,
@@ -164,7 +164,9 @@ class FmpyRunner(SimulatorRunner):
             if test.output_interval is not None:
                 sim_kwargs["output_interval"] = test.output_interval
             elif test.number_of_intervals is not None and test.number_of_intervals > 0:
-                sim_kwargs["output_interval"] = test.stop_time / test.number_of_intervals
+                sim_kwargs["output_interval"] = (
+                    test.stop_time / test.number_of_intervals
+                )
 
             if self.progress:
                 self.progress.on_phase(test_key, "simulating")
@@ -187,8 +189,11 @@ class FmpyRunner(SimulatorRunner):
                 logger.warning("Test %s: %s", test.model_id, msg)
                 if self.progress:
                     self.progress.on_finish(
-                        test_key, success=False, elapsed=elapsed,
-                        detail=msg, timed_out=True,
+                        test_key,
+                        success=False,
+                        elapsed=elapsed,
+                        detail=msg,
+                        timed_out=True,
                     )
                 return TestRunResult(
                     model_id=test.model_id,
@@ -207,7 +212,10 @@ class FmpyRunner(SimulatorRunner):
             logger.warning("Test %s: %s", test.model_id, msg)
             if self.progress:
                 self.progress.on_finish(
-                    test_key, success=False, elapsed=elapsed, detail=msg,
+                    test_key,
+                    success=False,
+                    elapsed=elapsed,
+                    detail=msg,
                 )
             return TestRunResult(
                 model_id=test.model_id,
@@ -289,6 +297,7 @@ class FmpyRunner(SimulatorRunner):
 # ---------------------------------------------------------------------------
 # Helpers (free functions for testability)
 # ---------------------------------------------------------------------------
+
 
 def _resolve_fmu_path(test: TestModel) -> Optional[Path]:
     """Get the FMU binary path for a test.

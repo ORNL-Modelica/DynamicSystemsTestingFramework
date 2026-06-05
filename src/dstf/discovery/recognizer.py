@@ -32,6 +32,7 @@ class RecognizerResult:
     PTA.4 broadens this with runtime-behavior fields (``simulate_only``,
     ``requested_fmu_export``, ...).
     """
+
     model_id: str
     source_file: Optional[Path] = None
     # Variables-to-track contribution (was UnitTestInfo)

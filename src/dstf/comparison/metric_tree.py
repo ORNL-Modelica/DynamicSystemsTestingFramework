@@ -30,6 +30,7 @@ from .comparator import VariableComparison
 # Uniform metric result (combinator output shape)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class MetricResult:
     """Uniform shape produced by both leaves and combinators.
@@ -62,6 +63,7 @@ class MetricResult:
 # Combinator protocol
 # ---------------------------------------------------------------------------
 
+
 class Combinator(ABC):
     """Strategy interface for combining child metric results into one."""
 
@@ -69,8 +71,7 @@ class Combinator(ABC):
     name: str = ""
 
     @abstractmethod
-    def combine(self, children: list[MetricResult]) -> MetricResult:
-        ...
+    def combine(self, children: list[MetricResult]) -> MetricResult: ...
 
 
 class AndCombinator(Combinator):
@@ -230,7 +231,9 @@ class WarnCombinator(Combinator):
 
     def combine(self, children: list[MetricResult]) -> MetricResult:
         if len(children) != 1:
-            raise ValueError(f"warn combinator expects exactly 1 child, got {len(children)}")
+            raise ValueError(
+                f"warn combinator expects exactly 1 child, got {len(children)}"
+            )
         child = children[0]
         # Surface child's failure (if any) as a warning in diagnostics; parent
         # passes regardless. Score is intentionally None — a warn branch does
@@ -248,6 +251,7 @@ class WarnCombinator(Combinator):
 # ---------------------------------------------------------------------------
 # Leaf adapter + implicit-tree construction
 # ---------------------------------------------------------------------------
+
 
 def leaf_from_variable(vc: VariableComparison) -> MetricResult:
     """Adapt a per-variable ``VariableComparison`` to a leaf ``MetricResult``.

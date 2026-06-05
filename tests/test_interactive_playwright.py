@@ -18,6 +18,7 @@ the standalone ``interactive.js`` alongside the HTML so the
 ``<script src="interactive.js">`` reference resolves — then opens the
 file URL in headless Chromium and exercises the UI.
 """
+
 from __future__ import annotations
 
 import json
@@ -38,14 +39,25 @@ from playwright.sync_api import Page, sync_playwright
 
 _JS_SRC = (
     Path(__file__).resolve().parents[1]
-    / "src" / "dstf" / "reporting" / "templates" / "interactive.js"
+    / "src"
+    / "dstf"
+    / "reporting"
+    / "templates"
+    / "interactive.js"
 )
 _TEMPLATE_DIR = _JS_SRC.parent
 
 
-def _leaf(*, path: str, metric: str, variable: str, params: dict,
-          passed: bool = True, score: float = 1e-5,
-          window: dict | None = None) -> dict:
+def _leaf(
+    *,
+    path: str,
+    metric: str,
+    variable: str,
+    params: dict,
+    passed: bool = True,
+    score: float = 1e-5,
+    window: dict | None = None,
+) -> dict:
     return {
         "kind": "leaf",
         "path": path,
@@ -60,9 +72,13 @@ def _leaf(*, path: str, metric: str, variable: str, params: dict,
         "label": variable,
         "name": variable,
         "mode_effective": metric,
-        "nrmse": 1e-5, "rmse": 1e-5, "signal_range": 2.0,
-        "max_abs_error": 1e-5, "max_abs_error_time": 5.0,
-        "reference_final": 0.0, "actual_final": 0.0,
+        "nrmse": 1e-5,
+        "rmse": 1e-5,
+        "signal_range": 2.0,
+        "max_abs_error": 1e-5,
+        "max_abs_error_time": 5.0,
+        "reference_final": 0.0,
+        "actual_final": 0.0,
         "is_constant": False,
         "tolerance_used": params.get("tolerance", 1e-4),
         "score_display": f"{metric} 1e-5",
@@ -86,23 +102,23 @@ def _mode_controls_html(metric: str, params: dict) -> str:
         val = params.get("tolerance", 1e-4)
         return (
             '<div class="mode-controls" data-mode="%s" data-variable="x">'
-            '<label><span>Tolerance</span>'
+            "<label><span>Tolerance</span>"
             '<input type="number" step="any" data-field="tolerance" value="%s"></label>'
             "</div>" % (metric, val)
         )
     if metric == "range":
         return (
             '<div class="mode-controls" data-mode="range" data-variable="x">'
-            '<label><span>Min value</span>'
+            "<label><span>Min value</span>"
             '<input type="number" step="any" data-field="min_value" value="%s"></label>'
-            '<label><span>Max value</span>'
+            "<label><span>Max value</span>"
             '<input type="number" step="any" data-field="max_value" value="%s"></label>'
             "</div>" % (params.get("min_value", ""), params.get("max_value", ""))
         )
     if metric == "tube":
         return (
             '<div class="mode-controls" data-mode="tube" data-variable="x">'
-            '<label><span>tube_rel</span>'
+            "<label><span>tube_rel</span>"
             '<input type="number" step="any" data-field="tube_rel" value="%s"></label>'
             "</div>" % params.get("tube_rel", 0)
         )
@@ -133,30 +149,44 @@ def _fixture_context() -> dict:
         "kind": "combinator",
         "combinator": "and",
         "path": "/metrics",
-        "passed": True, "label": "and[3]",
+        "passed": True,
+        "label": "and[3]",
         "children": [
-            _leaf(path="/metrics/children/0",
-                  metric="nrmse", variable="h",
-                  params={"tolerance": 1e-3}),
-            _leaf(path="/metrics/children/1",
-                  metric="range", variable="h",
-                  params={"min_value": -0.01, "max_value": 1.1}),
+            _leaf(
+                path="/metrics/children/0",
+                metric="nrmse",
+                variable="h",
+                params={"tolerance": 1e-3},
+            ),
+            _leaf(
+                path="/metrics/children/1",
+                metric="range",
+                variable="h",
+                params={"min_value": -0.01, "max_value": 1.1},
+            ),
             {
-                "kind": "combinator", "combinator": "warn",
-                "path": "/metrics/children/2", "passed": True,
+                "kind": "combinator",
+                "combinator": "warn",
+                "path": "/metrics/children/2",
+                "passed": True,
                 "label": "warn",
                 "children": [
-                    _leaf(path="/metrics/children/2/children/0",
-                          metric="tube", variable="v",
-                          params={"tube_rel": 0.05}),
+                    _leaf(
+                        path="/metrics/children/2/children/0",
+                        metric="tube",
+                        variable="v",
+                        params={"tube_rel": 0.05},
+                    ),
                 ],
             },
         ],
     }
+
     # Simple trajectories — enough time points that LTTB decimation
     # doesn't kick in.
     def traj(name):
         import numpy as np
+
         t = np.linspace(0, 3, 50).tolist()
         if name == "v":
             # Shifted so ref is always >= 1 — avoids zero-crossing so a 5%
@@ -173,26 +203,47 @@ def _fixture_context() -> dict:
             # real error, not compute 0 from identical arrays.
             act = [v + 9e-6 for v in ref]
         return {
-            "index": 1, "name": name,
-            "act_time": t, "act_values": act,
-            "ref_time": t, "ref_values": ref,
+            "index": 1,
+            "name": name,
+            "act_time": t,
+            "act_values": act,
+            "ref_time": t,
+            "ref_values": ref,
         }
 
     variables_by_name = {
-        "h": {"name": "h", "trajectory": traj("h"), "overlays": [], "leaf_paths": ["/metrics/children/0", "/metrics/children/1"]},
-        "v": {"name": "v", "trajectory": traj("v"), "overlays": [], "leaf_paths": ["/metrics/children/2/children/0"]},
+        "h": {
+            "name": "h",
+            "trajectory": traj("h"),
+            "overlays": [],
+            "leaf_paths": ["/metrics/children/0", "/metrics/children/1"],
+        },
+        "v": {
+            "name": "v",
+            "trajectory": traj("v"),
+            "overlays": [],
+            "leaf_paths": ["/metrics/children/2/children/0"],
+        },
     }
 
     return {
         "model_id": "Fixture.Playwright",
-        "n_passed": 3, "sim_failed": False,
-        "last_run_at": 0, "last_run_str": "",
-        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
+        "n_passed": 3,
+        "sim_failed": False,
+        "last_run_at": 0,
+        "last_run_str": "",
+        "warnings": [],
+        "key_stats": {},
+        "ref_info": [],
+        "sim_params": [],
         "statistics_sections": [],
         "diagnostic_summaries": [],
         "artifacts": [],
-        "trajectories": list(variables_by_name[k]["trajectory"] for k in variables_by_name),
-        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "trajectories": list(
+            variables_by_name[k]["trajectory"] for k in variables_by_name
+        ),
+        "diag_trajectories": [],
+        "nobaseline_trajectories": [],
         "spec_path": "",
         "tree_view": tree,
         "variables_by_name": variables_by_name,
@@ -236,7 +287,9 @@ def rendered_page(tmp_path, playwright_browser) -> Iterator[Page]:
     context = playwright_browser.new_context()
     page = context.new_page()
     # Bubble JS errors up to the test as a sanity signal.
-    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.on(
+        "pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False)
+    )
     page.goto(html_path.as_uri())
     # Wait for the JS to finish DOMContentLoaded initialization.
     page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
@@ -247,6 +300,7 @@ def rendered_page(tmp_path, playwright_browser) -> Iterator[Page]:
 # ---------------------------------------------------------------------------
 # Tests — structure + activation
 # ---------------------------------------------------------------------------
+
 
 def test_per_variable_sections_rendered(rendered_page: Page):
     """Two unique variables → two variable sections."""
@@ -279,7 +333,9 @@ def test_clicking_leaf_activates_it(rendered_page: Page):
     active = rendered_page.evaluate("activeLeafPath")
     assert active == "/metrics/children/0"
     # Both mounts should carry .node-active on that path
-    active_nodes = rendered_page.locator('[data-path="/metrics/children/0"].node-active')
+    active_nodes = rendered_page.locator(
+        '[data-path="/metrics/children/0"].node-active'
+    )
     assert active_nodes.count() >= 1
 
 
@@ -309,21 +365,24 @@ def test_clicking_different_leaf_switches_activation(rendered_page: Page):
 # Tests — editing state
 # ---------------------------------------------------------------------------
 
+
 def test_editing_tolerance_updates_leaf_state(rendered_page: Page):
     """Type in the tolerance input → leafState.params.tolerance flips."""
-    selector = '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    selector = (
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    )
     inp = rendered_page.locator(selector).first
     inp.fill("0.01")
     inp.dispatch_event("input")
-    val = rendered_page.evaluate(
-        "leafState['/metrics/children/0'].params.tolerance"
-    )
+    val = rendered_page.evaluate("leafState['/metrics/children/0'].params.tolerance")
     assert val == pytest.approx(0.01)
 
 
 def test_cross_mount_input_sync(rendered_page: Page):
     """Edit in full-tree mount → per-variable mount's input reflects it."""
-    full_sel = '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    full_sel = (
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    )
     var_sel = '#nodes-0 [data-path="/metrics/children/0"] input[data-field="tolerance"]'
     full = rendered_page.locator(full_sel).first
     var_inp = rendered_page.locator(var_sel).first
@@ -334,7 +393,9 @@ def test_cross_mount_input_sync(rendered_page: Page):
 
 def test_window_inputs_round_trip_through_leafstate(rendered_page: Page):
     """Filling window_start/end updates leafState.window."""
-    sel = '#nodes-full [data-path="/metrics/children/0"] input[data-field="window_start"]'
+    sel = (
+        '#nodes-full [data-path="/metrics/children/0"] input[data-field="window_start"]'
+    )
     inp = rendered_page.locator(sel).first
     inp.fill("1.0")
     inp.dispatch_event("input")
@@ -409,7 +470,8 @@ def test_buildPatchData_reflects_scalar_edit(rendered_page: Page):
     assert payload["model"] == "Fixture.Playwright"
     ops = payload["patch"]
     tolerance_op = next(
-        (o for o in ops if o["path"].endswith("/tolerance")), None,
+        (o for o in ops if o["path"].endswith("/tolerance")),
+        None,
     )
     assert tolerance_op is not None, f"no tolerance op found in {ops}"
     assert tolerance_op["value"] == pytest.approx(0.1)
@@ -430,7 +492,8 @@ def test_buildPatchData_emits_window_add(rendered_page: Page):
     ).first.dispatch_event("input")
     payload = rendered_page.evaluate("buildPatchData()")
     window_op = next(
-        (o for o in payload["patch"] if o["path"].endswith("/window")), None,
+        (o for o in payload["patch"] if o["path"].endswith("/window")),
+        None,
     )
     assert window_op is not None
     assert window_op["op"] == "add"
@@ -440,6 +503,7 @@ def test_buildPatchData_emits_window_add(rendered_page: Page):
 # ---------------------------------------------------------------------------
 # Tests — structural editing (+ / −)
 # ---------------------------------------------------------------------------
+
 
 def test_remove_leaf_shows_inline_confirm_then_removes(rendered_page: Page):
     """Clicking − opens an inline confirm (not a browser dialog); ✓
@@ -569,7 +633,7 @@ def test_add_leaf_from_per_variable_mount_locks_variable(rendered_page: Page):
     """Clicking + inside a per-variable mount opens the modal with the
     variable pre-filled + readonly so the new leaf stays on-topic."""
     add_btn = rendered_page.locator(
-        '#nodes-0 .node-combinator > .node-header .node-btn-add'
+        "#nodes-0 .node-combinator > .node-header .node-btn-add"
     ).first
     add_btn.click()
     var_inp = rendered_page.locator("#add-leaf-variable")
@@ -618,6 +682,7 @@ def test_add_leaf_modal_datalist_populated(rendered_page: Page):
 # ---------------------------------------------------------------------------
 # Tests — plot-editor wiring (require Plotly CDN)
 # ---------------------------------------------------------------------------
+
 
 def _has_plotly(page: Page) -> bool:
     return page.evaluate("typeof Plotly !== 'undefined'")
@@ -808,9 +873,12 @@ def test_tube_shift_right_click_removes_control_point(rendered_page: Page):
     rendered_page.evaluate(
         "leafState['/metrics/children/2/children/0'].params.tube_points[0].time = 1.0"
     )
-    assert rendered_page.evaluate(
-        "(leafState['/metrics/children/2/children/0'].params.tube_points||[]).length"
-    ) == 2
+    assert (
+        rendered_page.evaluate(
+            "(leafState['/metrics/children/2/children/0'].params.tube_points||[]).length"
+        )
+        == 2
+    )
 
     # v2 editor wires right-click removal on the ``contextmenu`` event
     # (mousedown with button 2 is a no-op). Synthesize contextmenu at
@@ -856,10 +924,10 @@ def test_switching_leaves_does_not_stack_window_brush(rendered_page: Page):
     if not _has_plotly(rendered_page):
         pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     paths = [
-        "/metrics/children/0",               # nrmse on h
-        "/metrics/children/1",               # range on h
-        "/metrics/children/2/children/0",    # tube on v (warn-wrapped)
-        "/metrics/children/0",               # back to the first
+        "/metrics/children/0",  # nrmse on h
+        "/metrics/children/1",  # range on h
+        "/metrics/children/2/children/0",  # tube on v (warn-wrapped)
+        "/metrics/children/0",  # back to the first
     ]
     for p in paths:
         rendered_page.locator(
@@ -928,7 +996,7 @@ def test_tube_control_point_markers_not_in_legend(rendered_page: Page):
     """)
     # No "Tube upper pts" or "Tube lower pts" in visible legend
     for name in legend_entries:
-        assert 'pts' not in name.lower(), f"marker trace {name!r} leaked into legend"
+        assert "pts" not in name.lower(), f"marker trace {name!r} leaked into legend"
 
 
 def test_error_overlay_dropdown_adds_and_removes_trace(rendered_page: Page):
@@ -1013,9 +1081,7 @@ def test_change_kind_to_warn_on_multi_child_is_refused(rendered_page: Page):
     false and the tree stays unchanged."""
     # The disabled <option> means Playwright's select_option would error;
     # verify by calling the API directly (mimics a hypothetical alt path).
-    result = rendered_page.evaluate(
-        "changeCombinatorKind('/metrics', 'warn')"
-    )
+    result = rendered_page.evaluate("changeCombinatorKind('/metrics', 'warn')")
     assert result is False
     assert rendered_page.evaluate("WORKING_TREE.combinator") == "and"
 
@@ -1282,9 +1348,7 @@ def test_edit_survives_path_shift_via_remove(rendered_page: Page):
         "leafState['/metrics/children/0'].params.min_value"
     ) == pytest.approx(-0.99)
     # Old path cleared.
-    assert rendered_page.evaluate(
-        "'/metrics/children/1' in leafState"
-    ) is False
+    assert rendered_page.evaluate("'/metrics/children/1' in leafState") is False
     # DOM input shows the edit post-render.
     inp_after = rendered_page.locator(
         '#nodes-full [data-path="/metrics/children/0"] input[data-field="min_value"]'
@@ -1302,9 +1366,7 @@ def test_edit_survives_wrap(rendered_page: Page):
     inp.fill("0.02")
     inp.dispatch_event("input")
     # Wrap in warn via API (popup tested separately).
-    rendered_page.evaluate(
-        "wrapWorkingNode('/metrics/children/0', 'warn')"
-    )
+    rendered_page.evaluate("wrapWorkingNode('/metrics/children/0', 'warn')")
     # State migrated to deeper path.
     assert rendered_page.evaluate(
         "leafState['/metrics/children/0/children/0'].params.tolerance"
@@ -1425,9 +1487,10 @@ def test_reset_button_restores_original_window(rendered_page: Page):
         '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-reset'
     ).first.click()
     # Window cleared (original was {}).
-    assert rendered_page.evaluate(
-        "Object.keys(leafState['/metrics/children/0'].window)"
-    ) == []
+    assert (
+        rendered_page.evaluate("Object.keys(leafState['/metrics/children/0'].window)")
+        == []
+    )
 
 
 def test_detect_respects_leaf_window_and_source(tmp_path, playwright_browser):
@@ -1446,48 +1509,65 @@ def test_detect_respects_leaf_window_and_source(tmp_path, playwright_browser):
     _n = 512
     _t_end = 4.0
     _times = [i * _t_end / (_n - 1) for i in range(_n)]
-    _ref_vals = [
-        (math.sin(2 * math.pi * 2.0 * t) if t <= 2.0 else 0.0)
-        for t in _times
-    ]
-    _act_vals = [
-        (math.sin(2 * math.pi * 5.0 * t) if t > 2.0 else 0.0)
-        for t in _times
-    ]
+    _ref_vals = [(math.sin(2 * math.pi * 2.0 * t) if t <= 2.0 else 0.0) for t in _times]
+    _act_vals = [(math.sin(2 * math.pi * 5.0 * t) if t > 2.0 else 0.0) for t in _times]
     leaf = _leaf(
-        path="/metrics/children/0", metric="dominant-frequency",
+        path="/metrics/children/0",
+        metric="dominant-frequency",
         variable="osc",
         params={"peaks": []},
     )
     leaf["spectrum"] = {
-        "ref_freq": [], "ref_mag": [],
-        "act_freq": [], "act_mag": [],
-        "peaks_declared": [], "paired_peaks": [],
+        "ref_freq": [],
+        "ref_mag": [],
+        "act_freq": [],
+        "act_mag": [],
+        "peaks_declared": [],
+        "paired_peaks": [],
         "detected_reference_peaks_hz": [],
     }
     leaf["cli_authoritative"] = False
     tree = {
-        "kind": "combinator", "combinator": "and", "path": "/metrics",
-        "passed": False, "label": "and[1]", "children": [leaf],
+        "kind": "combinator",
+        "combinator": "and",
+        "path": "/metrics",
+        "passed": False,
+        "label": "and[1]",
+        "children": [leaf],
     }
     traj = {
-        "index": 1, "name": "osc",
-        "act_time": _times, "act_values": _act_vals,
-        "ref_time": _times, "ref_values": _ref_vals,
+        "index": 1,
+        "name": "osc",
+        "act_time": _times,
+        "act_values": _act_vals,
+        "ref_time": _times,
+        "ref_values": _ref_vals,
     }
     ctx = {
         "model_id": "Fixture.WindowedDetect",
-        "n_passed": 0, "sim_failed": False,
-        "last_run_at": 0, "last_run_str": "",
-        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
-        "statistics_sections": [], "diagnostic_summaries": [], "artifacts": [],
+        "n_passed": 0,
+        "sim_failed": False,
+        "last_run_at": 0,
+        "last_run_str": "",
+        "warnings": [],
+        "key_stats": {},
+        "ref_info": [],
+        "sim_params": [],
+        "statistics_sections": [],
+        "diagnostic_summaries": [],
+        "artifacts": [],
         "trajectories": [traj],
-        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "diag_trajectories": [],
+        "nobaseline_trajectories": [],
         "spec_path": "",
         "tree_view": tree,
         "variables_by_name": {
-            "osc": {"name": "osc", "trajectory": traj, "overlays": [],
-                    "leaf_paths": ["/metrics/children/0"]},
+            "osc": {
+                "name": "osc",
+                "trajectory": traj,
+                "overlays": [],
+                "leaf_paths": ["/metrics/children/0"],
+            },
         },
         "mode_schemas": {},
         "overlay_rows": [],
@@ -1499,7 +1579,9 @@ def test_detect_respects_leaf_window_and_source(tmp_path, playwright_browser):
     _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
     context = playwright_browser.new_context()
     page = context.new_page()
-    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.on(
+        "pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False)
+    )
     page.goto(html_path.as_uri())
     page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
     page.evaluate("activateLeaf(TREE_VIEW.children[0])")
@@ -1521,8 +1603,9 @@ def test_detect_respects_leaf_window_and_source(tmp_path, playwright_browser):
         f"expected 2 Hz peak from windowed reference, got {freqs}"
     )
     # Each seeded peak carries derived_from_window = {start: 0, end: 2}.
-    assert all(pk.get("derived_from_window") == {"start": 0.0, "end": 2.0}
-               for pk in pks)
+    assert all(
+        pk.get("derived_from_window") == {"start": 0.0, "end": 2.0} for pk in pks
+    )
 
     # Switch to Actual + window [2, 4] → expect ~5 Hz.
     page.evaluate("""
@@ -1538,8 +1621,9 @@ def test_detect_respects_leaf_window_and_source(tmp_path, playwright_browser):
     assert any(abs(f - 5.0) < 0.8 for f in freqs2), (
         f"expected 5 Hz peak from windowed actual, got {freqs2}"
     )
-    assert all(pk.get("derived_from_window") == {"start": 2.0, "end": 4.0}
-               for pk in pks2)
+    assert all(
+        pk.get("derived_from_window") == {"start": 2.0, "end": 4.0} for pk in pks2
+    )
     context.close()
 
 
@@ -1549,11 +1633,10 @@ def test_visibility_toggle_syncs_across_mounts(rendered_page: Page):
     the same leafState.visible, but pre-fix, sibling DOM drifted)."""
     full_sel = (
         '#nodes-full [data-path="/metrics/children/0"] > .node-header '
-        '> input.node-visible'
+        "> input.node-visible"
     )
     var_sel = (
-        '#nodes-0 [data-path="/metrics/children/0"] > .node-header '
-        '> input.node-visible'
+        '#nodes-0 [data-path="/metrics/children/0"] > .node-header > input.node-visible'
     )
     # Both start checked.
     assert rendered_page.locator(full_sel).first.is_checked()
@@ -1574,12 +1657,16 @@ def test_tube_polygon_follows_reference_curve(tmp_path, playwright_browser):
     sample, not a straight line between the endpoint y-values."""
     import shutil as _shutil
     from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+
     # Curvy ref — asymmetric so the bug would be obvious if present.
     import math
+
     ref_time = [i * 0.1 for i in range(101)]
     ref_values = [1.0 + 0.5 * math.sin(t) for t in ref_time]
     leaf = _leaf(
-        path="/metrics/children/0", metric="tube", variable="y",
+        path="/metrics/children/0",
+        metric="tube",
+        variable="y",
         params={
             "tube_width_mode": "rel",
             "tube_rel": 0.05,
@@ -1597,27 +1684,46 @@ def test_tube_polygon_follows_reference_curve(tmp_path, playwright_browser):
         "tube_interpolation": "linear",
     }
     tree = {
-        "kind": "combinator", "combinator": "and", "path": "/metrics",
-        "passed": True, "label": "and[1]", "children": [leaf],
+        "kind": "combinator",
+        "combinator": "and",
+        "path": "/metrics",
+        "passed": True,
+        "label": "and[1]",
+        "children": [leaf],
     }
     traj = {
-        "index": 1, "name": "y",
-        "act_time": ref_time, "act_values": ref_values,
-        "ref_time": ref_time, "ref_values": ref_values,
+        "index": 1,
+        "name": "y",
+        "act_time": ref_time,
+        "act_values": ref_values,
+        "ref_time": ref_time,
+        "ref_values": ref_values,
     }
     ctx = {
         "model_id": "Fixture.TubeCurve",
-        "n_passed": 1, "sim_failed": False,
-        "last_run_at": 0, "last_run_str": "",
-        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
-        "statistics_sections": [], "diagnostic_summaries": [], "artifacts": [],
+        "n_passed": 1,
+        "sim_failed": False,
+        "last_run_at": 0,
+        "last_run_str": "",
+        "warnings": [],
+        "key_stats": {},
+        "ref_info": [],
+        "sim_params": [],
+        "statistics_sections": [],
+        "diagnostic_summaries": [],
+        "artifacts": [],
         "trajectories": [traj],
-        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "diag_trajectories": [],
+        "nobaseline_trajectories": [],
         "spec_path": "",
         "tree_view": tree,
         "variables_by_name": {
-            "y": {"name": "y", "trajectory": traj, "overlays": [],
-                  "leaf_paths": ["/metrics/children/0"]},
+            "y": {
+                "name": "y",
+                "trajectory": traj,
+                "overlays": [],
+                "leaf_paths": ["/metrics/children/0"],
+            },
         },
         "mode_schemas": {},
         "overlay_rows": [],
@@ -1630,7 +1736,9 @@ def test_tube_polygon_follows_reference_curve(tmp_path, playwright_browser):
 
     context = playwright_browser.new_context()
     page = context.new_page()
-    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.on(
+        "pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False)
+    )
     page.goto(html_path.as_uri())
     page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
 
@@ -1670,7 +1778,8 @@ def test_tube_polygon_follows_reference_curve(tmp_path, playwright_browser):
 
 
 def test_buildPatchData_no_noise_when_tube_leaf_untouched(
-    tmp_path, playwright_browser,
+    tmp_path,
+    playwright_browser,
 ):
     """Regression for D75-era patch noise. A tube leaf with spec values
     for tube_rel/tube_width_mode should NOT emit redundant 'add' ops
@@ -1680,8 +1789,11 @@ def test_buildPatchData_no_noise_when_tube_leaf_untouched(
     them back to defaults."""
     import shutil as _shutil
     from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+
     leaf = _leaf(
-        path="/metrics/children/0", metric="tube", variable="y",
+        path="/metrics/children/0",
+        metric="tube",
+        variable="y",
         params={
             "tube_width_mode": "rel",
             "tube_rel": 0.05,
@@ -1696,27 +1808,46 @@ def test_buildPatchData_no_noise_when_tube_leaf_untouched(
         "tube_interpolation": "linear",
     }
     tree = {
-        "kind": "combinator", "combinator": "and", "path": "/metrics",
-        "passed": True, "label": "and[1]", "children": [leaf],
+        "kind": "combinator",
+        "combinator": "and",
+        "path": "/metrics",
+        "passed": True,
+        "label": "and[1]",
+        "children": [leaf],
     }
     traj = {
-        "index": 1, "name": "y",
-        "act_time": [0, 1, 2], "act_values": [0, 1, 0],
-        "ref_time": [0, 1, 2], "ref_values": [0, 1, 0],
+        "index": 1,
+        "name": "y",
+        "act_time": [0, 1, 2],
+        "act_values": [0, 1, 0],
+        "ref_time": [0, 1, 2],
+        "ref_values": [0, 1, 0],
     }
     ctx = {
         "model_id": "Fixture.TubeQuietPatch",
-        "n_passed": 1, "sim_failed": False,
-        "last_run_at": 0, "last_run_str": "",
-        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
-        "statistics_sections": [], "diagnostic_summaries": [], "artifacts": [],
+        "n_passed": 1,
+        "sim_failed": False,
+        "last_run_at": 0,
+        "last_run_str": "",
+        "warnings": [],
+        "key_stats": {},
+        "ref_info": [],
+        "sim_params": [],
+        "statistics_sections": [],
+        "diagnostic_summaries": [],
+        "artifacts": [],
         "trajectories": [traj],
-        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "diag_trajectories": [],
+        "nobaseline_trajectories": [],
         "spec_path": "",
         "tree_view": tree,
         "variables_by_name": {
-            "y": {"name": "y", "trajectory": traj, "overlays": [],
-                  "leaf_paths": ["/metrics/children/0"]},
+            "y": {
+                "name": "y",
+                "trajectory": traj,
+                "overlays": [],
+                "leaf_paths": ["/metrics/children/0"],
+            },
         },
         "mode_schemas": {},
         "overlay_rows": [],
@@ -1728,7 +1859,9 @@ def test_buildPatchData_no_noise_when_tube_leaf_untouched(
     _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
     context = playwright_browser.new_context()
     page = context.new_page()
-    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.on(
+        "pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False)
+    )
     page.goto(html_path.as_uri())
     page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
 
@@ -1757,49 +1890,75 @@ def test_declared_peaks_editor_activates_with_table(tmp_path, playwright_browser
     # declared peak + embedded spectrum.
     import shutil as _shutil
     from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+
     leaf = _leaf(
-        path="/metrics/children/0", metric="dominant-frequency",
+        path="/metrics/children/0",
+        metric="dominant-frequency",
         variable="osc",
         params={"peaks": [{"freq": 1.0, "tolerance": 0.01, "tolerance_mode": "rel"}]},
     )
     # Spectrum payload the editor reads from.
     leaf["spectrum"] = {
         "ref_freq": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
-        "ref_mag":  [0.1, 0.2, 1.0, 0.3, 0.15, 0.1, 0.05],
+        "ref_mag": [0.1, 0.2, 1.0, 0.3, 0.15, 0.1, 0.05],
         "act_freq": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
-        "act_mag":  [0.1, 0.2, 1.0, 0.3, 0.15, 0.1, 0.05],
+        "act_mag": [0.1, 0.2, 1.0, 0.3, 0.15, 0.1, 0.05],
         "peaks_declared": [{"freq": 1.0, "tolerance": 0.01, "tolerance_mode": "rel"}],
         "paired_peaks": [
-            {"declared_hz": 1.0, "matched_hz": 1.0, "delta": 0.0,
-             "passed": True, "tolerance": 0.01, "tolerance_mode": "rel"},
+            {
+                "declared_hz": 1.0,
+                "matched_hz": 1.0,
+                "delta": 0.0,
+                "passed": True,
+                "tolerance": 0.01,
+                "tolerance_mode": "rel",
+            },
         ],
         "detected_reference_peaks_hz": [1.0, 2.0, 3.0],
     }
     leaf["cli_authoritative"] = False
     # Wrap in a minimal tree.
     tree = {
-        "kind": "combinator", "combinator": "and", "path": "/metrics",
-        "passed": True, "label": "and[1]",
+        "kind": "combinator",
+        "combinator": "and",
+        "path": "/metrics",
+        "passed": True,
+        "label": "and[1]",
         "children": [leaf],
     }
     traj = {
-        "index": 1, "name": "osc",
-        "act_time": [0, 1, 2, 3], "act_values": [0, 1, 0, -1],
-        "ref_time": [0, 1, 2, 3], "ref_values": [0, 1, 0, -1],
+        "index": 1,
+        "name": "osc",
+        "act_time": [0, 1, 2, 3],
+        "act_values": [0, 1, 0, -1],
+        "ref_time": [0, 1, 2, 3],
+        "ref_values": [0, 1, 0, -1],
     }
     ctx = {
         "model_id": "Fixture.DominantFreq",
-        "n_passed": 1, "sim_failed": False,
-        "last_run_at": 0, "last_run_str": "",
-        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
-        "statistics_sections": [], "diagnostic_summaries": [], "artifacts": [],
+        "n_passed": 1,
+        "sim_failed": False,
+        "last_run_at": 0,
+        "last_run_str": "",
+        "warnings": [],
+        "key_stats": {},
+        "ref_info": [],
+        "sim_params": [],
+        "statistics_sections": [],
+        "diagnostic_summaries": [],
+        "artifacts": [],
         "trajectories": [traj],
-        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "diag_trajectories": [],
+        "nobaseline_trajectories": [],
         "spec_path": "",
         "tree_view": tree,
         "variables_by_name": {
-            "osc": {"name": "osc", "trajectory": traj, "overlays": [],
-                    "leaf_paths": ["/metrics/children/0"]},
+            "osc": {
+                "name": "osc",
+                "trajectory": traj,
+                "overlays": [],
+                "leaf_paths": ["/metrics/children/0"],
+            },
         },
         "mode_schemas": {},
         "overlay_rows": [],
@@ -1812,7 +1971,9 @@ def test_declared_peaks_editor_activates_with_table(tmp_path, playwright_browser
 
     context = playwright_browser.new_context()
     page = context.new_page()
-    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.on(
+        "pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False)
+    )
     page.goto(html_path.as_uri())
     page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
 
@@ -1838,8 +1999,10 @@ def test_declared_peaks_detect_button_populates_table(tmp_path, playwright_brows
     detected peaks; leafState.params.peaks reflects the detected list."""
     import shutil as _shutil
     from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+
     leaf = _leaf(
-        path="/metrics/children/0", metric="dominant-frequency",
+        path="/metrics/children/0",
+        metric="dominant-frequency",
         variable="osc",
         params={"peaks": []},  # empty — user hasn't declared yet
     )
@@ -1847,45 +2010,69 @@ def test_declared_peaks_detect_button_populates_table(tmp_path, playwright_brows
     # peaks. Use a 3-sinusoid sum at 1, 3, 5 Hz — Detect should find
     # exactly these in order.
     import math
+
     _n = 512
     _t_end = 4.0  # 4s window × 5 Hz max = 20 cycles (plenty)
     _times = [i * _t_end / (_n - 1) for i in range(_n)]
     _values = [
-        (3.0 * math.sin(2 * math.pi * 1.0 * t)
-         + 2.0 * math.sin(2 * math.pi * 3.0 * t)
-         + 1.0 * math.sin(2 * math.pi * 5.0 * t))
+        (
+            3.0 * math.sin(2 * math.pi * 1.0 * t)
+            + 2.0 * math.sin(2 * math.pi * 3.0 * t)
+            + 1.0 * math.sin(2 * math.pi * 5.0 * t)
+        )
         for t in _times
     ]
     leaf["spectrum"] = {
-        "ref_freq": [], "ref_mag": [],
-        "act_freq": [], "act_mag": [],
+        "ref_freq": [],
+        "ref_mag": [],
+        "act_freq": [],
+        "act_mag": [],
         "peaks_declared": [],
         "paired_peaks": [],
         "detected_reference_peaks_hz": [],
     }
     leaf["cli_authoritative"] = False
     tree = {
-        "kind": "combinator", "combinator": "and", "path": "/metrics",
-        "passed": False, "label": "and[1]", "children": [leaf],
+        "kind": "combinator",
+        "combinator": "and",
+        "path": "/metrics",
+        "passed": False,
+        "label": "and[1]",
+        "children": [leaf],
     }
     traj = {
-        "index": 1, "name": "osc",
-        "act_time": _times, "act_values": _values,
-        "ref_time": _times, "ref_values": _values,
+        "index": 1,
+        "name": "osc",
+        "act_time": _times,
+        "act_values": _values,
+        "ref_time": _times,
+        "ref_values": _values,
     }
     ctx = {
         "model_id": "Fixture.DominantFreqEmpty",
-        "n_passed": 0, "sim_failed": False,
-        "last_run_at": 0, "last_run_str": "",
-        "warnings": [], "key_stats": {}, "ref_info": [], "sim_params": [],
-        "statistics_sections": [], "diagnostic_summaries": [], "artifacts": [],
+        "n_passed": 0,
+        "sim_failed": False,
+        "last_run_at": 0,
+        "last_run_str": "",
+        "warnings": [],
+        "key_stats": {},
+        "ref_info": [],
+        "sim_params": [],
+        "statistics_sections": [],
+        "diagnostic_summaries": [],
+        "artifacts": [],
         "trajectories": [traj],
-        "diag_trajectories": [], "nobaseline_trajectories": [],
+        "diag_trajectories": [],
+        "nobaseline_trajectories": [],
         "spec_path": "",
         "tree_view": tree,
         "variables_by_name": {
-            "osc": {"name": "osc", "trajectory": traj, "overlays": [],
-                    "leaf_paths": ["/metrics/children/0"]},
+            "osc": {
+                "name": "osc",
+                "trajectory": traj,
+                "overlays": [],
+                "leaf_paths": ["/metrics/children/0"],
+            },
         },
         "mode_schemas": {},
         "overlay_rows": [],
@@ -1897,7 +2084,9 @@ def test_declared_peaks_detect_button_populates_table(tmp_path, playwright_brows
     _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
     context = playwright_browser.new_context()
     page = context.new_page()
-    page.on("pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False))
+    page.on(
+        "pageerror", lambda exc: pytest.fail(f"page JS error: {exc}", pytrace=False)
+    )
     page.goto(html_path.as_uri())
     page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
 
@@ -1936,11 +2125,10 @@ def test_visibility_toggle_does_not_affect_scoring(rendered_page: Page):
     # on h was passing in the fixture).
     rendered_page.locator(
         '#nodes-full [data-path="/metrics/children/0"] > .node-header '
-        '> input.node-visible'
+        "> input.node-visible"
     ).first.uncheck()
     pill = rendered_page.locator(
-        '#nodes-full [data-path="/metrics/children/0"] > .node-header '
-        '> .node-status'
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header > .node-status'
     ).first
     assert pill.is_visible()
     assert "pass" in (pill.get_attribute("class") or "").lower()

@@ -21,6 +21,7 @@ _FETCH_HINT = "uv run python scripts/fetch_reference_fmus.py"
 def _fmpy_available() -> bool:
     try:
         import fmpy  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -76,18 +77,19 @@ def test_fmpy_can_read_bouncing_ball():
 
     # Prefer FMI 2.0 — broadest FMPy support.
     fmu_path = REFERENCE_FMUS_DIR / "2.0" / "BouncingBall.fmu"
-    assert fmu_path.exists(), (
-        f"Expected {fmu_path} — run: {_FETCH_HINT}"
-    )
+    assert fmu_path.exists(), f"Expected {fmu_path} — run: {_FETCH_HINT}"
 
     md = fmpy.read_model_description(fmu_path)
     assert md is not None
-    assert "BouncingBall" in md.modelName or md.modelName.lower().startswith("bouncingball")
+    assert "BouncingBall" in md.modelName or md.modelName.lower().startswith(
+        "bouncingball"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Phase 2.2: backend registration + routing
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.fmpy
 @pytest.mark.skipif(not _fmpy_available(), reason="fmpy not installed")
@@ -113,9 +115,8 @@ def test_fmpy_backend_registers_under_name():
     assert isinstance(runner, FmpyRunner)
     # Capabilities declared as advertised in docs/extensibility.md §3
     from dstf.simulators.base import Capability, DatasetType
+
     assert Capability.PERSISTENT_WORKERS in runner.capabilities
     assert Capability.BATCH_FALLBACK not in runner.capabilities
     assert Capability.FMU_EXPORT not in runner.capabilities
     assert runner.produced_datasets == frozenset({DatasetType.TIME_SERIES})
-
-

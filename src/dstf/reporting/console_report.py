@@ -115,8 +115,12 @@ def _print_var_failure(var: VariableComparison):
     if var.is_constant:
         print(f"      RMSE:               {var.rmse:.6e} (constant signal)")
     else:
-        print(f"      NRMSE:              {var.nrmse:.6e} (signal range: {var.signal_range:.4e})")
+        print(
+            f"      NRMSE:              {var.nrmse:.6e} (signal range: {var.signal_range:.4e})"
+        )
         print(f"      RMSE:               {var.rmse:.6e}")
-    print(f"      Max abs error:      {var.max_abs_error:.6e} (at t={var.max_abs_error_time:g})")
+    print(
+        f"      Max abs error:      {var.max_abs_error:.6e} (at t={var.max_abs_error_time:g})"
+    )
     print(f"      Reference final:    {var.reference_final:.6e}")
     print(f"      Actual final:       {var.actual_final:.6e}")

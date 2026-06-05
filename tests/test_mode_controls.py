@@ -1,4 +1,5 @@
 """Tests for the Phase 6.1.1 auto-derived mode UI controls."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -102,6 +103,7 @@ class TestDeriveSchemaEdgeCases:
     def test_non_dataclass_raises(self):
         class Plain:
             pass
+
         with pytest.raises(TypeError):
             derive_schema(Plain)
 
@@ -109,6 +111,7 @@ class TestDeriveSchemaEdgeCases:
         @dataclass
         class Cfg:
             color: Optional[Literal["r", "g", "b"]] = None
+
         s = derive_schema(Cfg, mode="x")
         assert s.fields[0].choices == ["r", "g", "b"]
         assert s.fields[0].optional is True
@@ -116,8 +119,10 @@ class TestDeriveSchemaEdgeCases:
     def test_metadata_label_and_help(self):
         @dataclass
         class Cfg:
-            tol: float = field(default=1e-3,
-                               metadata={"label": "Tolerance", "help": "NRMSE threshold"})
+            tol: float = field(
+                default=1e-3, metadata={"label": "Tolerance", "help": "NRMSE threshold"}
+            )
+
         s = derive_schema(Cfg, mode="x")
         assert s.fields[0].label == "Tolerance"
         assert s.fields[0].help == "NRMSE threshold"
@@ -126,6 +131,7 @@ class TestDeriveSchemaEdgeCases:
         @dataclass
         class Cfg:
             tube_min_width: float = 0.0
+
         s = derive_schema(Cfg, mode="x")
         assert s.fields[0].label == "Tube min width"
 
@@ -150,12 +156,12 @@ class TestRenderSchemaHtml:
         html = render_schema_html(s)
         assert 'type="checkbox"' in html
         assert 'data-field="count_must_match"' in html
-        assert 'checked' in html  # default is True
+        assert "checked" in html  # default is True
 
     def test_enum_field_renders_select(self):
         s = derive_schema(TubeConfig, mode="tube")
         html = render_schema_html(s)
-        assert '<select' in html
+        assert "<select" in html
         assert '<option value="linear" selected>' in html
         assert '<option value="constant">' in html
 
@@ -172,22 +178,26 @@ class TestRenderSchemaHtml:
     def test_passthrough_emits_textarea(self):
         s = derive_schema(TubeConfig, mode="tube")
         html = render_schema_html(s)
-        assert '<textarea' in html
+        assert "<textarea" in html
         assert 'data-passthrough="true"' in html
 
     def test_html_escaped_variable_name(self):
         """Variable names containing HTML specials are escaped."""
         s = derive_schema(NrmseConfig, mode="nrmse")
-        html = render_schema_html(s, variable='h<script>')
-        assert '<script>' not in html
-        assert '&lt;script&gt;' in html
+        html = render_schema_html(s, variable="h<script>")
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
 
 
 class TestRegistry:
     def test_bundled_modes_registered(self):
         assert set(registered_modes()) >= {
-            "nrmse", "tube", "points", "range",
-            "event-timing", "dominant-frequency",
+            "nrmse",
+            "tube",
+            "points",
+            "range",
+            "event-timing",
+            "dominant-frequency",
         }
 
     def test_get_returns_mode_ui(self):
@@ -236,22 +246,24 @@ class TestWindowControls:
         assert 'data-field="window_start"' in html
         assert 'data-field="window_end"' in html
         # No value= when unset
-        assert 'value=' not in html
+        assert "value=" not in html
 
     def test_values_fill_inputs(self):
-        html = render_window_controls_html(variable="h", values={"start": 2.0, "end": 5.0})
+        html = render_window_controls_html(
+            variable="h", values={"start": 2.0, "end": 5.0}
+        )
         assert 'value="2.0"' in html
         assert 'value="5.0"' in html
 
     def test_open_start_only_fills_end(self):
         html = render_window_controls_html(variable="h", values={"end": 5.0})
-        assert html.count('value=') == 1
+        assert html.count("value=") == 1
         assert 'value="5.0"' in html
 
     def test_escapes_variable_name(self):
-        html = render_window_controls_html(variable='<script>')
-        assert '<script>' not in html
-        assert '&lt;script&gt;' in html
+        html = render_window_controls_html(variable="<script>")
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
 
     def test_step_any_on_number_inputs(self):
         html = render_window_controls_html(variable="h")
@@ -262,12 +274,14 @@ class TestWindowControls:
         """Simulation bounds fed via ``time_start`` / ``time_end`` render as
         the inputs' ``placeholder`` — guidance without auto-committing."""
         html = render_window_controls_html(
-            variable="h", time_start=0.0, time_end=10.0,
+            variable="h",
+            time_start=0.0,
+            time_end=10.0,
         )
         assert 'placeholder="0"' in html
         assert 'placeholder="10"' in html
         # Values stay blank — placeholder is a hint, not a commit.
-        assert 'value=' not in html
+        assert "value=" not in html
 
 
 class TestPlotContributionSlot:
@@ -290,7 +304,13 @@ class TestPlotContributionSlot:
 
         def contrib(values):
             return PlotContribution(
-                shapes=[{"type": "line", "y0": values["min_value"], "y1": values["min_value"]}],
+                shapes=[
+                    {
+                        "type": "line",
+                        "y0": values["min_value"],
+                        "y1": values["min_value"],
+                    }
+                ],
             )
 
         ui = register_mode_ui("contrib-test", Cfg, plot_contribution=contrib)
@@ -348,12 +368,19 @@ class TestEmitModeSchemas:
 
     def test_includes_every_bundled_mode(self):
         schemas = emit_mode_schemas()
-        for mode in ("nrmse", "tube", "points", "range",
-                     "event-timing", "dominant-frequency"):
+        for mode in (
+            "nrmse",
+            "tube",
+            "points",
+            "range",
+            "event-timing",
+            "dominant-frequency",
+        ):
             assert mode in schemas, f"{mode} missing from emit_mode_schemas"
 
     def test_schema_entries_are_json_safe(self):
         import json
+
         schemas = emit_mode_schemas()
         # Round-trip through JSON — catches any non-serializable field
         round_trip = json.loads(json.dumps(schemas))
@@ -372,14 +399,19 @@ def test_event_timing_render_html_includes_passthrough_events():
     textarea is the fallback when JS fails to load."""
     from dstf.comparison.modes import EventTimingConfig
     from dstf.reporting.ui.mode_controls import (
-        derive_schema, render_schema_html,
+        derive_schema,
+        render_schema_html,
     )
+
     schema = derive_schema(EventTimingConfig, mode="event-timing")
-    html = render_schema_html(schema, values={
-        "time_tolerance": 1e-3,
-        "count_must_match": True,
-        "events": None,
-    })
+    html = render_schema_html(
+        schema,
+        values={
+            "time_tolerance": 1e-3,
+            "count_must_match": True,
+            "events": None,
+        },
+    )
     assert 'data-field="time_tolerance"' in html
     assert 'data-field="count_must_match"' in html
     # Passthrough field emits a textarea; events should be there.

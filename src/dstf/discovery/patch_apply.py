@@ -22,6 +22,7 @@ This module is self-contained: no external JSON-Patch / JSON-Pointer
 libraries. The surface is small (replace/add/remove on a single path
 each), so the RFC 6901 unescape rules fit in ~10 lines.
 """
+
 from __future__ import annotations
 
 import json
@@ -63,13 +64,15 @@ def apply_patch(
             _apply_one_op(entry, op, whitelist)
         except PatchError as e:
             raise PatchError(
-                f"patch_ops[{i}] ({op!r}): {e}", path=e.path,
+                f"patch_ops[{i}] ({op!r}): {e}",
+                path=e.path,
             ) from None
 
     if write:
         spec_path.parent.mkdir(parents=True, exist_ok=True)
         spec_path.write_text(
-            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+            json.dumps(data, indent=2) + "\n",
+            encoding="utf-8",
         )
     return data
 
@@ -77,6 +80,7 @@ def apply_patch(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
 
 def _load_spec(spec_path: Path) -> dict:
     if not spec_path.exists():
@@ -111,7 +115,9 @@ def _apply_one_op(entry: dict, op: dict, whitelist: tuple[str, ...]) -> None:
             path=path,
         )
     if not isinstance(path, str) or not path.startswith("/"):
-        raise PatchError("'path' must be an RFC 6901 JSON-Pointer starting with /", path=path)
+        raise PatchError(
+            "'path' must be an RFC 6901 JSON-Pointer starting with /", path=path
+        )
     if not any(path == w or path.startswith(w + "/") for w in whitelist):
         raise PatchError(
             f"path not in whitelist {whitelist}",
@@ -141,8 +147,9 @@ def _split_pointer(pointer: str) -> list[str]:
     return [seg.replace("~1", "/").replace("~0", "~") for seg in raw]
 
 
-def _set_at(obj: Any, tokens: list[str], value: Any, path: str, *,
-            must_exist: bool) -> None:
+def _set_at(
+    obj: Any, tokens: list[str], value: Any, path: str, *, must_exist: bool
+) -> None:
     if not tokens:
         raise PatchError("empty path points at the entry root; refuse", path=path)
     *parents, last = tokens
@@ -152,18 +159,23 @@ def _set_at(obj: Any, tokens: list[str], value: Any, path: str, *,
     if isinstance(cur, list):
         idx = _list_index(cur, last, path, allow_append=not must_exist)
         if must_exist and idx >= len(cur):
-            raise PatchError(f"list index {idx} out of range (len {len(cur)})", path=path)
+            raise PatchError(
+                f"list index {idx} out of range (len {len(cur)})", path=path
+            )
         if idx == len(cur):
             cur.append(value)
         else:
             cur[idx] = value
     elif isinstance(cur, dict):
         if must_exist and last not in cur:
-            raise PatchError(f"key {last!r} not present (use 'add' for new keys)", path=path)
+            raise PatchError(
+                f"key {last!r} not present (use 'add' for new keys)", path=path
+            )
         cur[last] = value
     else:
         raise PatchError(
-            f"cannot set on non-container {type(cur).__name__}", path=path,
+            f"cannot set on non-container {type(cur).__name__}",
+            path=path,
         )
 
 
@@ -185,7 +197,8 @@ def _remove_at(obj: Any, tokens: list[str], path: str) -> None:
         del cur[last]
     else:
         raise PatchError(
-            f"cannot remove from non-container {type(cur).__name__}", path=path,
+            f"cannot remove from non-container {type(cur).__name__}",
+            path=path,
         )
 
 
@@ -205,7 +218,8 @@ def _descend(cur: Any, tok: str, path: str, *, create_missing: bool) -> Any:
             cur[tok] = {}
         return cur[tok]
     raise PatchError(
-        f"cannot descend into {type(cur).__name__}", path=path,
+        f"cannot descend into {type(cur).__name__}",
+        path=path,
     )
 
 

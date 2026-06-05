@@ -19,6 +19,7 @@ REFERENCE_FMUS_DIR = PROJECT_ROOT / "examples" / "fmu" / "reference-fmus-binarie
 def _fmpy_available() -> bool:
     try:
         import fmpy  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -60,14 +61,14 @@ def _make_test(fmu_path: Path, variables: list[str], stop_time: float = 3.0):
 
     return TestModel(
         model_id=fmu_path.stem,
-        source_file=fmu_path,        # FMPy backend reads .fmu path from here
+        source_file=fmu_path,  # FMPy backend reads .fmu path from here
         source_package="",
         short_name=fmu_path.stem,
         n_vars=len(variables),
         variable_patterns=variables,
         stop_time=stop_time,
         tolerance=1e-6,
-        method="Dassl",              # gets mapped to CVode by FmpyRunner
+        method="Dassl",  # gets mapped to CVode by FmpyRunner
         source="spec",
     )
 
@@ -75,6 +76,7 @@ def _make_test(fmu_path: Path, variables: list[str], stop_time: float = 3.0):
 # ---------------------------------------------------------------------------
 # Single-FMU simulation
 # ---------------------------------------------------------------------------
+
 
 class TestFmpySimulation:
     def test_bouncing_ball_simulates_end_to_end(self, tmp_path):
@@ -152,7 +154,8 @@ class TestFmpySimulation:
         runner = FmpyRunner(config)  # type: ignore[arg-type]
         runner.run_single_test(test, "test_0001", index=1, total=1)
         result = runner.read_result(
-            test, "test_0001",
+            test,
+            "test_0001",
             run_result=None,  # type: ignore[arg-type]
         )
         assert result.success
@@ -165,6 +168,7 @@ class TestFmpySimulation:
 # ---------------------------------------------------------------------------
 # Helper-function tests (no FMU needed)
 # ---------------------------------------------------------------------------
+
 
 class TestFmpyHelpers:
     def test_save_load_roundtrip(self, tmp_path):

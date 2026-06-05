@@ -133,7 +133,9 @@ def _install_dymola_log_filter() -> None:
 
     def _filtered_print(level, msg):
         text = str(msg)
-        if time.monotonic() < _suppress_until and any(p in text for p in _NOISE_PATTERNS):
+        if time.monotonic() < _suppress_until and any(
+            p in text for p in _NOISE_PATTERNS
+        ):
             return
         orig(level, msg)
 
@@ -228,7 +230,9 @@ class DymolaWorker(Worker):
         # (a subprocess.Popen). Fall back to an empty set if the attribute
         # ever moves — kill-by-pid just becomes best-effort in that case.
         proc = getattr(self.dymola, "_dymola_process", None)
-        self.pids = {proc.pid} if proc is not None and getattr(proc, "pid", None) else set()
+        self.pids = (
+            {proc.pid} if proc is not None and getattr(proc, "pid", None) else set()
+        )
 
         # Establish working directory
         self.dymola.cd(str(self.config.work_dir))
@@ -442,8 +446,7 @@ class DymolaWorker(Worker):
             )
         except Exception as exc:
             raise RuntimeError(
-                f"DymolaInterface.translateModelFMU failed for "
-                f"{test.model_id}: {exc}"
+                f"DymolaInterface.translateModelFMU failed for {test.model_id}: {exc}"
             ) from exc
         if not result:
             raise RuntimeError(
@@ -573,6 +576,7 @@ class DymolaWorker(Worker):
         self.dymola = None
         if d is not None:
             done = threading.Event()
+
             def _try():
                 try:
                     d.close()
@@ -580,6 +584,7 @@ class DymolaWorker(Worker):
                     pass
                 finally:
                     done.set()
+
             t = threading.Thread(target=_try, daemon=True)
             t.start()
             done.wait(grace)
@@ -590,6 +595,7 @@ class DymolaWorker(Worker):
         if not self.pids:
             return
         import psutil
+
         for pid in list(self.pids):
             try:
                 p = psutil.Process(pid)
@@ -624,7 +630,9 @@ class DymolaWorker(Worker):
             except BaseException as e:
                 exc_box[0] = e
 
-        t = threading.Thread(target=_runner, daemon=True, name=f"dym-exec-{self.worker_id}")
+        t = threading.Thread(
+            target=_runner, daemon=True, name=f"dym-exec-{self.worker_id}"
+        )
         t.start()
         t.join(timeout)
 
@@ -702,14 +710,19 @@ class DymolaWorker(Worker):
             self.dymola.ExecuteCommand(cmd)
         except Exception as exc:  # pragma: no cover — diagnostic path
             logger.warning(
-                "Worker %s: setting '%s' raised: %s", self.worker_id, cmd, exc,
+                "Worker %s: setting '%s' raised: %s",
+                self.worker_id,
+                cmd,
+                exc,
             )
             return
         err = self._last_error()
         if err and ("Error" in err or "error:" in err.lower()):
             logger.warning(
                 "Worker %s: setting '%s' reported: %s",
-                self.worker_id, cmd, err.strip()[:200],
+                self.worker_id,
+                cmd,
+                err.strip()[:200],
             )
 
     def _last_error(self) -> str:
@@ -720,6 +733,7 @@ class DymolaWorker(Worker):
 
 
 # ---------------------------------------------------------------------------
+
 
 class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
     """Dymola runner using persistent DymolaInterface workers + a queue.
@@ -743,6 +757,7 @@ class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
         # ``interface_loader.load_dymola_interface`` and have the patch
         # take effect here.
         from .interface_loader import load_dymola_interface as _load
+
         _load(config.dymola_interface_path)
 
     def setup_before_workers(self) -> None:
@@ -760,7 +775,10 @@ class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
 
     def make_worker(self, worker_id: int) -> DymolaWorker:
         return DymolaWorker(
-            worker_id, self.config, self.dymola_config, self._di_cls,
+            worker_id,
+            self.config,
+            self.dymola_config,
+            self._di_cls,
         )
 
     def export_fmu(self, test: TestModel, output_dir: Path) -> Path:

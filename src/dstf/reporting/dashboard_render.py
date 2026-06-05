@@ -113,13 +113,21 @@ def _enrich_row_from_comparison(
         return False
 
     for key in (
-        "worst_nrmse", "n_vars", "n_vars_passed", "n_warnings",
-        "translation_wall", "sim_wall", "total_wall",
-        "ref_id", "ref_file", "field_sources",
+        "worst_nrmse",
+        "n_vars",
+        "n_vars_passed",
+        "n_warnings",
+        "translation_wall",
+        "sim_wall",
+        "total_wall",
+        "ref_id",
+        "ref_file",
+        "field_sources",
         # Comparison-derived status overrides live-mode status when present.
         # The compare phase distinguishes pass / fail / sim-fail / no-ref;
         # live mode only knows passed / failed / timed_out.
-        "status_text", "status_class",
+        "status_text",
+        "status_class",
     ):
         if key in summary:
             row[key] = summary[key]
@@ -131,10 +139,10 @@ def _enrich_row_from_comparison(
 # matches the buttons in dashboard.html (pass/fail/sim-fail/no-ref/queued/
 # running/timed-out) so a single filter applies live and final.
 _LIVE_STATUS_MAP = {
-    "queued":    ("QUEUED",    "queued"),
-    "running":   ("RUNNING",   "running"),
-    "passed":    ("PASS",      "pass"),
-    "failed":    ("FAIL",      "fail"),
+    "queued": ("QUEUED", "queued"),
+    "running": ("RUNNING", "running"),
+    "passed": ("PASS", "pass"),
+    "failed": ("FAIL", "fail"),
     "timed_out": ("TIMED OUT", "timed-out"),
 }
 
@@ -148,6 +156,7 @@ def build_rerun_prefix(config) -> str:
     Prefers --config when available; otherwise falls back to
     --source-path (+ optional --reference-root).
     """
+
     def q(p) -> str:
         s = str(p)
         return f'"{s}"' if " " in s else s
@@ -164,7 +173,9 @@ def build_rerun_prefix(config) -> str:
     return " ".join(parts)
 
 
-def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[str] = None) -> dict:
+def build_dashboard_context(
+    work_dir: Path, mode: str, rerun_prefix: Optional[str] = None
+) -> dict:
     """Build the Jinja context for dashboard.html.
 
     mode='live' — auto_refresh=True, post-run fields stay None
@@ -174,8 +185,12 @@ def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[st
     decide whether to start the fetch loop.
     """
     snapshot = _read_status(work_dir) or {
-        "total": 0, "elapsed": 0.0, "eta_seconds": None,
-        "counts": {}, "tests": [], "updated_at": 0.0,
+        "total": 0,
+        "elapsed": 0.0,
+        "eta_seconds": None,
+        "counts": {},
+        "tests": [],
+        "updated_at": 0.0,
     }
 
     # Wall-clock anchor for the stale-sidecar guard. Sidecars written
@@ -189,7 +204,8 @@ def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[st
     for t in snapshot.get("tests", []):
         raw_status = t.get("status", "queued")
         status_text, status_class = _LIVE_STATUS_MAP.get(
-            raw_status, (raw_status.upper(), raw_status.replace("_", "-")),
+            raw_status,
+            (raw_status.upper(), raw_status.replace("_", "-")),
         )
         # Live-mode ref_id can be derived from report_dir when it follows
         # the "ref_NNNN" naming (set by cmd_run pre-populating
@@ -205,7 +221,9 @@ def build_dashboard_context(work_dir: Path, mode: str, rerun_prefix: Optional[st
             "status_text": status_text,
             "status_class": status_class,
             "elapsed": t.get("elapsed"),
-            "started_wall": t.get("started_wall"),  # epoch — JS uses for live "running for Ns"
+            "started_wall": t.get(
+                "started_wall"
+            ),  # epoch — JS uses for live "running for Ns"
             "worker_id": t.get("worker_id"),
             "report_dir": t.get("report_dir") or t.get("test_key"),
             "phase": t.get("phase"),

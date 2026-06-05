@@ -16,6 +16,7 @@ clock-drift alignment, windowing) are user-space concerns — any of
 them can be implemented in a Python test file today. Framework-level
 alignment/fitting is tracked as a follow-up in ``docs/ideas.md``.
 """
+
 from __future__ import annotations
 
 import csv

@@ -4,6 +4,7 @@ Window is a uniform leaf-level property scoping every metric to
 ``[window_start, window_end]``. Slicing happens in `tree_eval` before
 ``mode.compare`` so mode configs stay untouched.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -30,8 +31,10 @@ from dstf.simulators import VariableResult
 
 def _var(time, values, index=1, name="x"):
     return VariableResult(
-        index=index, time=np.asarray(time, dtype=float),
-        values=np.asarray(values, dtype=float), name=name,
+        index=index,
+        time=np.asarray(time, dtype=float),
+        values=np.asarray(values, dtype=float),
+        name=name,
     )
 
 
@@ -47,56 +50,80 @@ def _baseline(time, values, name="primary"):
 
 class TestWindowParsing:
     def test_no_window_default_none(self):
-        tree = parse_metric_tree({
-            "metric": "nrmse", "variable": "x", "tolerance": 1e-3,
-        })
+        tree = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "tolerance": 1e-3,
+            }
+        )
         assert tree.window_start is None
         assert tree.window_end is None
 
     def test_window_both_ends(self):
-        tree = parse_metric_tree({
-            "metric": "nrmse", "variable": "x", "tolerance": 1e-3,
-            "window": {"start": 1.0, "end": 5.0},
-        })
+        tree = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "tolerance": 1e-3,
+                "window": {"start": 1.0, "end": 5.0},
+            }
+        )
         assert tree.window_start == 1.0
         assert tree.window_end == 5.0
 
     def test_window_open_start(self):
-        tree = parse_metric_tree({
-            "metric": "nrmse", "variable": "x",
-            "window": {"end": 5.0},
-        })
+        tree = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "window": {"end": 5.0},
+            }
+        )
         assert tree.window_start is None
         assert tree.window_end == 5.0
 
     def test_window_open_end(self):
-        tree = parse_metric_tree({
-            "metric": "nrmse", "variable": "x",
-            "window": {"start": 3.0},
-        })
+        tree = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "window": {"start": 3.0},
+            }
+        )
         assert tree.window_start == 3.0
         assert tree.window_end is None
 
     def test_window_end_before_start_rejected(self):
         with pytest.raises(MetricSpecError, match="must be > start"):
-            parse_metric_tree({
-                "metric": "nrmse", "variable": "x",
-                "window": {"start": 5.0, "end": 3.0},
-            })
+            parse_metric_tree(
+                {
+                    "metric": "nrmse",
+                    "variable": "x",
+                    "window": {"start": 5.0, "end": 3.0},
+                }
+            )
 
     def test_window_not_dict_rejected(self):
         with pytest.raises(MetricSpecError, match="expected an object"):
-            parse_metric_tree({
-                "metric": "nrmse", "variable": "x",
-                "window": "10-20",
-            })
+            parse_metric_tree(
+                {
+                    "metric": "nrmse",
+                    "variable": "x",
+                    "window": "10-20",
+                }
+            )
 
     def test_window_not_in_params(self):
         """window is hoisted to its own fields, not left in params."""
-        tree = parse_metric_tree({
-            "metric": "nrmse", "variable": "x", "tolerance": 1e-3,
-            "window": {"start": 1.0, "end": 5.0},
-        })
+        tree = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "tolerance": 1e-3,
+                "window": {"start": 1.0, "end": 5.0},
+            }
+        )
         assert "window" not in tree.params
 
 
@@ -109,11 +136,18 @@ class TestWindowEvaluation:
         ref = _baseline(t, np.sin(t))
         act = _var(t, np.sin(t))
 
-        tree = parse_metric_tree({
-            "metric": "nrmse", "variable": "x", "tolerance": 1e-6,
-        })
+        tree = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "tolerance": 1e-6,
+            }
+        )
         result = evaluate_spec(
-            tree, {"x": act}, {"primary": ref}, base_tolerance=1e-6,
+            tree,
+            {"x": act},
+            {"primary": ref},
+            base_tolerance=1e-6,
         )
         assert result.passed is True
         # score is NRMSE; for identical signals it's essentially zero
@@ -129,12 +163,19 @@ class TestWindowEvaluation:
         act_vals[t > 7.0] += 5.0  # huge error after t=7
         act = _var(t, act_vals)
 
-        tree = parse_metric_tree({
-            "metric": "nrmse", "variable": "x", "tolerance": 1e-6,
-            "window": {"start": 2.0, "end": 5.0},
-        })
+        tree = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "tolerance": 1e-6,
+                "window": {"start": 2.0, "end": 5.0},
+            }
+        )
         result = evaluate_spec(
-            tree, {"x": act}, {"primary": ref}, base_tolerance=1e-6,
+            tree,
+            {"x": act},
+            {"primary": ref},
+            base_tolerance=1e-6,
         )
         # The [2, 5] slice of act matches ref exactly — score tiny.
         assert result.passed is True
@@ -149,12 +190,19 @@ class TestWindowEvaluation:
         act_vals[(t >= 3.0) & (t <= 4.0)] += 2.0  # big error inside window
         act = _var(t, act_vals)
 
-        tree = parse_metric_tree({
-            "metric": "nrmse", "variable": "x", "tolerance": 1e-3,
-            "window": {"start": 2.0, "end": 5.0},
-        })
+        tree = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "tolerance": 1e-3,
+                "window": {"start": 2.0, "end": 5.0},
+            }
+        )
         result = evaluate_spec(
-            tree, {"x": act}, {"primary": ref}, base_tolerance=1e-3,
+            tree,
+            {"x": act},
+            {"primary": ref},
+            base_tolerance=1e-3,
         )
         assert result.passed is False
         assert result.score > 0.1
@@ -164,12 +212,19 @@ class TestWindowEvaluation:
         ref = _baseline(t, np.sin(t))
         act = _var(t, np.sin(t))
 
-        tree = parse_metric_tree({
-            "metric": "nrmse", "variable": "x", "tolerance": 1e-6,
-            "window": {"start": 2.0, "end": 5.0},
-        })
+        tree = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "tolerance": 1e-6,
+                "window": {"start": 2.0, "end": 5.0},
+            }
+        )
         result = evaluate_spec(
-            tree, {"x": act}, {"primary": ref}, base_tolerance=1e-6,
+            tree,
+            {"x": act},
+            {"primary": ref},
+            base_tolerance=1e-6,
         )
         assert result.diagnostics.get("window") == {"start": 2.0, "end": 5.0}
 
@@ -182,17 +237,30 @@ class TestPiecewiseRegression:
         ref = _baseline(t, np.sin(t))
         act = _var(t, np.sin(t))
 
-        tree = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "x", "tolerance": 1e-6,
-                 "window": {"end": 5.0}},
-                {"metric": "nrmse", "variable": "x", "tolerance": 1e-6,
-                 "window": {"start": 5.0}},
-            ],
-        })
+        tree = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {
+                        "metric": "nrmse",
+                        "variable": "x",
+                        "tolerance": 1e-6,
+                        "window": {"end": 5.0},
+                    },
+                    {
+                        "metric": "nrmse",
+                        "variable": "x",
+                        "tolerance": 1e-6,
+                        "window": {"start": 5.0},
+                    },
+                ],
+            }
+        )
         result = evaluate_spec(
-            tree, {"x": act}, {"primary": ref}, base_tolerance=1e-6,
+            tree,
+            {"x": act},
+            {"primary": ref},
+            base_tolerance=1e-6,
         )
         assert result.passed is True
 
@@ -205,17 +273,30 @@ class TestPiecewiseRegression:
         act_vals[t >= 6.0] += 3.0  # big error in second half
         act = _var(t, act_vals)
 
-        tree = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "x", "tolerance": 1e-3,
-                 "window": {"end": 5.0}},
-                {"metric": "nrmse", "variable": "x", "tolerance": 1e-3,
-                 "window": {"start": 5.0}},
-            ],
-        })
+        tree = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {
+                        "metric": "nrmse",
+                        "variable": "x",
+                        "tolerance": 1e-3,
+                        "window": {"end": 5.0},
+                    },
+                    {
+                        "metric": "nrmse",
+                        "variable": "x",
+                        "tolerance": 1e-3,
+                        "window": {"start": 5.0},
+                    },
+                ],
+            }
+        )
         result = evaluate_spec(
-            tree, {"x": act}, {"primary": ref}, base_tolerance=1e-3,
+            tree,
+            {"x": act},
+            {"primary": ref},
+            base_tolerance=1e-3,
         )
         assert result.passed is False
         # First child passes, second fails
@@ -231,29 +312,36 @@ class TestLeafPaths:
         assert collect_leaf_paths(tree) == ["/metrics"]
 
     def test_flat_and(self):
-        tree = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "x"},
-                {"metric": "nrmse", "variable": "y"},
-            ],
-        })
+        tree = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {"metric": "nrmse", "variable": "y"},
+                ],
+            }
+        )
         assert collect_leaf_paths(tree) == [
             "/metrics/children/0",
             "/metrics/children/1",
         ]
 
     def test_nested(self):
-        tree = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "x"},
-                {"combinator": "or", "children": [
-                    {"metric": "nrmse", "variable": "y"},
-                    {"metric": "tube", "variable": "z", "tube_rel": 0.02},
-                ]},
-            ],
-        })
+        tree = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {
+                        "combinator": "or",
+                        "children": [
+                            {"metric": "nrmse", "variable": "y"},
+                            {"metric": "tube", "variable": "z", "tube_rel": 0.02},
+                        ],
+                    },
+                ],
+            }
+        )
         assert collect_leaf_paths(tree) == [
             "/metrics/children/0",
             "/metrics/children/1/children/0",
@@ -272,15 +360,20 @@ class TestLeafPaths:
         ref = _baseline(t, np.sin(t))
         act = _var(t, np.sin(t))
 
-        tree = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "x"},
-                {"combinator": "warn", "children": [
+        tree = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
                     {"metric": "nrmse", "variable": "x"},
-                ]},
-            ],
-        })
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {"metric": "nrmse", "variable": "x"},
+                        ],
+                    },
+                ],
+            }
+        )
         result = evaluate_spec(tree, {"x": act}, {"primary": ref}, base_tolerance=1e-3)
         paths = collect_leaf_paths(tree)
         leaves = collect_leaf_variables(result)
@@ -295,38 +388,44 @@ class TestCollectVariables:
         assert collect_variables(tree) == ["h"]
 
     def test_distinct_variables_in_order(self):
-        tree = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "h"},
-                {"metric": "nrmse", "variable": "v"},
-            ],
-        })
+        tree = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "h"},
+                    {"metric": "nrmse", "variable": "v"},
+                ],
+            }
+        )
         assert collect_variables(tree) == ["h", "v"]
 
     def test_dedup_preserves_first_occurrence(self):
-        tree = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "h"},
-                {"metric": "range", "variable": "h", "min": -1.0, "max": 1.0},
-                {"metric": "nrmse", "variable": "v"},
-                {"metric": "tube", "variable": "h", "tube_rel": 0.02},
-            ],
-        })
+        tree = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "h"},
+                    {"metric": "range", "variable": "h", "min": -1.0, "max": 1.0},
+                    {"metric": "nrmse", "variable": "v"},
+                    {"metric": "tube", "variable": "h", "tube_rel": 0.02},
+                ],
+            }
+        )
         assert collect_variables(tree) == ["h", "v"]
 
 
 class TestLeavesForVariable:
     def test_filters_to_named_variable_with_paths(self):
-        tree = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "h"},
-                {"metric": "nrmse", "variable": "v"},
-                {"metric": "range", "variable": "h", "min": 0.0, "max": 1.0},
-            ],
-        })
+        tree = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "h"},
+                    {"metric": "nrmse", "variable": "v"},
+                    {"metric": "range", "variable": "h", "min": 0.0, "max": 1.0},
+                ],
+            }
+        )
         h_leaves = leaves_for_variable(tree, "h")
         assert [path for _, path in h_leaves] == [
             "/metrics/children/0",
@@ -364,7 +463,8 @@ class TestSynthesizeImplicitTree:
 
     def test_override_mode_translates_to_metric(self):
         tree = synthesize_implicit_tree(
-            ["h"], variable_overrides={"h": {"mode": "tube", "tube_rel": 0.05}},
+            ["h"],
+            variable_overrides={"h": {"mode": "tube", "tube_rel": 0.05}},
         )
         leaf = tree.children[0]
         assert leaf.metric == "tube"
@@ -374,7 +474,8 @@ class TestSynthesizeImplicitTree:
 
     def test_override_range_metric(self):
         tree = synthesize_implicit_tree(
-            ["h"], variable_overrides={"h": {"mode": "range", "min": -1.0, "max": 1.0}},
+            ["h"],
+            variable_overrides={"h": {"mode": "range", "min": -1.0, "max": 1.0}},
         )
         leaf = tree.children[0]
         assert leaf.metric == "range"
@@ -408,7 +509,9 @@ class TestSpecToView:
     """The serializer feeding Stage-2's recursive UI component."""
 
     def test_leaf_root(self):
-        spec = parse_metric_tree({"metric": "nrmse", "variable": "h", "tolerance": 1e-3})
+        spec = parse_metric_tree(
+            {"metric": "nrmse", "variable": "h", "tolerance": 1e-3}
+        )
         view = spec_to_view(spec)
         assert view["kind"] == "leaf"
         assert view["path"] == "/metrics"
@@ -420,31 +523,46 @@ class TestSpecToView:
         assert view["children"] == []
 
     def test_window_serialized_when_set(self):
-        spec = parse_metric_tree({
-            "metric": "nrmse", "variable": "h",
-            "window": {"start": 1.0, "end": 5.0},
-        })
+        spec = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "h",
+                "window": {"start": 1.0, "end": 5.0},
+            }
+        )
         view = spec_to_view(spec)
         assert view["window"] == {"start": 1.0, "end": 5.0}
 
     def test_window_only_start(self):
-        spec = parse_metric_tree({
-            "metric": "nrmse", "variable": "h",
-            "window": {"start": 1.0},
-        })
+        spec = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "h",
+                "window": {"start": 1.0},
+            }
+        )
         view = spec_to_view(spec)
         assert view["window"] == {"start": 1.0}
 
     def test_combinator_with_nested_leaves(self):
-        spec = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "h"},
-                {"combinator": "warn", "children": [
-                    {"metric": "nrmse", "variable": "h", "against": "experiment"},
-                ]},
-            ],
-        })
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "h"},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {
+                                "metric": "nrmse",
+                                "variable": "h",
+                                "against": "experiment",
+                            },
+                        ],
+                    },
+                ],
+            }
+        )
         view = spec_to_view(spec)
         assert view["kind"] == "combinator"
         assert view["combinator"] == "and"
@@ -462,27 +580,33 @@ class TestSpecToView:
         assert grandchild["against"] == "experiment"
 
     def test_k_of_n_fields_emitted(self):
-        spec = parse_metric_tree({
-            "combinator": "k-of-n", "k": 2,
-            "children": [
-                {"metric": "nrmse", "variable": "h"},
-                {"metric": "nrmse", "variable": "v"},
-                {"metric": "nrmse", "variable": "w"},
-            ],
-        })
+        spec = parse_metric_tree(
+            {
+                "combinator": "k-of-n",
+                "k": 2,
+                "children": [
+                    {"metric": "nrmse", "variable": "h"},
+                    {"metric": "nrmse", "variable": "v"},
+                    {"metric": "nrmse", "variable": "w"},
+                ],
+            }
+        )
         view = spec_to_view(spec)
         assert view["combinator"] == "k-of-n"
         assert view["k"] == 2
 
     def test_weighted_fields_emitted(self):
-        spec = parse_metric_tree({
-            "combinator": "weighted",
-            "weights": [0.5, 0.5], "threshold": 1e-3,
-            "children": [
-                {"metric": "nrmse", "variable": "h"},
-                {"metric": "nrmse", "variable": "v"},
-            ],
-        })
+        spec = parse_metric_tree(
+            {
+                "combinator": "weighted",
+                "weights": [0.5, 0.5],
+                "threshold": 1e-3,
+                "children": [
+                    {"metric": "nrmse", "variable": "h"},
+                    {"metric": "nrmse", "variable": "v"},
+                ],
+            }
+        )
         view = spec_to_view(spec)
         assert view["combinator"] == "weighted"
         assert view["weights"] == [0.5, 0.5]
@@ -490,13 +614,15 @@ class TestSpecToView:
         assert view["direction"] == "less"
 
     def test_evaluation_merged_by_path(self):
-        spec = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
-                {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
-            ],
-        })
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+                    {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+                ],
+            }
+        )
         t = np.linspace(0.0, 10.0, 101)
         ref = _baseline(t, np.sin(t))
         act = _var(t, np.sin(t))
@@ -516,13 +642,15 @@ class TestSpecToView:
 
 class TestFlattenEvaluation:
     def test_keys_match_leaf_paths(self):
-        spec = parse_metric_tree({
-            "combinator": "and",
-            "children": [
-                {"metric": "nrmse", "variable": "x"},
-                {"metric": "nrmse", "variable": "x"},
-            ],
-        })
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {"metric": "nrmse", "variable": "x"},
+                ],
+            }
+        )
         t = np.linspace(0.0, 10.0, 101)
         ref = _baseline(t, np.sin(t))
         act = _var(t, np.sin(t))

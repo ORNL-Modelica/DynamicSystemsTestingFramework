@@ -36,7 +36,9 @@ def _dymola_sort_key(path: Path) -> tuple:
     'Dymola 2024x Refresh 1' and sorts descending.
     """
     name = str(path)
-    m = re.search(r"Dymola[\s_]?(\d{4})x(?:[\s_]+Refresh[\s_]*(\d+))?", name, re.IGNORECASE)
+    m = re.search(
+        r"Dymola[\s_]?(\d{4})x(?:[\s_]+Refresh[\s_]*(\d+))?", name, re.IGNORECASE
+    )
     if not m:
         return (0, 0, name)
     year = int(m.group(1))
@@ -229,6 +231,7 @@ def describe_dymola_interface(override_path: Optional[Path] = None) -> dict:
     try:
         info["sys_path_entry"] = str(_prepare_sys_path(archive))
         from dymola.dymola_interface import DymolaInterface  # type: ignore[import-not-found]
+
         info["import_ok"] = True
         info["dymola_interface_module"] = DymolaInterface.__module__
     except Exception as e:  # pragma: no cover — diagnostic helper

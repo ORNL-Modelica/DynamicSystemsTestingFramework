@@ -9,6 +9,7 @@ the zero crossing. The signal is the same x(t) = sin(t) integrated
 from a harmonic oscillator (``x'' + x = 0``, x(0) = 0, v(0) = 1) so
 the numerical content matches the Modelica + Julia counterparts.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -17,6 +18,7 @@ from scipy.integrate import solve_ivp
 
 def simulate(stop_time: float, tolerance: float) -> dict:
     """Integrate the harmonic oscillator x'' + x = 0 up to ``stop_time``."""
+
     def rhs(_t: float, y: np.ndarray) -> list[float]:
         x, v = y
         return [v, -x]
