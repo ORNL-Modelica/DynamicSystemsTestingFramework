@@ -40,7 +40,12 @@ jobs:
         run: uv run mypy
 
       - name: Pytest + coverage ratchet
-        # fail_under (66%) lives in pyproject [tool.coverage.report]; the
-        # marker filter drops the browser-driven Playwright subset. All
-        # simulator-backed tests self-skip when their tool is absent.
-        run: uv run pytest -q -m "not playwright" --cov=dstf --cov-report=term-missing
+        # fail_under (66%) lives in pyproject [tool.coverage.report]. Deselect
+        # every backend-dependent marker: this runner has no simulators, and
+        # not all such tests self-skip — the Julia smoke tests, for instance,
+        # shell out to `dstf run` and fail when no Julia worker can start.
+        # Playwright is import-skipped at collection but deselected too.
+        run: >
+          uv run pytest -q
+          -m "not playwright and not dymola and not fmpy and not ompython and not julia and not reference_fmus"
+          --cov=dstf --cov-report=term-missing
