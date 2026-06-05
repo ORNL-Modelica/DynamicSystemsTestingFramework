@@ -2410,3 +2410,32 @@ headline is deflated by un-runnable simulator code. The real shape:
   lower-ROI (matplotlib rendering is awkward to test).
 - Architecture-refactor pass (`improve-codebase-architecture`) — the
   original prompt; intentionally sequenced *after* the safety net.
+
+### As-built (2026-06-05)
+
+Shipped on branch `chore/quality-floor` in 5 commits (config → format →
+lint → types → tests → CI). Outcomes vs spec:
+
+- **ruff**: whole-tree format (1 commit, in `.git-blame-ignore-revs`) +
+  575 lint findings → 0. Real bugs beyond style: dead code removed
+  (`spec_path`, `pos`); 5 B904 exception-chains; and **a latent UI bug** —
+  `mode_controls._classify_type` only recognized `typing.Union`, so any
+  mode-config field written in PEP-604 `X | None` form silently lost its
+  `optional` flag in the reporter. Now accepts `types.UnionType` too.
+- **mypy** (tiered: comparison/discovery/storage/config): 22 → 0. Notably
+  4 `numpy.bool` values passed where `builtins.bool` expected (would
+  serialize oddly into baseline JSON), now `bool()`-wrapped.
+- **Re-export hazard**: F401 stripped `comparator.py`'s algorithm-function
+  re-exports (a documented facade consumed by modes/tree_eval/tests);
+  restored under `# noqa: F401`. Lesson: facade modules need the noqa or
+  an `__all__` before an import-cleanup sweep.
+- **Coverage**: 58% → **68%** on the hardware-free suite after the
+  omit-list. junit_report 0→100%, html_report 0→100%, console_report
+  0→97%, patch_apply 77→86%. +30 tests (737 → 767). Ratchet `fail_under
+  = 66` in `[tool.coverage.report]`.
+- **CI**: `.github/workflows/quality.yml` (lint + format-check + mypy +
+  hardware-free pytest + coverage) on push/PR; `.pre-commit-config.yaml`
+  for local parity. FMPy e2e (`PHASE_2_5_CI_PLAN.md`) untouched.
+- **JS quality floor deferred** to its own grill (interactive.js, 4.7k LOC).
+- Follow-up noted: `html_report.py` hard-codes the title "Modelica Test
+  Report" — stale post-D81 rename.

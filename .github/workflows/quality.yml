@@ -1,0 +1,45 @@
+# Quality floor (D88): lint + type-check + the hardware-free test suite +
+# coverage ratchet. Runs on a clean ubuntu runner with NO simulators —
+# Dymola / Julia / OpenModelica / fmpy tests skip cleanly, Playwright is
+# deselected. Independent of the FMPy end-to-end job (docs/PHASE_2_5_CI_PLAN.md),
+# which stays deferred on its own cost trade-off.
+name: quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # NOTE: pin to the latest stable tags before relying on this in anger.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install package + dev extras
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check
+
+      - name: Ruff format check
+        run: ruff format --check
+
+      - name: Mypy (core modules)
+        run: mypy
+
+      - name: Pytest + coverage ratchet
+        # fail_under (66%) lives in pyproject [tool.coverage.report]; the
+        # marker filter drops the browser-driven Playwright subset. All
+        # simulator-backed tests self-skip when their tool is absent.
+        run: pytest -q -m "not playwright" --cov=dstf --cov-report=term-missing

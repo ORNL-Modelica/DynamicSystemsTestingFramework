@@ -1,0 +1,21 @@
+# Local fast-feedback hooks (D88). Install once with:
+#   uv run pre-commit install
+# Mirrors the CI quality job's lint/format/type gates so issues surface
+# before push. The full test suite is NOT run here (too slow for a commit
+# hook) — CI owns that.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.16
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (core modules)
+        entry: uv run mypy
+        language: system
+        pass_filenames: false
+        types: [python]

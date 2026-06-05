@@ -212,7 +212,7 @@ class TestHtmlReport:
         out = tmp_path / "report.html"
         generate_html_report([_failing()], out)
         page = out.read_text()
-        assert "<table class=\"details\">" in page
+        assert '<table class="details">' in page
         assert "<td>h</td>" in page  # the failed variable
 
     def test_model_id_is_html_escaped(self, tmp_path):
@@ -238,5 +238,5 @@ class TestHtmlReport:
         out = tmp_path / "report.html"
         generate_html_report([_warned()], out)
         page = out.read_text()
-        assert "<table class=\"warnings\">" in page
+        assert '<table class="warnings">' in page
         assert "<td>Event count</td>" in page

@@ -596,12 +596,16 @@ class TestRejectionEdges:
         # An empty pointer fails the RFC 6901 format guard (it does not start
         # with "/"), protecting the entry root from a wholesale overwrite.
         with pytest.raises(PatchError, match="JSON-Pointer"):
-            apply_patch(self._spec(tmp_path), "M", [{"op": "add", "path": "", "value": 1}])
+            apply_patch(
+                self._spec(tmp_path), "M", [{"op": "add", "path": "", "value": 1}]
+            )
 
     def test_remove_missing_key(self, tmp_path):
         with pytest.raises(PatchError, match="not present"):
             apply_patch(
-                self._spec(tmp_path), "M", [{"op": "remove", "path": "/comparison/ghost"}]
+                self._spec(tmp_path),
+                "M",
+                [{"op": "remove", "path": "/comparison/ghost"}],
             )
 
     def test_list_index_out_of_range(self, tmp_path):
