@@ -81,3 +81,7 @@ htmlcov/
 # the results_additional/ dslog fixture tracked too. Big generated fixtures —
 # dsfinal.txt, dsin.txt, dsmodel.c — stay ignored: no test references them.)
 !tests/fixtures/**/dslog.txt
+
+# Soul-System session state (event log, handoff cursors) — machine/session
+# local, not project source. Accidentally tracked once via `git add -A`.
+.soul/
