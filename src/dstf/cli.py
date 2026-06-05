@@ -1504,7 +1504,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # run
     p_run = subparsers.add_parser(
         "run", parents=[filter_parent, compare_parent, report_parent],
-        help="Run tests in Dymola",
+        help="Run tests (simulate via the configured backend + compare against references)",
     )
     p_run.add_argument(
         "-i", "--interactive", nargs="?", const="all", default=None,

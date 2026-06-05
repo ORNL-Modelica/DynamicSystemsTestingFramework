@@ -49,7 +49,7 @@ Forward work: multi-baseline reads into tree leaves (hybrid schema is there, but
 ## Project Layout
 
 ```
-ModelicaTesting/                         # repo root (the project name is DSTF; on-disk dir kept its old name)
+DynamicSystemsTestingFramework/          # repo root (project name: DSTF)
 ├── examples/                            # Demo libraries — one per backend, used by README first-5-min walkthrough
 │   ├── modelica/ModelicaTestingLib/       # Components/UnitTests.mo + Examples/ + Resources/ReferenceResults/
 │   ├── fmu/                                # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)

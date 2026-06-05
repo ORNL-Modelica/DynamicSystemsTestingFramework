@@ -13,7 +13,7 @@
 ## Project Structure
 
 ```
-ModelicaTesting/
+DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
 │   ├── cli.py                    # CLI: run, compare, discover, manifest, spec-update,
 │   │                             #      companion, soft-check, import-baseline, migrate-baselines, export-schema

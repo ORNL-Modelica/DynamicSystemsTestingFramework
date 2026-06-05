@@ -197,7 +197,7 @@ def build_schema() -> dict:
 
     return {
         "$schema": _JSON_SCHEMA_URI,
-        "title": "ModelicaTesting test_spec.json",
+        "title": "DSTF test_spec.json",
         "type": "object",
         "required": ["tests"],
         "properties": {
