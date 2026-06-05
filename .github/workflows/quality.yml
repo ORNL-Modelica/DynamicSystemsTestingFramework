@@ -23,23 +23,24 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install package + dev extras
-        run: uv pip install --system -e ".[dev]"
+      # `uv sync` provisions a Python matching requires-python (>=3.10),
+      # creates .venv from uv.lock, and installs the project + dev extra.
+      # Tools are then run via `uv run` so they resolve against that venv —
+      # no PATH / interpreter ambiguity.
+      - name: Sync dependencies
+        run: uv sync --extra dev
 
       - name: Ruff lint
-        run: ruff check
+        run: uv run ruff check
 
       - name: Ruff format check
-        run: ruff format --check
+        run: uv run ruff format --check
 
       - name: Mypy (core modules)
-        run: mypy
+        run: uv run mypy
 
       - name: Pytest + coverage ratchet
         # fail_under (66%) lives in pyproject [tool.coverage.report]; the
         # marker filter drops the browser-driven Playwright subset. All
         # simulator-backed tests self-skip when their tool is absent.
-        run: pytest -q -m "not playwright" --cov=dstf --cov-report=term-missing
+        run: uv run pytest -q -m "not playwright" --cov=dstf --cov-report=term-missing
