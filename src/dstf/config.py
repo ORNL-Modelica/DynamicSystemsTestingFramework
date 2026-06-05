@@ -515,6 +515,7 @@ class Config:
     @property
     def simulator_backend(self) -> str:
         """The simulator backend type (e.g., 'Dymola' from 'Dymola 2025')."""
+        assert self.simulator is not None  # resolved in __post_init__
         return _detect_backend(self.simulator)
 
     @property
@@ -524,9 +525,12 @@ class Config:
         Modelica-source convenience accessor; for source_type == "modelica" this
         is identical to ``source_path``.
         """
+        assert self.source_path is not None  # resolved in __post_init__
         return self.source_path
 
     @property
     def reference_dir(self) -> Path:
         """Reference results directory, partitioned by simulator backend and OS."""
+        assert self.reference_root is not None  # resolved in __post_init__
+        assert self.os_name is not None  # resolved in __post_init__
         return self.reference_root / self.simulator_backend / self.os_name

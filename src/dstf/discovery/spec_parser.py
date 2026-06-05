@@ -161,7 +161,7 @@ def add_to_test_spec(
     and overwrite was not set.
     """
     # Load existing or create new
-    data = {"tests": []}
+    data: dict = {"tests": []}
     if spec_path.exists():
         try:
             data = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -197,7 +197,7 @@ def update_test_variables(
     additional_patterns: list[str],
 ) -> None:
     """Add variable patterns to an existing test entry, or create a new one."""
-    data = {"tests": []}
+    data: dict = {"tests": []}
     if spec_path.exists():
         try:
             data = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -239,7 +239,7 @@ def update_test_comparison(
 
     update_data format: {"model": "...", "comparison": {"tolerance": 0.05, ...}}
     """
-    data = {"tests": []}
+    data: dict = {"tests": []}
     if spec_path.exists():
         try:
             data = json.loads(spec_path.read_text(encoding="utf-8"))

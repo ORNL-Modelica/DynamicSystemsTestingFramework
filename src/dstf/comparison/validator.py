@@ -19,7 +19,7 @@ their role) so validation is context-aware per test.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 
@@ -174,8 +174,8 @@ def role_lookup_from_store(store, model_id: str) -> BaselineRoleLookup:
 
 
 def role_lookup_from_names(
-    soft_checks: list[str] = (),
-    companions: list[str] = (),
+    soft_checks: Sequence[str] = (),
+    companions: Sequence[str] = (),
 ) -> BaselineRoleLookup:
     """Build a role-lookup from explicit name lists (testing-friendly)."""
     sc = set(soft_checks)

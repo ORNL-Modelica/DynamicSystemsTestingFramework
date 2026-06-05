@@ -572,7 +572,7 @@ class ReferenceStore:
         path_str = str(path)
         fmt = format or _infer_companion_format(path_str)
 
-        meta = {
+        meta: dict[str, Any] = {
             "kind": "external",
             "format": fmt,
             "path": path_str,
@@ -631,7 +631,7 @@ class ReferenceStore:
         shutil.copyfile(src, dst)
 
         meta_file = co_dir / f"{name}.json"
-        meta = {
+        meta: dict[str, Any] = {
             "kind": "frozen",
             "format": co.format,
             "data_file": data_basename,
@@ -715,7 +715,7 @@ class ReferenceStore:
             unique_times = len(np.unique(shared_time))
             n_intervals = max(unique_times - 1, 1)
 
-        ref_data = {
+        ref_data: dict[str, Any] = {
             "model_id": test.model_id,
             "test_id": test_id,
             "status": "active",
@@ -731,7 +731,7 @@ class ReferenceStore:
         }
 
         # Comparison settings (per-test and per-variable tolerances)
-        comparison = {}
+        comparison: dict[str, Any] = {}
         if test.comparison_tolerance is not None:
             comparison["tolerance"] = test.comparison_tolerance
         if test.variable_overrides:

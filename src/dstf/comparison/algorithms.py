@@ -210,7 +210,7 @@ def _compare_trajectories(
         max_abs_error_time=max_abs_error_time,
         reference_final=ref_final,
         actual_final=act_final,
-        is_constant=is_constant,
+        is_constant=bool(is_constant),
     )
 
 
@@ -586,7 +586,7 @@ def _compare_tube(
         max_abs_error_time=max_abs_error_time,
         reference_final=ref_final,
         actual_final=act_final,
-        is_constant=is_constant,
+        is_constant=bool(is_constant),
         mode="tube",
         tube_points_inside=fraction_inside,
         tube_worst_violation=worst_violation,
@@ -647,7 +647,7 @@ def _compare_range(
         max_abs_error_time=worst_time,
         reference_final=float("nan"),
         actual_final=act_final,
-        is_constant=act_range < _EPS,
+        is_constant=bool(act_range < _EPS),
         mode="range",
         # Repurpose the tube fields for consistent reporting — "inside" reads
         # as "inside bounds" here.
@@ -738,9 +738,8 @@ def _compare_event_timing(
     all_matched = True
     for e in declared_events:
         target = float(e["time"])
-        tol = float(
-            e.get("tolerance") if e.get("tolerance") is not None else time_tolerance
-        )
+        _tol = e.get("tolerance")
+        tol = float(_tol if _tol is not None else time_tolerance)
         # Find nearest unclaimed actual event within tolerance.
         best_idx = -1
         best_d = float("inf")

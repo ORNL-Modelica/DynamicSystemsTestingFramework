@@ -196,7 +196,11 @@ class WeightedCombinator(Combinator):
                 },
                 children=list(children),
             )
-        weighted_sum = sum(w * c.score for w, c in zip(self.weights, children))
+        # Weighted children are numeric leaves; a missing score contributes 0.
+        weighted_sum = sum(
+            w * (c.score if c.score is not None else 0.0)
+            for w, c in zip(self.weights, children)
+        )
         passed = (
             weighted_sum < self.threshold
             if self.direction == "less"
