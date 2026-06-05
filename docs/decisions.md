@@ -2438,4 +2438,16 @@ lint → types → tests → CI). Outcomes vs spec:
   for local parity. FMPy e2e (`PHASE_2_5_CI_PLAN.md`) untouched.
 - **JS quality floor deferred** to its own grill (interactive.js, 4.7k LOC).
 - Follow-up noted: `html_report.py` hard-codes the title "Modelica Test
-  Report" — stale post-D81 rename.
+  Report" — stale post-D81 rename (fixed → "DSTF Test Report").
+
+**CI confirmed green** (2026-06-05): `quality` workflow passes on
+`pull_request` in ~30s — all steps (uv sync → ruff lint → ruff format
+check → mypy → pytest + 66% coverage ratchet). Took three iterations on
+the runner: fixed a PEP-668 `--system` install error (→ `uv sync` +
+`uv run`), then two failures the local `-m "not playwright"` filter had
+masked — Julia smoke tests that shell out to `dstf run` instead of
+self-skipping (→ deselect all backend markers), and a `.gitignore`
+artifact pattern (`dslog.txt`) that had been silently excluding a
+committed test fixture, so its test could never have passed on a fresh
+clone (→ negation + track the fixture). Both genuine bugs CI surfaced
+that local runs could not.
