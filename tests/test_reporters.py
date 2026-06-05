@@ -189,6 +189,14 @@ class TestConsoleReport:
 
 
 class TestHtmlReport:
+    def test_title_uses_dstf_name(self, tmp_path):
+        # Title must track the DSTF rename (D81), not the legacy "Modelica".
+        out = tmp_path / "report.html"
+        generate_html_report([_passing()], out)
+        page = out.read_text()
+        assert "<title>DSTF Test Report</title>" in page
+        assert "Modelica" not in page
+
     def test_writes_file_with_summary_counts(self, tmp_path):
         out = tmp_path / "nested" / "report.html"
         generate_html_report([_passing(), _failing(), _no_ref(), _warned()], out)

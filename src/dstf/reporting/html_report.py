@@ -77,7 +77,7 @@ def generate_html_report(
 <html>
 <head>
 <meta charset="utf-8">
-<title>Modelica Test Report</title>
+<title>DSTF Test Report</title>
 <style>
 body {{ font-family: monospace; margin: 2em; }}
 table {{ border-collapse: collapse; width: 100%; }}
@@ -90,7 +90,7 @@ th {{ background: #f0f0f0; }}
 </style>
 </head>
 <body>
-<h1>Modelica Test Report</h1>
+<h1>DSTF Test Report</h1>
 <div class="summary">
 <strong>{n_passed}</strong> passed,
 <strong>{n_failed}</strong> failed,
