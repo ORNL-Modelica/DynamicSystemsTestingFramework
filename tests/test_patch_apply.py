@@ -548,3 +548,82 @@ class TestMissingModel:
         assert spec.exists()
         data = _read_spec(spec)
         assert data["tests"][0]["model"] == "B"
+
+
+class TestRejectionEdges:
+    """Validation/rejection guards (D88) — these protect the spec from
+    malformed patches exported by the reporter. They were the uncovered
+    branches in the 77% baseline."""
+
+    def _spec(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        _write_spec(spec, {"tests": [{"model": "M", "comparison": {"a": [1, 2]}}]})
+        return spec
+
+    def test_corrupt_json_rejected(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        spec.write_text("{not json", encoding="utf-8")
+        with pytest.raises(PatchError, match="cannot read"):
+            apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
+
+    def test_root_not_object_rejected(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        spec.write_text("[1, 2, 3]", encoding="utf-8")
+        with pytest.raises(PatchError, match="root must be an object"):
+            apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
+
+    def test_tests_not_list_rejected(self, tmp_path):
+        spec = tmp_path / "spec.json"
+        spec.write_text('{"tests": {}}', encoding="utf-8")
+        with pytest.raises(PatchError, match="'tests' must be a list"):
+            apply_patch(spec, "M", [{"op": "add", "path": "/comparison/x", "value": 1}])
+
+    def test_pointer_must_start_with_slash(self, tmp_path):
+        with pytest.raises(PatchError, match="JSON-Pointer"):
+            apply_patch(
+                self._spec(tmp_path),
+                "M",
+                [{"op": "add", "path": "comparison/x", "value": 1}],
+            )
+
+    def test_add_requires_value(self, tmp_path):
+        with pytest.raises(PatchError, match="requires 'value'"):
+            apply_patch(
+                self._spec(tmp_path), "M", [{"op": "add", "path": "/comparison/x"}]
+            )
+
+    def test_empty_path_rejected(self, tmp_path):
+        # An empty pointer fails the RFC 6901 format guard (it does not start
+        # with "/"), protecting the entry root from a wholesale overwrite.
+        with pytest.raises(PatchError, match="JSON-Pointer"):
+            apply_patch(self._spec(tmp_path), "M", [{"op": "add", "path": "", "value": 1}])
+
+    def test_remove_missing_key(self, tmp_path):
+        with pytest.raises(PatchError, match="not present"):
+            apply_patch(
+                self._spec(tmp_path), "M", [{"op": "remove", "path": "/comparison/ghost"}]
+            )
+
+    def test_list_index_out_of_range(self, tmp_path):
+        with pytest.raises(PatchError, match="out of range"):
+            apply_patch(
+                self._spec(tmp_path),
+                "M",
+                [{"op": "replace", "path": "/comparison/a/9", "value": 0}],
+            )
+
+    def test_list_index_not_integer(self, tmp_path):
+        with pytest.raises(PatchError, match="must be an integer"):
+            apply_patch(
+                self._spec(tmp_path),
+                "M",
+                [{"op": "replace", "path": "/comparison/a/x", "value": 0}],
+            )
+
+    def test_append_token_rejected_on_replace(self, tmp_path):
+        with pytest.raises(PatchError, match="append"):
+            apply_patch(
+                self._spec(tmp_path),
+                "M",
+                [{"op": "replace", "path": "/comparison/a/-", "value": 0}],
+            )

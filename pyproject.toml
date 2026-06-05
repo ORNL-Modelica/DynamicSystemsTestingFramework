@@ -111,6 +111,10 @@ omit = [
 ]
 
 [tool.coverage.report]
+# Ratchet floor (D88): measured baseline 68% on the hardware-free suite
+# (after omit-list), set ~2% below to block backsliding without an
+# aspirational target. Raise as coverage climbs; never lower silently.
+fail_under = 66
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
