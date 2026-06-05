@@ -11,9 +11,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
-
-import pytest
 
 from dstf.reporting.overlay_loader import (
     Overlay,
@@ -29,8 +26,8 @@ class _FakeCompanion:
     name: str
     kind: str
     format: str = "json"
-    path: Optional[str] = None
-    data_file: Optional[str] = None
+    path: str | None = None
+    data_file: str | None = None
     provenance: dict = field(default_factory=dict)
 
 

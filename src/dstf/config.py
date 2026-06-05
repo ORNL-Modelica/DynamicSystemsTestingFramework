@@ -7,7 +7,6 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +58,12 @@ def _detect_backend(simulator_name: str) -> str:
 def detect_os() -> str:
     """Detect the current OS for reference result partitioning."""
     system = platform.system().lower()
-    if system == "linux":
-        return "linux"
-    elif system == "darwin":
-        return "macos"
-    elif system == "windows":
-        return "windows"
-    return system
+    return {"linux": "linux", "darwin": "macos", "windows": "windows"}.get(
+        system, system
+    )
 
 
-def find_package_dir(start: Optional[Path] = None) -> Path:
+def find_package_dir(start: Path | None = None) -> Path:
     """Find a Modelica package directory containing package.mo.
 
     If start is a directory containing package.mo, returns it directly.
@@ -137,7 +132,7 @@ def _create_default_config(config_dir: Path, library_name: str) -> dict:
 def _resolve_simulator_path(
     simulators_config: dict[str, list[str]],
     simulator_name: str,
-) -> Optional[str]:
+) -> str | None:
     """Resolve a simulator executable path from the simulators config.
 
     Looks up the named entry and returns the first path that exists on disk.
@@ -156,7 +151,7 @@ def _resolve_simulator_path(
 
 def _auto_detect_simulator(
     simulators_config: dict[str, list[str]],
-) -> Optional[tuple[str, str]]:
+) -> tuple[str, str] | None:
     """Pick the first simulator in ``simulators_config`` whose binary resolves.
 
     Resolution order per candidate entry:
@@ -215,9 +210,7 @@ def _looks_like_path(entry: str) -> bool:
     """
     if entry.startswith("/"):
         return True
-    if _WINDOWS_DRIVE_RE.match(entry):
-        return True
-    return False
+    return bool(_WINDOWS_DRIVE_RE.match(entry))
 
 
 @dataclass
@@ -237,10 +230,10 @@ class Config:
     # Path to the source location for the library being tested.
     # For source_type == "modelica": the directory containing package.mo.
     # For other source types: the FMU directory / Julia script / CSV file / etc.
-    source_path: Optional[Path] = None
+    source_path: Path | None = None
 
     # Reference results location (can be a separate repo/directory)
-    reference_root: Optional[Path] = None
+    reference_root: Path | None = None
 
     # Simulator selection. ``None`` means "not explicitly chosen" — the
     # post-init resolution then consults testing.json's ``simulator`` key,
@@ -248,22 +241,22 @@ class Config:
     # ``"Dymola"`` as the historical default. A non-None value (typically
     # from a CLI ``--simulator`` flag) is treated as authoritative and is
     # NOT overridden by anything from testing.json.
-    simulator: Optional[str] = None
-    simulator_path: Optional[str] = None
+    simulator: str | None = None
+    simulator_path: str | None = None
     show_ide: bool = False
     simulator_setup: list[str] = field(
         default_factory=list
     )  # Commands run after loading libraries
 
     # OS override (auto-detected if not set)
-    os_name: Optional[str] = None
+    os_name: str | None = None
 
     # Paths to dependency library roots
     dependencies: list[str] = field(default_factory=list)
 
     # Simulation / comparison
     parallel: int = 1
-    batch_size: Optional[int] = (
+    batch_size: int | None = (
         None  # tests per Dymola session; None = ceil(total/parallel) (one big batch per worker)
     )
     tolerance: float = DEFAULT_COMPARISON_TOLERANCE
@@ -271,14 +264,14 @@ class Config:
     timeout: int = 60
 
     # Output
-    work_dir: Optional[Path] = None
+    work_dir: Path | None = None
 
     # Optional override for Dymola's Python interface archive (dymola.egg or dymola-*.whl).
     # If unset, auto-discovers under platform install roots.
-    dymola_interface_path: Optional[Path] = None
+    dymola_interface_path: Path | None = None
 
     # Test spec file (external test definitions)
-    test_spec_file: Optional[Path] = None
+    test_spec_file: Path | None = None
 
     # Diagnostic variables: auto-captured from simulation, shown in reports but not compared
     diagnostic_variables: list[str] = field(
@@ -306,10 +299,10 @@ class Config:
     disabled_bundled: list[str] = field(default_factory=list)
 
     # Config file path
-    config_file: Optional[Path] = None
+    config_file: Path | None = None
 
     # Resolved (set during __post_init__)
-    library_name: Optional[str] = None
+    library_name: str | None = None
 
     def __post_init__(self):
         # Resolve reference root early — needed for config file search

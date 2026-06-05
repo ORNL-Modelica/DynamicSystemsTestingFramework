@@ -68,12 +68,16 @@ src = ["src", "tests"]
 #   I  isort           UP  pyupgrade      SIM flake8-simplify
 select = ["F", "E", "W", "B", "I", "UP", "SIM"]
 ignore = [
-    "E501",  # line length — formatter owns wrapping; long strings/URLs are fine
+    "E501",    # line length — formatter owns wrapping; long strings/URLs are fine
+    "SIM105",  # try/except/pass — deliberate best-effort cleanup in shutdown/parse
+               # paths; contextlib.suppress is not clearer enough to justify churn
+    "B905",    # zip() without strict= — not enforced yet; revisit when ratcheting
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Tests favor readability over lint purity (asserts, fixtures, long params).
-"tests/**" = ["B011", "SIM"]
+# Tests favor readability over lint purity: late imports after fixtures,
+# `== True` assertions, throwaway locals, %-format, lambdas.
+"tests/**" = ["B011", "SIM", "E402", "E712", "E731", "F841", "UP031", "B905", "B007"]
 
 [tool.mypy]
 # Tiered adoption (D88): lenient baseline scoped to the typed-dataclass core.

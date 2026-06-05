@@ -3,22 +3,19 @@
 import json
 from pathlib import Path
 
-import pytest
-
+from dstf.config import Config
 from dstf.discovery.mo_parser import (
-    parse_mo_file,
-    _extract_within,
     _extract_model_name,
+    _extract_within,
     _parse_unit_tests,
+    parse_mo_file,
 )
 from dstf.discovery.spec_parser import (
-    parse_test_spec,
     add_to_test_spec,
+    parse_test_spec,
     update_test_variables,
 )
 from dstf.discovery.test_registry import discover_tests
-from dstf.config import Config
-
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -380,6 +377,7 @@ def test_field_sources_records_spec_override():
     import json
     import tempfile
     from pathlib import Path
+
     from dstf.config import Config
     from dstf.discovery.test_registry import discover_tests
 

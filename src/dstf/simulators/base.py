@@ -79,8 +79,8 @@ class TestResult:
     success: bool
     variables: list[VariableResult] = field(default_factory=list)
     diagnostics: list[VariableResult] = field(default_factory=list)
-    error_message: Optional[str] = None
-    statistics: Optional[dict] = None
+    error_message: str | None = None
+    statistics: dict | None = None
 
 
 @dataclass
@@ -91,12 +91,12 @@ class TestRunResult:
     test_key: str
     success: bool
     elapsed: float = 0.0
-    error_message: Optional[str] = None
+    error_message: str | None = None
     timed_out: bool = False
-    statistics: Optional[dict] = None
+    statistics: dict | None = None
     # Phase breakdown (captured by the persistent runner; None in batch mode)
-    translation_wall: Optional[float] = None
-    sim_wall: Optional[float] = None
+    translation_wall: float | None = None
+    sim_wall: float | None = None
     # Set by persistent workers when the test run left the worker process
     # dead (we called close()). The dispatch loop uses this to decide
     # whether the next restart should count against the budget — workers
@@ -202,7 +202,7 @@ class BatchManifest:
 
     def enrich_ref_ids(self, ref_index) -> None:
         """Add ref_id to each entry using the reference index."""
-        for test_key, entry in self.manifest.items():
+        for _test_key, entry in self.manifest.items():
             ref_id = ref_index.get_id(entry["model_id"])
             entry["ref_id"] = f"ref_{ref_id}" if ref_id else None
         self.save()
@@ -273,7 +273,7 @@ def _print_run_header(
     suffix_phrase: str,
     parallel: int,
     timeout_s: float,
-    work_dir: Optional[Path],
+    work_dir: Path | None,
     *,
     timeout_per_test: bool = False,
 ) -> None:
@@ -308,8 +308,8 @@ def _print_progress(
     total: int,
     name: str,
     status: str,
-    elapsed: Optional[float] = None,
-    detail: Optional[str] = None,
+    elapsed: float | None = None,
+    detail: str | None = None,
 ):
     """Thread-safe progress output."""
     with _print_lock:
@@ -463,10 +463,10 @@ class SimulatorRunner(ABC):
         self.progress = None  # set to a ProgressReporter during run_tests()
         # Optional model_id → "ref_NNNN" map for dashboard report links
         # (set by CLI before run_tests if reference IDs are known)
-        self.ref_id_map: dict[str, Optional[str]] = {}
+        self.ref_id_map: dict[str, str | None] = {}
 
     @classmethod
-    def persistent_runner_cls(cls) -> Optional[type["SimulatorRunner"]]:
+    def persistent_runner_cls(cls) -> type["SimulatorRunner"] | None:
         """Return the persistent-worker variant of this runner, or ``None``
         if the backend is batch-only.
 
@@ -544,8 +544,8 @@ class SimulatorRunner(ABC):
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         total = len(tests)
 
-        from .progress import ProgressReporter
         from ..reporting.dashboard_render import build_rerun_prefix
+        from .progress import ProgressReporter
 
         self.progress = ProgressReporter(
             self.config.work_dir,
@@ -840,8 +840,8 @@ class PersistentRunnerBase(SimulatorRunner):
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         total = len(tests)
 
-        from .progress import ProgressReporter
         from ..reporting.dashboard_render import build_rerun_prefix
+        from .progress import ProgressReporter
 
         self.progress = ProgressReporter(
             self.config.work_dir,
@@ -956,7 +956,7 @@ class PersistentRunnerBase(SimulatorRunner):
         get up to :attr:`max_restarts_per_worker` restart attempts; on
         exhaustion the in-flight test gets a synthetic failure result.
         """
-        work_queue: queue.Queue[Optional[tuple]] = queue.Queue()
+        work_queue: queue.Queue[tuple | None] = queue.Queue()
         for item in test_items:
             work_queue.put(item)
         for _ in live_workers:
@@ -979,7 +979,7 @@ class PersistentRunnerBase(SimulatorRunner):
             if getattr(tr, "sim_wall", None) is not None:
                 parts.append(f"sim {tr.sim_wall:.1f}s")
             if tr.success and parts:
-                detail_str: Optional[str] = ", ".join(parts)
+                detail_str: str | None = ", ".join(parts)
             elif not tr.success:
                 detail_str = (tr.error_message or "")[:80]
             else:

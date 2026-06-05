@@ -13,7 +13,6 @@ from pathlib import Path
 from dstf.config import Config
 from dstf.discovery.test_registry import discover_tests
 
-
 PROJECT_ROOT = Path(__file__).parent.parent
 TESTING_JSON = (
     PROJECT_ROOT

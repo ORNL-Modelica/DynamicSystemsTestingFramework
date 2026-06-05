@@ -1,7 +1,5 @@
 """Smoke tests for ProgressReporter writing dashboard.html via dashboard_render."""
 
-from pathlib import Path
-
 from dstf.simulators.progress import ProgressReporter
 
 

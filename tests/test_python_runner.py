@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-
 _EXAMPLES_DIR = (
     Path(__file__).resolve().parents[1] / "examples" / "python" / "PythonTestingLib"
 )
@@ -40,8 +39,8 @@ def _scipy_available() -> bool:
 
 def test_python_runner_registered():
     """The Python runner registers when its submodule is imported."""
-    from dstf.simulators import get_runner_class
     from dstf.config import Config
+    from dstf.simulators import get_runner_class
 
     cfg = Config(config_file=_CONFIG) if _CONFIG.exists() else None
     if cfg is None:

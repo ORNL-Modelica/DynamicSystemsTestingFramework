@@ -21,10 +21,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from .comparator import VariableComparison
-
 
 # ---------------------------------------------------------------------------
 # Uniform metric result (combinator output shape)
@@ -53,10 +52,10 @@ class MetricResult:
     """
 
     passed: bool
-    score: Optional[float]
+    score: float | None
     label: str = ""
     diagnostics: dict[str, Any] = field(default_factory=dict)
-    children: list["MetricResult"] = field(default_factory=list)
+    children: list[MetricResult] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +134,7 @@ class KOfNCombinator(Combinator):
         passed = n_passed >= self.k
         scores = [c.score for c in children if c.score is not None]
         # Heuristic: score = K-th best child score (or worst if K > len).
-        score: Optional[float]
+        score: float | None
         if not scores:
             score = None
         else:

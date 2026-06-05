@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
@@ -12,9 +11,7 @@ from dstf.discovery.recognizer import (
     Recognizer,
     RecognizerResult,
     get_recognizers,
-    register,
 )
-
 
 PROJECT_ROOT = Path(__file__).parent.parent
 SAMPLE_DIR = PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib"
@@ -92,7 +89,7 @@ class _StubRecognizer(Recognizer):
         self._model_id = model_id
         self._fields = fields
 
-    def recognize(self, source_file: Path) -> Optional[RecognizerResult]:
+    def recognize(self, source_file: Path) -> RecognizerResult | None:
         # Match only files whose stem ends with the model's short name
         short = self._model_id.rsplit(".", 1)[-1]
         if source_file.stem != short:

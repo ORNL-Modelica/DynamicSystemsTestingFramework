@@ -23,14 +23,19 @@ should import them from :mod:`.types` and :mod:`.algorithms` directly.
 """
 
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ..discovery.test_registry import TestModel
 from ..simulators import TestResult
 from ..storage.reference_store import ReferenceStore
-from .algorithms import (
+
+# Re-export facade (see module docstring): modes/tree_eval/metric_tree and the
+# test suite import the per-mode algorithm functions from here, not from
+# .algorithms directly. comparator.py does not call them itself, so they read
+# as unused — keep the noqa to preserve the public import surface.
+from .algorithms import (  # noqa: F401
     _compare_dominant_frequency,
     _compare_event_timing,
     _compare_points,
@@ -51,14 +56,13 @@ from .types import (
     StructuralWarning,
     TestComparison,
     VariableComparison,
-    _EPS,
 )
 
 if TYPE_CHECKING:
     # Annotation-only — runtime import is inside compare_test() to break the
     # comparator <-> metric_tree cycle (metric_tree imports VariableComparison
     # from .types).
-    from .metric_tree import MetricResult
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +140,8 @@ def compare_test(
             comparison) instead of full NRMSE. Variables with
             ``mode: "tube"`` are *not* affected.
     """
-    from .modes import resolve_mode
     from .metric_tree import implicit_and_tree
+    from .modes import resolve_mode
     from .tree_eval import collect_leaf_variables, evaluate_spec
 
     ref_test_id = reference.get("test_id")
@@ -329,8 +333,8 @@ def _test_is_baseline_free(
     legacy NO_REF behavior. There's no partial-run support.
     """
     from .modes import resolve_mode
-    from .tree_spec import CombinatorSpec, LeafSpec
     from .tree_eval import _leaf_override_dict
+    from .tree_spec import LeafSpec
 
     # User-authored spec tree: walk every leaf and resolve its mode.
     if test.metric_tree_spec is not None:

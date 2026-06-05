@@ -4,17 +4,14 @@ import numpy as np
 import pytest
 
 from dstf.comparison.comparator import (
-    VariableComparison,
-    StructuralWarning,
+    _check_structural_changes,
+    _compare_points,
+    _compare_trajectories,
+    _dedup_time_series,
     _find_event_boundaries,
     _split_segments,
-    _dedup_time_series,
-    _compare_trajectories,
-    _compare_points,
-    _check_structural_changes,
 )
 from dstf.simulators.base import TestResult
-
 
 # ---------------------------------------------------------------------------
 # Event boundary detection
@@ -406,14 +403,15 @@ class TestStructuralChanges:
 # Tolerance resolution
 # ---------------------------------------------------------------------------
 
+from pathlib import Path
+
 from dstf.comparison.comparator import (
-    compare_test,
     _compare_tube,
     _interpolate_tube_widths,
+    compare_test,
 )
 from dstf.discovery.test_registry import TestModel
 from dstf.simulators.base import VariableResult
-from pathlib import Path
 
 
 def _make_test(comparison_tolerance=None, variable_overrides=None):
@@ -830,14 +828,13 @@ class TestTubeComparison:
 # ---------------------------------------------------------------------------
 
 from dstf.comparison.modes import (
-    resolve_mode,
-    NrmseMode,
-    TubeMode,
-    PointsMode,
     NrmseConfig,
-    TubeConfig,
+    NrmseMode,
     PointsConfig,
-    ComparisonMode,
+    PointsMode,
+    TubeConfig,
+    TubeMode,
+    resolve_mode,
 )
 
 
@@ -1267,6 +1264,7 @@ class TestPointsDeclaredPath:
         reads it for absolute-value points.
         """
         import numpy as np
+
         from dstf.comparison.comparator import _compare_points
 
         # Empty ref arrays: an absolute-value point should still score.
@@ -1373,6 +1371,7 @@ class TestPointsDeclaredPath:
         target at t=3 exactly but hits it at t=2.95.
         """
         import numpy as np
+
         from dstf.comparison.comparator import _compare_points
 
         # ref doesn't matter — point has explicit value.
@@ -1399,6 +1398,7 @@ class TestPointsDeclaredPath:
     def test_time_tolerance_fails_when_act_misses_box(self):
         """If the act curve never enters the box, point fails."""
         import numpy as np
+
         from dstf.comparison.comparator import _compare_points
 
         ref_t = np.array([0.0, 5.0])
@@ -1423,6 +1423,7 @@ class TestPointsDeclaredPath:
     def test_time_tolerance_zero_degenerates_to_strict_time(self):
         """time_tolerance=0 must behave identically to a single-point check."""
         import numpy as np
+
         from dstf.comparison.comparator import _compare_points
 
         ref_t = np.array([0.0, 5.0])
@@ -1460,6 +1461,7 @@ class TestPointsDeclaredPath:
         [t_lo, t_hi] PLUS at the interpolated endpoints t_lo and t_hi
         — so we don't miss a curve entering between samples."""
         import numpy as np
+
         from dstf.comparison.comparator import _compare_points
 
         ref_t = np.array([0.0, 5.0])

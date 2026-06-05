@@ -31,26 +31,19 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import queue
-import signal
 import subprocess
-import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..base import (
-    BatchManifest,
     Capability,
     PersistentRunnerBase,
     TestRunResult,
     Worker,
-    assign_test_keys,
 )
 from .runner import JuliaConfig, JuliaRunner, _resolve_julia_source
 
@@ -78,12 +71,12 @@ class JuliaWorker(Worker):
     def __init__(self, worker_id: int, config: Config, julia_cfg: JuliaConfig):
         super().__init__(worker_id, config)
         self.julia_cfg = julia_cfg
-        self.proc: Optional[subprocess.Popen] = None
+        self.proc: subprocess.Popen | None = None
         self._stdout_q: queue.Queue[str] = queue.Queue()
         self._stderr_buf: list[str] = []
-        self._stdout_thread: Optional[threading.Thread] = None
-        self._stderr_thread: Optional[threading.Thread] = None
-        self._pid: Optional[int] = None
+        self._stdout_thread: threading.Thread | None = None
+        self._stderr_thread: threading.Thread | None = None
+        self._pid: int | None = None
 
     # ---------------------------------------------------------------
 
@@ -141,7 +134,7 @@ class JuliaWorker(Worker):
         test: TestModel,
         test_key: str,
         timeout: float,
-        progress: Optional[object] = None,
+        progress: object | None = None,
     ) -> TestRunResult:
         """Dispatch one test, wait ``timeout`` seconds for the response.
 

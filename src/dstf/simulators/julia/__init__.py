@@ -23,6 +23,6 @@ Not yet supported:
 
 from __future__ import annotations
 
-from .runner import JuliaRunner, JuliaConfig  # noqa: F401
+from .runner import JuliaConfig, JuliaRunner  # noqa: F401
 
 __all__ = ["JuliaRunner", "JuliaConfig"]

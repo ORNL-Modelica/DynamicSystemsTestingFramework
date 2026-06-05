@@ -21,7 +21,6 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -60,12 +59,12 @@ class JuliaConfig:
     project_dir: Path
 
     @classmethod
-    def from_config(cls, config: Config) -> "JuliaConfig":
+    def from_config(cls, config: Config) -> JuliaConfig:
         # Config.simulator_path is already resolved in __post_init__ via the
         # simulators map + PATH fallback. If that lookup didn't produce
         # anything (e.g., user omitted the path and PATH doesn't include
         # julia), try shutil.which() once more before giving up.
-        resolved: Optional[Path] = None
+        resolved: Path | None = None
         if config.simulator_path:
             p = Path(config.simulator_path).expanduser()
             if p.exists():
@@ -313,7 +312,7 @@ class JuliaRunner(SimulatorRunner):
 # ---------------------------------------------------------------------------
 
 
-def _resolve_julia_source(test: TestModel, config: Config) -> Optional[Path]:
+def _resolve_julia_source(test: TestModel, config: Config) -> Path | None:
     """Resolve the user's ``.jl`` file.
 
     Priority: ``test.source_file`` (spec_parser fills this when the entry
@@ -330,7 +329,7 @@ def _resolve_julia_source(test: TestModel, config: Config) -> Optional[Path]:
     return None
 
 
-def _read_failure_error(result_path: Path) -> Optional[str]:
+def _read_failure_error(result_path: Path) -> str | None:
     """If the driver wrote a failure JSON, pull its 'error' message."""
     if not result_path.exists():
         return None

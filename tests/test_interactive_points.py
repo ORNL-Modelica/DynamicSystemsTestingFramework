@@ -13,13 +13,9 @@ import pytest
 
 pytest.importorskip("playwright.sync_api")
 
-from playwright.sync_api import Page
 
 from test_interactive_playwright import (
     _fixture_context,
-    _leaf,
-    _render_report,
-    playwright_browser,
 )
 
 
@@ -74,6 +70,7 @@ def _context_with_points_leaf(points=None, tolerance=0.01):
 def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
     """Render a custom context to interactive.html."""
     from jinja2 import Environment, FileSystemLoader
+
     from test_interactive_playwright import _JS_SRC, _TEMPLATE_DIR
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)

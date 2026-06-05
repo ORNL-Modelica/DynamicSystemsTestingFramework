@@ -5,19 +5,17 @@ simulation + reference data, and the compare_test integration path.
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from dstf.comparison.comparator import compare_test
 from dstf.comparison.tree_eval import (
-    BaselineView,
     PRIMARY_BASELINE,
+    BaselineView,
     collect_leaf_variables,
     evaluate_spec,
 )
 from dstf.comparison.tree_spec import parse_metric_tree
 from dstf.discovery.test_registry import TestModel
 from dstf.simulators.base import TestResult, VariableResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers

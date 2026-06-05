@@ -47,8 +47,8 @@ _CONFIG = _EXAMPLES_DIR / "Resources" / "ReferenceResults" / "testing.json"
 @pytest.mark.julia
 def test_julia_runner_registered():
     """The Julia runner registers when its submodule is imported."""
-    from dstf.simulators import get_runner_class
     from dstf.config import Config
+    from dstf.simulators import get_runner_class
 
     cfg = Config(config_file=_CONFIG)
     cls = get_runner_class(cfg)

@@ -14,11 +14,9 @@ here for live-edit recompute. Drift is caught by
 
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 
-from .types import VariableComparison, _EPS
+from .types import _EPS, VariableComparison
 
 
 def _find_event_boundaries(time: np.ndarray) -> list[tuple[int, int]]:
@@ -283,7 +281,7 @@ def _compare_points(
     ref_values: np.ndarray,
     act_time: np.ndarray,
     act_values: np.ndarray,
-    points: Optional[list[dict]] = None,
+    points: list[dict] | None = None,
     tolerance: float = 1e-4,
 ) -> VariableComparison:
     # parity-test: live-preview JS counterpart at
@@ -354,10 +352,7 @@ def _compare_points(
     worst_t = 0.0
     for point in points:
         t = point.get("time")
-        if t is None:
-            t = trace_end
-        else:
-            t = float(t)
+        t = trace_end if t is None else float(t)
         # Resolve target.
         explicit_value = point.get("value")
         if explicit_value is not None:
@@ -602,8 +597,8 @@ def _compare_tube(
 def _compare_range(
     act_time: np.ndarray,
     act_values: np.ndarray,
-    min_value: Optional[float],
-    max_value: Optional[float],
+    min_value: float | None,
+    max_value: float | None,
 ) -> VariableComparison:
     # parity-test: live-preview JS counterpart at
     # src/dstf/reporting/templates/interactive.js MODE_SCORERS['range']
@@ -670,7 +665,7 @@ def _compare_event_timing(
     act_time: np.ndarray,
     time_tolerance: float = 1e-3,
     count_must_match: bool = True,
-    declared_events: Optional[list[dict]] = None,
+    declared_events: list[dict] | None = None,
 ) -> VariableComparison:
     """Compare event instants between reference and actual signals (4.C.1).
 
@@ -860,7 +855,7 @@ def _find_strongest_peak_in_window(
     spectrum: np.ndarray,
     lo: float,
     hi: float,
-) -> Optional[tuple[float, float]]:
+) -> tuple[float, float] | None:
     """Return the ``(freq, amplitude)`` of the strongest local maximum in
     ``[lo, hi]``, or ``None`` if no local maximum exists in that window.
 
@@ -892,7 +887,7 @@ def _compare_dominant_frequency(
     ref_values: np.ndarray,
     act_time: np.ndarray,
     act_values: np.ndarray,
-    peaks: Optional[list[dict]] = None,
+    peaks: list[dict] | None = None,
 ) -> VariableComparison:
     # parity-test: live-preview JS counterpart at
     # src/dstf/reporting/templates/interactive.js MODE_SCORERS['dominant-frequency']

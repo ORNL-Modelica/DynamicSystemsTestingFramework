@@ -24,7 +24,6 @@ locate the offending entry quickly in a large spec.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Union
 
 VALID_COMBINATORS = frozenset({"and", "or", "k-of-n", "warn", "weighted"})
 VALID_METRICS = frozenset(
@@ -69,8 +68,8 @@ class LeafSpec:
     variable: str
     params: dict = field(default_factory=dict)
     against: str = "primary"
-    window_start: Optional[float] = None
-    window_end: Optional[float] = None
+    window_start: float | None = None
+    window_end: float | None = None
 
 
 @dataclass
@@ -84,7 +83,7 @@ class CombinatorSpec:
     """
 
     combinator: str
-    children: list[Union["LeafSpec", "CombinatorSpec"]]
+    children: list[LeafSpec | CombinatorSpec]
     k: int = 0  # only meaningful for k-of-n
     # Weighted-only fields (empty/zero for other combinators).
     weights: list[float] = field(default_factory=list)
@@ -109,7 +108,7 @@ class CombinatorSpec:
                 )
 
 
-SpecNode = Union[LeafSpec, CombinatorSpec]
+SpecNode = LeafSpec | CombinatorSpec
 
 
 def collect_leaf_paths(spec: SpecNode, *, root: str = "/metrics") -> list[str]:
@@ -187,7 +186,7 @@ def spec_to_view(
     node: SpecNode,
     *,
     root: str = "/metrics",
-    evaluation_by_path: Optional[dict[str, dict]] = None,
+    evaluation_by_path: dict[str, dict] | None = None,
 ) -> dict:
     """Serialize a ``SpecNode`` to a JSON-safe dict with paths + evaluation.
 
@@ -269,8 +268,8 @@ def _window_view(leaf: LeafSpec) -> dict:
 def synthesize_implicit_tree(
     variables: list[str],
     *,
-    variable_overrides: Optional[dict[str, dict]] = None,
-    base_tolerance: Optional[float] = None,
+    variable_overrides: dict[str, dict] | None = None,
+    base_tolerance: float | None = None,
 ) -> SpecNode:
     """Build a render-only ``SpecNode`` for tests that don't author a tree.
 
@@ -398,17 +397,17 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
         except (TypeError, ValueError) as exc:
             raise MetricSpecError(
                 f"{path}.weights: all weights must be numeric ({exc})"
-            )
+            ) from exc
         if "threshold" not in raw:
             raise MetricSpecError(
                 f"{path}.threshold: 'weighted' combinator requires 'threshold'"
             )
         try:
             threshold = float(raw["threshold"])
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
             raise MetricSpecError(
                 f"{path}.threshold: must be numeric, got {raw['threshold']!r}"
-            )
+            ) from exc
         direction = raw.get("direction", "less")
         if direction not in ("less", "greater"):
             raise MetricSpecError(
@@ -448,8 +447,8 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
     # Both endpoints optional; open-ended on either side supported. The
     # comparator slices before calling mode.compare so every metric
     # composes uniformly with the window.
-    window_start: Optional[float] = None
-    window_end: Optional[float] = None
+    window_start: float | None = None
+    window_end: float | None = None
     window_raw = raw.get("window")
     if window_raw is not None:
         if not isinstance(window_raw, dict):

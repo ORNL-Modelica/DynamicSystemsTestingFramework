@@ -1,6 +1,7 @@
 """Console (terminal) report for test comparison results."""
 
 import sys
+
 from ..comparison.comparator import TestComparison, VariableComparison
 
 # ANSI color codes

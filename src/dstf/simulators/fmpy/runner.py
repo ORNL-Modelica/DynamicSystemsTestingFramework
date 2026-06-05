@@ -41,7 +41,6 @@ import concurrent.futures
 import logging
 import time
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -299,7 +298,7 @@ class FmpyRunner(SimulatorRunner):
 # ---------------------------------------------------------------------------
 
 
-def _resolve_fmu_path(test: TestModel) -> Optional[Path]:
+def _resolve_fmu_path(test: TestModel) -> Path | None:
     """Get the FMU binary path for a test.
 
     spec_parser stores the resolved path in ``test.source_file`` when the

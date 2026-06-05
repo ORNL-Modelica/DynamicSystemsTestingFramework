@@ -20,14 +20,13 @@ from typing import Any
 from ..comparison.modes import (
     DominantFrequencyConfig,
     EventTimingConfig,
-    PointsConfig,
     NrmseConfig,
+    PointsConfig,
     RangeConfig,
     TubeConfig,
 )
 from ..comparison.tree_spec import VALID_COMBINATORS, VALID_METRICS
-from .ui.mode_controls import FIELD_TYPES, derive_schema
-
+from .ui.mode_controls import derive_schema
 
 _JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
 

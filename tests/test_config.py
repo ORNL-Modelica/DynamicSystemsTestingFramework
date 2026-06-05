@@ -8,12 +8,11 @@ import pytest
 
 from dstf.config import (
     Config,
+    detect_os,
+    find_package_dir,
     load_config_file,
     read_package_name,
-    find_package_dir,
-    detect_os,
 )
-
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

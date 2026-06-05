@@ -17,8 +17,8 @@ unreliable (``res`` isn't in scope for the follow-up prints).
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from ...discovery.test_registry import TestModel
 from ..base import _pattern_to_regex

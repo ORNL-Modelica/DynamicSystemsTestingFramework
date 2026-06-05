@@ -22,9 +22,8 @@ import logging
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -60,7 +59,7 @@ class OpenModelicaConfig:
     std_version: str = "latest"
 
     @classmethod
-    def from_config(cls, config: Config) -> "OpenModelicaConfig":
+    def from_config(cls, config: Config) -> OpenModelicaConfig:
         # Config.__post_init__ now resolves simulator_path via
         # BACKEND_BINARY_NAMES, so the Config-supplied value is authoritative.
         # Fall through to `omc` on PATH only if the config didn't set one at
@@ -208,8 +207,8 @@ class OpenModelicaRunner(SimulatorRunner):
             stats["timing"] = dict(parsed.timings)
 
         # Translation-wall = sum of all pre-simulation phases.
-        translation_wall: Optional[float] = None
-        sim_wall: Optional[float] = None
+        translation_wall: float | None = None
+        sim_wall: float | None = None
         if parsed.timings is not None:
             t = parsed.timings
             translation_wall = (
@@ -282,7 +281,7 @@ class OpenModelicaRunner(SimulatorRunner):
         self,
         test: TestModel,
         test_key: str,
-        run_result: Optional[TestRunResult],
+        run_result: TestRunResult | None,
     ) -> TestResult:
         stats = (
             dict(run_result.statistics)
@@ -364,7 +363,7 @@ def _compute_needed_variables(
     mat_path: Path,
     test: TestModel,
     diagnostic_vars: list[str],
-) -> Optional[set[str]]:
+) -> set[str] | None:
     """Determine which variable names to extract.
 
     Returns a set, or None to mean "load everything" (fallback if we can't

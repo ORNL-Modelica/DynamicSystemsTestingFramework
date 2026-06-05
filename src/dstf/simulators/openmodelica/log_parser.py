@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -36,7 +35,7 @@ class ParsedOmcOutput:
     success: bool
     result_file: str = ""
     messages: str = ""
-    timings: Optional[dict[str, float]] = None
+    timings: dict[str, float] | None = None
     error_notices: list[str] = field(default_factory=list)
 
 

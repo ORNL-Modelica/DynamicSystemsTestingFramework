@@ -6,18 +6,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from dstf.config import Config
+from dstf.discovery.test_registry import TestModel
+from dstf.simulators.base import TestResult, VariableResult
 from dstf.storage.reference_store import (
-    Baseline,
     PRIMARY_BASELINE,
-    RefIndex,
+    Baseline,
     ReferenceStore,
+    RefIndex,
     _downsample,
     _extract_baselines,
 )
-from dstf.simulators.base import TestResult, VariableResult
-from dstf.discovery.test_registry import TestModel
-from dstf.config import Config
-
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

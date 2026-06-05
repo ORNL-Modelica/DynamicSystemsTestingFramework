@@ -22,7 +22,6 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -59,8 +58,8 @@ class PythonConfig:
     python_binary: Path
 
     @classmethod
-    def from_config(cls, config: Config) -> "PythonConfig":
-        resolved: Optional[Path] = None
+    def from_config(cls, config: Config) -> PythonConfig:
+        resolved: Path | None = None
         if config.simulator_path:
             p = Path(config.simulator_path).expanduser()
             if p.exists():
@@ -299,7 +298,7 @@ class PythonRunner(SimulatorRunner):
 # ---------------------------------------------------------------------------
 
 
-def _resolve_python_source(test: TestModel, config: Config) -> Optional[Path]:
+def _resolve_python_source(test: TestModel, config: Config) -> Path | None:
     """Resolve the user's ``.py`` file.
 
     Priority: ``test.source_file`` (spec_parser fills this when the entry
@@ -315,7 +314,7 @@ def _resolve_python_source(test: TestModel, config: Config) -> Optional[Path]:
     return None
 
 
-def _read_failure_error(result_path: Path) -> Optional[str]:
+def _read_failure_error(result_path: Path) -> str | None:
     """If the driver wrote a failure JSON, pull its 'error' message."""
     if not result_path.exists():
         return None

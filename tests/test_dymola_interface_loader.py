@@ -82,7 +82,8 @@ def test_reextracts_when_wheel_signature_changes(monkeypatch, tmp_path, fake_whe
     # Replace the wheel with different content; bump mtime explicitly so this
     # test isn't a flaky race-with-filesystem-resolution.
     _write_minimal_wheel(fake_wheel, b"# generation 2: different content " * 200)
-    import os, time
+    import os
+    import time
 
     new_mtime = time.time() + 5
     os.utime(fake_wheel, (new_mtime, new_mtime))

@@ -27,7 +27,6 @@ import pytest
 from dstf.reporting.plot_comparison import _decimate_context_for_html
 from dstf.reporting.ui.mode_controls import emit_mode_schemas
 
-
 GOLDEN_DIR = Path(__file__).parent / "golden"
 UPDATE = os.environ.get("UPDATE_GOLDEN") == "1"
 

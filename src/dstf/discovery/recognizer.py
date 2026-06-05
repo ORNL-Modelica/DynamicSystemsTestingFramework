@@ -17,7 +17,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -34,25 +33,25 @@ class RecognizerResult:
     """
 
     model_id: str
-    source_file: Optional[Path] = None
+    source_file: Path | None = None
     # Variables-to-track contribution (was UnitTestInfo)
-    n_vars: Optional[int] = None
+    n_vars: int | None = None
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""
-    x_reference: Optional[list[float]] = None
-    error_expected: Optional[float] = None
+    x_reference: list[float] | None = None
+    error_expected: float | None = None
     # Simulation-parameters contribution (was ExperimentInfo)
-    stop_time: Optional[float] = None
-    tolerance: Optional[float] = None
-    method: Optional[str] = None
-    number_of_intervals: Optional[int] = None
-    output_interval: Optional[float] = None
+    stop_time: float | None = None
+    tolerance: float | None = None
+    method: str | None = None
+    number_of_intervals: int | None = None
+    output_interval: float | None = None
     # PTA.4 — richer-contract runtime-behavior fields. Recognizers can set
     # these; TestModel carries them through. Consumers land in PTA.5 (for
     # simulate_only) and 4.B (for requested_fmu_export / requested_baselines).
-    simulate_only: Optional[bool] = None
-    requested_fmu_export: Optional[bool] = None
-    requested_baselines: Optional[list[str]] = None
+    simulate_only: bool | None = None
+    requested_fmu_export: bool | None = None
+    requested_baselines: list[str] | None = None
 
 
 class Recognizer(ABC):
@@ -64,7 +63,7 @@ class Recognizer(ABC):
     applies_to: frozenset[str] = frozenset()
 
     @abstractmethod
-    def recognize(self, source_file: Path) -> Optional[RecognizerResult]:
+    def recognize(self, source_file: Path) -> RecognizerResult | None:
         """Inspect a source file. Return a result if a test is recognized, else None."""
         ...
 

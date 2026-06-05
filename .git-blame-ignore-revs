@@ -1,0 +1,7 @@
+# Revisions to ignore in `git blame` (bulk mechanical reformats — D88).
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub honors this file automatically.
+
+# style: ruff format whole tree (D88)
+e85f532312db23de0155fb288a5d8c8cc6bdcddf

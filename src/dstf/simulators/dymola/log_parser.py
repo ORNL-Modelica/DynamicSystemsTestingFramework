@@ -2,10 +2,9 @@
 
 import re
 from pathlib import Path
-from typing import Optional
 
 
-def parse_dslog(path: Path) -> Optional[dict]:
+def parse_dslog(path: Path) -> dict | None:
     """Parse a Dymola log file and extract all available statistics.
 
     Works with both dslog.txt (simulation runtime stats) and

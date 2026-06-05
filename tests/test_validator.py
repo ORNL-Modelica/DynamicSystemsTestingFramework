@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from dstf.comparison.tree_spec import parse_metric_tree
 from dstf.comparison.validator import (
     BaselineRole,

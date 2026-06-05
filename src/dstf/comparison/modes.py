@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Literal
 
 import numpy as np
 
@@ -28,7 +28,6 @@ from .comparator import (
     _compare_trajectories,
     _compare_tube,
 )
-
 
 # ---------------------------------------------------------------------------
 # Abstract base
@@ -102,7 +101,7 @@ class TubeConfig:
     (reporting/ui/mode_controls.py).
     """
 
-    tube_width_mode: Optional[Literal["band", "rel", "abs"]] = field(
+    tube_width_mode: Literal["band", "rel", "abs"] | None = field(
         default=None,
         metadata={
             "label": "Width mode",
@@ -136,7 +135,7 @@ class TubeConfig:
             "help": "Floor for the tube width — useful near zero-crossings.",
         },
     )
-    tube_points: Optional[list[dict]] = field(
+    tube_points: list[dict] | None = field(
         default=None,
         metadata={
             "label": "Control points",
@@ -183,7 +182,7 @@ class PointsConfig:
     See docs/superpowers/specs/2026-04-24-points-mode-design.md.
     """
 
-    points: Optional[list[dict]] = field(
+    points: list[dict] | None = field(
         default=None,
         metadata={
             "label": "Declared points",
@@ -217,7 +216,7 @@ class RangeConfig:
     are declared in the spec itself — reference data is not consulted.
     """
 
-    min_value: Optional[float] = field(
+    min_value: float | None = field(
         default=None,
         metadata={
             "label": "Lower bound (optional)",
@@ -227,7 +226,7 @@ class RangeConfig:
             ),
         },
     )
-    max_value: Optional[float] = field(
+    max_value: float | None = field(
         default=None,
         metadata={
             "label": "Upper bound (optional)",
@@ -274,7 +273,7 @@ class EventTimingConfig:
             ),
         },
     )
-    events: Optional[list[dict]] = field(
+    events: list[dict] | None = field(
         default=None,
         metadata={
             "label": "Declared events",
@@ -304,7 +303,7 @@ class DominantFrequencyConfig:
     that bootstraps the list from the reference spectrum's top-N peaks.
     """
 
-    peaks: Optional[list[dict]] = field(
+    peaks: list[dict] | None = field(
         default=None,
         metadata={
             "label": "Peaks",

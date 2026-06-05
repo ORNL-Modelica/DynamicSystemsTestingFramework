@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from ..config import (
-    Config,
     DEFAULT_METHOD,
     DEFAULT_STOP_TIME,
     DEFAULT_TOLERANCE,
+    Config,
 )
 from .recognizer import RecognizerResult, get_recognizers
 
@@ -27,22 +27,22 @@ class TestModel:
     n_vars: int
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""
-    x_reference: Optional[list[float]] = None
+    x_reference: list[float] | None = None
     error_expected: float = 1e-6
     stop_time: float = DEFAULT_STOP_TIME
     tolerance: float = DEFAULT_TOLERANCE
     method: str = DEFAULT_METHOD
-    number_of_intervals: Optional[int] = None
-    output_interval: Optional[float] = None
+    number_of_intervals: int | None = None
+    output_interval: float | None = None
     result_file: str = ""
-    timeout: Optional[int] = None  # Per-test timeout override (seconds)
+    timeout: int | None = None  # Per-test timeout override (seconds)
 
     # External spec: variable patterns (may include globs like "medium.T*" or "*")
     # These are resolved against actual .mat variable names after simulation.
     variable_patterns: list[str] = field(default_factory=list)
 
     # Comparison settings (per-test and per-variable overrides)
-    comparison_tolerance: Optional[float] = None  # Overrides config.tolerance
+    comparison_tolerance: float | None = None  # Overrides config.tolerance
     variable_overrides: dict[str, dict] = field(default_factory=dict)
     # variable_overrides format: {"var_name": {"tolerance": 0.1}, ...}
 

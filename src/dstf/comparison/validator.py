@@ -19,9 +19,9 @@ their role) so validation is context-aware per test.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Optional
 
 from .tree_spec import CombinatorSpec, LeafSpec, SpecNode
 
@@ -41,7 +41,7 @@ class ValidationError:
         return f"{self.path}: {self.message}"
 
 
-BaselineRoleLookup = Callable[[str], Optional[BaselineRole]]
+BaselineRoleLookup = Callable[[str], BaselineRole | None]
 
 
 def validate_tree(
@@ -161,7 +161,7 @@ def role_lookup_from_store(store, model_id: str) -> BaselineRoleLookup:
     soft_check_names = set(store.get_soft_checks(model_id).keys())
     companion_names = set(store.get_companions(model_id).keys())
 
-    def lookup(name: str) -> Optional[BaselineRole]:
+    def lookup(name: str) -> BaselineRole | None:
         if name == "primary":
             return BaselineRole.PRIMARY
         if name in soft_check_names:
@@ -181,7 +181,7 @@ def role_lookup_from_names(
     sc = set(soft_checks)
     co = set(companions)
 
-    def lookup(name: str) -> Optional[BaselineRole]:
+    def lookup(name: str) -> BaselineRole | None:
         if name == "primary":
             return BaselineRole.PRIMARY
         if name in sc:

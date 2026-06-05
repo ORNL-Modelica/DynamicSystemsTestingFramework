@@ -20,30 +20,22 @@ preserved untouched.
 from __future__ import annotations
 
 import logging
-import queue
-import re
 import shutil
-import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from ..base import (
-    BatchManifest,
     PersistentRunnerBase,
     TestRunResult,
     Worker,
-    _print_progress,
-    assign_test_keys,
 )
-from .log_parser import parse_dslog
 from ..common.mat_reader import read_mat_time_extents
-from .runner import DymolaRunner, DymolaConfig
 from .interface_loader import load_dymola_interface
+from .log_parser import parse_dslog
+from .runner import DymolaConfig, DymolaRunner
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +118,9 @@ def _install_dymola_log_filter() -> None:
     if _dymola_logger_patched:
         return
     try:
-        from dymola.dymola_interface_internal import DymolaLogger  # type: ignore[import-not-found]
+        from dymola.dymola_interface_internal import (
+            DymolaLogger,  # type: ignore[import-not-found]
+        )
     except ImportError:
         return  # interface not loaded yet; will be retried on next call
     orig = DymolaLogger._PrintMessage
@@ -290,8 +284,8 @@ class DymolaWorker(Worker):
         test_dir.mkdir(parents=True, exist_ok=True)
 
         start = time.monotonic()
-        translation_wall: Optional[float] = None
-        sim_wall: Optional[float] = None
+        translation_wall: float | None = None
+        sim_wall: float | None = None
         try:
             self.dymola.cd(str(test_dir))
             self.dymola.clearlog()
@@ -512,7 +506,7 @@ class DymolaWorker(Worker):
         mat_path = test_dir / "dsres.mat"
         dsfinal_path = test_dir / "dsfinal.txt"
         success = False
-        completion_msg: Optional[str] = None
+        completion_msg: str | None = None
         if not translation_failed and mat_path.exists() and dsfinal_path.exists():
             extents = read_mat_time_extents(mat_path)
             stop_time = float(test.stop_time)
@@ -620,8 +614,8 @@ class DymolaWorker(Worker):
         After a timeout or worker-level exception, `self.dymola` is None and
         the worker must be restarted before further tests are dispatched.
         """
-        result_box: list[Optional[TestRunResult]] = [None]
-        exc_box: list[Optional[BaseException]] = [None]
+        result_box: list[TestRunResult | None] = [None]
+        exc_box: list[BaseException | None] = [None]
         start_ts = time.monotonic()
 
         def _runner():

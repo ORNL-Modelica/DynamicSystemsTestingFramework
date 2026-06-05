@@ -18,13 +18,13 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
 from ..config import Config
 from ..discovery.test_registry import TestModel
-from ..simulators import TestResult, VariableResult
+from ..simulators import TestResult
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +181,8 @@ class Companion:
     name: str
     kind: str  # "external" | "frozen"
     format: str  # "csv" | "json"
-    path: Optional[str] = None  # absolute path for external
-    data_file: Optional[str] = None  # basename for frozen (sibling of metadata)
+    path: str | None = None  # absolute path for external
+    data_file: str | None = None  # basename for frozen (sibling of metadata)
     provenance: dict = field(default_factory=dict)
 
 
@@ -237,12 +237,12 @@ class RefIndex:
         if not self._loaded:
             self._scan()
 
-    def get_id(self, model_id: str) -> Optional[str]:
+    def get_id(self, model_id: str) -> str | None:
         """Look up the numeric ID for a model. Returns None if not found."""
         self._ensure_loaded()
         return self._by_model.get(model_id)
 
-    def get_model_id(self, test_id: str) -> Optional[str]:
+    def get_model_id(self, test_id: str) -> str | None:
         """Look up the model ID for a numeric test ID."""
         self._ensure_loaded()
         entry = self._by_id.get(test_id)
@@ -303,14 +303,14 @@ class ReferenceStore:
     def _ensure_dir(self):
         self.ref_dir.mkdir(parents=True, exist_ok=True)
 
-    def _ref_file_for_model(self, model_id: str) -> Optional[Path]:
+    def _ref_file_for_model(self, model_id: str) -> Path | None:
         """Get the reference file path for a model. Returns None if not indexed."""
         test_id = self._index.get_id(model_id)
         if test_id is None:
             return None
         return self.ref_dir / RefIndex.ref_filename(test_id)
 
-    def get_reference(self, model_id: str) -> Optional[dict]:
+    def get_reference(self, model_id: str) -> dict | None:
         """Load reference data for a model. Returns None if not found.
 
         Returns the raw dict as stored on disk. Most callers should prefer
@@ -348,7 +348,7 @@ class ReferenceStore:
         self,
         model_id: str,
         name: str = PRIMARY_BASELINE,
-    ) -> Optional[Baseline]:
+    ) -> Baseline | None:
         """Return one named baseline for a model, or None if not found.
 
         Defaults to ``"primary"`` — which is what every existing caller
@@ -367,7 +367,7 @@ class ReferenceStore:
     # wrapping — soft_checks never hard-fail.
     # ------------------------------------------------------------------
 
-    def _soft_check_dir_for(self, model_id: str) -> Optional[Path]:
+    def _soft_check_dir_for(self, model_id: str) -> Path | None:
         ref_file = self._ref_file_for_model(model_id)
         if ref_file is None:
             return None
@@ -409,10 +409,10 @@ class ReferenceStore:
         time: list[float],
         variables: list[dict],
         *,
-        diagnostics: Optional[list[dict]] = None,
-        provenance: Optional[dict] = None,
-        simulation: Optional[dict] = None,
-        statistics: Optional[dict] = None,
+        diagnostics: list[dict] | None = None,
+        provenance: dict | None = None,
+        simulation: dict | None = None,
+        statistics: dict | None = None,
         overwrite: bool = True,
     ) -> bool:
         """Register a soft_check baseline for a model.
@@ -489,7 +489,7 @@ class ReferenceStore:
     # (copied into ref storage).
     # ------------------------------------------------------------------
 
-    def _companion_dir_for(self, model_id: str) -> Optional[Path]:
+    def _companion_dir_for(self, model_id: str) -> Path | None:
         ref_file = self._ref_file_for_model(model_id)
         if ref_file is None:
             return None
@@ -536,8 +536,8 @@ class ReferenceStore:
         name: str,
         path: Path,
         *,
-        format: Optional[str] = None,
-        provenance: Optional[dict] = None,
+        format: str | None = None,
+        provenance: dict | None = None,
     ) -> bool:
         """Register an external file as a companion (pointer only, no copy).
 

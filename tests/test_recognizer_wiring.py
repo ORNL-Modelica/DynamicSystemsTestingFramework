@@ -16,7 +16,6 @@ from dstf.discovery.json_recognizer import (
 )
 from dstf.discovery.test_registry import discover_tests
 
-
 PROJECT_ROOT = Path(__file__).parent.parent
 SAMPLE_LIB = PROJECT_ROOT / "examples" / "modelica" / "ModelicaTestingLib"
 

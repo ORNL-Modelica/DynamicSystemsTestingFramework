@@ -8,7 +8,6 @@ of MB for large models) when only a few variables are needed.
 import logging
 import struct
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -33,7 +32,6 @@ def _scan_mat4_headers(f) -> dict:
     """
     variables = {}
     while True:
-        pos = f.tell()
         hdr_bytes = f.read(20)
         if len(hdr_bytes) < 20:
             break
@@ -72,7 +70,7 @@ def _read_mat4_block(f, info) -> np.ndarray:
     return np.frombuffer(raw, dtype=dtype).reshape((mrows, ncols), order="F")
 
 
-def list_result_mat_variables(mat_path: Path) -> Optional[list[str]]:
+def list_result_mat_variables(mat_path: Path) -> list[str] | None:
     """Read only the variable names from a Dymola .mat file (no data loaded).
 
     This is fast even for large files — it reads headers and the name matrix only.
@@ -96,8 +94,8 @@ def list_result_mat_variables(mat_path: Path) -> Optional[list[str]]:
 
 def read_result_mat(
     mat_path: Path,
-    variable_names: Optional[set[str]] = None,
-) -> Optional[dict]:
+    variable_names: set[str] | None = None,
+) -> dict | None:
     """Read a Dymola-format .mat file with selective variable loading.
 
     Dymola uses a specific MAT4 format with:
@@ -145,9 +143,12 @@ def read_result_mat(
         # is fixed by the DSresult format; an earlier shape[0]<shape[1]
         # heuristic silently broke for MATs with n_vars <= 4 (only surfaced
         # on OM where tight variableFilter often leaves a handful of vars).
-        if data_info.ndim == 2 and data_info.shape[0] == 4:
-            data_info = data_info.T
-        elif data_info.ndim == 2 and data_info.shape[0] < data_info.shape[1]:
+        if (
+            data_info.ndim == 2
+            and data_info.shape[0] == 4
+            or data_info.ndim == 2
+            and data_info.shape[0] < data_info.shape[1]
+        ):
             data_info = data_info.T
 
         # Memory-map data_2 for selective row access.
@@ -224,7 +225,7 @@ def read_result_mat(
         return None
 
 
-def read_mat_time_extents(mat_path: Path) -> Optional[tuple[float, float]]:
+def read_mat_time_extents(mat_path: Path) -> tuple[float, float] | None:
     """Cheaply read just the first and last time values from a Dymola .mat.
 
     Useful for verifying a simulation reached its requested stop time

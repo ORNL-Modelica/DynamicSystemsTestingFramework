@@ -18,7 +18,6 @@ from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
 from dstf.simulators.base import TestResult, VariableResult
 from dstf.storage.reference_store import (
-    Companion,
     ReferenceStore,
 )
 

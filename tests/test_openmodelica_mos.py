@@ -5,8 +5,8 @@ from pathlib import Path
 from dstf.discovery.test_registry import TestModel
 from dstf.simulators.openmodelica.mos_generator import (
     build_simulate_mos,
-    classify_dependency,
     build_variable_filter,
+    classify_dependency,
 )
 
 

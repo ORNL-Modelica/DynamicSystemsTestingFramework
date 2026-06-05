@@ -7,7 +7,6 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -25,8 +24,8 @@ from ..base import (
     _print_run_header,
     resolve_variable_patterns,
 )
-from .log_parser import parse_dslog
 from ..common.mat_reader import list_result_mat_variables, read_result_mat
+from .log_parser import parse_dslog
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +119,8 @@ class DymolaRunner(SimulatorRunner):
         self.config.work_dir.mkdir(parents=True, exist_ok=True)
         total = len(tests)
 
-        from ..progress import ProgressReporter
         from ...reporting.dashboard_render import build_rerun_prefix
+        from ..progress import ProgressReporter
 
         self.progress = ProgressReporter(
             self.config.work_dir,
@@ -214,8 +213,9 @@ class DymolaRunner(SimulatorRunner):
             # batch as they become free (natural load balancing + crash isolation).
             # worker_id attribution comes from the thread name so the dashboard can
             # group tests by actual worker slot rather than batch index.
+            import re
+            import threading
             from concurrent.futures import ThreadPoolExecutor, as_completed
-            import threading, re
 
             def _worker_slot() -> int:
                 m = re.search(r"(\d+)$", threading.current_thread().name)
@@ -269,7 +269,7 @@ class DymolaRunner(SimulatorRunner):
         shutdown_path: Path,
         index_offset: int,
         total: int,
-        worker_id: Optional[int] = None,
+        worker_id: int | None = None,
     ) -> list[TestRunResult]:
         """Run a batch of tests in a single Dymola session."""
         work_dir = self.config.work_dir
@@ -413,7 +413,7 @@ class DymolaRunner(SimulatorRunner):
             # incrementally, so a killed/aborted sim can leave a partial file.
             dsfinal_path = test_dir / "dsfinal.txt"
             sim_completed = False
-            completion_msg: Optional[str] = None
+            completion_msg: str | None = None
             if not translation_failed and mat_path.exists() and dsfinal_path.exists():
                 from ..common.mat_reader import read_mat_time_extents
 
@@ -509,7 +509,7 @@ class DymolaRunner(SimulatorRunner):
         self,
         test: TestModel,
         test_key: str,
-        run_result: Optional[TestRunResult],
+        run_result: TestRunResult | None,
     ) -> TestResult:
         stats = (
             dict(run_result.statistics)
@@ -675,9 +675,9 @@ def _generate_test_mos(
     lines = [
         f"// {test.model_id}",
         f'cd("{test_dir.as_posix()}");',
-        f"clearlog();",
+        "clearlog();",
         f"simulateModel({','.join(parts)});",
-        f'savelog("translation_log.txt");',
+        'savelog("translation_log.txt");',
     ]
 
     script_path = test_dir / "simulate.mos"
@@ -698,7 +698,7 @@ def _generate_batch_mos(
         f'RunScript("{startup_path.as_posix()}");',
     ]
 
-    for test, test_key in test_items:
+    for _test, test_key in test_items:
         test_mos = work_dir / test_key / "simulate.mos"
         lines.append(f'RunScript("{test_mos.as_posix()}");')
 
@@ -718,7 +718,7 @@ def _compute_needed_variables(
     mat_path: Path,
     test: TestModel,
     diagnostic_vars: list[str] = None,
-) -> Optional[set[str]]:
+) -> set[str] | None:
     """Determine which variables need to be extracted from a .mat file.
 
     Returns a set of variable names, or None to load everything (fallback).

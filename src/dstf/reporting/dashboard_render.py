@@ -21,10 +21,8 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _env = Environment(
@@ -33,7 +31,7 @@ _env = Environment(
 )
 
 
-def _read_status(work_dir: Path) -> Optional[dict]:
+def _read_status(work_dir: Path) -> dict | None:
     p = work_dir / "status.json"
     if not p.exists():
         return None
@@ -43,7 +41,7 @@ def _read_status(work_dir: Path) -> Optional[dict]:
         return None
 
 
-def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> Optional[dict]:
+def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:
     """Read per-test comparison_data.json if present.
 
     Per-test reports are at <work_dir>/reports/<report_dir>/comparison_data.json
@@ -61,7 +59,7 @@ def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> Optional[dict]:
 def _enrich_row_from_comparison(
     row: dict,
     comp: dict,
-    snapshot_start_wall: Optional[float],
+    snapshot_start_wall: float | None,
 ) -> bool:
     """Copy post-run fields from a per-test comparison_data.json into a row.
 
@@ -174,7 +172,7 @@ def build_rerun_prefix(config) -> str:
 
 
 def build_dashboard_context(
-    work_dir: Path, mode: str, rerun_prefix: Optional[str] = None
+    work_dir: Path, mode: str, rerun_prefix: str | None = None
 ) -> dict:
     """Build the Jinja context for dashboard.html.
 
@@ -281,7 +279,7 @@ def _atomic_write(path: Path, text: str) -> None:
     """
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     tmp.write_text(text, encoding="utf-8")
-    last_err: Optional[OSError] = None
+    last_err: OSError | None = None
     for delay in (0, 0.05, 0.1, 0.2, 0.5):
         if delay:
             time.sleep(delay)
@@ -298,18 +296,18 @@ def _atomic_write(path: Path, text: str) -> None:
         raise last_err
 
 
-def _render(work_dir: Path, mode: str, rerun_prefix: Optional[str] = None) -> None:
+def _render(work_dir: Path, mode: str, rerun_prefix: str | None = None) -> None:
     ctx = build_dashboard_context(work_dir, mode=mode, rerun_prefix=rerun_prefix)
     template = _env.get_template("dashboard.html")
     html = template.render(**ctx)
     _atomic_write(work_dir / "dashboard.html", html)
 
 
-def render_live(work_dir: Path, rerun_prefix: Optional[str] = None) -> None:
+def render_live(work_dir: Path, rerun_prefix: str | None = None) -> None:
     """Render dashboard.html in live mode (auto-refreshes via meta tag)."""
     _render(work_dir, mode="live", rerun_prefix=rerun_prefix)
 
 
-def render_final(work_dir: Path, rerun_prefix: Optional[str] = None) -> None:
+def render_final(work_dir: Path, rerun_prefix: str | None = None) -> None:
     """Render dashboard.html in final mode (refresh stripped, sidecars merged)."""
     _render(work_dir, mode="final", rerun_prefix=rerun_prefix)

@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Literal
 
 import pytest
 
 from dstf.comparison.modes import (
     DominantFrequencyConfig,
     EventTimingConfig,
-    PointsConfig,
     NrmseConfig,
+    PointsConfig,
     RangeConfig,
     TubeConfig,
 )
@@ -110,7 +110,7 @@ class TestDeriveSchemaEdgeCases:
     def test_optional_literal_preserves_choices(self):
         @dataclass
         class Cfg:
-            color: Optional[Literal["r", "g", "b"]] = None
+            color: Literal["r", "g", "b"] | None = None
 
         s = derive_schema(Cfg, mode="x")
         assert s.fields[0].choices == ["r", "g", "b"]

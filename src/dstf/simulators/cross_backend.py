@@ -31,7 +31,6 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import Optional
 
 from ..config import Config
 from ..discovery.test_registry import TestModel
@@ -52,7 +51,7 @@ def produce_dymola_via_fmpy_baseline(
     config: Config,
     store: ReferenceStore,
     *,
-    fmu_dir: Optional[Path] = None,
+    fmu_dir: Path | None = None,
 ) -> bool:
     """Run the Dymola → FMPy chain for one test and store the result.
 

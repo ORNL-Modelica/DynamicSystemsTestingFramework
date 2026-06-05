@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 _INSTALL_HINT = (
     "OMPython is not installed. The persistent-worker OpenModelica runner "
     "needs it to drive omc over ZMQ. Install the optional extra:\n"
@@ -53,7 +52,9 @@ def describe_om_session() -> dict:
 
         info["ompython_installed"] = True
         info["version"] = getattr(OMPython, "__version__", "unknown")
-        from OMPython import OMCSessionZMQ  # type: ignore[import-not-found]  # noqa: F401
+        from OMPython import (
+            OMCSessionZMQ,  # type: ignore[import-not-found]  # noqa: F401
+        )
 
         info["import_ok"] = True
     except Exception as exc:  # pragma: no cover — diagnostic helper

@@ -6,8 +6,6 @@ import argparse
 import json
 from pathlib import Path
 
-import pytest
-
 
 def _run_spec_update(spec_path: Path, update_json_path: Path) -> int:
     """Invoke cmd_spec_update directly, bypassing arg parsing."""

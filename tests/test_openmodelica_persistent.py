@@ -16,7 +16,6 @@ import pytest
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
 
-
 # ---------------------------------------------------------------------------
 # FakeSession + fixtures
 # ---------------------------------------------------------------------------

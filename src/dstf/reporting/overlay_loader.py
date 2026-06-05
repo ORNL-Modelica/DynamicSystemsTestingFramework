@@ -50,7 +50,6 @@ import logging
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +65,10 @@ class Overlay:
 
     name: str
     role: str  # "soft_check" | "companion"
-    kind: Optional[str] = None  # companion only: "external" | "frozen"
+    kind: str | None = None  # companion only: "external" | "frozen"
     status: str = "loaded"  # "loaded" | "missing" | "invalid"
     note: str = ""
-    variables: dict[str, "OverlayVariable"] = field(default_factory=dict)
+    variables: dict[str, OverlayVariable] = field(default_factory=dict)
 
 
 @dataclass
@@ -126,7 +125,7 @@ def load_overlays(store, model_id: str, config=None) -> list[Overlay]:
         logger.warning("Failed to enumerate companions for %s: %s", model_id, e)
         companions = {}
 
-    for name, companion in companions.items():
+    for _name, companion in companions.items():
         overlays.append(_load_companion(store, model_id, companion))
 
     # Auto-discovered sibling-backend companions (opt-in via config).
@@ -307,10 +306,7 @@ def _load_companion(store, model_id: str, companion) -> Overlay:
 
     fmt = (companion.format or "json").lower()
     try:
-        if fmt == "csv":
-            vars_ = _load_csv(path)
-        else:
-            vars_ = _load_json(path)
+        vars_ = _load_csv(path) if fmt == "csv" else _load_json(path)
     except Exception as e:
         logger.warning(
             "Failed to load companion %r (%s): %s",
@@ -344,7 +340,7 @@ def _load_companion(store, model_id: str, companion) -> Overlay:
     )
 
 
-def _resolve_companion_path(store, model_id: str, companion) -> Optional[Path]:
+def _resolve_companion_path(store, model_id: str, companion) -> Path | None:
     """Locate the data file on disk. Handles both external + frozen kinds."""
     if companion.kind == "frozen":
         # Frozen companions store their data beside the metadata in the

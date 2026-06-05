@@ -48,9 +48,10 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 from .mo_parser import (
     _extract_balanced_braces,
@@ -137,7 +138,7 @@ class CompositeMatch:
     matches: list
 
 
-MatchContext = Union[ComponentMatch, ExtendsMatch, CompositeMatch]
+MatchContext = ComponentMatch | ExtendsMatch | CompositeMatch
 
 
 def _find_match(match: MatchContext, type_):
@@ -189,7 +190,7 @@ def _allowed_sources_for(match_spec: dict) -> frozenset[str]:
 # Match interpreter registry
 # ---------------------------------------------------------------------------
 
-_MatchFn = Callable[[str, dict], Optional[MatchContext]]
+_MatchFn = Callable[[str, dict], MatchContext | None]
 _MATCH_INTERPRETERS: dict[str, _MatchFn] = {}
 
 
@@ -202,9 +203,7 @@ def _register_match(type_name: str):
 
 
 @_register_match("component-instantiation")
-def _match_component_instantiation(
-    content: str, spec: dict
-) -> Optional[ComponentMatch]:
+def _match_component_instantiation(content: str, spec: dict) -> ComponentMatch | None:
     full = spec["component_name"]
     segments = full.split(".")
     # Try fully qualified, then progressively shorter tail-suffixes — most
@@ -241,7 +240,7 @@ def _match_component_instantiation(
 
 
 @_register_match("extends")
-def _match_extends(content: str, spec: dict) -> Optional[ExtendsMatch]:
+def _match_extends(content: str, spec: dict) -> ExtendsMatch | None:
     pattern_glob = spec["class_pattern"]
     # Strip comments + string literals first — prose like "extends
     # ModelicaTestingLib.Icons.Example" inside a doc annotation would
@@ -279,7 +278,7 @@ def _strip_modelica_literals(content: str) -> str:
 
 
 @_register_match("class-name-glob")
-def _match_class_name_glob(content: str, spec: dict) -> Optional[ClassNameMatch]:
+def _match_class_name_glob(content: str, spec: dict) -> ClassNameMatch | None:
     """Match a class whose fully qualified name matches an fnmatch glob."""
     pattern_glob = spec["class_pattern"]
     within = _extract_within(content)
@@ -293,7 +292,7 @@ def _match_class_name_glob(content: str, spec: dict) -> Optional[ClassNameMatch]
 
 
 @_register_match("all-of")
-def _match_all_of(content: str, spec: dict) -> Optional[CompositeMatch]:
+def _match_all_of(content: str, spec: dict) -> CompositeMatch | None:
     """All child matchers must match; result aggregates all child contexts."""
     matches = []
     for child_spec in spec.get("matchers", []):
@@ -308,7 +307,7 @@ def _match_all_of(content: str, spec: dict) -> Optional[CompositeMatch]:
 
 
 @_register_match("any-of")
-def _match_any_of(content: str, spec: dict) -> Optional[CompositeMatch]:
+def _match_any_of(content: str, spec: dict) -> CompositeMatch | None:
     """First matching child wins; result wraps just that child."""
     for child_spec in spec.get("matchers", []):
         child_fn = _MATCH_INTERPRETERS.get(child_spec.get("type"))
@@ -480,11 +479,9 @@ class JsonRecognizer(Recognizer):
             fnmatch.fnmatchcase(rel, g) for g in self._paths_include
         ):
             return False
-        if any(fnmatch.fnmatchcase(rel, g) for g in self._paths_exclude):
-            return False
-        return True
+        return not any(fnmatch.fnmatchcase(rel, g) for g in self._paths_exclude)
 
-    def recognize(self, source_file: Path) -> Optional[RecognizerResult]:
+    def recognize(self, source_file: Path) -> RecognizerResult | None:
         try:
             content = source_file.read_text(encoding="utf-8", errors="replace")
         except OSError:

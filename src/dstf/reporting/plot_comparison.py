@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -49,8 +48,8 @@ def _build_stats_section(
     title: str,
     ref_cat: dict,
     cur_cat: dict,
-    key_order: Optional[list[str]] = None,
-) -> Optional[dict]:
+    key_order: list[str] | None = None,
+) -> dict | None:
     """Build a statistics section dict for the template.
 
     If `key_order` is provided, keys appear in that order; unrecognized keys
@@ -83,7 +82,7 @@ def _build_stats_section(
 def _extract_mode_values(
     vc: VariableComparison,
     mode: str,
-    spec_params: Optional[dict] = None,
+    spec_params: dict | None = None,
 ) -> dict:
     """Produce the per-mode config-value dict for the UI panel + JS scorer.
 
@@ -234,7 +233,7 @@ def _augment_tree_view(
     view: dict,
     comparisons_by_path: dict[str, VariableComparison],
     *,
-    time_bounds_by_variable: Optional[dict[str, tuple[float, float]]] = None,
+    time_bounds_by_variable: dict[str, tuple[float, float]] | None = None,
 ) -> None:
     """Walk ``view`` in place, enriching leaf nodes with render artifacts.
 
@@ -376,8 +375,8 @@ def _render_window_controls(
     variable: str,
     values: dict,
     *,
-    time_start: Optional[float] = None,
-    time_end: Optional[float] = None,
+    time_start: float | None = None,
+    time_end: float | None = None,
 ) -> str:
     """Render the universal window inputs for a tree-backed leaf.
 
@@ -411,9 +410,9 @@ def _render_window_controls(
 
 def _build_ref_info(
     comparisons: list,
-    ref_data: Optional[dict],
-    test_dir: Optional[Path],
-    ref_file: Optional[Path],
+    ref_data: dict | None,
+    test_dir: Path | None,
+    ref_file: Path | None,
 ) -> list:
     """Build the test-metadata rows shown in the report's "Reference Info"
     section: test_id / status / dates / reference-file link / test-dir link
@@ -550,7 +549,7 @@ def _build_statistics_sections(ref_stats: dict, cur_stats: dict) -> list:
 def _build_trajectories(
     comparisons: list,
     result,
-    ref_data: Optional[dict],
+    ref_data: dict | None,
 ) -> tuple[list, list, list]:
     """Build the trajectory triple — primary tracked variables, diagnostic
     variables (CPUtime / EventCounter), and the no-baseline pass-through
@@ -619,7 +618,7 @@ def _build_trajectories(
     return trajectories, diag_trajectories, nobaseline_trajectories
 
 
-def _build_diag_summaries(result, ref_data: Optional[dict]) -> list:
+def _build_diag_summaries(result, ref_data: dict | None) -> list:
     """Diagnostic-variable summary rows (current final/min/max vs reference
     summary). Replaces the pre-D78 full-trajectory comparison for
     diagnostics — the trajectory is informational; the summary values
@@ -660,7 +659,7 @@ def _build_diag_summaries(result, ref_data: Optional[dict]) -> list:
 
 
 def _build_artifacts(
-    test_dir: Optional[Path],
+    test_dir: Path | None,
     artifact_files: tuple[tuple[str, str], ...],
 ) -> list:
     """Walk the runner-declared :attr:`SimulatorRunner.artifact_files`
@@ -773,7 +772,7 @@ def _build_key_stats(
     return key_stats
 
 
-def _build_warning_rows(warnings: Optional[list]) -> list:
+def _build_warning_rows(warnings: list | None) -> list:
     """Translate :class:`StructuralWarning` instances into the row dicts
     the template iterates over. Trivial wrapper, kept as a helper for
     symmetry with the other ``_build_*`` extractors.
@@ -793,7 +792,7 @@ def _build_tree_view_and_variables(
     test_model,
     metric_tree,
     trajectories: list,
-) -> tuple[Optional[dict], dict]:
+) -> tuple[dict | None, dict]:
     """Stage-2 single-source-of-truth: returns ``(tree_view,
     variables_by_name)``.
 
@@ -810,14 +809,22 @@ def _build_tree_view_and_variables(
     if not comparisons:
         return None, {}
 
+    from ..comparison.tree_eval import flatten_evaluation as _flatten_evaluation
     from ..comparison.tree_spec import (
         collect_leaf_paths as _collect_leaf_paths,
+    )
+    from ..comparison.tree_spec import (
         collect_variables as _collect_variables,
+    )
+    from ..comparison.tree_spec import (
         leaves_for_variable as _leaves_for_variable,
+    )
+    from ..comparison.tree_spec import (
         spec_to_view as _spec_to_view,
+    )
+    from ..comparison.tree_spec import (
         synthesize_implicit_tree as _synthesize_implicit_tree,
     )
-    from ..comparison.tree_eval import flatten_evaluation as _flatten_evaluation
 
     comparison_var_names = [vc.name or f"x[{vc.index}]" for vc in comparisons]
     if (
@@ -884,17 +891,17 @@ def _build_tree_view_and_variables(
 def _build_template_context(
     model_id: str,
     comparisons: list[VariableComparison],
-    ref_data: Optional[dict],
-    cur_stats: Optional[dict],
-    test_dir: Optional[Path],
+    ref_data: dict | None,
+    cur_stats: dict | None,
+    test_dir: Path | None,
     test_model=None,
     result=None,
-    ref_file: Optional[Path] = None,
-    warnings: Optional[list] = None,
-    last_run_at: Optional[float] = None,
+    ref_file: Path | None = None,
+    warnings: list | None = None,
+    last_run_at: float | None = None,
     metric_tree=None,
     artifact_files: tuple[tuple[str, str], ...] = (),
-    overlays: Optional[list] = None,
+    overlays: list | None = None,
 ) -> dict:
     """Build the full template context dict from comparison data.
 
@@ -980,23 +987,23 @@ def _build_template_context(
 
 def generate_comparison_plots(
     model_id: str,
-    ref_data: Optional[dict],
+    ref_data: dict | None,
     result,
     comparisons: list[VariableComparison],
     plot_dir: Path,
-    test_dir: Optional[Path] = None,
+    test_dir: Path | None = None,
     test_model=None,
-    ref_file: Optional[Path] = None,
-    warnings: Optional[list] = None,
-    last_run_at: Optional[float] = None,
+    ref_file: Path | None = None,
+    warnings: list | None = None,
+    last_run_at: float | None = None,
     metric_tree=None,
     artifact_files: tuple[tuple[str, str], ...] = (),
     max_embedded_samples: int = 2000,
-    overlays: Optional[list] = None,
-    status_text: Optional[str] = None,
-    status_class: Optional[str] = None,
-    ref_id: Optional[str] = None,
-) -> Optional[Path]:
+    overlays: list | None = None,
+    status_text: str | None = None,
+    status_class: str | None = None,
+    ref_id: str | None = None,
+) -> Path | None:
     """Render this test's interactive.html (Plotly) + comparison_data.json sidecar.
 
     Returns the path to the rendered interactive.html.
@@ -1327,8 +1334,8 @@ def generate_report_suite(
     Returns the path to the unified dashboard HTML file (rendered separately
     by ``dashboard_render.render_final``).
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     import time as _time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     report_wall_start = _time.monotonic()
     report_dir = config.work_dir / "reports"

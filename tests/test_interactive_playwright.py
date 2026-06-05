@@ -21,17 +21,15 @@ file URL in headless Chromium and exercises the UI.
 
 from __future__ import annotations
 
-import json
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
 pytest.importorskip("playwright.sync_api")
 
 from playwright.sync_api import Page, sync_playwright
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1498,9 +1496,11 @@ def test_detect_respects_leaf_window_and_source(tmp_path, playwright_browser):
     peaks come from the WINDOWED signal (not the full trajectory). Also
     verify source dropdown [Reference | Actual] works. Each seeded peak
     carries ``derived_from_window`` metadata."""
-    import shutil as _shutil
-    from jinja2 import Environment as _Env, FileSystemLoader as _Loader
     import math
+    import shutil as _shutil
+
+    from jinja2 import Environment as _Env
+    from jinja2 import FileSystemLoader as _Loader
 
     # Ref: 2 Hz sine for t in [0, 2], silence for t in [2, 4].
     # Actual: silence for t in [0, 2], 5 Hz sine for t in [2, 4].
@@ -1655,11 +1655,12 @@ def test_tube_polygon_follows_reference_curve(tmp_path, playwright_browser):
     t=0 and t=10 with rel-mode width=0.05 on a curvy reference must
     produce a polygon whose upper bound tracks ``ref(t) * 1.05`` at every
     sample, not a straight line between the endpoint y-values."""
-    import shutil as _shutil
-    from jinja2 import Environment as _Env, FileSystemLoader as _Loader
-
     # Curvy ref — asymmetric so the bug would be obvious if present.
     import math
+    import shutil as _shutil
+
+    from jinja2 import Environment as _Env
+    from jinja2 import FileSystemLoader as _Loader
 
     ref_time = [i * 0.1 for i in range(101)]
     ref_values = [1.0 + 0.5 * math.sin(t) for t in ref_time]
@@ -1788,7 +1789,9 @@ def test_buildPatchData_no_noise_when_tube_leaf_untouched(
     leafState.params, making buildPatchData think the user had changed
     them back to defaults."""
     import shutil as _shutil
-    from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+
+    from jinja2 import Environment as _Env
+    from jinja2 import FileSystemLoader as _Loader
 
     leaf = _leaf(
         path="/metrics/children/0",
@@ -1889,7 +1892,9 @@ def test_declared_peaks_editor_activates_with_table(tmp_path, playwright_browser
     # Synthesize a fixture with a dominant-frequency leaf carrying a
     # declared peak + embedded spectrum.
     import shutil as _shutil
-    from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+
+    from jinja2 import Environment as _Env
+    from jinja2 import FileSystemLoader as _Loader
 
     leaf = _leaf(
         path="/metrics/children/0",
@@ -1998,7 +2003,9 @@ def test_declared_peaks_detect_button_populates_table(tmp_path, playwright_brows
     """Click 'Detect peaks from reference' → table fills with the top
     detected peaks; leafState.params.peaks reflects the detected list."""
     import shutil as _shutil
-    from jinja2 import Environment as _Env, FileSystemLoader as _Loader
+
+    from jinja2 import Environment as _Env
+    from jinja2 import FileSystemLoader as _Loader
 
     leaf = _leaf(
         path="/metrics/children/0",

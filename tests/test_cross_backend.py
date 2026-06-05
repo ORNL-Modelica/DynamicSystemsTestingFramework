@@ -9,13 +9,11 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from dstf.discovery.test_registry import TestModel
-
 
 PROJECT_ROOT = Path(__file__).parent.parent
 REFERENCE_FMUS_DIR = PROJECT_ROOT / "examples" / "fmu" / "reference-fmus-binaries"

@@ -3,7 +3,6 @@
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -13,7 +12,7 @@ class UnitTestInfo:
     n: int = 1
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""  # Raw text of x={...} for complex cases (cat, etc.)
-    x_reference: Optional[list[float]] = None
+    x_reference: list[float] | None = None
     error_expected: float = 1e-6
 
 
@@ -21,11 +20,11 @@ class UnitTestInfo:
 class ExperimentInfo:
     """Simulation parameters from experiment() annotation."""
 
-    stop_time: Optional[float] = None
-    tolerance: Optional[float] = None
-    method: Optional[str] = None
-    number_of_intervals: Optional[int] = None
-    output_interval: Optional[float] = None
+    stop_time: float | None = None
+    tolerance: float | None = None
+    method: str | None = None
+    number_of_intervals: int | None = None
+    output_interval: float | None = None
 
 
 @dataclass
@@ -34,8 +33,8 @@ class MoParseResult:
 
     model_id: str  # Fully qualified Modelica path
     mo_file: Path
-    unit_test: Optional[UnitTestInfo] = None
-    experiment: Optional[ExperimentInfo] = None
+    unit_test: UnitTestInfo | None = None
+    experiment: ExperimentInfo | None = None
 
 
 def _extract_within(text: str) -> str:
@@ -101,7 +100,7 @@ def _parse_x_expressions(raw: str) -> list[str]:
     return expressions
 
 
-def _parse_float_list(raw: str) -> Optional[list[float]]:
+def _parse_float_list(raw: str) -> list[float] | None:
     """Parse a simple {val1, val2, ...} list of floats."""
     try:
         parts = raw.strip().split(",")
@@ -130,7 +129,7 @@ def _strip_modelica_literals(text: str) -> str:
     return out
 
 
-def _parse_unit_tests(text: str) -> Optional[UnitTestInfo]:
+def _parse_unit_tests(text: str) -> UnitTestInfo | None:
     """Extract UnitTests block parameters from model text."""
     # Match the UnitTests declaration — may span multiple lines
     # Patterns: "UnitTests unitTests(" or "ErrorAnalysis.UnitTests unitTests("
@@ -218,7 +217,7 @@ def _parse_unit_tests(text: str) -> Optional[UnitTestInfo]:
     return info
 
 
-def _parse_experiment(text: str) -> Optional[ExperimentInfo]:
+def _parse_experiment(text: str) -> ExperimentInfo | None:
     """Extract experiment() annotation parameters."""
     m = re.search(r"experiment\s*\(([^)]*)\)", text)
     if not m:
@@ -255,7 +254,7 @@ def _parse_experiment(text: str) -> Optional[ExperimentInfo]:
     return info
 
 
-def parse_mo_file(path: Path) -> Optional[MoParseResult]:
+def parse_mo_file(path: Path) -> MoParseResult | None:
     """Parse a .mo file and extract UnitTests and experiment info.
 
     Returns None if the file cannot be parsed or has no UnitTests block.
@@ -294,7 +293,11 @@ def parse_mo_file(path: Path) -> Optional[MoParseResult]:
 # Bundled recognizer (PTA.1)
 # ---------------------------------------------------------------------------
 
-from .recognizer import Recognizer, RecognizerResult, register
+from .recognizer import (  # noqa: E402  (late import: registers the bundled recognizer after its deps are defined)
+    Recognizer,
+    RecognizerResult,
+    register,
+)
 
 
 class BundledModelicaUnitTestsRecognizer(Recognizer):
@@ -310,7 +313,7 @@ class BundledModelicaUnitTestsRecognizer(Recognizer):
     name = "modelica:bundled-unit-tests"
     applies_to = frozenset({"modelica"})
 
-    def recognize(self, source_file: Path) -> Optional[RecognizerResult]:
+    def recognize(self, source_file: Path) -> RecognizerResult | None:
         parsed = parse_mo_file(source_file)
         if parsed is None:
             return None

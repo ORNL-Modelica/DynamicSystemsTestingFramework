@@ -10,12 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import numpy as np
-import pytest
-
 from dstf.config import Config
-from dstf.discovery.test_registry import TestModel
-from dstf.simulators.base import TestResult, VariableResult
 from dstf.storage.reference_store import ReferenceStore
 
 

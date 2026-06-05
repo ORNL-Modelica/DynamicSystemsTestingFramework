@@ -27,13 +27,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 
 class PatchError(Exception):
     """Raised when a patch cannot be applied cleanly."""
 
-    def __init__(self, message: str, path: Optional[str] = None):
+    def __init__(self, message: str, path: str | None = None):
         self.path = path
         super().__init__(f"{path}: {message}" if path else message)
 
@@ -88,7 +88,7 @@ def _load_spec(spec_path: Path) -> dict:
     try:
         data = json.loads(spec_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
-        raise PatchError(f"cannot read {spec_path}: {e}")
+        raise PatchError(f"cannot read {spec_path}: {e}") from e
     if not isinstance(data, dict):
         raise PatchError("spec root must be an object")
     data.setdefault("tests", [])
@@ -141,7 +141,7 @@ def _split_pointer(pointer: str) -> list[str]:
     if pointer == "":
         return []
     if not pointer.startswith("/"):
-        raise PatchError(f"JSON-Pointer must start with /", path=pointer)
+        raise PatchError("JSON-Pointer must start with /", path=pointer)
     raw = pointer[1:].split("/")
     # Order matters: ~1 before ~0 per RFC 6901.
     return [seg.replace("~1", "/").replace("~0", "~") for seg in raw]

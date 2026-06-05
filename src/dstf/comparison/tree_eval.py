@@ -14,8 +14,7 @@ nodes map ``spec.combinator`` to the concrete ``Combinator`` classes in
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -23,12 +22,12 @@ from ..simulators import VariableResult
 from .comparator import VariableComparison
 from .metric_tree import (
     AndCombinator,
-    WeightedCombinator,
     Combinator,
     KOfNCombinator,
     MetricResult,
     OrCombinator,
     WarnCombinator,
+    WeightedCombinator,
     leaf_from_variable,
 )
 from .modes import resolve_mode
@@ -50,7 +49,7 @@ class BaselineView:
 
     name: str
     ref_vars_by_name: dict[str, dict]
-    shared_ref_time: Optional[np.ndarray] = None
+    shared_ref_time: np.ndarray | None = None
 
 
 # Spec-level metric names → the discriminator value in the override dict
@@ -301,8 +300,8 @@ def _evaluate_leaf(
 def _slice_window(
     t: np.ndarray,
     v: np.ndarray,
-    start: Optional[float],
-    end: Optional[float],
+    start: float | None,
+    end: float | None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return ``(t, v)`` restricted to ``[start, end]`` (inclusive).
 
@@ -349,7 +348,7 @@ def _missing_baseline_comparison(leaf: LeafSpec) -> VariableComparison:
 
 def _missing_variable_comparison(
     name: str,
-    var_result: Optional[VariableResult],
+    var_result: VariableResult | None,
 ) -> VariableComparison:
     actual_final = float("nan")
     index = 0

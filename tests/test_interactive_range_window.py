@@ -14,22 +14,15 @@ helper + fixture context are imported from there.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 pytest.importorskip("playwright.sync_api")
 
-from playwright.sync_api import Page
 
 from test_interactive_playwright import (  # noqa: E402
     _fixture_context,
-    _leaf,
     _render_report,
-    playwright_browser,
 )
-
 
 # ---------------------------------------------------------------------------
 # Task 1: _sliceLeafTrajectory helper
@@ -170,7 +163,9 @@ def _context_with_windowed_range(window_start, window_end, min_value, max_value)
 def _render_with_context(tmp_path, ctx):
     """Like _render_report, but accepts a custom context."""
     import shutil
+
     from jinja2 import Environment, FileSystemLoader
+
     from test_interactive_playwright import _JS_SRC, _TEMPLATE_DIR
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)

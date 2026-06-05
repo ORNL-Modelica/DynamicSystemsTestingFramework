@@ -3,12 +3,10 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from dstf.reporting.dashboard_render import (
-    render_live,
-    render_final,
     build_dashboard_context,
+    render_final,
+    render_live,
 )
 
 

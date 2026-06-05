@@ -12,10 +12,8 @@ import json
 import math
 
 import numpy as np
-import pytest
 
 from dstf.reporting.plot_comparison import _decimate_context_for_html
-
 
 BUDGET_BYTES = 5 * 1024 * 1024  # 5 MB
 N_VARS = 50

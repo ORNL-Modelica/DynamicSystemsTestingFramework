@@ -5,12 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dstf.simulators.dymola.log_parser import parse_dslog
-from dstf.simulators.common.mat_reader import read_result_mat
-from dstf.simulators.dymola.runner import _extract_variables
-from dstf.simulators.base import resolve_variable_patterns, _pattern_to_regex
 from dstf.discovery.test_registry import TestModel
-
+from dstf.simulators.base import _pattern_to_regex, resolve_variable_patterns
+from dstf.simulators.common.mat_reader import read_result_mat
+from dstf.simulators.dymola.log_parser import parse_dslog
+from dstf.simulators.dymola.runner import _extract_variables
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SAMPLE_MAT = FIXTURES_DIR / "results" / "Dymola" / "dsres.mat"
@@ -351,10 +350,10 @@ class TestVariablePatterns:
 
 from dstf.simulators import (
     _REGISTRY,
-    register,
-    get_runner,
-    _import_builtin_backend,
     SimulatorRunner,
+    _import_builtin_backend,
+    get_runner,
+    register,
 )
 
 

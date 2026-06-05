@@ -274,11 +274,11 @@ class TestOpenModelicaIntegration:
 
     def test_variable_filter_shrinks_mat(self, tmp_path):
         """variableFilter keeps the MAT small (one var request ⇒ few names)."""
-        from dstf.simulators.openmodelica.runner import (
-            OpenModelicaRunner,
-        )
         from dstf.simulators.common.mat_reader import (
             list_result_mat_variables,
+        )
+        from dstf.simulators.openmodelica.runner import (
+            OpenModelicaRunner,
         )
 
         (tmp_path / "package.mo").write_text("package EmptyLib end EmptyLib;")
@@ -352,8 +352,8 @@ class TestOpenModelicaIntegration:
         variable the fixture's variableFilter allowed through.
         """
         from dstf.simulators.common.mat_reader import (
-            read_result_mat,
             list_result_mat_variables,
+            read_result_mat,
         )
 
         fixture = FIXTURES / "pid_controller_res.mat"

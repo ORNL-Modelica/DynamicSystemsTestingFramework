@@ -2,10 +2,7 @@
 
 from pathlib import Path
 
-import pytest
-
 from dstf.simulators.openmodelica.log_parser import (
-    ParsedOmcOutput,
     parse_omc_stdout,
 )
 

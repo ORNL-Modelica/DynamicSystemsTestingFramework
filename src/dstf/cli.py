@@ -4,7 +4,6 @@ import argparse
 import fnmatch
 import sys
 from pathlib import Path
-from typing import Optional
 
 from .config import Config
 from .discovery.test_registry import TestModel, discover_tests
@@ -33,8 +32,8 @@ def _resolve_filter_patterns(spec: str) -> list[str]:
 
 def _filter_tests(
     tests: list[TestModel],
-    pattern: Optional[str] = None,
-    package: Optional[str] = None,
+    pattern: str | None = None,
+    package: str | None = None,
 ) -> list[TestModel]:
     """Filter tests by glob/list/file on model_id, plus optional package prefix."""
     filtered = tests
@@ -293,7 +292,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     # live progress as tests register. The first ProgressReporter.register
     # call will overwrite this initial empty page; subsequent meta-refresh
     # ticks pick up updates. Final mode lands at the same URL after compare.
-    from .reporting.dashboard_render import render_live, build_rerun_prefix
+    from .reporting.dashboard_render import build_rerun_prefix, render_live
     from .reporting.plot_comparison import open_in_browser
 
     render_live(config.work_dir, rerun_prefix=build_rerun_prefix(config))
@@ -361,7 +360,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # Without --report the per-test sidecars don't exist, so the
         # post-comparison columns stay dashed; the live snapshot is
         # frozen at the moment compare_all finished.
-        from .reporting.dashboard_render import render_final, build_rerun_prefix
+        from .reporting.dashboard_render import build_rerun_prefix, render_final
 
         render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
 
@@ -450,7 +449,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # per-test sidecars (no --report run yet), the post-run columns stay
     # dashed and the page reads as a "live" snapshot frozen at the moment
     # comparison finished.
-    from .reporting.dashboard_render import render_final, build_rerun_prefix
+    from .reporting.dashboard_render import build_rerun_prefix, render_final
 
     render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
 
@@ -481,8 +480,9 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 def cmd_check_openmodelica(args: argparse.Namespace) -> int:
     """Diagnose OMPython availability + the `omc` binary."""
-    from .simulators.openmodelica.session_loader import describe_om_session
     import shutil as _shutil
+
+    from .simulators.openmodelica.session_loader import describe_om_session
 
     info = describe_om_session()
     omc_path = _shutil.which("omc")
@@ -611,12 +611,12 @@ def cmd_manifest(args: argparse.Namespace) -> int:
                 print(f"{tid:>6}  {entry['status']:<10}  {entry['model_id']}")
 
         if skipped:
-            print(f"\nSkipped:")
+            print("\nSkipped:")
             for tid in sorted(skipped):
                 print(f"{tid:>6}  {skipped[tid]['model_id']}")
 
         if obsolete and args.show_obsolete:
-            print(f"\nObsolete:")
+            print("\nObsolete:")
             for tid in sorted(obsolete):
                 print(f"{tid:>6}  {obsolete[tid]['model_id']}")
 
@@ -658,7 +658,7 @@ def _cleanup_orphans(config, apply: bool) -> int:
         # Try both possible report-dir names
         rep_test = report_dir / tk
         rep_ref = None
-        from .storage.reference_store import ReferenceStore, RefIndex
+        from .storage.reference_store import ReferenceStore
 
         store = ReferenceStore(config)
         ref_id = store.index.get_id(model_id)
@@ -678,6 +678,7 @@ def _cleanup_orphans(config, apply: bool) -> int:
         return 0
 
     import shutil
+
     from .simulators import BatchManifest
 
     manifest_path = config.work_dir / "batch_manifest.json"
@@ -751,7 +752,8 @@ def cmd_spec_update(args: argparse.Namespace) -> int:
     patch envelope (6.4.3). Auto-detect by shape: presence of ``"patch"``
     → new path; else legacy ``update_test_comparison``."""
     import json as json_mod
-    from .discovery.patch_apply import PatchError, apply_patch
+
+    from .discovery.patch_apply import PatchError
     from .discovery.spec_parser import update_test_comparison
 
     config = _build_config(args)
@@ -833,7 +835,7 @@ def _validate_entry_metric_tree(data, model_id, config):
     try:
         tree = parse_metric_tree(entry["metrics"])
     except Exception as e:
-        raise PatchError(f"patched metric tree is invalid: {e}")
+        raise PatchError(f"patched metric tree is invalid: {e}") from e
 
     store = ReferenceStore(config)
     lookup = role_lookup_from_store(store, model_id)
@@ -891,7 +893,7 @@ def cmd_companion(args: argparse.Namespace) -> int:
             return 0
         # All models
         total = 0
-        for tid, entry in sorted(store.index.all_tests().items()):
+        for _tid, entry in sorted(store.index.all_tests().items()):
             if entry["status"] == "obsolete":
                 continue
             companions = store.get_companions(entry["model_id"])
@@ -953,7 +955,7 @@ def cmd_soft_check(args: argparse.Namespace) -> int:
                 print(f"  {name:<30} n_vars={len(bl.variables):<4} origin={origin}")
             return 0
         total = 0
-        for tid, entry in sorted(store.index.all_tests().items()):
+        for _tid, entry in sorted(store.index.all_tests().items()):
             if entry["status"] == "obsolete":
                 continue
             checks = store.get_soft_checks(entry["model_id"])
@@ -1008,7 +1010,7 @@ def cmd_import_baseline(args: argparse.Namespace) -> int:
     time = data.get("time") or []
     variables = data.get("variables") or []
     if not time or not variables:
-        print(f"Source file missing 'time' or 'variables' — cannot import")
+        print("Source file missing 'time' or 'variables' — cannot import")
         return 1
 
     provenance = dict(data.get("provenance") or {})
@@ -1088,7 +1090,7 @@ def migrate_baselines_tree(ref_root: Path, apply: bool) -> tuple[int, int]:
         f"{'migrated' if apply else 'to migrate'}."
     )
     if not apply and total_moves > 0:
-        print(f"Re-run with --apply to actually move them.")
+        print("Re-run with --apply to actually move them.")
     return total_files, total_moves
 
 
@@ -1169,9 +1171,9 @@ def _should_review(comp, filters: set[str]) -> bool:
         return True
     if "warnings" in filters and comp.warnings:
         return True
-    if "passed" in filters and comp.sim_success and comp.passed and not comp.warnings:
-        return True
-    return False
+    return bool(
+        "passed" in filters and comp.sim_success and comp.passed and not comp.warnings
+    )
 
 
 def _interactive_review(
@@ -1252,7 +1254,7 @@ def _interactive_review(
 
         # Can't accept if simulation failed
         if not comp.sim_success:
-            print(f"  Skipping (simulation failed)\n")
+            print("  Skipping (simulation failed)\n")
             n_skipped += 1
             continue
 
@@ -1332,7 +1334,7 @@ def _interactive_review(
                                         print(f"    ... and {len(matched) - 10} more")
 
             elif choice == "s":
-                print(f"  Skipped.\n")
+                print("  Skipped.\n")
                 n_skipped += 1
                 break
 
@@ -1375,8 +1377,6 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
 
     test_dir = config.work_dir / test_key if test_key else None
 
-    spec_path = _get_spec_path(config) if config else None
-
     # Resolve reference file path for clickable link in report
     ref_file = None
     test_id = store.index.get_id(model_id)
@@ -1414,7 +1414,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         print("  Plot generation failed (matplotlib not installed?)")
 
 
-def _find_test_key(model_id: str, config) -> Optional[str]:
+def _find_test_key(model_id: str, config) -> str | None:
     """Find the test_NNNN key for a model from the batch manifest."""
     from .simulators import BatchManifest
 
@@ -1448,7 +1448,7 @@ def _print_detail(comp) -> None:
         )
 
     if comp.warnings:
-        print(f"    Structural warnings:")
+        print("    Structural warnings:")
         for w in comp.warnings:
             print(f"      {w.field}: {w.reference_value} -> {w.current_value}")
     print()
@@ -1462,8 +1462,8 @@ def _generate_report_suite(comparisons, results, tests, store, config) -> int:
     work_dir/reports/. dashboard_render.render_final then reads
     those sidecars and produces the top-level work_dir/dashboard.html.
     """
+    from .reporting.dashboard_render import build_rerun_prefix, render_final
     from .reporting.plot_comparison import generate_report_suite, open_in_browser
-    from .reporting.dashboard_render import render_final, build_rerun_prefix
 
     generate_report_suite(comparisons, results, tests, store, config)
     render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
@@ -1929,7 +1929,7 @@ _COMMANDS = {
 }
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     if args.command is None:

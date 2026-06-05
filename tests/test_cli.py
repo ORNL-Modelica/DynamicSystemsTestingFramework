@@ -8,7 +8,6 @@ import pytest
 from dstf.cli import (
     _parse_review_filter,
     _should_review,
-    _VALID_REVIEW_FILTERS,
 )
 
 
@@ -157,7 +156,7 @@ def test_argparse_subcommands_match_dispatch_table():
     """Every subcommand registered with argparse must have a handler in
     ``_COMMANDS``, and vice versa. Catches drift when adding a new
     subcommand to one site but forgetting the other."""
-    from dstf.cli import build_arg_parser, _COMMANDS
+    from dstf.cli import _COMMANDS, build_arg_parser
 
     parser = build_arg_parser()
     # subparsers action holds the subcommand registry

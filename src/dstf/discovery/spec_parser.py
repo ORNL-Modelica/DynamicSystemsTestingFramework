@@ -3,14 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
-from ..config import (
-    Config,
-    DEFAULT_METHOD,
-    DEFAULT_STOP_TIME,
-    DEFAULT_TOLERANCE,
-)
 from .test_registry import TestModel
 
 logger = logging.getLogger(__name__)
