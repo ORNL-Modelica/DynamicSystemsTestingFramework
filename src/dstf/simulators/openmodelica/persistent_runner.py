@@ -305,6 +305,21 @@ class OpenModelicaWorker(Worker):
         assert self.session is not None
         return _raw_get_error_string(self.session)
 
+    def tool_version(self) -> str | None:
+        """Actual omc version via ``getVersion()`` (wire format is a quoted
+        string, same as an error string). Best-effort → ``None`` on failure."""
+        if self.session is None:
+            return None
+        try:
+            raw = self.session.sendExpression("getVersion()", parsed=False)
+        except Exception:
+            return None
+        s = (raw or "").strip()
+        if len(s) >= 2 and s.startswith('"') and s.endswith('"'):
+            s = s[1:-1]
+        s = s.replace('\\"', '"').replace("\\\\", "\\").strip()
+        return s or None
+
     def run_test(
         self,
         test: TestModel,
@@ -661,3 +676,10 @@ class PersistentOpenModelicaRunner(PersistentRunnerBase, OpenModelicaRunner):
             self.om_config,
             self._session_cls,
         )
+
+    def _probe_worker_version(self, live_workers: list) -> str | None:
+        for w in live_workers:
+            v = w.tool_version()
+            if v:
+                return v
+        return None

@@ -725,6 +725,26 @@ class DymolaWorker(Worker):
         except Exception:
             return ""
 
+    def tool_version(self) -> str | None:
+        """Actual Dymola version via the built-in ``DymolaVersion()``.
+
+        ``ExecuteCommand`` returns the command's evaluated value (see
+        ``_exec_setting``), so calling it on a value-returning built-in yields
+        the version string (e.g. ``"Dymola 2026x Refresh 1"``). Best-effort:
+        returns ``None`` if the interface isn't up or the call yields no usable
+        string. This is what disambiguates a 2025x baseline from a 2026x
+        re-run when results drift.
+        """
+        if self.dymola is None:
+            return None
+        try:
+            val = self.dymola.ExecuteCommand("DymolaVersion()")
+        except Exception:
+            return None
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+        return None
+
 
 # ---------------------------------------------------------------------------
 
@@ -774,6 +794,16 @@ class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
             self.dymola_config,
             self._di_cls,
         )
+
+    def _probe_worker_version(self, live_workers: list) -> str | None:
+        # Ask live workers in turn; the first to name a version wins. Called
+        # once at startup (before dispatch) so the interface is idle and
+        # cross-thread access to worker.dymola is safe.
+        for w in live_workers:
+            v = w.tool_version()
+            if v:
+                return v
+        return None
 
     def export_fmu(self, test: TestModel, output_dir: Path) -> Path:
         """Spin up a one-shot worker to export a single FMU (4.B.2).

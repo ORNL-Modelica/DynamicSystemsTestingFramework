@@ -133,6 +133,79 @@ def test_render_live_writes_dashboard_html(tmp_path):
     assert "DASHBOARD_MODE = 'live'" in out
 
 
+def test_run_metadata_flows_to_context(tmp_path):
+    snapshot = {
+        "total": 1,
+        "elapsed": 0.0,
+        "counts": {},
+        "tests": [],
+        "updated_at": 0.0,
+        "metadata": {
+            "backend": "Dymola",
+            "simulator": "Dymola 2026x",
+            "os": "linux",
+            "tool_version": "Dymola 2026x Refresh 1",
+            "dstf_version": "0.1.0",
+            "generated_at": 1_700_000_000.0,
+        },
+    }
+    _write_status_json(tmp_path, snapshot)
+    ctx = build_dashboard_context(tmp_path, mode="final")
+    rm = ctx["run_metadata"]
+    assert rm["label"] == "Dymola 2026x"
+    assert rm["os"] == "linux"
+    assert rm["tool_version"] == "Dymola 2026x Refresh 1"
+    assert rm["dstf_version"] == "0.1.0"
+    # epoch formatted to a human date string (year present)
+    assert rm["generated_str"] and "20" in rm["generated_str"]
+
+
+def test_run_metadata_absent_is_none(tmp_path):
+    snapshot = {"total": 0, "counts": {}, "tests": [], "updated_at": 0.0}
+    _write_status_json(tmp_path, snapshot)
+    ctx = build_dashboard_context(tmp_path, mode="final")
+    assert ctx["run_metadata"] is None
+
+
+def test_render_final_shows_metadata_banner(tmp_path):
+    snapshot = {
+        "total": 1,
+        "elapsed": 1.0,
+        "counts": {"passed": 1},
+        "tests": [],
+        "updated_at": 0.0,
+        "metadata": {
+            "backend": "Dymola",
+            "simulator": "Dymola 2026x",
+            "os": "linux",
+            "tool_version": "Dymola 2026x Refresh 1",
+            "dstf_version": "0.1.0",
+            "generated_at": 1_700_000_000.0,
+        },
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_final(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "Dymola 2026x" in out  # configured label
+    assert "Dymola 2026x Refresh 1" in out  # reported version
+    assert "linux" in out
+    assert "run-meta" in out  # the banner element
+
+
+def test_render_final_no_banner_without_metadata(tmp_path):
+    snapshot = {
+        "total": 1,
+        "elapsed": 1.0,
+        "counts": {"passed": 1},
+        "tests": [],
+        "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_final(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "run-meta" not in out
+
+
 def test_render_final_strips_refresh(tmp_path):
     snapshot = {
         "total": 1,

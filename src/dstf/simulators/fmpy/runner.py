@@ -106,6 +106,17 @@ class FmpyRunner(SimulatorRunner):
                 'uv pip install -e ".[fmpy]"'
             ) from exc
 
+    def describe_tool_version(self) -> str | None:
+        """The fmpy library version drives simulation, so it's the run's
+        'tool version'. (Per-FMU ``generationTool`` metadata is richer but
+        varies test-to-test; the library version is the run-level constant.)"""
+        try:
+            import fmpy
+
+            return f"FMPy {fmpy.__version__}"
+        except Exception:  # pragma: no cover — __init__ already validated import
+            return None
+
     # ------------------------------------------------------------------
     # Simulation
     # ------------------------------------------------------------------

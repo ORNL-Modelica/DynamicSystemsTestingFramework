@@ -307,6 +307,45 @@ class TestStrictJsonArtifacts:
         assert re.search(r"\bNaN\b", html) is None
 
 
+class TestRunMetadataBanner:
+    """Run-provenance banner in the per-test interactive.html."""
+
+    def test_banner_rendered_when_metadata_present(self, tmp_path):
+        plot_dir = tmp_path / "report"
+        generate_comparison_plots(
+            model_id="Fixture.Prov",
+            ref_data=None,
+            result=None,
+            comparisons=[_nonfinite_comparison()],
+            plot_dir=plot_dir,
+            run_metadata={
+                "label": "Dymola 2026x",
+                "backend": "Dymola",
+                "os": "linux",
+                "tool_version": "Dymola 2026x Refresh 1",
+                "dstf_version": "0.1.0",
+                "generated_str": "2026-07-07 14:30",
+            },
+        )
+        html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
+        assert 'class="run-meta"' in html
+        assert "Dymola 2026x" in html
+        assert "Dymola 2026x Refresh 1" in html  # reported version distinct
+        assert "linux" in html
+
+    def test_no_banner_when_metadata_absent(self, tmp_path):
+        plot_dir = tmp_path / "report"
+        generate_comparison_plots(
+            model_id="Fixture.NoProv",
+            ref_data=None,
+            result=None,
+            comparisons=[_nonfinite_comparison()],
+            plot_dir=plot_dir,
+        )
+        html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
+        assert 'class="run-meta"' not in html
+
+
 # ---------------------------------------------------------------------------
 # Finding 37 (support) — full_samples counts for the decimation banner
 # ---------------------------------------------------------------------------

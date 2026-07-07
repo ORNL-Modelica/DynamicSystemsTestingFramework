@@ -2522,3 +2522,67 @@ warnings corroborate: IRIS nonlinear 3→11 / events 13→16, pumps events
    TODO-cleanup.md once confirmed unused.
 5. Consider `jsonschema` as a dev extra to un-gate the schema-validation
    test; consider a Windows-partition run to exercise `<os>=windows`.
+
+
+## D90 — Run-provenance metadata on reports (2026-07-07): which backend/version produced the results
+
+**Trigger.** The 5 TRANSFORM drift failures (D89) reproduce on *both* WSL
+Dymola 2026x and Windows Dymola — so they're version/model, not
+platform. But the report showed *what* the verdicts were and never *what
+produced them*: no backend, no simulator version, no OS anywhere in
+`status.json`, the dashboard, or the per-test report. The backend/OS
+existed only as the `<Backend>/<os>/` storage path, never surfaced. That
+made "did the tool change (Dymola 2025x→2026x, MSL bump)?" a fresh
+investigation each time. This is the prerequisite for the drift
+differential: stamp each run so a 2025x re-run and a 2026x baseline are
+unambiguous side by side.
+
+**Design.** New `RunMetadata` (`simulators/run_metadata.py`):
+`backend` · `simulator` (the configured label) · `os` · `tool_version`
+(actual, tool-reported) · `dstf_version` · `generated_at`. Built once per
+run from `Config` and serialized into `status.json` under a `metadata`
+key; the reporters read it straight back (`build_dashboard_context`
+already reads only `status.json`, so the dashboard banner came for free).
+
+Two-tier version capture, both **best-effort — provenance must never
+abort a run**:
+- Config identity (backend/simulator/os/dstf) is always available and is
+  the reliable floor.
+- Actual `tool_version` is the gold standard when obtainable. Batch/
+  subprocess backends report eagerly via `describe_tool_version()`
+  (FMPy → `fmpy.__version__`, Python → the *configured* interpreter's
+  `--version`). Persistent backends can't name their version until a
+  worker is live, so they leave it `None` and the `run_tests` template
+  patches it in after startup via `_probe_worker_version(live_workers)`
+  → `progress.update_metadata(tool_version=...)`. Dymola:
+  `ExecuteCommand("DymolaVersion()")`; OpenModelica: `getVersion()`
+  (wire-string unwrap); Julia: `julia --version`. Every probe is wrapped
+  (`_safe_tool_version` / `_safe_probe_worker_version`) so a failure
+  degrades to the configured label, never an aborted run.
+
+**Surfaces.** Banner on `dashboard.html` (under the title) + per-test
+`interactive.html` (threaded through `generate_report_suite` →
+`_read_run_metadata` → `generate_comparison_plots`), plus a console
+`Backend: …` header line. Banner shows the configured label and, when the
+reported version differs, appends it in parens — e.g.
+`Dymola (Dymola Version 2026x, 2025-10-10) · linux · DSTF 0.1.0`.
+Backward compatible: pre-existing `status.json` without `metadata` → no
+banner (the `{% if run_metadata %}` guard keeps the interactive
+structural-hash snapshot stable).
+
+**Verified end-to-end (live, this box):** Python →
+`Python 3.12.12`; Dymola 2026x → `Dymola Version 2026x, 2025-10-10`
+(the exact string the 2025x/2026x differential needs — includes build
+date); OpenModelica → `OpenModelica 1.27.0~dev.beta.3-2-g3d4d539`
+(confirms the getVersion wire-unwrap). Julia/FMPy probes are unit-tested
+at the parse layer only (no Julia executor / FMUs here). Suite 985 →
+**1019 passed** / 23 skipped (+34 tests across `test_run_metadata`,
+`test_tool_version`, and additions to `test_progress_reporter` /
+`test_dashboard_render` / `test_review_fixes_reporter`), ruff + mypy
+clean, coverage 77.9% (floor 66).
+
+**Still open** (does not block the feature): the 5 TRANSFORM drift
+failures still await adjudication — now the differential can be run:
+re-simulate them under Dymola 2025x Refresh 1 and compare the two
+version-stamped reports to separate a Dymola/MSL-version effect from a
+genuine model change.

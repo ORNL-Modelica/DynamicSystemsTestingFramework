@@ -423,6 +423,24 @@ class PersistentJuliaRunner(PersistentRunnerBase, JuliaRunner):
     def make_worker(self, worker_id: int) -> JuliaWorker:
         return JuliaWorker(worker_id, self.config, self.julia_config)
 
+    def _probe_worker_version(self, live_workers: list) -> str | None:
+        # The version is a property of the configured julia binary, not the
+        # running session, so probe the binary directly rather than reaching
+        # into a worker's subprocess. Best-effort → None on any failure.
+        import subprocess
+
+        try:
+            out = subprocess.run(
+                [str(self.julia_config.julia_binary), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            banner = (out.stdout or out.stderr or "").strip()
+            return banner or None
+        except Exception:
+            return None
+
     def starting_workers_message(self, n_workers: int) -> str:
         # First runs hit MTK + OrdinaryDiffEq JIT compile, which is
         # multi-minute. Surfacing this at start time so users don't think

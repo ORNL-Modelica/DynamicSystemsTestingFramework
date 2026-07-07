@@ -49,7 +49,13 @@ class ProgressReporter:
     Writes status.json + dashboard.html to work_dir on every state change.
     """
 
-    def __init__(self, work_dir: Path, total: int, rerun_prefix: str | None = None):
+    def __init__(
+        self,
+        work_dir: Path,
+        total: int,
+        rerun_prefix: str | None = None,
+        metadata: dict | None = None,
+    ):
         self.work_dir = work_dir
         self.total = total
         # Stashed for inclusion in status.json so the dashboard's rerun-
@@ -57,6 +63,11 @@ class ProgressReporter:
         # from any CWD. Computed by callers via dashboard_render.build_
         # rerun_prefix(config).
         self.rerun_prefix = rerun_prefix
+        # Run-level provenance (backend/simulator/os/version). Serialized into
+        # status.json under "metadata" and rendered as a banner by the
+        # reporters. None → the "metadata" key stays null (backward compat with
+        # snapshots written before this field existed). See run_metadata.py.
+        self._metadata = dict(metadata) if metadata else None
         self._lock = threading.Lock()
         self._write_lock = threading.Lock()
         self._tests: dict[str, TestStatus] = {}
@@ -66,6 +77,18 @@ class ProgressReporter:
         # meta-refresh ticks (otherwise the header elapsed appears frozen at
         # whatever it was when the last test state-change wrote the snapshot).
         self._start_wall = time.time()
+
+    def update_metadata(self, **fields: object) -> None:
+        """Patch run-level metadata after the fact (e.g. a backend that only
+        learns its ``tool_version`` once its worker is live) and re-emit the
+        snapshot. No-op when no base metadata was supplied — we never fabricate
+        a provenance block from a late partial update.
+        """
+        with self._lock:
+            if self._metadata is None:
+                return
+            self._metadata.update(fields)
+        self._write()
 
     def register(
         self,
@@ -125,6 +148,7 @@ class ProgressReporter:
     def _snapshot(self) -> dict:
         with self._lock:
             tests = [asdict(t) for t in self._tests.values()]
+            metadata = dict(self._metadata) if self._metadata else None
         counts = {"queued": 0, "running": 0, "passed": 0, "failed": 0, "timed_out": 0}
         for t in tests:
             counts[t["status"]] = counts.get(t["status"], 0) + 1
@@ -144,6 +168,7 @@ class ProgressReporter:
             "rerun_prefix": self.rerun_prefix,
             "start_wall": self._start_wall,
             "updated_at": time.time(),
+            "metadata": metadata,
         }
 
     def _write(self) -> None:

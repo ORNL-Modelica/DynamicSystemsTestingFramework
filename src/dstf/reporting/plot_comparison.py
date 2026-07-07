@@ -922,6 +922,7 @@ def _build_template_context(
     metric_tree=None,
     artifact_files: tuple[tuple[str, str], ...] = (),
     overlays: list | None = None,
+    run_metadata: dict | None = None,
 ) -> dict:
     """Build the full template context dict from comparison data.
 
@@ -1002,6 +1003,9 @@ def _build_template_context(
         "tree_view": tree_view,
         "variables_by_name": variables_by_name,
         "mode_schemas": _emit_mode_schemas(),
+        # Run provenance banner (backend/simulator/version/os). Same shape as
+        # the dashboard's, formatted by dashboard_render.format_run_metadata.
+        "run_metadata": run_metadata,
     }
 
 
@@ -1023,6 +1027,7 @@ def generate_comparison_plots(
     status_text: str | None = None,
     status_class: str | None = None,
     ref_id: str | None = None,
+    run_metadata: dict | None = None,
 ) -> Path | None:
     """Render this test's interactive.html (Plotly) + comparison_data.json sidecar.
 
@@ -1051,6 +1056,7 @@ def generate_comparison_plots(
         metric_tree=metric_tree,
         artifact_files=artifact_files,
         overlays=overlays,
+        run_metadata=run_metadata,
     )
 
     # Write comparison_data.json alongside the HTML. This is the
@@ -1355,6 +1361,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         status_text=args.get("status_text"),
         status_class=args.get("status_class"),
         ref_id=args.get("ref_id"),
+        run_metadata=args.get("run_metadata"),
     )
     render_elapsed = _time.monotonic() - t0
     return {
@@ -1374,6 +1381,22 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         "report_path": f"{args['report_id']}/interactive.html" if html_path else None,
         "_render_elapsed": render_elapsed,
     }
+
+
+def _read_run_metadata(work_dir: Path) -> dict | None:
+    """Read + shape the run provenance from ``work_dir/status.json`` for the
+    per-test banner. Returns None (banner omitted) when status.json is absent,
+    unreadable, or predates the ``metadata`` field. Never raises."""
+    import json as _json
+
+    from .dashboard_render import format_run_metadata
+
+    status_path = work_dir / "status.json"
+    try:
+        snapshot = _json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return format_run_metadata(snapshot.get("metadata"))
 
 
 def generate_report_suite(
@@ -1429,6 +1452,11 @@ def generate_report_suite(
                     },
                 )
 
+    # Run provenance for the per-test banner — read once from status.json and
+    # shaped by the same formatter the dashboard uses, so both surfaces agree.
+    # None when status.json predates the metadata field (banner is omitted).
+    run_metadata = _read_run_metadata(config.work_dir)
+
     # Resolve per-test args sequentially (cheap dict/store lookups), then
     # render reports in parallel
     work = [
@@ -1443,6 +1471,8 @@ def generate_report_suite(
         )
         for comp in comparisons
     ]
+    for args in work:
+        args["run_metadata"] = run_metadata
 
     n_workers = max(1, min(getattr(config, "parallel", 1) or 1, len(work)))
     index_tests: list[dict] = []

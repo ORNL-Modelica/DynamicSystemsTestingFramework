@@ -199,6 +199,7 @@ details summary:hover { color: #333; }
 <body>
 
 <h1>{{ model_id }}</h1>
+{% if run_metadata %}<div class="run-meta" style="font-size:0.85em; color:#888; margin-bottom:0.25em;"><strong>{{ run_metadata.label }}</strong>{% if run_metadata.tool_version and run_metadata.tool_version != run_metadata.label %} <span title="version reported by the backend">({{ run_metadata.tool_version }})</span>{% endif %}{% if run_metadata.os %} · {{ run_metadata.os }}{% endif %}{% if run_metadata.dstf_version %} · DSTF {{ run_metadata.dstf_version }}{% endif %}{% if run_metadata.generated_str %} · {{ run_metadata.generated_str }}{% endif %}</div>{% endif %}
 {% if last_run_str %}<div style="font-size:0.85em; color:#888; margin-bottom:0.5em;">Last run: {{ last_run_str }}</div>{% endif %}
 
 {# === SUMMARY === #}

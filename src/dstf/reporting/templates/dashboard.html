@@ -147,6 +147,14 @@ body.has-selection { padding-bottom: 5em; }
 <body>
 <div id="sticky-chrome">
 <h1>{{ title }}</h1>
+{% if run_metadata %}
+<div class="run-meta" style="font-size:0.8em; color:#888; margin:-4px 0 8px;">
+  <strong>{{ run_metadata.label }}</strong>{% if run_metadata.tool_version and run_metadata.tool_version != run_metadata.label %} <span title="version reported by the backend">({{ run_metadata.tool_version }})</span>{% endif %}
+  {% if run_metadata.os %}· {{ run_metadata.os }}{% endif %}
+  {% if run_metadata.dstf_version %}· DSTF {{ run_metadata.dstf_version }}{% endif %}
+  {% if run_metadata.generated_str %}· {{ run_metadata.generated_str }}{% endif %}
+</div>
+{% endif %}
 <div class="status-bar">
   {% if auto_refresh %}Auto-refreshing every 5s ·
     elapsed <span id="header-elapsed">{{ "%.0f"|format(elapsed) }}s</span> ·

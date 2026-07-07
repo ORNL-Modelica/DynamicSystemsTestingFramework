@@ -171,6 +171,37 @@ def build_rerun_prefix(config) -> str:
     return " ".join(parts)
 
 
+def format_run_metadata(meta: dict | None) -> dict | None:
+    """Turn the raw ``status.json`` ``metadata`` block into a template-friendly
+    provenance dict, or ``None`` when no metadata was recorded.
+
+    Adds a display ``label`` (the configured simulator, falling back to the
+    backend family) and a human-readable ``generated_str`` from the epoch
+    timestamp. Kept separate from ``build_dashboard_context`` so the per-test
+    interactive report can reuse the exact same shaping.
+    """
+    if not meta:
+        return None
+    label = meta.get("simulator") or meta.get("backend") or "unknown"
+    generated_at = meta.get("generated_at")
+    generated_str = None
+    if generated_at:
+        try:
+            generated_str = time.strftime(
+                "%Y-%m-%d %H:%M", time.localtime(generated_at)
+            )
+        except Exception:  # pragma: no cover — defensive against bad epoch
+            generated_str = None
+    return {
+        "label": label,
+        "backend": meta.get("backend"),
+        "os": meta.get("os"),
+        "tool_version": meta.get("tool_version"),
+        "dstf_version": meta.get("dstf_version"),
+        "generated_str": generated_str,
+    }
+
+
 def build_dashboard_context(
     work_dir: Path, mode: str, rerun_prefix: str | None = None
 ) -> dict:
@@ -268,6 +299,9 @@ def build_dashboard_context(
         # This works between meta-refresh ticks (when the snapshot is stale)
         # and right after a refresh (when it's fresh).
         "start_wall": snapshot.get("start_wall"),
+        # Run provenance (backend/simulator/version/os) for the banner. None
+        # for snapshots written before this field existed.
+        "run_metadata": format_run_metadata(snapshot.get("metadata")),
     }
 
 

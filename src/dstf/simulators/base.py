@@ -305,6 +305,7 @@ def _print_run_header(
     work_dir: Path | None,
     *,
     timeout_per_test: bool = False,
+    metadata: dict | None = None,
 ) -> None:
     """Print the standard "Running N tests..." header + dashboard URL.
 
@@ -327,6 +328,17 @@ def _print_run_header(
         parts.append(f" {suffix_phrase}")
     parts.append(f" (parallel={parallel}, {timeout_label})")
     print("".join(parts), file=sys.stderr)
+    if metadata:
+        # Provenance line so the terminal (like the dashboard) says which
+        # backend/version produced these results — the tool_version may still
+        # be None here for persistent backends and is filled in on the report.
+        label = metadata.get("simulator") or metadata.get("backend") or "unknown"
+        bits = [label]
+        if metadata.get("os"):
+            bits.append(metadata["os"])
+        if metadata.get("dstf_version"):
+            bits.append(f"DSTF {metadata['dstf_version']}")
+        print(f"Backend: {' · '.join(bits)}", file=sys.stderr)
     if work_dir is not None:
         dashboard = work_dir / "dashboard.html"
         print(f"Live progress: {dashboard.resolve().as_uri()}", file=sys.stderr)
@@ -522,6 +534,40 @@ class SimulatorRunner(ABC):
         """
         return None
 
+    def describe_tool_version(self) -> str | None:
+        """Best-effort actual tool version (e.g. ``"Dymola 2026x"``, an omc
+        version, a Python version), or ``None`` when the backend can't cheaply
+        report one without a live session.
+
+        Called eagerly by ``run_tests`` to stamp run provenance. Persistent
+        backends whose version only exists once a worker is up should leave
+        this ``None`` and instead override :meth:`_probe_worker_version`, which
+        the persistent template calls after startup. MUST NOT raise — a failed
+        version probe degrades to the configured simulator label, never an
+        aborted run.
+        """
+        return None
+
+    def _safe_tool_version(self) -> str | None:
+        """``describe_tool_version()`` with a blanket guard — provenance is
+        never allowed to abort a run, so any probe failure degrades to
+        ``None`` (the reporter then falls back to the configured label)."""
+        try:
+            return self.describe_tool_version()
+        except Exception:
+            logger.debug("tool-version probe failed", exc_info=True)
+            return None
+
+    def _build_run_metadata(self, tool_version: str | None = None) -> dict:
+        """Assemble the run-provenance dict handed to ``ProgressReporter``.
+
+        Kept as a helper (not inlined) so both the batch and persistent
+        ``run_tests`` templates build identical provenance from ``self.config``.
+        """
+        from .run_metadata import RunMetadata
+
+        return RunMetadata.from_config(self.config, tool_version=tool_version).as_dict()
+
     def export_fmu(self, test: TestModel, output_dir: "Path") -> "Path":
         """Export the test's model as an FMU into ``output_dir``.
 
@@ -576,10 +622,15 @@ class SimulatorRunner(ABC):
         from ..reporting.dashboard_render import build_rerun_prefix
         from .progress import ProgressReporter
 
+        # Batch/subprocess backends can report their version cheaply and
+        # eagerly (no live session to wait on); persistent backends leave this
+        # None and patch it in once a worker is up (see below).
+        run_metadata = self._build_run_metadata(self._safe_tool_version())
         self.progress = ProgressReporter(
             self.config.work_dir,
             total,
             rerun_prefix=build_rerun_prefix(self.config),
+            metadata=run_metadata,
         )
 
         # Assign test_keys (reuse existing from prior runs if present — supports
@@ -610,6 +661,7 @@ class SimulatorRunner(ABC):
             self.config.parallel,
             self.config.timeout,
             self.config.work_dir,
+            metadata=run_metadata,
         )
 
         def _result_status(rr: TestRunResult) -> str:
@@ -857,6 +909,28 @@ class PersistentRunnerBase(SimulatorRunner):
         """
         return f"Starting {n_workers} {self.backend_label} worker(s)..."
 
+    def _probe_worker_version(self, live_workers: list["Worker"]) -> str | None:
+        """Best-effort actual tool version, asked of a live worker.
+
+        The persistent template calls this once workers are up (before
+        dispatch) to stamp run provenance. Default returns ``None``; backends
+        whose session can name its version (Dymola's ``DymolaVersion()``,
+        omc's ``getVersion()``) override this. MUST NOT raise — the template
+        wraps it in :meth:`_safe_probe_worker_version`.
+        """
+        return None
+
+    def _safe_probe_worker_version(self, live_workers: list["Worker"]) -> str | None:
+        """Guarded :meth:`_probe_worker_version` — a probe failure degrades to
+        ``None`` and never disrupts the run."""
+        if not live_workers:
+            return None
+        try:
+            return self._probe_worker_version(live_workers)
+        except Exception:
+            logger.debug("worker version probe failed", exc_info=True)
+            return None
+
     # ------------------------------------------------------------------
     # The template
     # ------------------------------------------------------------------
@@ -872,10 +946,15 @@ class PersistentRunnerBase(SimulatorRunner):
         from ..reporting.dashboard_render import build_rerun_prefix
         from .progress import ProgressReporter
 
+        # Persistent backends usually can't name their version until a worker
+        # is live, so tool_version starts None and is patched in after startup
+        # via _probe_worker_version (see below).
+        run_metadata = self._build_run_metadata(self._safe_tool_version())
         self.progress = ProgressReporter(
             self.config.work_dir,
             total,
             rerun_prefix=build_rerun_prefix(self.config),
+            metadata=run_metadata,
         )
 
         manifest_map, test_items = assign_test_keys(self.config.work_dir, tests)
@@ -903,6 +982,7 @@ class PersistentRunnerBase(SimulatorRunner):
             self.config.timeout,
             self.config.work_dir,
             timeout_per_test=True,
+            metadata=run_metadata,
         )
 
         workers = [self.make_worker(i) for i in range(n_workers)]
@@ -936,6 +1016,13 @@ class PersistentRunnerBase(SimulatorRunner):
             f"{time.monotonic() - start_all:.1f}s",
             file=sys.stderr,
         )
+
+        # Now that a worker is live, ask it for the real tool version and stamp
+        # it into the run provenance. Best-effort — a failed probe leaves the
+        # configured simulator label as the shown version.
+        version = self._safe_probe_worker_version(live_workers)
+        if version and self.progress is not None:
+            self.progress.update_metadata(tool_version=version)
 
         results = self._dispatch_with_restart(live_workers, test_items, total)
 
@@ -1174,9 +1261,7 @@ class PersistentRunnerBase(SimulatorRunner):
                                 prev_killed_worker = False  # consumed by restart
                         if not restart_exhausted:
                             if self.progress is not None:
-                                self.progress.on_start(
-                                    test_key, worker_id=w.worker_id
-                                )
+                                self.progress.on_start(test_key, worker_id=w.worker_id)
                             timeout = float(
                                 test.timeout
                                 if test.timeout is not None

@@ -107,6 +107,26 @@ class PythonRunner(SimulatorRunner):
         super().__init__(config)
         self.python_config = PythonConfig.from_config(config)
 
+    def describe_tool_version(self) -> str | None:
+        """Version of the *configured* interpreter (``python_config.
+        python_binary``) that actually runs each test's subprocess — not this
+        host's Python, which may differ. Probed via ``--version`` with a short
+        timeout; ``None`` on any failure."""
+        import subprocess
+
+        try:
+            out = subprocess.run(
+                [str(self.python_config.python_binary), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            # Older CPython prints the banner to stderr, newer to stdout.
+            banner = (out.stdout or out.stderr or "").strip()
+            return banner or None
+        except Exception:
+            return None
+
     # ------------------------------------------------------------------
     # Simulation
     # ------------------------------------------------------------------
