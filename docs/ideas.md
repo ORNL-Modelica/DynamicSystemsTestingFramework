@@ -610,3 +610,17 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   becomes the dominant cost. The Julia D77→D78 progression is the
   template — long-lived subprocess + stdin-JSON dispatch, same
   contract on the wire.
+
+- **Julia-in-CI executor** (2026-07-06, review wave): the D89 .jl driver
+  guards (retcode/final-time check, stale-definition poison sentinel,
+  json_escape) are text-pinned only — no Julia on the dev box. A tiny CI
+  job with the official julia container + OrdinaryDiffEq could actually
+  execute run_test.jl/run_persistent.jl against a 2-state toy system and
+  retire that standing residual.
+
+- **Known-drift baseline marking** (2026-07-06): the TRANSFORM
+  verification left 5 real-drift failures pending adjudication. An
+  `expected_fail: "<reason/issue>"` field on a test-spec entry (surfaced
+  as XFAIL in console/JUnit, distinct from PASS/FAIL) would let a suite
+  stay green-gated while drift is investigated, without re-accepting
+  baselines prematurely or muting the check.
