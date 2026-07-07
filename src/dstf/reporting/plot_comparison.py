@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import platform
 import re
 import shutil
@@ -15,6 +16,25 @@ from ..comparison.comparator import VariableComparison
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+
+def _json_sanitize(obj):
+    """Recursively replace non-finite floats (inf / -inf / nan) with None.
+
+    review 2026-07-06 finding 68: ``comparison_data.json`` is the documented
+    downstream artifact and the same context is embedded into
+    interactive.html — dumping with ``allow_nan=True`` injected literal
+    ``Infinity`` / ``NaN`` tokens (e.g. from missing-baseline sentinel
+    comparisons), which is invalid JSON for every strict consumer. Returns
+    new containers; the input is not mutated.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_sanitize(v) for v in obj]
+    return obj
 
 
 def _sanitize_filename(name: str) -> str:
@@ -1088,12 +1108,24 @@ def generate_comparison_plots(
             else {}
         ),
     }
-    data_path.write_text(json.dumps(context, indent=2, default=str), encoding="utf-8")
+    # review 2026-07-06 finding 68: strict JSON — sanitize non-finite
+    # floats to null and forbid NaN/Infinity tokens at dump time.
+    data_path.write_text(
+        json.dumps(_json_sanitize(context), indent=2, default=str, allow_nan=False),
+        encoding="utf-8",
+    )
 
     # Decimate trajectory arrays embedded into interactive.html. This
     # caps the HTML payload for Plotly rendering; pass/fail scoring,
     # stored baselines, and comparison_data.json are unaffected.
     _decimate_context_for_html(context, max_embedded_samples)
+
+    # review 2026-07-06 finding 68: the embedded page context must be
+    # strict JSON too — Jinja's |tojson would otherwise emit Infinity/NaN
+    # literals into window.MT_REPORT. Sanitize AFTER decimation so the
+    # recursive pass runs over the capped arrays, not the full-resolution
+    # ones.
+    context = _json_sanitize(context)
 
     # Render interactive HTML (Plotly, inline data — now decimated).
     # Stage 5: the static ``comparison.html`` path was retired. The index
@@ -1123,7 +1155,22 @@ def _decimate_context_for_html(context: dict, max_samples: int) -> None:
     if max_samples is None or max_samples <= 0:
         return
 
+    def _stamp_full_samples(traj: dict) -> None:
+        # review 2026-07-06 finding 37: record pre-decimation sample counts
+        # so interactive.js can disclose "live scores computed on decimated
+        # data (N of M samples)". setdefault — trajectory dicts are shared
+        # between context['trajectories'] and variables_by_name, so the
+        # first stamp (pre-decimation) must win.
+        traj.setdefault(
+            "full_samples",
+            {
+                "act": len(traj.get("act_time") or []),
+                "ref": len(traj.get("ref_time") or []),
+            },
+        )
+
     for traj in context.get("trajectories", []) or []:
+        _stamp_full_samples(traj)
         traj["act_time"], traj["act_values"] = decimate_pair(
             traj.get("act_time"), traj.get("act_values"), max_samples
         )
@@ -1143,6 +1190,7 @@ def _decimate_context_for_html(context: dict, max_samples: int) -> None:
     for var_data in (context.get("variables_by_name") or {}).values():
         traj = var_data.get("trajectory") or {}
         if "act_time" in traj:
+            _stamp_full_samples(traj)
             traj["act_time"], traj["act_values"] = decimate_pair(
                 traj.get("act_time"), traj.get("act_values"), max_samples
             )
@@ -1166,6 +1214,15 @@ def _decimate_context_for_html(context: dict, max_samples: int) -> None:
         traj["time"], traj["values"] = decimate_pair(
             traj.get("time"), traj.get("values"), max_samples
         )
+        # review 2026-07-06 finding 71: nobaseline trajectories carry the
+        # same sibling-backend / companion / soft_check overlays as
+        # baselined ones — decimate them under the same payload budget
+        # (undecimated overlays produced multi-MB HTML in exactly the
+        # sibling-backend cross-check case).
+        for ov in traj.get("overlays", []) or []:
+            ov["time"], ov["values"] = decimate_pair(
+                ov.get("time"), ov.get("values"), max_samples
+            )
 
 
 def _render_template(template_name: str, context: dict, output_path: Path) -> None:
@@ -1210,12 +1267,14 @@ def _build_per_test_args(
         status_text, status_class = (
             ("PASS", "pass") if comp.passed else ("FAIL", "fail")
         )
-    elif not comp.has_reference:
-        status_text, status_class = "NO_REF", "no-ref"
-    elif comp.passed:
-        status_text, status_class = "PASS", "pass"
-    else:
+    elif not comp.passed:
+        # A failing verdict wins over NO_REF — baseline-free modes carry
+        # a real verdict without a stored baseline (review 2026-07-06).
         status_text, status_class = "FAIL", "fail"
+    elif not comp.has_reference and not comp.evaluated:
+        status_text, status_class = "NO_REF", "no-ref"
+    else:
+        status_text, status_class = "PASS", "pass"
 
     n_vars = len(comp.variables) if comp.variables else 0
     n_vars_passed = sum(1 for v in comp.variables if v.passed) if comp.variables else 0

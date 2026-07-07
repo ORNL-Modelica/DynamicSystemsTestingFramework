@@ -25,11 +25,37 @@ const STOP_TIME   = parse(Float64, ARGS[2])
 const TOLERANCE   = parse(Float64, ARGS[3])
 const RESULT_PATH = ARGS[4]
 
+# review 2026-07-06 (finding 75): the failure JSON is hand-built (JSON3 may
+# not have loaded when the failure happens). Julia's repr()-style escaping
+# is NOT JSON (`\$` is invalid) — real error detail was lost to parse
+# errors. Minimal manual JSON string escaper instead.
+function json_escape(s::AbstractString)
+    buf = IOBuffer()
+    for c in s
+        if c == '\\'
+            write(buf, "\\\\")
+        elseif c == '"'
+            write(buf, "\\\"")
+        elseif c == '\n'
+            write(buf, "\\n")
+        elseif c == '\r'
+            write(buf, "\\r")
+        elseif c == '\t'
+            write(buf, "\\t")
+        elseif c < ' '
+            write(buf, "\\u" * string(UInt32(c), base=16, pad=4))
+        else
+            write(buf, c)
+        end
+    end
+    return String(take!(buf))
+end
+
 function write_failure(msg)
     open(RESULT_PATH, "w") do io
-        write(io, string("{\"success\": false, \"error\": ",
-                         Base.repr(string(msg)),
-                         ", \"time\": [], \"variables\": {}}"))
+        write(io, string("{\"success\": false, \"error\": \"",
+                         json_escape(string(msg)),
+                         "\", \"time\": [], \"variables\": {}}"))
     end
 end
 
@@ -51,6 +77,19 @@ try
 
     prob = ModelingToolkit.ODEProblem(nt.sys, u0, (0.0, STOP_TIME), ps)
     sol = OrdinaryDiffEq.solve(prob, OrdinaryDiffEq.Tsit5(); reltol=TOLERANCE)
+
+    # review 2026-07-06 (finding 4): a diverged / unstable / maxiters-
+    # truncated solve must not be written as success — with --accept the
+    # truncated trajectory would become the regression baseline. Check the
+    # retcode AND that integration actually reached stop_time.
+    if !OrdinaryDiffEq.SciMLBase.successful_retcode(sol)
+        error("solver did not succeed: retcode=" * string(sol.retcode))
+    end
+    if isempty(sol.t) || abs(sol.t[end] - STOP_TIME) > 1e-6 * max(abs(STOP_TIME), 1.0)
+        t_end = isempty(sol.t) ? "none" : string(sol.t[end])
+        error("solve stopped at t=" * t_end * " before stop_time=" *
+              string(STOP_TIME) * " (retcode=" * string(sol.retcode) * ")")
+    end
 
     # Collect unknowns (state variables) AND observables (algebraic
     # expressions like `y ~ a*x1 + b*x2` that structural_simplify

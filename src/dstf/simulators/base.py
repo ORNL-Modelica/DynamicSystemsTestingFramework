@@ -197,7 +197,13 @@ class BatchManifest:
 
     def save(self) -> Path:
         path = self.work_dir / "batch_manifest.json"
-        path.write_text(json.dumps(self.manifest, indent=2), encoding="utf-8")
+        # review 2026-07-06 finding 66: atomic replace — a torn write made
+        # every subsequent run/compare crash at startup until the file was
+        # hand-deleted. Lazy import: storage imports simulators (TestResult),
+        # so a module-level import here would be circular.
+        from ..storage.reference_store import _atomic_write_text
+
+        _atomic_write_text(path, json.dumps(self.manifest, indent=2))
         return path
 
     def enrich_ref_ids(self, ref_index) -> None:
@@ -209,7 +215,30 @@ class BatchManifest:
 
     @classmethod
     def load(cls, path: Path) -> "BatchManifest":
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError(f"expected a JSON object, got {type(data).__name__}")
+        except (ValueError, OSError) as exc:
+            # review 2026-07-06 finding 66: a corrupt manifest must not crash
+            # startup. Quarantine it (keeping the bytes for forensics) and
+            # start from an empty manifest — every caller already treats a
+            # missing manifest as empty, so test keys are simply re-assigned
+            # on the next run. (JSONDecodeError is a ValueError subclass.)
+            corrupt = path.with_name(f"{path.name}.corrupt")
+            where = ""
+            try:
+                path.replace(corrupt)
+                where = f"; moved to {corrupt.name}"
+            except OSError:
+                pass
+            logger.warning(
+                "Corrupt batch manifest %s (%s)%s — starting with an empty manifest",
+                path,
+                exc,
+                where,
+            )
+            return cls(batch_id=0, work_dir=path.parent, manifest={})
         # Handle legacy format: test_key -> model_id string
         normalized = {}
         for key, val in data.items():
@@ -883,6 +912,19 @@ class PersistentRunnerBase(SimulatorRunner):
 
         live_workers = self._start_workers_parallel(workers)
         if not live_workers:
+            # review 2026-07-06 (finding 24): close every worker before the
+            # raise — start()-failed workers already close themselves in the
+            # startup handler, but close() is idempotent and this guarantees
+            # no orphaned simulator process (license seat) survives the abort.
+            for w in workers:
+                try:
+                    w.close()
+                except Exception:
+                    logger.debug(
+                        "Worker %s: close() during startup-failure cleanup raised",
+                        w.worker_id,
+                        exc_info=True,
+                    )
             if self.progress is not None:
                 self.progress.finalize()
             raise RuntimeError(
@@ -935,6 +977,18 @@ class PersistentRunnerBase(SimulatorRunner):
                     f"  Worker {w.worker_id}: start FAILED — {exc}",
                     file=sys.stderr,
                 )
+                # review 2026-07-06 (finding 24): a worker that failed mid-
+                # start may already have spawned its subprocess; close it so
+                # the process (and its license seat) doesn't leak. close() is
+                # contractually idempotent + safe on never-started workers.
+                try:
+                    w.close()
+                except Exception:
+                    logger.debug(
+                        "Worker %s: close() after failed start raised",
+                        w.worker_id,
+                        exc_info=True,
+                    )
 
         with ThreadPoolExecutor(max_workers=len(workers)) as pool:
             futures = [pool.submit(_start_one, w) for w in workers]
@@ -1050,6 +1104,42 @@ class PersistentRunnerBase(SimulatorRunner):
                 )
                 return False
 
+        # review 2026-07-06 (finding 20): dispatch-thread liveness registry.
+        # A worker whose restart failed permanently must NOT stay in the
+        # dispatch loop — it would tight-loop on the shared queue, instantly
+        # fail-marking tests that healthy workers could have run. Its thread
+        # exits instead — unless it is the LAST live thread, in which case it
+        # drains the queue and fail-marks the remainder so every test gets a
+        # recorded result and nothing hangs. (There is no work_queue.join()
+        # anywhere — the thread joins below are the only sync point — so an
+        # early thread exit cannot deadlock; leftover sentinels are inert.)
+        live_threads = [len(live_workers)]
+        live_threads_lock = threading.Lock()
+
+        def _fail_dead(test, test_key: str, message: str) -> None:
+            _record(
+                test,
+                test_key,
+                TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=False,
+                    elapsed=0.0,
+                    error_message=message,
+                ),
+            )
+
+        def _drain_remaining(reason: str) -> None:
+            while True:
+                try:
+                    item = work_queue.get_nowait()
+                except queue.Empty:
+                    return
+                if item is not None:
+                    test, test_key = item
+                    _fail_dead(test, test_key, reason)
+                work_queue.task_done()
+
         def _worker_loop(w: "Worker"):
             # Track whether the previous test left the worker dead for a
             # benign reason (we deliberately hard-killed it after a per-
@@ -1057,56 +1147,104 @@ class PersistentRunnerBase(SimulatorRunner):
             # restarts shouldn't count against the worker's permanent-
             # broken budget — the worker was healthy, the test was slow.
             prev_killed_worker = False
-            while True:
-                item = work_queue.get()
-                if item is None:
-                    work_queue.task_done()
-                    return
-                test, test_key = item
-                try:
-                    if not w.is_alive():
-                        if not _try_restart(
-                            w, count_against_budget=not prev_killed_worker
-                        ):
-                            _record(
-                                test,
-                                test_key,
-                                TestRunResult(
-                                    model_id=test.model_id,
-                                    test_key=test_key,
-                                    success=False,
-                                    elapsed=0.0,
-                                    error_message="Worker dead; restart exhausted",
-                                ),
+            try:
+                while True:
+                    item = work_queue.get()
+                    if item is None:
+                        work_queue.task_done()
+                        return
+                    test, test_key = item
+                    restart_exhausted = False
+                    try:
+                        if not w.is_alive():
+                            if not _try_restart(
+                                w, count_against_budget=not prev_killed_worker
+                            ):
+                                # review 2026-07-06 (finding 20): fail-mark
+                                # ONLY the item this thread already holds;
+                                # exit the loop right after the finally so
+                                # remaining tests go to live workers.
+                                _fail_dead(
+                                    test,
+                                    test_key,
+                                    "Worker dead; restart exhausted",
+                                )
+                                restart_exhausted = True
+                            else:
+                                prev_killed_worker = False  # consumed by restart
+                        if not restart_exhausted:
+                            if self.progress is not None:
+                                self.progress.on_start(
+                                    test_key, worker_id=w.worker_id
+                                )
+                            timeout = float(
+                                test.timeout
+                                if test.timeout is not None
+                                else self.config.timeout
                             )
-                            continue
-                        prev_killed_worker = False  # consumed by this restart
-                    if self.progress is not None:
-                        self.progress.on_start(test_key, worker_id=w.worker_id)
-                    timeout = float(
-                        test.timeout
-                        if test.timeout is not None
-                        else self.config.timeout
+                            try:
+                                tr = w.run_test_with_timeout(
+                                    test,
+                                    test_key,
+                                    timeout,
+                                    progress=self.progress,
+                                )
+                            except Exception as exc:
+                                # review 2026-07-06 (finding 21): the Worker
+                                # ABC contract permits raises for worker-level
+                                # catastrophes. A raise must be recorded — not
+                                # kill the dispatch thread and silently drop
+                                # the in-flight test (plus, at --parallel 1,
+                                # the whole remaining queue). The next
+                                # iteration's is_alive()/restart logic handles
+                                # the possibly-dead worker.
+                                logger.exception(
+                                    "Worker %s raised while running %s",
+                                    w.worker_id,
+                                    test.model_id,
+                                )
+                                _record(
+                                    test,
+                                    test_key,
+                                    TestRunResult(
+                                        model_id=test.model_id,
+                                        test_key=test_key,
+                                        success=False,
+                                        elapsed=0.0,
+                                        error_message=f"worker exception: {exc!r}",
+                                    ),
+                                )
+                                prev_killed_worker = False
+                            else:
+                                _record(test, test_key, tr)
+                                # Reset the restart counter on a successful
+                                # test — the worker has demonstrably recovered.
+                                # Consecutive *real* worker deaths (translation
+                                # broke / RPC dead) still accumulate to
+                                # ``max_restarts_per_worker`` and trip restart-
+                                # exhausted. Benign worker kills (timeout,
+                                # post-timeout disk-rescue) flow through
+                                # prev_killed_worker so they don't poison the
+                                # counter.
+                                if tr.success and not tr.worker_killed:
+                                    w._n_restarts = 0  # type: ignore[attr-defined]
+                                prev_killed_worker = bool(
+                                    tr.timed_out or tr.worker_killed
+                                )
+                    finally:
+                        work_queue.task_done()
+                    if restart_exhausted:
+                        return
+            finally:
+                # review 2026-07-06 (finding 20): last thread out drains the
+                # queue so no test is left unrecorded and no consumer hangs.
+                with live_threads_lock:
+                    live_threads[0] -= 1
+                    is_last = live_threads[0] == 0
+                if is_last:
+                    _drain_remaining(
+                        "Worker dead; restart exhausted (no live workers remaining)"
                     )
-                    tr = w.run_test_with_timeout(
-                        test,
-                        test_key,
-                        timeout,
-                        progress=self.progress,
-                    )
-                    _record(test, test_key, tr)
-                    # Reset the restart counter on a successful test — the
-                    # worker has demonstrably recovered. Consecutive *real*
-                    # worker deaths (translation broke / RPC dead) still
-                    # accumulate to ``max_restarts_per_worker`` and trip
-                    # restart-exhausted. Benign worker kills (timeout,
-                    # post-timeout disk-rescue) flow through prev_killed_worker
-                    # so they don't poison the counter.
-                    if tr.success and not tr.worker_killed:
-                        w._n_restarts = 0  # type: ignore[attr-defined]
-                    prev_killed_worker = bool(tr.timed_out or tr.worker_killed)
-                finally:
-                    work_queue.task_done()
 
         thread_prefix = self.backend_label.lower().replace(" ", "-") or "pworker"
         threads = [

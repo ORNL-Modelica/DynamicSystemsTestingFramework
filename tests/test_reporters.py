@@ -59,7 +59,10 @@ def _sim_failed(model_id="Lib.Examples.C"):
 
 
 def _no_ref(model_id="Lib.Examples.D"):
-    return TestComparison(model_id=model_id, passed=False, has_reference=False)
+    # Mirrors compare_all's NO_REF short-circuit: passed=True, nothing
+    # evaluated. (A comp with passed=False now classifies as FAILED even
+    # without a baseline — review 2026-07-06, finding 5.)
+    return TestComparison(model_id=model_id, passed=True, has_reference=False)
 
 
 def _warned(model_id="Lib.Examples.E"):

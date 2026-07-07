@@ -5,8 +5,34 @@ import fnmatch
 import sys
 from pathlib import Path
 
-from .config import Config
+from .config import Config, ConfigError
 from .discovery.test_registry import TestModel, discover_tests
+
+
+def _split_filter_list(spec: str) -> list[str]:
+    """Split a comma-separated filter list on commas NOT inside ``[]``.
+
+    review 2026-07-06 finding 64: naive comma-splitting broke fnmatch
+    character classes like ``Test[A,B]*``. Small scanner: a comma inside an
+    open ``[`` class belongs to the class. No escape mechanism — an
+    unclosed ``[`` makes the rest of the string one pattern (fnmatch treats
+    an unmatched ``[`` as a literal anyway).
+    """
+    parts: list[str] = []
+    buf: list[str] = []
+    in_class = False
+    for ch in spec:
+        if ch == "," and not in_class:
+            parts.append("".join(buf))
+            buf = []
+            continue
+        if ch == "[" and not in_class:
+            in_class = True
+        elif ch == "]" and in_class:
+            in_class = False
+        buf.append(ch)
+    parts.append("".join(buf))
+    return [p.strip() for p in parts if p.strip()]
 
 
 def _resolve_filter_patterns(spec: str) -> list[str]:
@@ -14,7 +40,8 @@ def _resolve_filter_patterns(spec: str) -> list[str]:
 
     Accepts:
       - "Foo.Bar.*"           — single glob
-      - "Foo.A,Foo.B,Foo.C"   — comma-separated globs
+      - "Foo.A,Foo.B,Foo.C"   — comma-separated globs (commas inside []
+                                character classes are part of the class)
       - "@path/to/file.txt"   — file with one pattern per line; '#' starts a comment
     """
     if spec.startswith("@"):
@@ -27,7 +54,7 @@ def _resolve_filter_patterns(spec: str) -> list[str]:
             if line:
                 patterns.append(line)
         return patterns
-    return [p.strip() for p in spec.split(",") if p.strip()]
+    return _split_filter_list(spec)
 
 
 def _filter_tests(
@@ -38,11 +65,23 @@ def _filter_tests(
     """Filter tests by glob/list/file on model_id, plus optional package prefix."""
     filtered = tests
     if package:
-        filtered = [t for t in filtered if t.model_id.startswith(package)]
+        # review 2026-07-06 finding 65: match the package itself or children
+        # across a dot boundary — "MyLib.Fluid" must not also select
+        # "MyLib.FluidExperimental.*" (raw startswith did).
+        filtered = [
+            t
+            for t in filtered
+            if t.model_id == package or t.model_id.startswith(package + ".")
+        ]
     if pattern:
         patterns = _resolve_filter_patterns(pattern)
+        # review 2026-07-06 finding 63: fnmatchcase — fnmatch.fnmatch is
+        # case-insensitive on Windows, so the same filter selected different
+        # tests across the two OS partitions this project maintains.
         filtered = [
-            t for t in filtered if any(fnmatch.fnmatch(t.model_id, p) for p in patterns)
+            t
+            for t in filtered
+            if any(fnmatch.fnmatchcase(t.model_id, p) for p in patterns)
         ]
     return filtered
 
@@ -264,6 +303,26 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"--rerun {rerun_filter}: selected {len(tests)} of {len(prior_comps)} tests"
         )
 
+        if not tests:
+            # review 2026-07-06 finding 59: an empty rerun set means the
+            # prior run already satisfies the requested categories — that
+            # is SUCCESS (a green prior run must not fail CI), unlike an
+            # empty user --filter below. Still refresh the merged report so
+            # the dashboard reflects the (unchanged) full-suite state.
+            print(f"Nothing to rerun (no tests in categories: {rerun_filter})")
+            config.work_dir.mkdir(parents=True, exist_ok=True)
+            from .reporting.dashboard_render import build_rerun_prefix, render_final
+
+            render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
+            if args.report:
+                scope_tests = [t for t in all_tests if t.model_id in prior_results]
+                # Exit code stays 0 regardless of prior-result verdicts:
+                # "nothing to rerun" is this invocation's whole outcome.
+                _generate_report_suite(
+                    prior_comps, prior_results, scope_tests, store, config
+                )
+            return 0
+
     if not tests:
         print("No tests matched the filter.")
         return 1
@@ -332,8 +391,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     results = runner.read_results(manifests, scope_tests)
 
     if args.accept:
-        stored = store.accept_results(scope_tests, results)
+        # review 2026-07-06 finding 30 (part 2): accept ONLY the tests
+        # simulated in THIS run (`tests`), never the merged --rerun/--merge
+        # scope (`scope_tests`) — the merged scope's results for
+        # out-of-scope tests are stale on-disk artifacts from older runs,
+        # and stale results must never become baselines.
+        stored, skipped = store.accept_results(tests, results)
         print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
+        if skipped:
+            # review 2026-07-06 finding 30 (part 1): a partial accept is a
+            # failure — name what was skipped and exit nonzero so CI can't
+            # silently bless an incomplete baseline set.
+            print(f"Skipped {len(skipped)} test(s):")
+            for model_id, reason in skipped:
+                print(f"  {model_id}: {reason}")
+            return 1
         return 0
     elif args.interactive is not None:
         from .comparison.comparator import compare_all
@@ -466,12 +538,16 @@ def cmd_export(args: argparse.Namespace) -> int:
 
     store = ReferenceStore(config)
 
+    # review 2026-07-06 finding 60: --output arrives as a string — coerce to
+    # Path (the ReferenceStore export APIs call .parent on it).
     if args.format == "csv":
-        out = args.output or (config.work_dir / "references.csv")
+        out = Path(args.output) if args.output else (config.work_dir / "references.csv")
         store.export_csv(out)
         print(f"Exported to {out}")
     else:
-        out = args.output or (config.work_dir / "references.json")
+        out = (
+            Path(args.output) if args.output else (config.work_dir / "references.json")
+        )
         store.export_json(out)
         print(f"Exported to {out}")
 
@@ -805,12 +881,69 @@ def _apply_validated_patch(spec_path, model_id, patch, config):
     when the patched entry has a `metrics` tree."""
     from .discovery.patch_apply import apply_patch
 
+    # Stage 0 (review 2026-07-06 finding 41): per-leaf ops against a
+    # flat-override entry need the implicit tree materialized first.
+    patch = _materialize_implicit_metrics(spec_path, model_id, patch)
     # Stage 1: dry-run apply in memory to check path/whitelist errors.
     mutated = apply_patch(spec_path, model_id, patch, write=False)
     # Stage 2: validate metric tree (if present).
     _validate_entry_metric_tree(mutated, model_id, config)
     # Stage 3: commit.
     apply_patch(spec_path, model_id, patch, write=True)
+
+
+def _materialize_implicit_metrics(spec_path, model_id, patch):
+    """Prepend an op materializing the implicit metrics tree when needed.
+
+    review 2026-07-06 finding 41: the reporter's per-leaf patch ops target
+    ``/metrics/children/N/...``, but tests defined via flat
+    ``comparison.variable_overrides`` (the primary documented format) have
+    no ``metrics`` block — ``patch_apply`` refuses to auto-create an array
+    parent, so no scalar edit on a flat-override test could round-trip.
+    Materialize the SAME implicit tree the reporter displayed (one leaf
+    per tracked variable, params from ``comparison.variable_overrides``,
+    wrapped in an AND — see ``synthesize_implicit_tree``) as a leading
+    ``add /metrics`` op, then let the per-leaf ops land on it.
+    """
+    import json as json_mod
+
+    from .comparison.tree_spec import spec_to_raw, synthesize_implicit_tree
+    from .discovery.patch_apply import PatchError
+
+    needs_tree = any(
+        isinstance(op, dict) and str(op.get("path", "")).startswith("/metrics/")
+        for op in patch
+    )
+    if not needs_tree or not spec_path.exists():
+        return patch
+    try:
+        data = json_mod.loads(spec_path.read_text(encoding="utf-8"))
+    except (json_mod.JSONDecodeError, OSError):
+        return patch  # let apply_patch surface the real read error
+    tests = data.get("tests") if isinstance(data, dict) else None
+    entry = next(
+        (
+            e
+            for e in (tests or [])
+            if isinstance(e, dict) and e.get("model") == model_id
+        ),
+        None,
+    )
+    if entry is None or "metrics" in entry:
+        return patch
+    variables = entry.get("variables") or []
+    if not variables:
+        raise PatchError(
+            f"cannot materialize an implicit metrics tree for {model_id!r}: "
+            "the entry declares no tracked variables to build leaves from"
+        )
+    overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
+    tree = synthesize_implicit_tree(variables, variable_overrides=overrides)
+    print(
+        f"Note: materialized implicit metrics tree for {model_id} "
+        f"({len(variables)} leaves) — entry had no 'metrics' block"
+    )
+    return [{"op": "add", "path": "/metrics", "value": spec_to_raw(tree)}, *patch]
 
 
 def _validate_entry_metric_tree(data, model_id, config):
@@ -1154,6 +1287,17 @@ def _parse_review_filter(filter_str: str) -> set[str]:
     return filters
 
 
+def _review_filter_arg(value: str) -> str:
+    """argparse ``type=`` callback for ``-i`` / ``--rerun`` category lists.
+
+    review 2026-07-06 finding 58: validate at parse time so a typo like
+    ``-i sim_failed`` aborts in under a second with the valid-categories
+    message (argparse exit code 2) — not after the full simulation run.
+    """
+    _parse_review_filter(value)  # raises argparse.ArgumentTypeError on typos
+    return value
+
+
 def _should_review(comp, filters: set[str]) -> bool:
     """Check if a comparison matches the active review filters."""
     if "all" in filters:
@@ -1162,12 +1306,10 @@ def _should_review(comp, filters: set[str]) -> bool:
         return True
     if "no-baseline" in filters and not comp.has_reference:
         return True
-    if (
-        "failed" in filters
-        and comp.sim_success
-        and not comp.passed
-        and comp.has_reference
-    ):
+    # A failing test matches "failed" even without a baseline —
+    # baseline-free modes (range / declared events / declared peaks)
+    # carry a real verdict (review 2026-07-06, finding 5).
+    if "failed" in filters and comp.sim_success and not comp.passed:
         return True
     if "warnings" in filters and comp.warnings:
         return True
@@ -1187,7 +1329,13 @@ def _interactive_review(
     """Interactively review each test and accept/reject results."""
     from .discovery.spec_parser import update_test_variables
     from .simulators import resolve_variable_patterns
-    from .simulators.dymola.mat_reader import read_dymola_mat
+
+    # review 2026-07-06 (found while testing finding 62): the old import
+    # `from .simulators.dymola.mat_reader import read_dymola_mat` pointed at
+    # a module removed in the simulators/common refactor, so EVERY -i
+    # invocation crashed with ModuleNotFoundError before the loop started.
+    # The [v] path only needs variable names — use the names-only reader.
+    from .simulators.common.mat_reader import list_result_mat_variables
 
     filters = _parse_review_filter(review_filter)
 
@@ -1195,6 +1343,17 @@ def _interactive_review(
     n_accepted = 0
     n_skipped = 0
     n_auto_skipped = 0
+    # review 2026-07-06 finding 62: one consistent exit rule — after the
+    # review loop ends (completed OR quit), exit 1 iff any test the loop
+    # passed over (reviewed, user-skipped, or auto-skipped) is still
+    # failing/sim-failed and was not accepted during this session; else 0.
+    # Tests never reached before a quit were neither reviewed nor skipped,
+    # so they don't count.
+    n_unresolved = 0
+
+    def _still_failing(c) -> bool:
+        return (not c.sim_success) or not c.passed
+
     n_total = len(comparisons)
 
     spec_path = _get_spec_path(config) if config else None
@@ -1212,6 +1371,8 @@ def _interactive_review(
     for idx, comp in enumerate(comparisons, 1):
         if not _should_review(comp, filters):
             n_auto_skipped += 1
+            if _still_failing(comp):
+                n_unresolved += 1
             continue
         model_id = comp.model_id
 
@@ -1256,6 +1417,7 @@ def _interactive_review(
         if not comp.sim_success:
             print("  Skipping (simulation failed)\n")
             n_skipped += 1
+            n_unresolved += 1
             continue
 
         # Prompt
@@ -1286,13 +1448,26 @@ def _interactive_review(
                         runner = _get_runner(config)
                         result = runner.read_result(test, test_key, None)
 
-                if test and result and store.store_reference(test, result):
+                stored_ok = False
+                store_err = None
+                if test and result:
+                    try:
+                        stored_ok = store.store_reference(test, result)
+                    except ValueError as e:
+                        # review 2026-07-06 leftover B: store_reference now
+                        # rejects non-finite trajectories — one poisoned
+                        # result must not crash the review loop.
+                        store_err = str(e)
+                if stored_ok:
                     n_vars = len(result.variables) if result.variables else 0
                     print(f"  {GREEN}Accepted ({n_vars} variables).{RESET}\n")
                     n_accepted += 1
                 else:
-                    print(f"  {RED}Failed to store.{RESET}\n")
+                    detail = f": {store_err}" if store_err else "."
+                    print(f"  {RED}Failed to store{detail}{RESET}\n")
                     n_skipped += 1
+                    if _still_failing(comp):
+                        n_unresolved += 1
                 break
 
             elif choice == "v" and has_result:
@@ -1321,9 +1496,8 @@ def _interactive_review(
                             test_dir = config.work_dir / test_key
                             mat_path = test_dir / "dsres.mat"
                             if mat_path.exists():
-                                mat_data = read_dymola_mat(mat_path)
-                                if mat_data:
-                                    available = list(mat_data.keys())
+                                available = list_result_mat_variables(mat_path)
+                                if available:
                                     matched = resolve_variable_patterns(
                                         new_patterns, available
                                     )
@@ -1336,6 +1510,8 @@ def _interactive_review(
             elif choice == "s":
                 print("  Skipped.\n")
                 n_skipped += 1
+                if _still_failing(comp):
+                    n_unresolved += 1
                 break
 
             elif choice == "d":
@@ -1352,7 +1528,9 @@ def _interactive_review(
             elif choice == "q":
                 auto = f", {n_auto_skipped} auto-skipped" if n_auto_skipped else ""
                 print(f"\nStopped. Accepted {n_accepted}, skipped {n_skipped}{auto}.")
-                return 0 if n_accepted > 0 else 1
+                # review 2026-07-06 finding 62: quit uses the same rule as
+                # completion — unresolved failures seen so far decide.
+                return 1 if n_unresolved else 0
 
             else:
                 options = "a/v/s/d/p/q" if has_result else "s/d/p/q"
@@ -1360,7 +1538,8 @@ def _interactive_review(
 
     auto = f", {n_auto_skipped} auto-skipped" if n_auto_skipped else ""
     print(f"\nDone. Accepted {n_accepted}, skipped {n_skipped}{auto}.")
-    return 0
+    # review 2026-07-06 finding 62: see n_unresolved above.
+    return 1 if n_unresolved else 0
 
 
 def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -> None:
@@ -1592,7 +1771,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     filter_parent.add_argument(
         "--filter",
         type=str,
-        help="Glob, comma-separated list, or @file (one pattern per line) — matches against model_id",
+        help="Glob, comma-separated list, or @file (one pattern per line) — "
+        "matches against model_id. Commas inside [] character classes are "
+        "part of the class, not separators (e.g. 'Test[A,B]*' is one pattern).",
     )
     filter_parent.add_argument("--package", type=str, help="Filter by package prefix")
 
@@ -1637,17 +1818,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         parents=[filter_parent, compare_parent, report_parent],
         help="Run tests (simulate via the configured backend + compare against references)",
     )
-    p_run.add_argument(
+    # review 2026-07-06 finding 61: review-then-accept (-i) and
+    # accept-everything (--accept) are mutually exclusive intents — make
+    # combining them a hard argparse error instead of silently letting
+    # --accept win and skipping the review the user asked for.
+    accept_or_review = p_run.add_mutually_exclusive_group()
+    accept_or_review.add_argument(
         "-i",
         "--interactive",
         nargs="?",
         const="all",
         default=None,
         metavar="FILTER",
+        type=_review_filter_arg,  # review 2026-07-06 finding 58: parse-time check
         help="Interactive review. Optional filter: failed, no-baseline, "
         "warnings, sim-failed, passed (comma-separated). Default: all.",
     )
-    p_run.add_argument(
+    accept_or_review.add_argument(
         "--accept",
         action="store_true",
         help="Accept results as new baseline references",
@@ -1700,6 +1887,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         const="failed",
         default=None,
         metavar="CATEGORIES",
+        type=_review_filter_arg,  # review 2026-07-06 finding 58: parse-time check
         help="Rerun tests selected by status from the prior run. Categories: "
         "failed, no-baseline, warnings, sim-failed, passed (comma-separated). "
         "Default: failed. Implies --merge.",
@@ -1935,7 +2123,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 1
-    return _COMMANDS[args.command](args)
+    try:
+        return _COMMANDS[args.command](args)
+    except ConfigError as exc:
+        # review 2026-07-06 leftover A: a testing.json problem (malformed,
+        # unreadable, missing explicit --config) is a user error — print one
+        # clean line and exit 2 (argparse's usage-error code), never a
+        # traceback.
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 2
 
 
 def main_entry() -> None:

@@ -799,9 +799,12 @@ class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
         try:
             return worker.export_fmu(test, output_dir)
         finally:
+            # review 2026-07-06 (finding 76): use the worker's guarded close()
+            # (graceful close + psutil hard-kill of tracked PIDs), not
+            # dymola.close() — a hung or raising interface would otherwise
+            # leak the one-shot Dymola process and its license seat.
             try:
-                if worker.dymola is not None:
-                    worker.dymola.close()
+                worker.close()
             except Exception:
                 pass
 

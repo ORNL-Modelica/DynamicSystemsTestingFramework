@@ -77,7 +77,12 @@ def _validate_capabilities(cls: type[SimulatorRunner], name: str) -> None:
         )
     if (
         Capability.PERSISTENT_WORKERS in caps
-        and cls.persistent_runner_cls is SimulatorRunner.persistent_runner_cls
+        # review 2026-07-06 (finding 28): classmethods must be compared via
+        # __func__ — `cls.persistent_runner_cls is SimulatorRunner.
+        # persistent_runner_cls` compares per-access bound-method wrappers
+        # and is always False, which left this check permanently inert.
+        and cls.persistent_runner_cls.__func__
+        is SimulatorRunner.persistent_runner_cls.__func__
     ):
         raise TypeError(
             f"@register('{name}'): {cls.__name__} declares "

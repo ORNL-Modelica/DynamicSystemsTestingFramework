@@ -421,6 +421,10 @@ window.MT_REPORT = {
   MODEL_ID: {{ model_id | tojson }},
   TREE_VIEW: {{ tree_view | tojson }},
   VARIABLES_BY_NAME: {{ variables_by_name | tojson }},
+  {# review 2026-07-06 finding 76h: emit the key order explicitly — JS
+     Object.keys() reorders integer-like keys numerically, desyncing plot
+     element IDs from this template's loop.index0 numbering. #}
+  VARIABLE_ORDER: {{ variables_by_name | list | tojson }},
   MODE_SCHEMAS: {{ mode_schemas | tojson }},
   DIAG_TRAJECTORIES: {{ diag_trajectories | tojson }},
   NB_TRAJECTORIES: {{ nobaseline_trajectories | tojson }},

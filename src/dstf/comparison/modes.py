@@ -564,5 +564,14 @@ def resolve_mode(
             )
         )
 
+    if mode_name and mode_name != "nrmse":
+        # An unrecognized mode must be loud. Silently defaulting to NRMSE
+        # changed the scoring algorithm on a typo ("Tube" vs "tube") with
+        # no diagnostic (review 2026-07-06).
+        raise ValueError(
+            f"unknown comparison mode {mode_name!r}; valid: "
+            "nrmse, tube, points, range, event-timing, dominant-frequency"
+        )
+
     # Default: NRMSE
     return NrmseMode(NrmseConfig(tolerance=tolerance))

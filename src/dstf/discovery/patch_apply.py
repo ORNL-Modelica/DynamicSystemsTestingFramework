@@ -26,8 +26,11 @@ each), so the RFC 6901 unescape rules fit in ~10 lines.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class PatchError(Exception):
@@ -98,9 +101,23 @@ def _load_spec(spec_path: Path) -> dict:
 
 
 def _find_or_create_entry(data: dict, model_id: str) -> dict:
-    for entry in data["tests"]:
-        if isinstance(entry, dict) and entry.get("model") == model_id:
-            return entry
+    matches = [
+        entry
+        for entry in data["tests"]
+        if isinstance(entry, dict) and entry.get("model") == model_id
+    ]
+    if len(matches) > 1:
+        # review 2026-07-06 finding 51: duplicates — first entry wins
+        # everywhere (discovery + edit helpers use the same rule); warn so
+        # the user notices the dead entries.
+        logger.warning(
+            "test_spec has %d duplicate entries for model '%s'; "
+            "patching the first — remove the duplicates",
+            len(matches),
+            model_id,
+        )
+    if matches:
+        return matches[0]
     entry = {"model": model_id}
     data["tests"].append(entry)
     return entry
@@ -154,18 +171,25 @@ def _set_at(
         raise PatchError("empty path points at the entry root; refuse", path=path)
     *parents, last = tokens
     cur = obj
-    for tok in parents:
-        cur = _descend(cur, tok, path, create_missing=not must_exist)
+    for i, tok in enumerate(parents):
+        next_token = parents[i + 1] if i + 1 < len(parents) else last
+        cur = _descend(
+            cur, tok, path, create_missing=not must_exist, next_token=next_token
+        )
     if isinstance(cur, list):
         idx = _list_index(cur, last, path, allow_append=not must_exist)
-        if must_exist and idx >= len(cur):
+        if idx > len(cur) or (must_exist and idx >= len(cur)):
             raise PatchError(
                 f"list index {idx} out of range (len {len(cur)})", path=path
             )
-        if idx == len(cur):
-            cur.append(value)
-        else:
+        if must_exist:
             cur[idx] = value
+        else:
+            # review 2026-07-06 finding 49: RFC 6902 `add` on an existing
+            # array index INSERTS before it (it used to replace, silently
+            # destroying a sibling leaf); idx == len(cur) appends, matching
+            # the '-' token.
+            cur.insert(idx, value)
     elif isinstance(cur, dict):
         if must_exist and last not in cur:
             raise PatchError(
@@ -202,7 +226,9 @@ def _remove_at(obj: Any, tokens: list[str], path: str) -> None:
         )
 
 
-def _descend(cur: Any, tok: str, path: str, *, create_missing: bool) -> Any:
+def _descend(
+    cur: Any, tok: str, path: str, *, create_missing: bool, next_token: str | None = None
+) -> Any:
     if isinstance(cur, list):
         idx = _list_index(cur, tok, path, allow_append=False)
         if idx >= len(cur):
@@ -213,6 +239,21 @@ def _descend(cur: Any, tok: str, path: str, *, create_missing: bool) -> Any:
             if not create_missing:
                 raise PatchError(
                     f"key {tok!r} not present (use 'add' for new keys)",
+                    path=path,
+                )
+            # review 2026-07-06 finding 49: never auto-create a dict where
+            # the path expects an ARRAY — a per-leaf op like
+            # /metrics/children/0/... against a spec without a metrics tree
+            # used to silently create {"children": {"0": ...}}, which the
+            # tree validator then rejects. Fail loudly instead.
+            if next_token is not None and (
+                next_token == "-" or next_token.isdigit()
+            ):
+                raise PatchError(
+                    f"key {tok!r} not present and the next token "
+                    f"{next_token!r} is an array index — refusing to "
+                    f"auto-create a dict in place of an array (the test "
+                    f"entry likely has no explicit 'metrics' tree yet)",
                     path=path,
                 )
             cur[tok] = {}

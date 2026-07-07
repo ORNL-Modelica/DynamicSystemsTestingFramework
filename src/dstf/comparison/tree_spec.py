@@ -265,6 +265,40 @@ def _window_view(leaf: LeafSpec) -> dict:
     return out
 
 
+def spec_to_raw(node: SpecNode) -> dict:
+    """Serialize a ``SpecNode`` back to the raw ``metrics`` JSON shape.
+
+    Inverse of :func:`parse_metric_tree` — the output round-trips through
+    it. Added for review 2026-07-06 finding 41: ``cmd_spec_update`` uses
+    this to MATERIALIZE the implicit tree (from
+    :func:`synthesize_implicit_tree`) into a flat-override test entry
+    before applying reporter-emitted per-leaf patch ops like
+    ``/metrics/children/0/tolerance`` — without it, no scalar edit on a
+    flat-override test could round-trip.
+    """
+    if isinstance(node, LeafSpec):
+        out: dict = {"metric": node.metric, "variable": node.variable}
+        out.update(node.params)
+        if node.against != "primary":
+            out["against"] = node.against
+        window = _window_view(node)
+        if window:
+            out["window"] = window
+        return out
+    raw: dict = {
+        "combinator": node.combinator,
+        "children": [spec_to_raw(c) for c in node.children],
+    }
+    if node.combinator == "k-of-n":
+        raw["k"] = node.k
+    if node.combinator == "weighted":
+        raw["weights"] = list(node.weights)
+        raw["threshold"] = node.threshold
+        if node.direction != "less":
+            raw["direction"] = node.direction
+    return raw
+
+
 def synthesize_implicit_tree(
     variables: list[str],
     *,

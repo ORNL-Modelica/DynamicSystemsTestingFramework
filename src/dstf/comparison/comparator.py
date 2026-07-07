@@ -99,11 +99,14 @@ def _check_structural_changes(
 
     for dotted_key, label in checks:
         parts = dotted_key.split(".")
-        ref_val = ref_stats
-        cur_val = cur_stats
+        ref_val: object = ref_stats
+        cur_val: object = cur_stats
         for p in parts:
-            ref_val = ref_val.get(p, {}) if isinstance(ref_val, dict) else None
-            cur_val = cur_val.get(p, {}) if isinstance(cur_val, dict) else None
+            # .get(p) — a missing key must yield None (skip), not {}. With
+            # {} the None-guard below never fired and every baseline-free
+            # run produced phantom "{} → 5" warnings (review 2026-07-06).
+            ref_val = ref_val.get(p) if isinstance(ref_val, dict) else None
+            cur_val = cur_val.get(p) if isinstance(cur_val, dict) else None
 
         if ref_val is None or cur_val is None:
             continue
@@ -178,18 +181,29 @@ def compare_test(
     structural_warnings = _check_structural_changes(reference, result)
 
     ref_vars = {v["index"]: v for v in reference.get("variables", [])}
+    # Name-keyed view for the primary pairing path. Pairing purely by
+    # numeric index silently scored variables against the wrong baseline
+    # trajectory after any spec reorder (review 2026-07-06, finding 8).
+    ref_vars_by_name = {}
+    for v in reference.get("variables", []):
+        rn = v.get("name") or v.get("expression", "")
+        if rn and rn not in ref_vars_by_name:
+            ref_vars_by_name[rn] = v
     shared_ref_time = reference.get("time")
     if shared_ref_time is not None:
         shared_ref_time = np.array(shared_ref_time)
     comparisons = []
 
-    # Resolve base comparison tolerance: per-test > reference > config > default
+    # Resolve base comparison tolerance: per-test > reference > config >
+    # default. `is not None` chain, NOT `or` — an explicit tolerance of 0
+    # (strictest possible) must be honored (review 2026-07-06, finding 7).
     ref_comparison = reference.get("comparison", {})
-    base_tolerance = (
-        test.comparison_tolerance
-        or ref_comparison.get("tolerance")
-        or default_tolerance
-    )
+    if test.comparison_tolerance is not None:
+        base_tolerance = test.comparison_tolerance
+    elif ref_comparison.get("tolerance") is not None:
+        base_tolerance = ref_comparison["tolerance"]
+    else:
+        base_tolerance = default_tolerance
 
     # Phase 3.3: when the spec provides an explicit MetricTree, it fully
     # replaces the implicit flat-AND + per-variable overrides. The user's
@@ -242,7 +256,27 @@ def compare_test(
     merged_overrides = {**ref_var_overrides, **test.variable_overrides}
 
     for var_result in result.variables:
-        ref_var = ref_vars.get(var_result.index)
+        # Pair by name first; fall back to index only when the result
+        # variable carries no name (legacy x[N] expressions). An
+        # index-paired ref whose stored name disagrees with the result's
+        # name is a stale/reordered baseline — warn and treat as missing
+        # rather than score against the wrong trajectory.
+        if var_result.name and var_result.name in ref_vars_by_name:
+            ref_var = ref_vars_by_name[var_result.name]
+        else:
+            ref_var = ref_vars.get(var_result.index)
+            if ref_var is not None and var_result.name:
+                stored_name = ref_var.get("name") or ref_var.get("expression", "")
+                if stored_name and stored_name != var_result.name:
+                    logger.warning(
+                        "%s: reference index %d holds %r but result is %r — "
+                        "treating as missing baseline (re-accept to refresh)",
+                        test.model_id,
+                        var_result.index,
+                        stored_name,
+                        var_result.name,
+                    )
+                    ref_var = None
 
         # Resolve the variable's display name BEFORE the ref-missing check
         # so baseline-free modes can still use overrides keyed by the
@@ -254,7 +288,28 @@ def compare_test(
 
         var_override = merged_overrides.get(name, {})
         tolerance = var_override.get("tolerance", base_tolerance)
-        mode = resolve_mode(var_override, tolerance, default_points=default_points)
+        try:
+            mode = resolve_mode(var_override, tolerance, default_points=default_points)
+        except ValueError as exc:
+            # An unrecognized mode string must fail the variable loudly —
+            # silently falling back to NRMSE changed the scoring algorithm
+            # on a typo (review 2026-07-06).
+            comparisons.append(
+                VariableComparison(
+                    index=var_result.index,
+                    name=name,
+                    passed=False,
+                    nrmse=float("inf"),
+                    rmse=float("inf"),
+                    signal_range=0.0,
+                    max_abs_error=float("inf"),
+                    max_abs_error_time=0.0,
+                    reference_final=float("nan"),
+                    actual_final=float("nan"),
+                    diagnostics={"error": str(exc)},
+                )
+            )
+            continue
 
         if ref_var is None:
             # Baseline-free modes (range; event-timing with declared events;
@@ -370,7 +425,19 @@ def _test_is_baseline_free(
     # so treat the test as not baseline-free (stay with NO_REF).
     if not test.variable_overrides:
         return False
-    base_tolerance = test.comparison_tolerance or default_tolerance
+    # Mixed tests: any tracked variable WITHOUT an override becomes an
+    # implicit NRMSE leaf, which needs a baseline — so the test as a
+    # whole is not baseline-free (review 2026-07-06, finding 10; matches
+    # the docstring's "mixed trees fall back to NO_REF"). Glob patterns
+    # can't be proven covered, so they also disqualify.
+    tracked = list(test.variable_patterns) or list(test.x_expressions)
+    if tracked and set(tracked) - set(test.variable_overrides):
+        return False
+    base_tolerance = (
+        test.comparison_tolerance
+        if test.comparison_tolerance is not None
+        else default_tolerance
+    )
     for override in test.variable_overrides.values():
         tol = float(override.get("tolerance", base_tolerance))
         try:

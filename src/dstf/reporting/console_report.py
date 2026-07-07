@@ -41,16 +41,21 @@ def print_report(comparisons: list[TestComparison]) -> int:
     for comp in comparisons:
         status = _pass_fail(comp.passed)
 
+        # Order matters: a failing test counts as FAILED even without a
+        # baseline (baseline-free modes carry a real verdict). NO_REF is
+        # reserved for tests where nothing was evaluated at all — review
+        # 2026-07-06, finding 5 (failing range-mode tests exited 0).
         if not comp.sim_success:
             n_sim_fail += 1
             status = _color("SIM_FAIL", _RED)
-        elif not comp.has_reference:
+        elif not comp.passed:
+            n_failed += 1
+            status = _color("FAIL", _RED)
+        elif not comp.has_reference and not comp.evaluated:
             n_no_ref += 1
             status = _color("NO_REF", _YELLOW)
-        elif comp.passed:
-            n_passed += 1
         else:
-            n_failed += 1
+            n_passed += 1
 
         # Show warning indicator if structural changes detected
         warn_tag = ""

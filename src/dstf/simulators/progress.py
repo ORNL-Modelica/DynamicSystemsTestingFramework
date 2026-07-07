@@ -150,8 +150,11 @@ class ProgressReporter:
         # Serialize all file writes — without this, two threads can race on
         # the same tmp filename and `replace` fails on Windows when the file
         # is still open by another thread.
-        snapshot = self._snapshot()
+        # review 2026-07-06 (finding 25): snapshot INSIDE the write lock
+        # (matching finalize()) — a snapshot taken outside could be written
+        # after a newer one, regressing status.json / the live dashboard.
         with self._write_lock:
+            snapshot = self._snapshot()
             self._write_json(snapshot)
             self._render_dashboard(mode="live")
 

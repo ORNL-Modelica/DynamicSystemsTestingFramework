@@ -1,8 +1,11 @@
 """Parse Modelica .mo files to extract UnitTests block info and experiment annotations."""
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,16 +40,52 @@ class MoParseResult:
     experiment: ExperimentInfo | None = None
 
 
+_CLASS_DECL_RE = re.compile(r"\b(?:model|block|class|package)\s+(\w+)")
+
+
 def _extract_within(text: str) -> str:
-    """Extract the 'within' clause to get the parent package path."""
-    m = re.search(r"within\s+([\w.]+)\s*;", text)
+    """Extract the 'within' clause to get the parent package path.
+
+    Operates on comment/string-stripped text — review 2026-07-06 finding 48:
+    a ``within`` mentioned in a comment must not shadow the real clause.
+    """
+    stripped = _strip_modelica_literals(text)
+    m = re.search(r"\bwithin\s+([\w.]+)\s*;", stripped)
     return m.group(1) if m else ""
 
 
-def _extract_model_name(text: str) -> str:
-    """Extract the model/class name from the definition."""
-    m = re.search(r"(?:model|block|class|package)\s+(\w+)", text)
-    return m.group(1) if m else ""
+def _extract_model_name(text: str, source: object = "") -> str:
+    """Extract the first class-like declaration's name.
+
+    Operates on comment/string-stripped text with a word-boundary anchor —
+    review 2026-07-06 finding 48: the word "model" in a comment above the
+    class must not shadow the real declaration.
+
+    TODO(finding 55): single-file multi-class storage is NOT supported —
+    only the FIRST top-level class is parsed. When a second top-level class
+    is detected (a class declaration after the first class's ``end Name;``),
+    a warning names what was skipped. ``source`` is optional context (file
+    path) for that warning.
+    """
+    stripped = _strip_modelica_literals(text)
+    m = _CLASS_DECL_RE.search(stripped)
+    if not m:
+        return ""
+    name = m.group(1)
+    # review 2026-07-06 finding 55: warn about sibling top-level classes the
+    # parser skips instead of silently dropping their tests.
+    end_m = re.search(rf"\bend\s+{re.escape(name)}\s*;", stripped[m.end() :])
+    if end_m:
+        extra = _CLASS_DECL_RE.search(stripped, m.end() + end_m.end())
+        if extra:
+            logger.warning(
+                "%s: multiple top-level classes in one file are not supported; "
+                "parsed %r, skipped %r (and any further classes)",
+                source or "<unknown file>",
+                name,
+                extra.group(1),
+            )
+    return name
 
 
 def _extract_balanced_braces(text: str, start: int) -> str:
@@ -114,18 +153,25 @@ _MO_LINE_COMMENT = re.compile(r"//[^\n]*")
 _MO_BLOCK_COMMENT = re.compile(r"/\*[\s\S]*?\*/")
 
 
+def _blank_match(m: "re.Match[str]") -> str:
+    """Replace a match with same-length whitespace (newlines preserved)."""
+    return "".join(c if c == "\n" else " " for c in m.group(0))
+
+
 def _strip_modelica_literals(text: str) -> str:
     """Strip comments + string literals from Modelica source.
 
     Prevents false-positive matches where prose inside an
     ``annotation(Documentation(...))`` block mentions a keyword like
-    ``UnitTests(...)`` or ``extends Foo``. Block comments replaced with
-    a single space (may shift offsets, fine since scanners operate on
-    the stripped text consistently).
+    ``UnitTests(...)`` or ``extends Foo``. Replacement is 1:1 (each stripped
+    char becomes a space, newlines kept) so OFFSETS INTO THE STRIPPED TEXT
+    ARE VALID IN THE ORIGINAL — review 2026-07-06 findings 48/50 rely on
+    scanning the stripped text and slicing the original (e.g. to recover
+    string-valued parameters that the stripping blanked).
     """
-    out = _MO_BLOCK_COMMENT.sub(" ", text)
-    out = _MO_LINE_COMMENT.sub("", out)
-    out = _MO_STRING.sub(" ", out)
+    out = _MO_BLOCK_COMMENT.sub(_blank_match, text)
+    out = _MO_LINE_COMMENT.sub(_blank_match, out)
+    out = _MO_STRING.sub(_blank_match, out)
     return out
 
 
@@ -217,27 +263,86 @@ def _parse_unit_tests(text: str) -> UnitTestInfo | None:
     return info
 
 
-def _parse_experiment(text: str) -> ExperimentInfo | None:
-    """Extract experiment() annotation parameters."""
-    m = re.search(r"experiment\s*\(([^)]*)\)", text)
+def _find_experiment_span(stripped: str) -> tuple[int, int] | None:
+    """Locate the ``experiment(...)`` parameter text in stripped source.
+
+    Returns (start, end) offsets of the text BETWEEN the balanced outer
+    parentheses, or None when no experiment annotation exists. Balanced-paren
+    scan instead of ``[^)]*`` — review 2026-07-06 finding 48: a nested group
+    like ``__Dymola_Tuning(...)`` must not truncate the parameter list.
+    Offsets are valid in the original text too (1:1 stripping).
+    """
+    m = re.search(r"\bexperiment\s*\(", stripped)
     if not m:
         return None
+    open_pos = m.end() - 1
+    depth = 0
+    for i in range(open_pos, len(stripped)):
+        if stripped[i] == "(":
+            depth += 1
+        elif stripped[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return (open_pos + 1, i)
+    return (open_pos + 1, len(stripped))  # unbalanced — take the rest
 
-    param_text = m.group(1)
+
+def _parse_number(
+    param_text: str,
+    key_pattern: str,
+    source: object,
+    field_name: str,
+) -> float | None:
+    """Extract ``<key> = <number>`` from an annotation parameter list.
+
+    review 2026-07-06 finding 56: accept plain numbers incl. scientific
+    notation only; an expression (``0.5*3600``) or garbage capture logs a
+    warning naming the file + field and is skipped — it must neither
+    silently truncate (old ``[0-9eE.+-]+`` regex kept just ``0.5``) nor
+    crash discovery with an uncaught ValueError.
+    """
+    m = re.search(rf"{key_pattern}\s*=\s*([^,]+)", param_text)
+    if not m:
+        return None
+    raw = m.group(1).strip()
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning(
+            "%s: ignoring non-numeric experiment %s=%r",
+            source or "<unknown file>",
+            field_name,
+            raw,
+        )
+        return None
+
+
+def _parse_experiment(text: str, source: object = "") -> ExperimentInfo | None:
+    """Extract experiment() annotation parameters.
+
+    Scans comment/string-stripped text (review 2026-07-06 finding 48: a
+    ``// experiment(StopTime=5)`` comment must not shadow the real
+    annotation) but recovers string values (``__Dymola_Algorithm="..."``)
+    from the ORIGINAL text via the offset-preserving stripper.
+    """
+    stripped = _strip_modelica_literals(text)
+    span = _find_experiment_span(stripped)
+    if span is None:
+        return None
+
+    start, end = span
+    param_text = stripped[start:end]  # numeric fields: comments stripped
+    param_orig = text[start:end]  # string fields: literals intact
     info = ExperimentInfo()
 
     # StopTime (Modelica standard) or stopTime
-    m2 = re.search(r"(?:S|s)topTime\s*=\s*([0-9eE.+-]+)", param_text)
-    if m2:
-        info.stop_time = float(m2.group(1))
+    info.stop_time = _parse_number(param_text, r"\b[Ss]topTime", source, "StopTime")
 
     # Tolerance
-    m2 = re.search(r"(?:T|t)olerance\s*=\s*([0-9eE.+-]+)", param_text)
-    if m2:
-        info.tolerance = float(m2.group(1))
+    info.tolerance = _parse_number(param_text, r"\b[Tt]olerance", source, "Tolerance")
 
-    # __Dymola_Algorithm or method
-    m2 = re.search(r'__Dymola_Algorithm\s*=\s*"([^"]+)"', param_text)
+    # __Dymola_Algorithm or method — quoted string, read from original text
+    m2 = re.search(r'__Dymola_Algorithm\s*=\s*"([^"]+)"', param_orig)
     if m2:
         info.method = m2.group(1)
 
@@ -247,9 +352,9 @@ def _parse_experiment(text: str) -> ExperimentInfo | None:
         info.number_of_intervals = int(m2.group(1))
 
     # Interval (output interval length) — standard Modelica
-    m2 = re.search(r"(?<!\w)[Ii]nterval\s*=\s*([0-9eE.+-]+)", param_text)
-    if m2:
-        info.output_interval = float(m2.group(1))
+    interval = _parse_number(param_text, r"(?<!\w)[Ii]nterval", source, "Interval")
+    if interval is not None:
+        info.output_interval = interval
 
     return info
 
@@ -269,7 +374,7 @@ def parse_mo_file(path: Path) -> MoParseResult | None:
         return None
 
     within = _extract_within(text)
-    model_name = _extract_model_name(text)
+    model_name = _extract_model_name(text, source=path)
     if not model_name:
         return None
 
@@ -279,7 +384,7 @@ def parse_mo_file(path: Path) -> MoParseResult | None:
         return None
 
     model_id = f"{within}.{model_name}" if within else model_name
-    experiment = _parse_experiment(text)
+    experiment = _parse_experiment(text, source=path)
 
     return MoParseResult(
         model_id=model_id,

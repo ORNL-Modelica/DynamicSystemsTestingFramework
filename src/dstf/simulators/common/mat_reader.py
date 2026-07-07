@@ -70,6 +70,31 @@ def _read_mat4_block(f, info) -> np.ndarray:
     return np.frombuffer(raw, dtype=dtype).reshape((mrows, ncols), order="F")
 
 
+def _raise_if_binnormal(f, blocks, mat_path: Path) -> None:
+    """Refuse binNormal-layout DSresult files.
+
+    review 2026-07-06 (finding 74): DSresult MATs come in two layouts —
+    binTrans (the Dymola/OM default; matrices stored transposed) declared in
+    the Aclass matrix, and binNormal. This reader only decodes binTrans; a
+    binNormal file (user-supplied .mat baseline) previously decoded as
+    transposed garbage silently returned as success. The raise is caught by
+    the callers' blanket handler and surfaced as a clear per-file error.
+    """
+    if "Aclass" not in blocks:
+        return  # no metadata — assume binTrans (historic behavior)
+    aclass = _read_mat4_block(f, blocks["Aclass"])
+    try:
+        text_f = "".join(chr(int(c)) for c in np.asarray(aclass).flatten(order="F"))
+        text_c = "".join(chr(int(c)) for c in np.asarray(aclass).flatten(order="C"))
+    except (ValueError, OverflowError, TypeError):
+        return  # unreadable Aclass — don't block the historic path
+    if "binNormal" in text_f or "binNormal" in text_c:
+        raise ValueError(
+            f"{mat_path}: binNormal .mat layout not supported — "
+            f"re-export with Dymola/OM default binTrans"
+        )
+
+
 def list_result_mat_variables(mat_path: Path) -> list[str] | None:
     """Read only the variable names from a Dymola .mat file (no data loaded).
 
@@ -82,6 +107,11 @@ def list_result_mat_variables(mat_path: Path) -> list[str] | None:
             if "name" not in blocks:
                 logger.error("No 'name' matrix in %s", mat_path)
                 return None
+
+            # review 2026-07-06 (finding 74): binNormal names are stored
+            # untransposed — decoding them with the binTrans transpose below
+            # yields garbage names.
+            _raise_if_binnormal(f, blocks, mat_path)
 
             # Dymola stores names as (max_name_len, n_vars) — transpose to
             # get (n_vars, max_name_len) so each row is one variable name.
@@ -124,6 +154,10 @@ def read_result_mat(
             if "dataInfo" not in blocks or "data_2" not in blocks:
                 logger.error("Missing dataInfo or data_2 in %s", mat_path)
                 return None
+
+            # review 2026-07-06 (finding 74): binNormal files would decode
+            # as transposed garbage returned as success. Refuse loudly.
+            _raise_if_binnormal(f, blocks, mat_path)
 
             # Load small matrices eagerly.
             # Dymola stores names as (max_name_len, n_vars) — transpose so
@@ -178,7 +212,12 @@ def read_result_mat(
                     continue
                 info = data_info[i]
                 data_matrix_idx = int(info[0])
-                col = abs(int(info[1])) - 1
+                col_idx = int(info[1])
+                if col_idx == 0:
+                    # review 2026-07-06 (finding 74): column 0 = "no data
+                    # column"; abs(0)-1 == -1 would wrap to the last row.
+                    continue
+                col = abs(col_idx) - 1
                 if data_matrix_idx == 2:
                     needed_rows.add(col)
 
@@ -194,6 +233,17 @@ def read_result_mat(
             info = data_info[i]
             data_matrix_idx = int(info[0])
             col_idx = int(info[1])
+            if col_idx == 0:
+                # review 2026-07-06 (finding 74): dataInfo column 0 means "not
+                # stored in a data matrix" (abscissa marker); abs(0)-1 == -1
+                # previously wrapped to the LAST row — returning the wrong
+                # variable's data under the requested name.
+                logger.debug(
+                    "Variable %s has dataInfo column 0 in %s; skipping",
+                    name,
+                    mat_path,
+                )
+                continue
             negate = col_idx < 0
             col = abs(col_idx) - 1
 

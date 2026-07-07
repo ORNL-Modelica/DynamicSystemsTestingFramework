@@ -57,8 +57,10 @@ from .mo_parser import (
     _extract_balanced_braces,
     _extract_model_name,
     _extract_within,
+    _find_experiment_span,
     _parse_float_list,
     _parse_x_expressions,
+    _strip_modelica_literals,
 )
 from .recognizer import Recognizer, RecognizerResult
 
@@ -211,10 +213,12 @@ def _match_component_instantiation(content: str, spec: dict) -> ComponentMatch |
     tails = [".".join(segments[i:]) for i in range(len(segments))]
     pattern_str = "|".join(re.escape(t) for t in tails)
     pattern = re.compile(rf"\b(?:{pattern_str})\s+(\w+)\s*\(", re.DOTALL)
-    # Strip annotations + string literals so prose mentioning the
-    # component class doesn't false-trigger. Offsets inside the stripped
-    # content stay valid for param-text extraction (block comments get
-    # replaced with spaces, preserving offsets).
+    # Strip comments + string literals so prose mentioning the component
+    # class doesn't false-trigger. The stripper is 1:1 (offset-preserving),
+    # so the balanced-paren scan runs on stripped text but the param text is
+    # sliced from the ORIGINAL content — review 2026-07-06 finding 50:
+    # string-valued parameters (algorithm="Dassl") were unextractable from
+    # the stripped text.
     stripped = _strip_modelica_literals(content)
     m = pattern.search(stripped)
     if not m:
@@ -235,7 +239,7 @@ def _match_component_instantiation(content: str, spec: dict) -> ComponentMatch |
     return ComponentMatch(
         component_class=matched_class,
         instance_name=instance_name,
-        param_text=stripped[paren_open + 1 : end],
+        param_text=content[paren_open + 1 : end],
     )
 
 
@@ -254,27 +258,10 @@ def _match_extends(content: str, spec: dict) -> ExtendsMatch | None:
     return None
 
 
-# Modelica string literals + comments. Stripped before source-scan regexes
-# so prose inside a Documentation annotation doesn't trigger false matches
-# on ``extends``, ``UnitTests(...)``, etc.
-_MODELICA_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
-_MODELICA_LINE_COMMENT = re.compile(r"//[^\n]*")
-_MODELICA_BLOCK_COMMENT = re.compile(r"/\*[\s\S]*?\*/")
-
-
-def _strip_modelica_literals(content: str) -> str:
-    """Remove string literals + comments from Modelica source.
-
-    Used by match functions that scan for declarations — annotation
-    HTML / doc prose that happens to contain a keyword like
-    ``extends`` would otherwise trigger false positives.
-    """
-    # Order matters: strip block comments first (they can contain //),
-    # then line comments, then strings.
-    out = _MODELICA_BLOCK_COMMENT.sub(" ", content)
-    out = _MODELICA_LINE_COMMENT.sub("", out)
-    out = _MODELICA_STRING.sub(" ", out)
-    return out
+# NOTE: the comment/string stripper is shared with mo_parser
+# (``_strip_modelica_literals``) — review 2026-07-06 findings 48/50: the
+# module used to carry its own copy whose replacements shifted offsets,
+# breaking original-text extraction of string-valued parameters.
 
 
 @_register_match("class-name-glob")
@@ -403,9 +390,14 @@ def _field_annotation(content: str, match: MatchContext, spec: dict) -> Any:
     and ``name`` is the parameter inside it.
     """
     ann_name = spec["annotation"]
+    # Scan stripped text (a commented-out annotation must not match; paren
+    # chars inside strings must not break the balance scan) but slice the
+    # ORIGINAL content so string values survive — review 2026-07-06
+    # findings 48/50.
+    stripped = _strip_modelica_literals(content)
     m = re.search(
         rf"\b{re.escape(ann_name)}\s*\(",
-        content,
+        stripped,
     )
     if not m:
         return None
@@ -413,10 +405,10 @@ def _field_annotation(content: str, match: MatchContext, spec: dict) -> Any:
     paren_open = m.end() - 1
     depth = 0
     end = paren_open
-    for i in range(paren_open, len(content)):
-        if content[i] == "(":
+    for i in range(paren_open, len(stripped)):
+        if stripped[i] == "(":
             depth += 1
-        elif content[i] == ")":
+        elif stripped[i] == ")":
             depth -= 1
             if depth == 0:
                 end = i
@@ -427,13 +419,17 @@ def _field_annotation(content: str, match: MatchContext, spec: dict) -> Any:
 
 @_register_field("experiment-annotation")
 def _field_experiment_annotation(content: str, match: MatchContext, spec: dict) -> Any:
-    m = re.search(r"experiment\s*\(([^)]*)\)", content)
-    if not m:
+    # review 2026-07-06 finding 48: locate experiment(...) on stripped text
+    # (comments must not shadow the real annotation) with a balanced-paren
+    # scan (no [^)]* truncation); extract values from the ORIGINAL span so
+    # quoted strings survive.
+    span = _find_experiment_span(_strip_modelica_literals(content))
+    if span is None:
         return None
     name = spec["name"]
     if not name:
         return None
-    pt = m.group(1)
+    pt = content[span[0] : span[1]]
     shape = spec.get("shape", "scalar")
     # Try the user-given name, then alt-case first letter — Modelica writes
     # both StopTime and stopTime interchangeably.

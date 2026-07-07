@@ -28,6 +28,10 @@ SIMULATOR_BACKENDS = {
     "OpenModelica": "OpenModelica",
     "FMPy": "FMPy",
     "Julia": "Julia",
+    # review 2026-07-06 finding 67: "Python" was missing, so the documented
+    # versioned-name convention ("Python 3.12") failed backend detection
+    # with "Unsupported simulator backend".
+    "Python": "Python",
 }
 
 # Binary names by backend, used for PATH-lookup fallback when testing.json
@@ -103,16 +107,31 @@ def read_package_name(package_dir: Path) -> str:
     raise ValueError(f"Could not parse package name from {pkg_file}")
 
 
+class ConfigError(ValueError):
+    """A testing.json problem the user must fix (malformed, unreadable, or a
+    missing explicit --config path)."""
+
+
 def load_config_file(path: Path) -> dict:
-    """Load a testing.json config file."""
+    """Load a testing.json config file.
+
+    A missing file returns ``{}`` (no config there). An EXISTING file that
+    cannot be read or parsed raises :class:`ConfigError` naming the file —
+    review 2026-07-06 finding 11: silently returning ``{}`` let the
+    auto-create branch overwrite the user's testing.json.
+    """
     if path.is_dir():
         path = path / CONFIG_FILENAME
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise ConfigError(f"Cannot read config file {path}: {e}") from e
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"Malformed JSON in config file {path}: {e}") from e
 
 
 def _create_default_config(config_dir: Path, library_name: str) -> dict:
@@ -123,6 +142,9 @@ def _create_default_config(config_dir: Path, library_name: str) -> dict:
         "dependencies": [],
     }
     config_path = config_dir / CONFIG_FILENAME
+    # review 2026-07-06 finding 19: the target dir may not exist yet (e.g.
+    # first run with a fresh --reference-root) — create it before writing.
+    config_dir.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     logger.info("Created default %s at %s", CONFIG_FILENAME, config_path)
     print(f"Created default {CONFIG_FILENAME} at {config_path}")
@@ -213,6 +235,26 @@ def _looks_like_path(entry: str) -> bool:
     return bool(_WINDOWS_DRIVE_RE.match(entry))
 
 
+def _dependency_looks_like_path(entry: str, base_dir: Path) -> bool:
+    """True if a ``dependencies`` entry denotes a filesystem path.
+
+    review 2026-07-06 finding 17: bare library names ("Modelica") must NOT
+    be absolutized — backends load them by name. Path signals: a separator,
+    a ``.mo`` suffix, a ``.``/``~`` prefix, or an existing file/dir relative
+    to the config file's directory.
+    """
+    if "/" in entry or "\\" in entry:
+        return True
+    if entry.endswith(".mo"):
+        return True
+    if entry.startswith(".") or entry.startswith("~"):
+        return True
+    try:
+        return (base_dir / entry).exists()
+    except OSError:
+        return False
+
+
 @dataclass
 class Config:
     """Runtime configuration for the testing system.
@@ -259,7 +301,12 @@ class Config:
     batch_size: int | None = (
         None  # tests per Dymola session; None = ceil(total/parallel) (one big batch per worker)
     )
-    tolerance: float = DEFAULT_COMPARISON_TOLERANCE
+    # Global comparison tolerance. None means "not explicitly set" — resolved
+    # in __post_init__ as CLI/constructor arg > testing.json `tolerance` key >
+    # DEFAULT_COMPARISON_TOLERANCE, with is-not-None semantics so an explicit
+    # 0.0 is honored (review 2026-07-06 finding 12). Always a float after
+    # construction.
+    tolerance: float | None = None
     default_points: bool = False
     timeout: int = 60
 
@@ -313,8 +360,16 @@ class Config:
         file_config = {}
         config_found_dir = None
         if self.config_file:
-            config_found_dir = Path(self.config_file).resolve().parent
-            file_config = load_config_file(Path(self.config_file))
+            config_path = Path(self.config_file).resolve()
+            if config_path.is_dir():
+                config_path = config_path / CONFIG_FILENAME
+            if not config_path.is_file():
+                # review 2026-07-06 finding 14: an explicit --config that
+                # doesn't exist must fail loudly, not silently fall through
+                # to auto-detection (and a freshly written default config).
+                raise ConfigError(f"Config file not found: {config_path}")
+            config_found_dir = config_path.parent
+            file_config = load_config_file(config_path)
         else:
             # Build search dirs from what we know so far
             search_dirs = [Path.cwd()]
@@ -325,8 +380,12 @@ class Config:
                 search_dirs.insert(0, pkg)  # package dir
                 search_dirs.insert(0, pkg.parent)  # repo root
             for search_dir in search_dirs:
-                file_config = load_config_file(search_dir)
-                if file_config:
+                # review 2026-07-06 findings 11/19: "found" means the FILE
+                # exists, not that it parsed to a non-empty dict — an existing
+                # (even empty) testing.json must stop the search and suppress
+                # the auto-create-defaults branch.
+                if (search_dir / CONFIG_FILENAME).is_file():
+                    file_config = load_config_file(search_dir)
                     config_found_dir = search_dir.resolve()
                     break
 
@@ -377,14 +436,15 @@ class Config:
                 )
 
         # If no config was found yet (source_path wasn't available for search),
-        # try repo_root now
-        if not file_config and config_found_dir is None:
+        # try repo_root now — existence-based, same as the search loop above.
+        if config_found_dir is None and (repo_root / CONFIG_FILENAME).is_file():
             file_config = load_config_file(repo_root)
-            if file_config:
-                config_found_dir = repo_root.resolve()
+            config_found_dir = repo_root.resolve()
 
-        # Auto-create testing.json if none was found
-        if not file_config:
+        # Auto-create testing.json ONLY if no config file was found anywhere
+        # (review 2026-07-06 findings 11/19: a found config — even one that
+        # parses to {} — must never be overwritten with defaults).
+        if config_found_dir is None:
             config_dir = self.reference_root if self.reference_root else repo_root
             file_config = _create_default_config(config_dir, self.library_name)
 
@@ -410,7 +470,12 @@ class Config:
                 simulators_config = file_config.get("simulators", {})
                 detected = _auto_detect_simulator(simulators_config)
                 if detected:
-                    self.simulator, self.simulator_path = detected
+                    self.simulator = detected[0]
+                    # review 2026-07-06 finding 18: auto-detect may fill the
+                    # simulator NAME, but must never clobber an explicitly
+                    # supplied simulator_path (CLI --simulator-path).
+                    if self.simulator_path is None:
+                        self.simulator_path = detected[1]
                 else:
                     self.simulator = "Dymola"
 
@@ -425,6 +490,20 @@ class Config:
         # Diagnostic variables
         if "diagnostic_variables" in file_config:
             self.diagnostic_variables = file_config["diagnostic_variables"]
+
+        # Global comparison tolerance (review 2026-07-06 finding 12: the
+        # documented testing.json `tolerance` key was never read). Precedence:
+        # explicit constructor/CLI value > file > default, is-not-None
+        # semantics so an explicit 0.0 anywhere is honored.
+        if self.tolerance is None:
+            file_tolerance = file_config.get("tolerance")
+            self.tolerance = (
+                float(file_tolerance)
+                if file_tolerance is not None
+                else DEFAULT_COMPARISON_TOLERANCE
+            )
+        else:
+            self.tolerance = float(self.tolerance)
 
         # Reporter payload budget
         if "max_embedded_samples" in file_config:
@@ -475,11 +554,26 @@ class Config:
                 else:
                     self.reference_root = repo_root / "Resources" / "ReferenceResults"
 
-        # Dependencies — resolve relative paths from config file location
+        # Dependencies — resolve relative paths from config file location.
+        # review 2026-07-06 finding 17: only absolutize entries that LOOK
+        # like paths. Bare library names (the documented
+        # ``"dependencies": ["Modelica"]`` form) must pass through untouched
+        # so the OpenModelica backend's classify_dependency routes them to
+        # ``loadModel(Modelica)`` instead of ``loadFile(<bogus path>)`` —
+        # absolutizing them also suppressed the MSL auto-injection.
+        # Dymola note: its runners load dependencies via
+        # ``openModel(<dir>/package.mo)`` and cannot load by bare name, but
+        # Dymola auto-loads MSL natively, so "Modelica" should simply be
+        # omitted there; a bare name reaching the Dymola runner fails at
+        # startup with a clear message, exactly as the absolutized bogus
+        # path did before this fix (no regression).
         if not self.dependencies and "dependencies" in file_config:
             base_dir = config_found_dir or repo_root
             resolved_deps = []
             for dep in file_config["dependencies"]:
+                if not _dependency_looks_like_path(dep, base_dir):
+                    resolved_deps.append(dep)  # bare library name
+                    continue
                 dep_path = Path(dep)
                 if not dep_path.is_absolute():
                     dep_path = (base_dir / dep_path).resolve()
@@ -499,7 +593,14 @@ class Config:
         if self.work_dir is None:
             work = file_config.get("work_dir")
             if work:
-                self.work_dir = Path(work).resolve()
+                work_path = Path(work)
+                if not work_path.is_absolute():
+                    # review 2026-07-06 finding 15: a relative work_dir
+                    # resolves against the config file's directory (like
+                    # test_spec / dependencies), not the CWD — `compare`
+                    # from another directory must find the same results.
+                    work_path = (config_found_dir or repo_root) / work_path
+                self.work_dir = work_path.resolve()
             else:
                 sim_dir = self.simulator.replace(" ", "_")
                 self.work_dir = (

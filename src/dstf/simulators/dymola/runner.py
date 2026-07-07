@@ -317,12 +317,49 @@ class DymolaRunner(SimulatorRunner):
 
         except subprocess.TimeoutExpired:
             batch_elapsed = time.monotonic() - start_time
-            proc.kill()
-            proc.communicate()
-            # Mark all tests as timed out
+            # review 2026-07-06 (finding 22): dymola.exe's dymosim child
+            # inherits the pipes, so a bare kill()+communicate() blocks until
+            # dymosim exits — the timeout path itself hung. Kill the whole
+            # process tree first, then drain pipes with a bounded wait.
+            _kill_process_tree(proc)
+            try:
+                proc.communicate(timeout=10)
+            except (subprocess.TimeoutExpired, OSError, ValueError):
+                # Last resort: close pipes without blocking on stragglers.
+                for stream in (proc.stdout, proc.stderr):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
+            # review 2026-07-06 (finding 76): salvage tests that verifiably
+            # completed on disk before the batch deadline (Dymola runs tests
+            # sequentially — earlier tests in the batch usually finished);
+            # only tests without a readable, complete result are timed out.
             results = []
             per_elapsed = batch_elapsed / len(test_items)
             for test, test_key in test_items:
+                test_dir = work_dir / test_key
+                completed, _why = _sim_completed_on_disk(
+                    test_dir, float(test.stop_time)
+                )
+                if completed:
+                    results.append(
+                        TestRunResult(
+                            model_id=test.model_id,
+                            test_key=test_key,
+                            success=True,
+                            elapsed=per_elapsed,
+                            statistics=parse_dslog(test_dir / "dslog.txt"),
+                        )
+                    )
+                    if self.progress is not None:
+                        self.progress.on_finish(
+                            test_key,
+                            success=True,
+                            elapsed=per_elapsed,
+                        )
+                    continue
                 results.append(
                     TestRunResult(
                         model_id=test.model_id,
@@ -411,25 +448,14 @@ class DymolaRunner(SimulatorRunner):
             #   2. mat file's last time reaches the requested stop_time
             # dsres.mat existence alone is insufficient — Dymola writes
             # incrementally, so a killed/aborted sim can leave a partial file.
+            # Shared with the batch-timeout salvage path (finding 76).
             dsfinal_path = test_dir / "dsfinal.txt"
             sim_completed = False
             completion_msg: str | None = None
-            if not translation_failed and mat_path.exists() and dsfinal_path.exists():
-                from ..common.mat_reader import read_mat_time_extents
-
-                extents = read_mat_time_extents(mat_path)
-                stop_time = float(test.stop_time)
-                if extents is not None:
-                    last_time = extents[1]
-                    tol = max(1e-6, abs(stop_time) * 1e-6)
-                    if last_time + tol >= stop_time:
-                        sim_completed = True
-                    else:
-                        completion_msg = (
-                            f"Stopped early at T={last_time:.6g} of {stop_time:.6g}"
-                        )
-                else:
-                    completion_msg = "dsres.mat unreadable"
+            if not translation_failed:
+                sim_completed, completion_msg = _sim_completed_on_disk(
+                    test_dir, float(test.stop_time)
+                )
 
             per_elapsed = batch_elapsed / len(test_items)
             if sim_completed:
@@ -707,6 +733,66 @@ def _generate_batch_mos(
     script_path = work_dir / f"batch_{batch_id:04d}.mos"
     script_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return script_path
+
+
+# ---------------------------------------------------------------------------
+# Process / on-disk state helpers
+# ---------------------------------------------------------------------------
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """Kill *proc* and its entire child tree.
+
+    review 2026-07-06 (finding 22): dymola.exe spawns dymosim as a child that
+    inherits the pipes; killing only dymola leaves dymosim holding them and
+    ``communicate()`` blocks forever. Mirrors DymolaWorker._kill_tracked_pids'
+    psutil approach, falling back to a plain kill if psutil can't resolve it.
+    """
+    try:
+        import psutil
+
+        parent = psutil.Process(proc.pid)
+        for child in parent.children(recursive=True):
+            try:
+                child.kill()
+            except psutil.NoSuchProcess:
+                pass
+        parent.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
+
+
+def _sim_completed_on_disk(
+    test_dir: Path,
+    stop_time: float,
+) -> tuple[bool, str | None]:
+    """Check on-disk artifacts for a truly completed simulation.
+
+    Completed iff dsfinal.txt exists AND dsres.mat's last time reaches
+    stop_time (dsres.mat alone is insufficient — Dymola writes incrementally,
+    so a killed sim leaves a partial file). Returns ``(completed, why_not)``;
+    ``why_not`` is only set when artifacts exist but are short/unreadable.
+    Used by both the normal batch evaluation and the batch-timeout salvage
+    path (review 2026-07-06, finding 76).
+    """
+    from ..common.mat_reader import read_mat_time_extents
+
+    mat_path = test_dir / "dsres.mat"
+    dsfinal_path = test_dir / "dsfinal.txt"
+    if not mat_path.exists() or not dsfinal_path.exists():
+        return False, None
+    extents = read_mat_time_extents(mat_path)
+    if extents is None:
+        return False, "dsres.mat unreadable"
+    last_time = extents[1]
+    # Allow a tiny tolerance — output_interval may not align perfectly
+    tol = max(1e-6, abs(stop_time) * 1e-6)
+    if last_time + tol >= stop_time:
+        return True, None
+    return False, f"Stopped early at T={last_time:.6g} of {stop_time:.6g}"
 
 
 # ---------------------------------------------------------------------------

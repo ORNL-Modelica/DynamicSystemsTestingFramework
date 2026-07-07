@@ -14,7 +14,11 @@ present both formats through the same view API.
 import csv
 import json
 import logging
+import os
 import re
+import shutil
+import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,6 +139,67 @@ def _extract_baselines(data: dict) -> dict[str, Baseline]:
 _REF_FILE_PATTERN = re.compile(r"^ref_(\d{4,})\.json$")
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Atomically replace ``path`` with ``text``.
+
+    review 2026-07-06 (finding 31): all reference writes were plain
+    ``write_text`` — a Ctrl-C mid-accept corrupted the baseline, the next
+    scan silently dropped it, and ``next_id()`` re-allocated its ID to a
+    different model. Same tmp-file + replace pattern as
+    ``dashboard_render._atomic_write`` (unique tmp name in the same
+    directory, retry loop for Windows file locking), except this variant
+    always raises on failure — a silently stale baseline is a
+    data-integrity bug, not a cosmetic one.
+    """
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        last_err: OSError | None = None
+        for delay in (0, 0.05, 0.1, 0.2, 0.5):
+            if delay:
+                time.sleep(delay)
+            try:
+                tmp.replace(path)
+                return
+            except OSError as e:
+                last_err = e
+        assert last_err is not None
+        raise last_err
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
+# review 2026-07-06 (finding 35): soft_check/companion names are interpolated
+# into file paths (``soft_checks/ref_NNNN/<name>.json``) — an unvalidated name
+# containing a separator or ".." writes outside the role dir and becomes
+# invisible to list/remove/``against``. Windows-illegal characters are also
+# rejected because reference partitions are shared across OSes.
+_ROLE_NAME_FORBIDDEN = ("/", "\\", "..", ":", "*", "?", '"', "<", ">", "|", "\0")
+
+
+def _validate_role_name(name: str, role: str) -> None:
+    """Reject soft_check/companion names that differ from their filename-safe
+    form, with a clear error naming the offending character."""
+    if not name or not isinstance(name, str):
+        raise ValueError(f"{role} name must be a non-empty string")
+    for token in _ROLE_NAME_FORBIDDEN:
+        if token in name:
+            raise ValueError(
+                f"{role} name {name!r} contains {token!r} — names must be "
+                f"plain filenames (no path separators, '..', or characters "
+                f"illegal on Windows)"
+            )
+    if name == "." or name != name.strip():
+        raise ValueError(
+            f"{role} name {name!r} is not filename-safe (leading/trailing "
+            f"whitespace or '.' are not allowed)"
+        )
+
+
 def _ref_stem(ref_file: Path) -> str:
     """Extract ``ref_NNNN`` stem from ``<ref_dir>/ref_NNNN.json``."""
     return ref_file.stem
@@ -229,7 +294,26 @@ class RefIndex:
             status = data.get("status", "active")
             self._by_id[test_id] = {"model_id": model_id, "status": status}
             if status != "obsolete":
-                self._by_model[model_id] = test_id
+                existing = self._by_model.get(model_id)
+                if existing is not None and existing != test_id:
+                    # review 2026-07-06 (finding 36): two active ref files
+                    # claim the same model_id. Keep the LOWEST-numbered one —
+                    # deterministic, and the oldest is the established
+                    # baseline — and warn loudly instead of silent last-wins.
+                    keep = min(existing, test_id, key=int)
+                    drop = max(existing, test_id, key=int)
+                    logger.warning(
+                        "Duplicate model_id %r in %s and %s — keeping the "
+                        "lowest-numbered file (%s); mark the other obsolete "
+                        "or delete it.",
+                        model_id,
+                        RefIndex.ref_filename(keep),
+                        RefIndex.ref_filename(drop),
+                        RefIndex.ref_filename(keep),
+                    )
+                    self._by_model[model_id] = keep
+                else:
+                    self._by_model[model_id] = test_id
 
         self._loaded = True
 
@@ -259,14 +343,47 @@ class RefIndex:
         return f"{max_id + 1:04d}"
 
     def register(self, model_id: str) -> str:
-        """Register a model and return its ID. Reuses existing ID if already registered."""
+        """Register a model and return its ID. Reuses existing ID if already registered.
+
+        review 2026-07-06 (findings 32+33): new IDs are claimed by
+        *exclusively creating* the ref file on disk (``open(..., "x")``).
+        A stale in-memory index (e.g. after ``cleanup_obsolete`` freed the
+        highest ID) or a concurrent ``--accept`` in another process could
+        both hand out an already-taken ID — the O_EXCL create makes the
+        claim atomic; on collision we rescan and move to the next free ID
+        instead of silently overwriting another model's baseline.
+        """
         existing = self.get_id(model_id)
         if existing is not None:
             return existing
-        test_id = self.next_id()
-        self._by_id[test_id] = {"model_id": model_id, "status": "active"}
-        self._by_model[model_id] = test_id
-        return test_id
+
+        self.ref_dir.mkdir(parents=True, exist_ok=True)
+        candidate = int(self.next_id())
+        while True:
+            test_id = f"{candidate:04d}"
+            ref_file = self.ref_dir / self.ref_filename(test_id)
+            try:
+                with open(ref_file, "x", encoding="utf-8") as f:
+                    # Minimal valid claim stub — store_reference atomically
+                    # replaces it with the full baseline immediately after.
+                    json.dump(
+                        {"model_id": model_id, "test_id": test_id, "status": "active"},
+                        f,
+                    )
+            except FileExistsError:
+                # ID already taken on disk (concurrent writer, or a file our
+                # stale index missed). Rescan, then move past the collision —
+                # the max() guard guarantees progress even when the colliding
+                # file is unreadable and therefore invisible to next_id().
+                self._scan()
+                claimed = self.get_id(model_id)
+                if claimed is not None:
+                    return claimed  # another process registered this model
+                candidate = max(candidate + 1, int(self.next_id()))
+                continue
+            self._by_id[test_id] = {"model_id": model_id, "status": "active"}
+            self._by_model[model_id] = test_id
+            return test_id
 
     def active_tests(self) -> dict[str, str]:
         """Return dict of test_id -> model_id for all active (non-obsolete, non-skip) tests."""
@@ -427,8 +544,8 @@ class ReferenceStore:
                 "'primary' is reserved for the stored simulation result; "
                 "soft_checks live alongside, not in place of, primary."
             )
-        if not name:
-            raise ValueError("soft_check name must be a non-empty string")
+        # review 2026-07-06 (finding 35): names become filenames — validate.
+        _validate_role_name(name, "soft_check")
 
         ref_file = self._ref_file_for_model(model_id)
         if ref_file is None or not ref_file.exists():
@@ -463,11 +580,14 @@ class ReferenceStore:
             entry["provenance"] = dict(provenance)
 
         sc_dir.mkdir(parents=True, exist_ok=True)
-        sc_file.write_text(json.dumps(entry, indent=2) + "\n", encoding="utf-8")
+        # review 2026-07-06 (finding 31): atomic — no partial soft_check files.
+        _atomic_write_text(sc_file, json.dumps(entry, indent=2) + "\n")
         return True
 
     def remove_soft_check(self, model_id: str, name: str) -> bool:
         """Delete a soft_check. Returns True if removed, False if not found."""
+        # review 2026-07-06 (finding 35): reject path-escaping names here too.
+        _validate_role_name(name, "soft_check")
         sc_dir = self._soft_check_dir_for(model_id)
         if sc_dir is None:
             return False
@@ -541,19 +661,20 @@ class ReferenceStore:
     ) -> bool:
         """Register an external file as a companion (pointer only, no copy).
 
-        The file is *not* read at registration. If it disappears later
-        the reporter degrades gracefully.
+        The file must exist at registration (fail fast on a typo'd path);
+        if it disappears *later* the reporter degrades gracefully.
 
         Args:
-            path: absolute or relative path to the external file. Stored
-                verbatim as a string.
+            path: absolute or relative path to the external file. Relative
+                paths are resolved against the current working directory at
+                registration time; the resolved absolute path is stored.
             format: ``"csv"`` or ``"json"``. Auto-detected from the file
                 extension if not given.
         """
         if name == PRIMARY_BASELINE:
             raise ValueError("'primary' is reserved for the stored simulation result")
-        if not name:
-            raise ValueError("companion name must be a non-empty string")
+        # review 2026-07-06 (finding 35): names become filenames — validate.
+        _validate_role_name(name, "companion")
 
         ref_file = self._ref_file_for_model(model_id)
         if ref_file is None or not ref_file.exists():
@@ -569,7 +690,20 @@ class ReferenceStore:
                 f"{model_id!r}; companions and soft_checks share a namespace."
             )
 
-        path_str = str(path)
+        # review 2026-07-06 (finding 34): resolve against the CWD (what the
+        # user typed) and store the absolute path — the overlay loader used
+        # to resolve relative paths against ref_dir, so relative
+        # registrations always loaded as "missing". Companions are
+        # user-registered files, so a missing file is a registration error:
+        # fail fast here instead of surfacing a silent missing overlay later.
+        resolved = Path(path).resolve()
+        if not resolved.exists():
+            raise FileNotFoundError(
+                f"companion file does not exist: {path} "
+                f"(resolved to {resolved}) — companions must point at an "
+                f"existing file at registration time"
+            )
+        path_str = str(resolved)
         fmt = format or _infer_companion_format(path_str)
 
         meta: dict[str, Any] = {
@@ -583,17 +717,8 @@ class ReferenceStore:
         co_dir = _companion_dir(self.ref_dir, ref_file)
         co_dir.mkdir(parents=True, exist_ok=True)
         meta_file = co_dir / f"{name}.json"
-        meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-
-        p = Path(path_str)
-        if not p.is_absolute() or not p.exists():
-            logger.info(
-                "companion %r registered but path %r is not currently readable "
-                "(external companions are pointer-only; reporter will degrade "
-                "gracefully if the file stays missing)",
-                name,
-                path_str,
-            )
+        # review 2026-07-06 (finding 31): atomic — no partial metadata files.
+        _atomic_write_text(meta_file, json.dumps(meta, indent=2) + "\n")
         return True
 
     def freeze_companion(self, model_id: str, name: str) -> bool:
@@ -606,8 +731,8 @@ class ReferenceStore:
         Returns True on freeze, False if the companion is missing or
         already frozen.
         """
-        import shutil
-
+        # review 2026-07-06 (finding 35): reject path-escaping names here too.
+        _validate_role_name(name, "companion")
         companions = self.get_companions(model_id)
         co = companions.get(name)
         if co is None:
@@ -628,7 +753,18 @@ class ReferenceStore:
         ext = _companion_extension(co.format)
         data_basename = f"{name}{ext}"
         dst = co_dir / data_basename
-        shutil.copyfile(src, dst)
+        # review 2026-07-06 (finding 31): copy via tmp + replace so an
+        # interrupted freeze can't leave a truncated data file behind.
+        tmp_dst = dst.with_name(f"{dst.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            shutil.copyfile(src, tmp_dst)
+            tmp_dst.replace(dst)
+        finally:
+            try:
+                if tmp_dst.exists():
+                    tmp_dst.unlink()
+            except OSError:
+                pass
 
         meta_file = co_dir / f"{name}.json"
         meta: dict[str, Any] = {
@@ -638,12 +774,15 @@ class ReferenceStore:
         }
         if co.provenance:
             meta["provenance"] = dict(co.provenance)
-        meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        # review 2026-07-06 (finding 31): atomic — no partial metadata files.
+        _atomic_write_text(meta_file, json.dumps(meta, indent=2) + "\n")
         return True
 
     def remove_companion(self, model_id: str, name: str) -> bool:
         """Delete a companion registration. For frozen companions the
         associated data file is also removed. Returns True if removed."""
+        # review 2026-07-06 (finding 35): reject path-escaping names here too.
+        _validate_role_name(name, "companion")
         co_dir = self._companion_dir_for(model_id)
         if co_dir is None:
             return False
@@ -668,9 +807,33 @@ class ReferenceStore:
         test: TestModel,
         result: TestResult,
     ) -> bool:
-        """Store simulation results as a new reference baseline."""
+        """Store simulation results as a new reference baseline.
+
+        Raises :class:`ValueError` when the trajectory contains non-finite
+        values — callers that accept in bulk should catch it per test.
+        """
         if not result.success or not result.variables:
             return False
+
+        # review 2026-07-06 leftover B: refuse to store a poisoned baseline.
+        # A trajectory containing NaN/Inf can never pass a later comparison
+        # (the metric math propagates NaN → guaranteed FAIL forever) and
+        # would serialize as non-strict JSON (`NaN`/`Infinity` literals)
+        # that strict parsers reject. Name the model + variable so accept
+        # flows can skip it and tell the user which signal is bad.
+        time_arr = np.asarray(result.variables[0].time, dtype=float)
+        if time_arr.size and not np.all(np.isfinite(time_arr)):
+            raise ValueError(
+                f"refusing to store baseline for {test.model_id}: the time "
+                "vector contains non-finite values (NaN/Inf)"
+            )
+        for var in result.variables:
+            vals = np.asarray(var.values, dtype=float)
+            if vals.size and not np.all(np.isfinite(vals)):
+                raise ValueError(
+                    f"refusing to store baseline for {test.model_id}: variable "
+                    f"'{var.name or var.index}' contains non-finite values (NaN/Inf)"
+                )
 
         self._ensure_dir()
 
@@ -789,7 +952,10 @@ class ReferenceStore:
             if extras:
                 ref_data["baselines"] = extras
 
-        ref_file.write_text(json.dumps(ref_data, indent=2) + "\n", encoding="utf-8")
+        # review 2026-07-06 (finding 31): atomic — a Ctrl-C mid-accept must
+        # not corrupt the baseline (a corrupt file is silently dropped by the
+        # next scan and its ID re-allocated to a different model).
+        _atomic_write_text(ref_file, json.dumps(ref_data, indent=2) + "\n")
 
         return True
 
@@ -797,14 +963,42 @@ class ReferenceStore:
         self,
         tests: list[TestModel],
         results: dict[str, TestResult],
-    ) -> int:
-        """Accept simulation results as new baselines. Returns count stored."""
+    ) -> tuple[int, list[tuple[str, str]]]:
+        """Accept simulation results as new baselines.
+
+        Returns ``(stored, skipped)`` where ``skipped`` lists
+        ``(model_id, reason)`` for tests that should have produced a
+        baseline but didn't — review 2026-07-06 finding 30: the CLI exits
+        nonzero (and says why) when an --accept run stores fewer baselines
+        than it attempted. Simulate-only tests never store a baseline by
+        design, so a successful simulate-only run is neither stored nor
+        skipped.
+        """
         stored = 0
+        skipped: list[tuple[str, str]] = []
         for test in tests:
             result = results.get(test.model_id)
-            if result and self.store_reference(test, result):
+            if result is None:
+                skipped.append((test.model_id, "no simulation result"))
+                continue
+            if not result.success:
+                skipped.append((test.model_id, "simulation failed"))
+                continue
+            if test.simulate_only:
+                continue
+            try:
+                ok = self.store_reference(test, result)
+            except ValueError as exc:
+                # review 2026-07-06 leftover B: one poisoned trajectory must
+                # not abort accepting the rest — skip it, warn, keep going.
+                logger.warning("Not accepting %s: %s", test.model_id, exc)
+                skipped.append((test.model_id, str(exc)))
+                continue
+            if ok:
                 stored += 1
-        return stored
+            else:
+                skipped.append((test.model_id, "no tracked variables in result"))
+        return stored, skipped
 
     def set_status(self, model_id: str, status: str) -> bool:
         """Update the status field of a reference file.
@@ -817,7 +1011,8 @@ class ReferenceStore:
         try:
             data = json.loads(ref_file.read_text(encoding="utf-8"))
             data["status"] = status
-            ref_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            # review 2026-07-06 (finding 31): atomic status flip.
+            _atomic_write_text(ref_file, json.dumps(data, indent=2) + "\n")
             # Update in-memory index
             test_id = self._index.get_id(model_id)
             if test_id and test_id in self._index._by_id:
@@ -843,7 +1038,8 @@ class ReferenceStore:
                 all_refs[model_id] = ref
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(all_refs, indent=2) + "\n", encoding="utf-8")
+        # review 2026-07-06 (finding 31): atomic like every other JSON write.
+        _atomic_write_text(output_path, json.dumps(all_refs, indent=2) + "\n")
 
     def export_csv(self, output_path: Path):
         """Export a summary CSV of all references."""
@@ -894,6 +1090,16 @@ class ReferenceStore:
                     ref_file.unlink()
                     removed += 1
                     logger.info("Removed obsolete reference: %s", ref_file.name)
+                # review 2026-07-06 (finding 32): also remove the deleted
+                # ref's soft_checks/ and companions/ dirs — a later reuse of
+                # this ID must not inherit another model's role data.
+                for role_dir in (
+                    _soft_check_dir(self.ref_dir, ref_file),
+                    _companion_dir(self.ref_dir, ref_file),
+                ):
+                    if role_dir.is_dir():
+                        shutil.rmtree(role_dir, ignore_errors=True)
+                        logger.info("Removed orphaned role dir: %s", role_dir)
         return removed
 
 
@@ -902,8 +1108,11 @@ def _downsample(
 ) -> tuple[list[float], list[float]]:
     """Downsample a time series to at most max_points.
 
-    Always preserves first, last, and event boundaries (duplicate time points).
-    Evenly samples remaining points to fill up to max_points.
+    Always preserves the first and last samples. Event boundaries (duplicate
+    time points) are preserved whenever they fit within the budget; if event
+    indices alone exceed max_points they are evenly thinned (review
+    2026-07-06, finding 3). Evenly samples remaining points to fill up to
+    max_points.
     """
     n = len(time)
     if n <= max_points:
@@ -918,17 +1127,38 @@ def _downsample(
             event_indices.add(i - 1)  # pre-event
             event_indices.add(i)  # post-event
 
-    # Fill remaining budget with evenly spaced indices
-    remaining = max_points - len(event_indices)
-    if remaining > 0:
-        candidates = np.linspace(0, n - 1, remaining + len(event_indices), dtype=int)
-        all_indices = sorted(event_indices | set(candidates.tolist()))
+    if len(event_indices) > max_points:
+        # review 2026-07-06 (finding 3): event indices alone exceed the
+        # budget. Keep first/last and evenly thin the *interior* event
+        # indices to fit — the old tail-trim (`all_indices[:max_points]`)
+        # silently dropped the final samples, making tail regressions
+        # invisible to every future comparison.
+        interior = sorted(event_indices - {0, n - 1})
+        budget = max(max_points - 2, 0)
+        if budget and interior:
+            pick = np.unique(np.linspace(0, len(interior) - 1, budget).astype(int))
+            kept = {interior[i] for i in pick}
+        else:
+            kept = set()
+        all_indices = sorted({0, n - 1} | kept)
     else:
-        all_indices = sorted(event_indices)
-
-    # Trim to max_points if we overshot
-    if len(all_indices) > max_points:
-        all_indices = all_indices[:max_points]
+        # Fill remaining budget with evenly spaced indices
+        remaining = max_points - len(event_indices)
+        candidates = np.linspace(0, n - 1, remaining + len(event_indices), dtype=int)
+        extras = sorted(set(candidates.tolist()) - event_indices)
+        # review 2026-07-06 (finding 3): when the union overshoots
+        # max_points, drop interior linspace candidates — never the
+        # endpoints or event boundaries — so the stored baseline always
+        # reaches the final time sample.
+        overshoot = len(event_indices) + len(extras) - max_points
+        if overshoot > 0:
+            keep_n = len(extras) - overshoot
+            if keep_n > 0:
+                pick = np.unique(np.linspace(0, len(extras) - 1, keep_n).astype(int))
+                extras = [extras[i] for i in pick]
+            else:
+                extras = []
+        all_indices = sorted(event_indices | set(extras))
 
     idx = np.array(all_indices)
     return _to_json_list(time[idx]), _to_json_list(values[idx])

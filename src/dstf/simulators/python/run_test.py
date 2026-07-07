@@ -90,14 +90,32 @@ def main(argv: list[str]) -> int:
         if not isinstance(payload["variables"], dict):
             raise ValueError("'variables' must be a dict of name -> list[float]")
 
-        time_list = list(payload["time"])
-        variables = {str(k): list(v) for k, v in payload["variables"].items()}
-        for name, values in variables.items():
-            if len(values) != len(time_list):
+        # review 2026-07-06 (finding 29): validate value TYPES, not just list
+        # lengths — a simulate() returning strings used to pass the run and
+        # then blow up np.asarray during read_results, aborting every test's
+        # read phase. Fail here, cleanly, naming the offending variable.
+        raw_time = list(payload["time"])
+        try:
+            time_list = [float(v) for v in raw_time]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"'time' contains a non-numeric value: {exc}"
+            ) from exc
+        variables = {}
+        for k, v in payload["variables"].items():
+            name = str(k)
+            raw_values = list(v)
+            if len(raw_values) != len(time_list):
                 raise ValueError(
-                    f"variable '{name}' has {len(values)} samples; "
+                    f"variable '{name}' has {len(raw_values)} samples; "
                     f"expected {len(time_list)} to match 'time'"
                 )
+            try:
+                variables[name] = [float(x) for x in raw_values]
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"variable '{name}' contains a non-numeric value: {exc}"
+                ) from exc
 
         result_path.write_text(
             json.dumps(

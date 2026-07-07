@@ -61,69 +61,107 @@ def _field_to_schema(field) -> dict:
     return node
 
 
+# The six comparison modes, in spec order. Single source for both the
+# ``$defs`` emission and the leaf's if/then wiring (finding 72).
+_MODES: list[tuple[str, type]] = [
+    ("nrmse", NrmseConfig),
+    ("tube", TubeConfig),
+    ("points", PointsConfig),
+    ("range", RangeConfig),
+    ("event-timing", EventTimingConfig),
+    ("dominant-frequency", DominantFrequencyConfig),
+]
+
+
+def _mode_def_name(mode_name: str) -> str:
+    return f"mode_{mode_name.replace('-', '_')}"
+
+
+def _leaf_common_properties() -> dict[str, Any]:
+    """Leaf keys that co-reside with mode-specific knobs in the same object.
+
+    Shared between the leaf spec and every mode ``$def`` — the mode defs are
+    ``$ref``'d from inside the leaf (if metric == <mode> then $ref), so they
+    describe the same flat object and must list these keys for editor/LLM
+    autocomplete (review 2026-07-06 finding 72).
+    """
+    return {
+        "metric": {
+            "type": "string",
+            "enum": sorted(VALID_METRICS),
+            "description": "The per-variable metric to score with.",
+        },
+        "variable": {
+            "type": "string",
+            "description": "Variable name as reported by the simulator.",
+        },
+        "against": {
+            "type": "string",
+            "default": "primary",
+            "description": (
+                "Which baseline to score against — 'primary' or the name "
+                "of a registered soft_check. Companions are not scorable."
+            ),
+        },
+        "window": {
+            "type": "object",
+            "description": "Scope the leaf to [start, end] (idea #46).",
+            "properties": {
+                "start": {"type": "number"},
+                "end": {"type": "number"},
+            },
+            "additionalProperties": False,
+        },
+        "label": {
+            "type": "string",
+            "description": "Human-readable label shown in reports.",
+        },
+    }
+
+
 def _mode_def(config_cls: type, mode_name: str) -> dict:
     sch = derive_schema(config_cls, mode=mode_name)
-    props: dict[str, Any] = {}
+    # review 2026-07-06 finding 72: deliberately NO "additionalProperties":
+    # false — the spec's posture is lenient (unknown keys pass through as
+    # metric params so newer specs still validate against older schemas).
+    # The complete properties map — mode knobs plus the leaf's co-resident
+    # keys — exists for autocomplete and type-checking, not hard rejection.
+    props: dict[str, Any] = _leaf_common_properties()
     for f in sch.fields:
         props[f.name] = _field_to_schema(f)
     return {
         "type": "object",
         "title": f"{mode_name} mode config",
         "properties": props,
-        "additionalProperties": False,
     }
 
 
 def build_schema() -> dict:
     """Build the top-level JSON-Schema document."""
-    mode_defs = {
-        f"mode_{name.replace('-', '_')}": _mode_def(cls, name)
-        for name, cls in [
-            ("nrmse", NrmseConfig),
-            ("tube", TubeConfig),
-            ("points", PointsConfig),
-            ("range", RangeConfig),
-            ("event-timing", EventTimingConfig),
-            ("dominant-frequency", DominantFrequencyConfig),
-        ]
-    }
+    mode_defs = {_mode_def_name(name): _mode_def(cls, name) for name, cls in _MODES}
 
     leaf_spec = {
         "type": "object",
         "title": "Metric tree leaf",
         "required": ["metric", "variable"],
-        "properties": {
-            "metric": {
-                "type": "string",
-                "enum": sorted(VALID_METRICS),
-                "description": "The per-variable metric to score with.",
-            },
-            "variable": {
-                "type": "string",
-                "description": "Variable name as reported by the simulator.",
-            },
-            "against": {
-                "type": "string",
-                "default": "primary",
-                "description": (
-                    "Which baseline to score against — 'primary' or the name "
-                    "of a registered soft_check. Companions are not scorable."
-                ),
-            },
-            "window": {
-                "type": "object",
-                "description": "Scope the leaf to [start, end] (idea #46).",
-                "properties": {
-                    "start": {"type": "number"},
-                    "end": {"type": "number"},
-                },
-                "additionalProperties": False,
-            },
-            # Mode-specific knobs live inline alongside metric/variable
-            # per the historical override shape — e.g., a leaf with
-            # metric=tube may set tube_rel, tube_width_mode, etc.
-        },
+        # Mode-specific knobs live inline alongside metric/variable per the
+        # historical override shape — e.g., a leaf with metric=tube may set
+        # tube_rel, tube_width_mode, etc. (typed via the allOf below).
+        "properties": _leaf_common_properties(),
         "additionalProperties": True,
+        # review 2026-07-06 finding 72: make the mode $defs real — the
+        # ``metric`` discriminator selects the matching mode definition, so
+        # validators type-check mode knobs and editors get autocomplete.
+        "allOf": [
+            {
+                "if": {
+                    "properties": {"metric": {"const": name}},
+                    "required": ["metric"],
+                },
+                "then": {"$ref": f"#/$defs/{_mode_def_name(name)}"},
+            }
+            for name, _ in _MODES
+        ],
     }
 
     combinator_spec = {

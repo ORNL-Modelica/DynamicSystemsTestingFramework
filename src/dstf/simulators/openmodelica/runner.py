@@ -43,6 +43,7 @@ from ..common.mat_reader import (
     list_result_mat_variables,
     read_result_mat,
 )
+from ..common.proc_output import decode_output
 from .log_parser import parse_omc_stdout
 from .mos_generator import build_simulate_mos
 
@@ -168,12 +169,18 @@ class OpenModelicaRunner(SimulatorRunner):
                 cwd=test_dir,
                 capture_output=True,
                 text=True,
+                # review 2026-07-06 (finding 75): pin utf-8 + replace so a
+                # non-ASCII omc message can't crash the reader on cp1252 hosts.
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
             elapsed = time.monotonic() - wall_start
+            # review 2026-07-06 (finding 23): TimeoutExpired.stdout is bytes
+            # even with text=True — decode_output handles None/bytes/str.
             (test_dir / self.STDOUT_FILENAME).write_text(
-                (exc.stdout or "") + "\n[TimeoutExpired]\n",
+                decode_output(exc.stdout) + "\n[TimeoutExpired]\n",
                 encoding="utf-8",
             )
             msg = f"omc exceeded {timeout}s timeout"

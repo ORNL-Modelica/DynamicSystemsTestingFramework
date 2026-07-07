@@ -86,3 +86,16 @@ class TestComparison:
     # exactly). Phase 3.2+ replaces with user-authored trees from
     # test_spec.json. None when no comparison ran (sim failure, no baseline).
     metric_tree: MetricResult | None = None
+
+    @property
+    def evaluated(self) -> bool:
+        """True when a comparison actually ran for this test.
+
+        Distinguishes a baseline-free or simulate-only test (which has a
+        metric tree / variables and a real verdict despite
+        ``has_reference=False``) from the NO_REF short-circuit where
+        nothing was scored. Report surfaces must classify ``not passed``
+        as FAILED whenever ``evaluated`` is true — review 2026-07-06,
+        finding 5 (failing baseline-free tests exited 0 as "NO_REF").
+        """
+        return self.metric_tree is not None or bool(self.variables)

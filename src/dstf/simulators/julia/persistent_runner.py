@@ -96,6 +96,11 @@ class JuliaWorker(Worker):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            # review 2026-07-06 (finding 75): pin utf-8 + replace — on cp1252
+            # Windows a UTF-8 Julia backtrace killed the reader thread and
+            # every subsequent test on this worker then timed out.
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,  # line-buffered
             cwd=str(self.julia_cfg.project_dir),
         )

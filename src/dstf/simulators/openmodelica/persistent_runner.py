@@ -28,9 +28,11 @@ come from the returned ``SimulationResult`` record.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import threading
 import time
+from pathlib import Path
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
@@ -214,6 +216,27 @@ class OpenModelicaWorker(Worker):
         ``setCommandLineOptions`` → dep loads (MSL auto-injected) →
         library load → user setup commands.
         """
+        # review 2026-07-06 (finding 26): OMCSessionZMQ() resolves omc via
+        # OPENMODELICAHOME / PATH and ignores the configured omc path that
+        # batch mode honors — silently running a different omc version
+        # against the same baseline partition. OMPython exposes no omc-path
+        # argument, so when a specific path IS configured we derive
+        # OPENMODELICAHOME from it (<home>/bin/omc → <home>) before the
+        # session spawns. Defensive: only acts on an explicit, existing path.
+        configured = getattr(self.config, "simulator_path", None)
+        if configured:
+            omc_path = Path(configured).expanduser()
+            if omc_path.exists():
+                om_home = omc_path.parent.parent
+                if os.environ.get("OPENMODELICAHOME") != str(om_home):
+                    os.environ["OPENMODELICAHOME"] = str(om_home)
+                    logger.warning(
+                        "Persistent OpenModelica resolves omc via "
+                        "OPENMODELICAHOME; derived OPENMODELICAHOME=%s from "
+                        "the configured omc path %s",
+                        om_home,
+                        omc_path,
+                    )
         self.session = self._OMCSession()
         try:
             pid = self.session.getpid()

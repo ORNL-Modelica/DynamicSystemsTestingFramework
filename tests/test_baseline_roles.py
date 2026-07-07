@@ -201,17 +201,21 @@ class TestCompanionStorage:
         assert "rig" in companions
         assert companions["rig"].kind == "external"
         assert companions["rig"].format == "csv"  # inferred from extension
-        assert companions["rig"].path == str(external)
+        # review 2026-07-06 (finding 34): stored path is the resolved absolute
+        # form (was: verbatim), so the loader and the store agree.
+        assert companions["rig"].path == str(external.resolve())
         assert companions["rig"].provenance == {"campaign": "2026-Q1"}
 
-    def test_add_external_tolerates_missing_path(self, store_with_primary):
-        """Registration succeeds even when the external file is missing —
-        graceful degradation is the point."""
+    def test_add_external_missing_path_rejected(self, store_with_primary):
+        """review 2026-07-06 (finding 34): companions are user-registered
+        files, so a wrong path fails fast at registration. Graceful
+        degradation still applies at LOAD time if the file moves later
+        (see test_overlay_loader.py)."""
         store, test = store_with_primary
         missing = Path("/nonexistent/path/data.csv")
-        ok = store.add_companion(test.model_id, "ghost", path=missing)
-        assert ok is True
-        assert "ghost" in store.get_companions(test.model_id)
+        with pytest.raises(FileNotFoundError):
+            store.add_companion(test.model_id, "ghost", path=missing)
+        assert "ghost" not in store.get_companions(test.model_id)
 
     def test_freeze_copies_data_beside_metadata(self, store_with_primary, tmp_path):
         store, test = store_with_primary
@@ -240,9 +244,14 @@ class TestCompanionStorage:
         # Second freeze returns False (no-op)
         assert store.freeze_companion(test.model_id, "c1") is False
 
-    def test_freeze_missing_source_raises(self, store_with_primary):
+    def test_freeze_missing_source_raises(self, store_with_primary, tmp_path):
+        # review 2026-07-06 (finding 34): add_companion now requires the file
+        # to exist, so simulate the file moving away *after* registration.
         store, test = store_with_primary
-        store.add_companion(test.model_id, "ghost", path=Path("/nonexistent.csv"))
+        src = tmp_path / "vanishing.csv"
+        src.write_text("x\n1\n")
+        store.add_companion(test.model_id, "ghost", path=src)
+        src.unlink()
         with pytest.raises(FileNotFoundError):
             store.freeze_companion(test.model_id, "ghost")
 

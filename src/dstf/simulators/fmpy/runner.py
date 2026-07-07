@@ -80,15 +80,14 @@ class FmpyRunner(SimulatorRunner):
     cross-backend verification.
     """
 
-    capabilities = frozenset(
-        {
-            Capability.PERSISTENT_WORKERS,  # FMPy instances are cheap to keep alive
-            # Deliberately absent:
-            #   BATCH_FALLBACK — FMPy *is* the Python path; no script fallback exists
-            #   FMU_EXPORT — FMPy consumes FMUs, doesn't produce them
-            #   EXPERIMENT_INGEST — not applicable
-        }
-    )
+    # Deliberately empty:
+    #   PERSISTENT_WORKERS — review 2026-07-06 (finding 28): the flag was
+    #     aspirational (no persistent FMPy runner exists) and tripped the
+    #     repaired capability-honesty check. Re-add when one actually ships.
+    #   BATCH_FALLBACK — FMPy *is* the Python path; no script fallback exists
+    #   FMU_EXPORT — FMPy consumes FMUs, doesn't produce them
+    #   EXPERIMENT_INGEST — not applicable
+    capabilities: frozenset[Capability] = frozenset()
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
     artifact_files = (("result.npz", "Result file"),)
 
@@ -201,9 +200,18 @@ class FmpyRunner(SimulatorRunner):
                     elapsed=elapsed,
                     error_message=msg,
                     sim_wall=elapsed,
+                    # review 2026-07-06 (finding 73): without this flag the
+                    # summary counted the timeout as a plain failure while
+                    # the dashboard (progress) showed timed_out — disagreeing.
+                    timed_out=True,
                 )
             finally:
                 executor.shutdown(wait=False)
+
+            # review 2026-07-06 (finding 73): save INSIDE the try so an
+            # OSError (disk full, permissions) fails this one test via the
+            # handler below instead of propagating and aborting the run.
+            _save_result(test_dir / self.RESULT_FILENAME, result)
 
         except Exception as exc:  # FMPy raises various exception types
             elapsed = time.monotonic() - wall_start
@@ -226,7 +234,6 @@ class FmpyRunner(SimulatorRunner):
             )
 
         elapsed = time.monotonic() - wall_start
-        _save_result(test_dir / self.RESULT_FILENAME, result)
 
         if self.progress:
             self.progress.on_finish(test_key, success=True, elapsed=elapsed)

@@ -12,7 +12,11 @@ const DIAG_TRAJECTORIES = MT_REPORT.DIAG_TRAJECTORIES || [];
 const NB_TRAJECTORIES = MT_REPORT.NB_TRAJECTORIES || [];
 
 // Variable name → index (element IDs). Order matches template iteration.
-const VARIABLE_ORDER = Object.keys(VARIABLES_BY_NAME || {});
+// review 2026-07-06 finding 76h: the template emits the ordered key list
+// explicitly — JS Object.keys() reorders integer-like keys numerically,
+// which desyncs plot element IDs from the Jinja loop.index0 numbering.
+const VARIABLE_ORDER = MT_REPORT.VARIABLE_ORDER
+  || Object.keys(VARIABLES_BY_NAME || {});
 const VARIABLE_INDEX = {};
 VARIABLE_ORDER.forEach((name, i) => { VARIABLE_INDEX[name] = i; });
 
@@ -43,6 +47,14 @@ function initWorkingTree() {
   structureDirty = false;
 }
 
+// review 2026-07-06 finding 38: JSON round-trip deep copy. leafState params
+// must not share nested arrays (tube_points / points / events / peaks) with
+// the tree or with original_params — shared references made in-place edits
+// invisible to the export diff and unrecoverable by the reset button.
+function _deepCopy(obj) {
+  return obj == null ? obj : JSON.parse(JSON.stringify(obj));
+}
+
 (function initLeafState() {
   walkLeaves(TREE_VIEW, (leaf) => {
     // ``original_params`` mirrors the INITIAL state the user is editing
@@ -53,11 +65,15 @@ function initWorkingTree() {
     // hadn't touched anything. Pre-fix (D74/D75) this produced noisy
     // 5-op patches on untouched tube leaves; now the diff is quiet.
     const merged = Object.assign({}, leaf.params || {}, leaf.mode_values || {});
+    // review 2026-07-06 finding 39: 'absolute' is a legacy read-alias for
+    // the canonical 'abs' token (matches Python modes.py Literal) —
+    // normalize on load, always store/export 'abs'.
+    if (merged.tube_width_mode === 'absolute') merged.tube_width_mode = 'abs';
     leafState[leaf.path] = {
-      params: Object.assign({}, merged),
+      params: _deepCopy(merged),
       window: Object.assign({}, leaf.window || {}),
       visible: true,
-      original_params: Object.assign({}, merged),
+      original_params: _deepCopy(merged),
       original_window: Object.assign({}, leaf.window || {}),
     };
   });
@@ -114,40 +130,74 @@ function overlayTraceName(role, name) {
 // tests/test_scorer_parity.py — when changing math here, update the
 // Python counterpart and the parity-test expectations.
 const MODE_SCORERS = {
-  // Mirror of _compare_trajectories (comparator.py:148).
+  // Mirror of _compare_trajectories (algorithms.py). review 2026-07-06
+  // finding 42: piecewise event segmentation (duplicate-time boundaries,
+  // pre/post-event dedup interpolation) + _EPS-guarded constant-signal
+  // normalization now mirror Python exactly; empty data FAILS (finding 1
+  // parity — _no_data_failure).
   'nrmse': (leaf) => {
     const tol = _paramNumber(leaf, 'tolerance', leaf.tolerance_used);
     const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
     const { refTime, refValues, actTime, actValues } =
         _sliceLeafTrajectory(leaf, traj);
-    if (refTime.length < 2) {
-      // Not enough windowed points to compute a meaningful NRMSE —
-      // fall through to the CLI value. Covers the case where the
-      // user narrows the window below the sampling rate.
-      return leaf.nrmse < tol;
-    }
-    // NRMSE = sqrt(mean((act - ref)^2)) / (max(ref) - min(ref)).
-    // Interpolate act onto ref's time grid so we score on a shared
-    // time axis (matches the CLI's signal-range normalization).
+    if (!refTime.length || !actTime.length) return false;  // _no_data_failure
+
+    const boundaries = _findEventBoundariesJS(refTime);
+    const segments = _splitSegmentsJS(refTime, refValues, boundaries);
+    const [actTPre, actVPre] = _dedupTimeSeriesJS(actTime, actValues, 'first');
+    const [actTPost, actVPost] = _dedupTimeSeriesJS(actTime, actValues, 'last');
+
     let sq = 0;
-    for (let i = 0; i < refTime.length; i++) {
-      const aV = _interpLinear(actTime, actValues, refTime[i]);
-      const d = aV - refValues[i];
-      sq += d * d;
+    let n = 0;
+    const nSeg = segments.length;
+    for (let s = 0; s < nSeg; s++) {
+      const [segT, segV] = segments[s];
+      if (!segT.length) continue;
+      const isLast = s === nSeg - 1;
+      for (let i = 0; i < segT.length; i++) {
+        let aV;
+        if (isLast || nSeg === 1) {
+          // Last (or only) segment: post-event values.
+          aV = _interpLinear(actTPost, actVPost, segT[i]);
+        } else if (s === 0) {
+          // First segment ending at an event: pre-event values.
+          aV = _interpLinear(actTPre, actVPre, segT[i]);
+        } else if (i === 0) {
+          // Interior segment start: post-event value at the boundary.
+          aV = _interpLinear(actTPost, actVPost, segT[0]);
+        } else {
+          aV = _interpLinear(actTPre, actVPre, segT[i]);
+        }
+        const d = aV - segV[i];
+        sq += d * d;
+        n++;
+      }
     }
-    const rmse = Math.sqrt(sq / refTime.length);
-    let refMin = refValues[0], refMax = refValues[0];
+    if (n === 0) return false;  // no comparable samples after segmentation
+
+    const rmse = Math.sqrt(sq / n);
+    let refMin = refValues[0], refMax = refValues[0], refMagMax = 0;
     for (const v of refValues) {
       if (v < refMin) refMin = v;
       if (v > refMax) refMax = v;
+      const a = Math.abs(v);
+      if (a > refMagMax) refMagMax = a;
     }
     const range = refMax - refMin;
-    // Zero-range (flat reference) → use RMSE directly, same convention
-    // as the CLI's _compare_trajectories degenerate-signal handling.
-    const nrmse = range > 0 ? rmse / range : rmse;
+    // Constant-signal normalization: same _EPS (100 × float64 eps) and
+    // magnitude fallback as Python (algorithms.py / types._EPS).
+    let nrmse;
+    if (range < _EPS_JS) {
+      nrmse = refMagMax > _EPS_JS ? rmse / refMagMax : rmse;
+    } else {
+      nrmse = rmse / range;
+    }
     return nrmse < tol;
   },
-  // Mirror of _compare_points (comparator.py:331).
+  // Mirror of _compare_points (algorithms.py). review 2026-07-06 finding
+  // 43: fully-clipped checkpoints FAIL, ref-relative targets outside the
+  // reference range FAIL, empty actual FAILS, and passing requires
+  // scored > 0 — matches the post-review Python semantics exactly.
   'points': (leaf) => {
     const tol = _paramNumber(leaf, 'tolerance', leaf.tolerance_used);
     const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
@@ -157,32 +207,32 @@ const MODE_SCORERS = {
     const points = Array.isArray(params.points) ? params.points : null;
 
     // Implicit final-only path: empty / null points → check act[-1] vs
-    // ref[-1] with tolerance. Matches CLI's _compare_points fallback.
+    // ref[-1] with tolerance. Empty trajectory FAILS (Python parity).
     if (!points || points.length === 0) {
-      if (!refTime.length || !actTime.length) return !!leaf.passed;
+      if (!refValues.length || !actValues.length) return false;
       const refFinal = refValues[refValues.length - 1];
       const actFinal = actValues[actValues.length - 1];
       return Math.abs(actFinal - refFinal) < tol;
     }
 
-    // Declared-points path. Same algorithm as _compare_points + box check.
-    if (!actTime.length) return !!leaf.passed;
+    // Declared-points path.
     const traceEnd = refTime.length ? refTime[refTime.length - 1]
-                   : actTime[actTime.length - 1];
-    let allMatched = true;
+                   : actTime.length ? actTime[actTime.length - 1] : 0;
+    let scored = 0;
+    let failed = 0;
     for (const point of points) {
-      let t = point.time;
-      if (t == null) t = traceEnd;
-      else t = Number(t);
+      const t = point.time == null ? traceEnd : Number(point.time);
       // Resolve target.
       let target;
       if (point.value != null) {
         target = Number(point.value);
-      } else if (refTime.length) {
-        target = _interpLinear(refTime, refValues, t);
       } else {
-        // Ref-relative point with no ref data — skip.
-        continue;
+        if (!refTime.length) { failed++; continue; }  // ref-relative, no ref
+        if (t < refTime[0] || t > refTime[refTime.length - 1]) {
+          failed++;  // checkpoint time outside reference range
+          continue;
+        }
+        target = _interpLinear(refTime, refValues, t);
       }
       // Resolve y-tolerance + mode.
       const perTol = point.tolerance != null ? Number(point.tolerance) : tol;
@@ -191,21 +241,24 @@ const MODE_SCORERS = {
       // Box check.
       const xTol = point.time_tolerance != null
         ? Number(point.time_tolerance) : 0;
+      if (!actTime.length) { failed++; continue; }  // empty trajectory
       const tLo = Math.max(t - xTol, actTime[0]);
       const tHi = Math.min(t + xTol, actTime[actTime.length - 1]);
-      if (tHi < tLo) continue;          // fully clipped
+      if (tHi < tLo) { failed++; continue; }  // fully clipped → FAIL
       const delta = _minDeltaInBox(actTime, actValues, tLo, tHi, target);
-      if (delta > yLimit) {
-        allMatched = false;
-      }
+      scored++;
+      if (delta > yLimit) failed++;
     }
-    return allMatched;
+    return scored > 0 && failed === 0;
   },
-  // Mirror of _compare_range (comparator.py:617).
+  // Mirror of _compare_range (algorithms.py).
   'range': (leaf) => {
     const p = (leafState[leaf.path] || {}).params || {};
     const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
     const { actValues } = _sliceLeafTrajectory(leaf, traj);
+    // review 2026-07-06 finding 6 parity: zero samples (empty trajectory
+    // or window slicing away everything) FAILS — no vacuous pass.
+    if (!actValues.length) return false;
     const mn = _nullOrNumber(p.min_value);
     const mx = _nullOrNumber(p.max_value);
     for (const v of actValues) {
@@ -214,60 +267,73 @@ const MODE_SCORERS = {
     }
     return true;
   },
-  // Mirror of _compare_tube (comparator.py:487). Trickiest of the
-  // mirrors — width-mode dispatch + tube_points interpolation.
+  // Mirror of _compare_tube + _interpolate_tube_widths (algorithms.py).
+  // review 2026-07-06 finding 40: the previous scorer scored every
+  // tube_points value as a band offset regardless of tube_width_mode /
+  // tube_interpolation. Now: interpolate RAW widths on the ref grid
+  // (linear, or stepwise for tube_interpolation='constant'), then
+  // dispatch on mode — 'rel' scales by |ref|, 'band' adds as offsets,
+  // 'abs' treats interpolated upper/lower as literal y-bounds. The
+  // tube_min_width floor applies to rel/band only. Empty data FAILS.
   'tube': (leaf) => {
     const traj = (VARIABLES_BY_NAME[leaf.variable] || {}).trajectory || {};
-    if (!traj.ref_time || !traj.ref_time.length) return !!leaf.passed;
     const p = (leafState[leaf.path] || {}).params || {};
-    const rel = Number(p.tube_rel || 0);
-    const abs = Number(p.tube_abs || 0);
+    // Window-clip both sides — Python receives pre-sliced arrays from
+    // tree_eval and interpolates act on the windowed grid the same way.
+    const { refTime, refValues, actTime, actValues } =
+        _sliceLeafTrajectory(leaf, traj);
+    if (!refTime.length || !actTime.length) return false;  // _no_data_failure
+
+    // Missing/null mode defaults to 'rel' — same interpretation as the
+    // tube editor (getWidthMode) and the mode its auto-seeded points
+    // carry. Python raises ValueError for a missing mode, so no parity
+    // case is expressible; unknown non-empty tokens still fail hard.
+    const mode = _normTubeMode(p.tube_width_mode) || 'rel';
+    if (mode !== 'band' && mode !== 'rel' && mode !== 'abs') {
+      return false;  // Python raises ValueError on unknown width mode
+    }
     const minW = Number(p.tube_min_width || 0);
-    const mode = p.tube_width_mode;
     const points = Array.isArray(p.tube_points) ? p.tube_points : [];
 
-    // Window-clip both ref and act before iterating. Act interp uses
-    // the full-trajectory act arrays (so we interpolate onto windowed
-    // refTime grid, but get correct values even if the nearest act
-    // samples are just outside the window).
-    const { refTime, refValues } = _sliceLeafTrajectory(leaf, traj);
-    const actTimeFull = traj.act_time || [];
-    const actValuesFull = traj.act_values || [];
-
-    let widthsUpper, widthsLower;
+    let rawUpper, rawLower;
     if (points.length > 0) {
-      const normalized = points.map(pt => ({
-        time: Number(pt.time ?? 0),
-        upper: Number(pt.upper ?? pt.abs ?? pt.rel ?? 0),
-        lower: Number(pt.lower ?? pt.abs ?? pt.rel ?? 0),
-      })).sort((a, b) => a.time - b.time);
-      const interp = (t, key) => {
-        if (t <= normalized[0].time) return normalized[0][key];
-        if (t >= normalized[normalized.length - 1].time) return normalized[normalized.length - 1][key];
-        for (let i = 1; i < normalized.length; i++) {
-          if (normalized[i].time >= t) {
-            const f = (t - normalized[i - 1].time) / (normalized[i].time - normalized[i - 1].time);
-            return normalized[i - 1][key] + f * (normalized[i][key] - normalized[i - 1][key]);
-          }
-        }
-        return normalized[normalized.length - 1][key];
-      };
-      widthsUpper = refTime.map(t => Math.max(minW, interp(t, 'upper')));
-      widthsLower = refTime.map(t => Math.max(minW, interp(t, 'lower')));
+      const pts = [...points].sort((a, b) => Number(a.time) - Number(b.time));
+      // Python checks the FIRST point's format: asymmetric (upper/lower)
+      // vs legacy symmetric (abs/rel fields).
+      const asym = pts[0].upper !== undefined || pts[0].lower !== undefined;
+      const ctrlT = pts.map(q => Number(q.time));
+      const ctrlU = pts.map(q => Number(
+        asym ? (q.upper ?? q.abs ?? 0) : (q.abs ?? q.rel ?? 0)));
+      const ctrlL = pts.map(q => Number(
+        asym ? (q.lower ?? q.abs ?? 0) : (q.abs ?? q.rel ?? 0)));
+      const interp = (p.tube_interpolation === 'constant' || pts.length === 1)
+        ? _interpStep : _interpLinear;
+      rawUpper = refTime.map(t => interp(ctrlT, ctrlU, t));
+      rawLower = refTime.map(t => interp(ctrlT, ctrlL, t));
     } else {
-      const w = refValues.map(v => {
-        if (mode === 'rel') return Math.max(minW, rel * Math.abs(v));
-        if (mode === 'band') return Math.max(minW, abs);
-        return Math.max(minW, Math.max(abs, rel * Math.abs(v)));
-      });
-      widthsUpper = w;
-      widthsLower = w;
+      // Constant-tube shorthand — only 'band' and 'rel'; Python raises
+      // for 'abs' without tube_points.
+      if (mode === 'abs') return false;
+      const c = mode === 'band' ? Number(p.tube_abs || 0)
+                                : Number(p.tube_rel || 0);
+      rawUpper = refTime.map(() => c);
+      rawLower = rawUpper;
     }
 
     for (let i = 0; i < refTime.length; i++) {
-      const actV = _interpLinear(actTimeFull, actValuesFull, refTime[i]);
-      if (actV > refValues[i] + widthsUpper[i]) return false;
-      if (actV < refValues[i] - widthsLower[i]) return false;
+      const actV = _interpLinear(actTime, actValues, refTime[i]);
+      let upper, lower;
+      if (mode === 'abs') {
+        upper = rawUpper[i];   // literal y-axis bounds — no min-width floor
+        lower = rawLower[i];
+      } else {
+        let uw = mode === 'rel' ? rawUpper[i] * Math.abs(refValues[i]) : rawUpper[i];
+        let lw = mode === 'rel' ? rawLower[i] * Math.abs(refValues[i]) : rawLower[i];
+        if (minW > 0) { uw = Math.max(uw, minW); lw = Math.max(lw, minW); }
+        upper = refValues[i] + uw;
+        lower = refValues[i] - lw;
+      }
+      if (actV > upper || actV < lower) return false;
     }
     return true;
   },
@@ -303,19 +369,49 @@ const MODE_SCORERS = {
       freqs = spec.act_freq || [];
       mags = spec.act_mag || [];
     }
-    if (!freqs || freqs.length < 3) return !!leaf.passed;
+    // review 2026-07-06: no usable spectrum FAILS (Python parity — the
+    // CLI fails a too-short signal rather than passing vacuously).
+    if (!freqs || freqs.length < 3) return false;
+    // review 2026-07-06 finding 44: mirror Python's claiming + amplitude
+    // floor — each declared peak must claim a DISTINCT actual peak, and
+    // matches below _PEAK_MIN_REL_AMPLITUDE of the spectrum max are
+    // ignored as noise.
+    let maxMag = 0;
+    for (const m of mags) if (m > maxMag) maxMag = m;
+    const ampFloor = _PEAK_MIN_REL_AMPLITUDE_JS * maxMag;
+    const claimed = new Set();
     for (const pk of pks) {
       const f = Number(pk.freq);
-      const tol = Number(pk.tolerance) || 0;
+      // review 2026-07-06 finding 76b: default tolerance 0.01 (Python's
+      // declared.get("tolerance", 0.01)), not 0.
+      const tol = pk.tolerance == null ? 0.01 : Number(pk.tolerance);
       if (!(f > 0)) return false;
       const [lo, hi] = pk.tolerance_mode === 'abs'
         ? [f - tol, f + tol]
         : [f * (1 - tol), f * (1 + tol)];
-      if (!_findStrongestPeakInWindowJS(freqs, mags, lo, hi)) return false;
+      const match = _findStrongestPeakInWindowJS(freqs, mags, lo, hi, {
+        exclude: claimed,
+        minAmplitude: ampFloor,
+      });
+      if (!match) return false;
+      claimed.add(match.freq);
     }
     return true;
   },
 };
+
+// review 2026-07-06 finding 42: mirror of Python types._EPS
+// (= 100 * np.finfo(float64).eps; Number.EPSILON === float64 eps).
+const _EPS_JS = 100 * Number.EPSILON;
+
+// review 2026-07-06 finding 44: mirror of algorithms._PEAK_MIN_REL_AMPLITUDE.
+const _PEAK_MIN_REL_AMPLITUDE_JS = 0.01;
+
+// review 2026-07-06 finding 39: 'absolute' accepted as a legacy read-alias
+// only; canonical token everywhere is 'abs' (Python modes.py Literal).
+function _normTubeMode(m) {
+  return m === 'absolute' ? 'abs' : m;
+}
 
 function _paramNumber(leaf, field, fallback) {
   const p = (leafState[leaf.path] || {}).params || {};
@@ -614,7 +710,7 @@ const MODE_PLOT_CONTRIBUTIONS = {
       const rel = Number(p.tube_rel || 0);
       const abs = Number(p.tube_abs || 0);
       const minW = Number(p.tube_min_width || 0);
-      const mode = p.tube_width_mode;
+      const mode = _normTubeMode(p.tube_width_mode);  // review 2026-07-06 finding 39
       const widths = traj.ref_values.map(v => {
         if (mode === 'rel') return Math.max(minW, rel * Math.abs(v));
         if (mode === 'band') return Math.max(minW, abs);
@@ -893,14 +989,21 @@ function _findTopNPeaksJS(freqs, spectrum, nPeaks, minFrequency = 0) {
   return top.map(p => ({ freq: p.freq, amplitude: p.amp }));
 }
 
-function _findStrongestPeakInWindowJS(freqs, spectrum, lo, hi) {
+function _findStrongestPeakInWindowJS(freqs, spectrum, lo, hi, opts) {
   // Mirrors Python _find_strongest_peak_in_window. Returns {freq, amplitude}
   // of the strongest local max in [lo, hi], or null if none.
+  // review 2026-07-06 finding 44: optional ``opts.exclude`` (Set of already
+  // claimed bin frequencies) and ``opts.minAmplitude`` (noise floor) mirror
+  // the Python signature's exclude / min_amplitude parameters.
   if (!freqs || freqs.length < 3) return null;
+  const exclude = opts && opts.exclude;
+  const minAmplitude = (opts && opts.minAmplitude) || 0;
   let best = null;
   for (let i = 1; i < freqs.length - 1; i++) {
     if (freqs[i] < lo || freqs[i] > hi) continue;
     if (spectrum[i] > spectrum[i - 1] && spectrum[i] > spectrum[i + 1]) {
+      if (minAmplitude > 0 && spectrum[i] < minAmplitude) continue;
+      if (exclude && exclude.has(freqs[i])) continue;
       if (best === null || spectrum[i] > best.amplitude) {
         best = { freq: freqs[i], amplitude: spectrum[i] };
       }
@@ -909,15 +1012,67 @@ function _findStrongestPeakInWindowJS(freqs, spectrum, lo, hi) {
   return best;
 }
 
-function _detectEvents(time) {
-  // Modelica events manifest as consecutive samples at the same ``t`` — one
-  // pre-event, one post-event. Return a de-duplicated list of event times.
-  const out = [];
-  if (!time || time.length < 2) return out;
-  for (let i = 1; i < time.length; i++) {
-    if (time[i] === time[i - 1]) out.push(time[i]);
+function _findEventBoundariesJS(time) {
+  // Mirror of Python _find_event_boundaries (algorithms.py): groups runs
+  // of CONSECUTIVE duplicate time values, returning [firstDup, lastDup]
+  // index pairs. Dymola may emit 2 OR 3 duplicates per event.
+  const boundaries = [];
+  if (!time || time.length < 2) return boundaries;
+  let i = 1;
+  while (i < time.length) {
+    if (time[i] === time[i - 1]) {
+      const firstDup = i;
+      while (i < time.length && time[i] === time[firstDup - 1]) i++;
+      boundaries.push([firstDup, i - 1]);
+    } else {
+      i++;
+    }
   }
-  return out;
+  return boundaries;
+}
+
+function _splitSegmentsJS(time, values, boundaries) {
+  // Mirror of Python _split_segments: pre-event value ends the previous
+  // segment, post-event value starts the next; intermediate dups skipped.
+  if (!boundaries.length) return [[time, values]];
+  const segments = [];
+  let prev = 0;
+  for (const [firstDup, lastDup] of boundaries) {
+    segments.push([time.slice(prev, firstDup), values.slice(prev, firstDup)]);
+    prev = lastDup;
+  }
+  if (prev < time.length) {
+    segments.push([time.slice(prev), values.slice(prev)]);
+  }
+  return segments;
+}
+
+function _dedupTimeSeriesJS(time, values, keep) {
+  // Mirror of Python _dedup_time_series: drop duplicate time entries,
+  // keeping the 'first' or 'last' value at each duplicated t.
+  const outT = [], outV = [];
+  if (keep === 'first') {
+    for (let i = 0; i < time.length; i++) {
+      if (i === 0 || time[i] !== time[i - 1]) {
+        outT.push(time[i]); outV.push(values[i]);
+      }
+    }
+  } else {
+    for (let i = 0; i < time.length; i++) {
+      if (i === time.length - 1 || time[i] !== time[i + 1]) {
+        outT.push(time[i]); outV.push(values[i]);
+      }
+    }
+  }
+  return [outT, outV];
+}
+
+function _detectEvents(time) {
+  // Modelica events manifest as CONSECUTIVE samples at the same ``t``.
+  // review 2026-07-06 finding 47: group a run of duplicates into ONE
+  // event (mirror Python _find_event_boundaries) — Dymola's 3-duplicate
+  // events used to seed two identical declared rows.
+  return _findEventBoundariesJS(time || []).map(b => time[b[0]]);
 }
 
 // ---- Plot editor registry (MODE_PLOT_EDITORS) ----
@@ -949,10 +1104,12 @@ const MODE_PLOT_EDITORS = {};
 //     synced=true.
 //   * Control-point table — columns adapt to synced + widthMode:
 //     - synced + rel/band:  Time | Width     | ✕
-//     - synced + absolute:  Time | Upper | Lower | ✕
+//     - synced + abs:       Time | Upper | Lower | ✕
 //     - unsynced:           Time | Upper | Mode | Lower | Mode | ✕
-//   * Width mode selector (rel / band / absolute) — global when synced;
-//     per-point-per-side when unsynced.
+//   * Width mode selector (rel / band / abs) — global. The per-side
+//     selectors shown when unsynced are display/input-interpretation
+//     aids only; stored values ALWAYS live in the global mode (review
+//     2026-07-06 finding 46).
 //   * Sync/unsync toggle, interpolation (linear / constant), min-width floor.
 //   * Shift+click on plot — adds a point; assigned to whichever bound
 //     (upper/lower) the click y is closest to.
@@ -1298,8 +1455,10 @@ MODE_PLOT_EDITORS['tube'] = (function() {
   // ---- state accessors ------------------------------------------------
   function getParams(leaf) { return (leafState[leaf.path] || {}).params || {}; }
   function getWidthMode(leaf) {
-    const m = getParams(leaf).tube_width_mode;
-    return (m === 'band' || m === 'rel' || m === 'absolute') ? m : 'rel';
+    // review 2026-07-06 finding 39: canonical token is 'abs' (Python
+    // modes.py Literal); 'absolute' accepted as a legacy read-alias.
+    const m = _normTubeMode(getParams(leaf).tube_width_mode);
+    return (m === 'band' || m === 'rel' || m === 'abs') ? m : 'rel';
   }
   function setWidthMode(leaf, mode) { getParams(leaf).tube_width_mode = mode; }
   function getInterpolation(leaf) {
@@ -1379,12 +1538,45 @@ MODE_PLOT_EDITORS['tube'] = (function() {
     const rvAbs = Math.abs(rv);
     const fallbackBand = roundSig(signalRange(leaf) * 0.05, 3);
     if (mode === 'rel') return { upper: 0.05, lower: 0.05 };
-    if (mode === 'absolute') {
+    if (mode === 'abs') {
       const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
       return { upper: roundSig(rv + band, 4), lower: roundSig(rv - band, 4) };
     }
     const band = rvAbs > 1e-15 ? roundSig(rvAbs * 0.05, 3) : fallbackBand;
     return { upper: band, lower: band };
+  }
+
+  // ---- width-mode conversion helpers (review 2026-07-06 finding 46) ----
+  // Stored control-point values ALWAYS live in the single GLOBAL width
+  // mode. These two convert a value between a mode's units and the
+  // absolute y-axis position at the point's time, so per-side mode
+  // selectors can act as input-interpretation aids without ever leaking
+  // a differently-scaled value into storage / scoring / export.
+  function widthToAbsY(leaf, pt, side, mode, value) {
+    const rv = refValueAt(leaf, pt.time);
+    if (mode === 'abs') return Number(value);
+    const offset = mode === 'rel'
+      ? Number(value) * Math.abs(rv)
+      : Number(value);
+    return side === 'upper' ? rv + offset : rv - offset;
+  }
+  function absYToWidth(leaf, pt, side, mode, yAbs) {
+    const rv = refValueAt(leaf, pt.time);
+    const rvAbs = Math.abs(rv);
+    if (mode === 'abs') return roundSig(yAbs, 4);
+    const offset = side === 'upper' ? yAbs - rv : rv - yAbs;
+    if (mode === 'rel') {
+      return rvAbs > 1e-15 ? roundSig(Math.max(offset / rvAbs, 0), 3) : 0.05;
+    }
+    return roundSig(Math.max(offset, 0), 3);
+  }
+  // Value shown in an unsynced row's input: the stored global-mode value
+  // re-expressed in the row's per-side display mode.
+  function displaySideValue(leaf, pt, side, sideMode) {
+    const globalMode = getWidthMode(leaf);
+    if (sideMode === globalMode) return pt[side];
+    return absYToWidth(leaf, pt, side, sideMode,
+      widthToAbsY(leaf, pt, side, globalMode, pt[side]));
   }
 
   function seedIfEmpty(leaf) {
@@ -1417,7 +1609,7 @@ MODE_PLOT_EDITORS['tube'] = (function() {
     const minW = getMinWidth(leaf);
 
     let upper, lower;
-    if (mode === 'absolute') {
+    if (mode === 'abs') {
       upper = Number(pt.upper);
       lower = Number(pt.lower);
     } else if (mode === 'rel') {
@@ -1440,22 +1632,12 @@ MODE_PLOT_EDITORS['tube'] = (function() {
     const pts = getPoints(leaf);
     const pt = pts[ptIdx];
     if (!pt) return;
-    const globalMode = getWidthMode(leaf);
     const es = ensureEditorState(leaf);
-    const pm = es.perPointModes[ptIdx] || { upperMode: null, lowerMode: null };
     const isUpper = bound === 'upper';
-    const mode = es.synced ? globalMode : (pm[isUpper ? 'upperMode' : 'lowerMode'] || globalMode);
-    const rv = refValueAt(leaf, pt.time);
-    const rvAbs = Math.abs(rv);
-
-    if (mode === 'absolute') pt[bound] = roundSig(yAbs, 4);
-    else if (mode === 'rel') {
-      const offset = isUpper ? yAbs - rv : rv - yAbs;
-      pt[bound] = rvAbs > 1e-15 ? roundSig(Math.max(offset / rvAbs, 0), 3) : 0.05;
-    } else {
-      const offset = isUpper ? yAbs - rv : rv - yAbs;
-      pt[bound] = roundSig(Math.max(offset, 0), 3);
-    }
+    // review 2026-07-06 finding 46: a drag supplies an absolute y — store
+    // it in the GLOBAL width mode always. Per-side modes are a display /
+    // input-interpretation aid, never a storage format.
+    pt[bound] = absYToWidth(leaf, pt, bound, getWidthMode(leaf), yAbs);
     if (es.synced) pt[isUpper ? 'lower' : 'upper'] = pt[bound];
     // In-place mutation only — don't clone via setPoints here. During a
     // drag, callers hold a pt reference that must survive to the next
@@ -1495,7 +1677,7 @@ MODE_PLOT_EDITORS['tube'] = (function() {
     const refAt = grid.map(t => (rt.length ? _interpLinear(rt, rv, t) : 0));
 
     const upper = grid.map((t, i) => {
-      if (mode === 'absolute') return rawUpperGrid[i];
+      if (mode === 'abs') return rawUpperGrid[i];
       let w = mode === 'rel'
         ? rawUpperGrid[i] * Math.abs(refAt[i])
         : rawUpperGrid[i];  // 'band'
@@ -1503,7 +1685,7 @@ MODE_PLOT_EDITORS['tube'] = (function() {
       return refAt[i] + w;
     });
     const lower = grid.map((t, i) => {
-      if (mode === 'absolute') return rawLowerGrid[i];
+      if (mode === 'abs') return rawLowerGrid[i];
       let w = mode === 'rel'
         ? rawLowerGrid[i] * Math.abs(refAt[i])
         : rawLowerGrid[i];
@@ -1542,7 +1724,7 @@ MODE_PLOT_EDITORS['tube'] = (function() {
 
   // ---- table UI -------------------------------------------------------
   function unitLabel(mode) {
-    return mode === 'rel' ? 'fraction' : mode === 'absolute' ? 'y-value' : 'signal units';
+    return mode === 'rel' ? 'fraction' : mode === 'abs' ? 'y-value' : 'signal units';
   }
 
   // Re-render tube UI into every active slot for this leaf. Called on
@@ -1637,9 +1819,9 @@ MODE_PLOT_EDITORS['tube'] = (function() {
     table.className = 'tube-table';
     const header = table.insertRow();
     const pts = getPoints(leaf);
-    if (es.synced && widthMode !== 'absolute') {
+    if (es.synced && widthMode !== 'abs') {
       header.innerHTML = `<th>Time</th><th>Width (${unitLabel(widthMode)})</th><th></th>`;
-    } else if (es.synced && widthMode === 'absolute') {
+    } else if (es.synced && widthMode === 'abs') {
       header.innerHTML = `<th>Time</th><th>Upper (y)</th><th>Lower (y)</th><th></th>`;
     } else {
       header.innerHTML = `<th>Time</th><th>Upper</th><th>Mode</th><th>Lower</th><th>Mode</th><th></th>`;
@@ -1647,12 +1829,12 @@ MODE_PLOT_EDITORS['tube'] = (function() {
 
     pts.forEach((pt, i) => {
       const row = table.insertRow();
-      if (es.synced && widthMode !== 'absolute') {
+      if (es.synced && widthMode !== 'abs') {
         row.appendChild(numberCell(pt.time, v => onPointField(leaf, i, 'time', v, commit), 'any'));
         row.appendChild(numberCell(pt.upper, v => onPointField(leaf, i, 'width', v, commit),
                                    widthMode === 'rel' ? '0.001' : 'any', 0));
         row.appendChild(removeCell(leaf, i, commit));
-      } else if (es.synced && widthMode === 'absolute') {
+      } else if (es.synced && widthMode === 'abs') {
         row.appendChild(numberCell(pt.time, v => onPointField(leaf, i, 'time', v, commit), 'any'));
         row.appendChild(numberCell(pt.upper, v => onPointField(leaf, i, 'upper', v, commit), 'any'));
         row.appendChild(numberCell(pt.lower, v => onPointField(leaf, i, 'lower', v, commit), 'any'));
@@ -1661,11 +1843,16 @@ MODE_PLOT_EDITORS['tube'] = (function() {
         const pm = es.perPointModes[i] || { upperMode: null, lowerMode: null };
         const uMode = pm.upperMode || widthMode;
         const lMode = pm.lowerMode || widthMode;
+        // review 2026-07-06 finding 46: inputs DISPLAY in the per-side
+        // mode; storage stays in the global mode (displaySideValue /
+        // onPointField convert on the way in and out).
         row.appendChild(numberCell(pt.time, v => onPointField(leaf, i, 'time', v, commit), 'any'));
-        row.appendChild(numberCell(pt.upper, v => onPointField(leaf, i, 'upper', v, commit),
+        row.appendChild(numberCell(displaySideValue(leaf, pt, 'upper', uMode),
+                                   v => onPointField(leaf, i, 'upper', v, commit),
                                    uMode === 'rel' ? '0.001' : 'any'));
         row.appendChild(modeCell(uMode, m => onSideMode(leaf, i, 'upper', m, commit)));
-        row.appendChild(numberCell(pt.lower, v => onPointField(leaf, i, 'lower', v, commit),
+        row.appendChild(numberCell(displaySideValue(leaf, pt, 'lower', lMode),
+                                   v => onPointField(leaf, i, 'lower', v, commit),
                                    lMode === 'rel' ? '0.001' : 'any'));
         row.appendChild(modeCell(lMode, m => onSideMode(leaf, i, 'lower', m, commit)));
         row.appendChild(removeCell(leaf, i, commit));
@@ -1699,7 +1886,9 @@ MODE_PLOT_EDITORS['tube'] = (function() {
   function modeCell(mode, onChange) {
     const td = document.createElement('td');
     const sel = document.createElement('select');
-    for (const opt of ['band', 'rel', 'absolute']) {
+    // review 2026-07-06 finding 39: canonical 'abs' token in the per-side
+    // selector too (was 'absolute', which nothing else recognized).
+    for (const opt of ['band', 'rel', 'abs']) {
       const o = document.createElement('option');
       o.value = opt; o.textContent = opt;
       if (mode === opt) o.selected = true;
@@ -1728,70 +1917,48 @@ MODE_PLOT_EDITORS['tube'] = (function() {
     // In-place mutation only — preserves pt identity for any drag in flight.
     if (field === 'time') pt.time = value;
     else if (field === 'width') { pt.upper = value; pt.lower = value; }
-    else if (field === 'upper') pt.upper = value;
-    else if (field === 'lower') pt.lower = value;
+    else if (field === 'upper' || field === 'lower') {
+      // review 2026-07-06 finding 46: typed values are interpreted in the
+      // row's per-side display mode, but STORED in the global mode.
+      const es = ensureEditorState(leaf);
+      const pm = es.perPointModes[i] || { upperMode: null, lowerMode: null };
+      const globalMode = getWidthMode(leaf);
+      const sideMode = (es.synced ? globalMode
+        : (pm[field + 'Mode'] || globalMode));
+      pt[field] = sideMode === globalMode
+        ? value
+        : absYToWidth(leaf, pt, field, globalMode,
+            widthToAbsY(leaf, pt, field, sideMode, value));
+    }
     if (field === 'time') sortPointsAndModes(leaf);
     refreshTables(leaf, commit);
     commit();
   }
 
   function onSideMode(leaf, i, side, newMode, commit) {
+    // review 2026-07-06 finding 46: switching a per-side mode changes the
+    // input's DISPLAY units only — stored values stay in the global width
+    // mode, so scoring / polygon / export are unaffected by the toggle.
     const es = ensureEditorState(leaf);
     const pm = es.perPointModes[i];
-    const globalMode = getWidthMode(leaf);
-    const oldMode = pm[side + 'Mode'] || globalMode;
+    if (!pm) return;
+    const oldMode = pm[side + 'Mode'] || getWidthMode(leaf);
     if (oldMode === newMode) return;
-
-    const pts = getPoints(leaf);
-    const pt = pts[i];
-    const rv = refValueAt(leaf, pt.time);
-    const rvAbs = Math.abs(rv);
-    const isUpper = side === 'upper';
-
-    let yAbs;
-    if (oldMode === 'absolute') yAbs = pt[side];
-    else if (oldMode === 'rel') {
-      const offset = pt[side] * rvAbs;
-      yAbs = isUpper ? rv + offset : rv - offset;
-    } else yAbs = isUpper ? rv + pt[side] : rv - pt[side];
-
-    if (newMode === 'absolute') pt[side] = roundSig(yAbs, 4);
-    else if (newMode === 'rel') {
-      const offset = isUpper ? yAbs - rv : rv - yAbs;
-      pt[side] = rvAbs > 1e-15 ? roundSig(Math.max(offset / rvAbs, 0), 3) : 0.05;
-    } else {
-      const offset = isUpper ? yAbs - rv : rv - yAbs;
-      pt[side] = roundSig(Math.max(offset, 0), 3);
-    }
     pm[side + 'Mode'] = newMode;
-    // In-place mutation of pt; no clone.
     refreshTables(leaf, commit);
     commit();
   }
 
   function reprojectAllPoints(leaf, oldMode, newMode) {
-    // In-place reprojection — iterates the live array and mutates each
-    // pt. Caller holds the pt references; we keep them valid.
+    // In-place reprojection when the GLOBAL width mode changes —
+    // iterates the live array and mutates each pt. Caller holds the pt
+    // references; we keep them valid. review 2026-07-06 finding 39:
+    // token-safe via the shared conversion helpers ('abs', not
+    // 'absolute').
     getPoints(leaf).forEach(pt => {
-      const rv = refValueAt(leaf, pt.time);
-      const rvAbs = Math.abs(rv);
       for (const side of ['upper', 'lower']) {
-        const isUpper = side === 'upper';
-        let yAbs;
-        if (oldMode === 'absolute') yAbs = pt[side];
-        else if (oldMode === 'rel') {
-          const offset = pt[side] * rvAbs;
-          yAbs = isUpper ? rv + offset : rv - offset;
-        } else yAbs = isUpper ? rv + pt[side] : rv - pt[side];
-
-        if (newMode === 'absolute') pt[side] = roundSig(yAbs, 4);
-        else if (newMode === 'rel') {
-          const offset = isUpper ? yAbs - rv : rv - yAbs;
-          pt[side] = rvAbs > 1e-15 ? roundSig(Math.max(offset / rvAbs, 0), 3) : 0.05;
-        } else {
-          const offset = isUpper ? yAbs - rv : rv - yAbs;
-          pt[side] = roundSig(Math.max(offset, 0), 3);
-        }
+        pt[side] = absYToWidth(leaf, pt, side, newMode,
+          widthToAbsY(leaf, pt, side, oldMode, pt[side]));
       }
     });
   }
@@ -2738,18 +2905,27 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
   // its tolerance window on the actual spectrum? Replaces CLI-stale
   // paired_peaks in the table's match column. Returns [{declared_hz,
   // matched_hz, delta}].
+  // review 2026-07-06 finding 44: mirrors the scorer's claiming +
+  // amplitude-floor semantics so the Match column agrees with the pill.
   function evaluateMatches(leaf) {
     const actSpectrum = getLiveSpectrum(leaf, 'act');
     const pks = getDeclaredPeaks(leaf);
+    let maxMag = 0;
+    for (const m of actSpectrum.magnitudes) if (m > maxMag) maxMag = m;
+    const ampFloor = _PEAK_MIN_REL_AMPLITUDE_JS * maxMag;
+    const claimed = new Set();
     return pks.map(pk => {
       const f = Number(pk.freq);
-      const tol = Number(pk.tolerance) || 0;
+      // review 2026-07-06 finding 76b: default 0.01 (Python parity).
+      const tol = pk.tolerance == null ? 0.01 : Number(pk.tolerance);
       const [lo, hi] = pk.tolerance_mode === 'abs'
         ? [f - tol, f + tol]
         : [f * (1 - tol), f * (1 + tol)];
       const match = _findStrongestPeakInWindowJS(
         actSpectrum.freqs, actSpectrum.magnitudes, lo, hi,
+        { exclude: claimed, minAmplitude: ampFloor },
       );
+      if (match) claimed.add(match.freq);
       return {
         declared_hz: f,
         matched_hz: match ? match.freq : null,
@@ -2889,7 +3065,8 @@ MODE_PLOT_EDITORS['dominant-frequency'] = (function() {
     const shapes = [];
     for (const pk of pks) {
       const f = Number(pk.freq);
-      const tol = Number(pk.tolerance) || 0;
+      // review 2026-07-06 finding 76b: default 0.01 (Python parity).
+      const tol = pk.tolerance == null ? 0.01 : Number(pk.tolerance);
       if (tol <= 0 || f <= 0) continue;
       const [lo, hi] = pk.tolerance_mode === 'abs'
         ? [f - tol, f + tol]
@@ -3196,8 +3373,19 @@ function buildWindowBrushControl(leaf, plotEl, commit) {
   return wrap;
 }
 
+// review 2026-07-06 finding 76c: single armed brush at a time, with a
+// well-defined cancel path — ESC and a second click on the brush button
+// both disarm cleanly (listener removed, dragmode restored, no stacked
+// handlers). The global ESC handler consults this before leaf-deactivate.
+let _activeBrush = null;   // {btn, cleanup} | null
+
 function enterBrushMode(leaf, plotEl, commit, btn) {
   if (!plotEl) return;
+  if (_activeBrush) {
+    const sameBtn = _activeBrush.btn === btn;
+    _activeBrush.cleanup();
+    if (sameBtn) return;   // second click on the armed button = cancel
+  }
   const prev = plotEl._fullLayout?.dragmode || 'zoom';
   Plotly.relayout(plotEl, { dragmode: 'select', selectdirection: 'h' });
   if (btn) { btn.classList.add('brush-armed'); btn.textContent = '🔲 Drag on plot…'; }
@@ -3206,6 +3394,7 @@ function enterBrushMode(leaf, plotEl, commit, btn) {
     plotEl.removeListener?.('plotly_selected', onSel);
     Plotly.relayout(plotEl, { dragmode: prev });
     if (btn) { btn.classList.remove('brush-armed'); btn.textContent = '🔲 Set window from plot'; }
+    _activeBrush = null;
   };
   const onSel = (evt) => {
     if (!evt || !evt.range || !evt.range.x) return;
@@ -3221,12 +3410,22 @@ function enterBrushMode(leaf, plotEl, commit, btn) {
     commit();
   };
   plotEl.on('plotly_selected', onSel);
+  _activeBrush = { btn, cleanup };
 }
 
 function deactivateLeaf() {
   if (!activeLeafPath) return;
+  // An armed brush belongs to the active leaf's editor slot — disarm it
+  // before the slot DOM is cleared (review 2026-07-06 finding 76c).
+  if (_activeBrush) _activeBrush.cleanup();
   const path = activeLeafPath;
-  const leaf = findLeaf(TREE_VIEW, path) || findLeaf(WORKING_TREE, path);
+  // review 2026-07-06 finding 76d: when the structure has been edited the
+  // rendered (and activated) leaf objects come from WORKING_TREE — resolve
+  // there FIRST so editors' WeakMap identity lookups (e.g. the peak
+  // editor's slotsByLeaf) hit, and their document-level listeners detach.
+  const leaf = structureDirty
+    ? (findLeaf(WORKING_TREE, path) || findLeaf(TREE_VIEW, path))
+    : (findLeaf(TREE_VIEW, path) || findLeaf(WORKING_TREE, path));
   activeLeafPath = null;
   document.querySelectorAll('.node-active').forEach(el => el.classList.remove('node-active'));
   if (leaf) {
@@ -3268,13 +3467,79 @@ document.addEventListener('DOMContentLoaded', () => {
   renderAllNodeTrees();
   wireOverlayPickers();
   wireErrorOverlays();
-  refreshPassStates();
+  // review 2026-07-06 finding 37: the CLI verdict is authoritative for the
+  // INITIAL render. Pills / summary are stamped from the CLI-evaluated
+  // tree, NOT recomputed from the LTTB-decimated embedded arrays —
+  // borderline tests used to flip verdicts in the browser before the user
+  // touched anything. Live re-scoring (refreshPassStates) kicks in only
+  // once the user edits (param change, window change, structural edit).
+  applyCliPassStates();
   updateExport();
-  // ESC deactivates the active leaf (escape hatch from edit mode).
+  renderDecimationBanner();
+  // ESC: cancel an armed window brush first (review 2026-07-06 finding
+  // 76c), else deactivate the active leaf (escape hatch from edit mode).
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && activeLeafPath) deactivateLeaf();
+    if (e.key !== 'Escape') return;
+    if (_activeBrush) { _activeBrush.cleanup(); return; }
+    if (activeLeafPath) deactivateLeaf();
   });
 });
+
+// Stamp pills + summary from the CLI-computed ``passed`` flags without
+// invoking MODE_SCORERS (review 2026-07-06 finding 37).
+function applyCliPassStates() {
+  const tree = currentTree();
+  const passMap = {};
+  (function walk(n) {
+    if (!n) return;
+    if (n.passed !== undefined && n.passed !== null) passMap[n.path] = !!n.passed;
+    (n.children || []).forEach(walk);
+  })(tree);
+  updatePassPills(passMap);
+  updateSummaryFromMap(passMap, tree);
+}
+
+// review 2026-07-06 finding 37: persistent, dismissible disclosure that the
+// browser's live scorers run on LTTB-decimated arrays. plot_comparison.py
+// stamps per-variable ``full_samples`` (pre-decimation counts) into the
+// embedded trajectory dicts; when any variable was decimated, state N of M.
+function renderDecimationBanner() {
+  let embedded = 0;
+  let full = 0;
+  let anyDecimated = false;
+  for (const name of VARIABLE_ORDER) {
+    const traj = (VARIABLES_BY_NAME[name] || {}).trajectory || {};
+    const fs = traj.full_samples;
+    if (!fs) continue;
+    const e = (traj.act_time || []).length + (traj.ref_time || []).length;
+    const f = (fs.act || 0) + (fs.ref || 0);
+    embedded += e;
+    full += f;
+    if (f > e) anyDecimated = true;
+  }
+  if (!anyDecimated || !document.body) return;
+  const banner = document.createElement('div');
+  banner.id = 'decimation-banner';
+  banner.style.cssText =
+    'position:sticky;top:0;z-index:1000;background:#fff3cd;'
+    + 'border:1px solid #ffe08a;border-radius:4px;color:#664d03;'
+    + 'padding:8px 12px;margin:8px 0;display:flex;align-items:center;'
+    + 'gap:8px;font-size:0.9em;';
+  const msg = document.createElement('span');
+  msg.textContent =
+    `Live scores are computed on decimated data (${embedded} of ${full} `
+    + 'samples) — CLI verdicts are authoritative until re-run.';
+  banner.appendChild(msg);
+  const close = document.createElement('button');
+  close.textContent = '✕';
+  close.title = 'Dismiss';
+  close.style.cssText =
+    'margin-left:auto;background:none;border:none;cursor:pointer;'
+    + 'color:inherit;font-size:1em;';
+  close.addEventListener('click', () => banner.remove());
+  banner.appendChild(close);
+  document.body.insertBefore(banner, document.body.firstChild);
+}
 
 // ---- Plotly rendering ----
 // Always enable shape-position drag — the range editor hooks
@@ -3521,6 +3786,11 @@ function combinatorParamControls(node) {
   container.className = 'node-combinator-params';
   const children = node.children || [];
 
+  // review 2026-07-06 finding 45: param edits must mutate the WORKING_TREE
+  // node (resolved by path, same pattern as removeNodeButton) — mutating
+  // the rendered ``node`` hit the pristine TREE_VIEW when the edit was the
+  // first structural change, so the input visibly reverted and the export
+  // carried the stale value.
   if (node.combinator === 'k-of-n') {
     const label = document.createElement('label');
     label.className = 'mc-field mc-int';
@@ -3534,8 +3804,9 @@ function combinatorParamControls(node) {
     inp.className = 'node-k-input';
     inp.addEventListener('change', () => {
       const v = parseInt(inp.value, 10);
-      if (Number.isFinite(v) && v >= 1) {
-        node.k = v;
+      const target = findWorkingNode(node.path);
+      if (Number.isFinite(v) && v >= 1 && target) {
+        target.k = v;
         markStructureDirty();
       } else {
         inp.value = String(node.k || 1);
@@ -3556,8 +3827,13 @@ function combinatorParamControls(node) {
     thrInp.className = 'node-threshold-input';
     thrInp.addEventListener('change', () => {
       const v = parseFloat(thrInp.value);
-      if (Number.isFinite(v)) { node.threshold = v; markStructureDirty(); }
-      else thrInp.value = String(node.threshold ?? 1.0);
+      const target = findWorkingNode(node.path);
+      if (Number.isFinite(v) && target) {
+        target.threshold = v;
+        markStructureDirty();
+      } else {
+        thrInp.value = String(node.threshold ?? 1.0);
+      }
     });
     thrLabel.appendChild(thrInp);
     container.appendChild(thrLabel);
@@ -3575,7 +3851,9 @@ function combinatorParamControls(node) {
       dirSel.appendChild(opt);
     });
     dirSel.addEventListener('change', () => {
-      node.direction = dirSel.value;
+      const target = findWorkingNode(node.path);
+      if (!target) return;
+      target.direction = dirSel.value;
       markStructureDirty();
     });
     dirLabel.appendChild(dirSel);
@@ -3598,11 +3876,12 @@ function combinatorParamControls(node) {
       wi.dataset.index = String(i);
       wi.addEventListener('change', () => {
         const v = parseFloat(wi.value);
-        if (Number.isFinite(v)) {
-          const nextWeights = children.map((__, j) => (
-            j === i ? v : ((node.weights || [])[j] ?? 1.0)
+        const target = findWorkingNode(node.path);
+        if (Number.isFinite(v) && target) {
+          const tChildren = target.children || [];
+          target.weights = tChildren.map((__, j) => (
+            j === i ? v : ((target.weights || [])[j] ?? 1.0)
           ));
-          node.weights = nextWeights;
           markStructureDirty();
         } else {
           wi.value = String((node.weights || [])[i] ?? 1.0);
@@ -3835,10 +4114,18 @@ function renderLeaf(leaf, container, opts) {
 }
 
 function statusPill(passed) {
-  if (passed === undefined || passed === null) return null;
+  // review 2026-07-06 finding 76e: always return a pill element — leaves
+  // added via the + editor have no CLI verdict yet, and without a
+  // .node-status element updatePassPills had nothing to stamp once the
+  // live scorer produced one. Undefined renders as a neutral placeholder.
   const span = document.createElement('span');
-  span.className = `node-status ${passed ? 'pass' : 'fail'}`;
-  span.textContent = passed ? 'PASS' : 'FAIL';
+  if (passed === undefined || passed === null) {
+    span.className = 'node-status pending';
+    span.textContent = '—';
+  } else {
+    span.className = `node-status ${passed ? 'pass' : 'fail'}`;
+    span.textContent = passed ? 'PASS' : 'FAIL';
+  }
   return span;
 }
 
@@ -4042,11 +4329,14 @@ function appendLeafToWorking(parentPath, metric, varname) {
   // ``leafState[path]`` and silently short-circuit when missing, which
   // was the cause of "added tube but plot doesn't update".
   rebuildPaths(WORKING_TREE, '/metrics');
+  // review 2026-07-06 finding 38: deep copies — schema defaults can carry
+  // arrays (points/peaks) that must not be shared between params and
+  // original_params.
   leafState[leaf.path] = {
-    params: Object.assign({}, defaults),
+    params: _deepCopy(defaults),
     window: {},
     visible: true,
-    original_params: Object.assign({}, defaults),
+    original_params: _deepCopy(defaults),
     original_window: {},
   };
   markStructureDirty();
@@ -4371,7 +4661,10 @@ function resetLeafToOriginal(path) {
   // pick up the reverted values. The input-refresh pass handles the DOM.
   const state = leafState[path];
   if (!state) return;
-  state.params = Object.assign({}, state.original_params || {});
+  // review 2026-07-06 finding 38: deep copy so reset restores pristine
+  // nested arrays (tube_points / points / events / peaks), not references
+  // the next edit would corrupt in both params AND original_params.
+  state.params = _deepCopy(state.original_params || {});
   state.window = Object.assign({}, state.original_window || {});
   renderAllNodeTreesFromWorking();
   refreshPassStates();
@@ -4398,9 +4691,17 @@ function nodeToSpec(node) {
       if (mergedParams[k] !== undefined && mergedParams[k] !== null) out[k] = mergedParams[k];
     }
     if (node.against && node.against !== 'primary') out.against = node.against;
-    const win = state.window && (state.window.start != null || state.window.end != null)
-      ? state.window
-      : (node.window && (node.window.start != null || node.window.end != null) ? node.window : null);
+    // review 2026-07-06 finding 76a: when the leaf has live state, its
+    // window is authoritative — an explicitly CLEARED window (state.window
+    // = {}) must export as "no window", not fall back to the stale
+    // node.window and resurrect it.
+    let win = null;
+    if (state.window !== undefined) {
+      win = (state.window && (state.window.start != null || state.window.end != null))
+        ? state.window : null;
+    } else if (node.window && (node.window.start != null || node.window.end != null)) {
+      win = node.window;
+    }
     if (win) {
       const w = {};
       if (win.start != null) w.start = Number(win.start);
@@ -4507,7 +4808,13 @@ function syncSiblingInputs(leafPath, field, val, sourceInput) {
   document.querySelectorAll(selector).forEach(inp => {
     if (inp === sourceInput) return;
     if (inp.type === 'checkbox') inp.checked = !!val;
-    else inp.value = (val == null ? '' : val);
+    // review 2026-07-06 finding 76f: passthrough textareas hold raw JSON —
+    // assigning an array/object directly stringifies to "[object Object]"
+    // and corrupts the sibling mount's value.
+    else if (inp.dataset && inp.dataset.passthrough === 'true') {
+      inp.value = val == null ? ''
+        : (typeof val === 'string' ? val : JSON.stringify(val));
+    } else inp.value = (val == null ? '' : val);
   });
 }
 
@@ -4708,6 +5015,12 @@ function buildPatchData() {
       const o = orig[field];
       if (cur === o) return;
       if (typeof cur === 'number' && typeof o === 'number' && !floatsDiffer(cur, o)) return;
+      // review 2026-07-06 finding 38: params/original_params are now deep
+      // copies, so identity never matches for arrays/objects — compare
+      // structurally and emit ops only for real value changes.
+      if (cur != null && o != null
+          && typeof cur === 'object' && typeof o === 'object'
+          && JSON.stringify(cur) === JSON.stringify(o)) return;
       ops.push({
         op: 'add',
         path: `${leaf.path}/${jsonPointerEscape(field)}`,
@@ -4749,7 +5062,26 @@ function updateExport() {
 function copyExport() {
   const el = document.getElementById('export-json');
   if (!el) return;
-  navigator.clipboard.writeText(el.value).then(() => showSaveStatus('Copied!'));
+  // review 2026-07-06 finding 76g: navigator.clipboard is unavailable on
+  // file:// (non-secure context) — fall back to the textarea+execCommand
+  // pattern (same as dashboard.js) and surface failure instead of
+  // silently doing nothing.
+  const text = el.value;
+  const fallbackCopy = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_e) { ok = false; }
+    document.body.removeChild(ta);
+    showSaveStatus(ok ? 'Copied!' : 'Copy failed — select the JSON and copy manually');
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => showSaveStatus('Copied!'), fallbackCopy);
+  } else {
+    fallbackCopy();
+  }
 }
 
 function downloadExport() {

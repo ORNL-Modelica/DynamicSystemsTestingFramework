@@ -11,9 +11,18 @@ def generate_html_report(
     output_path: Path,
 ) -> None:
     """Generate an HTML report from test comparisons."""
-    n_passed = sum(1 for c in comparisons if c.passed)
-    n_failed = sum(1 for c in comparisons if not c.passed)
-    n_no_ref = sum(1 for c in comparisons if not c.has_reference)
+    # One mutually-exclusive bucket per test so header counts reconcile
+    # with row statuses (review 2026-07-06, finding 69: NO_REF counted as
+    # passed and SIM_FAIL as failed). Classification order matches
+    # console_report: SIM_FAIL > FAIL > NO_REF (unevaluated) > PASS.
+    n_sim_fail = sum(1 for c in comparisons if not c.sim_success)
+    n_failed = sum(1 for c in comparisons if c.sim_success and not c.passed)
+    n_no_ref = sum(
+        1
+        for c in comparisons
+        if c.sim_success and c.passed and not c.has_reference and not c.evaluated
+    )
+    n_passed = len(comparisons) - n_sim_fail - n_failed - n_no_ref
     n_warned = sum(1 for c in comparisons if c.warnings)
     total = len(comparisons)
 
@@ -21,12 +30,12 @@ def generate_html_report(
     for comp in comparisons:
         if not comp.sim_success:
             status = '<span style="color:red">SIM_FAIL</span>'
-        elif not comp.has_reference:
-            status = '<span style="color:orange">NO_REF</span>'
-        elif comp.passed:
-            status = '<span style="color:green">PASS</span>'
-        else:
+        elif not comp.passed:
             status = '<span style="color:red">FAIL</span>'
+        elif not comp.has_reference and not comp.evaluated:
+            status = '<span style="color:orange">NO_REF</span>'
+        else:
+            status = '<span style="color:green">PASS</span>'
 
         if comp.warnings:
             status += ' <span style="color:orange" title="Structural changes detected">&#9888;</span>'

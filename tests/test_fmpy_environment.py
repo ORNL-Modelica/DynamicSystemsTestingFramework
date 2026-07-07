@@ -116,7 +116,10 @@ def test_fmpy_backend_registers_under_name():
     # Capabilities declared as advertised in docs/extensibility.md §3
     from dstf.simulators.base import Capability, DatasetType
 
-    assert Capability.PERSISTENT_WORKERS in runner.capabilities
+    # review 2026-07-06 (finding 28): PERSISTENT_WORKERS was aspirational —
+    # FmpyRunner ships no persistent runner, and the repaired capability-
+    # honesty check now rejects the unbacked flag at registration.
+    assert Capability.PERSISTENT_WORKERS not in runner.capabilities
     assert Capability.BATCH_FALLBACK not in runner.capabilities
     assert Capability.FMU_EXPORT not in runner.capabilities
     assert runner.produced_datasets == frozenset({DatasetType.TIME_SERIES})

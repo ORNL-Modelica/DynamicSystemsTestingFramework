@@ -37,6 +37,7 @@ from ..base import (
     VariableResult,
     resolve_variable_patterns,
 )
+from ..common.proc_output import decode_output
 
 logger = logging.getLogger(__name__)
 
@@ -161,12 +162,18 @@ class PythonRunner(SimulatorRunner):
                 cwd=test_dir,
                 capture_output=True,
                 text=True,
+                # review 2026-07-06 (finding 75): pin utf-8 + replace so a
+                # non-ASCII traceback can't crash decoding on cp1252 hosts.
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
             elapsed = time.monotonic() - wall_start
-            stdout_path.write_text(exc.stdout or "", encoding="utf-8")
-            stderr_path.write_text(exc.stderr or "", encoding="utf-8")
+            # review 2026-07-06 (finding 23): TimeoutExpired.stdout/.stderr are
+            # bytes even with text=True — decode_output handles None/bytes/str.
+            stdout_path.write_text(decode_output(exc.stdout), encoding="utf-8")
+            stderr_path.write_text(decode_output(exc.stderr), encoding="utf-8")
             msg = f"Python execution exceeded {timeout}s timeout"
             if self.progress:
                 self.progress.on_finish(
@@ -191,9 +198,12 @@ class PythonRunner(SimulatorRunner):
         stderr_path.write_text(proc.stderr or "", encoding="utf-8")
 
         if proc.returncode != 0:
+            # review 2026-07-06 (finding 75): whitespace-only stderr made
+            # splitlines()[-1] IndexError inside the failure handler.
+            stderr_lines = (proc.stderr or "").strip().splitlines()
             err = _read_failure_error(result_path) or (
-                (proc.stderr or "").strip().splitlines()[-1]
-                if proc.stderr
+                stderr_lines[-1]
+                if stderr_lines
                 else f"python returned {proc.returncode}"
             )
             if self.progress:
@@ -264,7 +274,22 @@ class PythonRunner(SimulatorRunner):
                 statistics=run_result.statistics if run_result else None,
             )
 
-        time_arr = np.asarray(payload.get("time", []), dtype=np.float64)
+        # review 2026-07-06 (finding 29): non-numeric values in a result
+        # payload (user simulate() returning strings, tampered file) must
+        # fail THIS test, not raise through read_results and abort the whole
+        # read phase for every test. The driver validates too; this is the
+        # runner-side belt.
+        try:
+            time_arr = np.asarray(payload.get("time", []), dtype=np.float64)
+        except (ValueError, TypeError) as exc:
+            return TestResult(
+                model_id=test.model_id,
+                success=False,
+                error_message=(
+                    f"Non-numeric 'time' array in {result_path.name}: {exc}"
+                ),
+                statistics=run_result.statistics if run_result else None,
+            )
         available = list(payload.get("variables", {}).keys())
         requested = resolve_variable_patterns(test.variable_patterns, available)
         if not requested:
@@ -273,16 +298,30 @@ class PythonRunner(SimulatorRunner):
             elif not test.variable_patterns:
                 requested = []
 
-        variables = [
-            VariableResult(
-                index=i + 1,
-                name=name,
-                time=time_arr,
-                values=np.asarray(payload["variables"][name], dtype=np.float64),
+        variables = []
+        for i, name in enumerate(requested):
+            if name not in payload["variables"]:
+                continue
+            try:
+                values = np.asarray(payload["variables"][name], dtype=np.float64)
+            except (ValueError, TypeError) as exc:
+                return TestResult(
+                    model_id=test.model_id,
+                    success=False,
+                    error_message=(
+                        f"Variable '{name}' has non-numeric values in "
+                        f"{result_path.name}: {exc}"
+                    ),
+                    statistics=run_result.statistics if run_result else None,
+                )
+            variables.append(
+                VariableResult(
+                    index=i + 1,
+                    name=name,
+                    time=time_arr,
+                    values=values,
+                )
             )
-            for i, name in enumerate(requested)
-            if name in payload["variables"]
-        ]
 
         return TestResult(
             model_id=test.model_id,

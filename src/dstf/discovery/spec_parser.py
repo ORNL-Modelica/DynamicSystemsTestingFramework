@@ -9,6 +9,60 @@ from .test_registry import TestModel
 logger = logging.getLogger(__name__)
 
 
+def _spec_number(section: dict, key: str, conv, model_id: str):
+    """Return ``conv(section[key])``, or None when absent / null / invalid.
+
+    review 2026-07-06 finding 16: JSON ``null`` means "not set" (this
+    module's own docstring shows ``"output_interval": null``) — it must not
+    crash discovery with ``float(None)``. A non-numeric value logs a warning
+    naming the model + field and is skipped so one bad entry doesn't abort
+    the whole run.
+    """
+    if key not in section:
+        return None
+    raw = section[key]
+    if raw is None:
+        return None
+    try:
+        return conv(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Test '%s': ignoring non-numeric simulation/comparison value %s=%r",
+            model_id,
+            key,
+            raw,
+        )
+        return None
+
+
+def _entries(data: dict) -> list:
+    """The spec's tests list, tolerating a missing/malformed key."""
+    tests = data.get("tests")
+    return tests if isinstance(tests, list) else []
+
+
+def _find_entry_indices(data: dict, model_id: str) -> list[int]:
+    """Indices of dict entries matching ``model_id``, warning on duplicates.
+
+    review 2026-07-06 finding 51: duplicate model entries — the FIRST wins
+    everywhere (discovery, patch_apply, and these edit helpers), each site
+    warning so the user notices the dead entries.
+    """
+    matches = [
+        i
+        for i, e in enumerate(_entries(data))
+        if isinstance(e, dict) and e.get("model") == model_id
+    ]
+    if len(matches) > 1:
+        logger.warning(
+            "test_spec has %d duplicate entries for model '%s'; "
+            "using the first — remove the duplicates",
+            len(matches),
+            model_id,
+        )
+    return matches
+
+
 def parse_test_spec(spec_path: Path) -> list[TestModel]:
     """Parse a test_spec.json file into TestModel entries.
 
@@ -57,7 +111,14 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
         return []
 
     tests = []
-    for entry in tests_data:
+    for i, entry in enumerate(tests_data):
+        # review 2026-07-06 finding 53: a non-dict entry must be skipped with
+        # a warning, not crash discovery with AttributeError.
+        if not isinstance(entry, dict):
+            logger.warning(
+                "Skipping non-dict entry tests[%d] in %s: %r", i, spec_path, entry
+            )
+            continue
         model_id = entry.get("model")
         if not model_id:
             logger.warning("Skipping spec entry with no 'model' field")
@@ -110,25 +171,53 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
             source="spec",
         )
 
-        # Simulation settings
+        # Simulation settings. Fields the spec actually sets are stamped with
+        # provenance "test_spec" here (review 2026-07-06 finding 57) — unset
+        # fields stay None and get provenance "default" when
+        # TestModel.finalize_defaults runs at the end of discover_tests.
         sim = entry.get("simulation", {})
-        if "stop_time" in sim:
-            test.stop_time = float(sim["stop_time"])
-        if "tolerance" in sim:
-            test.tolerance = float(sim["tolerance"])
-        if "method" in sim:
+        if not isinstance(sim, dict):
+            logger.warning(
+                "Test '%s': 'simulation' must be an object, got %r — ignored",
+                model_id,
+                sim,
+            )
+            sim = {}
+        stop_time = _spec_number(sim, "stop_time", float, model_id)
+        if stop_time is not None:
+            test.stop_time = stop_time
+            test.field_sources["stop_time"] = "test_spec"
+        tolerance = _spec_number(sim, "tolerance", float, model_id)
+        if tolerance is not None:
+            test.tolerance = tolerance
+            test.field_sources["tolerance"] = "test_spec"
+        if sim.get("method") is not None:
             test.method = str(sim["method"])
-        if "number_of_intervals" in sim:
-            test.number_of_intervals = int(sim["number_of_intervals"])
-        if "output_interval" in sim:
-            test.output_interval = float(sim["output_interval"])
-        if "timeout" in sim:
-            test.timeout = int(sim["timeout"])
+            test.field_sources["method"] = "test_spec"
+        n_intervals = _spec_number(sim, "number_of_intervals", int, model_id)
+        if n_intervals is not None:
+            test.number_of_intervals = n_intervals
+            test.field_sources["number_of_intervals"] = "test_spec"
+        output_interval = _spec_number(sim, "output_interval", float, model_id)
+        if output_interval is not None:
+            test.output_interval = output_interval
+            test.field_sources["output_interval"] = "test_spec"
+        timeout = _spec_number(sim, "timeout", int, model_id)
+        if timeout is not None:
+            test.timeout = timeout
 
         # Comparison settings
         comp = entry.get("comparison", {})
-        if "tolerance" in comp:
-            test.comparison_tolerance = float(comp["tolerance"])
+        if not isinstance(comp, dict):
+            logger.warning(
+                "Test '%s': 'comparison' must be an object, got %r — ignored",
+                model_id,
+                comp,
+            )
+            comp = {}
+        comparison_tolerance = _spec_number(comp, "tolerance", float, model_id)
+        if comparison_tolerance is not None:
+            test.comparison_tolerance = comparison_tolerance
         if "variable_overrides" in comp:
             test.variable_overrides = comp["variable_overrides"]
 
@@ -170,21 +259,21 @@ def add_to_test_spec(
         if "tests" not in data:
             data["tests"] = []
 
-    # Check if model already exists
-    existing_idx = None
-    for i, entry in enumerate(data["tests"]):
-        if entry.get("model") == model_id:
-            existing_idx = i
-            break
+    # Check if model already exists (non-dict entries skipped — finding 53;
+    # duplicates: first wins with a warning — finding 51)
+    matches = _find_entry_indices(data, model_id)
 
-    new_entry = {"model": model_id, "variables": variables}
-
-    if existing_idx is not None:
+    if matches:
         if not overwrite:
             return False
-        data["tests"][existing_idx] = new_entry
+        # review 2026-07-06 finding 52: overwrite replaces only
+        # model + variables — hand-authored comparison/simulation/metrics
+        # (and any unknown keys) must survive.
+        entry = data["tests"][matches[0]]
+        entry["model"] = model_id
+        entry["variables"] = variables
     else:
-        data["tests"].append(new_entry)
+        data["tests"].append({"model": model_id, "variables": variables})
 
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -206,17 +295,15 @@ def update_test_variables(
         if "tests" not in data:
             data["tests"] = []
 
-    # Find existing entry
-    found = False
-    for entry in data["tests"]:
-        if entry.get("model") == model_id:
-            existing = set(entry.get("variables", []))
-            existing.update(additional_patterns)
-            entry["variables"] = sorted(existing)
-            found = True
-            break
-
-    if not found:
+    # Find existing entry (non-dict entries skipped, duplicates warned —
+    # review 2026-07-06 findings 53/51)
+    matches = _find_entry_indices(data, model_id)
+    if matches:
+        entry = data["tests"][matches[0]]
+        existing = set(entry.get("variables", []))
+        existing.update(additional_patterns)
+        entry["variables"] = sorted(existing)
+    else:
         data["tests"].append(
             {
                 "model": model_id,
@@ -255,14 +342,33 @@ def update_test_comparison(
     comparison = update_data.get("comparison", {})
 
     # Find existing entry and merge comparison, preserve everything else
-    found = False
-    for entry in data["tests"]:
-        if entry.get("model") == model_id:
-            entry["comparison"] = comparison
-            found = True
-            break
-
-    if not found:
+    # (review 2026-07-06 finding 54: this used to REPLACE the section
+    # wholesale, dropping variable_overrides — merge per the docstring:
+    # keys present in update_data win, other keys survive, and
+    # variable_overrides merge per-variable).
+    matches = _find_entry_indices(data, model_id)
+    if matches:
+        entry = data["tests"][matches[0]]
+        existing_comp = entry.get("comparison")
+        if not isinstance(existing_comp, dict):
+            existing_comp = {}
+        entry["comparison"] = existing_comp
+        for key, value in comparison.items():
+            if key == "variable_overrides" and isinstance(value, dict):
+                overrides = existing_comp.setdefault("variable_overrides", {})
+                if not isinstance(overrides, dict):
+                    overrides = {}
+                    existing_comp["variable_overrides"] = overrides
+                for var, override in value.items():
+                    if isinstance(override, dict) and isinstance(
+                        overrides.get(var), dict
+                    ):
+                        overrides[var].update(override)
+                    else:
+                        overrides[var] = override
+            else:
+                existing_comp[key] = value
+    else:
         data["tests"].append(
             {
                 "model": model_id,

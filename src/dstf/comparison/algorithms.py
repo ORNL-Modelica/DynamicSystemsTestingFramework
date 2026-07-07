@@ -83,6 +83,30 @@ def _dedup_time_series(
     return time[mask], values[mask]
 
 
+def _no_data_failure(mode: str, reason: str) -> VariableComparison:
+    """Hard-fail sentinel for comparisons with nothing to compare.
+
+    Review 2026-07-06 (Theme 1): an empty reference slice, empty actual
+    trajectory, or a window that excludes every sample must FAIL with a
+    diagnostic — a vacuous pass here would let a dead simulation or a
+    mis-specified window report green in a regression framework.
+    """
+    return VariableComparison(
+        index=0,
+        name="",
+        passed=False,
+        nrmse=float("inf"),
+        rmse=float("inf"),
+        signal_range=0.0,
+        max_abs_error=float("inf"),
+        max_abs_error_time=0.0,
+        reference_final=float("nan"),
+        actual_final=float("nan"),
+        mode=mode,
+        diagnostics={"error": reason},
+    )
+
+
 def _compare_trajectories(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -110,6 +134,15 @@ def _compare_trajectories(
     - RMSE directly for constant signals (range ~ 0)
     - Pass if NRMSE < tolerance
     """
+    if len(ref_time) == 0:
+        return _no_data_failure(
+            "nrmse", "no reference samples to compare (empty baseline or window)"
+        )
+    if len(act_time) == 0:
+        return _no_data_failure(
+            "nrmse", "no actual samples to compare (empty trajectory or window)"
+        )
+
     # Detect event boundaries in reference time
     boundaries = _find_event_boundaries(ref_time)
     segments = _split_segments(ref_time, ref_values, boundaries)
@@ -153,17 +186,11 @@ def _compare_trajectories(
         all_ref_times.append(seg_time)
 
     if not all_abs_errors:
-        return VariableComparison(
-            index=0,
-            name="",
-            passed=True,
-            nrmse=0.0,
-            rmse=0.0,
-            signal_range=0.0,
-            max_abs_error=0.0,
-            max_abs_error_time=0.0,
-            reference_final=0.0,
-            actual_final=0.0,
+        # All segments empty — can happen with pathological duplicate-only
+        # time vectors. Same rule as the guards above: nothing compared
+        # means FAIL, not a vacuous pass (review 2026-07-06, finding 1).
+        return _no_data_failure(
+            "nrmse", "no comparable samples after event segmentation"
         )
 
     # Concatenate all segment errors for aggregate metrics
@@ -350,6 +377,12 @@ def _compare_points(
     failed = 0
     worst_delta = 0.0
     worst_t = 0.0
+    # Review 2026-07-06 (finding 2): a checkpoint the simulation never
+    # reached — or whose ref-relative target lies beyond the stored
+    # baseline — FAILS instead of being skipped. Skipping let truncated
+    # simulations pass their tail checkpoints. Reasons are collected for
+    # the report.
+    point_failures: list[dict] = []
     for point in points:
         t = point.get("time")
         t = trace_end if t is None else float(t)
@@ -359,9 +392,22 @@ def _compare_points(
             target = float(explicit_value)
         else:
             if len(ref_time) == 0:
-                # Ref-relative point with no reference data is skipped.
+                # Ref-relative point with no reference data cannot score.
                 # The ``is_baseline_free`` invariant should prevent us
-                # from getting here, but we guard anyway.
+                # from getting here, but if it happens it is a failure,
+                # not a skip.
+                failed += 1
+                point_failures.append(
+                    {"time": t, "reason": "no reference data for ref-relative point"}
+                )
+                continue
+            if t < float(ref_time[0]) or t > float(ref_time[-1]):
+                # np.interp would silently clamp to the nearest endpoint,
+                # scoring against a target the baseline never defined.
+                failed += 1
+                point_failures.append(
+                    {"time": t, "reason": "checkpoint time outside reference range"}
+                )
                 continue
             target = float(np.interp(t, ref_time, ref_values))
         # Resolve tolerance + mode.
@@ -369,14 +415,23 @@ def _compare_points(
         per_tol = float(per_tol) if per_tol is not None else float(tolerance)
         mode = point.get("tolerance_mode", "abs")
         y_limit = per_tol * abs(target) if mode == "rel" else per_tol
-        if len(act_time) == 0:
-            continue
         x_tol = point.get("time_tolerance", 0)
         x_tol = float(x_tol) if x_tol is not None else 0.0
+        if len(act_time) == 0:
+            failed += 1
+            point_failures.append(
+                {"time": t, "reason": "no actual samples (empty trajectory)"}
+            )
+            continue
         t_lo = max(t - x_tol, float(act_time[0]))
         t_hi = min(t + x_tol, float(act_time[-1]))
         if t_hi < t_lo:
-            # Fully clipped (time outside trajectory + box doesn't reach in).
+            # Time box entirely outside the actual trajectory — the
+            # simulation never reached this checkpoint.
+            failed += 1
+            point_failures.append(
+                {"time": t, "reason": "checkpoint time outside actual trajectory"}
+            )
             continue
         delta, t_at_min = _min_delta_in_box(
             act_time,
@@ -391,6 +446,9 @@ def _compare_points(
             worst_t = t_at_min
         if delta > y_limit:
             failed += 1
+            point_failures.append(
+                {"time": t, "reason": f"delta {delta:.6g} exceeds limit {y_limit:.6g}"}
+            )
 
     passed = scored > 0 and failed == 0
     return VariableComparison(
@@ -410,6 +468,7 @@ def _compare_points(
             "failed_points": failed,
             "worst_delta": worst_delta,
             "worst_time": worst_t,
+            "point_failures": point_failures,
         },
     )
 
@@ -485,6 +544,14 @@ def _compare_tube(
     A point passes if: tube_lower <= actual <= tube_upper.
     The test passes if ALL points are inside the tube (strict).
     """
+    if len(ref_time) == 0:
+        return _no_data_failure(
+            "tube", "no reference samples to compare (empty baseline or window)"
+        )
+    if len(act_time) == 0:
+        return _no_data_failure(
+            "tube", "no actual samples to compare (empty trajectory or window)"
+        )
     act_interp = np.interp(ref_time, act_time, act_values)
 
     tube_width_mode = tube_config.get("tube_width_mode")
@@ -609,6 +676,10 @@ def _compare_range(
     This gives the MetricTree a leaf type that works without a stored
     baseline (the "is this variable always within safe limits" pattern).
     """
+    if len(act_values) == 0:
+        return _no_data_failure(
+            "range", "no actual samples to check (empty trajectory or window)"
+        )
     above = (
         np.maximum(act_values - max_value, 0.0)
         if max_value is not None
@@ -733,29 +804,34 @@ def _compare_event_timing(
     counts_match = declared_count == actual_count
     max_delta = 0.0
     delta_at = 0.0
-    # Track which actual events have been claimed so we don't double-match.
+    # Optimal 1-D interval matching (review 2026-07-06, greedy-stealing
+    # finding): each declared event defines a window [time-tol, time+tol].
+    # Sorting windows by right endpoint and assigning each the SMALLEST
+    # unclaimed actual event inside it is a maximum matching for interval
+    # graphs — a feasible assignment is never missed because an earlier
+    # declared event claimed the wrong actual event.
     claimed = [False] * actual_count
     all_matched = True
+    windows = []
     for e in declared_events:
         target = float(e["time"])
         _tol = e.get("tolerance")
         tol = float(_tol if _tol is not None else time_tolerance)
-        # Find nearest unclaimed actual event within tolerance.
+        windows.append((target - tol, target + tol, target))
+    windows.sort(key=lambda w: w[1])
+    for lo, hi, target in windows:
         best_idx = -1
-        best_d = float("inf")
         for j, at in enumerate(act_events):
-            if claimed[j]:
-                continue
-            d = abs(at - target)
-            if d <= tol and d < best_d:
-                best_d = d
+            if not claimed[j] and lo <= at <= hi:
                 best_idx = j
+                break  # act_events is time-sorted → first hit is smallest
         if best_idx < 0:
             all_matched = False
             continue
         claimed[best_idx] = True
-        if best_d > max_delta:
-            max_delta = best_d
+        d = abs(act_events[best_idx] - target)
+        if d > max_delta:
+            max_delta = d
             delta_at = target
 
     passed = all_matched and (counts_match or not count_must_match)
@@ -854,6 +930,9 @@ def _find_strongest_peak_in_window(
     spectrum: np.ndarray,
     lo: float,
     hi: float,
+    *,
+    exclude: set[float] | None = None,
+    min_amplitude: float = 0.0,
 ) -> tuple[float, float] | None:
     """Return the ``(freq, amplitude)`` of the strongest local maximum in
     ``[lo, hi]``, or ``None`` if no local maximum exists in that window.
@@ -861,6 +940,11 @@ def _find_strongest_peak_in_window(
     Used by the declared-peaks pass/fail path. A peak qualifies if it's a
     local max (greater than both neighbors) AND its frequency sits in
     ``[lo, hi]``. Returning ``None`` means the leaf fails that peak.
+
+    ``exclude`` holds bin frequencies already claimed by other declared
+    peaks; ``min_amplitude`` filters spectral noise (review 2026-07-06:
+    without both, two declared peaks could match the same actual peak,
+    or a claimed-peak fix would just re-match machine-noise sidelobes).
     """
     if len(freqs) < 3:
         return None
@@ -870,6 +954,12 @@ def _find_strongest_peak_in_window(
         spectrum[interior] > spectrum[interior + 1]
     )
     candidate_idx = interior[in_window & is_local_max]
+    if min_amplitude > 0.0:
+        candidate_idx = candidate_idx[spectrum[candidate_idx] >= min_amplitude]
+    if exclude:
+        candidate_idx = np.array(
+            [i for i in candidate_idx if float(freqs[i]) not in exclude], dtype=int
+        )
     if len(candidate_idx) == 0:
         return None
     best = candidate_idx[int(np.argmax(spectrum[candidate_idx]))]
@@ -879,6 +969,12 @@ def _find_strongest_peak_in_window(
 # Cap spectrum samples embedded into the HTML report's interactive.js —
 # fine enough to see peaks, small enough to not bloat the payload.
 _SPECTRUM_EMBED_CAP = 512
+
+# A local maximum below this fraction of the spectrum's global max is
+# treated as noise, not a matchable mode. Declared peaks describe
+# significant resonances; letting near-zero FFT sidelobes satisfy a
+# declared peak defeats the check (see _compare_dominant_frequency).
+_PEAK_MIN_REL_AMPLITUDE = 0.01
 
 
 def _compare_dominant_frequency(
@@ -1015,6 +1111,18 @@ def _compare_dominant_frequency(
     all_passed = True
     max_rel_err = 0.0
     max_delta = 0.0
+    # Each declared peak must claim a DISTINCT actual peak (review
+    # 2026-07-06: without claiming, a two-resonance system regressing to
+    # one resonance passed both declared peaks against the single
+    # surviving peak). The amplitude floor keeps the claiming from
+    # falling through to machine-noise sidelobes: a "peak" below
+    # _PEAK_MIN_REL_AMPLITUDE of the spectrum maximum is not a mode.
+    claimed_hz: set[float] = set()
+    amp_floor = (
+        _PEAK_MIN_REL_AMPLITUDE * float(np.max(act_spectrum))
+        if len(act_spectrum)
+        else 0.0
+    )
     for declared in peaks:
         f_decl = float(declared.get("freq", 0.0))
         tol = float(declared.get("tolerance", 0.01))
@@ -1024,7 +1132,16 @@ def _compare_dominant_frequency(
         else:  # "abs"
             lo, hi = f_decl - tol, f_decl + tol
 
-        match = _find_strongest_peak_in_window(act_freqs, act_spectrum, lo, hi)
+        match = _find_strongest_peak_in_window(
+            act_freqs,
+            act_spectrum,
+            lo,
+            hi,
+            exclude=claimed_hz,
+            min_amplitude=amp_floor,
+        )
+        if match is not None:
+            claimed_hz.add(match[0])
         if match is None:
             paired.append(
                 {

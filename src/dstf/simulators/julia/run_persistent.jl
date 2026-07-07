@@ -40,10 +40,30 @@ function handle_request(req)
 
     t_start = time()
     try
+        # review 2026-07-06 (finding 27): in this long-lived process a user
+        # file that fails to (re)define build_mtk_system would silently reuse
+        # the PREVIOUS test's definition. Poison the binding with a sentinel
+        # method BEFORE every include — if the file doesn't replace it, the
+        # invokelatest below raises this error instead of simulating the
+        # wrong model (covers bad-file-after-good-file, not just the first).
+        Main.eval(:(build_mtk_system() = error(
+            "user file did not define build_mtk_system() — stale-definition guard"
+        )))
         include(user_file)
         nt = Base.invokelatest(build_mtk_system)
         prob = ModelingToolkit.ODEProblem(nt.sys, nt.u0, (0.0, stop_time), nt.ps)
         sol = OrdinaryDiffEq.solve(prob, OrdinaryDiffEq.Tsit5(); reltol=tol)
+
+        # review 2026-07-06 (finding 4): mirror run_test.jl — a diverged /
+        # truncated solve must not be reported (or baselined) as success.
+        if !OrdinaryDiffEq.SciMLBase.successful_retcode(sol)
+            error("solver did not succeed: retcode=" * string(sol.retcode))
+        end
+        if isempty(sol.t) || abs(sol.t[end] - stop_time) > 1e-6 * max(abs(stop_time), 1.0)
+            t_end = isempty(sol.t) ? "none" : string(sol.t[end])
+            error("solve stopped at t=" * t_end * " before stop_time=" *
+                  string(stop_time) * " (retcode=" * string(sol.retcode) * ")")
+        end
 
         # Collect unknowns AND observables — see run_test.jl for rationale.
         unk = ModelingToolkit.unknowns(nt.sys)

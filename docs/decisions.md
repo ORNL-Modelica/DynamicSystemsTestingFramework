@@ -2451,3 +2451,74 @@ artifact pattern (`dslog.txt`) that had been silently excluding a
 committed test fixture, so its test could never have passed on a fresh
 clone (→ negation + track the fixture). Both genuine bugs CI surfaced
 that local runs could not.
+
+## D89 — Full-review fix wave (2026-07-06): 75 findings, 7 batches, verified on TRANSFORM
+
+A whole-codebase review (7 parallel subsystem reviewers + adversarial
+spot-verification; method + findings in `CODE_REVIEW_2026-07-06.md`)
+surfaced ~75 real bugs the 768-test suite didn't cover. All fixed the
+same day in 7 batches, each red-first tested:
+
+- **A — verdict integrity**: "nothing to compare" (empty window/baseline/
+  trajectory) now hard-FAILS everywhere (was vacuous PASS or crash);
+  clipped/out-of-range checkpoints fail; explicit tolerance 0 honored
+  (`is not None` chains); failing baseline-free tests count as FAILED on
+  every surface (console exit code, JUnit, dashboard badge, `--rerun
+  failed`) via new `TestComparison.evaluated`; ref↔actual pairing by name
+  (index fallback for unnamed only); declared FFT peaks claim distinct
+  actual peaks above a 1% amplitude floor; declared-event matching is
+  optimal interval assignment; unknown mode strings raise.
+- **B — config safety**: malformed testing.json raises `ConfigError`
+  (was: silently OVERWRITTEN with defaults); documented `tolerance` key
+  now actually read; relative work_dir resolves against the config dir.
+- **C — discovery**: spec-over-annotation merge uses None-sentinels +
+  `finalize_defaults()` (a spec value equal to the default no longer
+  loses to the annotation); comment/string-stripped .mo parsing with
+  balanced-paren experiment capture; RFC 6902 add-at-index inserts;
+  duplicate spec entries: first-wins + warning everywhere.
+- **D — worker pool/backends**: restart-exhausted workers exit the
+  dispatch loop (was: drained the queue fail-marking everything); worker
+  raises recorded, not thread-killing; Dymola batch timeout tree-kills +
+  salvages completed tests (was: could hang forever on dymosim);
+  `TimeoutExpired.stdout` bytes decoded; Julia drivers check retcode +
+  final time (diverged solves no longer become baselines) + stale-
+  definition poison guard; mat_reader refuses binNormal, guards col-0.
+- **E — reference store**: `_downsample` never drops first/last/event
+  samples (was: silently truncated baseline tails); atomic writes
+  everywhere; O_EXCL ID allocation (cross-process safe); cleanup removes
+  orphaned role dirs; role names validated; NaN/Inf baselines rejected.
+- **F — reporter round-trip**: CLI verdicts authoritative on load with a
+  decimation banner (was: silently re-scored from LTTB data); deep-copied
+  editor state so in-place tube/point edits actually export; `'abs'`
+  token unified; JS scorers now mirror Python exactly (node-executed
+  parity harness, 10 → 34 cases); `spec-update` materializes implicit
+  trees so per-leaf patches on flat-override tests round-trip;
+  comparison_data.json is strict JSON.
+- **G — CLI**: `-i`/`--rerun` categories validated pre-run; `--accept`
+  exit code honest + scoped to the rerun subset; `-i`+`--accept`
+  mutually exclusive; `fnmatchcase`; dot-boundary `--package`; atomic +
+  quarantining batch manifest; schema export wires mode `$defs` via
+  if/then `$ref`s. Bonus find: `-i` had been crashing outright on a
+  stale `dymola.mat_reader` import since the common/ refactor.
+
+Suite: 768 → **985 passed** (+217 regression tests in
+`tests/test_review_fixes_*.py`), ruff + tiered mypy clean. Verified
+end-to-end on TRANSFORM-Library (native Linux Dymola 2026x, 4 persistent
+workers, from WSL): 326/326 simulated, 321/326 compare-passed, exit 1.
+The 5 failures are real model drift vs old-Dymola baselines (structural
+warnings corroborate: IRIS nonlinear 3→11 / events 13→16, pumps events
+20→7) — owner adjudication needed, not framework bugs.
+
+**Next steps** (recorded 2026-07-06):
+1. Adjudicate the 5 TRANSFORM failures: `dstf --config
+   TRANSFORM-UnitTests/ReferenceResults/testing.json run --rerun failed
+   --report` (or `-i failed`) → re-accept or investigate.
+2. Execute the .jl driver changes on a Julia-equipped machine — retcode
+   guard, poison sentinel, json_escape are text-pinned only here.
+3. Run the Playwright suite on a browser-equipped machine —
+   interactive.js changed substantially (node parity harness covers the
+   scorers, not the editors' DOM behavior).
+4. Delete the buildingspy leftovers in TRANSFORM-UnitTests per its
+   TODO-cleanup.md once confirmed unused.
+5. Consider `jsonschema` as a dev extra to un-gate the schema-validation
+   test; consider a Windows-partition run to exercise `<os>=windows`.

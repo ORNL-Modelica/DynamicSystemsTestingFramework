@@ -26,10 +26,16 @@ def generate_junit_report(
     for suite_name in sorted(suites.keys()):
         suite_comps = suites[suite_name]
         n_tests = len(suite_comps)
-        n_failures = sum(
-            1 for c in suite_comps if not c.passed and c.sim_success and c.has_reference
-        )
+        # Failing tests count as failures even without a baseline
+        # (baseline-free modes carry a real verdict) — review 2026-07-06,
+        # finding 5: they were emitted as <skipped> with failures="0".
+        n_failures = sum(1 for c in suite_comps if not c.passed and c.sim_success)
         n_errors = sum(1 for c in suite_comps if not c.sim_success)
+        n_skipped = sum(
+            1
+            for c in suite_comps
+            if c.sim_success and c.passed and not c.has_reference and not c.evaluated
+        )
 
         suite_elem = ET.SubElement(
             root,
@@ -39,6 +45,7 @@ def generate_junit_report(
                 "tests": str(n_tests),
                 "failures": str(n_failures),
                 "errors": str(n_errors),
+                "skipped": str(n_skipped),
             },
         )
 
@@ -61,8 +68,10 @@ def generate_junit_report(
                         "type": "SimulationError",
                     },
                 )
-            elif not comp.has_reference:
-                # No baseline — not an error, just a skipped test
+            elif comp.passed and not comp.has_reference and not comp.evaluated:
+                # No baseline AND nothing evaluated — a genuinely skipped
+                # test. Failing baseline-free tests fall through to the
+                # <failure> branch below.
                 ET.SubElement(
                     tc,
                     "skipped",

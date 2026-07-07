@@ -76,8 +76,10 @@ def test_should_review_failed_skips_passing():
 
 
 def test_should_review_failed_skips_no_baseline():
-    """A test with no baseline is 'no-baseline', not 'failed'."""
-    comp = FakeComparison(passed=False, has_reference=False)
+    """An unevaluated fresh test (production NO_REF shape: passed=True)
+    is 'no-baseline', not 'failed'. Failing baseline-free tests DO match
+    'failed' — covered in test_review_fixes_verdict.py."""
+    comp = FakeComparison(passed=True, has_reference=False)
     assert _should_review(comp, {"failed"}) is False
 
 

@@ -104,6 +104,7 @@ class TestOpenModelicaRunnerUnit:
             n_vars=0,
             variable_patterns=["x"],
             stop_time=1.0,
+            tolerance=1e-6,  # explicit: direct construction bypasses discovery defaults (review 2026-07-06, finding 13)
         )
 
         # Synthetic omc stdout: a well-formed SimulationResult record.
@@ -124,7 +125,8 @@ class TestOpenModelicaRunnerUnit:
 
         # The runner checks that result_res.mat EXISTS in the test dir before
         # declaring success, so create a placeholder.
-        def fake_run(cmd, cwd, capture_output, text, timeout):
+        def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
+            # **kwargs absorbs encoding/errors (review 2026-07-06, finding 75)
             (Path(cwd) / "result_res.mat").write_bytes(b"\x00")
             captured_call["cmd"] = list(cmd)
             captured_call["cwd"] = cwd
@@ -181,6 +183,7 @@ class TestOpenModelicaRunnerUnit:
             n_vars=0,
             variable_patterns=[],
             stop_time=1.0,
+            tolerance=1e-6,  # explicit: direct construction bypasses discovery defaults (review 2026-07-06, finding 13)
         )
         stdout_synth = (
             "Error: Class Lib.DoesNotExist not found.\n"
@@ -198,7 +201,8 @@ class TestOpenModelicaRunnerUnit:
             "end SimulationResult;\n"
         )
 
-        def fake_run(cmd, cwd, capture_output, text, timeout):
+        def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
+            # **kwargs absorbs encoding/errors (review 2026-07-06, finding 75)
             return CompletedProcess(
                 args=cmd, returncode=0, stdout=stdout_synth, stderr=""
             )
@@ -299,6 +303,7 @@ class TestOpenModelicaIntegration:
             n_vars=0,
             variable_patterns=["inertia1.phi"],
             stop_time=0.5,
+            tolerance=1e-6,  # explicit: direct construction bypasses discovery defaults (review 2026-07-06, finding 13)
             number_of_intervals=20,
             source="spec",
         )
@@ -335,6 +340,7 @@ class TestOpenModelicaIntegration:
             n_vars=0,
             variable_patterns=[],
             stop_time=1.0,
+            tolerance=1e-6,  # explicit: direct construction bypasses discovery defaults (review 2026-07-06, finding 13)
             source="spec",
         )
         rr = runner.run_single_test(test, test_key="t", index=1, total=1)

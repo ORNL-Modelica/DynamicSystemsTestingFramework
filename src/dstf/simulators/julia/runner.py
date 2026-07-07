@@ -36,6 +36,7 @@ from ..base import (
     VariableResult,
     resolve_variable_patterns,
 )
+from ..common.proc_output import decode_output
 
 logger = logging.getLogger(__name__)
 
@@ -174,12 +175,18 @@ class JuliaRunner(SimulatorRunner):
                 cwd=test_dir,
                 capture_output=True,
                 text=True,
+                # review 2026-07-06 (finding 75): pin utf-8 + replace so a
+                # UTF-8 Julia backtrace can't crash decoding on cp1252 hosts.
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
             elapsed = time.monotonic() - wall_start
-            stdout_path.write_text(exc.stdout or "", encoding="utf-8")
-            stderr_path.write_text(exc.stderr or "", encoding="utf-8")
+            # review 2026-07-06 (finding 23): TimeoutExpired.stdout/.stderr are
+            # bytes even with text=True — decode_output handles None/bytes/str.
+            stdout_path.write_text(decode_output(exc.stdout), encoding="utf-8")
+            stderr_path.write_text(decode_output(exc.stderr), encoding="utf-8")
             msg = f"Julia simulation exceeded {timeout}s timeout"
             if self.progress:
                 self.progress.on_finish(
@@ -207,9 +214,12 @@ class JuliaRunner(SimulatorRunner):
             # The driver writes a structured failure JSON on exceptions; if
             # present, we surface its 'error' message. Otherwise fall back
             # to the raw stderr tail.
+            # review 2026-07-06 (finding 75): whitespace-only stderr made
+            # splitlines()[-1] IndexError inside the failure handler.
+            stderr_lines = (proc.stderr or "").strip().splitlines()
             err = _read_failure_error(result_path) or (
-                (proc.stderr or "").strip().splitlines()[-1]
-                if proc.stderr
+                stderr_lines[-1]
+                if stderr_lines
                 else f"julia returned {proc.returncode}"
             )
             if self.progress:

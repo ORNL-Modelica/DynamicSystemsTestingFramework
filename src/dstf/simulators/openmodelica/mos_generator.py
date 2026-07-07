@@ -30,10 +30,21 @@ def classify_dependency(entry: str) -> tuple[str, str]:
     Returns (``"loadModel"``, name) for bare library names (no path
     separators, doesn't look like a file), or (``"loadFile"``,
     absolute_path) for path-like entries (resolves to a package.mo).
+
+    Bare names reach this function unresolved because Config's dependency
+    absolutization skips them — review 2026-07-06 finding 17: absolutizing
+    "Modelica" produced ``loadFile()`` on a nonexistent path and suppressed
+    the MSL auto-injection.
     """
-    # Path-like if it contains a separator, ends in .mo, or resolves to an
-    # existing file.
-    looks_like_path = "/" in entry or "\\" in entry or entry.endswith(".mo")
+    # Path-like if it contains a separator, ends in .mo, or starts with a
+    # relative-path/home prefix (mirrors config._dependency_looks_like_path).
+    looks_like_path = (
+        "/" in entry
+        or "\\" in entry
+        or entry.endswith(".mo")
+        or entry.startswith(".")
+        or entry.startswith("~")
+    )
     if not looks_like_path:
         return ("loadModel", entry)
 

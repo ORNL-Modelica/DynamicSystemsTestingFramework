@@ -1,5 +1,6 @@
 """Orchestrate test discovery: find test models and merge parameters."""
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -15,6 +16,8 @@ from .recognizer import RecognizerResult, get_recognizers
 if TYPE_CHECKING:
     from ..comparison.tree_spec import SpecNode
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class TestModel:
@@ -29,9 +32,18 @@ class TestModel:
     x_raw: str = ""
     x_reference: list[float] | None = None
     error_expected: float = 1e-6
-    stop_time: float = DEFAULT_STOP_TIME
-    tolerance: float = DEFAULT_TOLERANCE
-    method: str = DEFAULT_METHOD
+    # Simulation fields default to None = "not set by any source" so the
+    # spec-over-annotation merge can use `is not None` as the explicitly-set
+    # sentinel, exactly like number_of_intervals / output_interval — review
+    # 2026-07-06 finding 13: equality-with-default sentinels silently dropped
+    # a spec value that happened to equal the framework default. During
+    # discovery they may be None; ``finalize_defaults()`` (called at the end
+    # of discover_tests) resolves them to the framework defaults so
+    # downstream consumers (runners, reporters, storage) only ever see
+    # concrete values.
+    stop_time: float | None = None
+    tolerance: float | None = None
+    method: str | None = None
     number_of_intervals: int | None = None
     output_interval: float | None = None
     result_file: str = ""
@@ -73,6 +85,32 @@ class TestModel:
 
     # Where this test was defined: "unit_tests", "spec", "both"
     source: str = "unit_tests"
+
+    def finalize_defaults(self) -> "TestModel":
+        """Resolve unset (None) simulation fields to framework defaults.
+
+        Called once, at the END of discover_tests — review 2026-07-06
+        finding 13: only the merge logic distinguishes "unset" (None) from
+        "explicitly the default value"; everything downstream sees concrete
+        values. Also stamps provenance "default" for the five sim fields no
+        source set (finding 57: spec-only tests used to claim "test_spec"
+        provenance for pure framework defaults).
+        """
+        if self.stop_time is None:
+            self.stop_time = DEFAULT_STOP_TIME
+        if self.tolerance is None:
+            self.tolerance = DEFAULT_TOLERANCE
+        if self.method is None:
+            self.method = DEFAULT_METHOD
+        for fname in (
+            "stop_time",
+            "tolerance",
+            "method",
+            "number_of_intervals",
+            "output_interval",
+        ):
+            self.field_sources.setdefault(fname, "default")
+        return self
 
 
 def _build_test_model_from_recognizer_results(
@@ -192,6 +230,17 @@ def discover_tests(config: Config) -> list[TestModel]:
         from .spec_parser import parse_test_spec
 
         for test in parse_test_spec(config.test_spec_file):
+            # review 2026-07-06 finding 51: duplicate model entries — FIRST
+            # wins (matching patch_apply / the spec edit helpers), with a
+            # warning. Last-wins here made applied patches silently
+            # ineffective (they edit the first entry).
+            if test.model_id in spec_tests:
+                logger.warning(
+                    "test_spec has duplicate entries for model '%s'; "
+                    "using the first — remove the duplicates",
+                    test.model_id,
+                )
+                continue
             spec_tests[test.model_id] = test
 
     # Step 3: Merge — union by model_id
@@ -201,19 +250,25 @@ def discover_tests(config: Config) -> list[TestModel]:
     for model_id, test in ut_tests.items():
         merged[model_id] = test
 
-    # Merge spec tests
+    # Merge spec tests. Two-layer contract (docs/usage.md): the model's
+    # experiment(...) annotation provides defaults; any field set in
+    # simulation.* overrides it. DECISION (review 2026-07-06 finding 13):
+    # "explicitly set in the spec" is `is not None` for ALL five sim fields —
+    # never equality with a framework default, which silently dropped a spec
+    # value like stop_time=1.0 against experiment(StopTime=100). Framework
+    # defaults are applied only afterwards, by finalize_defaults() below.
     for model_id, spec_test in spec_tests.items():
         if model_id in merged:
             existing = merged[model_id]
             existing.variable_patterns = spec_test.variable_patterns
             existing.source = "both"
-            if spec_test.stop_time != DEFAULT_STOP_TIME:
+            if spec_test.stop_time is not None:
                 existing.stop_time = spec_test.stop_time
                 existing.field_sources["stop_time"] = "test_spec"
-            if spec_test.tolerance != DEFAULT_TOLERANCE:
+            if spec_test.tolerance is not None:
                 existing.tolerance = spec_test.tolerance
                 existing.field_sources["tolerance"] = "test_spec"
-            if spec_test.method != DEFAULT_METHOD:
+            if spec_test.method is not None:
                 existing.method = spec_test.method
                 existing.field_sources["method"] = "test_spec"
             if spec_test.number_of_intervals is not None:
@@ -231,16 +286,15 @@ def discover_tests(config: Config) -> list[TestModel]:
             if spec_test.metric_tree_spec is not None:
                 existing.metric_tree_spec = spec_test.metric_tree_spec
         else:
-            for fname in (
-                "stop_time",
-                "tolerance",
-                "method",
-                "number_of_intervals",
-                "output_interval",
-            ):
-                spec_test.field_sources.setdefault(fname, "test_spec")
+            # Provenance for spec-set fields was stamped by parse_test_spec;
+            # unset fields get "default" in finalize_defaults — review
+            # 2026-07-06 finding 57 (the old blanket "test_spec" stamp lied).
             merged[model_id] = spec_test
 
-    # Sort by model_id for consistent ordering
+    # Sort by model_id for consistent ordering; resolve remaining None sim
+    # fields to framework defaults so downstream code never sees None
+    # (finding 13 decision: apply-defaults-at-end-of-merge).
     tests = sorted(merged.values(), key=lambda t: t.model_id)
+    for test in tests:
+        test.finalize_defaults()
     return tests

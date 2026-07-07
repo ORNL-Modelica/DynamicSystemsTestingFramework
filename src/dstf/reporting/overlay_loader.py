@@ -349,9 +349,11 @@ def _resolve_companion_path(store, model_id: str, companion) -> Path | None:
         if co_dir is None or not companion.data_file:
             return None
         return co_dir / companion.data_file
-    # External: path is stored verbatim as a string. Relative paths are
-    # resolved against the ref_dir so companions can be committed as
-    # repo-relative pointers.
+    # External: review 2026-07-06 (finding 34) — add_companion now resolves
+    # paths against the CWD at registration time and stores them absolute,
+    # so absolute paths are the normal case. A relative path here is a
+    # legacy entry (registered before the fix): keep the historical
+    # ref_dir-relative resolution for those, and say so.
     if not companion.path:
         return None
     p = Path(companion.path)
@@ -360,6 +362,13 @@ def _resolve_companion_path(store, model_id: str, companion) -> Path | None:
     ref_dir = getattr(store, "ref_dir", None)
     if ref_dir is None:
         return p
+    logger.info(
+        "companion %r has a legacy relative path %r — resolving against "
+        "the reference dir %s (new registrations store absolute paths)",
+        companion.name,
+        companion.path,
+        ref_dir,
+    )
     return (Path(ref_dir) / p).resolve()
 
 
