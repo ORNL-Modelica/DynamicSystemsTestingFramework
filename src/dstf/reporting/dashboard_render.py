@@ -192,6 +192,10 @@ def format_run_metadata(meta: dict | None) -> dict | None:
             )
         except Exception:  # pragma: no cover — defensive against bad epoch
             generated_str = None
+    # Surface the Modelica Standard Library version prominently (the second
+    # drift suspect); keep the full library_versions dict for completeness.
+    lib_versions = meta.get("library_versions") or {}
+    msl = lib_versions.get("Modelica") if isinstance(lib_versions, dict) else None
     return {
         "label": label,
         "backend": meta.get("backend"),
@@ -199,6 +203,8 @@ def format_run_metadata(meta: dict | None) -> dict | None:
         "tool_version": meta.get("tool_version"),
         "dstf_version": meta.get("dstf_version"),
         "generated_str": generated_str,
+        "msl": msl,
+        "library_versions": lib_versions or None,
     }
 
 

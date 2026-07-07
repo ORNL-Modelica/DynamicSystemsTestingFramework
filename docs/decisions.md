@@ -2560,6 +2560,21 @@ abort a run**:
   (`_safe_tool_version` / `_safe_probe_worker_version`) so a failure
   degrades to the configured label, never an aborted run.
 
+**Library (MSL) versions.** The user's *second* drift suspect was an MSL
+bump, so the persistent template also captures loaded-library versions
+alongside the tool version via a parallel `_probe_library_versions`
+hook, stamped into `RunMetadata.library_versions` (e.g. `{"Modelica":
+"4.1.0"}`) and rendered as a `· MSL 4.1.0` segment in the banner.
+OpenModelica uses `getVersion(Modelica)` (after an idempotent
+`loadModel(Modelica)`). Dymola exposes **no** scripting getter for a
+library's version (probed empirically: `getVersion`/`getModelicaVersion`/
+`DefaultModelicaVersion`/`getDependentLibraries` all fail or return names
+only, and `getClassText` omits the top-level `version=` annotation) — so
+we read the `DYMOLA` install-root env var it sets on both platforms
+(`getEnvironmentVariable("DYMOLA")` → `[root, exists]`) and glob
+`$DYMOLA/Modelica/Library/Modelica X.Y.Z/`, picking the newest by
+dotted-int. Best-effort → `{}` on any failure.
+
 **Surfaces.** Banner on `dashboard.html` (under the title) + per-test
 `interactive.html` (threaded through `generate_report_suite` →
 `_read_run_metadata` → `generate_comparison_plots`), plus a console
@@ -2573,16 +2588,25 @@ structural-hash snapshot stable).
 **Verified end-to-end (live, this box):** Python →
 `Python 3.12.12`; Dymola 2026x → `Dymola Version 2026x, 2025-10-10`
 (the exact string the 2025x/2026x differential needs — includes build
-date); OpenModelica → `OpenModelica 1.27.0~dev.beta.3-2-g3d4d539`
-(confirms the getVersion wire-unwrap). Julia/FMPy probes are unit-tested
-at the parse layer only (no Julia executor / FMUs here). Suite 985 →
-**1019 passed** / 23 skipped (+34 tests across `test_run_metadata`,
-`test_tool_version`, and additions to `test_progress_reporter` /
-`test_dashboard_render` / `test_review_fixes_reporter`), ruff + mypy
-clean, coverage 77.9% (floor 66).
+date) **+ MSL 4.1.0**; OpenModelica → `OpenModelica
+1.27.0~dev.beta.3-2-g3d4d539` **+ MSL 4.1.0** (confirms both the
+getVersion wire-unwrap and getVersion(Modelica)). The full 5-test
+TRANSFORM drift set was re-run under 2026x here (reference half of the
+differential): all 5 FAIL vs the old baselines, banner stamped `Dymola
+(Dymola Version 2026x, 2025-10-10) · MSL 4.1.0`, rasterized + eyeballed.
+Pumps + MSLFluid drift 0.5–0.7 NRMSE; the two IRIS models drift 0.035 by
+the *identical* amount (one shared component). Julia/FMPy probes are
+unit-tested at the parse layer only (no Julia executor / FMUs here).
+Suite 985 → **1033 passed** / 23 skipped (+48 tests across
+`test_run_metadata`, `test_tool_version`, and additions to
+`test_progress_reporter` / `test_dashboard_render` /
+`test_review_fixes_reporter`), ruff + mypy clean, coverage ~78% (floor
+66).
 
 **Still open** (does not block the feature): the 5 TRANSFORM drift
-failures still await adjudication — now the differential can be run:
-re-simulate them under Dymola 2025x Refresh 1 and compare the two
-version-stamped reports to separate a Dymola/MSL-version effect from a
-genuine model change.
+failures still await adjudication — the differential is now set up: the
+2026x reference half is captured + version-stamped here; run the 2025x
+Refresh 1 half on Windows and compare the two `Dymola`/`MSL`-stamped
+reports. If 2025x ships the same MSL and passes → 2026x-version effect;
+if MSL differs → the MSL bump is the likely cause; if both fail with the
+same MSL → a model change predating both.

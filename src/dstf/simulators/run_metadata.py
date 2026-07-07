@@ -58,6 +58,11 @@ class RunMetadata:
     ``dstf_version``  the DSTF package version that ran the tests.
     ``generated_at``  epoch seconds when the run started; ``None`` only in
                       synthetic contexts (tests) that don't stamp a time.
+    ``library_versions`` loaded-library versions the backend could report,
+                      e.g. ``{"Modelica": "4.1.0"}`` — the Modelica Standard
+                      Library version is the second drift suspect (a solver's
+                      MSL can change between tool releases). ``None`` when the
+                      backend reports none.
     """
 
     backend: str
@@ -66,6 +71,7 @@ class RunMetadata:
     tool_version: str | None = None
     dstf_version: str = ""
     generated_at: float | None = None
+    library_versions: dict | None = None
 
     @classmethod
     def from_config(
@@ -73,6 +79,7 @@ class RunMetadata:
         config: Config,
         tool_version: str | None = None,
         now: float | None = None,
+        library_versions: dict | None = None,
     ) -> RunMetadata:
         """Build from a resolved ``Config``.
 
@@ -86,6 +93,7 @@ class RunMetadata:
             tool_version=tool_version,
             dstf_version=_dstf_version(),
             generated_at=time.time() if now is None else now,
+            library_versions=library_versions or None,
         )
 
     def as_dict(self) -> dict:

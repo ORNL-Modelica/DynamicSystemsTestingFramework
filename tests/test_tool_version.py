@@ -120,6 +120,84 @@ class _ConcretePersistent(PersistentRunnerBase):
         raise NotImplementedError
 
 
+class _FakeDymolaLibs:
+    """Fake DymolaInterface for library_versions(): ExecuteCommand returns the
+    [root, exists] pair for the DYMOLA env-var query."""
+
+    def __init__(self, root):
+        self._root = root
+
+    def ExecuteCommand(self, cmd):
+        assert "DYMOLA" in cmd
+        return [self._root, True] if self._root is not None else ["", False]
+
+
+def _dymola_worker_libs(root):
+    from dstf.simulators.dymola.persistent_runner import DymolaWorker
+
+    w = DymolaWorker.__new__(DymolaWorker)
+    w.dymola = _FakeDymolaLibs(root)
+    return w
+
+
+class TestDymolaLibraryVersions:
+    def test_globs_bundled_msl_from_dymola_root(self, tmp_path):
+        # Lay out $DYMOLA/Modelica/Library/Modelica 4.0.0
+        (tmp_path / "Modelica" / "Library" / "Modelica 4.0.0").mkdir(parents=True)
+        assert _dymola_worker_libs(str(tmp_path)).library_versions() == (
+            {"Modelica": "4.0.0"}
+        )
+
+    def test_picks_newest_when_multiple_bundled(self, tmp_path):
+        for v in ("3.2.3", "4.0.0", "4.1.0"):
+            (tmp_path / "Modelica" / "Library" / f"Modelica {v}").mkdir(parents=True)
+        # newest by dotted-int, not string order (so 4.1.0 > 4.0.0 > 3.2.3)
+        assert _dymola_worker_libs(str(tmp_path)).library_versions() == (
+            {"Modelica": "4.1.0"}
+        )
+
+    def test_empty_when_no_bundle(self, tmp_path):
+        assert _dymola_worker_libs(str(tmp_path)).library_versions() == {}
+
+    def test_empty_when_env_unset(self):
+        assert _dymola_worker_libs(None).library_versions() == {}
+
+    def test_empty_when_interface_absent(self):
+        from dstf.simulators.dymola.persistent_runner import DymolaWorker
+
+        w = DymolaWorker.__new__(DymolaWorker)
+        w.dymola = None
+        assert w.library_versions() == {}
+
+
+class TestOpenModelicaLibraryVersions:
+    def _worker(self, getversion_raw):
+        from dstf.simulators.openmodelica.persistent_runner import OpenModelicaWorker
+
+        class _Sess:
+            def sendExpression(self, expr, parsed=False):
+                if expr.startswith("loadModel"):
+                    return "true\n"
+                return getversion_raw
+
+        w = OpenModelicaWorker.__new__(OpenModelicaWorker)
+        w.session = _Sess()
+        return w
+
+    def test_unwraps_msl_version(self):
+        assert self._worker('"4.1.0"\n').library_versions() == {"Modelica": "4.1.0"}
+
+    def test_empty_when_unloaded(self):
+        assert self._worker('""\n').library_versions() == {}
+
+    def test_empty_when_session_absent(self):
+        from dstf.simulators.openmodelica.persistent_runner import OpenModelicaWorker
+
+        w = OpenModelicaWorker.__new__(OpenModelicaWorker)
+        w.session = None
+        assert w.library_versions() == {}
+
+
 class TestProbeOrchestration:
     def test_base_probe_returns_none(self):
         base = _ConcretePersistent.__new__(_ConcretePersistent)
@@ -154,6 +232,29 @@ class TestProbeOrchestration:
         runner = PersistentDymolaRunner.__new__(PersistentDymolaRunner)
         workers = [SimpleNamespace(tool_version=lambda: None)]
         assert runner._probe_worker_version(workers) is None
+
+    def test_base_library_probe_returns_none(self):
+        base = _ConcretePersistent.__new__(_ConcretePersistent)
+        assert base._probe_library_versions([SimpleNamespace()]) is None
+
+    def test_safe_library_probe_guards(self):
+        class Boom(_ConcretePersistent):
+            def _probe_library_versions(self, live_workers):
+                raise RuntimeError("nope")
+
+        assert (
+            Boom.__new__(Boom)._safe_probe_library_versions([SimpleNamespace()]) is None
+        )
+
+    def test_dymola_library_probe_first_nonempty_wins(self):
+        from dstf.simulators.dymola.persistent_runner import PersistentDymolaRunner
+
+        runner = PersistentDymolaRunner.__new__(PersistentDymolaRunner)
+        workers = [
+            SimpleNamespace(library_versions=lambda: {}),
+            SimpleNamespace(library_versions=lambda: {"Modelica": "4.1.0"}),
+        ]
+        assert runner._probe_library_versions(workers) == {"Modelica": "4.1.0"}
 
 
 # ---------------------------------------------------------------------------

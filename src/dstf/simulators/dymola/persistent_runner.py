@@ -745,6 +745,48 @@ class DymolaWorker(Worker):
             return val.strip()
         return None
 
+    def library_versions(self) -> dict:
+        """Loaded Modelica Standard Library version.
+
+        Dymola exposes no scripting getter for a library's version, but it
+        bundles MSL on disk under ``$DYMOLA/Modelica/Library/Modelica X.Y.Z/``
+        and sets the ``DYMOLA`` env var (both platforms). We read that env var
+        via the interface, then glob the bundle dir for the version. Best-
+        effort → ``{}`` on any failure. The install path is local to the
+        machine running dstf, so the glob is a plain filesystem read.
+        """
+        if self.dymola is None:
+            return {}
+        try:
+            raw = self.dymola.ExecuteCommand(
+                'Modelica.Utilities.System.getEnvironmentVariable("DYMOLA")'
+            )
+        except Exception:
+            return {}
+        # getEnvironmentVariable returns [value, exists] over the interface.
+        root = raw[0] if isinstance(raw, (list, tuple)) and raw else raw
+        if not isinstance(root, str) or not root.strip():
+            return {}
+        import glob
+        import os
+        import re
+
+        vers = sorted(
+            {
+                m.group(1)
+                for p in glob.glob(
+                    os.path.join(root.strip(), "Modelica", "Library", "Modelica *")
+                )
+                if (m := re.search(r"Modelica ([\d][\d.]*)", os.path.basename(p)))
+            }
+        )
+        # If several MSL versions are bundled, report the newest (Dymola's
+        # default load) — max by dotted-int tuple, not string order.
+        if not vers:
+            return {}
+        best = max(vers, key=lambda v: tuple(int(x) for x in v.split(".")))
+        return {"Modelica": best}
+
 
 # ---------------------------------------------------------------------------
 
@@ -803,6 +845,13 @@ class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
             v = w.tool_version()
             if v:
                 return v
+        return None
+
+    def _probe_library_versions(self, live_workers: list) -> dict | None:
+        for w in live_workers:
+            libs = w.library_versions()
+            if libs:
+                return libs
         return None
 
     def export_fmu(self, test: TestModel, output_dir: Path) -> Path:

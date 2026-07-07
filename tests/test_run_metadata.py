@@ -55,6 +55,7 @@ class TestAsDict:
             tool_version="1.11.2",
             dstf_version="0.1.0",
             generated_at=42.0,
+            library_versions={"Modelica": "4.1.0"},
         )
         d = meta.as_dict()
         assert d == {
@@ -64,7 +65,22 @@ class TestAsDict:
             "tool_version": "1.11.2",
             "dstf_version": "0.1.0",
             "generated_at": 42.0,
+            "library_versions": {"Modelica": "4.1.0"},
         }
+
+    def test_library_versions_defaults_none_and_flows_via_from_config(self):
+        assert RunMetadata.from_config(_stub_config()).library_versions is None
+        meta = RunMetadata.from_config(
+            _stub_config(), library_versions={"Modelica": "4.0.0"}
+        )
+        assert meta.library_versions == {"Modelica": "4.0.0"}
+        # empty dict normalizes to None (no library line rendered)
+        assert (
+            RunMetadata.from_config(
+                _stub_config(), library_versions={}
+            ).library_versions
+            is None
+        )
 
     def test_json_serializable(self):
         import json

@@ -320,6 +320,25 @@ class OpenModelicaWorker(Worker):
         s = s.replace('\\"', '"').replace("\\\\", "\\").strip()
         return s or None
 
+    def library_versions(self) -> dict:
+        """Loaded Modelica Standard Library version via ``getVersion(Modelica)``.
+
+        Ensures MSL is loaded first (``loadModel(Modelica)`` is idempotent) so
+        the probe is robust even before any test has pulled it in. Wire format
+        is a quoted string. Best-effort → ``{}`` on failure."""
+        if self.session is None:
+            return {}
+        try:
+            self.session.sendExpression("loadModel(Modelica)", parsed=False)
+            raw = self.session.sendExpression("getVersion(Modelica)", parsed=False)
+        except Exception:
+            return {}
+        s = (raw or "").strip()
+        if len(s) >= 2 and s.startswith('"') and s.endswith('"'):
+            s = s[1:-1]
+        s = s.strip()
+        return {"Modelica": s} if s else {}
+
     def run_test(
         self,
         test: TestModel,
@@ -682,4 +701,11 @@ class PersistentOpenModelicaRunner(PersistentRunnerBase, OpenModelicaRunner):
             v = w.tool_version()
             if v:
                 return v
+        return None
+
+    def _probe_library_versions(self, live_workers: list) -> dict | None:
+        for w in live_workers:
+            libs = w.library_versions()
+            if libs:
+                return libs
         return None

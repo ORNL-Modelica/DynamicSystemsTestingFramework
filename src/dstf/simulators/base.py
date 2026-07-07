@@ -558,7 +558,11 @@ class SimulatorRunner(ABC):
             logger.debug("tool-version probe failed", exc_info=True)
             return None
 
-    def _build_run_metadata(self, tool_version: str | None = None) -> dict:
+    def _build_run_metadata(
+        self,
+        tool_version: str | None = None,
+        library_versions: dict | None = None,
+    ) -> dict:
         """Assemble the run-provenance dict handed to ``ProgressReporter``.
 
         Kept as a helper (not inlined) so both the batch and persistent
@@ -566,7 +570,11 @@ class SimulatorRunner(ABC):
         """
         from .run_metadata import RunMetadata
 
-        return RunMetadata.from_config(self.config, tool_version=tool_version).as_dict()
+        return RunMetadata.from_config(
+            self.config,
+            tool_version=tool_version,
+            library_versions=library_versions,
+        ).as_dict()
 
     def export_fmu(self, test: TestModel, output_dir: "Path") -> "Path":
         """Export the test's model as an FMU into ``output_dir``.
@@ -931,6 +939,25 @@ class PersistentRunnerBase(SimulatorRunner):
             logger.debug("worker version probe failed", exc_info=True)
             return None
 
+    def _probe_library_versions(self, live_workers: list["Worker"]) -> dict | None:
+        """Best-effort loaded-library versions (e.g. ``{"Modelica": "4.1.0"}``)
+        asked of a live worker. Default ``None``; Modelica backends override
+        (Dymola reads the bundled MSL under ``$DYMOLA``; omc uses
+        ``getVersion(Modelica)``). The MSL version is the second drift suspect
+        after the tool version itself. MUST NOT raise — wrapped by
+        :meth:`_safe_probe_library_versions`."""
+        return None
+
+    def _safe_probe_library_versions(self, live_workers: list["Worker"]) -> dict | None:
+        """Guarded :meth:`_probe_library_versions`."""
+        if not live_workers:
+            return None
+        try:
+            return self._probe_library_versions(live_workers)
+        except Exception:
+            logger.debug("worker library-version probe failed", exc_info=True)
+            return None
+
     # ------------------------------------------------------------------
     # The template
     # ------------------------------------------------------------------
@@ -1017,12 +1044,19 @@ class PersistentRunnerBase(SimulatorRunner):
             file=sys.stderr,
         )
 
-        # Now that a worker is live, ask it for the real tool version and stamp
-        # it into the run provenance. Best-effort — a failed probe leaves the
-        # configured simulator label as the shown version.
+        # Now that a worker is live, ask it for the real tool version and the
+        # loaded library versions (e.g. MSL) and stamp them into the run
+        # provenance. Best-effort — a failed probe leaves the configured
+        # simulator label as the shown version and omits the library line.
+        updates: dict = {}
         version = self._safe_probe_worker_version(live_workers)
-        if version and self.progress is not None:
-            self.progress.update_metadata(tool_version=version)
+        if version:
+            updates["tool_version"] = version
+        libs = self._safe_probe_library_versions(live_workers)
+        if libs:
+            updates["library_versions"] = libs
+        if updates and self.progress is not None:
+            self.progress.update_metadata(**updates)
 
         results = self._dispatch_with_restart(live_workers, test_items, total)
 

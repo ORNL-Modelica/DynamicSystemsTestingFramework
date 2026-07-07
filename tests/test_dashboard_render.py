@@ -160,6 +160,44 @@ def test_run_metadata_flows_to_context(tmp_path):
     assert rm["generated_str"] and "20" in rm["generated_str"]
 
 
+def test_run_metadata_surfaces_msl_from_library_versions(tmp_path):
+    snapshot = {
+        "total": 1,
+        "counts": {},
+        "tests": [],
+        "updated_at": 0.0,
+        "metadata": {
+            "backend": "Dymola",
+            "simulator": "Dymola 2026x",
+            "os": "linux",
+            "library_versions": {"Modelica": "4.1.0"},
+        },
+    }
+    _write_status_json(tmp_path, snapshot)
+    ctx = build_dashboard_context(tmp_path, mode="final")
+    assert ctx["run_metadata"]["msl"] == "4.1.0"
+
+
+def test_render_final_shows_msl_in_banner(tmp_path):
+    snapshot = {
+        "total": 1,
+        "elapsed": 1.0,
+        "counts": {"passed": 1},
+        "tests": [],
+        "updated_at": 0.0,
+        "metadata": {
+            "backend": "Dymola",
+            "simulator": "Dymola 2026x",
+            "os": "linux",
+            "library_versions": {"Modelica": "4.0.0"},
+        },
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_final(tmp_path)
+    out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "MSL 4.0.0" in out
+
+
 def test_run_metadata_absent_is_none(tmp_path):
     snapshot = {"total": 0, "counts": {}, "tests": [], "updated_at": 0.0}
     _write_status_json(tmp_path, snapshot)
