@@ -148,31 +148,76 @@ def _parse_float_list(raw: str) -> list[float] | None:
         return None
 
 
-_MO_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
-_MO_LINE_COMMENT = re.compile(r"//[^\n]*")
-_MO_BLOCK_COMMENT = re.compile(r"/\*[\s\S]*?\*/")
-
-
-def _blank_match(m: "re.Match[str]") -> str:
-    """Replace a match with same-length whitespace (newlines preserved)."""
-    return "".join(c if c == "\n" else " " for c in m.group(0))
-
-
 def _strip_modelica_literals(text: str) -> str:
-    """Strip comments + string literals from Modelica source.
+    """Blank comments + string literals from Modelica source (1:1, newlines
+    kept, so offsets into the result index the original — findings 48/50 slice
+    the original for string-valued params the blanking removed).
 
-    Prevents false-positive matches where prose inside an
-    ``annotation(Documentation(...))`` block mentions a keyword like
-    ``UnitTests(...)`` or ``extends Foo``. Replacement is 1:1 (each stripped
-    char becomes a space, newlines kept) so OFFSETS INTO THE STRIPPED TEXT
-    ARE VALID IN THE ORIGINAL — review 2026-07-06 findings 48/50 rely on
-    scanning the stripped text and slicing the original (e.g. to recover
-    string-valued parameters that the stripping blanked).
+    Single-pass lexer, NOT a sequence of independent regexes. The old 3-pass
+    approach (block-comment, then line-comment, then string) was unsound
+    because the three languages interleave: a ``//`` inside a string literal
+    (``"modelica://..."`` — ubiquitous in Modelica annotation URIs) was eaten
+    by the line-comment pass, blanking the string's closing quote and
+    desyncing every following string. On TRANSFORM's InverseParameterization
+    that swallowed the real ``experiment(StopTime=10)`` — StopTime silently
+    defaulted to 1.0 and the sim ran a tenth of its length (regression found
+    2026-07-07). A stateful scan is the only correct model: at each position we
+    are in exactly one of code / string / line-comment / block-comment, and
+    the delimiters that matter depend on which.
     """
-    out = _MO_BLOCK_COMMENT.sub(_blank_match, text)
-    out = _MO_LINE_COMMENT.sub(_blank_match, out)
-    out = _MO_STRING.sub(_blank_match, out)
-    return out
+    out: list[str] = []
+    i, n = 0, len(text)
+    NORMAL, STRING, LINE, BLOCK = 0, 1, 2, 3
+    state = NORMAL
+    while i < n:
+        c = text[i]
+        two = text[i : i + 2]
+        if state == NORMAL:
+            if two == "//":
+                out.append("  ")
+                i += 2
+                state = LINE
+            elif two == "/*":
+                out.append("  ")
+                i += 2
+                state = BLOCK
+            elif c == '"':
+                out.append(" ")
+                i += 1
+                state = STRING
+            else:
+                out.append(c)
+                i += 1
+        elif state == STRING:
+            if c == "\\" and i + 1 < n:
+                # escape: blank the backslash + the escaped char together, so a
+                # ``\"`` inside the string is NOT read as the closing quote.
+                out.append("  " if text[i + 1] != "\n" else " \n")
+                i += 2
+            elif c == '"':
+                out.append(" ")
+                i += 1
+                state = NORMAL
+            else:
+                out.append("\n" if c == "\n" else " ")
+                i += 1
+        elif state == LINE:
+            if c == "\n":
+                out.append("\n")
+                i += 1
+                state = NORMAL
+            else:
+                out.append(" ")
+                i += 1
+        else:  # BLOCK  (Modelica block comments do not nest)
+            if two == "*/":
+                out.append("  ")
+                i += 2
+                state = NORMAL
+            else:
+                out.append("\n" if c == "\n" else " ")
+                i += 1
+    return "".join(out)
 
 
 def _parse_unit_tests(text: str) -> UnitTestInfo | None:

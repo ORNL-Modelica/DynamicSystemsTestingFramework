@@ -2610,3 +2610,43 @@ Refresh 1 half on Windows and compare the two `Dymola`/`MSL`-stamped
 reports. If 2025x ships the same MSL and passes → 2026x-version effect;
 if MSL differs → the MSL bump is the likely cause; if both fail with the
 same MSL → a model change predating both.
+
+
+## D91 — `.mo` literal-stripper rewritten single-pass: `//` inside a string desynced parsing (2026-07-07)
+
+Surfaced while adjudicating the D90 TRANSFORM drift differential.
+`MSLFluid.InverseParameterization` "drifted" — but the real cause was
+that DSTF simulated it to **1.0 s instead of its `experiment(StopTime=10)`**
+(the editor ran the full 10 s). Root cause: `_strip_modelica_literals`
+(`discovery/mo_parser.py`) blanked comments + strings as **three
+independent regex passes in sequence** — block-comment, then line-comment
+(`//[^\n]*`), then string. That is unsound: the languages interleave. The
+`__Dymola_Commands(... ="modelica://…/plotResults.mos")` URL sits **before**
+the experiment annotation, and the line-comment pass ate the `//` inside
+that string literal, blanking the string's closing quote. Every following
+string then parsed off-by-one-quote, so the real `experiment(StopTime=10)`
+fell inside a phantom string and was blanked → `_find_experiment_span`
+returned `None` → StopTime silently defaulted to 1.0.
+
+This is a D89 (finding 48) follow-on: that change *introduced* the
+stripper to stop comments shadowing annotations, but the 3-pass form was
+context-blind. Fixed by replacing it with a **single-pass lexer** that
+tracks one of code / string / line-comment / block-comment at each
+position and blanks accordingly (escaped `\"` handled; Modelica block
+comments don't nest). Same offset-preserving contract (1:1 length,
+newlines kept) that findings 48/50 rely on.
+
+Impact beyond the one test: **any** model with a `//` inside a string
+literal (ubiquitous — `modelica://` URIs in `__Dymola_Commands`,
+`Documentation`, `img src`) *before* an annotation the scanner needs
+(experiment / UnitTests / within) could be silently mis-parsed. The
+symptom is quiet (truncated sim, default StopTime), so other TRANSFORM
+tests may have been affected — a full re-run is the way to tell.
+
+Verified: 3 red-first regression tests (`//`-in-string, `"`-in-comment,
+`/*`-in-string) in `TestFinding48StrippedParsing`; the real
+InverseParameterization.mo now parses StopTime=10.0; end-to-end under
+Dymola 2026x it runs the full 10 s and **PASSES** (worst NRMSE 2.4e-07,
+was a spurious FAIL). Suite 1033 → **1036**, discovery suite 116/116,
+ruff + mypy clean. So of the 5 D90 "drifts", InverseParameterization was
+never real — it was this parser bug.

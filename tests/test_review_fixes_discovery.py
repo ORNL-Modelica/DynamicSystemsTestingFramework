@@ -255,8 +255,7 @@ class TestFinding16NullAndGarbageSpecValues:
         assert tests[0].stop_time is None  # skipped, not aborted
         assert tests[0].tolerance == 1e-5  # sibling field still parsed
         assert any(
-            "MyLib.A" in r.message and "stop_time" in r.message
-            for r in caplog.records
+            "MyLib.A" in r.message and "stop_time" in r.message for r in caplog.records
         )
 
 
@@ -298,9 +297,7 @@ class TestFinding53NonDictEntries:
             spec_path, {"model": "MyLib.A", "comparison": {"tolerance": 0.1}}
         )
         data = json.loads(spec_path.read_text(encoding="utf-8"))
-        by_model = {
-            e["model"]: e for e in data["tests"] if isinstance(e, dict)
-        }
+        by_model = {e["model"]: e for e in data["tests"] if isinstance(e, dict)}
         assert set(by_model) == {"MyLib.A", "MyLib.B"}
         assert by_model["MyLib.A"]["comparison"]["tolerance"] == 0.1
 
@@ -627,7 +624,9 @@ class TestFinding48StrippedParsing:
     def test_experiment_with_nested_parens_is_fully_parsed(self):
         """[^)]* used to truncate at the first ')' — StopTime after a nested
         group was silently dropped."""
-        text = "annotation(experiment(__Dymola_Tuning(a=1), StopTime=10, Tolerance=1e-5));"
+        text = (
+            "annotation(experiment(__Dymola_Tuning(a=1), StopTime=10, Tolerance=1e-5));"
+        )
         info = _parse_experiment(text)
         assert info is not None
         assert info.stop_time == 10.0
@@ -639,6 +638,56 @@ class TestFinding48StrippedParsing:
         text = 'annotation(experiment(StopTime=2, __Dymola_Algorithm="Esdirk45a"));'
         info = _parse_experiment(text)
         assert info.method == "Esdirk45a"
+
+    def test_double_slash_inside_string_does_not_desync_stripper(self):
+        """Regression (2026-07-07): a ``//`` inside a string literal (e.g. a
+        ``modelica://`` URI) must not be treated as a line comment. The old
+        3-pass stripper ran the line-comment regex before the string regex, so
+        the ``//`` in the URL blanked the string's closing quote and desynced
+        every following string — swallowing the real ``experiment()`` and
+        defaulting StopTime to 1.0. Mirrors TRANSFORM's InverseParameterization,
+        where a ``__Dymola_Commands`` URL precedes the experiment annotation."""
+        text = (
+            "within MyLib;\n"
+            "model Foo\n"
+            "  Real x;\n"
+            "  annotation(\n"
+            "    __Dymola_Commands(file(ensureSimulated=true)="
+            '"modelica://MyLib/Resources/Scripts/plotResults.mos" "plot"),\n'
+            "    experiment(StopTime=10, Interval=0.001),\n"
+            '    Documentation(info="<html><img src=\\"modelica://x.png\\"></html>"));\n'
+            "end Foo;\n"
+        )
+        info = _parse_experiment(text)
+        assert info is not None
+        assert info.stop_time == 10.0  # was None → default 1.0 before the fix
+        assert info.output_interval == 0.001
+
+    def test_quote_inside_line_comment_does_not_open_string(self):
+        """The dual hazard: a ``"`` inside a real ``//`` comment must not start
+        a string that swallows following code."""
+        text = (
+            "model Foo\n"
+            '  // a stray quote " here must not open a string\n'
+            "  annotation(experiment(StopTime=7));\n"
+            "end Foo;\n"
+        )
+        info = _parse_experiment(text)
+        assert info is not None
+        assert info.stop_time == 7.0
+
+    def test_block_comment_close_inside_string_is_ignored(self):
+        """A ``*/`` inside a string must not end a block comment that was never
+        opened; and a ``/*`` inside a string must not start one."""
+        text = (
+            "model Foo\n"
+            '  parameter String s = "not /* a comment */ really";\n'
+            "  annotation(experiment(StopTime=3));\n"
+            "end Foo;\n"
+        )
+        info = _parse_experiment(text)
+        assert info is not None
+        assert info.stop_time == 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -665,8 +714,7 @@ class TestFinding56NumericGarbage:
         assert result.experiment.stop_time is None  # skipped, NOT 0.5
         assert result.experiment.tolerance == 1e-6  # sibling still parsed
         assert any(
-            "StopTime" in r.message or "stop_time" in r.message
-            for r in caplog.records
+            "StopTime" in r.message or "stop_time" in r.message for r in caplog.records
         )
         assert any("Foo.mo" in r.message for r in caplog.records)
 
