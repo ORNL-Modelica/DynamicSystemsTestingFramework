@@ -2650,3 +2650,32 @@ Dymola 2026x it runs the full 10 s and **PASSES** (worst NRMSE 2.4e-07,
 was a spurious FAIL). Suite 1033 → **1036**, discovery suite 116/116,
 ruff + mypy clean. So of the 5 D90 "drifts", InverseParameterization was
 never real — it was this parser bug.
+
+
+## D92 — Sim-failure without a baseline was masked as NO_REF (2026-07-07)
+
+Surfaced running OpenModelica over TRANSFORM (D90 curiosity run): 91/329
+models fail to simulate under OM, but the dashboard showed `SIM_FAIL 0 /
+NO_REF 94` — hiding every failure as "no baseline." Root cause in
+`compare_all` (`comparison/comparator.py`): the no-baseline short-circuit
+(`reference is None → NO_REF, passed=True`) ran BEFORE any sim-success
+check. The `result is None` guard above it only catches backends that OMIT
+a failed test (Dymola: no `.mat` → absent from results). OpenModelica's
+`read_result` instead returns a `success=False` TestResult for a missing
+`.mat`, which is NOT None — so it fell through to the no-baseline branch
+and every OM compile/solver failure on a model without an OM baseline was
+mislabeled NO_REF with `passed=True`.
+
+Fix: add a `if not result.success:` → SIM_FAIL branch in `compare_all`
+BEFORE the no-baseline short-circuit (mirrors `compare_test`'s own line-152
+guard, which the short-circuit was pre-empting). +3 red-first tests
+(fail-no-baseline → SIM_FAIL; success-no-baseline still NO_REF; missing
+result still SIM_FAIL). Suite 1036 → **1039**, ruff + mypy clean. OM/
+TRANSFORM report corrected to `221 PASS / 14 FAIL / 87 SIM_FAIL / 7 NO_REF`.
+
+Related-but-separate (logged, not fixed here): `dstf compare` reads
+results from disk and `BatchManifest.save()` doesn't persist the run's
+success flags, so a test the run marked failed but which left a partial
+`.mat` reads back as success (why compare shows 87 SIM_FAIL vs the run's
+91). A fresh `dstf run` labels all 91 correctly. Fixing that needs the
+manifest to persist per-test success — deferred.

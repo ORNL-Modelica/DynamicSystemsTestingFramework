@@ -33,6 +33,7 @@ from dstf.comparison.algorithms import (
 from dstf.comparison.comparator import (
     _check_structural_changes,
     _test_is_baseline_free,
+    compare_all,
     compare_test,
 )
 from dstf.comparison.modes import resolve_mode
@@ -86,12 +87,16 @@ class TestEmptyDataFails:
 
     def test_tube_empty_reference_fails_without_crashing(self):
         cfg = {"tube_width_mode": "band", "tube_abs": 0.5}
-        vc = _compare_tube(EMPTY, EMPTY, np.array([0.0, 1.0]), np.array([0.0, 0.0]), cfg)
+        vc = _compare_tube(
+            EMPTY, EMPTY, np.array([0.0, 1.0]), np.array([0.0, 0.0]), cfg
+        )
         assert not vc.passed
 
     def test_tube_empty_actual_fails_without_crashing(self):
         cfg = {"tube_width_mode": "band", "tube_abs": 0.5}
-        vc = _compare_tube(np.array([0.0, 1.0]), np.array([1.0, 1.0]), EMPTY, EMPTY, cfg)
+        vc = _compare_tube(
+            np.array([0.0, 1.0]), np.array([1.0, 1.0]), EMPTY, EMPTY, cfg
+        )
         assert not vc.passed
 
     def test_range_empty_actual_fails(self):
@@ -114,7 +119,12 @@ class TestEmptyDataFails:
         result = _mk_result()
         reference = {
             "variables": [
-                {"index": 1, "name": "x", "time": [0.0, 5.0, 10.0], "values": [1.0, 1.0, 1.0]}
+                {
+                    "index": 1,
+                    "name": "x",
+                    "time": [0.0, 5.0, 10.0],
+                    "values": [1.0, 1.0, 1.0],
+                }
             ]
         }
         comp = compare_test(test, result, reference)
@@ -446,3 +456,68 @@ class TestReportClassification:
 
         assert _should_review(_failing_baseline_free_comp(), {"failed"}) is True
         assert _should_review(_no_ref_comp(), {"failed"}) is False
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-07 — sim-failure without a baseline must be SIM_FAIL, not NO_REF
+# ---------------------------------------------------------------------------
+
+
+class _NoRefStore:
+    """Minimal ReferenceStore stub: every model has no stored baseline."""
+
+    def get_reference(self, model_id):
+        return None
+
+
+class TestSimFailWithoutBaselineIsSimFail:
+    """compare_all's no-baseline short-circuit ran BEFORE any sim-success
+    check, so a test that failed to SIMULATE *and* has no baseline was masked
+    as NO_REF with passed=True. OM's read_result returns a success=False
+    TestResult (not None) for a missing .mat, so it slipped past the
+    `result is None` guard. Surfaced across 91 OM/TRANSFORM tests (compile /
+    solver failures on models that never got OM baselines)."""
+
+    def test_failed_sim_no_baseline_is_sim_fail(self):
+        test = _mk_test(model_id="MyLib.Failed")
+        results = {
+            "MyLib.Failed": TestResult(
+                model_id="MyLib.Failed",
+                success=False,
+                error_message="Result file not found",
+            )
+        }
+        (c,) = compare_all([test], results, _NoRefStore())
+        assert c.sim_success is False  # was True (default) -> NO_REF
+        assert c.passed is False  # was True
+
+    def test_successful_sim_no_baseline_still_no_ref(self):
+        """Regression guard: a SUCCESSFUL sim with no baseline must stay
+        NO_REF (has_reference False, sim_success True) — the fix must not
+        turn genuine no-baseline into SIM_FAIL."""
+        test = _mk_test(model_id="MyLib.Ok")
+        results = {
+            "MyLib.Ok": TestResult(
+                model_id="MyLib.Ok",
+                success=True,
+                variables=[
+                    VariableResult(
+                        index=1,
+                        time=np.linspace(0.0, 1.0, 5),
+                        values=np.ones(5),
+                        name="x",
+                    )
+                ],
+            )
+        }
+        (c,) = compare_all([test], results, _NoRefStore())
+        assert c.sim_success is True
+        assert c.has_reference is False
+
+    def test_missing_result_object_still_sim_fail(self):
+        """The pre-existing `result is None` path (backends that omit failed
+        tests, e.g. Dymola with no .mat) must keep reporting SIM_FAIL."""
+        test = _mk_test(model_id="MyLib.Gone")
+        (c,) = compare_all([test], {}, _NoRefStore())
+        assert c.sim_success is False
+        assert c.passed is False

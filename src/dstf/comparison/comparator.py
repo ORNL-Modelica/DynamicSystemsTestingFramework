@@ -475,6 +475,26 @@ def compare_all(
             )
             continue
 
+        # A simulation that FAILED is SIM_FAIL regardless of whether a baseline
+        # exists — this check MUST precede the no-baseline short-circuit below.
+        # Backends differ in how they signal failure: Dymola omits the test
+        # (caught by `result is None` above), but OpenModelica's read_result
+        # returns a success=False TestResult (missing .mat) that is NOT None,
+        # so without this it fell through to the no-baseline branch and was
+        # mislabeled NO_REF with passed=True. Surfaced 2026-07-07 across 91
+        # OM/TRANSFORM compile/solver failures on models that never got OM
+        # baselines (mirrors compare_test's own `not result.success` guard).
+        if not result.success:
+            comparisons.append(
+                TestComparison(
+                    model_id=test.model_id,
+                    passed=False,
+                    sim_success=False,
+                    error_message=result.error_message or "Simulation failed",
+                )
+            )
+            continue
+
         reference = store.get_reference(test.model_id)
         # simulate_only tests don't need a baseline — their pass criterion
         # is "did it simulate successfully?". Dispatch to compare_test with
