@@ -513,6 +513,23 @@ def cmd_compare(args: argparse.Namespace) -> int:
     )
 
     results = runner.read_last_results(tests)
+
+    if getattr(args, "accept", False):
+        # Accept-without-rerun: store the last run's on-disk results as
+        # baselines. read_last_results already forced any test the run
+        # recorded as failed/timed_out to success=False (via status.json),
+        # so accept_results skips them — a partial/stale .mat can't become a
+        # baseline. Terminal, mirroring `run --accept` (finding 30: partial
+        # accept exits nonzero).
+        stored, skipped = store.accept_results(tests, results)
+        print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
+        if skipped:
+            print(f"Skipped {len(skipped)} test(s):")
+            for model_id, reason in skipped:
+                print(f"  {model_id}: {reason}")
+            return 1
+        return 0
+
     comparisons = compare_all(
         tests, results, store, config.tolerance, config.default_points
     )
@@ -1919,6 +1936,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         help="Threads for --report rendering (Plotly serialization + JSON sidecar dump). "
         "Comparison itself is fast; this is the post-comparison report suite. Default: 1.",
+    )
+    p_compare.add_argument(
+        "--accept",
+        action="store_true",
+        help="Accept the last run's on-disk results as new baselines WITHOUT "
+        "re-simulating. Skips tests the run recorded as failed/timed_out.",
     )
 
     # export

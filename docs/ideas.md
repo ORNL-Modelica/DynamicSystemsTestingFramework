@@ -624,3 +624,29 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   as XFAIL in console/JUnit, distinct from PASS/FAIL) would let a suite
   stay green-gated while drift is investigated, without re-accepting
   baselines prematurely or muting the check.
+
+- **`compare --accept`** — DONE 2026-07-08 (D93); status.json verdict
+  guard closed the footgun without the manifest change. Original note:
+  (2026-07-07)
+  today `--accept` lives only on `run`, so accepting the results you just
+  ran means re-simulating the whole suite (a ~44-min round-trip on
+  TRANSFORM). Add `--accept` to `compare` so it stores the last run's
+  on-disk results as baselines directly. Blocked on the same gap as the
+  D92-deferred note: `BatchManifest.save()` doesn't persist per-test
+  success flags, so `compare` currently can't reliably tell a genuine
+  result from a stale/partial `.mat`. Fix that first (persist run results
+  in the manifest), then `compare --accept` and honest SIM_FAIL-on-compare
+  both fall out of it. Requested after the TRANSFORM adjudication where
+  re-running to accept was the only path.
+
+- **BUG to investigate — rerun-command selection leaks across reports**
+  (2026-07-07, owner-reported): selecting tests in a report to build the
+  "rerun these" prompt text at the bottom sometimes includes tests that
+  are NOT the current sheet's selection — it appears to hold over selection
+  state from a previously-open report (dashboard vs a per-test interactive,
+  or a prior dashboard). Suspect shared/persisted selection state
+  (localStorage? a module-global set not scoped per report/page?) in the
+  dashboard/interactive JS rerun-command builder. Repro to capture: open
+  report A, select some tests, open report B, select different tests, read
+  the rerun text — check whether A's selection bleeds in. Fix: scope the
+  selection set to the current page/report identity and clear it on load.

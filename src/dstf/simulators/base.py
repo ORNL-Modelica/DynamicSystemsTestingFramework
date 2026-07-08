@@ -467,6 +467,27 @@ class Worker(ABC):
         )
 
 
+def _apply_status_verdicts(work_dir: Path, results: dict[str, "TestResult"]) -> None:
+    """Force results the run recorded as failed/timed_out to success=False.
+
+    The run's authoritative per-test verdict lives in ``status.json``; the
+    on-disk result read can be fooled by a partial/stale ``.mat`` into
+    reporting success. Mutates ``results`` in place. No-op when status.json is
+    absent or unreadable — legacy work dirs simply keep the disk read.
+    """
+    status_path = work_dir / "status.json"
+    try:
+        snap = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    for row in snap.get("tests", []):
+        if row.get("status") in ("failed", "timed_out"):
+            r = results.get(row.get("model_id"))
+            if r is not None and r.success:
+                r.success = False
+                r.error_message = r.error_message or f"Run recorded {row['status']}"
+
+
 # ---------------------------------------------------------------------------
 # Abstract simulator interface
 # ---------------------------------------------------------------------------
@@ -830,7 +851,16 @@ class SimulatorRunner(ABC):
             return {}
 
         manifests = [BatchManifest.load(p) for p in manifest_paths]
-        return self.read_results(manifests, tests)
+        results = self.read_results(manifests, tests)
+        # The run's authoritative sim verdict lives in status.json, but the
+        # manifest doesn't persist per-test success flags — so a test the run
+        # recorded as failed/timed_out can read back as success here just
+        # because a partial/stale .mat survived on disk. That would let
+        # `compare` mislabel it and `compare --accept` bless a garbage
+        # baseline. Force those to success=False (2026-07-08; the manifest-
+        # persistence fix that would make this unnecessary is a separate item).
+        _apply_status_verdicts(work_dir, results)
+        return results
 
 
 # ---------------------------------------------------------------------------

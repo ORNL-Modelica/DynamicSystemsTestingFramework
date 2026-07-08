@@ -2679,3 +2679,33 @@ success flags, so a test the run marked failed but which left a partial
 `.mat` reads back as success (why compare shows 87 SIM_FAIL vs the run's
 91). A fresh `dstf run` labels all 91 correctly. Fixing that needs the
 manifest to persist per-test success — deferred.
+
+
+## D93 — `compare --accept` (accept without re-simulating) + status.json verdict guard (2026-07-08)
+
+Owner ask: accepting the results you just ran shouldn't require a full
+re-simulation (a ~44-min round-trip on TRANSFORM). `run --accept` was the
+only path.
+
+`compare` already reads the last run's on-disk results (`read_last_results`)
+and `accept_results` is defensive (skips `success=False`, skips missing
+results, `store_reference` rejects NaN/Inf). So added `--accept` to the
+`compare` subcommand — terminal, mirroring `run --accept` (finding 30:
+partial accept exits nonzero). Verified end-to-end on the Python example:
+run (no baselines → NO_REF) → `compare --accept` READS 3 result files (no
+sim) + stores → `compare` → 3/3 PASS.
+
+The one hazard: the on-disk read can be fooled by a partial/stale `.mat`
+into reporting success for a test the run actually marked failed — which
+would let `compare --accept` bless a garbage baseline (the D92-deferred
+footgun; the manifest doesn't persist per-test success). Rather than change
+the manifest format, `read_last_results` now consults the run's authoritative
+`status.json` and forces any test recorded failed/timed_out back to
+`success=False` (`_apply_status_verdicts`, no-op on legacy work dirs without
+status.json). That both guards accept AND fixes the deferred verdict gap:
+the OM/TRANSFORM `compare` now reports `221/14/91 SIM_FAIL/3 NO_REF` (was
+`.../87/7` — the 4 partial-`.mat` tests), matching a fresh `run`.
+
++6 tests (`test_compare_accept.py`). Suite **1044**, ruff + mypy clean.
+Follow-on still open: persisting run results in the manifest would make the
+status.json cross-check unnecessary and is the cleaner long-term fix.
