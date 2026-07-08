@@ -98,9 +98,7 @@ def main(argv: list[str]) -> int:
         try:
             time_list = [float(v) for v in raw_time]
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"'time' contains a non-numeric value: {exc}"
-            ) from exc
+            raise ValueError(f"'time' contains a non-numeric value: {exc}") from exc
         variables = {}
         for k, v in payload["variables"].items():
             name = str(k)

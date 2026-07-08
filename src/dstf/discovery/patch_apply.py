@@ -227,7 +227,12 @@ def _remove_at(obj: Any, tokens: list[str], path: str) -> None:
 
 
 def _descend(
-    cur: Any, tok: str, path: str, *, create_missing: bool, next_token: str | None = None
+    cur: Any,
+    tok: str,
+    path: str,
+    *,
+    create_missing: bool,
+    next_token: str | None = None,
 ) -> Any:
     if isinstance(cur, list):
         idx = _list_index(cur, tok, path, allow_append=False)
@@ -246,9 +251,7 @@ def _descend(
             # /metrics/children/0/... against a spec without a metrics tree
             # used to silently create {"children": {"0": ...}}, which the
             # tree validator then rejects. Fail loudly instead.
-            if next_token is not None and (
-                next_token == "-" or next_token.isdigit()
-            ):
+            if next_token is not None and (next_token == "-" or next_token.isdigit()):
                 raise PatchError(
                     f"key {tok!r} not present and the next token "
                     f"{next_token!r} is an array index — refusing to "

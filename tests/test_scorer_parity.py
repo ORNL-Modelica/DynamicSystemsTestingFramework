@@ -224,156 +224,334 @@ _TUBE_STEP_PTS = [
 
 _PARITY_CASES: list[dict[str, Any]] = [
     # ---- original coverage --------------------------------------------
-    {"id": "nrmse-pass", "mode": "nrmse", "verdict": "pass",
-     "params": {"tolerance": 1e-2}, "traj": "ramp_small"},
-    {"id": "nrmse-fail", "mode": "nrmse", "verdict": "fail",
-     "params": {"tolerance": 1e-3}, "traj": "ramp_large"},
-    {"id": "tube-rel-scalar-pass", "mode": "tube", "verdict": "pass",
-     "params": {"tube_width_mode": "rel", "tube_rel": 0.05, "tube_abs": 0,
-                "tube_min_width": 0},
-     "traj": "sine_off_002"},
-    {"id": "tube-rel-scalar-fail", "mode": "tube", "verdict": "fail",
-     "params": {"tube_width_mode": "rel", "tube_rel": 0.05, "tube_abs": 0,
-                "tube_min_width": 0},
-     "traj": "sine_off_05"},
-    {"id": "range-pass", "mode": "range", "verdict": "pass",
-     "params": {"min_value": 0.0, "max_value": 1.0}, "traj": "range_inside"},
-    {"id": "range-fail", "mode": "range", "verdict": "fail",
-     "params": {"min_value": 0.0, "max_value": 1.0}, "traj": "range_outside"},
-    {"id": "points-final-pass", "mode": "points", "verdict": "pass",
-     "params": {"tolerance": 1e-3, "points": []}, "traj": "const_final_match"},
-    {"id": "points-final-fail", "mode": "points", "verdict": "fail",
-     "params": {"tolerance": 1e-3, "points": []}, "traj": "const_final_miss"},
-    {"id": "domfreq-pass", "mode": "dominant-frequency", "verdict": "pass",
-     "params": {"peaks": [{"freq": 5.0, "tolerance": 0.5,
-                           "tolerance_mode": "abs"}]},
-     "traj": "tone5"},
-    {"id": "domfreq-fail", "mode": "dominant-frequency", "verdict": "fail",
-     "params": {"peaks": [{"freq": 12.0, "tolerance": 0.5,
-                           "tolerance_mode": "abs"}]},
-     "traj": "tone5"},
+    {
+        "id": "nrmse-pass",
+        "mode": "nrmse",
+        "verdict": "pass",
+        "params": {"tolerance": 1e-2},
+        "traj": "ramp_small",
+    },
+    {
+        "id": "nrmse-fail",
+        "mode": "nrmse",
+        "verdict": "fail",
+        "params": {"tolerance": 1e-3},
+        "traj": "ramp_large",
+    },
+    {
+        "id": "tube-rel-scalar-pass",
+        "mode": "tube",
+        "verdict": "pass",
+        "params": {
+            "tube_width_mode": "rel",
+            "tube_rel": 0.05,
+            "tube_abs": 0,
+            "tube_min_width": 0,
+        },
+        "traj": "sine_off_002",
+    },
+    {
+        "id": "tube-rel-scalar-fail",
+        "mode": "tube",
+        "verdict": "fail",
+        "params": {
+            "tube_width_mode": "rel",
+            "tube_rel": 0.05,
+            "tube_abs": 0,
+            "tube_min_width": 0,
+        },
+        "traj": "sine_off_05",
+    },
+    {
+        "id": "range-pass",
+        "mode": "range",
+        "verdict": "pass",
+        "params": {"min_value": 0.0, "max_value": 1.0},
+        "traj": "range_inside",
+    },
+    {
+        "id": "range-fail",
+        "mode": "range",
+        "verdict": "fail",
+        "params": {"min_value": 0.0, "max_value": 1.0},
+        "traj": "range_outside",
+    },
+    {
+        "id": "points-final-pass",
+        "mode": "points",
+        "verdict": "pass",
+        "params": {"tolerance": 1e-3, "points": []},
+        "traj": "const_final_match",
+    },
+    {
+        "id": "points-final-fail",
+        "mode": "points",
+        "verdict": "fail",
+        "params": {"tolerance": 1e-3, "points": []},
+        "traj": "const_final_miss",
+    },
+    {
+        "id": "domfreq-pass",
+        "mode": "dominant-frequency",
+        "verdict": "pass",
+        "params": {"peaks": [{"freq": 5.0, "tolerance": 0.5, "tolerance_mode": "abs"}]},
+        "traj": "tone5",
+    },
+    {
+        "id": "domfreq-fail",
+        "mode": "dominant-frequency",
+        "verdict": "fail",
+        "params": {
+            "peaks": [{"freq": 12.0, "tolerance": 0.5, "tolerance_mode": "abs"}]
+        },
+        "traj": "tone5",
+    },
     # ---- review 2026-07-06 finding 42: constant-signal normalization +
     # ---- event segmentation --------------------------------------------
-    {"id": "nrmse-const-large-pass", "mode": "nrmse", "verdict": "pass",
-     "params": {"tolerance": 1e-4}, "traj": "const_large"},
-    {"id": "nrmse-const-fail", "mode": "nrmse", "verdict": "fail",
-     "params": {"tolerance": 1e-4}, "traj": "const_off_by_one"},
-    {"id": "nrmse-event-jump-pass", "mode": "nrmse", "verdict": "pass",
-     "params": {"tolerance": 1e-6}, "traj": "event_jump"},
+    {
+        "id": "nrmse-const-large-pass",
+        "mode": "nrmse",
+        "verdict": "pass",
+        "params": {"tolerance": 1e-4},
+        "traj": "const_large",
+    },
+    {
+        "id": "nrmse-const-fail",
+        "mode": "nrmse",
+        "verdict": "fail",
+        "params": {"tolerance": 1e-4},
+        "traj": "const_off_by_one",
+    },
+    {
+        "id": "nrmse-event-jump-pass",
+        "mode": "nrmse",
+        "verdict": "pass",
+        "params": {"tolerance": 1e-6},
+        "traj": "event_jump",
+    },
     # ---- review 2026-07-06 finding 1/6 parity: empty windows FAIL ------
-    {"id": "nrmse-empty-window-fail", "mode": "nrmse", "verdict": "fail",
-     "params": {"tolerance": 1e-2}, "traj": "ramp_small",
-     "window": {"start": 2.0, "end": 3.0}},
-    {"id": "nrmse-window-pass", "mode": "nrmse", "verdict": "pass",
-     "params": {"tolerance": 1e-2}, "traj": "ramp_small",
-     "window": {"start": 0.2, "end": 0.8}},
-    {"id": "tube-empty-window-fail", "mode": "tube", "verdict": "fail",
-     "params": {"tube_width_mode": "rel", "tube_rel": 0.05},
-     "traj": "sine_off_002", "window": {"start": 2.0, "end": 3.0}},
-    {"id": "range-empty-window-fail", "mode": "range", "verdict": "fail",
-     "params": {"min_value": 0.0, "max_value": 1.0}, "traj": "range_inside",
-     "window": {"start": 5.0, "end": 6.0}},
+    {
+        "id": "nrmse-empty-window-fail",
+        "mode": "nrmse",
+        "verdict": "fail",
+        "params": {"tolerance": 1e-2},
+        "traj": "ramp_small",
+        "window": {"start": 2.0, "end": 3.0},
+    },
+    {
+        "id": "nrmse-window-pass",
+        "mode": "nrmse",
+        "verdict": "pass",
+        "params": {"tolerance": 1e-2},
+        "traj": "ramp_small",
+        "window": {"start": 0.2, "end": 0.8},
+    },
+    {
+        "id": "tube-empty-window-fail",
+        "mode": "tube",
+        "verdict": "fail",
+        "params": {"tube_width_mode": "rel", "tube_rel": 0.05},
+        "traj": "sine_off_002",
+        "window": {"start": 2.0, "end": 3.0},
+    },
+    {
+        "id": "range-empty-window-fail",
+        "mode": "range",
+        "verdict": "fail",
+        "params": {"min_value": 0.0, "max_value": 1.0},
+        "traj": "range_inside",
+        "window": {"start": 5.0, "end": 6.0},
+    },
     # ---- review 2026-07-06 finding 40: tube_points × width mode ×
     # ---- interpolation ---------------------------------------------------
     # rel-mode points: width 0.05·|ref| >= 0.055 everywhere, so offset
     # 0.052 passes — the pre-fix JS scored control points as band offsets
     # (width 0.05 < 0.052 → false FAIL).
-    {"id": "tube-points-rel-pass", "mode": "tube", "verdict": "pass",
-     "params": {"tube_width_mode": "rel", "tube_points": _TUBE_REL_PTS},
-     "traj": "sine_off_0052"},
-    {"id": "tube-points-rel-fail", "mode": "tube", "verdict": "fail",
-     "params": {"tube_width_mode": "rel", "tube_points": _TUBE_REL_PTS},
-     "traj": "sine_off_02"},
-    {"id": "tube-points-band-pass", "mode": "tube", "verdict": "pass",
-     "params": {"tube_width_mode": "band", "tube_points": _TUBE_BAND_PTS},
-     "traj": "sine_off_005"},
-    {"id": "tube-points-band-fail", "mode": "tube", "verdict": "fail",
-     "params": {"tube_width_mode": "band", "tube_points": _TUBE_BAND_PTS},
-     "traj": "sine_off_02"},
+    {
+        "id": "tube-points-rel-pass",
+        "mode": "tube",
+        "verdict": "pass",
+        "params": {"tube_width_mode": "rel", "tube_points": _TUBE_REL_PTS},
+        "traj": "sine_off_0052",
+    },
+    {
+        "id": "tube-points-rel-fail",
+        "mode": "tube",
+        "verdict": "fail",
+        "params": {"tube_width_mode": "rel", "tube_points": _TUBE_REL_PTS},
+        "traj": "sine_off_02",
+    },
+    {
+        "id": "tube-points-band-pass",
+        "mode": "tube",
+        "verdict": "pass",
+        "params": {"tube_width_mode": "band", "tube_points": _TUBE_BAND_PTS},
+        "traj": "sine_off_005",
+    },
+    {
+        "id": "tube-points-band-fail",
+        "mode": "tube",
+        "verdict": "fail",
+        "params": {"tube_width_mode": "band", "tube_points": _TUBE_BAND_PTS},
+        "traj": "sine_off_02",
+    },
     # abs-mode points: literal y-bounds. act in [1.12, 1.92]: inside
     # [0.5, 2.5] → pass; above [0.0, 1.0] → fail (the pre-fix JS treated
     # the bounds as band offsets → false PASS).
-    {"id": "tube-points-abs-pass", "mode": "tube", "verdict": "pass",
-     "params": {"tube_width_mode": "abs",
-                "tube_points": [
-                    {"time": 0.0, "upper": 2.5, "lower": 0.5},
-                    {"time": 1.0, "upper": 2.5, "lower": 0.5},
-                ]},
-     "traj": "sine_off_002"},
-    {"id": "tube-points-abs-fail", "mode": "tube", "verdict": "fail",
-     "params": {"tube_width_mode": "abs",
-                "tube_points": [
-                    {"time": 0.0, "upper": 1.0, "lower": 0.0},
-                    {"time": 1.0, "upper": 1.0, "lower": 0.0},
-                ]},
-     "traj": "sine_off_002"},
+    {
+        "id": "tube-points-abs-pass",
+        "mode": "tube",
+        "verdict": "pass",
+        "params": {
+            "tube_width_mode": "abs",
+            "tube_points": [
+                {"time": 0.0, "upper": 2.5, "lower": 0.5},
+                {"time": 1.0, "upper": 2.5, "lower": 0.5},
+            ],
+        },
+        "traj": "sine_off_002",
+    },
+    {
+        "id": "tube-points-abs-fail",
+        "mode": "tube",
+        "verdict": "fail",
+        "params": {
+            "tube_width_mode": "abs",
+            "tube_points": [
+                {"time": 0.0, "upper": 1.0, "lower": 0.0},
+                {"time": 1.0, "upper": 1.0, "lower": 0.0},
+            ],
+        },
+        "traj": "sine_off_002",
+    },
     # Interpolation: linear widths ramp up early enough to admit the step
     # offset; stepwise (constant) holds 0.05 until t=0.6 and fails.
-    {"id": "tube-interp-linear-pass", "mode": "tube", "verdict": "pass",
-     "params": {"tube_width_mode": "band", "tube_points": _TUBE_STEP_PTS,
-                "tube_interpolation": "linear"},
-     "traj": "step_offset"},
-    {"id": "tube-interp-constant-fail", "mode": "tube", "verdict": "fail",
-     "params": {"tube_width_mode": "band", "tube_points": _TUBE_STEP_PTS,
-                "tube_interpolation": "constant"},
-     "traj": "step_offset"},
+    {
+        "id": "tube-interp-linear-pass",
+        "mode": "tube",
+        "verdict": "pass",
+        "params": {
+            "tube_width_mode": "band",
+            "tube_points": _TUBE_STEP_PTS,
+            "tube_interpolation": "linear",
+        },
+        "traj": "step_offset",
+    },
+    {
+        "id": "tube-interp-constant-fail",
+        "mode": "tube",
+        "verdict": "fail",
+        "params": {
+            "tube_width_mode": "band",
+            "tube_points": _TUBE_STEP_PTS,
+            "tube_interpolation": "constant",
+        },
+        "traj": "step_offset",
+    },
     # ---- review 2026-07-06 finding 43: points-mode hard-fail paths -----
-    {"id": "points-clipped-fail", "mode": "points", "verdict": "fail",
-     "params": {"tolerance": 0.5,
-                "points": [{"time": 5.0, "value": 0.6, "tolerance": 0.5}]},
-     "traj": "ramp_small"},
-    {"id": "points-outside-ref-fail", "mode": "points", "verdict": "fail",
-     "params": {"tolerance": 0.5, "points": [{"time": 1.5, "tolerance": 0.5}]},
-     "traj": "short_ref_long_act"},
-    {"id": "points-empty-actual-fail", "mode": "points", "verdict": "fail",
-     "params": {"tolerance": 0.5,
-                "points": [{"time": 0.5, "value": 0.65, "tolerance": 0.5}]},
-     "traj": "empty_act"},
-    {"id": "points-multi-pass", "mode": "points", "verdict": "pass",
-     "params": {"tolerance": 0.1,
-                "points": [{"time": 0.3, "tolerance": 0.1},
-                           {"time": 0.7, "tolerance": 0.1}]},
-     "traj": "ramp_small"},
+    {
+        "id": "points-clipped-fail",
+        "mode": "points",
+        "verdict": "fail",
+        "params": {
+            "tolerance": 0.5,
+            "points": [{"time": 5.0, "value": 0.6, "tolerance": 0.5}],
+        },
+        "traj": "ramp_small",
+    },
+    {
+        "id": "points-outside-ref-fail",
+        "mode": "points",
+        "verdict": "fail",
+        "params": {"tolerance": 0.5, "points": [{"time": 1.5, "tolerance": 0.5}]},
+        "traj": "short_ref_long_act",
+    },
+    {
+        "id": "points-empty-actual-fail",
+        "mode": "points",
+        "verdict": "fail",
+        "params": {
+            "tolerance": 0.5,
+            "points": [{"time": 0.5, "value": 0.65, "tolerance": 0.5}],
+        },
+        "traj": "empty_act",
+    },
+    {
+        "id": "points-multi-pass",
+        "mode": "points",
+        "verdict": "pass",
+        "params": {
+            "tolerance": 0.1,
+            "points": [
+                {"time": 0.3, "tolerance": 0.1},
+                {"time": 0.7, "tolerance": 0.1},
+            ],
+        },
+        "traj": "ramp_small",
+    },
     # ---- review 2026-07-06 finding 44: claiming + amplitude floor ------
     # Two declared peaks, one actual resonance: the second declared peak
     # cannot claim the already-claimed actual peak → FAIL.
-    {"id": "domfreq-claiming-fail", "mode": "dominant-frequency",
-     "verdict": "fail",
-     "params": {"peaks": [
-         {"freq": 5.0, "tolerance": 0.5, "tolerance_mode": "abs"},
-         {"freq": 5.2, "tolerance": 0.5, "tolerance_mode": "abs"},
-     ]},
-     "traj": "tone5"},
+    {
+        "id": "domfreq-claiming-fail",
+        "mode": "dominant-frequency",
+        "verdict": "fail",
+        "params": {
+            "peaks": [
+                {"freq": 5.0, "tolerance": 0.5, "tolerance_mode": "abs"},
+                {"freq": 5.2, "tolerance": 0.5, "tolerance_mode": "abs"},
+            ]
+        },
+        "traj": "tone5",
+    },
     # Two real resonances, two declared peaks: claiming must not break the
     # good path.
-    {"id": "domfreq-two-peaks-pass", "mode": "dominant-frequency",
-     "verdict": "pass",
-     "params": {"peaks": [
-         {"freq": 5.0, "tolerance": 0.6, "tolerance_mode": "abs"},
-         {"freq": 12.0, "tolerance": 0.6, "tolerance_mode": "abs"},
-     ]},
-     "traj": "tone5_12"},
+    {
+        "id": "domfreq-two-peaks-pass",
+        "mode": "dominant-frequency",
+        "verdict": "pass",
+        "params": {
+            "peaks": [
+                {"freq": 5.0, "tolerance": 0.6, "tolerance_mode": "abs"},
+                {"freq": 12.0, "tolerance": 0.6, "tolerance_mode": "abs"},
+            ]
+        },
+        "traj": "tone5_12",
+    },
     # A 0.2%-amplitude blip is below the 1% noise floor → FAIL; the same
     # peak at 30% amplitude passes.
-    {"id": "domfreq-amp-floor-fail", "mode": "dominant-frequency",
-     "verdict": "fail",
-     "params": {"peaks": [
-         {"freq": 20.0, "tolerance": 1.0, "tolerance_mode": "abs"},
-     ]},
-     "traj": "tone5_20_tiny"},
-    {"id": "domfreq-amp-floor-pass", "mode": "dominant-frequency",
-     "verdict": "pass",
-     "params": {"peaks": [
-         {"freq": 20.0, "tolerance": 1.0, "tolerance_mode": "abs"},
-     ]},
-     "traj": "tone5_20_strong"},
+    {
+        "id": "domfreq-amp-floor-fail",
+        "mode": "dominant-frequency",
+        "verdict": "fail",
+        "params": {
+            "peaks": [
+                {"freq": 20.0, "tolerance": 1.0, "tolerance_mode": "abs"},
+            ]
+        },
+        "traj": "tone5_20_tiny",
+    },
+    {
+        "id": "domfreq-amp-floor-pass",
+        "mode": "dominant-frequency",
+        "verdict": "pass",
+        "params": {
+            "peaks": [
+                {"freq": 20.0, "tolerance": 1.0, "tolerance_mode": "abs"},
+            ]
+        },
+        "traj": "tone5_20_strong",
+    },
     # review 2026-07-06 finding 76b: omitted tolerance defaults to 0.01 on
     # BOTH sides (Python declared.get("tolerance", 0.01)); the JS default
     # used to be 0, failing every default-tolerance peak.
-    {"id": "domfreq-default-tol-pass", "mode": "dominant-frequency",
-     "verdict": "pass",
-     "params": {"peaks": [{"freq": 5.0, "tolerance_mode": "rel"}]},
-     "traj": "tone5"},
+    {
+        "id": "domfreq-default-tol-pass",
+        "mode": "dominant-frequency",
+        "verdict": "pass",
+        "params": {"peaks": [{"freq": 5.0, "tolerance_mode": "rel"}]},
+        "traj": "tone5",
+    },
 ]
 
 
@@ -760,9 +938,7 @@ def test_js_state_behaviors_node(tmp_path):
     assert results["detectEvents"] == [1, 3]
 
     # finding 38: the in-place edit produced exactly one tube_points op...
-    assert [op["path"] for op in results["tubeOps"]] == [
-        f"{tube_path}/tube_points"
-    ]
+    assert [op["path"] for op in results["tubeOps"]] == [f"{tube_path}/tube_points"]
     assert results["tubeOps"][0]["value"][0]["upper"] == 99.0
     # ...and reset restored the pristine value + a quiet diff.
     assert results["afterResetUpper"] == 0.05
@@ -824,7 +1000,5 @@ def test_js_scorers_agree_with_python(parity_page):
     """
     page, expected = parity_page
 
-    js_verdicts = page.evaluate(
-        "() => {" + _WALK_LEAVES_JS + " return out; }"
-    )
+    js_verdicts = page.evaluate("() => {" + _WALK_LEAVES_JS + " return out; }")
     _assert_verdicts_agree(js_verdicts, expected)

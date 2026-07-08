@@ -208,7 +208,9 @@ class TestTimeoutExpiredBytesHandling:
         rr = runner.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False
         assert rr.timed_out is True
-        assert "po" in (tmp_path / "work" / "test_0001" / "python_stdout.txt").read_text()
+        assert (
+            "po" in (tmp_path / "work" / "test_0001" / "python_stdout.txt").read_text()
+        )
 
     def test_openmodelica_runner_timeout_with_bytes_output(self, tmp_path, monkeypatch):
         from dstf.config import Config
@@ -454,7 +456,9 @@ class TestFmpyRunnerFixes:
         runner.config.timeout = 0.05
         rr = runner.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False
-        assert rr.timed_out is True  # finding 73: was False → dashboard/console disagreed
+        assert (
+            rr.timed_out is True
+        )  # finding 73: was False → dashboard/console disagreed
 
     def test_save_oserror_fails_single_test_not_run(self, tmp_path, monkeypatch):
         runner = self._make_runner(tmp_path, monkeypatch, lambda **kw: object())
@@ -589,7 +593,9 @@ class TestProgressSnapshotUnderLock:
         pr = ProgressReporter(tmp_path, total=n)
         monkeypatch.setattr(pr, "_render_dashboard", lambda mode: None)
         written: list[dict] = []
-        monkeypatch.setattr(pr, "_write_json", lambda snapshot: written.append(snapshot))
+        monkeypatch.setattr(
+            pr, "_write_json", lambda snapshot: written.append(snapshot)
+        )
 
         for i in range(n):
             pr.register(f"t{i}", f"M.T{i}")
@@ -978,9 +984,7 @@ class TestCrossBackendSoftCheckValueError:
                     ],
                 )
 
-        monkeypatch.setattr(
-            "dstf.simulators.fmpy.runner.FmpyRunner", _FakeFmpyRunner
-        )
+        monkeypatch.setattr("dstf.simulators.fmpy.runner.FmpyRunner", _FakeFmpyRunner)
 
         primary = MagicMock()
         primary.export_fmu.return_value = fmu_path

@@ -96,9 +96,7 @@ class TestDownsampleTailPreservation:
         # Pick an event index pair that is NOT on the even-sampling grid so
         # the union of events + linspace candidates overshoots max_points.
         grid = set(np.linspace(0, n - 1, max_points, dtype=int).tolist())
-        k = next(
-            i for i in range(2, n - 2) if i not in grid and (i - 1) not in grid
-        )
+        k = next(i for i in range(2, n - 2) if i not in grid and (i - 1) not in grid)
         t[k] = t[k - 1]  # duplicate time value == Modelica event boundary
         v = np.sin(t)
         v[k:] += 1.0  # discontinuity at the event
@@ -110,9 +108,7 @@ class TestDownsampleTailPreservation:
         assert t_out[-1] == t[-1], "stored baseline must end at the final sample"
         assert v_out[-1] == pytest.approx(v[-1], rel=1e-12)
         # Both sides of the event boundary survive (duplicate time value).
-        dup_times = {
-            t_out[i] for i in range(1, len(t_out)) if t_out[i] == t_out[i - 1]
-        }
+        dup_times = {t_out[i] for i in range(1, len(t_out)) if t_out[i] == t_out[i - 1]}
         assert float("%.15g" % t[k]) in dup_times
 
     def test_event_indices_alone_exceeding_budget_are_thinned_not_truncated(self):
@@ -147,9 +143,7 @@ class TestDownsampleTailPreservation:
 
 
 class TestAtomicWrites:
-    def test_interrupted_replace_preserves_existing_file(
-        self, tmp_path, monkeypatch
-    ):
+    def test_interrupted_replace_preserves_existing_file(self, tmp_path, monkeypatch):
         """A crash between tmp-write and replace must leave the original
         baseline intact (and no stray tmp files)."""
         target = tmp_path / "ref_0001.json"
@@ -199,9 +193,7 @@ class TestAtomicWrites:
 
         ref_root = str(store.ref_dir)
         direct_json_writes = [
-            p
-            for p in recorded
-            if str(p).startswith(ref_root) and p.suffix == ".json"
+            p for p in recorded if str(p).startswith(ref_root) and p.suffix == ".json"
         ]
         assert direct_json_writes == []
         # And nothing left half-written behind.
@@ -220,9 +212,7 @@ class TestIdAllocation:
         """Two stores over the same partition (simulating two --accept
         processes): the second, holding a stale empty index, must not
         reuse ID 0001 and overwrite the first model's baseline."""
-        config = Config(
-            source_path=sample_models_dir, reference_root=tmp_path / "refs"
-        )
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
         store1 = ReferenceStore(config)
         store2 = ReferenceStore(config)
         # Force both indexes to load while the partition is empty.
@@ -239,9 +229,7 @@ class TestIdAllocation:
         assert ref_b is not None and ref_b["model_id"] == "Lib.B"
         assert ref_a["test_id"] != ref_b["test_id"]
 
-    def test_register_skips_id_taken_on_disk_but_missing_from_index(
-        self, tmp_path
-    ):
+    def test_register_skips_id_taken_on_disk_but_missing_from_index(self, tmp_path):
         """An unindexed (e.g. mid-write, unreadable) ref file still blocks
         its ID from being handed out."""
         tmp_path.mkdir(exist_ok=True)
@@ -362,9 +350,7 @@ class TestRoleNameValidation:
         assert repr(bad) in str(exc.value) or bad in str(exc.value)
 
     @pytest.mark.parametrize("bad", BAD_NAMES)
-    def test_add_companion_rejects_unsafe_name(
-        self, store_with_primary, tmp_path, bad
-    ):
+    def test_add_companion_rejects_unsafe_name(self, store_with_primary, tmp_path, bad):
         store, test = store_with_primary
         src = tmp_path / "data.csv"
         src.write_text("time,x\n0,1\n", encoding="utf-8")
@@ -381,9 +367,7 @@ class TestRoleNameValidation:
         with pytest.raises(ValueError):
             store.freeze_companion(test.model_id, bad)
 
-    def test_traversal_name_writes_nothing_outside_role_dir(
-        self, store_with_primary
-    ):
+    def test_traversal_name_writes_nothing_outside_role_dir(self, store_with_primary):
         store, test = store_with_primary
         with pytest.raises(ValueError):
             store.add_soft_check(
@@ -432,9 +416,7 @@ class TestDuplicateModelIdScan:
             "time": [],
             "variables": [],
         }
-        (ref_dir / f"ref_{test_id}.json").write_text(
-            json.dumps(data), encoding="utf-8"
-        )
+        (ref_dir / f"ref_{test_id}.json").write_text(json.dumps(data), encoding="utf-8")
 
     def test_lowest_id_wins_with_warning(self, tmp_path, caplog):
         self._write_ref(tmp_path, "0001", "Lib.Dup")

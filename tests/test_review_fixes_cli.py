@@ -159,9 +159,7 @@ def _run_args(env, *extra) -> argparse.Namespace:
 
 
 def _stored_model_ids(env) -> set[str]:
-    ref_dir = (
-        env.config_dir / "Resources" / "ReferenceResults" / "Dymola" / detect_os()
-    )
+    ref_dir = env.config_dir / "Resources" / "ReferenceResults" / "Dymola" / detect_os()
     if not ref_dir.exists():
         return set()
     return {
@@ -223,9 +221,7 @@ def test_accept_and_interactive_are_mutually_exclusive(capsys, monkeypatch, tmp_
 class TestRerunEmptySetIsSuccess:
     def test_nothing_to_rerun_exits_zero(self, run_env, capsys):
         t1 = _mk_test("Lib.T1")
-        run_env.make(
-            [t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")}
-        )
+        run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
         rc = cmd_run(_run_args(run_env, "--rerun", "failed"))
         out = capsys.readouterr().out
         assert rc == 0
@@ -243,9 +239,7 @@ class TestRerunEmptySetIsSuccess:
 
         monkeypatch.setattr("dstf.cli._generate_report_suite", fake_suite)
         t1 = _mk_test("Lib.T1")
-        run_env.make(
-            [t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")}
-        )
+        run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
         rc = cmd_run(_run_args(run_env, "--rerun", "failed", "--report"))
         assert rc == 0
         assert called, "merged report suite was not generated"
@@ -459,7 +453,9 @@ class TestInteractiveReviewExitCode:
         result = _mk_result("Lib.A")
         _feed_inputs(monkeypatch, ["a"])
         rc = _interactive_review(
-            [test], {"Lib.A": result}, [_FakeComp("Lib.A", passed=False)],
+            [test],
+            {"Lib.A": result},
+            [_FakeComp("Lib.A", passed=False)],
             _AcceptingStore(),
         )
         assert rc == 0
@@ -482,7 +478,9 @@ class TestInteractiveReviewExitCode:
         result = _mk_result("Lib.A")
         _feed_inputs(monkeypatch, ["a"])
         rc = _interactive_review(
-            [test], {"Lib.A": result}, [_FakeComp("Lib.A", passed=False)],
+            [test],
+            {"Lib.A": result},
+            [_FakeComp("Lib.A", passed=False)],
             _PoisonStore(),
         )
         assert rc == 1
@@ -533,8 +531,7 @@ class TestFilterCommaSplit:
             _mk_test("Other.X"),
         ]
         got = {
-            t.model_id
-            for t in _filter_tests(tests, pattern="Lib.Test[A,B]*,Other.*")
+            t.model_id for t in _filter_tests(tests, pattern="Lib.Test[A,B]*,Other.*")
         }
         assert got == {"Lib.TestA1", "Other.X"}
 
@@ -626,7 +623,9 @@ def test_nobaseline_overlays_are_decimated():
                 "name": "x",
                 "time": list(big),
                 "values": list(big),
-                "overlays": [{"name": "sibling", "time": list(big), "values": list(big)}],
+                "overlays": [
+                    {"name": "sibling", "time": list(big), "values": list(big)}
+                ],
             }
         ]
     }
@@ -660,8 +659,7 @@ class TestSchemaModeRefs:
         clauses = leaf.get("allOf", [])
         assert clauses, "leaf spec must carry if/then clauses wiring mode $defs"
         by_metric = {
-            c["if"]["properties"]["metric"]["const"]: c["then"]["$ref"]
-            for c in clauses
+            c["if"]["properties"]["metric"]["const"]: c["then"]["$ref"] for c in clauses
         }
         assert by_metric == {
             metric: f"#/$defs/{def_name}"
