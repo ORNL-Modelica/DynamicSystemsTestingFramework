@@ -1,3 +1,5 @@
+@/mnt/d/Projects/Soul-System/operations/CLAUDE.md
+
 # CLAUDE.md
 
 ## Project Overview
