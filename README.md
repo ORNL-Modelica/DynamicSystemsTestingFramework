@@ -6,8 +6,6 @@ Regression and unit testing for time-dependent system behavior. Discovers tests,
 
 Library-agnostic: tests can be discovered from in-model annotations (`UnitTests` components), declarative `test_spec.json`, or both. Reference results are partitioned per backend / OS so the same library can be regression-tested across simulators without ref drift.
 
-> Formerly **ModelicaTesting**.
-
 ![DSTF dashboard](docs/img/dashboard.png)
 
 *The unified dashboard — live progress during a run, a static report after. Each report is stamped with the backend, tool + MSL version, and OS that produced it; the table gives per-test verdicts, worst-NRMSE, and phase timing.*
