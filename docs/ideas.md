@@ -671,3 +671,35 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   buildingspy flow used, see the retired `funnel_comp/`) can. This makes #25
   more valuable than its current M/High ranking: it would have let the pump/
   IRIS drifts be judged on shape rather than failing on a small timing offset.
+
+- **Report → CLI action menu (not just rerun)** (2026-07-08, owner): when you
+  select tests in the HTML report, the "copy command" affordance only builds a
+  rerun. Offer the full set scoped to the selection — `run`, `compare`,
+  `compare --accept` (D93), `--report`, `--rerun <category>` — as copy-to-
+  clipboard commands so the report is a launchpad into the CLI. Pairs with the
+  #42/D93 accept work and the rerun-selection-leak bug (scope the selection set
+  per report first). Small JS; the command strings already exist server-side.
+
+- **In-report glossary / help lookup** (2026-07-08, owner): make the report a
+  place to get oriented, not just read verdicts. A glossary panel / inline
+  lookup explaining the vocabulary — NRMSE, tube/band/rel/abs, points,
+  event-timing, dominant-frequency, PASS vs FAIL vs SIM_FAIL vs NO_REF,
+  primary/soft_check/companion baseline roles, warn-wrapping. Content largely
+  exists in docs/usage.md + the mode field metadata (label/help already flow
+  into the UI via mode_controls); surface it as a "?"-panel keyed by the mode
+  each variable uses.
+
+- **Richer button hover hints** (2026-07-08, owner): descriptive `title`/
+  tooltip text on the report's buttons (accept/rerun/copy, tube/point editors,
+  window controls, per-leaf scoring toggles) so hovering explains what each
+  does. Cheap, high-orientation-value; complements the glossary above.
+
+- **Report screenshot in the README** (2026-07-08, owner): embed a rendered
+  dashboard/interactive screenshot in the DSTF README so the "reporter-as-IDE"
+  story is visible at a glance. Generate from a demo (ModelicaTestingLib /
+  python example) so it's reproducible; commit the PNG under docs/img/. Doable
+  now.
+
+- **CI-status badge on the README** (2026-07-08, owner): the repo has the
+  `quality` GitHub Action (ORNL-Modelica/DynamicSystemsTestingFramework); add
+  its passing badge to the DSTF README top. Doable now (see this session).
