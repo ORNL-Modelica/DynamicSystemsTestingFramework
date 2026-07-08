@@ -650,3 +650,24 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   report A, select some tests, open report B, select different tests, read
   the rerun text — check whether A's selection bleeds in. Fix: scope the
   selection set to the current page/report identity and clear it on load.
+
+- **`export-script` — emit a single test as an IDE-runnable script**
+  (2026-07-08): when a test fails, drop into the Modelica IDE to poke at it
+  by hand — `dstf export-script <model>` writes a `.mos` (Dymola) / OMEdit
+  snippet that opens + simulates just that model with the test's resolved
+  experiment params (stop_time/tolerance/method/interval), so the
+  investigation matches what DSTF ran. Bridges DSTF → the interactive
+  `dymola-sim-debug` loop. Inspired by the old buildingspy flow's generated
+  `runAll_Dymola.mos` (retired in the TRANSFORM-UnitTests cleanup). Small,
+  backend-scoped (Dymola/OM first). Not the "run everything in the IDE"
+  convenience — the useful modern version is "hand me THIS failing test."
+
+- **Elevate #25 (funnel / X-direction time tolerance)** (2026-07-08): the
+  TRANSFORM 2026x adjudication showed drift that is partly *solver-timing*
+  sensitive — IRIS results are OS-dependent (linux 0.0351 vs windows 0.0535
+  for the same model/version) and event instants shift between toolchains.
+  DSTF's `tube` is Y-only and cannot absorb a legitimate time-shift; a real
+  2-D funnel (dx AND dy envelope, à la LBL `funnel`/pyfunnel — which the old
+  buildingspy flow used, see the retired `funnel_comp/`) can. This makes #25
+  more valuable than its current M/High ranking: it would have let the pump/
+  IRIS drifts be judged on shape rather than failing on a small timing offset.
