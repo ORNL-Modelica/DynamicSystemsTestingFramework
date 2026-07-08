@@ -195,7 +195,7 @@ Worked example: `simulators/openmodelica/persistent_runner.py` is the smallest o
 
 ### Current
 
-`SimulatorRunner` ABC with two concrete implementations: `DymolaRunner` (native Modelica) and `FmpyRunner` (FMU). Phase 1.2 introduced the `Capability` + `DatasetType` enums and the `capabilities` / `produced_datasets` class-attribute contract; Phase 2.3 validated the contract with a second backend.
+`SimulatorRunner` ABC with five concrete implementations: `DymolaRunner`, `OpenModelicaRunner` (native Modelica), `FmpyRunner` (FMU), `JuliaRunner` (ModelingToolkit), and `PythonRunner` (arbitrary `simulate()`). The `Capability` + `DatasetType` enums and the `capabilities` / `produced_datasets` class-attribute contract gate feature availability per backend.
 
 - `DymolaRunner` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT}` — the last is currently a placeholder until a cross-backend verification feature wires it.
 - `FmpyRunner` declares `{PERSISTENT_WORKERS}` — no batch fallback (FMPy *is* the Python path), no FMU export (FMPy consumes FMUs), no experiment ingest.

@@ -176,7 +176,7 @@ store.add_named_baseline(
 )
 ```
 
-The model must already have a primary baseline (run with `--accept` once). Primary stays untouched by subsequent accepts — see D47 in `docs/decisions.md` for schema details.
+The model must already have a primary baseline (run with `--accept` once). Primary stays untouched by subsequent accepts — see `docs/decisions.md` for schema details.
 
 ---
 

@@ -6,7 +6,7 @@ Regression and unit testing for time-dependent system behavior. Discovers tests,
 
 Library-agnostic: tests can be discovered from in-model annotations (`UnitTests` components), declarative `test_spec.json`, or both. Reference results are partitioned per backend / OS so the same library can be regression-tested across simulators without ref drift.
 
-> Formerly **ModelicaTesting**. Renamed in D81 (2026-04-25); see `docs/decisions.md`.
+> Formerly **ModelicaTesting**.
 
 ![DSTF dashboard](docs/img/dashboard.png)
 
@@ -173,9 +173,8 @@ uv run dstf check-dymola
 | `docs/architecture.md` | Six-layer plug-in pipeline + current-state map to code |
 | `docs/extensibility.md` | Plug-in contracts for Source / Discovery / Backend / Dataset / Metric / Combinator |
 | `docs/vision.md` | Where the framework is going (target user base, non-Modelica futures) |
-| `docs/decisions.md` | Authoritative decision log (D1–D87 as of 2026-04-25) |
+| `docs/decisions.md` | Authoritative decision log |
 | `docs/ideas.md` | Backlog (unimplemented features, with explicit deferred-by-design entries) |
-| `docs/SESSION_HANDOFF.md` | Most-recent session state — read this when picking up work |
 | `examples/{modelica,fmu,julia,python}/` | Working demo libraries — one per backend |
 
 ## CI integration
@@ -193,4 +192,4 @@ For HTML reports as build artifacts, also pass `--report ./reports` and upload t
 
 ## Status
 
-837 pytest passing (incl. ~70 Playwright browser tests). 5 backends production. 3 demo libraries. Reporter-as-IDE feature-complete; the points / range / tube / dom-frequency editors all share the `createDeclaredItemsTable` scaffold (D87) and `createPointPlotEditor` shift-modifier interaction layer.
+5 simulator backends in production, 3 demo libraries, and a comprehensive pytest suite (a Playwright subset covers the interactive report). The reporter-as-IDE is feature-complete: per-leaf live scoring plus shift-click/drag editors for tube / point / range / peak criteria.
