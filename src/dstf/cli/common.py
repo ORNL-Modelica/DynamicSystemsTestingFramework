@@ -160,7 +160,10 @@ def _write_id_mapping(store, config) -> None:
     mapping_path = config.work_dir / "reference_manifest.json"
     config.work_dir.mkdir(parents=True, exist_ok=True)
     mapping = {f"ref_{tid}": active[tid] for tid in sorted(active)}
-    mapping_path.write_text(json.dumps(mapping, indent=2) + "\n", encoding="utf-8")
+    # LF on every platform, like every other JSON we write.
+    mapping_path.write_text(
+        json.dumps(mapping, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
 
 
 _VALID_REVIEW_FILTERS = {

@@ -16,6 +16,7 @@ from dstf.cli.common import (
     _parse_review_filter,
     _resolve_filter_patterns,
     _should_review,
+    _write_id_mapping,
 )
 from dstf.cli.main import build_arg_parser
 from dstf.cli.review import _interactive_review
@@ -1191,3 +1192,35 @@ def test_an_explicit_simulator_bypasses_the_recorded_backend_check(tmp_path, cap
     )
     err = capsys.readouterr().err
     assert "NoSuchBackend" not in err
+
+
+def test_id_mapping_written_with_lf(tmp_path, monkeypatch):
+    """reference_manifest.json is machine-readable output a user may keep,
+    so it gets LF like every other JSON we write.
+
+    A byte assertion cannot fail on Linux — CPython
+        compiles the CRLF write translation in rather than reading
+        os.linesep — so pin the argument at the call site instead.
+    """
+
+    class _Index:
+        def active_tests(self):
+            return {"0001": "Lib.A"}
+
+    class _Store:
+        index = _Index()
+
+    class _Config:
+        work_dir = tmp_path / "work"
+
+    seen: dict[str, object] = {}
+    real = Path.write_text
+
+    def spy(self, data, *args, **kwargs):
+        seen[self.name] = kwargs.get("newline")
+        return real(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", spy)
+    _write_id_mapping(_Store(), _Config())
+
+    assert seen["reference_manifest.json"] == "\n"

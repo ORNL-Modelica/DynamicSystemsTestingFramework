@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -119,6 +121,29 @@ class TestCli:
         assert out.exists()
         schema = json.loads(out.read_text())
         assert schema["type"] == "object"
+
+    def test_output_file_written_with_lf(self, tmp_path, monkeypatch):
+        """The exported schema gets committed next to the spec it describes,
+        so its line ending must not depend on the OS that wrote it.
+
+        A byte assertion cannot fail on Linux — CPython
+        compiles the CRLF write translation in rather than reading
+        os.linesep — so pin the argument at the call site instead.
+        """
+        from dstf.cli.spec_cmds import cmd_export_schema
+
+        seen: dict[str, object] = {}
+        real = Path.write_text
+
+        def spy(self, data, *args, **kwargs):
+            seen[self.name] = kwargs.get("newline")
+            return real(self, data, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", spy)
+        out = tmp_path / "schema.json"
+        assert cmd_export_schema(argparse.Namespace(output=str(out))) == 0
+
+        assert seen["schema.json"] == "\n"
 
 
 def test_event_timing_schema_includes_events_as_passthrough():

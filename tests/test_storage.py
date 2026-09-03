@@ -1,6 +1,7 @@
 """Tests for storage: RefIndex and ReferenceStore."""
 
 import csv
+import inspect
 import json
 import logging
 from pathlib import Path
@@ -13,7 +14,7 @@ from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
 from dstf.simulators.types import TestResult, VariableResult
 from dstf.storage.baseline import PRIMARY_BASELINE, Baseline
-from dstf.storage.ref_index import RefIndex
+from dstf.storage.ref_index import RefIndex, _atomic_write_text
 from dstf.storage.reference_store import (
     ReferenceStore,
     _downsample,
@@ -629,10 +630,49 @@ class TestExports:
         assert rows[0][0] == "test_id"
         assert rows[1][1] == "ModelicaTestingLib.Examples.Test1"
         assert list(out.parent.glob("*.tmp")) == []
-        # csv embeds \r\n; _atomic_write_text must be called with
-        # newline="" or Windows doubles it to \r\r\n. csv.reader can't
-        # detect that on Linux — only the raw bytes can.
-        assert b"\r\r\n" not in out.read_bytes()
+        # csv embeds \r\n itself. Pin that it reaches disk intact and is
+        # never doubled to \r\r\n. Since "\n" became the default
+        # newline, neither that nor the caller's explicit newline="" is
+        # translating, so this can no longer catch a dropped kwarg on any
+        # platform — it pins the CSV terminator, not the argument.
+        raw = out.read_bytes()
+        assert b"\r\n" in raw
+        assert b"\r\r\n" not in raw
+
+
+class TestLineEndings:
+    """Every JSON DSTF writes lands with LF on every platform.
+
+    The reference tree is version-controlled by the people who consume it.
+    While ``_atomic_write_text`` took :func:`open`'s ``newline=None``, a
+    baseline accepted on Windows landed CRLF and the same file accepted from
+    WSL landed LF, so a one-value edit arrived as a whole-file diff with the
+    real change invisible inside it.
+
+    The byte assertions can only fail on a CRLF platform. The signature
+    assertion is what fails on Linux too, so it is the one that actually
+    guards the decision.
+    """
+
+    def test_atomic_write_defaults_to_lf(self):
+        default = inspect.signature(_atomic_write_text).parameters["newline"].default
+        assert default == "\n"
+
+    def test_atomic_write_emits_lf(self, tmp_path):
+        out = tmp_path / "x.json"
+        _atomic_write_text(out, '{\n  "a": 1\n}\n')
+        assert b"\r" not in out.read_bytes()
+
+    def test_stored_baseline_is_lf(self, sample_models_dir, tmp_path):
+        config = Config(source_path=sample_models_dir, reference_root=tmp_path / "refs")
+        store = ReferenceStore(config)
+        helper = TestReferenceStore()
+        store.store_reference(helper._make_test_model(), helper._make_test_result())
+
+        refs = list((tmp_path / "refs").rglob("ref_*.json"))
+        assert refs
+        for ref in refs:
+            assert b"\r" not in ref.read_bytes(), ref
 
 
 # =========================================================================

@@ -27,7 +27,7 @@ _REF_FILE_PATTERN = re.compile(r"^ref_(\d{4,})\.json$")
 _ID_HIGH_WATER_FILE = ".id_high_water.json"
 
 
-def _atomic_write_text(path: Path, text: str, *, newline: str | None = None) -> None:
+def _atomic_write_text(path: Path, text: str, *, newline: str = "\n") -> None:
     """Atomically replace ``path`` with ``text``.
 
     review 2026-07-06 (finding 31): all reference writes were plain
@@ -39,9 +39,20 @@ def _atomic_write_text(path: Path, text: str, *, newline: str | None = None) -> 
     always raises on failure — a silently stale baseline is a
     data-integrity bug, not a cosmetic one.
 
-    ``newline`` is passed through to :func:`open`; callers that already
-    embedded their own line terminators (``csv`` writes ``\\r\\n``) pass
-    ``""`` to suppress the platform translation that would double them.
+    ``newline`` is passed through to :func:`open` and defaults to ``"\\n"``,
+    NOT to :func:`open`'s ``None``: with ``None`` Python
+    translates ``\\n`` to ``os.linesep``, so a baseline accepted on Windows
+    landed CRLF and the same file accepted from WSL landed LF. The reference
+    tree is a surface other people version-control; a cross-platform accept
+    turned a one-value edit into a 6,881-line whole-file diff, hiding the
+    real change inside it. Every JSON write in the package therefore gets LF
+    on every platform, and a new caller cannot reintroduce the bug by
+    forgetting a keyword. The one CSV caller still passes ``""``
+    explicitly, which is now belt-and-braces rather than load-bearing:
+    neither ``""`` nor ``"\\n"`` translates on write, so the ``\\r\\n`` that
+    :mod:`csv` embeds survives either way. It stays because it states the
+    intent at the call site and because it is what keeps that caller correct
+    if this default is ever revisited.
     """
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:

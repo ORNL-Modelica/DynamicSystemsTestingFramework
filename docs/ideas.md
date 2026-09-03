@@ -742,3 +742,362 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   unscored)"); the row could append a small "(+N unscored)" marker.
   Cosmetic; the honest-display work of D121 covers the all-unscored
   case already.
+
+- **Formal documentation site (Sphinx, code-doc-first)** (2026-09-02, owner):
+  build DSTF's user and API documentation with a proper documentation tool
+  such as Sphinx, relying on docstrings and code documentation as much as
+  possible rather than hand-written duplicates. Motivation: external
+  write-ups defer their details to "the documentation", which today is
+  README + docs/*.md only. Constraint from the owner: rely on code
+  documentation as much as possible.
+
+- **Tube evaluation on the union of the reference and actual grids**
+  (2026-09-02, from a design review): `_compare_tube` interpolates the
+  actual trajectory onto `ref_time` and checks only those points, so an
+  excursion contained entirely within one reference interval is invisible.
+  Evaluate the band at every actual sample as well (interpolate the
+  reference-defined bounds onto `act_time` and check both grids). Tube
+  only; NRMSE stays on the reference grid, since adding samples changes the
+  statistic's weighting. Small change in `comparison/algorithms.py`; the
+  in-band fraction's denominator becomes the union grid.
+
+- **Vocabulary cleanup pass on the code, before the public 1.0 announcement**
+  (2026-09-03, owner, from a design review): the documented vocabulary and
+  the code's have drifted apart, and the documentation is what a new reader
+  meets first. The code still says `simulator` where the architecture says
+  **Backend** — `src/dstf/simulators/`, `class SimulatorRunner`,
+  `PersistentRunnerBase`, and `testing.json`'s `"simulator"` / `"simulators"`
+  keys — all residue from ModelicaTesting (D81 renamed the project, not the
+  internals). A Backend is a role (test descriptor in, trajectories out); a
+  simulator is an external tool, and `ConstantCsv` is a backend that is not
+  one, which is the architecture's central claim. Owner's requirement: be
+  certain the code is correctly cleaned up before the official 1.0 release,
+  so a reader arriving from the docs meets the same words.
+  Scope, in two tiers:
+  (a) Free to rename — package `simulators/` → `backends/`, `SimulatorRunner`
+      and the `Persistent*Runner` classes, internal variables and docstrings,
+      `docs/extensibility.md` §3 and the `plugins.py` docstring (see also the
+      E01a follow-up: those two still justify the single entry-point group
+      with the backend+metrics pairing rather than the recognizer+backend one).
+  (b) Coordinated change, not a refactor — `testing.json`'s `"simulator"` and
+      `"simulators"` keys. TRANSFORM-UnitTests drives these (project stage
+      block). **Owner's ruling, 2026-09-03: do it — DSTF and
+      TRANSFORM-UnitTests are updated in the same pass.** The coordination is
+      therefore the simultaneous edit, not a migration utility for third
+      parties; a reader/writer split still applies within DSTF (accept the old
+      key on read for the length of the pass if that makes the two-repo swap
+      safer, but never write it).
+      Scope check done 2026-09-03: the stored reference tree is NOT affected.
+      `config.py:665` builds `reference_root / simulator_backend / os_name`,
+      where `simulator_backend` is a *value* ("Dymola"), so the ~326 stored
+      baselines keep their paths under any rename. Tier (b) is the two JSON
+      keys and nothing else.
+  First step is an audit, not an edit: census every `simulator` / `runner`
+  identifier and string, split it into (a) and (b), and bring the count back
+  before anything is renamed.
+
+- **UI-vs-code parity audit, with the documented criteria as the yardstick**
+  (2026-09-03, owner, from a TRANSFORM run): the owner opened a `scalar` leaf
+  in the interactive report and found (a) the variable picker offers only the
+  test's tracked variables, with no way to reach the stored statistics the
+  scalar mode is documented to score (`CPUtime.final`,
+  `translation.scalar_unknowns`), and (b) no choices at all for the reduction
+  — no `mean`, `sample_mean`, `max`, `min`, `final`, `integral`.
+  Cause, traced 2026-09-03 (read-only): `ScalarConfig.quantity` is typed
+  `str | dict | None` (`comparison/modes.py:357`). `derive_schema` builds an
+  enum control only from a `Literal`, and a multi-type optional union falls to
+  `passthrough` (`reporting/ui/mode_controls.py:124`), which renders as a
+  raw-JSON textarea (`:273`). So the six reduce names and the dotted-path form
+  exist only inside the field's `help` string. The stored-statistics gap is
+  separate: a statistic is not a tracked variable, and nothing feeds the run's
+  available `statistics` / diagnostics keys into a picker.
+  Second client, same cause: `derive_schema` also backs `export-schema`
+  (`reporting/schema_export.py:145`), so a `passthrough` field means the
+  exported JSON Schema cannot fully describe that leaf either — and that
+  schema is the machine-readable contract the docs lean on ("the fields of a
+  new leaf can be built from the schema alone"). One loose
+  type degrades both the GUI and the contract, silently in both.
+  The idea is the audit, not just this fix. `passthrough` is a *silent*
+  degradation, so the gap class is invisible by construction: for every
+  registered metric and combinator, list every field, flag every
+  `passthrough`, and flag every field whose real domain is enumerable but is
+  not typed `Literal`. Yardstick, per the owner: every documented criterion
+  beyond the trajectory — reductions of a tracked series, stored statistics
+  such as final CPU time, translation statistics made load-bearing, bounds
+  vs. baseline-relative tolerance — must be reachable
+  through the UI, not merely through hand-edited JSON.
+  Fix directions (sketches, not decisions): give auto-derive a `choices` /
+  domain metadata key it honors for non-`Literal` fields, or retype
+  `quantity` as a discriminated shape; and thread the run's available
+  statistics and diagnostics keys into the report context so the quantity
+  picker can offer them alongside the tracked variables.
+
+- **A richer demo test: several metric kinds on one interesting trajectory**
+  (2026-09-03, owner, from a demo-library review): every demo test
+  exercises one idea on a simple trajectory — `TubeToleranceTest` is a single
+  exponential, `MetricTreeTest` a step response plus a lag, `EventTest` a
+  staircase, `MultiFrequencyTest` a three-tone composite. Nothing in the
+  library shows interesting *behaviour* and a rich metric combination at the
+  same time: a trajectory with a transient, discrete events, and a steady
+  state, scored by a tube on one window, event-timing across the
+  discontinuities, a `scalar` on a translation statistic, and a companion
+  overlay — one plot carrying the whole story. Wanted for a live demo rather
+  than a static figure (owner's framing: "we can leave that to the demo"). Constraint: it must stay a demo library model, i.e. no MSL
+  dependency at parse time, in the style of the existing `Examples`.
+
+- **A reproducible figure/screenshot capture script** (2026-09-03, from a
+  documentation review): the report screenshots used in DSTF's write-ups are
+  hand-taken and nothing in this repo can reproduce them — no
+  Playwright capture recipe in `tests/`, `scripts/` or `docs/`. A small script
+  that opens a named test's `interactive.html`, opens a named leaf's editor,
+  applies a browser zoom, crops to declared panels and writes a PNG at a
+  chosen `deviceScaleFactor` would make documentation figures regenerable
+  after any reporter change. Measured motivation: one such screenshot came
+  out 2704x1528 (808 DPI at print column width) yet its editor labels
+  rendered ~0.44 mm tall, because the capture was under-zoomed and
+  over-wide — a defect a
+  scripted capture with explicit zoom and crop would not reintroduce.
+  The Playwright dependency already exists in the dev extra (the interactive
+  HTML tests are gated on it).
+
+- **Audit the visual / UI test system for completeness, and cut the
+  human-in-the-loop pass** (2026-09-03, owner, alongside the UI-vs-code parity
+  audit): make sure the reporter's UI is covered well enough that verifying a
+  reporter change does not depend on a person opening a browser.
+  Measured starting point, 2026-09-03 (read-only):
+  * ~160 Playwright tests across seven files
+    (`test_interactive_playwright.py` 91, `test_interactive_points.py` 28,
+    `test_interactive_range_window.py` 14, `test_interactive_against_baselines.py`
+    11, `test_interactive_event_timing.py` 8, `test_dashboard_selection_playwright.py`
+    3, plus `test_scorer_parity.py`'s JS-vs-Python parity tests), all gated by
+    `importorskip`, so a machine without Playwright silently runs none of them.
+  * `docs/qa/reporter_checklist.md` is 205 lines and ~29 manual items, and
+    states its own scope as "the remaining ~20% that requires human judgment —
+    visual quality, drag-based plot interactions, and UX feel".
+  * There is **no visual-regression testing at all**: no reference screenshots,
+    no image diffing, nothing that fails when the report renders wrongly but
+    still holds the right state.
+  Audit questions, in the order they matter:
+  1. Is the checklist stale? It says drag-based plot interactions stay manual,
+     yet the interactive tests carry ~75 shift/drag/mouse references, including
+     `shiftKey`, `mouse.move`, and named corner/edge-drag tests. Either the
+     automation caught up and the checklist was never updated, or those hits
+     are incidental. Settle that first — the answer changes how big this job
+     is.
+  2. Which of the ~29 manual items are automatable as state assertions rather
+     than as pictures? Every one that is, should be.
+  3. What genuinely needs a picture? That is the case for visual-regression
+     baselines, which need the capture script logged above as their
+     precondition (deterministic zoom, crop and `deviceScaleFactor`, or the
+     diffs will be noise).
+  4. Per-metric editor parity: `tube`, `points`, `range`, `event-timing`,
+     `dominant-frequency` and `scalar` all appear in the interactive tests, but
+     appearing is not covering — for each, is the editor *exercised*, or only
+     rendered? The `scalar` leaf is the known-bad case (see the UI-vs-code
+     parity idea: its `quantity` field renders as a raw-JSON textarea), which
+     is a hint that "named in a test" and "verified usable" have diverged.
+  5. Does the gating hide failures? `importorskip` means a CI or dev machine
+     without browsers reports a green suite. Whether Playwright should be a
+     hard requirement of the dev extra is an owner call.
+  Why it matters: the headline documented claim is that bands, checkpoints
+  and FFT peak boxes are *dragged directly on the plot*. If drag is the least
+  automated part of the surface, the most-quoted UI claim rests on the
+  thinnest test coverage — which is the reason this audit is worth doing before
+  the public 1.0 push rather than after.
+
+- **Review whether `.id_high_water.json` is necessary, or derivable from what
+  is already on disk** (2026-09-03, owner: "it smells like a workaround for
+  something"): the file exists (D99) because the ID index is built by scanning
+  — design principle 3 — so a ref file IS the only durable record that its ID
+  was ever allocated. `cleanup_obsolete` (`storage/reference_store.py:445`)
+  `unlink()`s obsolete ref files, and that unlink is the single event that
+  destroys the record; the dot-file exists to remember what the unlink forgot.
+  It is the only ref-file deleter in the codebase, and `manifest cleanup` is
+  dry-run by default, so the whole hazard flows through one narrow path.
+  The owner's instinct is worth testing against that: **make the deletion
+  non-destructive of the ID instead of adding a second store.** Candidate —
+  have `cleanup_obsolete` rewrite the ref file in place as a stub (model_id,
+  `status: "obsolete"`, no trajectory payload) rather than unlinking it.
+  Cleanup's real job is reclaiming trajectory bulk, not directory entries, and
+  a scan then yields the true high-water forever.
+  What that would buy, beyond deleting one file kind: the whole race
+  mitigation in `_bump_high_water` (`storage/ref_index.py:167`) goes with it —
+  a bump currently folds in a FRESH disk scan because a read-check-write mark
+  is last-writer-wins and can *regress* under two racing `--accept` processes
+  (an adversarial-review finding in D99, and write-then-verify does not close
+  it). No second store, no race to mitigate.
+  Also worth noticing while in there: `cleanup_obsolete` still deletes each
+  deleted ref's `soft_checks/` and `companions/` dirs justified by "a later
+  reuse of this ID must not inherit another model's role data" (review
+  2026-07-06, finding 32) — i.e. the code carries *two* mitigations for ID
+  reuse, one assuming reuse happens and one preventing it. Whichever design
+  wins, that comment should stop contradicting it.
+  Arguments for leaving it alone, to weigh honestly: it is two lines of JSON,
+  reviewed and tested; absent or corrupt it degrades to scan-only, so it never
+  fails an accept; and neither design survives a user's manual `rm` of a ref
+  file. Check before changing: what else assumes a cleaned-up ref is gone from
+  disk (`list_obsolete`'s contract, the manifest CLI's reporting,
+  `tests/test_storage.py`'s high-water tests), and whether a stub file would
+  confuse `RefIndex` scanning or any downstream reader of the partition.
+
+- **A merged cross-backend report** (2026-09-03, owner, from a review of how
+  simulators are selected): today one `dstf run` is one backend, and
+  everything downstream is partitioned by it — references at
+  `<reference_root>/<Backend>/<os>/`, work dir defaulting to
+  `testing_output/<library>/<Simulator>/<os>/` (`config.py:634`), and therefore
+  `dashboard.html`, `reports/` and the result sidecars too. That partitioning
+  is why no fan-out layer was ever needed: two invocations, even concurrent
+  ones, never collide, so the shell or a CI job matrix *is* the fan-out layer
+  (verified 2026-09-03; `--simulator` takes one name and there is no
+  matrix/all-backends flag anywhere in the CLI).
+  What the partitioning does not give is a single view. Running a library
+  against Dymola and OpenModelica yields two dashboards and two exit codes,
+  with no page showing the suite across backends and no one place that says
+  "these four tests pass on Dymola and fail on OpenModelica". That view is
+  what this idea is.
+  Design constraints, so the work starts from the real ones:
+  * **Join on the model ID, never on `ref_NNNN`.** Numeric IDs are allocated
+    per partition (`RefIndex` is per `ref_dir`, and so is the high-water
+    mark), so `ref_0007` under `Dymola/linux` and under `OpenModelica/linux`
+    are unrelated. The model ID stored inside each ref file is the only
+    cross-backend identity.
+  * Not the same thing as cross-backend *scoring*, which already exists: a
+    `soft_check` imports another backend's primary so cross-simulator
+    disagreement is scored inside one run (the demo's `MetricTreeTest`). This
+    idea is about display and roll-up across independent runs, not about
+    making one run's verdict depend on another's.
+  * `--merge` is not it either: it widens a filtered rerun's report to the
+    whole batch manifest within one work dir and one backend
+    (`cli/main.py:233`).
+  * Expect ragged matrices: a test may be absent, `no-baseline`, or
+    `sim-failed` on one backend and pass on another; the OS axis is real too
+    (`<Backend>/<os>`), so the natural shape is model x (backend, os), not
+    model x backend.
+  **Owner's steer, 2026-09-03: yes to the roll-up exit status — the goal is
+  maximum value for both CI and the interactive user.** So the merged page is
+  not display-only: it carries its own verdict, giving CI a single required
+  check across the matrix, which a CI matrix cannot express on its own. Still
+  open: a new CLI verb reading N work dirs (`dstf summarize <dir>...`) versus
+  teaching the existing dashboard to accept several.
+  Process, per the owner: this idea gets grilled, researched and reviewed
+  before any plan or execution — do not treat the entry above as a spec.
+
+### Publicly stated future directions
+
+These three have been stated publicly, which changes their status: they are no
+longer private "somedays" but directions others have been told to expect.
+Recorded 2026-09-03 at the owner's request. Each still gets grilled before
+planning.
+
+- **UQ: promote the reserved Dataset kinds and score ensembles** (direction
+  1; answers a standing request for UQ and sensitivity analysis):
+  `DatasetType` already reserves `EVENTS`, `SPECTRUM`
+  and `DISTRIBUTION` (`simulators/types.py:46`) while every backend emits
+  `TIME_SERIES` and `SCALARS` is scorable today. Giving the reserved kinds the
+  same standing as trajectories would let `event-timing` and
+  `dominant-frequency` share machinery with metrics added later, and the
+  distribution kind is the seam UQ enters through. An ensemble run — one model
+  swept over uncertain parameters — returns a sample per output instead of a
+  single trajectory, and scoring that needs metric shapes DSTF does not have:
+  a quantile band doing for an ensemble what the tube does for one run, and a
+  Kolmogorov-Smirnov statistic comparing a whole sample against a stored one.
+  The stated claim, which the work must keep true, is that each of these is a
+  new plug-in rather than a change to the framework. Second half of the
+  commitment: align the stored representation with the common UQ description
+  proposed by Bajand et al. (2025) so a baseline
+  carries the same uncertainty description a Modelica, FMI or SSP toolchain
+  already produces. Relates to the E-tier "Phase 9 dataset types" note above,
+  which lists #23 Frechet, #24 spectral coherence, #26 ISO 18571 and #25
+  x-tolerance as the other leaves those kinds unlock.
+
+- **Sensitivity analysis as a reader of stored scores** (direction 1, second
+  half): the stated claim is that every leaf's score is stored with the
+  trajectories it scored, which is the input a ranking tool needs. Nothing is
+  required of DSTF here beyond keeping that true and being able to hand the
+  records over — per D66 the ranking tool itself is downstream, not ours. Worth
+  a check that the per-leaf score records really are complete and reachable for
+  an external consumer (the JSON outputs, not just the HTML), since that is
+  now asserted publicly.
+
+- **Make cross-backend cross-checking routine** (direction 2): the
+  cross-backend chain exports a model as an FMU from one backend and replays it
+  on another, so one backend's regression becomes a cross-check on another's.
+  Making that automatic — every backend pair compared without an author
+  asking for it — is the stated next step from the capability
+  declarations. Today the chain is EXPERIMENTAL and Dymola-only for export;
+  idea #54 above (OM FMU export via `buildModelFMU`) is the prerequisite for
+  even one more pair. Note the design question this raises: "every backend
+  pair" implies a fan-out the CLI does not have, which is the same seam as the
+  merged cross-backend report idea logged above — the two should be grilled
+  together.
+
+- **Tools that propose specification changes from evidence, wired into each
+  ecosystem's test runner** (direction 3): the proposing half is already
+  logged as the **Phase 7 rule-based recommender** (B-tier above; see D66) —
+  now stated publicly, with the mechanism given as (a recommender emits a patch and validation rejects a bad proposal
+  before it reaches the repository). The half not previously recorded is the
+  integration: making those proposals reachable from each ecosystem's own test
+  runner, which is where DSTF meets existing CI setups. Also related to the
+  merged cross-backend report's roll-up exit status, which is the other
+  CI-facing gap.
+
+- **~~Write baseline JSON with LF on every platform~~** — **DONE** (D122,
+  2026-09-03). Fixed at the default rather than the call sites:
+  `_atomic_write_text`'s `newline` is now `"\n"`, which covers all ten of
+  its JSON callers; `config.py`, `cli/common.py`, `cli/spec_cmds.py` and
+  `report_suite.py`'s byte-stable `interactive.js` took the explicit
+  kwarg. Wider than logged below: `spec_parser`/`patch_apply` write
+  `test_spec.json`, also a promised surface. No migration — existing CRLF
+  files read back fine and flip on their next accept. An accept on
+  Windows is still unrun. The `.gitattributes` half of the original
+  entry below is NOT done — suggesting `*.json text eol=lf` to consuming
+  repos is a docs question left open. Original entry, kept for its
+  call-site list:
+
+  > The defect (2026-09-03, from the
+  TRANSFORM tree showing two baselines as wholly modified when nothing had
+  changed): `_atomic_write_text`
+  (`storage/ref_index.py:30`) forwards `newline` to `open`, and every JSON
+  caller — `reference_store.py:301`, `:358`, `:385`, `roles.py:235`, `:382`,
+  `:441`, `batch_manifest.py:69`, `ref_index.py:198` — takes the default
+  `None`, so Python translates `\n` to `os.linesep`. A baseline accepted on
+  Windows lands CRLF; the same file accepted from WSL lands LF. The CSV
+  export at `reference_store.py:426` already passes `newline=""` on purpose,
+  so the mechanism is understood in this file, just not applied to JSON.
+  Why it matters beyond tidiness: the reference tree is a surface other
+  people version-control (the stage block names it), and a cross-platform
+  accept turns a one-value edit into a whole-file diff — 6,881 changed lines
+  on the observed `ref_0011.json`, with the real change invisible inside it.
+  Fix: pass `newline="\n"` on the JSON writes. Small and contained.
+  Old data, not old code: files already stored with CRLF still read fine, so
+  no migration is needed — but consider whether `manifest`-style tooling
+  should offer a one-shot normalise, and whether the docs should suggest
+  `*.json text eol=lf` in the consuming repo's `.gitattributes` as a belt
+  alongside it. Verify on both platforms before claiming it fixed.
+
+- **Two leftovers from the D122 review, both small** (2026-09-03, from the
+  adversarial review of the line-ending fix): (1) `ref_index.py`'s ID-claim
+  stub writes its JSON with `json.dump` and no trailing newline, so a crash
+  between `register()` and `store_reference()` leaves a ref file that git
+  flags `\ No newline at end of file` for as long as it survives. Pre-dates
+  D122 and is orthogonal to line endings; one `+ "\n"` if it is worth
+  touching at all. (2) JUnit XML is the one text output DSTF writes that
+  still takes the platform newline — `ElementTree.write`'s filename branch
+  opens without `newline=`, so fixing it means passing a file object rather
+  than a kwarg. Excluded from D122 deliberately (CI artifact, regenerated
+  wholesale, content differs every run); only worth revisiting if someone
+  reports committing `results.xml`.
+
+- **`import-baseline` stores whatever path the user typed, absolute included**
+  (2026-09-03, found during a pre-publication scrub of this repo):
+  `cli/baseline_cmds.py:216` does `provenance.setdefault("imported_from",
+  str(source))`, so importing a soft_check by absolute path bakes that
+  absolute path into a JSON file the user then commits. This repo shipped one:
+  the demo's `openmodelica.json` carried a full absolute path from the
+  machine that produced it, until it was rewritten by hand. The reference tree is a surface other people version-control, so
+  the leak is theirs, not ours — a username and a directory layout published
+  by a tool they ran. Likely shape: record the path relative to
+  `reference_root` (or the source repo root) when the source lies under it,
+  and only fall back to the literal string when it does not. Needs grilling
+  first — "relative to what" is the actual question, and provenance that
+  cannot be resolved later is worse than none.

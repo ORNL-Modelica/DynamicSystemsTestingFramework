@@ -503,6 +503,29 @@ class TestFinding19AutoCreate:
         assert (ref_root / "testing.json").is_file()
         assert config.reference_root == ref_root.resolve()
 
+    def test_default_config_written_with_lf(self, tmp_path, monkeypatch):
+        """testing.json is a surface users version-control, so its line
+        ending must not depend on the OS that wrote it.
+
+        A byte assertion cannot fail on Linux — CPython
+        compiles the CRLF write translation in rather than reading
+        os.linesep — so pin the argument at the call site instead.
+        """
+        monkeypatch.chdir(tmp_path)
+        lib = _make_lib(tmp_path / "src")
+
+        seen: dict[str, object] = {}
+        real = Path.write_text
+
+        def spy(self, data, *args, **kwargs):
+            seen[self.name] = kwargs.get("newline")
+            return real(self, data, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", spy)
+        Config(source_path=lib, reference_root=tmp_path / "fresh" / "refs")
+
+        assert seen["testing.json"] == "\n"
+
     def test_existing_empty_config_not_overwritten(self, tmp_path, monkeypatch):
         """A found config that parses to {} counts as 'found' — auto-create
         must not fire and must not overwrite the user's file."""

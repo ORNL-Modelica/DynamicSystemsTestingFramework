@@ -145,7 +145,11 @@ def _create_default_config(config_dir: Path, library_name: str) -> dict:
     # review 2026-07-06 finding 19: the target dir may not exist yet (e.g.
     # first run with a fresh --reference-root) — create it before writing.
     config_dir.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    # LF on every platform: testing.json is a surface
+    # users version-control, so it must not depend on the writing OS.
+    config_path.write_text(
+        json.dumps(config, indent=2) + "\n", encoding="utf-8", newline="\n"
+    )
     logger.info("Created default %s at %s", CONFIG_FILENAME, config_path)
     print(f"Created default {CONFIG_FILENAME} at {config_path}")
     return config

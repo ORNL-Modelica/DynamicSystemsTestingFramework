@@ -73,7 +73,8 @@ htmlcov/
 # Cursor
 .cursorignore
 .cursorindexingignore
-# Local agent configuration and working notes — machine-local paths inside.
+# Local agent configuration and working notes. Machine-local: the paths
+# inside resolve only on the machine that wrote them.
 .claude/
 
 # Test fixtures named like Dymola artifacts are real, committed test data —

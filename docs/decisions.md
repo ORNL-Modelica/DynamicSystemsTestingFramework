@@ -3730,3 +3730,75 @@ copy's freshness check is size-only; a zero-length embedded overlay
 fails closed rather than falling back to the CLI badge; a pinned
 against-leaf's tube editor centres on y=0 rather than wrongly on the
 primary.
+
+## D122 — Every JSON DSTF writes lands with LF, on every platform (2026-09-03)
+
+`_atomic_write_text` forwarded `newline=None` to `open`,
+so Python translated `\n` to `os.linesep`: a baseline accepted on Windows
+landed CRLF, the same file accepted from WSL landed LF. Observed in the
+user's TRANSFORM-UnitTests tree — `ref_0011.json` and `ref_0222.json`
+showed as modified with +6881/-6881 and +231/-231 while being
+byte-identical to HEAD once `\r` was stripped. CORRECTION (same day,
+verified in that repo): the observation was real but its stated cause was
+not. An earlier note recorded "no `.gitattributes` and no `core.autocrlf`, so
+nothing normalises it back"; that was true when written and the owner
+closed it hours later — `6471d47` adds `* text=auto eol=lf` and `1372809`
+renormalizes, both 2026-09-03. That tree now reads clean with a
+6,881-CR working copy, because git cleans on compare. Do not repeat the
+claim: a consuming repo may or may not normalise, which is exactly why
+the writer must not depend on it. The cost is not tidiness: the reference tree is the
+seam other people version-control (the stage block names it), and a real
+one-value edit inside a 6,881-line whole-file diff is invisible in review.
+This repo could never surface the bug itself — its own `.gitattributes`
+carries `* text=auto eol=lf`.
+
+The fix is the default, not the call sites. `_atomic_write_text`'s
+`newline` narrows from `str | None = None` to `str = "\n"`, which corrects
+all ten of its JSON callers at once (`patch_apply`, `spec_parser`,
+`batch_manifest`, `reference_store` ×3, `roles` ×3, `ref_index`) and means
+a caller added later cannot reintroduce the defect by forgetting a keyword.
+Three JSON writers bypass that primitive and took the explicit kwarg
+instead: `config.py` (`testing.json`), `cli/common.py`
+(`reference_manifest.json`) and `cli/spec_cmds.py` (the exported schema).
+The scope is wider than the defect report, which named only the baseline
+tree: `spec_parser` and `patch_apply` write `test_spec.json`, also a
+promised surface. `reporting/report_suite.py`'s `interactive.js` joins them
+for one specific reason — unlike everything else under `reports/` it is
+byte-stable across runs, so an archived report tree regenerated from the
+other OS would diff wholly for nothing.
+
+Deliberately excluded, all regenerated wholesale with content that differs
+every run anyway: report HTML/JSON, simulator stdout/stderr dumps, work-dir
+result JSON, progress files, the Dymola/OM `.mos` scripts (forcing LF on a
+script a Windows tool reads is a separate question nobody has asked), and
+the JUnit XML at `reporting/junit_report.py` — `ElementTree.write`'s
+filename branch opens without `newline=`, so that one would need a file
+object rather than a kwarg, and it is a CI artifact, not a committed file.
+`ref_index`'s ID-claim stub is excluded on different grounds: `json.dump`
+with no `indent` emits a single line containing no `\n` at all.
+
+The CSV export keeps its explicit `newline=""`, now belt-and-braces rather
+than load-bearing — per CPython's `textio.c` neither `""` nor `"\n"`
+translates on write, so the `\r\n` that `csv` embeds survives either way.
+That also means the existing `\r\r\n` regression assertion at
+`tests/test_storage.py` can no longer fail on any platform; it was restated
+to pin the CSV terminator rather than pretend to guard the argument.
+
+Old data, not old code: baselines already stored with CRLF read back fine —
+every reader goes through `read_text` (universal newlines) or `json.loads`,
+and nothing hashes, seeks or appends over reference-tree content. They stay
+CRLF until re-accepted, at which point each flips to LF and produces one
+whole-file diff. That is a one-time cost and no migration is offered.
+
+Verification, and its limit. Full suite green (1403 passed, 26 skipped);
+the mechanism was proved directly — an explicit `newline` controls the
+terminator independently of `os.linesep`, and `Path.write_text`'s `newline`
+parameter exists on the 3.10 floor (executed on CPython 3.10.20, not
+recalled). No byte assertion can gate this on Linux: CPython compiles the
+CRLF write translation in under `#ifdef MS_WINDOWS` rather than reading
+`os.linesep`, so setting `os.linesep` at runtime changes nothing. The gates
+are therefore call-site assertions — the signature default for the
+primitive, and a `Path.write_text` spy for each of the three direct writers
+— each mutation-checked by reverting the decision and confirming the test
+fails. **What remains unrun: an actual accept on Windows.** The platform
+where the defect manifests is the one that cannot be tested from here.

@@ -214,7 +214,8 @@ def cmd_export_schema(args: argparse.Namespace) -> int:
     text = json_mod.dumps(schema, indent=2) + "\n"
     out = getattr(args, "output", None)
     if out:
-        Path(out).write_text(text, encoding="utf-8")
+        # LF on every platform — the schema gets committed.
+        Path(out).write_text(text, encoding="utf-8", newline="\n")
         print(f"Wrote schema to {out}")
     else:
         sys.stdout.write(text)

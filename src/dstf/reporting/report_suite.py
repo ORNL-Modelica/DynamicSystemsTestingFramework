@@ -100,7 +100,11 @@ def write_report_assets(page_dir: Path) -> Path:
     Returns the JS path.
     """
     dest = page_dir / "interactive.js"
-    dest.write_text(interactive_js_source(), encoding="utf-8")
+    # LF on every platform. Unlike the rest of a report, this
+    # file is byte-stable across runs, so an archived report tree
+    # regenerated from the other OS would otherwise diff wholly for
+    # nothing.
+    dest.write_text(interactive_js_source(), encoding="utf-8", newline="\n")
     copy_vendor_assets(page_dir.parent)
     return dest
 

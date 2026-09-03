@@ -82,3 +82,12 @@ def test_valid_spec_entries_survive_an_edit(tmp_path):
     add_to_test_spec(spec, "Lib.B", ["y"])
     data = json.loads(spec.read_text(encoding="utf-8"))
     assert [e["model"] for e in data["tests"]] == ["Lib.A", "Lib.B"]
+
+
+def test_spec_is_written_with_lf(tmp_path):
+    """test_spec.json is version-controlled by the consumer, so it
+    must not pick up CRLF when the edit happens to run on Windows."""
+    spec = tmp_path / "test_spec.json"
+    add_to_test_spec(spec, "Lib.B", ["y"])
+
+    assert b"\r" not in spec.read_bytes()
