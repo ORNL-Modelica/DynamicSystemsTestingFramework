@@ -35,7 +35,8 @@ from pathlib import Path
 from ..config import Config
 from ..discovery.test_registry import TestModel
 from ..storage.reference_store import ReferenceStore
-from .base import SimulatorRunner, TestResult
+from .base import SimulatorRunner
+from .types import Capability, TestResult
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +69,21 @@ def produce_dymola_via_fmpy_baseline(
     soft_checks augment primary, they do not replace it.
     """
     work = fmu_dir or (config.work_dir / f"chain_{test.model_id.replace('.', '_')}")
-    work.mkdir(parents=True, exist_ok=True)
 
-    # Step 1 — export the FMU via the primary backend.
+    # Step 1 — export the FMU via the primary backend. Gate on the declared
+    # capability rather than catching NotImplementedError: "this backend
+    # can't export" is a configuration fact knowable before we do any work,
+    # and the flag is the framework's single source of truth for it (batch
+    # Dymola, for instance, can't — only the persistent variant can).
+    if Capability.FMU_EXPORT not in primary_runner.capabilities:
+        logger.warning(
+            "cross-backend chain: %s does not declare Capability.FMU_EXPORT; "
+            "skipping %s",
+            type(primary_runner).__name__,
+            test.model_id,
+        )
+        return False
+    work.mkdir(parents=True, exist_ok=True)
     try:
         fmu_path = primary_runner.export_fmu(test, work)
     except (NotImplementedError, RuntimeError) as exc:

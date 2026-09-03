@@ -395,22 +395,35 @@ class Config:
         source_type_hint = file_config.get("source_type", self.source_type)
 
         if source_type_hint == "modelica":
-            # Resolve source path — CLI arg > config file > auto-detect
-            if self.source_path is not None:
-                self.source_path = Path(self.source_path).resolve()
-                if not (self.source_path / "package.mo").exists():
-                    self.source_path = find_package_dir(self.source_path)
-            elif "source_path" in file_config:
-                base_dir = config_found_dir or Path.cwd()
-                self.source_path = (base_dir / file_config["source_path"]).resolve()
-                if not (self.source_path / "package.mo").exists():
-                    self.source_path = find_package_dir(self.source_path)
-            else:
-                self.source_path = find_package_dir()
+            # Resolve source path — CLI arg > config file > auto-detect.
+            # "no package.mo anywhere" is a user error (wrong --source-path,
+            # wrong cwd, or source_type should have been "fmu"/"julia"), so
+            # find_package_dir's FileNotFoundError becomes a ConfigError and
+            # main() prints one line instead of a traceback.
+            try:
+                if self.source_path is not None:
+                    self.source_path = Path(self.source_path).resolve()
+                    if not (self.source_path / "package.mo").exists():
+                        self.source_path = find_package_dir(self.source_path)
+                elif "source_path" in file_config:
+                    base_dir = config_found_dir or Path.cwd()
+                    self.source_path = (base_dir / file_config["source_path"]).resolve()
+                    if not (self.source_path / "package.mo").exists():
+                        self.source_path = find_package_dir(self.source_path)
+                else:
+                    self.source_path = find_package_dir()
+            except OSError as e:
+                raise ConfigError(
+                    f"{e} Set 'source_path' in testing.json, pass --source-path, "
+                    f"or set 'source_type' if this library isn't Modelica."
+                ) from e
 
             # Read library name from package.mo
             if self.library_name is None:
-                self.library_name = read_package_name(self.source_path)
+                try:
+                    self.library_name = read_package_name(self.source_path)
+                except (FileNotFoundError, ValueError) as e:
+                    raise ConfigError(str(e)) from e
 
             # The parent of the package dir is where testing.json typically lives
             repo_root = self.source_path.parent
@@ -513,11 +526,26 @@ class Config:
         # Recognizer instances stored on Config. CLI-provided recognizers
         # take precedence; testing.json fills in if Config wasn't given any.
         if not self.recognizers and "recognizers" in file_config:
-            from .discovery.json_recognizer import parse_recognizer_spec
+            from .discovery.json_recognizer import (
+                RecognizerSpecError,
+                parse_recognizer_spec,
+            )
 
-            self.recognizers = [
-                parse_recognizer_spec(spec) for spec in file_config["recognizers"]
-            ]
+            where = (
+                config_found_dir / CONFIG_FILENAME if config_found_dir else "the config"
+            )
+            specs = file_config["recognizers"]
+            if not isinstance(specs, list):
+                raise ConfigError(
+                    f"'recognizers' in {where} must be a list, "
+                    f"got {type(specs).__name__}"
+                )
+            try:
+                self.recognizers = [parse_recognizer_spec(spec) for spec in specs]
+            except RecognizerSpecError as e:
+                # A malformed recognizer is a testing.json problem the user
+                # must fix — one clean line and exit 2, not a traceback.
+                raise ConfigError(f"Invalid recognizer in {where}: {e}") from e
         if not self.disabled_bundled and "disable_bundled" in file_config:
             self.disabled_bundled = list(file_config["disable_bundled"])
 

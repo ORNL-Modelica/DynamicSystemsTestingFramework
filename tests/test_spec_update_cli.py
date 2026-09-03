@@ -1,4 +1,4 @@
-"""End-to-end cmd_spec_update tests — both legacy dict and new patch format."""
+"""End-to-end cmd_spec_update tests — the RFC 6902 patch envelope."""
 
 from __future__ import annotations
 
@@ -6,10 +6,15 @@ import argparse
 import json
 from pathlib import Path
 
+import pytest
+
+from dstf.comparison.tree_spec import parse_metric_tree
+from dstf.config import ConfigError
+
 
 def _run_spec_update(spec_path: Path, update_json_path: Path) -> int:
     """Invoke cmd_spec_update directly, bypassing arg parsing."""
-    from dstf.cli import cmd_spec_update
+    from dstf.cli.spec_cmds import cmd_spec_update
 
     # Use the spec's parent dir as reference_root so _build_config can
     # locate testing.json. Write a minimal one.
@@ -112,10 +117,10 @@ class TestPatchFormat:
         assert data["tests"][0]["simulation"]["stop_time"] == 10
 
 
-class TestLegacyDictFormat:
-    """Legacy flat-dict format still works for a transition cycle."""
+class TestNonEnvelopeRejected:
+    """The patch envelope is the only accepted input shape."""
 
-    def test_legacy_dict_still_honored(self, tmp_path):
+    def _spec(self, tmp_path) -> Path:
         spec = tmp_path / "test_spec.json"
         spec.write_text(
             json.dumps(
@@ -125,19 +130,171 @@ class TestLegacyDictFormat:
             ),
             encoding="utf-8",
         )
+        return spec
 
-        legacy = tmp_path / "legacy.json"
-        legacy.write_text(
-            json.dumps(
-                {
-                    "model": "MyLib.A",
-                    "comparison": {"tolerance": 1e-3},
-                }
-            ),
+    def test_flat_tolerance_dict_is_rejected(self, tmp_path):
+        spec = self._spec(tmp_path)
+        flat = tmp_path / "flat.json"
+        flat.write_text(
+            json.dumps({"model": "MyLib.A", "comparison": {"tolerance": 1e-3}}),
             encoding="utf-8",
         )
 
-        rc = _run_spec_update(spec, legacy)
-        assert rc == 0
+        with pytest.raises(ConfigError, match=r'"patch"'):
+            _run_spec_update(spec, flat)
+
+        # Spec file untouched.
         data = json.loads(spec.read_text())
-        assert data["tests"][0]["comparison"]["tolerance"] == 1e-3
+        assert data["tests"][0]["comparison"]["tolerance"] == 1e-4
+
+    def test_non_list_patch_is_rejected(self, tmp_path):
+        spec = self._spec(tmp_path)
+        bad = tmp_path / "bad.json"
+        bad.write_text(
+            json.dumps({"model": "MyLib.A", "patch": {"op": "replace"}}),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ConfigError, match="not a JSON-Patch envelope"):
+            _run_spec_update(spec, bad)
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_reporter.py — 2026-07-06 review,
+# reporter batch (CODE_REVIEW_2026-07-06.md).
+#
+# Finding 41 — ``cmd_spec_update`` materializes the implicit metric tree
+# before applying reporter-emitted per-leaf ops to a flat-override entry
+# (round-trip: flat entry -> per-leaf op -> valid spec carrying the edit).
+#
+# The source file carried a byte-identical ``_run_spec_update`` harness; the
+# one already defined above is used instead.
+# =========================================================================
+
+
+def _write_spec(tmp_path: Path, entry: dict) -> Path:
+    spec = tmp_path / "test_spec.json"
+    spec.write_text(json.dumps({"tests": [entry]}), encoding="utf-8")
+    return spec
+
+
+def _write_patch(tmp_path: Path, model: str, ops: list[dict]) -> Path:
+    patch = tmp_path / "spec_patch.json"
+    patch.write_text(json.dumps({"model": model, "patch": ops}), encoding="utf-8")
+    return patch
+
+
+class TestSpecUpdateMaterialization:
+    def test_per_leaf_op_round_trips_on_flat_entry(self, tmp_path):
+        """Reporter-style per-leaf op against a flat-override entry: the
+        implicit tree is materialized, the op lands, and the result parses
+        as a valid metric tree carrying the edit."""
+        spec = _write_spec(
+            tmp_path,
+            {
+                "model": "MyLib.A",
+                "variables": ["h", "v"],
+                "comparison": {
+                    "tolerance": 1e-4,
+                    "variable_overrides": {
+                        "v": {
+                            "mode": "tube",
+                            "tube_width_mode": "rel",
+                            "tube_rel": 0.05,
+                        }
+                    },
+                },
+            },
+        )
+        patch = _write_patch(
+            tmp_path,
+            "MyLib.A",
+            [{"op": "add", "path": "/metrics/children/0/tolerance", "value": 0.5}],
+        )
+
+        rc = _run_spec_update(spec, patch)
+        assert rc == 0
+
+        data = json.loads(spec.read_text(encoding="utf-8"))
+        entry = data["tests"][0]
+        assert "metrics" in entry
+
+        # Materialized tree mirrors what the reporter displayed: an AND of
+        # one leaf per tracked variable, overrides flowing into leaf params.
+        tree = parse_metric_tree(entry["metrics"])
+        leaves = tree.children
+        assert [leaf.variable for leaf in leaves] == ["h", "v"]
+        assert leaves[0].metric == "nrmse"
+        assert leaves[0].params["tolerance"] == 0.5  # the applied edit
+        assert leaves[1].metric == "tube"
+        assert leaves[1].params["tube_rel"] == 0.05
+
+        # The flat comparison block survives untouched (whitelist scope).
+        assert entry["comparison"]["variable_overrides"]["v"]["tube_rel"] == 0.05
+
+    def test_existing_metrics_tree_is_not_rematerialized(self, tmp_path):
+        spec = _write_spec(
+            tmp_path,
+            {
+                "model": "MyLib.B",
+                "variables": ["h"],
+                "metrics": {
+                    "combinator": "and",
+                    "children": [
+                        {"metric": "nrmse", "variable": "h", "tolerance": 1e-3}
+                    ],
+                },
+            },
+        )
+        patch = _write_patch(
+            tmp_path,
+            "MyLib.B",
+            [
+                {
+                    "op": "replace",
+                    "path": "/metrics/children/0/tolerance",
+                    "value": 2e-3,
+                }
+            ],
+        )
+        rc = _run_spec_update(spec, patch)
+        assert rc == 0
+        data = json.loads(spec.read_text(encoding="utf-8"))
+        entry = data["tests"][0]
+        assert entry["metrics"]["children"][0]["tolerance"] == 2e-3
+        assert len(entry["metrics"]["children"]) == 1
+
+    def test_wholesale_metrics_add_needs_no_materialization(self, tmp_path):
+        """A structural export (single add at exactly /metrics) applies
+        as-is on a flat entry — no materialization prepended."""
+        spec = _write_spec(
+            tmp_path,
+            {"model": "MyLib.C", "variables": ["h"]},
+        )
+        new_tree = {
+            "combinator": "and",
+            "children": [{"metric": "range", "variable": "h", "min_value": 0.0}],
+        }
+        patch = _write_patch(
+            tmp_path,
+            "MyLib.C",
+            [{"op": "add", "path": "/metrics", "value": new_tree}],
+        )
+        rc = _run_spec_update(spec, patch)
+        assert rc == 0
+        data = json.loads(spec.read_text(encoding="utf-8"))
+        assert data["tests"][0]["metrics"] == new_tree
+
+    def test_flat_entry_without_variables_fails_cleanly(self, tmp_path):
+        """No tracked variables → nothing to materialize leaves from; the
+        command errors instead of writing a broken spec."""
+        spec = _write_spec(tmp_path, {"model": "MyLib.D"})
+        original = spec.read_text(encoding="utf-8")
+        patch = _write_patch(
+            tmp_path,
+            "MyLib.D",
+            [{"op": "add", "path": "/metrics/children/0/tolerance", "value": 0.5}],
+        )
+        rc = _run_spec_update(spec, patch)
+        assert rc == 1
+        assert spec.read_text(encoding="utf-8") == original  # untouched

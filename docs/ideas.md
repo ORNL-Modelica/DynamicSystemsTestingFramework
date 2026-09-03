@@ -69,6 +69,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 | 61 | ~~Points editor — draggable plot markers (Full scope)~~ | M | Low | **DONE** — wired to the shared createPointPlotEditor factory. Shift+click on plot adds a point at (clicked_x, clicked_y) with explicit value; shift+drag on a diamond marker moves time + value (promoting ref-relative points to explicit-value); shift+right-click on a marker removes it. Same abstraction tube + dom-frequency use. |
 | 62 | CLI subcommand parity + standardization | L | Medium | Subcommands grew organically and have inconsistent flag coverage. Concrete known gap: `dstf compare` has no `--parallel`, so the read-and-compare phase always runs serially even when the user has cores available; on a 100-test suite this is the dominant time cost when re-comparing without re-simulating. Other gaps probably exist (audit needed): `--work-dir` / `--timeout` / `--merge` / `--rerun` / `--accept` / `-i` / `--report` are scattered unevenly across `run` vs `compare` vs `manifest`. **Hard constraint from user: no code expansion — same or reduction in LOC**. Right approach is argparse parent parsers (`parents=[...]`) — define groups once (FilterGroup, ParallelismGroup, ReportGroup, etc.), each subcommand opts in to the groups it needs. Flag declarations dedupe across subcommands, the inevitable next subcommand inherits the canonical flag set. Extend `test_argparse_subcommands_match_dispatch_table` to also assert each subcommand declares the flags from its declared groups. ~½ day; net-negative LOC. |
 | 63 | Failure-cluster summary in run report | L | Medium | Today the dashboard / per-test report shows each failure individually with its `error_message`. When the same root cause hits many tests (e.g. the TRANSFORM Dymola Linux run had 84 failures all with the new `"Translation failed: license tier too small for this model"` classification), users have to skim each row to notice the pattern. Idea: after the run, group failures by their classified `error_message`, and surface the top-N clusters in the index page header — e.g., `"242 passed, 84 failed (84 / 84 = 'license tier too small' — likely a Dymola license-tier issue, not test bugs)"`. Builds on the `_classify_translation_error` helper added in 790ddde; same dispatch could classify simulation failures too once we have their patterns. Discovered while running TRANSFORM on Dymola Linux 2026-04-29 — would have saved minutes of digging through individual translation_log.txt files to confirm the failures were all-the-same-cause. ~10 LOC in the report-suite generator. |
+| 64 | Header-only ref scan on index build | L | Low | `ReferenceStore._scan` reads and `json.loads` every `ref_NNNN.json` in full just to pull `model_id` + `status` off the top. On a suite the size of TRANSFORM (~326 baselines, each carrying full trajectories) that is tens of MB parsed on every CLI invocation that touches the store. Options: a tiny sidecar index written on accept, or a streaming/partial parse that stops after the metadata keys (`json` has no partial-parse entry point, so this means a hand-rolled scan or `ijson`). Noticed during the D-7 docstring sweep (Phase C-ii) — the comment there claimed a first-few-KB read that the code never did. |
 
 **Recommended order** (post-Phase-6-MVP, reorganized 2026-04-23):
 
@@ -224,7 +225,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 ## Link to reference JSON file from HTML report
 
 - Artifacts section links to simulation files (dslog.txt, dsin.txt, dsres.mat, etc.) but not to the reference JSON file (e.g., `ref_0042.json`)
-- The reference filename is already shown as text in the "Reference Information" table via `ref_info` (see `plot_comparison.py:98-104`) but it's not a clickable link
+- The reference filename is already shown as text in the "Reference Information" table via `ref_info` (see `context_builder.py`, `_build_ref_info`) but it's not a clickable link
 - Need to resolve the full path to the reference file and add a `file://` URI link, either as an artifact entry or as a clickable link in the ref_info table
 - Requires passing the resolved reference file path through to `_build_template_context()`
 
@@ -267,7 +268,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 ## Worst-violation annotation overlay
 
 - Mark the worst error point on the trajectory plot with an arrow annotation and callout
-- Data already in template context: `max_abs_error`, `max_abs_error_time` (line 175-176 of `plot_comparison.py`); for tube mode: `tube_worst_violation`, `tube_worst_violation_time`
+- Data already in template context: `max_abs_error`, `max_abs_error_time` (built in `context_builder.py`); for tube mode: `tube_worst_violation`, `tube_worst_violation_time`
 - The abs-error panel already draws a vertical dotted line at worst error time, but the main trajectory plot has no marker
 - Show only for failed variables to avoid clutter; could add a "Show annotations" toggle
 - ~15 lines of JS: add `Plotly.relayout(el, {annotations: [...]})` after `renderPlots()`
@@ -534,7 +535,7 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   ```
   JS accesses become `SHARED.act_time` instead of `TRAJECTORIES[idx].act_time`.
 - **Compounding payload win**: halves the per-test trajectory payload. Lets us raise the default cap back to 2000 at the same 5 MB budget — same visual fidelity plan as PHASE_6_PLAN originally specified.
-- **Scope & risk**: touches `reporting/plot_comparison.py` (trajectory-building) + `reporting/templates/interactive.html` (template structure + JS references at ~6 call sites: lines ~461, 713, 757, 904, 1082, 1307 of interactive.html). Coordinated Python + Jinja + JS change — non-trivial but contained.
+- **Scope & risk**: touches `reporting/context_builder.py` (trajectory-building) + `reporting/templates/interactive.html` (template structure + JS references at ~6 call sites: lines ~461, 713, 757, 904, 1082, 1307 of interactive.html). Coordinated Python + Jinja + JS change — non-trivial but contained.
 - **Edge case**: some backends may return different `act_time` grids per variable (irregular output). Current code already allows this; dedup assumes a shared grid. Guard: detect mismatched grids, fall back to per-variable time embedding (current shape). Rare enough that the guard path rarely triggers.
 - **Testing**: extend `test_report_size_budget.py` to assert that after 6.0.1 the cap=2000 still fits in 5 MB. Add JS smoke check via golden-file HTML snapshot (part of 6.1 testing infrastructure).
 - **When**: after 6.0 MVP ships; bundled with or just before 6.1.1 work starts so the reporter is structurally clean for the per-leaf panel additions.
@@ -703,3 +704,41 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
 - **CI-status badge on the README** (2026-07-08, owner): the repo has the
   `quality` GitHub Action (ORNL-Modelica/DynamicSystemsTestingFramework); add
   its passing badge to the DSTF README top. Doable now (see this session).
+
+## Derived variables + one shared expression facility (owner, 2026-08-31)
+
+- **Motivation**: owner asked whether criteria could cover computed quantities
+  (sums, differences) over both scalars and time series, not just raw signals.
+- **Shape**: ONE small evaluation facility serving two consumers: derived
+  *series* (spec-declared, e.g. `"err": "a - b"`, computed on results before
+  scoring, fed to existing metrics) and derived *scalars* (fed to the scalar
+  leaf). Safe evaluator (AST whitelist / numexpr-style), no bare eval.
+- **Explicitly deferred**: the v1 scalar leaf ships dotted stat paths +
+  closed-set series reductions (max/min/mean/sample_mean/final/integral —
+  the last added by D109) only; its
+  quantity field is structured so an `{"expr": ...}` variant can be added
+  without a format break. Nothing in v1 blocks on this.
+- **Today's outlets** (why this can wait): declare the derived quantity in the
+  model (`Real err = a - b;`), compute it in a Python-backend `simulate()`,
+  or attach it as a companion.
+
+- **Tree-path config errors should be labeled leaf failures, not crashes** —
+  DONE 2026-08-31 (D107); `_evaluate_leaf` now catches `ValueError` from both
+  `resolve_mode` and `mode.compare` and returns a hard-fail sentinel leaf.
+  Original note:
+  (2026-08-31, review watch-only from D106): a `metrics` tree leaf whose mode
+  config can't build — `scalar` without `quantity`, `range` without bounds —
+  raises `ValueError` out of `resolve_mode` inside `tree_eval._evaluate_leaf`
+  and aborts `compare_test`, while the flat `variable_overrides` path catches
+  the same error and emits an error VariableComparison. Give the tree path the
+  same catch (hard-fail sentinel with `diagnostics["error"]`) so a spec typo
+  fails one leaf loudly instead of the whole comparison.
+
+- **Dashboard row: unscored-leaf hint for the mixed case** (2026-09-01,
+  from the D121 screenshot pass): a test with n_unscored > 0 AND at
+  least one finite leaf score shows only the bare worst-score number on
+  the dashboard row — the `n/a (N unscored)` branch fires only when NO
+  leaf scored. The per-test key stat discloses it ("(1 leaf
+  unscored)"); the row could append a small "(+N unscored)" marker.
+  Cosmetic; the honest-display work of D121 covers the all-unscored
+  case already.

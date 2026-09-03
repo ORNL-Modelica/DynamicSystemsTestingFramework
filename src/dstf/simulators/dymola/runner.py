@@ -3,28 +3,30 @@
 import logging
 import math
 import subprocess
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
-
 from ...config import Config
 from ...discovery.test_registry import TestModel
+from ...storage.batch_manifest import BatchManifest
 from .. import register
-from ..base import (
-    BatchManifest,
+from ..base import SimulatorRunner, _print_run_header
+from ..common.mat_reader import read_result_mat
+from ..common.proc_kill import kill_process_tree
+from ..common.result_variables import (
+    compute_needed_variables,
+    extract_variables,
+    fold_diagnostics_into_statistics,
+    merge_timing_stats,
+)
+from ..types import (
     Capability,
     DatasetType,
-    SimulatorRunner,
     TestResult,
     TestRunResult,
-    VariableResult,
-    _print_run_header,
-    resolve_variable_patterns,
+    timeout_message,
 )
-from ..common.mat_reader import list_result_mat_variables, read_result_mat
 from .log_parser import parse_dslog
 
 logger = logging.getLogger(__name__)
@@ -60,16 +62,17 @@ class DymolaRunner(SimulatorRunner):
     startup overhead for large test suites.
     """
 
+    # NOTE: no Capability.FMU_EXPORT here. Dymola *can* export FMUs, but only
+    # through the DymolaInterface — see PersistentDymolaRunner, which declares
+    # the flag and implements export_fmu(). Batch mode would need a
+    # `translateModelFMU(...)` .mos script + `dymola -nowindow` spawn + FMU
+    # locator; nobody has needed it (persistent is the default path), so
+    # rather than declare a capability we don't have, we don't declare it and
+    # the cross-backend chain skips batch-mode Dymola with a clear message.
     capabilities = frozenset(
         {
             Capability.PERSISTENT_WORKERS,  # DymolaInterface-based workers (default)
             Capability.BATCH_FALLBACK,  # .mos script runner (--batch flag)
-            Capability.FMU_EXPORT,  # via translateModelFMU; persistent path
-            # implements it natively. Batch-mode
-            # export is declared (so cross-backend
-            # chains run for batch-only codebases)
-            # but the actual .mos-driven export path
-            # is not yet wired — see export_fmu().
         }
     )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
@@ -92,62 +95,15 @@ class DymolaRunner(SimulatorRunner):
 
         return PersistentDymolaRunner
 
-    def export_fmu(self, test: TestModel, output_dir: Path) -> Path:
-        # TODO(batch-fmu-export): write a `translateModelFMU(...)` .mos
-        # script + spawn `dymola -nowindow` against it, then locate the
-        # resulting .fmu in `output_dir`. Persistent variant
-        # (PersistentDymolaRunner.export_fmu) does the same call through
-        # the in-process DymolaInterface — share the FMU-locator helper
-        # but the spawn/parse plumbing has to be batch-specific.
-        # Why not done now: persistent is the default path; only codebases
-        # restricted to batch (no DymolaInterface available, e.g. CI
-        # without the wheel) actually need this. Cross-backend chains in
-        # batch mode currently no-op via the catch in cross_backend.py.
-        raise NotImplementedError(
-            "Dymola batch-mode FMU export is declared as a capability but "
-            "the .mos-script implementation is not yet wired. Use "
-            "persistent mode (drop --batch) to export via DymolaInterface, "
-            "or contribute the batch path — see TODO(batch-fmu-export) in "
-            "DymolaRunner.export_fmu."
-        )
-
     def run_tests(self, tests: list[TestModel]) -> list[BatchManifest]:
         """Run tests in batches with parallelism."""
         if not tests:
             return []
 
-        self.config.work_dir.mkdir(parents=True, exist_ok=True)
-        total = len(tests)
-
-        from ...reporting.dashboard_render import build_rerun_prefix
-        from ..progress import ProgressReporter
-
-        self.progress = ProgressReporter(
-            self.config.work_dir,
-            total,
-            rerun_prefix=build_rerun_prefix(self.config),
-        )
-
-        # Assign test_keys (reuse existing from prior runs if present —
-        # supports incremental workflow where the manifest accumulates).
-        from ..base import assign_test_keys
-
-        manifest_map, test_items = assign_test_keys(self.config.work_dir, tests)
-        for test, test_key in test_items:
-            report_dir = self.ref_id_map.get(test.model_id) or test_key
-            self.progress.register(
-                test_key,
-                test.model_id,
-                report_dir=report_dir,
-                field_sources=test.field_sources,
-            )
-
-        manifest = BatchManifest(
-            batch_id=0,
-            work_dir=self.config.work_dir,
-            manifest=manifest_map,
-        )
-        manifest.save()
+        setup = self._prepare_run(tests)
+        total = setup.total
+        manifest = setup.manifest
+        test_items = setup.keyed_tests
 
         # Clean and recreate per-test directories ONLY for tests being run
         # this batch (preserves prior dirs for tests not in this run).
@@ -189,10 +145,41 @@ class DymolaRunner(SimulatorRunner):
             self.config.timeout,
             self.config.work_dir,
             timeout_per_test=True,
+            metadata=setup.run_metadata,
         )
 
         # Generate and run batch scripts
         all_results: list[TestRunResult] = []
+        wall_start = time.monotonic()
+
+        # startup.mos reported the real Dymola version; publish it into the
+        # run provenance as soon as a batch has come back (the persistent
+        # lane does the equivalent via _probe_worker_version). Idempotent —
+        # only the first batch that yields a version stamps it.
+        stamped = [False]
+
+        def _stamp_tool_version() -> None:
+            if stamped[0]:
+                return
+            version = _read_startup_tool_version(self.config.work_dir)
+            if version:
+                stamped[0] = True
+                setup.progress.update_metadata(tool_version=version)
+
+        def _land(results: list[TestRunResult]) -> None:
+            """Take delivery of one batch's results.
+
+            Persisting each verdict here is what gives this lane the same
+            abort-proof run record the default loop and the persistent
+            dispatcher have: ``_prepare_run`` stamped every in-scope entry
+            ``pending``, and only ``record_result`` clears it. Without this
+            a completed ``run --batch`` left the whole scope ``pending`` and
+            the manifest-wins protection never materialized for it.
+            """
+            all_results.extend(results)
+            for r in results:
+                manifest.record_result(r)
+            _stamp_tool_version()
 
         if n_workers <= 1:
             # Sequential: run all batches in order on a single worker
@@ -206,7 +193,7 @@ class DymolaRunner(SimulatorRunner):
                     total,
                     worker_id=0,
                 )
-                all_results.extend(results)
+                _land(results)
                 offset += len(batch)
         else:
             # Parallel: submit every batch to the pool; workers pull next
@@ -242,24 +229,12 @@ class DymolaRunner(SimulatorRunner):
                     offset += len(batch)
 
                 for future in as_completed(futures):
-                    all_results.extend(future.result())
+                    _land(future.result())
 
-        # Summary
-        n_ok = sum(1 for r in all_results if r.success)
-        n_fail = sum(1 for r in all_results if not r.success and not r.timed_out)
-        n_timeout = sum(1 for r in all_results if r.timed_out)
-        total_work = sum(r.elapsed for r in all_results)
-
-        print(file=sys.stderr)
-        print(
-            f"Simulations complete: {n_ok} ok, {n_fail} failed, "
-            f"{n_timeout} timed out ({total_work:.0f}s total work)",
-            file=sys.stderr,
-        )
+        self._print_run_summary(all_results, total, time.monotonic() - wall_start)
 
         manifest.results = all_results
-        if self.progress is not None:
-            self.progress.finalize()
+        setup.progress.finalize()
         return [manifest]
 
     def _run_batch(
@@ -321,7 +296,17 @@ class DymolaRunner(SimulatorRunner):
             # inherits the pipes, so a bare kill()+communicate() blocks until
             # dymosim exits — the timeout path itself hung. Kill the whole
             # process tree first, then drain pipes with a bounded wait.
-            _kill_process_tree(proc)
+            kill_process_tree(proc.pid, name_hint="dymola")
+            if proc.poll() is None:
+                # The tree kill is a no-op when psutil is missing, the name
+                # guard misses (a wrapper script's process name is not
+                # "dymola") or the walk hits AccessDenied. We own this
+                # Popen — kill it directly rather than fall into the
+                # blocking communicate() finding 22 documents.
+                try:
+                    proc.kill()
+                except (ProcessLookupError, OSError):
+                    pass
             try:
                 proc.communicate(timeout=10)
             except (subprocess.TimeoutExpired, OSError, ValueError):
@@ -366,7 +351,9 @@ class DymolaRunner(SimulatorRunner):
                         test_key=test_key,
                         success=False,
                         elapsed=per_elapsed,
-                        error_message=f"Batch timed out after {total_timeout}s",
+                        error_message=timeout_message(
+                            f"Batch timed out after {total_timeout}s"
+                        ),
                         timed_out=True,
                     )
                 )
@@ -552,7 +539,7 @@ class DymolaRunner(SimulatorRunner):
             # Ordered: translation → simulation → other → total (rough
             # operation order). Rounded to 2 decimals at storage time so
             # the on-disk reference JSON stays clean.
-            timing = {}
+            timing: dict[str, float] = {}
             if run_result.translation_wall is not None:
                 timing["translation_wall"] = round(run_result.translation_wall, 2)
             if run_result.sim_wall is not None:
@@ -564,9 +551,7 @@ class DymolaRunner(SimulatorRunner):
                 other = max(0.0, run_result.elapsed - t_acct)
                 timing["other_wall"] = round(other, 2)
                 timing["total_wall"] = round(run_result.elapsed, 2)
-            if stats is None:
-                stats = {}
-            stats["timing"] = timing
+            stats = merge_timing_stats(stats, timing)
         test_dir = self.config.work_dir / test_key
         mat_path = test_dir / "dsres.mat"
 
@@ -580,7 +565,7 @@ class DymolaRunner(SimulatorRunner):
 
         # Phase 1: Get variable names (fast — reads only the name matrix)
         # Then resolve patterns to determine which variables we actually need.
-        needed_vars = _compute_needed_variables(
+        needed_vars = compute_needed_variables(
             mat_path,
             test,
             self.dymola_config.diagnostic_variables,
@@ -596,20 +581,12 @@ class DymolaRunner(SimulatorRunner):
                 statistics=stats,
             )
 
-        variables, diagnostics = _extract_variables(
+        variables, diagnostics = extract_variables(
             mat_data,
             test,
             self.dymola_config.diagnostic_variables,
         )
-
-        # Add diagnostic final values to statistics
-        if diagnostics:
-            if stats is None:
-                stats = {}
-            for diag in diagnostics:
-                if len(diag.values) > 0:
-                    sig = 7 if diag.values.dtype == np.float32 else 15
-                    stats[diag.name] = float(f"%.{sig}g" % diag.values[-1])
+        stats = fold_diagnostics_into_statistics(stats, diagnostics)
 
         return TestResult(
             model_id=test.model_id,
@@ -625,9 +602,40 @@ class DymolaRunner(SimulatorRunner):
 # ---------------------------------------------------------------------------
 
 
+#: startup.mos writes ``DymolaVersion()`` here. The batch lane has no live
+#: session to ask for a version (that is what the persistent lane's
+#: ``_probe_worker_version`` is for), and launching a Dymola purely to probe
+#: would cost a licence seat and tens of seconds — so the script that is
+#: already being run does the reporting, and the runner reads the file back
+#: once a batch has returned. No file (MSL not loaded, Dymola never started)
+#: leaves ``tool_version`` null, exactly as before.
+TOOL_VERSION_FILENAME = "dymola_version.txt"
+
+
+def _read_startup_tool_version(work_dir: Path) -> str | None:
+    """First non-empty line of the version file startup.mos wrote, if any.
+
+    Every worker's startup appends the same string, so the first line is the
+    answer; a missing or unreadable file means "no honest version available".
+    """
+    try:
+        text = (work_dir / TOOL_VERSION_FILENAME).read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return None
+
+
 def _generate_startup_mos(config: Config, dymola_config: DymolaConfig) -> Path:
     """Generate startup.mos: load dependencies, main library, and setup commands."""
     work_dir = config.work_dir
+    # Drop any version file a previous run in this work dir left behind — a
+    # stale line would be read back as THIS run's provenance.
+    (work_dir / TOOL_VERSION_FILENAME).unlink(missing_ok=True)
     lines = [
         "// Startup: load libraries and configure environment",
         f'cd("{work_dir.as_posix()}");',
@@ -646,6 +654,16 @@ def _generate_startup_mos(config: Config, dymola_config: DymolaConfig) -> Path:
     lines.append("// Framework settings")
     lines.append("OutputCPUtime := true;")
     lines.append("Advanced.UI.TranslationInCommandLog := true;")
+
+    # Run provenance: report the actual tool version to a file the runner
+    # reads back (see TOOL_VERSION_FILENAME). Cheap — it rides along in a
+    # script that has to run anyway.
+    version_file = (work_dir / TOOL_VERSION_FILENAME).as_posix()
+    lines.append("")
+    lines.append("// Run provenance (read back by the runner)")
+    lines.append(
+        f'Modelica.Utilities.Streams.print(DymolaVersion(), "{version_file}");'
+    )
 
     # Simulator setup commands (e.g., OutputCPUtime = true)
     if dymola_config.simulator_setup:
@@ -740,31 +758,6 @@ def _generate_batch_mos(
 # ---------------------------------------------------------------------------
 
 
-def _kill_process_tree(proc: subprocess.Popen) -> None:
-    """Kill *proc* and its entire child tree.
-
-    review 2026-07-06 (finding 22): dymola.exe spawns dymosim as a child that
-    inherits the pipes; killing only dymola leaves dymosim holding them and
-    ``communicate()`` blocks forever. Mirrors DymolaWorker._kill_tracked_pids'
-    psutil approach, falling back to a plain kill if psutil can't resolve it.
-    """
-    try:
-        import psutil
-
-        parent = psutil.Process(proc.pid)
-        for child in parent.children(recursive=True):
-            try:
-                child.kill()
-            except psutil.NoSuchProcess:
-                pass
-        parent.kill()
-    except Exception:
-        try:
-            proc.kill()
-        except (ProcessLookupError, OSError):
-            pass
-
-
 def _sim_completed_on_disk(
     test_dir: Path,
     stop_time: float,
@@ -793,121 +786,3 @@ def _sim_completed_on_disk(
     if last_time + tol >= stop_time:
         return True, None
     return False, f"Stopped early at T={last_time:.6g} of {stop_time:.6g}"
-
-
-# ---------------------------------------------------------------------------
-# Result extraction
-# ---------------------------------------------------------------------------
-
-
-def _compute_needed_variables(
-    mat_path: Path,
-    test: TestModel,
-    diagnostic_vars: list[str] = None,
-) -> set[str] | None:
-    """Determine which variables need to be extracted from a .mat file.
-
-    Returns a set of variable names, or None to load everything (fallback).
-    This avoids loading all data for large files with thousands of variables.
-    """
-    if diagnostic_vars is None:
-        diagnostic_vars = []
-
-    needed: set[str] = set()
-
-    # UnitTests variables
-    if test.source in ("unit_tests", "both") and test.n_vars > 0:
-        for i in range(1, test.n_vars + 1):
-            needed.add(f"unitTests.x[{i}]")
-
-    # Pattern-based variables — need the full name list to resolve globs
-    if test.variable_patterns:
-        all_names = list_result_mat_variables(mat_path)
-        if all_names is None:
-            return None  # fallback: load everything
-        resolved = resolve_variable_patterns(test.variable_patterns, all_names)
-        needed.update(resolved)
-
-    # Diagnostic variables
-    needed.update(diagnostic_vars)
-
-    return needed if needed else None
-
-
-def _extract_variables(
-    mat_data: dict,
-    test: TestModel,
-    diagnostic_vars: list[str] = None,
-) -> tuple[list[VariableResult], list[VariableResult]]:
-    """Extract tracked variables and diagnostic variables from parsed mat data.
-
-    Returns (variables, diagnostics).
-    """
-    if diagnostic_vars is None:
-        diagnostic_vars = []
-    results = []
-    seen_names: set[str] = set()
-    idx = 1
-
-    # 1. UnitTests variables (source = "unit_tests" or "both")
-    if test.source in ("unit_tests", "both") and test.n_vars > 0:
-        for i in range(1, test.n_vars + 1):
-            var_name = f"unitTests.x[{i}]"
-            if var_name in mat_data:
-                time, values = mat_data[var_name]
-                # Use parsed expressions only when they map 1:1 to variables.
-                # Complex expressions like cat() produce fewer names than variables,
-                # so fall back to x[i] for all to avoid misleading labels.
-                # When a single bare variable maps to multiple vars (e.g. x=y
-                # where y is an array), use varname[i] labels.
-                if len(test.x_expressions) == test.n_vars:
-                    expr = test.x_expressions[i - 1]
-                elif len(test.x_expressions) == 1 and test.n_vars > 1:
-                    expr = f"{test.x_expressions[0]}[{i}]"
-                else:
-                    expr = f"x[{i}]"
-                results.append(
-                    VariableResult(index=idx, time=time, values=values, name=expr)
-                )
-                seen_names.add(var_name)
-                seen_names.add(expr)
-                idx += 1
-            else:
-                logger.warning(
-                    "Variable %s not found in simulation output for %s",
-                    var_name,
-                    test.model_id,
-                )
-
-    # 2. Pattern-based variables (source = "spec" or "both")
-    if test.variable_patterns:
-        available = list(mat_data.keys())
-        resolved = resolve_variable_patterns(test.variable_patterns, available)
-        for var_name in resolved:
-            if var_name in seen_names:
-                continue
-            if var_name in mat_data:
-                time, values = mat_data[var_name]
-                results.append(
-                    VariableResult(index=idx, time=time, values=values, name=var_name)
-                )
-                seen_names.add(var_name)
-                idx += 1
-
-    # 3. Diagnostic variables (auto-captured, not compared)
-    diagnostics = []
-    diag_idx = 1
-    for var_name in diagnostic_vars:
-        if var_name in mat_data:
-            time, values = mat_data[var_name]
-            diagnostics.append(
-                VariableResult(
-                    index=diag_idx,
-                    time=time,
-                    values=values,
-                    name=var_name,
-                )
-            )
-            diag_idx += 1
-
-    return results, diagnostics

@@ -414,7 +414,7 @@
   - `simulators/fmpy/runner.py` module docstring gained a **"Limitations"** block documenting the shared scope: today the FMPy path calls `fmpy.simulate_fmu` with only `filename` / `stop_time` / `solver` / `relative_tolerance` / `output` / `output_interval` — no `input=` schedule, no `fmi_type=` override (FMPy auto-picks CS if present else ME), no `start_values=`. Autonomous FMUs only (inputs baked in). Reference FMUs (BouncingBall / Dahlquist / VanDerPol) are the validated shape. This does **not** reverse Phase 2's "complete" status — it honestly scopes what "complete" covers.
   - New `scripts/smoke_test_dymola_export.py` — 30-line standalone script the user runs on Windows to validate `translateModelFMU`'s signature + FMI license + cwd-on-Windows in one shot, independently of the test suite. Not wired into CI (no value on Linux). Prints pass/fail.
 - **Why**: The grill on D63's deferred validation surfaced a bigger concern than "does export_fmu call the right API": the cross-backend chain assumes "Dymola-exports-FMU + FMPy-default-simulates = meaningful cross-check", which is only true for **autonomous** tests — models with no external inputs, no python driver script stepping the FMU, no need to pick between co-simulation and model-exchange. For a test that is fundamentally "a python script driving an FMU with a scheduled input sequence", the chain would silently produce a baseline whose values don't reflect what the test actually does, and `"against": "dymola-via-fmpy"` would compare apples to oranges. Same semantic gap exists on the primary FMPy path but is less acute because FMPy-as-primary is explicitly opt-in per test (via `source_type: "fmu"` on a config or per-test `"fmu"` field) and was validated end-to-end for autonomous Reference FMUs. Labeling honestly is cheaper than generalizing now — generalization (input drivers, CS/ME choice, start-value overrides, python-driver tests) deserves a dedicated phase driven by real use cases.
-- **Defer-window rationale**: Horizon to feature-complete is ~2-4 months with a conference paper landing this week (idea-level, no live demo) and a public demo later. No planned work hooks `export_fmu`. Blast radius is contained: `export_fmu` has one caller (`produce_dymola_via_fmpy_baseline`); the chain has one caller (`cli._run_cross_backend_chains`); both gated on opt-in `requested_baselines`; zero tests currently set it. `translateModelFMU` API has been stable in Dymola for ~10 years. Code is well-defended (empty-return path, glob fallback, exception wrapping). Rollback cost if validation surfaces a bug at month 3: signature-level issue = tens of minutes; cwd/path quirk = half a day.
+- **Defer-window rationale**: Horizon to feature-complete is ~2-4 months with an external milestone landing this week (idea-level, no live demo) and a public demo later. No planned work hooks `export_fmu`. Blast radius is contained: `export_fmu` has one caller (`produce_dymola_via_fmpy_baseline`); the chain has one caller (`cli._run_cross_backend_chains`); both gated on opt-in `requested_baselines`; zero tests currently set it. `translateModelFMU` API has been stable in Dymola for ~10 years. Code is well-defended (empty-return path, glob fallback, exception wrapping). Rollback cost if validation surfaces a bug at month 3: signature-level issue = tens of minutes; cwd/path quirk = half a day.
 - **Smoke-test outcome (2026-04-17)**: `scripts/smoke_test_dymola_export.py` ran clean on **Dymola 2026x** against `Modelica.Blocks.Examples.PID_Controller`. Signature passes verbatim (all six kwargs accepted), FMI export license is present, `cd(<Windows temp>)` works with backslashes, a 1.6 MB FMU was produced. One interesting quirk: Dymola sanitizes the output basename with a disambiguation `_0` — `PID_Controller` → `PID_0Controller.fmu`. `DymolaWorker.export_fmu` is immune because it uses Dymola's returned basename verbatim (not a computed name from `model_id`) and has a glob fallback regardless. **Net effect**: the signature/license/cwd dimensions of D63's validation caveat are now locked; only the full chain (export → FMPy-simulate → baseline write) and the semantic-gap generalization remain deferred. Also updated: Dymola 2026x+ ships as a pip-installable wheel — `pip install .\dymola-2026.0-py3-none-any.whl` from the `python_interface` dir is the preferred setup. Smoke script's fallback path list extended to include 2026x.
 - **Trade-offs**: "Experimental" labeling is a soft signal — nothing enforces it at runtime. A user who reads the code before the docstring could still wire a chain against a non-autonomous test and get a misleading baseline; the one-time log warning is the only runtime surface for that. Accepting that because (a) `requested_baselines` is authored only by users who opt in explicitly via a recognizer, (b) the failure mode is a misleading comparison, not a crash, and (c) the chain semantics issue is called out in the warning text. The generalization phase ("FMU-path semantic gap closure") is filed as a dedicated follow-on; it bundles: input-schedule wiring in both `FmpyRunner` and chain, CS-vs-ME selection (test-spec field), start-value overrides, optional python-driver test shape (test declares a python entry point rather than a single model ID). Until that phase, both pathways are scoped to autonomous FMUs and the chain is scoped further to also-unvalidated-on-real-Dymola.
 
@@ -2709,3 +2709,1024 @@ the OM/TRANSFORM `compare` now reports `221/14/91 SIM_FAIL/3 NO_REF` (was
 +6 tests (`test_compare_accept.py`). Suite **1044**, ruff + mypy clean.
 Follow-on still open: persisting run results in the manifest would make the
 status.json cross-check unnecessary and is the cleaner long-term fix.
+
+## D94 — Data-integrity trio: frozen-JSON companion self-overwrite, corrupt-spec wipe, last non-atomic writers (2026-08-31)
+
+Pre-v1.0 review (see the plan doc referenced in the session memory) found two
+data-loss bugs, both untested. (1) `freeze_companion` for JSON companions
+copied the data to `<name>.json` — the exact path the metadata write then
+replaced, destroying the frozen data (`get_companions` even documented a
+`.data.json` scheme that was never implemented). Fixed: frozen JSON data now
+lives at `<name>.data.json` (`_frozen_data_basename`); `get_companions` skips
+the sibling; `add_companion` rejects names ending `.data` so a companion's
+metadata can never occupy another's data path. No shim for previously frozen
+JSON companions — their data was already destroyed by the bug; the reader
+degrades to "invalid" without crashing. (2) The three spec load-modify-write
+helpers swallowed `JSONDecodeError` and wrote `{"tests": []}` over a corrupt
+`test_spec.json` — one typo in a hand-authored spec (a promised seam) and the
+file was gone. Fixed: shared `_load_spec_for_edit` raises `ConfigError`
+(caught cleanly in `cli.main`) and writes nothing; writes go through
+`_atomic_write_text`, as do `export_csv` and `apply_patch` (the last
+non-atomic writers). `_atomic_write_text` gained a `newline` passthrough so
+csv's embedded `\r\n` isn't doubled on Windows; a raw-bytes assertion pins
+that, since `csv.reader` can't see it on Linux. Review notes for later: move
+`_atomic_write_text` to a neutral util module during the storage split (the
+discovery→storage import is a latent cycle), and a pinning test for the
+legacy corrupted-frozen shape would be nice. +14 tests, 8 failing on pre-fix
+source.
+
+## D95 — Explicit tolerance 0 (and any finite value) honored end-to-end (2026-08-31)
+
+The comparator deliberately honors an explicit tolerance of 0 as the
+strictest setting (is-not-None chains, D89-era finding 7), but two entry
+points silently dropped it: `_build_config` gated `--tolerance` on
+truthiness, and the reporter's `_paramNumber`/`getGlobalTolerance`/
+`getDefaultTolerance` treated `> 0` as "set" — so typing 0 in the browser
+kept the pill scoring at the old tolerance while the exported patch carried
+0, which the CLI then honored. Divergence class: pill disagrees with
+`dstf run` on the same spec. Fix: CLI uses `is not None`; the JS helpers pass
+ANY finite number through (adversarial review caught that clamping negatives
+would recreate the same divergence — a typo'd `-0.01` must fail loudly in
+the pill exactly as the CLI would), with unset/cleared (`null`/`''`/blank)
+still falling back — the guard matters because `Number(null) === 0` would
+otherwise turn a cleared field into "strictest". Per-item authoring
+validators (event tolerance cell, points-table tolerance) accept 0, reject
+negatives visibly. Parity fixtures gained a `tolerance_used` override so
+zero/negative cases are non-vacuous (the fallback would otherwise equal the
+tested value), + 3 parity rows and 2 CLI tests.
+
+## D96 — Persistent-worker lifecycle: tree kill, rescue accounting, pinned interfaces (2026-08-31)
+
+Four fixes from the pre-v1.0 backend review, all in the persistent-worker
+watchdog path. (1) The per-test timeout kill killed only the tracked
+dymola/omc PID — the name filter would have excluded `dymosim`/the compiled
+model binary anyway, and children were never enumerated — so the process
+actually simulating survived, burning CPU and holding result files open
+(Windows rmtree PermissionError on the next run). The batch runner had fixed
+exactly this (finding 22); the persistent path hadn't. Now both workers
+delegate to a shared `common/proc_kill.kill_process_tree` (children first;
+`name_hint` guards only the tracked parent against PID reuse; never raises —
+an exception here would misreport the timeout as a worker exception). Marked
+DEBT: children resolve from the live parent, so a parent that died on its own
+leaves orphans unreachable — the child-pid snapshot belongs in the Phase C
+watchdog hoist. Coverage includes one real-process test (spawn parent+child,
+assert both die); fakes pin ordering and guards. (2) An OM disk-rescued
+timeout left `worker_killed=False`, so the (benign) restart charged one of
+the worker's 3 strikes — genuine deaths then hit exhaustion earlier. NOTE the
+plan's original framing overstated this as a direct cascade; rescued
+successes reset the budget (`base.py` reset on success), so the defect was
+strike-creep, not immediate exhaustion. Now mirrors Dymola. The OM
+worker-EXCEPTION path deliberately stays uncounted-as-benign — a worker that
+keeps raising should consume its budget (matches Dymola's rationale). (3)
+`run_test` in both workers pins the interface handle at entry, and the
+Dymola broken-worker probe's `self.close()` is guarded by `self.dymola is
+dymola` — an abandoned watchdog thread could otherwise RPC against, or
+close, the RESTARTED worker mid-next-test (the "Mismatch request/response
+ID" poisoning). (4) Julia `start()` recreates the stdout queue so a killed
+worker's stale "ready" pulse can't satisfy the new worker's handshake
+(stderr buffer deliberately kept — diagnostically useful); batch-Dymola
+`run_tests` now stamps run metadata into ProgressReporter/status.json like
+the base paths (third copy of that prologue — collapse target for the Phase
+C dedup). +10 tests, 9 verified failing pre-fix.
+
+## D97 — Browser test lane recovered: D88 autofix had silently broken it (2026-08-31)
+
+Installing Playwright to verify D98's JS work revealed the browser lane had
+been broken since D88: the ruff F401 autofix (c41be89) stripped
+`playwright_browser` from the per-mode files' imports — a pytest fixture
+import is invisible to pyflakes because only the parameter name appears in
+tests — and every environment since lacked Playwright, so 51 of the browser
+tests errored at setup with "fixture not found" and nobody saw it. Fixes:
+(1) the fixture now lives in tests/conftest.py (lazy playwright import;
+conftest placement cannot be autofix-stripped), local copies deleted. (2)
+The documented `-m "not playwright"` incantation had NEVER worked — no
+`playwright` marker existed, so the filter was a no-op and the real gate was
+module-level importorskip. The marker is now registered and applied
+(module-level pytestmark on the four browser files; per-test on the parity
+suite's one browser test; test_interactive_html_snapshot stays unmarked —
+it is headless), so `-m "not playwright"` deselects 121 browser tests and
+`-m playwright` runs exactly them. (3) One stale test surfaced by the
+revived lane: test_points_scorer_window_clips_points asserted that a leaf
+window silently drops out-of-window declared checkpoints — the pre-parity
+JS behavior. Python's authoritative rule (verified directly): a ref-relative
+checkpoint outside the window-sliced reference range FAILS loudly
+("checkpoint time outside reference range", the anti-clamp rule, review
+2026-07-06 finding 2). Renamed to
+test_points_scorer_window_excluded_checkpoint_fails_loudly with the
+assertion inverted. Lanes after: 1076 passed hardware-free, 121 passed in
+the browser lane. Lesson recorded in the conftest docstring: fixture
+imports between test modules are an autofix hazard; fixtures shared across
+files belong in conftest.
+
+## D98 — Reporter trust batch: six pill-vs-CLI divergences closed (2026-08-31)
+
+The reporter's contract is that the live pill agrees with `dstf run`; the
+pre-v1.0 review found six places it could lie. (1) The dominant-frequency
+live scorer FFTs the LTTB-decimated embedded arrays while the CLI FFTs full
+resolution — different pow-2 bin grids whenever a trajectory exceeds
+max_embedded_samples, so a high-frequency peak could fail live yet pass on
+the CLI (both sides' comments claimed bit-identical parity). Chosen fix:
+decimation-aware CLI-authoritative badge — plot_comparison marks a
+dominant-frequency leaf cli_authoritative iff its variable's embed was
+decimated (JS reads the same full_samples stamp the decimation banner
+uses; recomputePassStates skips gated leaves so the pill keeps the CLI
+verdict). Undecimated variables keep exact live scoring. ORDER CONSTRAINT
+commented at the call site: the mark runs after the comparison_data.json
+write — the sidecar carries full resolution, so its tree deliberately keeps
+cli_authoritative=false. (2) The event-timing live Match column used greedy
+nearest-neighbor pairing while Python uses optimal interval matching
+(right-endpoint sort, smallest unclaimed wins — the D89-wave fix); the JS
+comment claiming "same pairing rule" was false. Ported. (3) Shift+click
+add-point cancelled on >1e-10 DATA-unit mouse drift — trackpad jitter made
+it a no-op; now a 5-screen-pixel slop from the raw event coords. (4) Tube
+with tube_width_mode unset: scorer assumed 'rel', plot drew
+max(abs, rel·|ref|) — drawn band and scored band differed; one shared
+DEFAULT_TUBE_WIDTH_MODE now feeds scorer, plot, and editor (known residual:
+'abs' without tube_points draws a band while both sides fail the leaf —
+verdict-agreeing). (5) Malformed passthrough JSON was stored as a raw
+string and exported into the spec with no visible error; now refused with
+the textarea marked invalid, last-good value kept. (6) A structural export
+froze inherited defaults (config-level tolerance) into per-leaf params via
+nodeToSpec, silently detaching those leaves from config.tolerance; params
+are now exported only if spec-authored or user-edited (shared _paramEdited
+backs both the structural strip and the granular patch diff — ops verified
+identical pre/post refactor). Coverage: Node-harness trust test for 2-6,
+4 Python tests for the marking rule including one end-to-end through the
+real _build_template_context (review finding: hand-built contexts can
+drift from _augment_tree_view's real shape), and the revived browser lane
+(D97) exercising the whole surface in Chromium. Remaining accepted debt:
+no automated JS test pins the recomputePassStates gate itself
+(manually verified in review); un-augmented leaves (spec/eval drift
+guard) keep live scoring as before.
+
+## D99 — Small-fixes batch: ID high-water mark, parser typing, guard scoping, schema gaps (2026-08-31)
+
+Five pre-v1.0 review items. (1) "IDs never reused" only held while ref files
+existed: `manifest cleanup` deleting the highest obsolete ref let
+`next_id() = max(scan)+1` re-allocate that ID to a different model,
+silently re-pointing external artifacts keyed on ref_NNNN. Each partition
+now persists `.id_high_water.json` (additive dot-file, invisible to every
+`ref_*.json` glob — the layout seam is unbroken; absent file → scan-only,
+old partitions keep working; write failure warns, never fails an accept).
+Adversarial review caught that a read-check-then-write bump is
+last-writer-wins and could REGRESS the mark under two racing `--accept`
+processes — and a write-verify-retry does not close it (the higher writer
+can verify before the lower writer's overwrite). Robust form: every bump
+folds in a fresh disk scan; since register() O_EXCL-claims the ref file
+BEFORE bumping, any mark a slow writer could clobber corresponds to a ref
+already visible on disk, so writing max(claimed, scan) makes the race
+harmless. (2) mo_parser's errorExpected still used the truncating
+number-class regex finding 56 removed elsewhere (`1e-3*2` → silently
+`1e-3`); now `_parse_number` + warn + default. json_recognizer typed its
+numeric fields: non-numeric strings destined for float fields warn + stay
+unset (annotation/spec layers can still fill them) instead of pushing a
+raw string into runners; bool is rejected (float(True)==1.0 defeated the
+naive guard); int fields (n_vars, number_of_intervals) get an
+exact-integer check. (3) migrate-baselines' role-dir skip was a
+posix-substring test — inert on Windows paths; now path components
+RELATIVE to the reference root (absolute parts would also match a
+role-named directory ABOVE the root and silently skip everything). (4)
+export-schema gained number_of_intervals / output_interval and the
+canonical `source` key (fmu documented as legacy alias, precedence noted).
+(5) Leaf/comparison count mismatch in the reporter now logs instead of
+silently dropping augmentation; read_mat_time_extents refuses binNormal
+layouts like its siblings. +19 tests.
+
+## D100 — OM success path refuses partial results; omc failure modes verified live (2026-08-31)
+
+Empirical grounding first (omc 1.27.0-dev, WSL): both canonical mid-run
+failure modes — an assert() violation and an integrator failure
+(DASSL error-test cascade at a singularity) — leave a PARTIAL result_res.mat
+on disk but return an EMPTY resultFile in the SimulationResult record, so
+the parser's `bool(result_file)` clause already fails them; and neither
+produces the capital-F "Failed" the log parser's case-sensitive substring
+looks for (that clause's provenance is unknown; its live risk is actually
+the inverse — a benign warning containing "Failed to ..." could fail a
+successful run — left for the cleanup pass). The gap that remains is a
+success-reporting record alongside a truncated trajectory (future omc
+behavior, torn write). Following the D93 accept-integrity precedent (a
+partial .mat blessed by --accept poisons a baseline), both OM success
+paths (batch + persistent) now verify the trajectory reached stop_time via
+a shared `mat_reaches_time` helper in common/mat_reader — the same
+rule + tolerance the persistent disk rescue already used, deduped onto the
+helper so the two paths cannot disagree about the same file. Refusal is
+loud: "partial result refused" with the reached-vs-requested times. One
+batch-test fixture that staged a one-byte garbage .mat with a success
+record now correctly fails the gate and was upgraded to a real fixture
+mat. +3 tests.
+
+## D101 — Metric + combinator registries: the Metric-layer extension seam is real (2026-08-31)
+
+`docs/extensibility.md` promises a registry per layer; before this,
+only backends and recognizers had one — metrics and combinators were closed
+if/elif chains duplicated across four files (resolve_mode, VALID_METRICS /
+_MODE_TO_METRIC in tree_spec, _build_combinator / _METRIC_TO_MODE_KEY in
+tree_eval, schema_export's mode list), so "adding a metric" meant editing
+all of them. Now `comparison/registry.py` holds MetricDescriptor (name,
+config_cls, build, accepted_datasets, score_direction) and
+CombinatorDescriptor; builtins self-register on package import (idempotent
+under importlib.reload); spec parsing, evaluation, resolve_mode's dispatch
+and error text, the auto-derived report controls, and export-schema all
+derive from it. The four duplicated name sources are deleted. Behavioral
+equivalence for the six builtins was verified by adversarial review down
+to a byte-identical exported schema against the pre-change commit and a
+byte-identical unknown-metric error message. A toy third-party metric in
+tests/test_metric_registry.py proves the seam end-to-end (parse → evaluate
+→ derived controls → exported schema) with zero framework edits; the
+negative half is pinned too (unregistered → parse rejects).
+
+Review-driven decisions folded in: `has_plot_editor`/`_UI_EXTRAS` deleted
+(unconsumed, and wrong for two of five modes — JS owns that fact);
+`mode_cls` deleted from the descriptor (unread; `build` closes over the
+class); `score_direction` made load-bearing immediately by pulling the
+planned W-4 forward — the validator now REJECTS a `weighted` node whose
+leaf children mix directions (summing lower-is-better NRMSE with
+higher-is-better tube fraction against one threshold is meaningless). The reporter's
+CLI-authoritative badge rule generalized from `mode == "event-timing"` to
+`mode not in _JS_SCORED_METRICS`, so a Python-registered metric is badged
+honestly instead of silently not re-scoring. Dataset-incompatibility
+hard-fails at EVALUATION time as a labeled leaf (extensibility.md's
+"fails at config resolution" promise corrected — the kind is only known
+once a backend produced data); both hard-fail sentinels now carry the
+leaf's real metric in `mode`. extensibility.md's Metric/Combinator
+sections rewritten to the shipped API (the old @register class sketch
+never existed), including the JS boundary: live re-scoring and the
+add-leaf dropdown are template-JS surfaces, so third-party metrics are
+CLI-authoritative in the report. Known limits recorded there. +32 tests.
+
+## D102 — Entry-point plug-ins; Capability flags made load-bearing (2026-08-31)
+
+Two halves of the same promise ("plug-ins install alongside DSTF as a
+separate package; the framework gates on declarations, not class names").
+(1) `dstf.plugins.load_plugins()` loads the single entry-point group
+`dstf.plugins` (one group, not one per layer — a plug-in package
+routinely ships a backend AND its metrics); module entries import,
+callable entries are invoked, a CLASS entry is rejected with guidance
+(instantiating it with no args is never what the author meant). Loaded in
+`cli.main` before dispatch and exported as `dstf.load_plugins` for
+library use. A broken plug-in is a HARD ConfigError naming the entry
+point — a metric that quietly failed to register changes scoring
+semantics. Per-entry completion tracking so a caught-and-retried load
+cannot re-invoke the healthy plug-ins and blame them for duplicate
+registration (review finding). `plugins.py` joined the mypy tier.
+(2) Capability flags were validated at registration but consulted
+nowhere; now `_get_runner` gates persistent dispatch on
+PERSISTENT_WORKERS, the cross-backend chain gates on FMU_EXPORT (before
+creating its work dir) instead of catching NotImplementedError, and
+`produced_datasets` threads into comparison as the evaluator's
+dataset_kind. Honesty fixes that fell out: batch `DymolaRunner` no longer
+claims FMU_EXPORT (its implementation was a raising stub — the flag and
+the implementation live on `PersistentDymolaRunner`, declared explicitly
+rather than inherited so the batch class's BATCH_FALLBACK isn't a false
+claim there either); `Capability.EXPERIMENT_INGEST` deleted (declared and
+consulted by nothing); dead `TestModel.requested_fmu_export` and
+`BatchManifest.batch_id` deleted (batch_id was never persisted — old
+manifests load unchanged). Capability-vs-hook biconditional pinned per
+backend by iterating the registry (not a hardcoded five-name list), so a
+sixth backend is covered automatically. Docs: extensibility.md gained the
+real plug-in packaging section; vision.md swept for the deleted names.
++15 tests. Both suites + lint/format/mypy green.
+
+## D103 — Demo aligned to the documented flagship example; import-baseline arg-shadowing bug (2026-08-31)
+
+MetricTreeTest is specified as "an NRMSE bound on the
+start-up transient and a tube on the steady-state window against the
+primary, plus a warn-wrapped leaf scoring the same trajectory against an
+OpenModelica soft_check" — but the shipped demo was and[nrmse(x),
+warn(nrmse(y))] on sin/cos: no windows, no tube, no soft_check anywhere in
+the example tree, and a pure sinusoid has no transient/steady-state to
+window. Fixed by making the demo BE that example: MetricTreeTest is
+now a first-order step response (tau=0.5, settled ~2.5s) feeding a slower
+lag; its tree is and[nrmse(x, window [0,2.5]), tube(x, rel 2%, window
+[2.5,10]), warn(nrmse(x, against=openmodelica))]. The OM result is
+imported as soft_check "openmodelica" into Dymola/linux AND
+OpenModelica/linux (on OM it compares OM to itself — trivially green, but
+the shared spec then shows no spurious "baseline not found" warning on
+either backend; the run path never validates roles, only spec-update does,
+so a missing name would have been warn-absorbed rather than fatal).
+Verified end-to-end on live simulators: 12/12 pass on BOTH omc 1.27 and
+Dymola 2026x, and the evaluated tree shows the warn leaf scoring a real
+cross-simulator NRMSE (1.1e-6), not a sentinel. Dymola/windows could not
+be regenerated from this machine: its stale MetricTreeTest primary is set
+status="skip" (the designed exclusion) with the soft_check staged; Phase S
+re-accepts it on a Windows box.
+
+Also closed the coverage gap ("every metric and every combinator"):
+the demo spec now exercises or (IntervalTest: tight nrmse OR loose tube),
+k-of-n (SimpleTest, k=1 of 2), weighted (ConstantTest, direction-uniform
+nrmse pair — the D101 validator forbids mixing), and event-timing
+(EventTest's stepped output, auto-detected events, 10ms tolerance) —
+every metric and combinator now runs in the bundled demo on both backends.
+
+Bug found live: `dstf import-baseline` was unusable with a config — its
+positional was NAMED source_path, colliding with the global --source-path,
+so _build_config treated the ref JSON as the library root and
+find_package_dir iterdir()'d a file (raw NotADirectoryError). Positional
+renamed to import_source (metavar keeps the CLI face); regression test
+pins that the global stays None. The raw-traceback UX for such errors is
+the known Phase C item.
+
+## D104 — Authored windows now pre-fill the reporter's window inputs (2026-08-31)
+
+Eyeballing the D103 demo report showed the window inputs empty on leaves
+whose spec authored windows (the tube band on the plot honored them, so
+scoring was correct — only the input seeding was broken). Root cause: the
+extractor read `vc.diagnostics["window"]`, but the evaluator stashes the
+window on the MetricResult, never the VariableComparison — so
+`window_values` had been empty for every authored window since windows
+shipped, masked by the browser fixtures hand-setting `window_values`.
+Seeding now comes from the authored `window` on the spec view (already
+correct there); the dead extractor is deleted. Regression test drives the
+real `_build_template_context` and asserts values mirror the authored
+window; re-render verified visually (2.5 boundaries shown, open sides as
+placeholders). Lesson repeated from D97: fixtures that hand-set what the
+pipeline should produce hide exactly these seams.
+
+## D105 — Reporter authors `against`: baseline selector in the add-leaf modal (2026-08-31)
+
+`against` was display-only in the reporter: the label and the patch export
+handled it, but every new leaf was hardcoded to primary — so a patch
+adding a leaf with `"against": "openmodelica"`) could not actually
+be produced in the reporter (F-12/W-7). Now the template injects the
+test's baseline roster as `OVERLAY_ROWS` (the `overlay_rows` context the
+report already carried) and the add-leaf modal shows an "Against" select
+— primary plus the unique soft_check names — only when soft_checks exist,
+so the modal is unchanged for the common case. Companions are never
+offered (unscorable, per the validator); every *registered* soft_check is
+offered regardless of report-side load status or per-variable coverage —
+registered names are legal targets and the CLI evaluation is the
+authority. Picking a non-primary name with no `warn` ancestor on the
+target node shows a non-blocking notice that spec-update's validator will
+reject the patch unless the leaf is warn-wrapped; the JS ancestor walk
+reproduces the validator's `in_warn` propagation (the target combinator
+itself counts).
+
+Honesty fix that fell out on both sides: a leaf with `against != primary`
+is now CLI-authoritative — the JS live scorers only have the primary
+trajectory arrays, so re-scoring such a leaf silently compared against
+the wrong baseline. That divergence was pre-existing for CLI-provided
+against-leaves (the D103 demo's warn leaf); `_augment_tree_view` and
+`_leafIsCliAuthoritative` both gate on it now, without disturbing D101's
+metric rule or D98's decimation flip (verified by fresh-context review).
++2 hardware-free tests (real `_build_template_context`), +5 browser tests
+(selector presence/absence, companion exclusion, patch round-trip with
+primary omitted, warn notice). Known limits recorded, not widened here:
+adding any child INTO an existing `warn` violates its exactly-one-child
+arity and the modal is silent about it (pre-existing — the add button
+predates this change), and plot-side contributions (tube envelope etc.)
+still draw against primary for an against-leaf (display-only; the badge
+suppresses the scoring dishonesty).
+
+## D106 — `scalar` metric leaf: one number, from a stored statistic or a series reduction (2026-08-31)
+
+Owner-approved for v1.0 as the answer to a review finding: translation
+statistics and CPU time were compared only as
+structural *warnings*; nothing could hard-fail a test on them. A seventh
+built-in metric, `scalar`, scores a single number. Its `quantity` param
+has exactly two v1 shapes, chosen so a later `{"expr": ...}` object slots
+in as a third without a format break (the owner's ruling: no free-form
+expression evaluator in v1): `{"reduce": max|min|mean|final|integral}`
+reduces the leaf's tracked series on both sides (window honored, integral
+= trapezoid, mean = time-weighted integral/span so a finer output grid
+cannot move it — sample mean only when the span is zero); or a bare
+dotted string that reads a stored scalar — resolved first in the ref
+file's `statistics` block, then as a diagnostics summary (`CPUtime.final`
+→ the stored `{final,min,max}` on the baseline side, computed live from
+the diagnostic trajectory on the current side; statistics wins a name
+collision; a legacy full-array diagnostics entry is summarized on read).
+Comparison is abs/rel `tolerance` against the baseline scalar (|ref|=0
+falls back to abs and says so), or declared `min_value`/`max_value`
+bounds (baseline-free, tolerance ignored). Missing path on either side is
+a labeled hard-fail sentinel. A stats-path quantity needs a `metrics`
+tree: the flat `variable_overrides` path only has the variable's own
+trajectory and now hard-fails such an override instead of quietly
+reducing that (second review). `accepted_datasets` = {TIME_SERIES,
+SCALARS} — the reserved SCALARS kind is now scorable.
+
+Where the data-source switch lives was the review's one real finding:
+the first cut resolved a string `quantity` for ANY leaf as an
+evaluator-owned rule "like the window", and a stray `quantity` on an
+nrmse/points/range leaf silently collapsed both sides to one identical
+sample and passed. The registry now owns it — `MetricDescriptor.
+accepts_quantity` (True only for scalar) gates both the evaluator
+redirect and the parser's rule that `variable` may be omitted for a
+string quantity (it defaults to the path; an explicit `variable` is the
+display label). The exported JSON-Schema derives the same rule from the
+registry so the two grammars cannot drift.
+
+Reporter: no live JS scorer in v1, so the D101 rule badges scalar leaves
+CLI-authoritative; the JS side now derives the add-leaf dropdown from the
+registry-fed `MODE_SCHEMAS` (the last hardcoded metric-name list is gone;
+Jinja's `tojson` sorts keys, so the dropdown is alphabetical) and badges
+any metric without a `MODE_SCORERS` entry, which made the event-timing
+special case redundant. Demo: SimpleTest became `and[k-of-n(...),
+scalar(final x, abs 1e-3)]` — MetricTreeTest untouched (it is the
+flagship example) — restoring "every metric and combinator runs in the
+bundled demo", verified live 12/12 on omc 1.27 AND Dymola 2026x with the
+leaf scoring from the stored trajectory (no re-accept). Two fresh-context
+review rounds (the registry gate, the flat-path guard, schema/parser
+agreement pinned by a test that evaluates the EMITTED rule, time-weighted
+mean, legacy diagnostics shape on read, sentinel display). +74 tests
+(1141 → 1215 hardware-free; 76 browser in the reporter file). Known,
+watch-only: a tree `scalar` leaf with no `quantity` raises out of
+`resolve_mode` like a tree `range` leaf with no bounds does (closed in
+D107).
+
+## D107 — Phase C-i: the three legacy shim families are gone (2026-08-31)
+
+Pre-release stage, an owner ruling, and re-verified seam evidence
+(a structural JSON walk over 894 TRANSFORM-UnitTests files and 77 demo
+files: zero in-file `baselines` maps, zero `min`/`max` range overrides,
+zero symmetric tube points, zero `fmu` spec keys, zero saved flat-dict
+exports — the 656 text hits for `min`/`max` in TRANSFORM refs are all
+`diagnostics[]` scalar summaries, not overrides). Deleted, each with a
+rejection test in its place: (D-1) the flat-dict `spec-update` branch
+"preserved for a transition cycle" and `update_test_comparison`, whose
+last caller it was — spec-update takes only the RFC 6902 envelope and a
+non-envelope file is a ConfigError naming it; (D-2) the in-file
+`baselines` map read/write and the `migrate-baselines` command with
+`migrate_baselines_tree` — named baselines come ONLY from the store's
+`soft_checks/ref_NNNN/` subdir now; a stray `baselines` key still in a
+ref file is ignored with one warning naming the file (old data, not old
+code — emitted in `ReferenceStore.get_reference`, the only read site that
+knows the path) and is dropped on the next accept; (D-3) the `min`/`max`
+range shorthand, the symmetric `abs`/`rel` tube-point format (Python
+raises naming `upper`/`lower`, the JS scorer returns false where Python
+raises, per that file's convention), and the `fmu` spec alias for
+`source` (an fmu-only entry warns naming `source`; the schema no longer
+documents `fmu`). The FMU demo spec was the only real user of two of the
+aliases and was rewritten. `Baseline` stays (soft_checks use it); its
+in-memory provenance origin is now `"flat"`, not `"legacy-flat"`.
+
+Structural fix pulled in because the pass raised its stakes: a config
+error on a `metrics`-tree leaf (a now-rejected `min`/`max`, a symmetric
+tube point, `scalar` without `quantity`) raised out of `resolve_mode` /
+`mode.compare` and aborted the ENTIRE `compare_all` with an anonymous
+traceback — one stale key would have lost a 331-test run's comparison —
+while the flat `variable_overrides` path caught the same error and
+failed only that variable. The tree path now does the same: the leaf
+becomes a labeled hard-fail sentinel carrying the error, the rest of the
+run evaluates. Two consequences the reviews forced: a CONFIG-error
+sentinel (flagged `config_error` in its diagnostics — not every error:
+an empty-window `_no_data_failure` on a live-scorable metric must stay
+live so dragging the window back un-fails it) is CLI-authoritative in
+the reporter, because a leaf whose config never built has no
+live-scoring state — before this the JS range scorer read absent bounds
+as "unbounded" and would have flipped the pill to PASS on the next
+re-score; the JS now returns false where Python raises, pinned in the
+parity suite (a range leaf freshly added in the modal therefore shows
+FAIL until a bound is typed, matching what `dstf run` would do). And the
+sentinel's reason is actually shown — console ("Not scored: <error>"),
+JUnit, and the interactive leaf (pill tooltip + a muted line: "<mode>
+leaf not scored — <error>") — which also upgraded the pre-existing
+empty-data failures from "NRMSE inf vs tolerance → FAIL" to the real
+reason on every surface. Review also re-pinned the one end-to-end path the pass had left
+unguarded (`compare_test` with a store that returns a soft_check and an
+`against` leaf — the previous positive test had been swapped for a
+negative-only one) and deleted a dead `baselines` fallback in
+`overlay_loader`.
+
+Read-only real-library check: `dstf discover` on TRANSFORM-UnitTests
+reports 331 tests (313 scan + 18 spec) with no warnings — the plan's 326
+is library drift (its HEAD moved 2026-08-11; the discovery path is
+untouched here), recorded in memory. Live OpenModelica demo 12/12 with
+MetricTreeTest's warn leaf resolving the `openmodelica` soft_check from
+the subdir — the only remaining named-baseline path. Four review rounds
+(the last, mechanical one verified in the main session: the six golden
+HTML hashes were refreshed, and the template's whole diff is the one
+`.node-error` CSS rule); every new behavioral guard was mutation-checked
+(the guard reverted → its test fails). Suites 1215 → 1215 hardware-free
+(−16 tests whose subject was deleted, +16 rejection/sentinel/surface
+tests), 76 → 77 browser.
+
+## D108 — Phase C-ii: dead code and stale docstrings swept (2026-08-31)
+
+Plan §3.2 D-4…D-8, behavior-preserving with one deliberate exception.
+D-4 had already been finished by D101/D102 (verified; one orphaned
+`has_plot_editor` comment block removed). D-5: the reporter's Python-side
+plot-contribution stub machinery in `ui/mode_controls.py`
+(`PlotContribution`, `custom_renderer`, `contribute_to_plot` and the
+`register_mode_ui` kwargs that fed them) had no production caller —
+the JS `MODE_PLOT_CONTRIBUTIONS` registry was always the real half —
+and is deleted with its four tests; `register_mode_ui` stays as the
+explicit-registration seam. D-6: thirteen unreferenced CSS rules and
+one dead hidden `plot-spectrum` div gone from `interactive.html`,
+`.tube-table` collapsed from three definitions to one preserving the
+cascade's effective values (`min-width: 300px` came from the FIRST
+block — the implementer read computed styles of the built tube table
+before/after via Playwright, identical; review re-derived the cascade
+property by property against the three originals and agreed), the
+`buildExportData` alias inlined; the six
+golden hashes were refreshed with the template diff as evidence, and a
+structural diff of all twelve rendered demo reports shows nothing but
+the removed div. D-7: eleven docstrings/comments that contradicted
+shipped code now describe it — persistent workers are the default and
+the CLI ABORTS when one is unavailable (no automatic batch fallback);
+the JSON recognizer's "deferred" matchers all shipped; the dashboard
+refreshes via `<meta http-equiv="refresh" content="5">` (a JS fetch is
+CORS-blocked on `file://`), not a 2 s JS fetch as CLAUDE.md claimed;
+`_slice_window` returns empty arrays for a degenerate window (its
+redundant `mask.any()` branch is gone); `against` is present tense;
+And/Or state what they compute (min/max over child scores) and that
+they do not consult `score_direction`; `_scan` reads whole files (lazy
+header read is idea #64). Two plan items were NOT stale and were left:
+the `<name>.data.json` frozen-companion scheme IS implemented (D94), and
+`PersistentRunnerBase`'s docstring makes no fallback claim. D-8: the
+identical-branch ternary, the literal-filename glob, the dead
+`WeightedCombinator` score guard (now a `cast` directly under the
+`any(score is None)` early return that justifies it), and `dstf
+export`'s accepted-but-ignored `--filter`/`--package` flags are gone —
+TRANSFORM-UnitTests' only `dstf` usage is its README (run / compare /
+--accept / --parallel / --report), so the CLI seam is untouched. The one
+behavior change: `plot_comparison`'s `max_embedded_samples` default is
+1000, agreeing with `Config` (both production callers pass it
+explicitly). The `test_review_fixes_*` fold-in waits for the C-iv
+restructure. Net −250/+116 lines.
+
+## D109 — `register_mode_ui` deleted (amends D108); `sample_mean` reduction (2026-09-01)
+
+D108 kept `register_mode_ui` as "the explicit-registration seam" while
+deleting its siblings. The owner asked what it had been for before
+deleting it, so its history was traced: born in Phase 6.1.1 (April) as
+the ONLY way a mode got a control panel, and within its first two days
+it carried three powers — a custom renderer when the auto-derived form
+wasn't enough, a has-plot-editor flag, and registering a UI for a config
+dataclass with no metric behind it. D101 derived every registered
+metric's controls from its config dataclass (`label`/`help`/`ui_min`/
+`ui_max` metadata), which made the renderer redundant, and deleted the
+plot-editor flag ("JS owns that fact"); D108 deleted the renderer/
+plot-contribution hooks as unconsumed. What was
+left was a strict subset of the auto-derivation, and its one residual
+power was a defect: a UI-only mode appeared in the add-leaf dropdown
+but not in the exported JSON-Schema and could be neither parsed nor
+evaluated — a dropdown entry that builds an unrunnable leaf. Owner
+ruling: delete it, with `_REGISTRY` and the re-exports;
+`registered_modes()` is now exactly the metric registry's names, so the
+dropdown, `emit_mode_schemas`, `schema_export` and `tree_spec` all read
+one list. The home for "my metric wants different controls than its
+fields imply" is the dataclass metadata channel or a new
+`MetricDescriptor` field — not a parallel name-keyed dict that can
+disagree with the registry. Recorded as an amendment, not slipped in as
+cleanup, because it reverses a keep-decision made the day before.
+
+Same ruling added `sample_mean` to the scalar leaf's closed reduction
+set beside the time-weighted `mean`: the arithmetic mean of the samples,
+for parity with tools that report that; documented in one sentence with
+`mean` so the difference is one glance. The closed set is a table
+lookup, so the D106 format is untouched.
+
+## D110 — Phase C-iii U-2: the per-worker watchdog is one template method (2026-09-01)
+
+The Dymola and OpenModelica persistent workers each carried a private
+copy of the same watchdog — spawn the simulation on a daemon thread,
+`join(timeout)`, on timeout close the tool and kill its process tree,
+try to rescue a result from disk, account `worker_killed` — plus their
+own `close()` and `_kill_tracked_pids()`; Julia had a third, poll-based
+shape with an inlined psutil kill; the batch Dymola runner had a fourth
+tree-kill copy. The copies had already diverged once (C-6/C-7/C-8, fixed
+in D96 on each side separately). Now `Worker` owns the template:
+`run_test_with_timeout` and `close` and `_kill_tracked_pids` live once
+in `simulators/base.py`, parameterised by hooks — abstract `start` /
+`is_alive`; `run_test` (the in-process execution the template runs on
+the thread); optional `_evaluate_from_disk` (default None), `_quiet`
+(default `nullcontext`; Dymola supplies `_suppress_stderr_noise`),
+`_detach_interface` + `_shutdown_interface(handle, grace)` (split so the
+handle is None-ed synchronously BEFORE the graceful-quit thread starts —
+otherwise `is_alive()` and Dymola's in-run identity guard would race a
+slow thread), and class attributes `kill_name_hint` / `timeout_kill_grace`
+(Dymola 5.0 so dslog.txt flushes; default 1.0) / `exec_thread_prefix`.
+`Worker.__init__` declares `pids` and `_n_restarts`, so the dispatcher's
+`getattr` and its two `type: ignore` reads are gone; `_dispatch_with_restart`
+keeps its signature and stderr wording byte for byte. Julia overrides
+only the deadline-poll body and adopts the shared kill, tracks its pid
+in `pids`, and reports `worker_killed=True` on timeout. The proc_kill
+DEBT note is resolved: descendants are snapshotted while the parent is
+alive (`snapshot_children`: pid + create time, name-guarded) so an
+orphan whose parent vanished during the graceful close is still found —
+and killed only if the pid's current occupant still has the snapshotted
+create time, because a pid recycled during the graceful window can be
+another worker's brand-new dymosim (review finding; Windows recycles
+freed pids almost immediately). The two workers lost ~120 lines each
+(Dymola −121/+15, OM −116/+45); docs/extensibility.md §3 carries the
+hook table (abstract / hook / template) and states that
+`_detach_interface` is required whenever the worker holds a handle,
+since `close()` relies on it to flip `is_alive()`.
+
+The live gate earned its keep: forced timeouts on Dymola and Julia left
+zero orphans, but on OpenModelica one `omc` survived — this OMPython
+build has no `session.getpid()`, so the OM worker had NEVER had a kill
+target on its timeout path (the except clause left `pids` empty; the
+dead sessions were only ever finished off by the abandoned graceful-quit
+thread). Fixed as part of the pass: the pid now falls back to the
+session's process handle, with one warning if neither source yields a
+pid. Also surfaced and fixed: after Julia's kill, `proc.poll()` could
+still read alive, so the dispatcher handed the dying worker the next
+test ("crashed mid-test") and the following restart was charged to the
+budget — the timeout branch now waits for the process to exit and
+detaches the handle before returning. Adversarial review then found
+three defects the live runs could not (they only exercise the kill
+landing): closing Julia's stdout pipe from the dispatch thread while
+the reader thread holds the buffer lock blocks until the child exits
+(measured 7.8 s on an 8 s child; a truly hung julia would have hung the
+run) — the timeout branch now keeps HEAD's `proc.kill()` belt-and-braces
+before the wait and closes only stdin until the process is actually
+reaped; the batch Dymola runner's timeout path had lost its
+`proc.kill()` fallback behind the name guard (a non-exec wrapper script
+fails the guard and nothing dies) — restored; and the orphan-kill reuse
+guard above. Also hardened the contract: `close()` raises `TypeError`
+when a backend detaches a handle but never overrode
+`_shutdown_interface` (the graceful thread's exceptions were silently
+swallowed), and its exceptions are now logged — type and message at
+WARNING, the stack at DEBUG, because OM's `quit()` on a mid-simulate
+ZMQ socket raises as a matter of course on every timeout and a
+12-line traceback per timeout would have violated the "run completes
+with a summary, no traceback" gate. And the live gate found one more
+hole in the design itself: when a Dymola timeout lands during
+TRANSLATION, dymosim does not exist at snapshot time — it is spawned
+inside the graceful window by the `simulateModel` the abandoned exec
+thread already issued, and is orphaned the instant dymola exits. A
+single snapshot before or after the graceful wait cannot see it;
+`close()` therefore re-samples the child tree every 0.25 s while the
+graceful attempt runs (bounded by `grace` plus at most one tick),
+pinned by a test that fails when the sampling interval is set past the
+window. A third review pass found the test meant to pin the Julia
+pipe-close fix was vacuous (its fake stream's assertion was swallowed
+by the very `except` under test) — fixed to record the attempt instead
+of raising — and that the sampling loop had overshot `grace` by the
+walk time; both closed before commit. +22 tests (1216 → 1238
+hardware-free; 77 browser); every new behavioral guard was
+mutation-checked. Known, watch-only (same exposure as before the
+hoist): the create-time reuse guard fails SAFE if the wall clock is
+stepped between snapshot and kill (psutil's own `is_running` shares
+it); `_detach_interface` is read-then-clear, so a Dymola broken-worker
+probe closing on the exec thread can race the watchdog into a double
+close (benign); and using OM's ZMQ socket from two threads on the
+timeout path is libzmq-documented UB inherited from HEAD — the socket
+is deliberately not closed under a parked `recv()`.
+
+## D111 — Phase C-iii U-1: one `run_tests` prologue (2026-09-01)
+
+Three copies of the run prologue — the batch template
+`SimulatorRunner.run_tests`, `PersistentRunnerBase.run_tests`, and the
+`.mos`-batch `DymolaRunner.run_tests` — each did the same seven steps
+(work dir, run-provenance metadata via `_build_run_metadata(
+_safe_tool_version())`, `ProgressReporter`, `assign_test_keys`, per-test
+`progress.register` with the ref-id report_dir map, `BatchManifest` +
+save) and had already drifted once: C-9 was the batch-Dymola copy
+losing the metadata line, so `status.json` stamped `"metadata": null`.
+The steps now live once in `SimulatorRunner._prepare_run(tests) ->
+RunSetup` (work_dir, total, run_metadata, progress, keyed_tests,
+manifest); the batch template rebuilds its 1-based 3-tuples from
+`keyed_tests`, the persistent base calls `setup_before_workers()` first
+so backend state exists before the provenance probe, and the Dymola
+batch runner keeps its mos-generation stages between `_prepare_run` and
+its header. `_print_run_summary` moved up to `SimulatorRunner` behind a
+`run_summary_phrase` property, so the two batch sites print the same
+number set the persistent one always did (wall, total work, speedup);
+`n_fail` is `total − ok − timeouts` everywhere (stricter than the old
+"not success and not timed out" count only when a result is lost).
+Finalize is unguarded everywhere, called on the `RunSetup`'s reporter
+(a known non-None reference) — the three `is not None` guards were
+covering a case `_prepare_run` makes impossible. Pinned by the C-9 test
+(tests/test_run_metadata.py) plus a three-site parity test that drives
+the real `run_tests` methods with stubbed execution and compares the
+resulting `batch_manifest.json` and `status.json` metadata. Verified
+live on all six lanes with stamped metadata: Dymola persistent and
+`--batch`, OpenModelica, Julia `--batch`, Python, FMPy (via `uv run
+--with fmpy`). Surfaced, pre-existing, not fixed here: the batch
+`DymolaRunner` and `JuliaRunner` classes have no `describe_tool_version`,
+so their `tool_version` is null — Julia's probe joins the JSON-driver
+base in U-4; Dymola's batch probe is a small follow-up.
+
+## D112 — Phase C-iii U-3: one variable-extraction path for Dymola and OM (2026-09-01)
+
+`_compute_needed_variables` and `_extract_variables` were ~100-line
+near-identical copies in the Dymola and OpenModelica runners, with two
+smaller duplicates in their `read_result` callers (the diag→statistics
+fold with its float32→7-significant-digit rule, and the timing-stats
+block). They now live once in `simulators/common/result_variables.py`
+(`compute_needed_variables` / `extract_variables` /
+`fold_diagnostics_into_statistics` / `merge_timing_stats`), with
+`diagnostic_vars` a required list — the None-default divergence is
+gone. Two deliberate unifications: the missing-requested-variable
+warning is loud on BOTH backends now (it was Dymola-only; the OM demo's
+SimulateOnlyTest line is now identical across backends), and the timing
+block uses OM's non-destructive `setdefault().update()` merge — reading
+the Dymola log parser settled that this is a no-op there (it writes
+only `translation`/`simulation` categories), while OM's per-phase omc
+timings genuinely coexist with the wall summary under the merge.
+Pattern-resolved names missing from the output stay silent on both, as
+before — only explicitly requested variables warn. Verified live:
+12/12 on Dymola persistent and OM with `--accept` into scratch roots
+showing the statistics blocks unchanged (Dymola: CPUtime/EventCounter/
+simulation/timing/translation; OM: timing only, matching the committed
+refs).
+
+## D113 — Phase C-iii U-4: the JSON-driver subprocess base (2026-09-01)
+
+The Julia and Python batch runners were ~85% the same file — the same
+driver-script subprocess skeleton (source resolve, per-test dir,
+progress phases, timeout mapping, identical `subprocess.run` kwargs,
+stdout/stderr artifacts, the rc≠0 error precedence result-file error >
+stderr tail > generic, wall-time statistics) differing in the driver
+path, the tool's argv flags, message nouns and artifact prefixes. The
+skeleton now lives once in `simulators/common/json_driver.py::
+JsonDriverRunner`, and each runner is its config plus eight class-level
+hooks (`driver_path`, `tool_label`, `action_label`, `stdio_prefix`,
+`source_suffix`, `result_filename`, `tool_binary`, `build_command`) —
+Julia 354 → 148 lines, Python 385 → 133 — the template for any future
+driver backend. Two deliberate changes riding along: Julia's
+`read_result` gains the numeric hardening Python already had (a
+non-numeric payload value fails the test instead of crashing the run),
+and `JuliaRunner` gains `describe_tool_version` (the probe moved off
+the persistent class, which now inherits it), so Julia batch runs stamp
+a real `tool_version` in `status.json` instead of null — verified live
+on Julia batch, Julia persistent and Python lanes. Source resolution is
+module-level `resolve_source_file` so the persistent `JuliaWorker`
+shares it too. One timing shift on the persistent Julia lane: the
+version is now probed synchronously in the prologue (≤15 s before
+the header) instead of patched in after worker startup — same value,
+earlier.
+
+C-iii acceptance (same day): the full TRANSFORM-UnitTests suite — 331
+tests, Dymola/linux, --parallel 4, report-only — ran through the
+hoisted watchdog/prologue/extraction/driver paths with ZERO sim
+failures, timeouts or crashes: 325 passed, 1 failed, 5 no-baseline.
+Both non-pass groups are library-side, for the owner: the failure is
+PointKinetics_Drift_Test_flat_Xenon at NRMSE 1.54e-04 against the
+1e-4 default — marginal drift on a four-day xenon transient whose
+final values agree exactly — and the 5 NO_REFs are tests the library
+gained since July (326 → 331) that have never had baselines accepted.
+No baselines were touched.
+
+## D114 — Phase C-iv split 1: cli.py becomes the cli/ package (2026-09-01)
+
+`cli.py` had grown to 2,147 lines holding 14 commands and every helper
+they share. It is now `cli/` split along helper-ownership lines:
+`__init__` (exactly `main` + `main_entry` — the console-script and
+`python -m dstf` seams, pyproject untouched), `main` (parser + the
+`_COMMANDS` dispatch table and its parity test), `common` (config
+building, filter/review parsing), `run_cmds` (run/compare, runner
+selection, report routing — the coupling cluster), `review` (the
+interactive loop), `spec_cmds`, `baseline_cmds`, `diag_cmds`. Every
+function moved whole; a normalization diff shows no executable body
+line changed. One deliberate asymmetry: `run_cmds` imports the review
+loop at module scope while `review` imports `_get_runner` INSIDE the
+function — so a monkeypatch of `dstf.cli.run_cmds._get_runner` still
+reaches the review path (a module-scope import would freeze the
+pre-patch object). `cmd_discover` went to `diag_cmds` (a listing
+command with zero coupling to the run cluster). Eight test files
+retargeted imports and patch targets to the functions' new homes; no
+assertion weakened. Seam evidence: `dstf --help` byte-identical to
+`python -m dstf --help`, 14 subcommands, parser ↔ dispatch parity,
+demo discover 12, check-dymola OK, live OpenModelica run + compare
+12/12. Known, accepted: `from .main import main` in the package
+`__init__` shadows the submodule name, so `import dstf.cli.main` then
+attribute access reaches the FUNCTION (use `from dstf.cli.main import
+X`, as every caller does); and the review loop binds `_get_runner`
+once at entry rather than per keypress — a monkeypatch applied after
+the loop starts would not be seen (none does).
+
+## D115 — Phase C-iv split 2: reference_store splits along its seams (2026-09-01)
+
+`storage/reference_store.py` (1,232 lines) is now four modules:
+`baseline.py` holds the `Baseline` value type and `PRIMARY_BASELINE` —
+its own leaf module because the roles code constructs `Baseline` at
+runtime while the store needs the roles mixin at class-creation time,
+so keeping the type in the store is a hard cycle; `ref_index.py` holds
+`RefIndex`, `_atomic_write_text` and the ref-file pattern/high-water
+constants (simulators, discovery and reporting retarget their imports —
+base.py's lazy-import comment now states the true reason, the old
+circularity claim being false once ref_index imports nothing from
+dstf); `roles.py` holds the nine soft_check/companion CRUD methods as
+`_RolesMixin`, moved verbatim, whose entire store coupling is two
+declared members (`ref_dir` and `_ref_file_for_model`); the store keeps
+primary CRUD, the accept path, `get_reference` and `_extract_baselines`
+and subclasses the mixin, so every public call site is unchanged. Every
+moved region byte-identical to HEAD (verified as exact substrings).
+Three test files retargeted imports, monkeypatch targets and — the
+silent-vacuum risk — the two caplog logger names, which now differ
+deliberately: duplicate-model_id warnings come from
+`dstf.storage.ref_index`, the stray-`baselines` warning from
+`dstf.storage.reference_store`. Live: OpenModelica 12/12 run + compare,
+soft-check/companion listings, manifest dump — all through the split
+store.
+
+## D116 — Phase C-iv split 3: base.py becomes base + types + persistent (2026-09-01)
+
+`simulators/base.py` (1,717 lines after the U-2 template moved in) is
+now three modules plus one relocation: `types.py` (Capability,
+DatasetType, the result dataclasses, `resolve_variable_patterns` — it
+imports nothing from dstf, which is what keeps the package import
+order safe), `persistent.py` (the Worker template and
+PersistentRunnerBase, 917 lines), `storage/batch_manifest.py`
+(BatchManifest joins the storage layer), and base keeping
+SimulatorRunner, `_prepare_run`/RunSetup, the printers and
+`assign_test_keys`. The package `__init__`'s `__all__` is
+byte-identical — only the sourcing changed — and all five backends
+still register. 59 of 61 moved definitions are token-identical; the
+two exceptions are one annotation-quoting pair on `BatchManifest.load`
+(`"BatchManifest"` → `BatchManifest` under `from __future__ import
+annotations`, with TestRunResult behind TYPE_CHECKING — the runtime
+import would be a genuine cycle; PEP 563 makes it a no-op). 41 files
+retargeted imports, including the watchdog tests' monkeypatch aliases
+(kill_process_tree/snapshot_children are looked up in persistent.py
+now). Verified live on OpenModelica: clean 12/12 run + compare, and a
+forced-timeout case through the moved template — three TIMEOUTs, three
+"not counted" restarts, pgrep omc 0 before and after. The lazy
+`_atomic_write_text` import in `save()` was hoisted to module level in
+the same commit (both live in storage now; review-sanctioned) — the
+finding-66 atomic-replace rationale stays.
+
+## D117 — Phase C-iv split 4: reporting split, one status classifier, html_report retired (2026-09-01)
+
+Three coupled pieces. (A) `plot_comparison.py` (1,675 lines) is gone:
+`context_builder.py` holds the pure results→context half,
+`report_suite.py` the Jinja rendering, LTTB decimation, sidecar and
+suite orchestration — moved whole, no thin shim (no cycle forced one),
+and the six golden interactive hashes did not move. (B) The per-test
+status classification existed in four copies (finding 69 once fixed
+the same bug twice); the divergence-table-first rule found console,
+JUnit and html_report identical — branch order differs in JUnit but
+the arms are mutually exclusive — and those now call ONE classifier in
+`reporting/status.py`, with console and JUnit output pinned
+byte-identical by embedded goldens. The report-suite copy is a REAL
+divergence and stays: its `simulate_only` branch needs the TestModel
+(a passing simulate-only test is PASS there, while console/JUnit class
+it with the no-baseline rows — a pre-existing incongruity now
+documented at the site, queued for C-v adjudication). (C)
+`html_report.py` — the third overlapping HTML surface — is deleted;
+`--report-format html` writes the DASHBOARD page via
+`dashboard_render.render_final_to`, byte-identical to the run's own
+dashboard.html. Riding along because the brief's own live check
+exposed it: `_output_report` read an `--output` flag that no
+run/compare parser ever defined (dead since birth) — the flag now
+exists on the shared report parent, so junit/html reports can be
+written to a chosen path. Known: dashboard links to per-test reports
+are relative, so a page written outside the work dir has dangling
+row links (documented in the docstring and usage.md); interactive.js
+comments still name plot_comparison.py (frozen behind the golden
+hashes; follow-up with hash-diff evidence). Kept, commented, not fixed: the shared latent quirk that
+a driver-omitted variable leaves a numbering gap (`enumerate` over the
+requested list). Known spelling split: this base uses
+`result_filename`; `FmpyRunner` keeps its own `RESULT_FILENAME`. Verified live per backend: normal
+demo runs 12/12 (Dymola, OM) and 8/8 (Julia); forced-timeout runs
+complete with a summary, restart "not counted", and pgrep counts equal
+before and 30 s after on all three.
+
+## D118 — Phase C-iv split 5: interactive.js becomes five fragments (2026-09-01)
+
+The 5,308-line `interactive.js` is five contiguous slices cut on its
+own section banners — `scorers.js` (embedded data, runtime state, the
+MODE_SCORERS registry, FFT/event detection), `editors.js` (the five
+plot editors and the modal), `plots.js` (init + Plotly rendering),
+`tree-ui.js` (the recursive tree, structural editing, nodeToSpec),
+`export.js` (summary, overlays, patch building) — concatenated at
+report-copy time by `report_suite.INTERACTIVE_JS_PARTS` +
+`write_interactive_js`, which is now the load-bearing ordering
+contract (a reorder silently breaks load semantics; the browser lane
+is what would catch it). The page keeps one script tag; no build
+step; the shipped artifact is byte-identical to the join. The parity
+harness loads `scorers.js` ALONE behind a stub that is nothing but
+`window.MT_REPORT` — the smallness of that stub is itself the standing
+check that scoring math stays browser-independent; the full DOM shim
+survives only for the two Node tests that exercise the bundle. One
+ratified code motion: `_interpStep` (nine lines, hoisted declaration,
+body byte-identical) moved from the editor region into scorers.js so
+the fragment loads standalone — byte order was a means, the standalone
+parity target is the end. Strip-comments-and-sort proves identical
+code-line multisets; the three stale plot_comparison.py comments were
+fixed in the same pass. The goldens did not move — they hash the
+rendered HTML, which references the script by src — closing C-iv's
+split sequence with the demo live 12/12 and zero console errors over
+the concatenated artifact.
+
+## D119 — Phase C-iv closes: review-wave test files folded home (2026-09-01)
+
+The seven `test_review_fixes_*.py` files — named for the review wave
+that produced them, not the modules they pin — are gone; their 244
+tests moved whole into the per-module files (two new homes were
+justified: `test_report_suite.py`, since the reporting split left no
+per-module file for that pair, and `test_julia_driver.py` for the
+driver pins that deliberately need no julia binary). Every finding
+citation and section header moved verbatim — those docstrings are the
+incident record. The count invariant was proven mechanically: 1305
+collected / 1287 passed / 18 skipped before and after, and the full
+browser lane at 129 (77 of them in the reporter file — the review
+caught that quoting "77" alone as "the browser lane" was ambiguous),
+with all 222 node-ids from the deleted files present unrenamed. The
+only body edit anywhere is one helper rename forced by a genuine name
+collision (`_mk_result` → `_mk_valued_result`, seven call sites);
+two module-level fmpy skip-gates became class/function gates so
+folded fake-fmpy tests run while the real-fmpy tests keep skipping —
+the 18 skips are the same 18. Noted follow-up: `_tm` now exists in
+six test files; a conftest helper is the cleanup when next touched.
+This closes Phase C-iv — six restructuring commits, D114–D119, each
+review-gated and behavior-preserving.
+
+## D120 — Phase C-v round 1: the CLI batch, honest run verdicts, recorded backends (2026-09-01)
+
+Ten sanctioned behavior changes. Global flags now work on either side
+of the subcommand (a `global_parent` whose copies default to
+`argparse.SUPPRESS`, so the subparser's namespace copy cannot erase a
+pre-subcommand value — the mechanism is pinned in both directions).
+Five raw-traceback paths became ConfigError usage lines (missing
+@filter file, malformed recognizers entry, malformed metrics block, no
+package at the source path, missing positionals on the companion and
+soft-check actions). `manifest cleanup` dry-runs by default everywhere,
+`--apply` executes. `--parallel`'s two meanings are documented in each
+subparser. Timeout messages name `simulation.timeout` as the per-test
+override, through one shared `timeout_message`. A failed post-timeout
+worker restart gets exactly ONE retried `start()` after a five-second
+backoff inside the same budgeted restart, so a licence blip at
+--parallel 1 no longer fails the remaining queue. The D93 follow-on
+landed, hardened by review: `_prepare_run` stamps this run's scope
+`pending` before anything starts, and each verdict is persisted
+per-result the moment it lands (the bulk epilogue writer was deleted —
+one mechanism, not two), so an interrupted run leaves `pending` on the
+tests it never reached and real verdicts on those it did; the reader
+treats only recorded verdicts as authoritative and falls back to the
+status.json cross-check for `pending` and pre-field entries alike (old
+data, not old code). A work dir whose manifest says a run failed
+compares as SIM_FAIL, and `compare --accept` accepts only tests whose
+last RUN completed successfully — `failed`, `timed_out` and `pending`
+(the in-flight-at-abort state) all refuse, while a drifted test whose
+run passed but comparison failed stays acceptable (re-baselining drift
+is legitimate); field-less pre-D120 manifests keep the status.json
+guard. Live-proven with a genuinely interrupted OpenModelica run:
+manifest 9 pending / 3 passed, compare honestly 3-of-12 — under the
+pre-fix code all twelve would still have read green.
+`_dispatch_with_restart` gained the manifest as a fourth argument
+(signature change, no shim). `compare` without `--simulator`
+adopts the backend the run recorded in its metadata (explicit still
+wins) — forcing the wrong backend on an OM work dir reproduces the old
+0/12 exactly, which is the whole point. Batch Dymola stamps a real
+tool_version by printing `DymolaVersion()` from startup.mos into a
+work-dir file read back after the first batch — live-verified in the
+main session (12/12, `Dymola Version 2026x, 2025-10-10` in the
+metadata). The eight `_tm` test helpers consolidated onto one conftest
+`make_test_model` (two thin wrappers keep genuinely different
+defaults; the watchdog's stays standalone by design).
+
+## D121 — Phase C-v round 2: the reporter batch (2026-09-01)
+
+Ten items; the two structural ones first. Against-leaves live-score
+now: a leaf with `against != primary` resolves its baseline from the
+variable's EMBEDDED soft_check overlay (companions are never
+scorable), so live re-scoring and the tube envelope use the curve the
+CLI scored — mutation-proven by fixtures where the primary and the
+soft_check give different verdicts, and live on MetricTreeTest's warn
+leaf (perturbing the soft_check flips the pill; perturbing the primary
+does not). The D105 CLI-authoritative pin narrows to overlay-absent
+(plus the unchanged D98 decimation rule), symmetric between the Python
+stamp and the JS rule. And the D117 simulate_only carve-out ends:
+`TestComparison.simulate_only` lets the ONE shared classifier call a
+passing simulate-only PASS everywhere — console, JUnit and the report
+now agree, and the report suite's private classifier copy is deleted.
+
+The rest: the owner-reported cross-report selection leak is fixed by
+gating selection restore on a per-report key (work dir + run start;
+filters/sort/widths deliberately still shared); the add-leaf `+` is
+disabled with a tooltip on a `warn` that has its one child; Plotly is
+vendored (cartesian 2.35.0, 1.25 MB — the full bundle phones home for
+map CSS and fails the offline gate) ONCE per report suite at
+`reports/plotly.min.js` after review pushed back on per-dir copies
+(22 MB → 8.3 MB per demo run; ~414 MB → 1.25 MB at TRANSFORM scale;
+the dashboard needs no Plotly at all — pinned; single-dir portability
+cost documented); legends use variable + metric names, not JSON-pointer
+paths; warn-wrapped failures no longer paint the summary red — the
+root verdict rules and an advisory chip counts them (the documented
+baseline-role semantics applied to the UI); browser-created `weighted`
+nodes carry the CLI-authoritative badge and a pending verdict that is
+deliberately not a pass; range out-of-window segments are gray traces
+(Plotly's shapes[].editable=false empirically does not pin under
+global shape editing); rich-editor modes lost their duplicated
+passthrough textarea under a general rule that spared event-timing's
+panel, whose time_tolerance/count_must_match have no other editor; the
+scalar Quantity box fits one line; and the dashboard's Worst-NRMSE
+column says "n/a (N unscored)" instead of "—" when a sentinel leaf
+poisons the max. Reports are now fully offline-capable (zero console
+errors and zero failed requests with the network disabled). Review
+pushed two more honesty fixes in before commit: overlay arrays are
+decimated under the same cap as the primary, so per-overlay
+full-sample counts are now stamped, the decimation banner discloses
+decimated overlays, and the banner
+discloses decimated soft_checks by name (companions count toward the
+totals but are never listed — they cannot be scored against). One
+clause of that fix was REFUSED by the implementer and the refusal
+ratified: pinning dominant-frequency on overlay decimation would be
+STRICTER than the primary's treatment, because the DF scorer FFTs the
+actual trajectory only — the baseline never enters the spectrum, which
+is also why a decimated primary ref does not pin DF today. The ruling
+is pinned by a guard test that fails loudly if the scorer ever starts
+reading the reference arrays — the one condition that would flip the
+call; and
+a root wrapped in `weighted` shows a pending summary matching its
+pending pill instead of painting red. Accepted, watch-only: two
+same-metric leaves on one variable now share a legend label (the
+pointer disambiguated before); pre-`start_wall` snapshots churn their
+selection key per refresh (old data tolerated, silently); the vendor
+copy's freshness check is size-only; a zero-length embedded overlay
+fails closed rather than falling back to the CLI badge; a pinned
+against-leaf's tube editor centres on y=0 rather than wrongly on the
+primary.

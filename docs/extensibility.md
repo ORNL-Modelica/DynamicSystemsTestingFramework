@@ -20,7 +20,21 @@ class DymolaBackend(Backend):
 
 Resolution: config specifies a name (`"backend": "Dymola"` or `"metric": "nrmse"`), a factory looks it up. Unknown names produce a clear error listing available plug-ins. Backends, metrics, combinators, dataset types, discovery strategies all use independent registries under `dstf.{backends,metrics,combinators,datasets,discovery}`.
 
-Third-party plug-ins register via Python entry points (`[project.entry-points."dstf.backends"]`) so users can ship a backend in a separate package without patching ours.
+### Shipping a plug-in in your own package
+
+Registration happens as an import side effect, so the framework has to import your module. It finds it through **one** entry-point group, `dstf.plugins` — declared in your package's `pyproject.toml`:
+
+```toml
+[project.entry-points."dstf.plugins"]
+acme-backend = "acme_dstf.backend"           # a module: importing it registers
+acme-metrics = "acme_dstf.metrics:register"  # a callable: invoked with no args
+```
+
+An entry point resolving to a **module** is merely imported (its `@register` / `register_metric` calls run at import time); one resolving to a **callable** is called with no arguments. Anything else is an error.
+
+One group, not one per layer: a plug-in package routinely ships a backend *and* the metrics that score it, and splitting the declaration by layer only makes the author guess which group a given registration belongs in.
+
+`dstf.cli.main` calls `load_plugins()` before dispatching any subcommand, so every command sees the same registries. Library users call `dstf.load_plugins()` themselves. Loading is idempotent. **A plug-in that fails to import or call is a hard error** (`ConfigError`, exit 2, naming the entry point) — a metric that quietly failed to register does not fail quietly downstream, it changes scoring semantics.
 
 ---
 
@@ -39,7 +53,7 @@ A Source describes *what* holds the behavior under test. Sources are not classes
 
 ### Current
 
-Two source types live today: `"modelica"` (default — `Config.source_path` points at a `package.mo` directory) and `"fmu"` (Phase 2 — `Config.source_path` is the FMU dir; per-test `"fmu"` field in `test_spec.json` names the binary). Discovery and backend selection gate on `Config.source_type`. Adding a new source means setting `source_type` and teaching `discover_tests` how to enumerate its tests; the backend layer below is independent.
+Two source types live today: `"modelica"` (default — `Config.source_path` points at a `package.mo` directory) and `"fmu"` (Phase 2 — `Config.source_path` is the FMU dir; per-test `"source"` field in `test_spec.json` names the binary). Discovery and backend selection gate on `Config.source_type`. Adding a new source means setting `source_type` and teaching `discover_tests` how to enumerate its tests; the backend layer below is independent.
 
 ---
 
@@ -117,9 +131,10 @@ Each Backend declares a frozen set of capabilities:
 | `supports_persistent_workers` | Holds loaded model(s) in memory across tests (performance: no per-test startup). |
 | `supports_batch_fallback` | Exposes a non-interactive script-driven mode when persistent workers aren't available. |
 | `supports_fmu_export` | Can export a test artefact as an FMU (enables cross-backend verification). |
-| `supports_experiment_ingest` | Reads pre-recorded data instead of simulating. |
 
 Features in the framework (CLI flags, report sections, cross-backend chains) gate on capabilities, not on backend names. A new backend that declares `supports_fmu_export` automatically participates in cross-backend verification with no framework change.
+
+Declare a capability on the class that actually has it. Where a backend ships a persistent variant, the two classes can differ — Dymola's FMU export needs a live `DymolaInterface`, so `PersistentDymolaRunner` declares `FMU_EXPORT` and the batch `DymolaRunner` does not. Registration-time validation (`simulators._validate_capabilities`) enforces flag ⟹ method override, but only for `@register`-ed classes; persistent variants are reached through `persistent_runner_cls`, so their declarations are covered by tests.
 
 ### Produced datasets (mandatory to declare)
 
@@ -141,24 +156,36 @@ A Backend must:
 
 ### Persistent-worker contract
 
-If your backend can hold a loaded model in memory across tests (declares `Capability.PERSISTENT_WORKERS`), inherit from `PersistentRunnerBase` (in `simulators/base.py`) and supply a `Worker` subclass — you do **not** re-implement the dispatch loop. The template owns the orchestration; you fill in backend-specific construction and lifecycle hooks.
+If your backend can hold a loaded model in memory across tests (declares `Capability.PERSISTENT_WORKERS`), inherit from `PersistentRunnerBase` (in `simulators/persistent.py`) and supply a `Worker` subclass — you do **not** re-implement the dispatch loop. The template owns the orchestration; you fill in backend-specific construction and lifecycle hooks.
 
-**`Worker` ABC** (in `simulators/base.py`) declares the long-lived-process contract every persistent backend's worker must satisfy:
+**`Worker` ABC** (in `simulators/persistent.py`) declares the long-lived-process contract every persistent backend's worker must satisfy. Two of its methods — `run_test_with_timeout` and `close` — are **template methods** implemented once in the base: the watchdog thread, the timeout kill, the process-tree kill, the disk rescue and the restart-accounting flags were identical in every backend. You supply hooks, not a watchdog.
 
-| Method | Required | Contract |
+What the base guarantees, for every worker: `run_test` executes on a daemon exec thread joined with the test's timeout; on expiry the worker is `close()`d (graceful attempt on its own daemon thread, abandoned after `timeout_kill_grace`, then `kill_process_tree` on every tracked PID and on the children recorded by the tree walks `close()` takes before the graceful attempt and every 0.25 s during it — a child that first appears *inside* that window, as dymosim does when the timeout lands during translation, is only reachable while its parent is still alive); `_evaluate_from_disk` then gets a chance to rescue a simulation that finished just before the kill. Timeout results carry `worker_killed=True` (a *healthy* worker died because the test was slow — the dispatch loop must not charge it against `max_restarts_per_worker`); worker exceptions leave it `False` (a genuinely broken worker DOES cost budget). `self.pids` and `self._n_restarts` are declared by `Worker.__init__`, so `super().__init__(worker_id, config)` is not optional.
+
+`_detach_interface` is what makes `is_alive()` go False, and `close()` is the only thing that calls it — so a worker that keeps its handle (or its `Popen`) after a kill still reads alive, and the dispatch loop hands it the next test. That test dies against a dead process with a result carrying no `worker_killed` flag, and the restart it forces is charged against the budget. Julia hit exactly this (D110): detach the handle on every path that kills the process, not just on `close()`.
+
+| Method / attribute | Required | Contract |
 |---|---|---|
 | `__init__(worker_id, config, ...)` | yes | Subclass extends with backend-specific args (e.g. `DymolaConfig`, an interface class). MUST call `super().__init__(worker_id, config)`. |
-| `start()` | yes | Bring the process up, apply startup (library loads, framework settings). Raise on failure. |
-| `close(grace=...)` | yes | Tear down. Try graceful first; hard-kill if the graceful path doesn't return within `grace` seconds. Idempotent — safe on workers that never started or already closed. |
-| `is_alive()` | yes | True iff the worker can accept another test. |
-| `run_test_with_timeout(test, test_key, timeout, progress=None)` | yes | Run one test with a watchdog. **MUST NOT** raise on test-level failures — return a `TestRunResult(success=False)` instead. **MAY** raise on worker-level catastrophes (subprocess died, pipe broken) so the dispatch loop's restart logic intervenes. |
+| `start()` | abstract | Bring the process up, apply startup (library loads, framework settings), record the process PID in `self.pids`. Raise on failure. |
+| `is_alive()` | abstract | True iff the worker can accept another test. Usually `self._handle is not None`. |
+| `run_test(test, test_key, progress=None)` | hook | The blocking single-test execution the watchdog runs on its exec thread. Required unless you override `run_test_with_timeout`. **MUST NOT** raise on test-level failures — return a `TestRunResult(success=False)`. **MAY** raise on worker-level catastrophes (RPC dropped, pipe broken); the template turns that into a `success=False` result and tears the worker down for the dispatch loop to restart. |
+| `_detach_interface()` | **required iff the worker holds a handle** | Clear the live-handle attribute and return what it held; runs synchronously inside `close()`. Default `None` = nothing to shut down. |
+| `_shutdown_interface(handle, grace)` | required iff `_detach_interface` returns a handle | The graceful shutdown itself (`handle.close()`, `sendExpression("quit()")`, write `{"cmd": "quit"}` + `wait`). Runs on a daemon thread abandoned after `grace`; `close()` raises `TypeError` up front if it is missing, since the daemon thread only logs what it catches. |
+| `_evaluate_from_disk(test, test_key, elapsed)` | hook | Rebuild a result from on-disk artifacts after a timeout / worker exception. Default `None` = no disk evidence. |
+| `_quiet()` | hook | Context manager wrapped around the watchdog's teardown calls. Default no-op; Dymola returns a suppressor for the urlopen noise its dying interface emits. |
+| `kill_name_hint` (class attr) | hook | Name substring a tracked PID must still match before it is killed — the guard against a recycled PID (`"dymola"`, `"omc"`, `"julia"`). `None` disables it. |
+| `timeout_kill_grace` (class attr) | hook | Graceful-shutdown budget on the *timeout* path. Default `1.0`; Dymola uses `5.0` so it can flush its open `dslog.txt`. |
+| `exec_thread_prefix` (class attr) | hook | Names the exec thread `<prefix>-exec-<worker_id>`. |
+| `run_test_with_timeout(...)` | template | Implemented by the base. Override wholesale only when the execution model doesn't fit "blocking call on a thread" — Julia polls a response queue against a deadline. An override still owes the shared semantics: no raise on test-level failure, `worker_killed=True` on a timeout kill, and `self._kill_tracked_pids()` for the kill. |
+| `close(grace=5.0)` | template | Implemented by the base and idempotent. Do not override. |
 | `export_fmu(test, output_dir)` | iff `FMU_EXPORT` | Default raises `NotImplementedError`. |
 
 **`PersistentRunnerBase`** (subclass of `SimulatorRunner`) provides the full `run_tests` template:
 
 ```
-setup_before_workers → ProgressReporter → assign_test_keys
-    → BatchManifest → make_worker × N → start in parallel
+setup_before_workers → _prepare_run (progress + keys + manifest)
+    → make_worker × N → start in parallel
     → filter live workers (raise if zero) → dispatch with restart
     → close all workers → finalize progress
 ```
@@ -216,7 +243,7 @@ Types:
 - `Distribution` — samples or fitted distribution (Monte Carlo, SDE ensembles, KS metrics).
 - `Field` — *reserved*. Spatial / PDE data. Not implemented.
 
-**Contract**: each Dataset type has a well-defined numpy-friendly shape. Metrics declare which Dataset types they accept. Backends declare which they produce. Incompatible combinations fail at config resolution with a clear error, not at runtime.
+**Contract**: each Dataset type has a well-defined numpy-friendly shape. Metrics declare which Dataset types they accept (`MetricDescriptor.accepted_datasets`). Backends declare which they produce (`produced_datasets`). An incompatible leaf hard-fails at evaluation time with a diagnostic naming both kinds — the kind is only known once a backend has produced data, so there is no earlier config-time hook.
 
 ### Current
 
@@ -249,10 +276,25 @@ class MetricResult:
 The MetricTree node referencing a metric specifies `"against": "<baseline-name>"` so a single test can carry multiple named baselines (see [vision.md](vision.md) "Multiple named baselines"). Cross-baseline comparison metrics (e.g. "how similar are Dymola and FMU outputs?") take two baseline names: `"against": ["dymola", "fmu"]`.
 
 **Contract**:
-1. `accepts` declares which Dataset types the metric consumes (pre-check at config time).
-2. `evaluate` is *pure* — no I/O, no mutation of inputs, no global state. Deterministic given inputs.
+1. `accepted_datasets` declares which Dataset types the metric consumes. A
+   leaf handed an incompatible kind hard-fails **at evaluation time** with a
+   diagnostic naming both kinds (there is no earlier config-time hook today —
+   the kind is only known once a backend has produced the data).
+2. `compare` is *pure* — no I/O, no mutation of inputs, no global state. Deterministic given inputs.
 3. `diagnostics` must be JSON-serializable (travels to reports + reference files).
-4. Metric-specific configuration is typed (frozen dataclass), registered with the metric, and validated on construction.
+4. Metric-specific configuration is typed (frozen dataclass); its field
+   metadata (`label`/`help`) drives the reporter's auto-derived controls and
+   the exported JSON-Schema.
+5. `score_direction` declares which way a better score runs (`"lower"` for
+   error-like, `"higher"` for coverage-like). The validator uses it to reject
+   `weighted` nodes mixing directions.
+6. `accepts_quantity` (default `False`) declares that the metric's `quantity`
+   param names *what data it scores*. Only for such a metric does a string
+   `quantity` make the evaluator resolve a stored scalar from the run's
+   statistics / diagnostics instead of a trajectory, and only then may
+   `variable` be omitted in the spec. Leave it `False` and an unrecognized
+   `quantity` stays an inert param — a trajectory metric keeps scoring
+   trajectories.
 
 ### Currently registered
 
@@ -262,30 +304,57 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
 - **`range`** — signal-only bounds check (no baseline needed). `RangeMode`. D53.
 - **`event-timing`** — compare event instants via duplicate-time detection. `EventTimingMode`. D62.
 - **`dominant-frequency`** — FFT peak comparison. `DominantFrequencyMode`. D62.
+- **`scalar`** — score one number: a reduction of the leaf's variable (`max` / `min` / `final` / `integral`, plus time-weighted `mean` and arithmetic `sample_mean`) or a stored statistic addressed by dotted path, against a baseline scalar (abs/rel tolerance) or declared bounds. The only metric declaring `accepts_quantity` — its `quantity` param names the data it scores. Accepts the `scalars` dataset kind as well as time series. `ScalarMode`.
 - **`x-tolerance`** *(planned)* — pyfunnel x+y funnel comparison.
 - **`fréchet`** / **`iso-18571`** *(future)* — shape-sensitive metrics.
 - **`ks-distribution`** *(future)* — stochastic regression.
 
-### User metrics
+### User metrics (implemented — `dstf.comparison.registry`)
 
-A user registers a metric in their own package:
+A user registers a metric by describing it once; every framework surface
+(spec parsing, evaluation, auto-derived report controls, `export-schema`)
+derives from the descriptor:
 
 ```python
-@register("power-balance")
-class PowerBalanceMetric(Metric):
-    accepts = frozenset({DatasetType.TimeSeries})
+from dataclasses import dataclass, field
+from dstf.comparison.modes import ComparisonMode
+from dstf.comparison.registry import MetricDescriptor, register_metric
 
-    def evaluate(self, actual, reference, config):
-        ...  # domain-specific pass/fail + score
+@dataclass(frozen=True)
+class PowerBalanceConfig:
+    tolerance_watts: float = field(
+        default=5.0, metadata={"label": "Tolerance (W)", "help": "..."}
+    )
+
+class PowerBalanceMode(ComparisonMode):
+    def __init__(self, config): ...
+    @property
+    def name(self): return "power-balance"
+    def compare(self, ref_time, ref_values, act_time, act_values): ...
+
+register_metric(MetricDescriptor(
+    name="power-balance",
+    config_cls=PowerBalanceConfig,
+    build=lambda override, tol: PowerBalanceMode(
+        PowerBalanceConfig(tolerance_watts=override.get("tolerance_watts", 5.0))
+    ),
+    score_direction="lower",
+))
 ```
 
-And references it in `test_spec.json`:
+And references it in `test_spec.json` like any built-in:
 
 ```json
-{"metric": "power-balance", "config": {"tolerance_watts": 5.0}}
+{"metric": "power-balance", "variable": "P_net", "tolerance_watts": 5.0}
 ```
 
-The framework requires no change.
+The framework requires no change; `tests/test_metric_registry.py` proves the
+full round-trip with a toy metric. One boundary to know: the interactive
+report's **live** re-scoring and its add-leaf dropdown are implemented in
+the template JS, which carries its own scorer table — a Python-registered
+metric evaluates, renders, and exports normally but shows the
+"CLI-authoritative" badge (its pill updates on the next `dstf run`, exactly
+like the built-in `event-timing`).
 
 ---
 
@@ -308,7 +377,7 @@ class Combinator(Protocol):
     def combine(self, children: list[MetricResult]) -> MetricResult: ...
 ```
 
-Pure function. Diagnostics must preserve enough of the children's diagnostics that a failing branch can be rendered in the report. Combinators are registered via `dstf.combinators`.
+Pure function. Diagnostics must preserve enough of the children's diagnostics that a failing branch can be rendered in the report. Combinators register via `dstf.comparison.registry.register_combinator` (a `CombinatorDescriptor`: name + a `CombinatorSpec -> Combinator` builder). One rule the validator enforces on `weighted`: its leaf children must share a `score_direction` — summing lower-is-better and higher-is-better scores against one threshold is meaningless.
 
 ### Schema in test_spec.json
 
@@ -358,7 +427,7 @@ Every plug-in, regardless of layer, must honor:
 1. **Determinism** — same inputs produce the same outputs. No wall-clock, no PID, no randomness without an explicit seed.
 2. **JSON-serializable configuration** — all plug-in config must round-trip through `test_spec.json` and the reference JSON.
 3. **Clear error messages on misuse** — "Backend `Foo` does not produce `Events`; metric `event-timing` requires it" is a framework-level check, not a runtime crash.
-4. **No framework-core edits** — if adding a plug-in requires editing `cli.py`, `config.py`, or anything outside `backends/`, `metrics/`, `combinators/`, `discovery/`, the abstraction is wrong. File an issue before working around it.
+4. **No framework-core edits** — if adding a plug-in requires editing the `cli/` package, `config.py`, or anything outside `backends/`, `metrics/`, `combinators/`, `discovery/`, the abstraction is wrong. File an issue before working around it.
 5. **Test fixture included** — every plug-in ships with at least one test against a known-good input.
 
 ---
@@ -389,4 +458,4 @@ examples/
 
 Each directory under `examples/` demonstrates one Source type end-to-end — a working reference a user can copy. Pytest fixtures (captured artefacts for unit-testing internals like the MAT reader) remain under `tests/fixtures/` and are separate from `examples/`.
 
-Third-party plug-ins live in separate packages and register via entry points. The same layout applies there.
+Third-party plug-ins live in separate packages and register via the `dstf.plugins` entry-point group (see [Shipping a plug-in in your own package](#shipping-a-plug-in-in-your-own-package)). The same layout applies there.

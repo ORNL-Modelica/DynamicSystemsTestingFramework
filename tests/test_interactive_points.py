@@ -6,12 +6,13 @@ MODE_PLOT_EDITORS['points'] (Tasks 5-8 of the points-mode plan).
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
 
 pytest.importorskip("playwright.sync_api")
+
+pytestmark = pytest.mark.playwright
 
 
 from test_interactive_playwright import (
@@ -71,13 +72,14 @@ def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
     """Render a custom context to interactive.html."""
     from jinja2 import Environment, FileSystemLoader
 
-    from test_interactive_playwright import _JS_SRC, _TEMPLATE_DIR
+    from dstf.reporting.report_suite import write_report_assets
+    from test_interactive_playwright import _TEMPLATE_DIR
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
-    shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    write_report_assets(tmp_path)
     return html_path
 
 
@@ -169,9 +171,20 @@ def test_points_scorer_time_tolerance_box_pass(tmp_path, playwright_browser):
     assert pass_state is True
 
 
-def test_points_scorer_window_clips_points(tmp_path, playwright_browser):
-    """Window [3, 5] excludes the t=2 trouble point. Fixture's
-    only-failing point is at t=2; with window applied → PASS."""
+def test_points_scorer_window_excluded_checkpoint_fails_loudly(
+    tmp_path, playwright_browser
+):
+    """A declared checkpoint OUTSIDE the leaf window fails, not skips.
+
+    Window [3, 5] slices the reference before scoring, so the ref-relative
+    t=2 checkpoint lands outside the reference range — Python fails it
+    ("checkpoint time outside reference range", the anti-clamp rule from
+    review 2026-07-06 finding 2: silently dropping a checkpoint hides a
+    mis-specified spec), and the live scorer must agree. This test
+    previously asserted the opposite (silent clipping); that was the
+    pre-parity JS behavior, fossilized while the browser lane was broken
+    by the D88 autofix (see conftest.playwright_browser).
+    """
     ctx = _context_with_points_leaf(
         points=[{"time": 2.0}, {"time": 4.0}],
         tolerance=0.01,
@@ -186,7 +199,7 @@ def test_points_scorer_window_clips_points(tmp_path, playwright_browser):
         () => recomputePassStates(TREE_VIEW)['/metrics/children/0']
     """)
     page.close()
-    assert pass_state is True
+    assert pass_state is False
 
 
 # ---------------------------------------------------------------------------

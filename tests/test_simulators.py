@@ -1,15 +1,21 @@
 """Tests for simulator utilities: log parser, mat reader, variable pattern matching."""
 
+import logging
+import struct
+import subprocess
 from pathlib import Path
+from subprocess import CompletedProcess
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+from conftest import make_test_model as _tm
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.base import _pattern_to_regex, resolve_variable_patterns
 from dstf.simulators.common.mat_reader import read_result_mat
+from dstf.simulators.common.result_variables import extract_variables
 from dstf.simulators.dymola.log_parser import parse_dslog
-from dstf.simulators.dymola.runner import _extract_variables
+from dstf.simulators.types import _pattern_to_regex, resolve_variable_patterns
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SAMPLE_MAT = FIXTURES_DIR / "results" / "Dymola" / "dsres.mat"
@@ -231,7 +237,7 @@ class TestDiagnosticExtraction:
         """CPUtime and EventCounter extracted as diagnostics."""
         mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
-        variables, diagnostics = _extract_variables(
+        variables, diagnostics = extract_variables(
             mat_data,
             test,
             ["CPUtime", "EventCounter"],
@@ -244,7 +250,7 @@ class TestDiagnosticExtraction:
         """Diagnostic variables don't appear in the regular variables list."""
         mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
-        variables, diagnostics = _extract_variables(
+        variables, diagnostics = extract_variables(
             mat_data,
             test,
             ["CPUtime", "EventCounter"],
@@ -258,7 +264,7 @@ class TestDiagnosticExtraction:
         mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
         # "x" exists in the mat data — treating it as diagnostic
-        variables, diagnostics = _extract_variables(
+        variables, diagnostics = extract_variables(
             mat_data,
             test,
             ["x"],
@@ -270,7 +276,7 @@ class TestDiagnosticExtraction:
         """Diagnostic variable not in mat data is silently skipped."""
         mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
-        variables, diagnostics = _extract_variables(
+        variables, diagnostics = extract_variables(
             mat_data,
             test,
             ["NonExistentVar"],
@@ -281,7 +287,7 @@ class TestDiagnosticExtraction:
         """Empty diagnostic list produces no diagnostics."""
         mat_data = read_result_mat(SAMPLE_MAT)
         test = self._make_test()
-        variables, diagnostics = _extract_variables(mat_data, test, [])
+        variables, diagnostics = extract_variables(mat_data, test, [])
         assert len(diagnostics) == 0
 
 
@@ -437,3 +443,536 @@ class TestDymolaConfig:
         assert dc.simulator_setup == []
         assert "CPUtime" in dc.diagnostic_variables
         assert "EventCounter" in dc.diagnostic_variables
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
+# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+#
+# * Finding 23 — shared subprocess-output decode helper;
+#   ``TimeoutExpired.stdout/.stderr`` are bytes even with ``text=True``, so
+#   the timeout handlers must not TypeError on them.
+# * Finding 75 — a whitespace-only stderr tail must not IndexError.
+# * Finding 74 — mat_reader Aclass (binNormal refused) + dataInfo column-0
+#   guards (column 0 used to wrap to the last row = the wrong variable).
+# * Finding 22 (+76-part) — Dymola batch timeout: tree-kill the process
+#   group, then salvage the tests that verifiably completed on disk.
+# =========================================================================
+
+
+def _write_mat4(path: Path, blocks: list[tuple[str, np.ndarray, int]]) -> None:
+    """Write a minimal MAT4 file: list of (name, 2D array, mopt)."""
+    dtype_by_p = {0: "<f8", 2: "<i4", 5: "<u1"}
+    with open(path, "wb") as f:
+        for name, arr, mopt in blocks:
+            arr = np.asarray(arr)
+            mrows, ncols = arr.shape
+            name_bytes = name.encode("ascii") + b"\x00"
+            f.write(struct.pack("<5i", mopt, mrows, ncols, 0, len(name_bytes)))
+            f.write(name_bytes)
+            dt = dtype_by_p[(mopt % 100) // 10]
+            f.write(arr.astype(dt).tobytes(order="F"))
+
+
+def _char_matrix(strings: list[str]) -> np.ndarray:
+    """Char-code matrix stored (max_len, n_strings) — the on-disk binTrans
+    orientation the reader transposes back with ``.T``."""
+    max_len = max(len(s) for s in strings)
+    m = np.zeros((max_len, len(strings)), dtype=np.uint8)
+    for j, s in enumerate(strings):
+        for i, ch in enumerate(s):
+            m[i, j] = ord(ch)
+    return m
+
+
+def _write_dsres_mat(
+    path: Path,
+    aclass_kind: str = "binTrans",
+    y_data_col: int = 0,
+) -> None:
+    """Synthesize a tiny DSresult mat: variables time, x, y.
+
+    ``y_data_col`` is y's dataInfo column entry — 0 reproduces finding 74's
+    wrap-to-last-row bug; a positive value makes y a normal variable.
+    """
+    n = 5
+    t = np.linspace(0.0, 1.0, n)
+    x = 2.0 * t
+    data_2 = np.vstack([t, x])  # rows: 0=time, 1=x
+    # dataInfo rows per var: (matrix_idx, col, interp, protected)
+    info_rows = np.array(
+        [
+            [0, 1, 0, -1],  # time
+            [2, 2, 0, -1],  # x → data_2 col index 2 → row 1
+            [2, y_data_col, 0, -1],  # y
+        ],
+        dtype=np.int32,
+    )
+    _write_mat4(
+        path,
+        [
+            ("Aclass", _char_matrix(["Atrajectory", "1.1", "", aclass_kind]), 51),
+            ("name", _char_matrix(["time", "x", "y"]), 51),
+            ("dataInfo", info_rows.T, 20),  # on-disk (4, n_vars)
+            ("data_2", data_2, 0),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Finding 23 — shared subprocess-output decode helper
+# ---------------------------------------------------------------------------
+
+
+class TestDecodeOutput:
+    def test_none_becomes_empty(self):
+        from dstf.simulators.common.proc_output import decode_output
+
+        assert decode_output(None) == ""
+
+    def test_bytes_decoded_utf8(self):
+        from dstf.simulators.common.proc_output import decode_output
+
+        assert decode_output("héllo".encode()) == "héllo"
+
+    def test_invalid_bytes_replaced_not_raised(self):
+        from dstf.simulators.common.proc_output import decode_output
+
+        out = decode_output(b"ok \xff\xfe bad")
+        assert "ok" in out and "bad" in out
+
+    def test_str_passthrough(self):
+        from dstf.simulators.common.proc_output import decode_output
+
+        assert decode_output("already text") == "already text"
+
+
+class TestTimeoutExpiredBytesHandling:
+    """Finding 23: TimeoutExpired.stdout/.stderr are bytes even with
+    text=True; the timeout handlers must not TypeError on them."""
+
+    def test_julia_runner_timeout_with_bytes_output(self, tmp_path, monkeypatch):
+        from dstf.simulators.julia import runner as jr
+
+        fake_julia = tmp_path / "julia"
+        fake_julia.write_text("#!/bin/sh\n")
+        user = tmp_path / "T.jl"
+        user.write_text("# stub\n")
+        cfg = SimpleNamespace(
+            simulator_path=str(fake_julia),
+            source_path=tmp_path,
+            work_dir=tmp_path / "work",
+            timeout=1,
+        )
+        runner = jr.JuliaRunner(cfg)
+
+        def fake_run(*a, **kw):
+            raise subprocess.TimeoutExpired(
+                cmd=["julia"], timeout=1, output=b"partial out", stderr=b"partial err"
+            )
+
+        monkeypatch.setattr(jr.subprocess, "run", fake_run)
+        test = _tm("T", source_file=user, variable_patterns=["x"])
+        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        assert rr.success is False
+        assert rr.timed_out is True
+        stdout_txt = (tmp_path / "work" / "test_0001" / "julia_stdout.txt").read_text()
+        assert "partial out" in stdout_txt
+
+    def test_python_runner_timeout_with_bytes_output(self, tmp_path, monkeypatch):
+        from dstf.simulators.python import runner as pr
+
+        user = tmp_path / "T.py"
+        user.write_text("# stub\n")
+        cfg = SimpleNamespace(
+            simulator_path=None,
+            source_path=tmp_path,
+            work_dir=tmp_path / "work",
+            timeout=1,
+        )
+        runner = pr.PythonRunner(cfg)
+
+        def fake_run(*a, **kw):
+            raise subprocess.TimeoutExpired(
+                cmd=["python"], timeout=1, output=b"po", stderr=b"pe"
+            )
+
+        monkeypatch.setattr(pr.subprocess, "run", fake_run)
+        test = _tm("T", source_file=user, variable_patterns=["x"])
+        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        assert rr.success is False
+        assert rr.timed_out is True
+        assert (
+            "po" in (tmp_path / "work" / "test_0001" / "python_stdout.txt").read_text()
+        )
+
+    def test_openmodelica_runner_timeout_with_bytes_output(self, tmp_path, monkeypatch):
+        from dstf.config import Config
+        from dstf.simulators.openmodelica.runner import OpenModelicaRunner
+
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            simulator="OpenModelica",
+            work_dir=tmp_path / "work",
+        )
+        runner = OpenModelicaRunner(cfg)
+
+        def fake_run(*a, **kw):
+            raise subprocess.TimeoutExpired(
+                cmd=["omc"], timeout=1, output=b"omc partial", stderr=None
+            )
+
+        monkeypatch.setattr(
+            "dstf.simulators.openmodelica.runner.subprocess.run", fake_run
+        )
+        test = _tm("Lib.A", variable_patterns=["x"])
+        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        assert rr.success is False
+        assert rr.timed_out is True
+        stdout_txt = (tmp_path / "work" / "test_0001" / "omc_stdout.txt").read_text()
+        assert "omc partial" in stdout_txt
+        assert "[TimeoutExpired]" in stdout_txt
+
+
+# ---------------------------------------------------------------------------
+# Finding 75 — whitespace-only stderr tail must not IndexError
+# ---------------------------------------------------------------------------
+
+
+class TestStderrTailGuard:
+    def test_julia_whitespace_only_stderr(self, tmp_path, monkeypatch):
+        from dstf.simulators.julia import runner as jr
+
+        fake_julia = tmp_path / "julia"
+        fake_julia.write_text("#!/bin/sh\n")
+        user = tmp_path / "T.jl"
+        user.write_text("# stub\n")
+        cfg = SimpleNamespace(
+            simulator_path=str(fake_julia),
+            source_path=tmp_path,
+            work_dir=tmp_path / "work",
+            timeout=1,
+        )
+        runner = jr.JuliaRunner(cfg)
+        monkeypatch.setattr(
+            jr.subprocess,
+            "run",
+            lambda *a, **kw: CompletedProcess(
+                args=a, returncode=1, stdout="", stderr="   \n\t\n"
+            ),
+        )
+        test = _tm("T", source_file=user, variable_patterns=["x"])
+        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        assert rr.success is False
+        assert "returned 1" in (rr.error_message or "")
+
+    def test_python_whitespace_only_stderr(self, tmp_path, monkeypatch):
+        from dstf.simulators.python import runner as pr
+
+        user = tmp_path / "T.py"
+        user.write_text("# stub\n")
+        cfg = SimpleNamespace(
+            simulator_path=None,
+            source_path=tmp_path,
+            work_dir=tmp_path / "work",
+            timeout=1,
+        )
+        runner = pr.PythonRunner(cfg)
+        monkeypatch.setattr(
+            pr.subprocess,
+            "run",
+            lambda *a, **kw: CompletedProcess(
+                args=a, returncode=1, stdout="", stderr="  \n \n"
+            ),
+        )
+        test = _tm("T", source_file=user, variable_patterns=["x"])
+        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        assert rr.success is False
+        assert "returned 1" in (rr.error_message or "")
+
+
+# ---------------------------------------------------------------------------
+# Finding 74 — mat_reader Aclass + dataInfo column-0 guards
+# ---------------------------------------------------------------------------
+
+
+class TestMatReaderGuards:
+    def test_binnormal_layout_refused(self, tmp_path, caplog):
+        from dstf.simulators.common.mat_reader import read_result_mat
+
+        mat = tmp_path / "res.mat"
+        _write_dsres_mat(mat, aclass_kind="binNormal", y_data_col=2)
+        with caplog.at_level(logging.ERROR, logger="dstf.simulators.common.mat_reader"):
+            result = read_result_mat(mat)
+        assert result is None
+        assert "binNormal" in caplog.text
+
+    def test_binnormal_layout_refused_in_name_listing(self, tmp_path, caplog):
+        from dstf.simulators.common.mat_reader import list_result_mat_variables
+
+        mat = tmp_path / "res.mat"
+        _write_dsres_mat(mat, aclass_kind="binNormal", y_data_col=2)
+        with caplog.at_level(logging.ERROR, logger="dstf.simulators.common.mat_reader"):
+            names = list_result_mat_variables(mat)
+        assert names is None
+        assert "binNormal" in caplog.text
+
+    def test_binnormal_layout_refused_in_time_extents(self, tmp_path):
+        """data_2 row 0 is time only in binTrans — a binNormal file yielded
+        garbage extents (and thus a bogus 'stopped early' verdict)."""
+        from dstf.simulators.common.mat_reader import read_mat_time_extents
+
+        mat = tmp_path / "res.mat"
+        _write_dsres_mat(mat, aclass_kind="binNormal", y_data_col=2)
+        assert read_mat_time_extents(mat) is None
+
+    def test_bintrans_time_extents_still_read(self, tmp_path):
+        from dstf.simulators.common.mat_reader import read_mat_time_extents
+
+        mat = tmp_path / "res.mat"
+        _write_dsres_mat(mat, aclass_kind="binTrans", y_data_col=2)
+        assert read_mat_time_extents(mat) == (0.0, 1.0)
+
+    def test_mat_reaches_time_verdicts(self, tmp_path):
+        """mat_reaches_time: reached / stopped-short / unreadable (D99).
+
+        The success-path belt and the disk rescue share this helper so
+        their verdicts about the same file can never disagree."""
+        from dstf.simulators.common.mat_reader import mat_reaches_time
+
+        mat = tmp_path / "res.mat"
+        _write_dsres_mat(mat)  # binTrans fixture, time 0.0 .. 1.0
+        reached, last = mat_reaches_time(mat, 1.0)
+        assert reached is True and last == pytest.approx(1.0)
+        reached, last = mat_reaches_time(mat, 2.0)
+        assert reached is False and last == pytest.approx(1.0)
+        reached, last = mat_reaches_time(tmp_path / "missing.mat", 1.0)
+        assert reached is False and last is None
+
+    def test_bintrans_still_reads_normally(self, tmp_path):
+        from dstf.simulators.common.mat_reader import read_result_mat
+
+        mat = tmp_path / "res.mat"
+        _write_dsres_mat(mat, aclass_kind="binTrans", y_data_col=2)
+        result = read_result_mat(mat)
+        assert result is not None
+        assert "x" in result and "y" in result
+        _, x_vals = result["x"]
+        np.testing.assert_allclose(x_vals, 2.0 * np.linspace(0.0, 1.0, 5))
+
+    def test_datainfo_column_zero_skips_variable(self, tmp_path):
+        """col 0 used to become index -1 → last row's data (the WRONG
+        variable) returned under the requested name."""
+        from dstf.simulators.common.mat_reader import read_result_mat
+
+        mat = tmp_path / "res.mat"
+        _write_dsres_mat(mat, aclass_kind="binTrans", y_data_col=0)
+        result = read_result_mat(mat)
+        assert result is not None
+        assert "x" in result
+        assert "y" not in result  # skipped, not silently wrong
+
+    def test_datainfo_column_zero_with_selection(self, tmp_path):
+        from dstf.simulators.common.mat_reader import read_result_mat
+
+        mat = tmp_path / "res.mat"
+        _write_dsres_mat(mat, aclass_kind="binTrans", y_data_col=0)
+        result = read_result_mat(mat, variable_names={"x", "y"})
+        assert result is not None
+        assert "x" in result
+        assert "y" not in result
+
+
+# ---------------------------------------------------------------------------
+# Finding 22 (+76-part) — Dymola batch timeout: tree-kill + disk salvage
+# ---------------------------------------------------------------------------
+
+
+class _FakeDymolaProc:
+    def __init__(self):
+        self.pid = 2**28 + 12345  # (almost certainly) nonexistent pid
+        self.communicate_calls: list[float | None] = []
+        self.killed = False
+        self.kill_calls = 0
+        self.stdout = None
+        self.stderr = None
+
+    def communicate(self, timeout=None):
+        self.communicate_calls.append(timeout)
+        if len(self.communicate_calls) == 1:
+            raise subprocess.TimeoutExpired(cmd="dymola", timeout=timeout)
+        return (b"", b"")
+
+    def poll(self):
+        return 0 if self.killed else None
+
+    def kill(self):
+        self.kill_calls += 1
+        self.killed = True
+
+
+class TestDymolaBatchTimeout:
+    def test_tree_kill_and_salvage_of_completed_tests(self, tmp_path, monkeypatch):
+        from dstf.simulators.dymola import runner as dr
+
+        wd = tmp_path / "work"
+        wd.mkdir()
+        cfg = SimpleNamespace(
+            show_ide=False,
+            simulator_setup=[],
+            diagnostic_variables=["CPUtime"],
+            work_dir=wd,
+            simulator_path="dymola-fake",
+            timeout=1,
+            parallel=1,
+        )
+        runner = dr.DymolaRunner(cfg)
+
+        test_a = _tm("Lib.A", stop_time=1.0)
+        test_b = _tm("Lib.B", stop_time=1.0)
+        items = [(test_a, "test_0001"), (test_b, "test_0002")]
+
+        # Test A verifiably completed on disk before the batch deadline.
+        dir_a = wd / "test_0001"
+        dir_a.mkdir()
+        n = 5
+        t = np.linspace(0.0, 1.0, n)
+        _write_mat4(dir_a / "dsres.mat", [("data_2", np.vstack([t, 2 * t]), 0)])
+        (dir_a / "dsfinal.txt").write_text("done")
+        # Test B produced nothing.
+        (wd / "test_0002").mkdir()
+
+        fake = _FakeDymolaProc()
+        monkeypatch.setattr(dr.subprocess, "Popen", lambda *a, **kw: fake)
+        # The batch timeout path delegates to the shared tree-killer (the
+        # worker watchdog uses the same one); record the call rather than
+        # letting it walk a nonexistent PID.
+        killed: list[tuple[int, str | None]] = []
+        monkeypatch.setattr(
+            dr,
+            "kill_process_tree",
+            lambda pid, name_hint=None: killed.append((pid, name_hint)),
+        )
+
+        startup = wd / "startup.mos"
+        shutdown = wd / "shutdown.mos"
+        startup.write_text("// stub")
+        shutdown.write_text("// stub")
+
+        results = runner._run_batch(items, startup, shutdown, 0, 2)
+
+        # Tree-kill happened, and the post-kill communicate was bounded.
+        assert killed == [(fake.pid, "dymola")]
+        assert len(fake.communicate_calls) == 2
+        assert fake.communicate_calls[1] is not None
+        # The tree kill was a no-op here (that is what the stub does), so the
+        # owned Popen must still have been killed — otherwise dymosim keeps
+        # the pipes and communicate() blocks, which is finding 22 all over.
+        assert fake.killed is True
+        assert fake.kill_calls == 1
+
+        by_id = {r.model_id: r for r in results}
+        assert by_id["Lib.A"].success is True  # salvaged from disk
+        assert by_id["Lib.A"].timed_out is False
+        assert by_id["Lib.B"].success is False
+        assert by_id["Lib.B"].timed_out is True
+
+    def test_live_process_is_not_double_killed(self, tmp_path, monkeypatch):
+        """When the tree kill lands, the Popen fallback stays out of it."""
+        from dstf.simulators.dymola import runner as dr
+
+        wd = tmp_path / "work"
+        wd.mkdir()
+        cfg = SimpleNamespace(
+            show_ide=False,
+            simulator_setup=[],
+            diagnostic_variables=["CPUtime"],
+            work_dir=wd,
+            simulator_path="dymola-fake",
+            timeout=1,
+            parallel=1,
+        )
+        runner = dr.DymolaRunner(cfg)
+        items = [(_tm("Lib.A", stop_time=1.0), "test_0001")]
+        (wd / "test_0001").mkdir()
+
+        fake = _FakeDymolaProc()
+        monkeypatch.setattr(dr.subprocess, "Popen", lambda *a, **kw: fake)
+        monkeypatch.setattr(
+            dr,
+            "kill_process_tree",
+            lambda pid, name_hint=None: setattr(fake, "killed", True),
+        )
+
+        startup = wd / "startup.mos"
+        shutdown = wd / "shutdown.mos"
+        startup.write_text("// stub")
+        shutdown.write_text("// stub")
+
+        runner._run_batch(items, startup, shutdown, 0, 1)
+
+        assert fake.killed is True  # by the tree kill
+        assert fake.kill_calls == 0  # poll() reads dead, so no second kill
+
+
+# =========================================================================
+# C-v round 1, item 9 — batch-Dymola run provenance.
+#
+# The batch lane stamped tool_version null: unlike the persistent lane it has
+# no live session to ask, and launching a Dymola purely to probe would cost a
+# licence seat. The startup .mos script it already runs reports the version to
+# a file, which the runner reads back after a batch returns.
+# =========================================================================
+
+
+class TestBatchDymolaToolVersion:
+    def _cfg(self, tmp_path):
+        return SimpleNamespace(
+            work_dir=tmp_path,
+            dependencies=[],
+            library_dir=tmp_path / "Lib",
+            simulator_setup=[],
+        )
+
+    def test_startup_mos_reports_the_dymola_version_to_a_file(self, tmp_path):
+        from dstf.simulators.dymola.runner import (
+            TOOL_VERSION_FILENAME,
+            DymolaConfig,
+            _generate_startup_mos,
+        )
+
+        script = _generate_startup_mos(self._cfg(tmp_path), DymolaConfig())
+        text = script.read_text(encoding="utf-8")
+        assert "DymolaVersion()" in text
+        assert TOOL_VERSION_FILENAME in text
+        # It must land in the work dir the runner reads back from.
+        assert (tmp_path / TOOL_VERSION_FILENAME).as_posix() in text
+
+    def test_a_stale_version_file_is_cleared_before_the_run(self, tmp_path):
+        """A previous run's version must never be read back as this run's —
+        the user may have upgraded Dymola between them."""
+        from dstf.simulators.dymola.runner import (
+            TOOL_VERSION_FILENAME,
+            DymolaConfig,
+            _generate_startup_mos,
+        )
+
+        (tmp_path / TOOL_VERSION_FILENAME).write_text("Dymola 2019\n", encoding="utf-8")
+        _generate_startup_mos(self._cfg(tmp_path), DymolaConfig())
+        assert not (tmp_path / TOOL_VERSION_FILENAME).exists()
+
+    def test_read_back_takes_the_first_line_and_degrades_to_none(self, tmp_path):
+        """Every worker's startup appends the same string. No file (MSL not
+        loaded, Dymola never started) leaves tool_version null, as before."""
+        from dstf.simulators.dymola.runner import (
+            TOOL_VERSION_FILENAME,
+            _read_startup_tool_version,
+        )
+
+        assert _read_startup_tool_version(tmp_path) is None
+        (tmp_path / TOOL_VERSION_FILENAME).write_text(
+            "\nDymola 2026x Refresh 1\nDymola 2026x Refresh 1\n", encoding="utf-8"
+        )
+        assert _read_startup_tool_version(tmp_path) == "Dymola 2026x Refresh 1"

@@ -2523,7 +2523,7 @@ After sed, manually skim each touched file to fix any awkward sentences. Sentenc
 
 - [ ] **Step 3: Update CLAUDE.md mode list**
 
-In `/mnt/d/Modelica/ModelicaTesting/CLAUDE.md`, find the line listing comparison-mode leaves (around the project-overview section — search for `nrmse` and `tube` together). It currently lists `nrmse / tube / final-only / range / event-timing / dominant-frequency`. Update to `nrmse / tube / points / range / event-timing / dominant-frequency`.
+In `the repo's `CLAUDE.md``, find the line listing comparison-mode leaves (around the project-overview section — search for `nrmse` and `tube` together). It currently lists `nrmse / tube / final-only / range / event-timing / dominant-frequency`. Update to `nrmse / tube / points / range / event-timing / dominant-frequency`.
 
 - [ ] **Step 4: Append D84 to decisions.md**
 

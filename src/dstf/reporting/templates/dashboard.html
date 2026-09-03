@@ -94,6 +94,7 @@ tr.timed-out td { background: #f3e5f5; }
 .status-badge.queued    { background: #888;    }
 .status-badge.running   { background: #2196F3; }
 .warn { color: #ff9800; font-weight: 600; }
+.unscored { color: #888; font-style: italic; }
 .detail-cell {
   max-width: var(--col-w-detail, 30em);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -241,7 +242,7 @@ body.has-selection { padding-bottom: 5em; }
   </td>
   <td>{% if t.worker_id is not none %}W{{ t.worker_id }}{% else %}—{% endif %}</td>
   <td class="elapsed-cell">{% if t.elapsed is not none %}{{ "%.1f"|format(t.elapsed) }}{% else %}—{% endif %}</td>
-  <td>{% if t.worst_nrmse is not none %}{{ "%.4e"|format(t.worst_nrmse) }}{% else %}—{% endif %}</td>
+  <td>{% if t.worst_nrmse is not none %}{{ "%.4e"|format(t.worst_nrmse) }}{% elif t.n_unscored %}<span class="unscored" title="No leaf on this test produced a score — every one is a sentinel (metric config that would not build, or no data to compare)">n/a ({{ t.n_unscored }} unscored)</span>{% else %}—{% endif %}</td>
   <td>{% if t.n_vars is not none %}{{ t.n_vars_passed }}/{{ t.n_vars }}{% else %}—{% endif %}</td>
   <td>{% if t.n_warnings is not none and t.n_warnings > 0 %}<span class="warn">{{ t.n_warnings }}</span>{% elif t.n_warnings is not none %}0{% else %}—{% endif %}</td>
   <td>{% if t.translation_wall is not none %}{{ "%.2f"|format(t.translation_wall) }}{% else %}—{% endif %}</td>
@@ -269,6 +270,11 @@ body.has-selection { padding-bottom: 5em; }
 const DASHBOARD_MODE = '{{ mode }}';
 const DASHBOARD_TOTAL = {{ total }};
 const RERUN_PREFIX = {{ rerun_prefix | tojson }};
+// Identity of THIS report (work dir + run start). The persisted UI state
+// is keyed by location.pathname, which successive runs into the same
+// work_dir share — the selection is scoped to this key so one report's
+// selection can never leak into the next one's rerun command.
+const REPORT_KEY = {{ report_key | tojson }};
 // Wall-clock anchors for the live-tick header + per-row elapsed.
 // SNAPSHOT_WALL = epoch seconds when the server wrote this snapshot.
 // SNAPSHOT_ELAPSED = run elapsed at that moment.

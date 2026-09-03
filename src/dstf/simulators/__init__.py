@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .base import (
-    BatchManifest,
+from ..storage.batch_manifest import BatchManifest
+from .base import SimulatorRunner
+from .types import (
     Capability,
-    SimulatorRunner,
     TestResult,
     TestRunResult,
     VariableResult,
@@ -46,7 +46,7 @@ def _validate_capabilities(cls: type[SimulatorRunner], name: str) -> None:
     registration. We catch this drift at import time so the typo or
     copy-paste-and-forget can't survive past `pytest --collect-only`.
 
-    Only the unambiguous capability/method pairings are checked here:
+    Every capability has a load-bearing method, and all three are checked:
 
     - ``FMU_EXPORT`` → ``export_fmu`` must be overridden.
     - ``BATCH_FALLBACK`` → either ``run_tests`` or ``run_single_test`` must
@@ -55,8 +55,10 @@ def _validate_capabilities(cls: type[SimulatorRunner], name: str) -> None:
     - ``PERSISTENT_WORKERS`` → ``persistent_runner_cls`` must be overridden
       to return a non-None class.
 
-    Capabilities without a single load-bearing method (``EXPERIMENT_INGEST``)
-    are not checked — too implicit to assert mechanically.
+    Only ``@register``-decorated classes are checked. Persistent variants
+    are reached via ``persistent_runner_cls``, not the registry, so their
+    declarations are covered by tests instead (see
+    ``tests/test_capability_gating.py::TestFmuExportGate``).
     """
     caps = cls.capabilities
     if Capability.FMU_EXPORT in caps and cls.export_fmu is SimulatorRunner.export_fmu:

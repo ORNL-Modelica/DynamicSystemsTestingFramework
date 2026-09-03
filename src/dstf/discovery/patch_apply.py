@@ -30,6 +30,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from ..storage.ref_index import _atomic_write_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,10 +75,9 @@ def apply_patch(
 
     if write:
         spec_path.parent.mkdir(parents=True, exist_ok=True)
-        spec_path.write_text(
-            json.dumps(data, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        # review 2026-07-06 (finding 31): atomic — an interrupted patch must
+        # not leave the user's spec truncated.
+        _atomic_write_text(spec_path, json.dumps(data, indent=2) + "\n")
     return data
 
 

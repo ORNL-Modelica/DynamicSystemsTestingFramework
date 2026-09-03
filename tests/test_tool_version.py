@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dstf.simulators.base import PersistentRunnerBase
+from dstf.simulators.persistent import PersistentRunnerBase
 
 # ---------------------------------------------------------------------------
 # Dymola worker version parsing (stubbed DymolaInterface)

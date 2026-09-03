@@ -1,12 +1,10 @@
-@/mnt/d/Projects/Soul-System/operations/CLAUDE.md
-
 # CLAUDE.md
 
 ## Project Overview
 
 **Dynamic Systems Testing Framework (DSTF)** — formerly **ModelicaTesting** — is a Python framework for regression and unit testing of time-dependent system behavior across simulated and pre-recorded trajectories.
 
-**Current state**: a multi-backend regression harness. Discovers tests by scanning `.mo`/`.jl` files and/or reading `test_spec.json`; simulates via **Dymola** (Python interface default, batch `.mos` fallback), **FMPy** (prebuilt FMUs), **OpenModelica** (OMPython persistent-worker default, `omc` batch fallback), **Julia/ModelingToolkit** (persistent `julia` worker), or **Python** (subprocess-per-test; any `simulate(stop_time, tolerance) -> dict` — scipy, pandas, CSV, HTTP, etc.); scores via a composable **MetricTree** (leaves: `nrmse` / `tube` / `points` / `range` / `event-timing` / `dominant-frequency`; combinators: `and` / `or` / `k-of-n` / `warn` / `weighted`; multi-baseline via `"against"`; time-windowed leaves via `"window"`). Reports via live dashboard + **interactive Plotly HTML** (Phase 6 reporter-as-IDE: per-leaf live scoring, structural tree editing, Shift+click/drag tube/range/peak editors, RFC 6902 JSON-Patch export round-tripped by `spec-update`) + JUnit XML. References partitioned under `<reference_root>/<Backend>/<os>/` with three baseline roles: **primary** (regression anchor, hard-fail), **soft_checks** (warn-wrapped cross-regression imports), **companions** (plot-only overlays, including cross-library).
+**Current state**: a multi-backend regression harness. Discovers tests by scanning `.mo`/`.jl` files and/or reading `test_spec.json`; simulates via **Dymola** (Python interface default, batch `.mos` fallback), **FMPy** (prebuilt FMUs), **OpenModelica** (OMPython persistent-worker default, `omc` batch fallback), **Julia/ModelingToolkit** (persistent `julia` worker), or **Python** (subprocess-per-test; any `simulate(stop_time, tolerance) -> dict` — scipy, pandas, CSV, HTTP, etc.); scores via a composable **MetricTree** (leaves: `nrmse` / `tube` / `points` / `range` / `event-timing` / `dominant-frequency` / `scalar`; combinators: `and` / `or` / `k-of-n` / `warn` / `weighted`; multi-baseline via `"against"`; time-windowed leaves via `"window"`). Reports via ONE suite-wide HTML surface — the dashboard (also what `--report-format html --output` writes) — plus per-test **interactive Plotly HTML** (Phase 6 reporter-as-IDE: per-leaf live scoring, structural tree editing, Shift+click/drag tube/range/peak editors, RFC 6902 JSON-Patch export round-tripped by `spec-update`) + JUnit XML. References partitioned under `<reference_root>/<Backend>/<os>/` with three baseline roles: **primary** (regression anchor, hard-fail), **soft_checks** (warn-wrapped cross-regression imports), **companions** (plot-only overlays, including cross-library).
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
@@ -17,18 +15,18 @@
 ```
 DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
-│   ├── cli.py                    # CLI: run, compare, discover, manifest, spec-update,
-│   │                             #      companion, soft-check, import-baseline, migrate-baselines, export-schema
+│   ├── cli/                      # CLI package: run, compare, discover, manifest, spec-update,
+│   │                             #      companion, soft-check, import-baseline, export-schema
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect simulator
 │   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse, RFC 6902 patch_apply
 │   ├── simulators/               # Abstract runner + Dymola / FMPy / OpenModelica / Julia backends
-│   │   ├── common/               # Shared: mat_reader, persistent-worker dispatch scaffolding
+│   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
 │   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers
-│   ├── storage/                  # ReferenceStore (primary + soft_checks + companions), RefIndex
-│   └── reporting/                # Console + JUnit + HTML (interactive.html + interactive.js + comparison_data.json)
+│   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline (4 modules)
+│   └── reporting/                # status.py classifier + console/junit + context_builder + report_suite + dashboard_render
 │       ├── ui/                   # mode_controls auto-derivation, window controls, schema export
-│       └── templates/            # Jinja2 templates (interactive.html)
+│       └── templates/            # interactive.html + five JS fragments (INTERACTIVE_JS_PARTS) + vendor/plotly.min.js (offline-capable reports)
 ├── examples/
 │   ├── modelica/ModelicaTestingLib/   # Demo Modelica library (UnitTests component + 10+ showcase tests)
 │   ├── fmu/                           # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)
@@ -48,6 +46,8 @@ The package ships a console script (`[project.scripts]` in `pyproject.toml`). Th
 # With testing.json containing source_path — single entry point
 uv run dstf --config path/to/testing.json run
 
+# Global flags work on either side of the subcommand (dstf run --config x == dstf --config x run)
+
 # Or with explicit flags
 uv run dstf --source-path /path/to/MyLib --reference-root /path/to/refs run
 
@@ -62,9 +62,9 @@ uv run dstf --config testing.json run --accept
 # Generate per-test interactive deep-dive plots. The unified dashboard.html always exists; --report adds reports/test_NNNN/interactive.html plots per test.
 uv run dstf --config testing.json run --report ./reports
 
-# Parallel run with small-batch queue dispatch
+# Parallel run with small-batch queue dispatch (--parallel on compare = render threads)
 uv run dstf --config testing.json run --parallel 4 --batch-size 3
-# Live progress + final report: work_dir/dashboard.html (one page; JS-fetches status.json every 2s during the run, becomes the static report after compare)
+# Live progress + final report: work_dir/dashboard.html (one page; re-rendered on every state change and meta-refreshed by the browser every 5s during the run, becomes the static report after compare)
 
 # Filter accepts: glob, comma-separated list, or @file (one pattern per line, # comments)
 uv run dstf --config testing.json run --filter "Foo.A,Foo.B"
@@ -77,17 +77,21 @@ uv run dstf --config testing.json run --rerun failed,sim-failed --report
 # Compare without re-running simulations (uses last results)
 uv run dstf --config testing.json compare
 
-# Apply a JSON-Patch (or legacy tolerance dict) exported from the interactive report
+# Machine-readable reports to a chosen path (--output works on run and compare)
+uv run dstf --config testing.json run --report-format junit --output results.xml
+uv run dstf --config testing.json compare --report-format html --output report.html
+
+# Apply an RFC 6902 JSON-Patch envelope exported from the interactive report
 uv run dstf --config testing.json spec-update spec_patch.json
 
 # Baseline-role CLIs
 uv run dstf --config testing.json companion add <model> <name> <path>
 uv run dstf --config testing.json soft-check list <model>
-uv run dstf --config testing.json import-baseline <model> <role> <name> <source>
+uv run dstf --config testing.json import-baseline <model> <name> <source>   # soft_checks only; companions via companion add
 
 # Manifest / schema
 uv run dstf --config testing.json manifest dump
-uv run dstf --config testing.json manifest cleanup --orphans [--apply]
+uv run dstf --config testing.json manifest cleanup [--orphans] [--apply]   # dry-run by default
 uv run dstf --config testing.json export-schema --output schema.json
 
 # Persistent workers are the DEFAULT for Dymola and OpenModelica and Julia.
@@ -158,6 +162,7 @@ Simulation parameters live under `simulation`, comparison settings under `compar
 - **`range`** — scalar `min_value` / `max_value` bounds on the signal; baseline-free (bounds come from the spec).
 - **`event-timing`** — compares event instants via Modelica duplicate-time detection; `time_tolerance` config; CLI-authoritative.
 - **`dominant-frequency`** — FFT peak matching against a declared-peaks table (`peaks: [{freq, tolerance, tolerance_mode}, ...]`); live JS scorer with windowed re-FFT and per-peak provenance.
+- **`scalar`** — scores one number named by `quantity`: a reduction of the leaf's variable (`{"reduce": "max"|"min"|"mean"|"sample_mean"|"final"|"integral"}`; `mean` is time-weighted, `sample_mean` arithmetic) or a dotted statistics / diagnostics-summary path (`"CPUtime.final"`). abs/rel `tolerance` against the baseline scalar, or baseline-free `min_value` / `max_value` bounds; CLI-authoritative.
 
 Leaves can be wrapped in an explicit `metrics` tree with combinators (`and`, `or`, `k-of-n`, `warn`, `weighted`) and scoped to a time window (`"window": {"start": ..., "end": ...}`).
 
@@ -171,8 +176,8 @@ Per-variable override (spec) > per-variable override (reference JSON) > per-test
 - **`TestModel`** (`discovery/test_registry.py`) — fully resolved test: model ID, simulation params, tracked variables, source, `simulate_only`, `requested_baselines`, `requested_fmu_export`.
 - **`Recognizer`** (`discovery/recognizer.py`) — registry of source-scan rules; bundled + user-declared JSON recognizers merged by `model_id`.
 - **`SimulatorRunner`** (`simulators/base.py`) — abstract interface; backends self-register via `@register` and declare `Capability` flags (`BATCH_FALLBACK`, `FMU_EXPORT`, ...). Concrete backends: `DymolaRunner` / `PersistentDymolaRunner`, `FmpyRunner`, `OpenModelicaRunner` / `PersistentOpenModelicaRunner`, `JuliaRunner` / `PersistentJuliaRunner`.
-- **`Worker`** + **`PersistentRunnerBase`** (`simulators/base.py`) — `Worker` ABC declares the long-lived-process contract every persistent backend must satisfy (`start` / `close` / `is_alive` / `run_test_with_timeout`). `PersistentRunnerBase` is a template-method class owning the worker-pool orchestration (parallel startup, shared queue + sentinel dispatch, per-worker restart on death). New persistent backends supply a `Worker` subclass + a small set of hooks (`worker_cls`, `backend_label`, `make_worker`, `setup_before_workers`, `preflight`) — see [docs/extensibility.md](docs/extensibility.md) §3 "Persistent-worker contract".
-- **`ReferenceStore`** (`storage/reference_store.py`) — CRUD for primary refs + soft_checks + companions; `RefIndex` built in-memory from scanning.
+- **`Worker`** + **`PersistentRunnerBase`** (`simulators/persistent.py`) — `Worker` ABC declares the long-lived-process contract every persistent backend must satisfy. It is itself a template-method class: `run_test_with_timeout` / `close` / `_kill_tracked_pids` (watchdog thread, timeout kill, process-tree kill incl. orphan snapshot, disk rescue, restart-accounting flags) are implemented once in the base. A backend supplies abstract `start` / `is_alive`, the `run_test` hook, and optionally `_evaluate_from_disk` / `_detach_interface` + `_shutdown_interface` / `_quiet` / the `kill_name_hint`, `timeout_kill_grace`, `exec_thread_prefix` class attrs. `PersistentRunnerBase` is a template-method class owning the worker-pool orchestration (parallel startup, shared queue + sentinel dispatch, per-worker restart on death). New persistent backends supply a `Worker` subclass + a small set of hooks (`worker_cls`, `backend_label`, `make_worker`, `setup_before_workers`, `preflight`) — see [docs/extensibility.md](docs/extensibility.md) §3 "Persistent-worker contract".
+- **`ReferenceStore`** (`storage/reference_store.py`; role CRUD in `storage/roles.py`) — primary refs + soft_checks + companions; `RefIndex` (`storage/ref_index.py`) built in-memory from scanning.
 - **`ComparisonMode`** (`comparison/modes.py`) — strategy pattern for per-variable comparison with typed config dataclasses; field metadata (`label` / `help` / `ui_min` / `ui_max`) flows into auto-derived UI via `reporting/ui/mode_controls.py`.
 - **`MetricTree`** (`comparison/tree_spec.py` + `tree_eval.py`) — `LeafSpec` / `CombinatorSpec` + evaluator; `implicit_and_tree()` for specs without an explicit tree; `validator.py` enforces baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped; companions not targetable).
 - **`comparator`** (`comparison/comparator.py`) — orchestrates per-test comparison; threads primary + named baselines into the evaluator; derives `TestComparison.passed` from the tree root.

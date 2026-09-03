@@ -21,10 +21,11 @@ a test response. This way the per-test timing reported in the dashboard
 is just compile/solve of the user model, not the one-time package load
 that would have happened regardless of the test set.
 
-Graceful degradation: if Julia's dependencies aren't ready (no Manifest.
-toml, failed `using`), the runner raises RuntimeError and the CLI falls
-back to the batch runner with a stderr notice — same pattern as Dymola
-and OpenModelica.
+This is the default runner; pass ``--batch`` to opt out. There is no
+automatic fallback: if Julia's dependencies aren't ready (no Manifest.toml,
+failed `using`), ``preflight`` raises RuntimeError and the CLI aborts with
+a message naming both fixes — same pattern as Dymola and OpenModelica (see
+``cli._get_runner``).
 """
 
 from __future__ import annotations
@@ -39,13 +40,10 @@ from pathlib import Path
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
-from ..base import (
-    Capability,
-    PersistentRunnerBase,
-    TestRunResult,
-    Worker,
-)
-from .runner import JuliaConfig, JuliaRunner, _resolve_julia_source
+from ..common.json_driver import resolve_source_file
+from ..persistent import PersistentRunnerBase, Worker
+from ..types import Capability, TestRunResult, timeout_message
+from .runner import JuliaConfig, JuliaRunner
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +53,20 @@ _PERSISTENT_DRIVER_PATH = Path(__file__).resolve().parent / "run_persistent.jl"
 # OrdinaryDiffEq precompiled-cache load takes ~15-40s; allow plenty.
 _WORKER_READY_TIMEOUT = 240.0
 
-# Grace period on clean close before we kill the worker process.
-_CLOSE_GRACE_SECONDS = 5.0
+# Max seconds to wait for a hard-killed worker to actually exit before we
+# stop caring — the handle is dropped either way.
+_KILL_EXIT_TIMEOUT = 5.0
+
+
+def _close_pipes(proc: subprocess.Popen) -> None:
+    """Close a finished worker's pipes. Best-effort: the reader threads may
+    still be unwinding on the other end."""
+    for stream in (proc.stdin, proc.stdout, proc.stderr):
+        if stream:
+            try:
+                stream.close()
+            except Exception:
+                pass
 
 
 class JuliaWorker(Worker):
@@ -68,6 +78,8 @@ class JuliaWorker(Worker):
     worker if it hangs.
     """
 
+    kill_name_hint = "julia"
+
     def __init__(self, worker_id: int, config: Config, julia_cfg: JuliaConfig):
         super().__init__(worker_id, config)
         self.julia_cfg = julia_cfg
@@ -76,7 +88,6 @@ class JuliaWorker(Worker):
         self._stderr_buf: list[str] = []
         self._stdout_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
-        self._pid: int | None = None
 
     # ---------------------------------------------------------------
 
@@ -90,6 +101,12 @@ class JuliaWorker(Worker):
             str(_PERSISTENT_DRIVER_PATH),
         ]
         logger.debug("Worker %d cmd: %s", self.worker_id, " ".join(cmd))
+        # Fresh queue per process. start() also runs on restart, and the killed
+        # process's reader thread may have left lines behind — including its
+        # 'ready' pulse, which would satisfy _wait_for_ready before the new
+        # process has even loaded. The old reader keeps its own reference to
+        # the orphaned queue, so it can't contaminate this one either.
+        self._stdout_q = queue.Queue()
         self.proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
@@ -104,7 +121,7 @@ class JuliaWorker(Worker):
             bufsize=1,  # line-buffered
             cwd=str(self.julia_cfg.project_dir),
         )
-        self._pid = self.proc.pid
+        self.pids = {self.proc.pid}
 
         self._stdout_thread = threading.Thread(
             target=self._reader_loop,
@@ -148,8 +165,10 @@ class JuliaWorker(Worker):
         the worker). Julia today reports phases via the dispatch loop's
         ``_record`` helper instead, so this argument is currently ignored.
 
-        Timed-out workers are hard-killed (the subprocess); the caller's
-        restart logic decides whether to respawn.
+        Overrides the base watchdog: the response arrives on a queue, so a
+        deadline poll reads it directly instead of parking a blocking call
+        on an exec thread the watchdog would then have to abandon. The kill
+        and the restart-accounting flags are the shared ones.
         """
         if self.proc is None or self.proc.poll() is not None:
             return TestRunResult(
@@ -158,7 +177,7 @@ class JuliaWorker(Worker):
                 success=False,
                 error_message="Julia worker not running",
             )
-        user_file = _resolve_julia_source(test, self.config)
+        user_file = resolve_source_file(test, self.config, JuliaRunner.source_suffix)
         if user_file is None or not user_file.exists():
             return TestRunResult(
                 model_id=test.model_id,
@@ -199,7 +218,8 @@ class JuliaWorker(Worker):
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                self._hard_kill()
+                self._kill_tracked_pids()
+                self._await_killed_process()
                 elapsed = time.monotonic() - wall_start
                 # Persist the stderr tail for diagnosis.
                 (test_dir / "julia_stderr.txt").write_text(
@@ -212,8 +232,15 @@ class JuliaWorker(Worker):
                     success=False,
                     elapsed=elapsed,
                     sim_wall=elapsed,
-                    error_message=f"Julia simulation exceeded {timeout}s timeout",
+                    error_message=timeout_message(
+                        f"Julia simulation exceeded {timeout}s timeout"
+                    ),
                     timed_out=True,
+                    # We killed a *healthy* worker because the test was slow;
+                    # the dispatch loop's benign-restart accounting keys on
+                    # ``timed_out or worker_killed``. Same semantics as the
+                    # shared watchdog's timeout branch.
+                    worker_killed=True,
                 )
             try:
                 line = self._stdout_q.get(timeout=min(remaining, 0.5))
@@ -294,36 +321,99 @@ class JuliaWorker(Worker):
     def is_alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
-    def close(self, grace: float = _CLOSE_GRACE_SECONDS) -> None:
-        """Graceful close: send ``quit``, wait, hard-kill if needed."""
-        if self.proc is None:
+    def _await_killed_process(self) -> None:
+        """Wait out the kill, then drop the handle.
+
+        ``kill_process_tree`` returns before the OS has torn the process
+        down, so ``proc.poll()`` can still read alive for a moment after
+        it. A worker that reads alive gets the next test dispatched
+        straight to it: that test then fails "crashed mid-test" — a
+        result carrying no ``worker_killed`` flag, so the restart it
+        forces is charged against ``max_restarts_per_worker``. Reaping
+        the process here, and detaching it either way, makes
+        ``is_alive()`` False before we return so the dispatch loop
+        restarts *before* handing us more work.
+        """
+        proc = self.proc
+        self.proc = None
+        if proc is None:
             return
-        if self.proc.poll() is None and self.proc.stdin is not None:
+        if proc.poll() is None:
+            # Belt and braces: kill_process_tree is a no-op whenever psutil
+            # is missing, the name guard misses, or the walk hits
+            # AccessDenied. We own this Popen — use it.
             try:
-                self.proc.stdin.write('{"cmd": "quit"}\n')
-                self.proc.stdin.flush()
+                proc.kill()
+            except (ProcessLookupError, OSError):
+                pass
+        try:
+            proc.wait(timeout=_KILL_EXIT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "Worker %d: killed julia process %d has not exited after %.0fs",
+                self.worker_id,
+                proc.pid,
+                _KILL_EXIT_TIMEOUT,
+            )
+            # Only stdin. The reader threads are parked in readline() holding
+            # the BufferedReader lock, so closing stdout/stderr here blocks
+            # the dispatch thread until the child finally exits — at
+            # --parallel 1 that is the whole run hanging on the one process
+            # we already failed to kill. The readers close their own ends
+            # when the pipe EOFs.
+            if proc.stdin:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+            return
+        _close_pipes(proc)
+
+    def _detach_interface(self) -> object | None:
+        proc = self.proc
+        self.proc = None
+        return proc
+
+    def _shutdown_interface(self, handle: object, grace: float) -> None:
+        """Ask the driver to quit, wait for it, then close the pipes.
+
+        A driver that misses *grace* is killed here through the Popen we
+        own: the template's PID kill is the only other teardown, and it is
+        a no-op whenever psutil is missing or the process name no longer
+        matches ``kill_name_hint``.
+        """
+        proc: subprocess.Popen = handle  # type: ignore[assignment]
+        if proc.poll() is None and proc.stdin is not None:
+            try:
+                proc.stdin.write('{"cmd": "quit"}\n')
+                proc.stdin.flush()
             except (BrokenPipeError, OSError):
                 pass
             try:
-                self.proc.wait(timeout=grace)
+                proc.wait(timeout=grace)
             except subprocess.TimeoutExpired:
-                self._hard_kill()
-        # Ensure pipes close.
-        for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
-            if stream:
                 try:
-                    stream.close()
-                except Exception:
+                    proc.kill()
+                except (ProcessLookupError, OSError):
                     pass
+        _close_pipes(proc)
 
     # ---------------------------------------------------------------
 
     def _reader_loop(self, stream, q: queue.Queue) -> None:
+        # The reader owns this end: it holds the BufferedReader lock inside
+        # readline(), so nobody else can safely close it. Closing here on
+        # EOF is what lets the teardown paths leave it alone.
         try:
             for line in iter(stream.readline, ""):
                 q.put(line.strip())
         except Exception as exc:
             logger.debug("worker %d reader error: %s", self.worker_id, exc)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
 
     def _stderr_drain(self, stream) -> None:
         try:
@@ -335,6 +425,11 @@ class JuliaWorker(Worker):
                     self._stderr_buf = self._stderr_buf[-200:]
         except Exception:
             pass
+        finally:
+            try:
+                stream.close()  # see _reader_loop: the reader owns this end
+            except Exception:
+                pass
 
     def _stderr_tail(self, n: int = 20) -> str:
         return "\n".join(self._stderr_buf[-n:])
@@ -355,27 +450,6 @@ class JuliaWorker(Worker):
             if msg.get("event") == "ready":
                 return True
         return False
-
-    def _hard_kill(self) -> None:
-        if self.proc is None:
-            return
-        # Try psutil first for clean subprocess tree kill (Julia doesn't
-        # spawn children in our driver, but defensive).
-        try:
-            import psutil
-
-            p = psutil.Process(self.proc.pid)
-            for child in p.children(recursive=True):
-                try:
-                    child.kill()
-                except psutil.NoSuchProcess:
-                    pass
-            p.kill()
-        except Exception:
-            try:
-                self.proc.kill()
-            except ProcessLookupError:
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -423,23 +497,10 @@ class PersistentJuliaRunner(PersistentRunnerBase, JuliaRunner):
     def make_worker(self, worker_id: int) -> JuliaWorker:
         return JuliaWorker(worker_id, self.config, self.julia_config)
 
-    def _probe_worker_version(self, live_workers: list) -> str | None:
-        # The version is a property of the configured julia binary, not the
-        # running session, so probe the binary directly rather than reaching
-        # into a worker's subprocess. Best-effort → None on any failure.
-        import subprocess
-
-        try:
-            out = subprocess.run(
-                [str(self.julia_config.julia_binary), "--version"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            banner = (out.stdout or out.stderr or "").strip()
-            return banner or None
-        except Exception:
-            return None
+    # No _probe_worker_version override: the julia version is a property of
+    # the configured binary, not of a live session, so JuliaRunner.
+    # describe_tool_version answers it and the shared prologue stamps it
+    # before the workers start.
 
     def starting_workers_message(self, n_workers: int) -> str:
         # First runs hit MTK + OrdinaryDiffEq JIT compile, which is

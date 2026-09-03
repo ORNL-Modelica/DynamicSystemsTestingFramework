@@ -21,7 +21,6 @@ file URL in headless Chromium and exercises the UI.
 
 from __future__ import annotations
 
-import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -29,21 +28,20 @@ import pytest
 
 pytest.importorskip("playwright.sync_api")
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page
+
+from dstf.reporting.report_suite import write_report_assets
+from dstf.reporting.ui.mode_controls import emit_mode_schemas
+
+pytestmark = pytest.mark.playwright
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-_JS_SRC = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "dstf"
-    / "reporting"
-    / "templates"
-    / "interactive.js"
+_TEMPLATE_DIR = (
+    Path(__file__).resolve().parents[1] / "src" / "dstf" / "reporting" / "templates"
 )
-_TEMPLATE_DIR = _JS_SRC.parent
 
 
 def _leaf(
@@ -55,6 +53,7 @@ def _leaf(
     passed: bool = True,
     score: float = 1e-5,
     window: dict | None = None,
+    error: str | None = None,
 ) -> dict:
     return {
         "kind": "leaf",
@@ -88,7 +87,12 @@ def _leaf(
         "mode_controls_html": _mode_controls_html(metric, params),
         "window_controls_html": _window_controls_html(window or {}),
         "window_values": dict(window or {}),
-        "cli_authoritative": metric in ("event-timing", "dominant-frequency"),
+        # event-timing is always CLI-authoritative; dominant-frequency only
+        # when its embedded trajectory was decimated (these fixtures are
+        # full-resolution, so it gets live scoring here).
+        "cli_authoritative": metric == "event-timing",
+        # _augment_tree_view always emits this key; None on a scored leaf.
+        "error": error,
     }
 
 
@@ -136,7 +140,7 @@ def _window_controls_html(window: dict) -> str:
     )
 
 
-def _fixture_context() -> dict:
+def _fixture_context(overlay_rows: list[dict] | None = None) -> dict:
     """A deliberately-varied tree so every editor gets exercised.
 
     Two variables (``h`` + ``v``), four leaves: nrmse on h, range on h,
@@ -245,43 +249,51 @@ def _fixture_context() -> dict:
         "spec_path": "",
         "tree_view": tree,
         "variables_by_name": variables_by_name,
-        "mode_schemas": {},  # not needed for behavioral tests
-        "overlay_rows": [],
+        # The real registry-derived schemas: the add-leaf dropdown's metric
+        # list is Object.keys(MODE_SCHEMAS), so an empty map would mean an
+        # empty dropdown.
+        "mode_schemas": emit_mode_schemas(),
+        "overlay_rows": list(overlay_rows or []),
     }
 
 
-def _render_report(tmp_path: Path) -> Path:
+# Baseline roster for the soft_check fixture — the companion row must never
+# reach the add-leaf "against" select (companions are unscorable).
+_OVERLAY_ROWS = [
+    {
+        "name": "experiment",
+        "role": "soft_check",
+        "kind": "json",
+        "status": "loaded",
+        "note": "",
+        "variables": ["h", "v"],
+    },
+    {
+        "name": "rig",
+        "role": "companion",
+        "kind": "csv",
+        "status": "loaded",
+        "note": "",
+        "variables": ["h"],
+    },
+]
+
+
+def _render_report(tmp_path: Path, overlay_rows: list[dict] | None = None) -> Path:
     """Render the fixture context to ``tmp_path/interactive.html`` and
     copy the standalone interactive.js alongside so the browser can
     resolve ``<script src="interactive.js">``."""
     from jinja2 import Environment, FileSystemLoader
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
-    html = env.get_template("interactive.html").render(**_fixture_context())
+    html = env.get_template("interactive.html").render(**_fixture_context(overlay_rows))
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
-    shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    write_report_assets(tmp_path)
     return html_path
 
 
-@pytest.fixture(scope="module")
-def playwright_browser():
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        yield browser
-        browser.close()
-
-
-@pytest.fixture
-def rendered_page(tmp_path, playwright_browser) -> Iterator[Page]:
-    """One fresh page per test, navigated to the fixture report.
-
-    Plotly loads from a CDN; if the browser can't reach it the page
-    still loads and the non-plot JS runs, but tests that interact with
-    the plot (Shift+click, drag) require it. Those tests ``pytest.skip``
-    if ``window.Plotly`` didn't define.
-    """
-    html_path = _render_report(tmp_path)
+def _open_report(playwright_browser, html_path: Path) -> Iterator[Page]:
     context = playwright_browser.new_context()
     page = context.new_page()
     # Bubble JS errors up to the test as a sanity signal.
@@ -293,6 +305,95 @@ def rendered_page(tmp_path, playwright_browser) -> Iterator[Page]:
     page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
     yield page
     context.close()
+
+
+_SENTINEL_ERROR = "RangeConfig requires at least one of min_value / max_value"
+
+
+def _render_report_with_sentinel_leaf(tmp_path: Path) -> Path:
+    """The fixture report with its range leaf turned into a sentinel.
+
+    Mirrors what ``_augment_tree_view`` emits for a leaf whose metric
+    config could not build: "not scored", an ``error`` string, and
+    ``cli_authoritative``.
+    """
+    from jinja2 import Environment, FileSystemLoader
+
+    ctx = _fixture_context()
+    leaf = ctx["tree_view"]["children"][1]
+    assert leaf["metric"] == "range", "fixture tree shape changed"
+    leaf.update(
+        {
+            "passed": False,
+            "score_display": "not scored",
+            "criterion": f"range leaf not scored — {_SENTINEL_ERROR}",
+            "error": _SENTINEL_ERROR,
+            "cli_authoritative": True,
+        }
+    )
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
+    html_path = tmp_path / "interactive.html"
+    html_path.write_text(
+        env.get_template("interactive.html").render(**ctx), encoding="utf-8"
+    )
+    write_report_assets(tmp_path)
+    return html_path
+
+
+@pytest.fixture
+def rendered_page_sentinel(tmp_path, playwright_browser) -> Iterator[Page]:
+    yield from _open_report(
+        playwright_browser, _render_report_with_sentinel_leaf(tmp_path)
+    )
+
+
+def test_sentinel_leaf_renders_its_error(rendered_page_sentinel: Page):
+    """The reason a leaf could not be scored must reach the DOM.
+
+    Without this the panel shows only "not scored" and the error text
+    lives nowhere in the report (H2).
+    """
+    page = rendered_page_sentinel
+    sel = '#nodes-full [data-path="/metrics/children/1"]'
+
+    err = page.locator(f"{sel} .node-error")
+    assert err.count() >= 1
+    assert _SENTINEL_ERROR in err.first.text_content()
+
+    # And as the score pill's tooltip.
+    score = page.locator(f"{sel} .node-score")
+    assert score.first.text_content().strip() == "not scored"
+    assert score.first.get_attribute("title") == _SENTINEL_ERROR
+
+    # A normally-scored leaf carries neither.
+    ok = '#nodes-full [data-path="/metrics/children/0"]'
+    assert page.locator(f"{ok} .node-error").count() == 0
+    assert page.locator(f"{ok} .node-score").first.get_attribute("title") is None
+
+
+# playwright_browser lives in conftest.py — see its docstring for why it
+# must not be defined here or imported between test modules (D97).
+
+
+@pytest.fixture
+def rendered_page(tmp_path, playwright_browser) -> Iterator[Page]:
+    """One fresh page per test, navigated to the fixture report.
+
+    Plotly is vendored beside the report (report_suite.write_report_assets
+    stages it), so it is always available — the plot-interactive tests
+    below need no reachability guard.
+    """
+    yield from _open_report(playwright_browser, _render_report(tmp_path))
+
+
+@pytest.fixture
+def rendered_page_softcheck(tmp_path, playwright_browser) -> Iterator[Page]:
+    """The same report with a soft_check + a companion baseline declared.
+
+    The add-leaf "against" selector only exists when the test carries at
+    least one soft_check, so it needs its own render.
+    """
+    yield from _open_report(playwright_browser, _render_report(tmp_path, _OVERLAY_ROWS))
 
 
 # ---------------------------------------------------------------------------
@@ -559,7 +660,9 @@ def test_add_leaf_via_modal(rendered_page: Page):
     assert modal.is_visible()
     metric_sel = rendered_page.locator("#add-leaf-metric")
     var_inp = rendered_page.locator("#add-leaf-variable")
-    assert metric_sel.locator("option").count() == 6
+    # One option per registered metric — the list is derived from
+    # MODE_SCHEMAS, not a second hardcoded name list in the JS.
+    assert metric_sel.locator("option").count() == len(emit_mode_schemas())
     metric_sel.select_option("nrmse")
     var_inp.fill("h")
     rendered_page.locator("#add-leaf-ok").click()
@@ -586,17 +689,8 @@ def test_added_leaf_gets_schema_driven_controls(rendered_page: Page):
     """A leaf added via the modal gets schema-rendered inputs + a
     seeded leafState entry so it can contribute to the plot + be
     edited like a CLI-evaluated leaf."""
-    # Provide MODE_SCHEMAS so the JS-side renderer has something to walk.
-    rendered_page.evaluate("""
-        MODE_SCHEMAS.range = {
-            mode: 'range',
-            fields: [
-                {name: 'min_value', type: 'float', default: null, optional: true, choices: null, label: 'Min value'},
-                {name: 'max_value', type: 'float', default: null, optional: true, choices: null, label: 'Max value'},
-            ],
-        };
-    """)
-    # Open the modal, add a range leaf on 'h'.
+    # Open the modal, add a range leaf on 'h'. MODE_SCHEMAS comes from the
+    # rendered context (the real registry schemas).
     rendered_page.locator(
         '#nodes-full [data-path="/metrics"] > .node-header .node-btn-add'
     ).first.click()
@@ -677,19 +771,158 @@ def test_add_leaf_modal_datalist_populated(rendered_page: Page):
     assert "v" in values
 
 
+def test_add_leaf_dropdown_lists_registered_metrics(rendered_page: Page):
+    """The metric list is derived from MODE_SCHEMAS, so a metric registered
+    Python-side (here: ``scalar``) reaches the dropdown with no JS edit.
+
+    Alphabetical, not registration order — the template embeds the schema
+    map with Jinja's ``tojson``, which sorts keys."""
+    rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-btn-add'
+    ).first.click()
+    values = rendered_page.eval_on_selector_all(
+        "#add-leaf-metric option", "els => els.map(e => e.value)"
+    )
+    assert values == sorted(emit_mode_schemas())
+    assert "scalar" in values
+
+
+def test_added_scalar_leaf_is_cli_authoritative(rendered_page: Page):
+    """A metric with no MODE_SCORERS entry gets the CLI-authoritative badge —
+    there is no live verdict for the browser to show."""
+    rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header .node-btn-add'
+    ).first.click()
+    rendered_page.locator("#add-leaf-metric").select_option("scalar")
+    rendered_page.locator("#add-leaf-variable").fill("h")
+    rendered_page.locator("#add-leaf-ok").click()
+
+    node = rendered_page.evaluate(
+        "() => WORKING_TREE.children[WORKING_TREE.children.length - 1]"
+    )
+    assert node["metric"] == "scalar"
+    assert node["cli_authoritative"] is True
+    assert (
+        rendered_page.locator(
+            '#nodes-full [data-path="/metrics/children/3"] .cli-authoritative'
+        ).count()
+        >= 1
+    )
+
+
 # ---------------------------------------------------------------------------
-# Tests — plot-editor wiring (require Plotly CDN)
+# Tests — add-leaf "against" (named-baseline) selector
 # ---------------------------------------------------------------------------
 
 
-def _has_plotly(page: Page) -> bool:
-    return page.evaluate("typeof Plotly !== 'undefined'")
+def _open_add_leaf(page: Page, path: str = "/metrics") -> None:
+    page.locator(
+        f'#nodes-full [data-path="{path}"] > .node-header .node-btn-add'
+    ).first.click()
+
+
+def test_against_select_absent_without_soft_checks(rendered_page: Page):
+    """No soft_check baselines ⇒ no "against" row at all: primary is the
+    only legal target and a one-option select would be noise."""
+    _open_add_leaf(rendered_page)
+    assert rendered_page.locator("#add-leaf-against").count() == 0
+    assert rendered_page.locator("#add-leaf-against-warning").count() == 0
+
+
+def test_against_select_lists_soft_checks_only(rendered_page_softcheck: Page):
+    """primary (default) + every soft_check; the companion row is excluded
+    because companions can never be scored against."""
+    _open_add_leaf(rendered_page_softcheck)
+    values = rendered_page_softcheck.eval_on_selector_all(
+        "#add-leaf-against option", "els => els.map(e => e.value)"
+    )
+    assert values == ["primary", "experiment"]
+
+
+def test_add_leaf_against_soft_check(rendered_page_softcheck: Page):
+    """Picking a soft_check sets ``against`` on the new WORKING_TREE node,
+    labels it, and badges it CLI-authoritative — the embedded trajectory
+    only carries the primary reference, so JS can't rescore it."""
+    page = rendered_page_softcheck
+    _open_add_leaf(page)
+    page.locator("#add-leaf-against").select_option("experiment")
+    page.locator("#add-leaf-metric").select_option("nrmse")
+    page.locator("#add-leaf-variable").fill("h")
+    page.locator("#add-leaf-ok").click()
+
+    node = page.evaluate(
+        "() => WORKING_TREE.children[WORKING_TREE.children.length - 1]"
+    )
+    assert node["against"] == "experiment"
+    assert node["cli_authoritative"] is True
+
+    labels = page.eval_on_selector_all(
+        "#nodes-full .node-label", "els => els.map(e => e.textContent)"
+    )
+    assert any("[against=experiment]" in t for t in labels)
+    assert (
+        page.locator(
+            '#nodes-full [data-path="/metrics/children/3"] .cli-authoritative'
+        ).count()
+        >= 1
+    )
+
+
+def test_against_round_trips_through_the_patch(rendered_page_softcheck: Page):
+    """The exported patch carries ``against`` for the soft_check leaf and
+    omits the key entirely for a default-primary one."""
+    page = rendered_page_softcheck
+    _open_add_leaf(page)
+    page.locator("#add-leaf-against").select_option("experiment")
+    page.locator("#add-leaf-variable").fill("h")
+    page.locator("#add-leaf-ok").click()
+
+    _open_add_leaf(page)
+    page.locator("#add-leaf-variable").fill("v")
+    page.locator("#add-leaf-ok").click()
+
+    children = page.evaluate("buildPatchData()")["patch"][0]["value"]["children"]
+    assert children[3]["against"] == "experiment"
+    assert "against" not in children[4]
+
+
+def test_against_warn_ancestor_notice(rendered_page_softcheck: Page):
+    """Non-blocking notice: spec-update's validator rejects a soft_check
+    leaf that isn't warn-wrapped, so the modal flags it — but still adds."""
+    page = rendered_page_softcheck
+    notice = page.locator("#add-leaf-against-warning")
+
+    # Under the root `and` — no warn ancestor.
+    _open_add_leaf(page)
+    page.locator("#add-leaf-against").select_option("experiment")
+    assert "warn combinator" in notice.text_content()
+    # Back to primary clears it.
+    page.locator("#add-leaf-against").select_option("primary")
+    assert notice.text_content() == ""
+    page.locator("#add-leaf-cancel").click()
+
+    # Under a warn wrapper — already compliant. The fixture's warn is full
+    # (its + is disabled: warn arity is exactly 1), so empty it first —
+    # that is also the state in which a user can legitimately add a leaf
+    # under a warn.
+    page.evaluate("""
+        () => {
+            findWorkingNode('/metrics/children/2').children = [];
+            markStructureDirty();
+        }
+    """)
+    _open_add_leaf(page, "/metrics/children/2")
+    page.locator("#add-leaf-against").select_option("experiment")
+    assert page.locator("#add-leaf-against-warning").text_content() == ""
+
+
+# ---------------------------------------------------------------------------
+# Tests — plot-editor wiring (Plotly ships with the report)
+# ---------------------------------------------------------------------------
 
 
 def test_tube_editor_activates_with_control_point_table(rendered_page: Page):
     """Click a tube leaf → the editor slot populates with the table UI."""
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     rendered_page.locator(
         '#nodes-full [data-path="/metrics/children/2/children/0"] .node-header'
     ).first.click()
@@ -702,8 +935,6 @@ def test_tube_editor_activates_with_control_point_table(rendered_page: Page):
 def test_tube_editor_auto_seeds_two_points_at_trajectory_ends(rendered_page: Page):
     """Activating a tube leaf with no points seeds exactly two at
     trajectory start/end with widthMode='rel' and width=0.05."""
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     # Fixture's tube leaf starts with tube_rel=0.05 but no tube_points.
     # Clear any points to simulate a fresh leaf.
     rendered_page.evaluate(
@@ -727,8 +958,6 @@ def test_tube_editor_auto_seeds_two_points_at_trajectory_ends(rendered_page: Pag
 
 
 def test_tube_editor_add_point_button_commits_to_state(rendered_page: Page):
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     rendered_page.locator(
         '#nodes-full [data-path="/metrics/children/2/children/0"] .node-header'
     ).first.click()
@@ -746,8 +975,6 @@ def test_tube_editor_add_point_button_commits_to_state(rendered_page: Page):
 def test_tube_editor_width_mode_change_reprojects_points(rendered_page: Page):
     """Changing widthMode from 'rel' to 'band' re-projects point values
     so the visual tube stays roughly the same."""
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     rendered_page.locator(
         '#nodes-full [data-path="/metrics/children/2/children/0"] .node-header'
     ).first.click()
@@ -782,8 +1009,6 @@ def test_tube_editor_unsync_reveals_per_side_mode_columns(rendered_page: Page):
     Tube editor renders into every mount's .node-editor slot, so scope
     the column count to the full-tree mount for a deterministic read.
     """
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     rendered_page.locator(
         '#nodes-full [data-path="/metrics/children/2/children/0"] .node-header'
     ).first.click()
@@ -813,8 +1038,6 @@ def test_tube_editor_unsync_reveals_per_side_mode_columns(rendered_page: Page):
 def test_tube_editor_shift_click_on_plot_adds_point(rendered_page: Page):
     """Shift+click on the plot background (not on an existing marker)
     adds a new control point at that (t, y). Mirrors prototype behaviour."""
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     rendered_page.locator(
         '#nodes-full [data-path="/metrics/children/2/children/0"] .node-header'
     ).first.click()
@@ -855,8 +1078,6 @@ def test_tube_shift_right_click_removes_control_point(rendered_page: Page):
     fire ahead of Plotly's own handlers; verify by synthesizing the
     native MouseEvent directly in the page context (Playwright's mouse
     API doesn't always propagate through Plotly's svg wrapper)."""
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     # Start with a clean slate — clear auto-seeded points, then populate
     # exactly two with a known time so the right-click hit-test is
     # deterministic.
@@ -919,8 +1140,6 @@ def test_switching_leaves_does_not_stack_window_brush(rendered_page: Page):
     because deactivateLeaf wasn't clearing .node-editor. Switch between
     leaves multiple times, then re-activate — exactly one brush button
     per mount."""
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     paths = [
         "/metrics/children/0",  # nrmse on h
         "/metrics/children/1",  # range on h
@@ -944,8 +1163,6 @@ def test_tube_edit_in_one_mount_refreshes_every_mount(rendered_page: Page):
     """Tube leaf renders its table into every mount's .node-editor slot.
     Editing a point in one mount must refresh every mount (prior bug:
     only the source slot re-rendered)."""
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     rendered_page.locator(
         '#nodes-full [data-path="/metrics/children/2/children/0"] .node-header'
     ).first.click()
@@ -978,8 +1195,6 @@ def test_tube_edit_in_one_mount_refreshes_every_mount(rendered_page: Page):
 def test_tube_control_point_markers_not_in_legend(rendered_page: Page):
     """Legend should show Actual + Reference + Tube polygon — no clutter
     from control-point marker traces."""
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     rendered_page.locator(
         '#nodes-full [data-path="/metrics/children/2/children/0"] .node-header'
     ).first.click()
@@ -1001,8 +1216,6 @@ def test_error_overlay_dropdown_adds_and_removes_trace(rendered_page: Page):
     """Selecting signed / abs / NRMSE adds a right-axis error trace;
     selecting 'none' removes it. Switching between modes replaces
     cleanly — no accumulating traces."""
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     sel = rendered_page.locator('.error-overlay-select[data-vidx="0"]').first
     # Pick signed error
     sel.select_option("signed")
@@ -1030,8 +1243,6 @@ def test_error_overlay_dropdown_adds_and_removes_trace(rendered_page: Page):
 def test_window_brush_button_injected_on_activation(rendered_page: Page):
     """Activating any leaf injects the ``🔲 Set window from plot`` button
     (universal across modes). Plotly required only for the actual drag."""
-    if not _has_plotly(rendered_page):
-        pytest.skip("Plotly CDN not reachable; plot-interactive test skipped")
     rendered_page.locator(
         '#nodes-full [data-path="/metrics/children/0"] .node-header'
     ).first.click()
@@ -1055,7 +1266,8 @@ def test_kind_dropdown_renders_on_every_combinator(rendered_page: Page):
     assert selects.count() == 2
     opts = selects.first.locator("option")
     assert opts.count() == 5
-    # Order matches VALID_COMBINATORS.
+    # Order matches the JS-side VALID_COMBINATORS constant in interactive.js
+    # (the Python frozenset of that name was replaced by the registry, D101).
     values = rendered_page.evaluate(
         "Array.from(document.querySelectorAll('#nodes-full .node-kind-select')[0].options)"
         ".map(o => o.value)"
@@ -1497,7 +1709,6 @@ def test_detect_respects_leaf_window_and_source(tmp_path, playwright_browser):
     verify source dropdown [Reference | Actual] works. Each seeded peak
     carries ``derived_from_window`` metadata."""
     import math
-    import shutil as _shutil
 
     from jinja2 import Environment as _Env
     from jinja2 import FileSystemLoader as _Loader
@@ -1576,7 +1787,7 @@ def test_detect_respects_leaf_window_and_source(tmp_path, playwright_browser):
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
-    _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    write_report_assets(tmp_path)
     context = playwright_browser.new_context()
     page = context.new_page()
     page.on(
@@ -1657,7 +1868,6 @@ def test_tube_polygon_follows_reference_curve(tmp_path, playwright_browser):
     sample, not a straight line between the endpoint y-values."""
     # Curvy ref — asymmetric so the bug would be obvious if present.
     import math
-    import shutil as _shutil
 
     from jinja2 import Environment as _Env
     from jinja2 import FileSystemLoader as _Loader
@@ -1733,7 +1943,7 @@ def test_tube_polygon_follows_reference_curve(tmp_path, playwright_browser):
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
-    _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    write_report_assets(tmp_path)
 
     context = playwright_browser.new_context()
     page = context.new_page()
@@ -1788,7 +1998,6 @@ def test_buildPatchData_no_noise_when_tube_leaf_untouched(
     read defaults from diagnostics and clobbered the spec values in
     leafState.params, making buildPatchData think the user had changed
     them back to defaults."""
-    import shutil as _shutil
 
     from jinja2 import Environment as _Env
     from jinja2 import FileSystemLoader as _Loader
@@ -1859,7 +2068,7 @@ def test_buildPatchData_no_noise_when_tube_leaf_untouched(
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
-    _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    write_report_assets(tmp_path)
     context = playwright_browser.new_context()
     page = context.new_page()
     page.on(
@@ -1891,7 +2100,6 @@ def test_declared_peaks_editor_activates_with_table(tmp_path, playwright_browser
     as rows; tolerance-mode select shows; Detect button visible."""
     # Synthesize a fixture with a dominant-frequency leaf carrying a
     # declared peak + embedded spectrum.
-    import shutil as _shutil
 
     from jinja2 import Environment as _Env
     from jinja2 import FileSystemLoader as _Loader
@@ -1972,7 +2180,7 @@ def test_declared_peaks_editor_activates_with_table(tmp_path, playwright_browser
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
-    _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    write_report_assets(tmp_path)
 
     context = playwright_browser.new_context()
     page = context.new_page()
@@ -2002,7 +2210,6 @@ def test_declared_peaks_editor_activates_with_table(tmp_path, playwright_browser
 def test_declared_peaks_detect_button_populates_table(tmp_path, playwright_browser):
     """Click 'Detect peaks from reference' → table fills with the top
     detected peaks; leafState.params.peaks reflects the detected list."""
-    import shutil as _shutil
 
     from jinja2 import Environment as _Env
     from jinja2 import FileSystemLoader as _Loader
@@ -2088,7 +2295,7 @@ def test_declared_peaks_detect_button_populates_table(tmp_path, playwright_brows
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
-    _shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    write_report_assets(tmp_path)
     context = playwright_browser.new_context()
     page = context.new_page()
     page.on(
@@ -2155,3 +2362,444 @@ def test_reset_does_not_dirty_structure(rendered_page: Page):
         '#nodes-full [data-path="/metrics/children/0"] > .node-header .node-btn-reset'
     ).first.click()
     assert rendered_page.evaluate("structureDirty") is False
+
+
+# ---------------------------------------------------------------------------
+# Warn arity — the add-leaf button on a full warn combinator
+# ---------------------------------------------------------------------------
+
+
+def _add_btn(page: Page, path: str):
+    return page.locator(
+        f'#nodes-full [data-path="{path}"] > .node-header > .node-btn-add'
+    ).first
+
+
+def test_add_leaf_disabled_on_a_warn_that_has_its_child(rendered_page: Page):
+    """warn pins arity at exactly 1 (tree_spec). The fixture's warn at
+    /metrics/children/2 already holds its tube leaf, so its + must be
+    disabled and say why — offering it only for the grammar to reject the
+    result later is a trap.
+    """
+    btn = _add_btn(rendered_page, "/metrics/children/2")
+    assert btn.count() == 1
+    assert btn.is_disabled()
+    title = btn.get_attribute("title") or ""
+    assert "exactly 1 child" in title
+    assert "⊕" in title, "the tooltip should point at the wrap button as the way out"
+
+
+def test_add_leaf_enabled_on_an_empty_warn(rendered_page: Page):
+    """The other state: a warn with no child yet still accepts one."""
+    rendered_page.evaluate("""
+        () => {
+            const warn = findWorkingNode('/metrics/children/2');
+            warn.children = [];
+            markStructureDirty();
+        }
+    """)
+    btn = _add_btn(rendered_page, "/metrics/children/2")
+    assert btn.count() == 1
+    assert btn.is_disabled() is False
+
+
+def test_add_leaf_stays_enabled_on_and_combinators(rendered_page: Page):
+    """Guard the fail-path: the arity rule is warn-specific — the root
+    ``and`` keeps its + no matter how many children it has.
+    """
+    assert _add_btn(rendered_page, "/metrics").is_disabled() is False
+
+
+# ---------------------------------------------------------------------------
+# Weighted combinator — CLI-authoritative badge + pending pill
+# ---------------------------------------------------------------------------
+
+
+def test_browser_created_weighted_gets_the_cli_badge(rendered_page: Page):
+    """Wrapping a node in ``weighted`` in the browser used to render a bare
+    FAIL: the JS defers weighted scoring to the CLI, and a node the user
+    just created has no CLI verdict to defer to. It now carries the same
+    CLI-authoritative badge the pinned leaves do, and a pending pill.
+    """
+    rendered_page.evaluate("wrapWorkingNode('/metrics/children/0', 'weighted')")
+    node = '#nodes-full [data-path="/metrics/children/0"]'
+    header = rendered_page.locator(f"{node} > .node-header").first
+    assert "weighted" in header.locator("select.node-kind-select").first.input_value()
+    badge = header.locator(".cli-authoritative")
+    assert badge.count() == 1
+    assert "CLI" in (badge.first.text_content() or "")
+    assert "per-leaf scores" in (badge.first.get_attribute("title") or "")
+
+    pill = header.locator(".node-status").first
+    assert pill.text_content().strip() == "—", (
+        "A weighted node with no CLI verdict must read pending, not FAIL."
+    )
+    assert "pending" in (pill.get_attribute("class") or "")
+
+
+def test_cli_evaluated_weighted_keeps_its_verdict(rendered_page: Page):
+    """The badge is not a licence to drop a real verdict: a weighted node
+    that DOES carry a CLI ``passed`` still shows it.
+    """
+    state = rendered_page.evaluate("""
+        () => {
+            const ctx = _findPathContext('/metrics/children/0');
+            wrapWorkingNode('/metrics/children/0', 'weighted');
+            const node = findWorkingNode('/metrics/children/0');
+            node.passed = true;
+            markStructureDirty();
+            return recomputePassStates(WORKING_TREE)['/metrics/children/0'];
+        }
+    """)
+    assert state is True
+    pill = rendered_page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header > .node-status'
+    ).first
+    assert pill.text_content().strip() == "PASS"
+
+
+# ---------------------------------------------------------------------------
+# Root-verdict colouring + the advisory marker
+# ---------------------------------------------------------------------------
+
+
+def test_warn_wrapped_failure_does_not_paint_the_summary_red(
+    tmp_path,
+    playwright_browser,
+):
+    """A failing leaf under a warn wrapper cannot fail the root — the
+    summary must follow the ROOT verdict and mark the failure advisory,
+    not paint the whole test red.
+
+    Fixture: the warn-wrapped tube leaf on 'v' is given tube_rel=0 so the
+    live scorer fails it; every gating leaf still passes.
+    """
+    ctx = _fixture_context()
+    tube = ctx["tree_view"]["children"][2]["children"][0]
+    tube["params"] = {"tube_rel": 0.0}
+    tube["mode_values"] = {"tube_rel": 0.0}
+    from test_interactive_range_window import _render_with_context
+
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
+    # Force a live re-score (the initial paint is CLI-stamped by design).
+    page.evaluate("refreshPassStates()")
+
+    summary_cls = page.locator("#summary-text").first.get_attribute("class") or ""
+    root_pass = page.evaluate("recomputePassStates(TREE_VIEW)['/metrics']")
+    leaf_pass = page.evaluate(
+        "recomputePassStates(TREE_VIEW)['/metrics/children/2/children/0']"
+    )
+    chip_count = page.locator("#summary-text .advisory-chip").count()
+    chip_text = (
+        page.locator("#summary-text .advisory-chip").first.text_content()
+        if chip_count
+        else ""
+    )
+    # The variable pill for 'v' (the warn-wrapped leaf's variable) likewise.
+    var_pill_cls = (
+        page.locator('.var-status[data-vidx="1"]').first.get_attribute("class") or ""
+    )
+    var_chip_count = page.locator('.advisory-chip[data-vidx="1"]').count()
+    page.close()
+
+    assert leaf_pass is False, "fixture no longer models a FAILING advisory leaf"
+    assert root_pass is True, "fixture no longer models a passing root"
+    assert "fail" not in summary_cls, (
+        f"summary painted {summary_cls!r} while the root PASSES — a "
+        "warn-wrapped failure is advisory and must not read as a test failure."
+    )
+    assert "pass" in summary_cls
+    assert chip_count == 1
+    assert "advisory" in chip_text
+    assert "fail" not in var_pill_cls
+    assert var_chip_count == 1
+
+
+def test_gating_failure_still_paints_the_summary_red(
+    tmp_path,
+    playwright_browser,
+):
+    """Fail-path guard: a failure OUTSIDE a warn wrapper still reads red
+    and gets no advisory chip.
+    """
+    ctx = _fixture_context()
+    nrmse = ctx["tree_view"]["children"][0]
+    nrmse["params"] = {"tolerance": 1e-12}
+    nrmse["mode_values"] = {"tolerance": 1e-12}
+    from test_interactive_range_window import _render_with_context
+
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
+    page.evaluate("refreshPassStates()")
+    summary_cls = page.locator("#summary-text").first.get_attribute("class") or ""
+    n_chips = page.locator("#summary-text .advisory-chip").count()
+    page.close()
+
+    assert "fail" in summary_cls
+    assert n_chips == 0
+
+
+# ---------------------------------------------------------------------------
+# Event-timing: one config surface, not two
+# ---------------------------------------------------------------------------
+
+
+def _render_event_timing_leaf(tmp_path: Path) -> Path:
+    from jinja2 import Environment, FileSystemLoader
+
+    ctx = _fixture_context()
+    leaf = ctx["tree_view"]["children"][0]
+    leaf["metric"] = "event-timing"
+    leaf["mode_effective"] = "event-timing"
+    leaf["cli_authoritative"] = True
+    params = {"time_tolerance": 1e-3, "count_must_match": True, "events": []}
+    leaf["params"] = dict(params)
+    leaf["mode_values"] = dict(params)
+    # The real server-side renderer, so the panel is exactly what
+    # production emits (a hand-rolled fixture could not show the bug).
+    from dstf.reporting.ui.mode_controls import get_mode_ui
+
+    leaf["mode_controls_html"] = get_mode_ui("event-timing").render(
+        variable="h", values=params
+    )
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
+    html_path = tmp_path / "interactive.html"
+    html_path.write_text(
+        env.get_template("interactive.html").render(**ctx), encoding="utf-8"
+    )
+    write_report_assets(tmp_path)
+    return html_path
+
+
+def test_event_timing_has_one_declared_events_surface(tmp_path, playwright_browser):
+    """The rich table editor owns the declared-events list; the schema
+    panel's raw-JSON textarea for the same field was a second, worse copy
+    of it showing at the same time.
+    """
+    html_path = _render_event_timing_leaf(tmp_path)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
+    node = '#nodes-full [data-path="/metrics/children/0"]'
+
+    # The panel's JSON textarea is gone...
+    n_textareas = page.locator(f"{node} .node-controls textarea").count()
+    # ...but the mode's scalar fields, which live nowhere else, remain.
+    has_tol = page.locator(f'{node} [data-field="time_tolerance"]').count()
+    has_count = page.locator(f'{node} [data-field="count_must_match"]').count()
+    # Activating the leaf mounts the table editor — the one surface.
+    page.evaluate("activateLeaf(TREE_VIEW.children[0])")
+    page.wait_for_function("document.querySelector('.event-timing-editor')")
+    n_editors = page.locator(".event-timing-editor").count()
+    n_textareas_active = page.locator(f"{node} .node-controls textarea").count()
+    page.close()
+
+    assert n_textareas == 0, (
+        "the declared-events raw-JSON textarea must not render — the table "
+        "editor is the surface for that field"
+    )
+    assert n_textareas_active == 0
+    assert has_tol == 1, "time_tolerance has no other editor; it must stay"
+    assert has_count == 1, "count_must_match has no other editor; it must stay"
+    assert n_editors >= 1
+
+
+def test_scalar_keeps_its_quantity_textarea(tmp_path, playwright_browser):
+    """The suppression is scoped to modes with a rich editor. ``scalar``
+    has none, so its Quantity field keeps the raw-JSON control — which is
+    also the control item (10) widened.
+    """
+    from jinja2 import Environment, FileSystemLoader
+
+    from dstf.reporting.ui.mode_controls import get_mode_ui
+
+    ctx = _fixture_context()
+    leaf = ctx["tree_view"]["children"][0]
+    leaf["metric"] = "scalar"
+    leaf["mode_effective"] = "scalar"
+    leaf["cli_authoritative"] = True
+    values = {"quantity": {"reduce": "final"}, "tolerance": 1e-4}
+    leaf["params"] = dict(values)
+    leaf["mode_values"] = dict(values)
+    leaf["mode_controls_html"] = get_mode_ui("scalar").render(
+        variable="h", values=values
+    )
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
+    html_path = tmp_path / "interactive.html"
+    html_path.write_text(
+        env.get_template("interactive.html").render(**ctx), encoding="utf-8"
+    )
+    write_report_assets(tmp_path)
+
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.wait_for_function("window.MT_REPORT && window.MT_REPORT.TREE_VIEW != null")
+    ta = page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] textarea[data-field="quantity"]'
+    ).first
+    assert ta.count() == 1
+    box = ta.bounding_box()
+    rows = ta.get_attribute("rows")
+    # The value must fit on one line: measure the rendered box against the
+    # text's own width in that font (scrollWidth), which is what "cramped"
+    # meant — the 12em × 2-row box wrapped {"reduce": "final"} mid-token.
+    fits = page.evaluate(
+        """() => {
+            const ta = document.querySelector(
+                '#nodes-full [data-path="/metrics/children/0"] '
+                + 'textarea[data-field="quantity"]');
+            return ta.scrollWidth <= ta.clientWidth + 1;
+        }"""
+    )
+    page.close()
+    assert rows == "1"
+    assert box["width"] >= 200, f"quantity box too narrow: {box}"
+    assert fits, '{"reduce": "final"} still does not fit on one line'
+
+
+# ---------------------------------------------------------------------------
+# Plot legends carry names, not JSON pointers
+# ---------------------------------------------------------------------------
+
+
+def test_plot_legend_names_use_variable_and_metric(rendered_page: Page):
+    """The tube trace's legend entry used to read "Tube /metrics/children/2
+    /children/0" — an internal address. It now names what it is and where.
+    """
+    names = rendered_page.evaluate("""
+        () => {
+            const out = [];
+            for (const varname of VARIABLE_ORDER) {
+                const traj = (VARIABLES_BY_NAME[varname] || {}).trajectory || {};
+                for (const leaf of leavesForVariable(varname)) {
+                    const fn = MODE_PLOT_CONTRIBUTIONS[leaf.metric];
+                    if (!fn) continue;
+                    for (const t of (fn(leaf, traj).traces || [])) {
+                        if (t.name) out.push(t.name);
+                    }
+                }
+            }
+            return out;
+        }
+    """)
+    assert names, "fixture produced no named traces"
+    assert not any("/children/" in n for n in names), (
+        f"a JSON pointer leaked into the plot legend: {names}"
+    )
+    assert "Tube · v" in names, f"expected a metric·variable label, got {names}"
+
+
+def test_against_leaf_legend_names_its_baseline(rendered_page: Page):
+    """A leaf scored against a named baseline says so in the legend —
+    two tube leaves on one variable would otherwise be indistinguishable.
+    """
+    name = rendered_page.evaluate("""
+        () => leafTraceName(
+            {metric: 'tube', variable: 'v', against: 'experiment'}, 'Tube')
+    """)
+    assert name == "Tube · v [experiment]"
+
+
+# ---------------------------------------------------------------------------
+# The report renders with the network switched off
+# ---------------------------------------------------------------------------
+
+
+def test_report_renders_plots_with_the_network_disabled(tmp_path, playwright_browser):
+    """Plotly ships beside the page, so an air-gapped machine gets plots.
+
+    Before, the page pulled Plotly from a CDN: with no network the script
+    tag failed silently, ``window.Plotly`` never defined, and every plot
+    div stayed empty with no error shown to the user. Playwright's offline
+    mode reproduces exactly that environment.
+    """
+    html_path = _render_report(tmp_path)
+    context = playwright_browser.new_context(offline=True)
+    errors: list[str] = []
+    failed_urls: list[str] = []
+    page = context.new_page()
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+    page.on(
+        "console",
+        lambda msg: errors.append(msg.text) if msg.type == "error" else None,
+    )
+    # Chrome asks for /favicon.ico on every page and logs a console error
+    # when it can't have it. That is the browser's own request, not the
+    # report's — record every failed request so the assertion below can
+    # tell the two apart instead of ignoring the whole class.
+    page.on("requestfailed", lambda req: failed_urls.append(req.url))
+    page.goto(html_path.as_uri())
+    page.wait_for_function(
+        "() => { const el = document.getElementById('plot-0');"
+        "        return el && el._mt_plotted === true; }"
+    )
+    has_plotly = page.evaluate("() => typeof window.Plotly !== 'undefined'")
+    n_traces = page.evaluate("() => document.getElementById('plot-0').data.length")
+    context.close()
+
+    assert has_plotly, "Plotly did not load with the network disabled"
+    assert n_traces >= 2, "plot rendered no traces offline"
+    # The page itself must have asked the network for nothing.
+    assert [u for u in failed_urls if not u.endswith("/favicon.ico")] == [], (
+        f"the report requested a network resource: {failed_urls}"
+    )
+    real_errors = [e for e in errors if "favicon" not in e.lower()]
+    # The favicon miss is Chrome's, and its console line names no URL — so
+    # drop the generic resource-load error only when favicon was the only
+    # failed request.
+    if failed_urls and all(u.endswith("/favicon.ico") for u in failed_urls):
+        real_errors = [e for e in real_errors if "Failed to load resource" not in e]
+    assert real_errors == [], f"console/page errors while offline: {errors}"
+
+
+def test_pending_root_verdict_does_not_paint_the_summary_red(rendered_page: Page):
+    """Wrapping the ROOT in `weighted` leaves it with no CLI verdict. The
+    root pill reads "—"; the summary used to read red beside it, because
+    `!!null` is false. Both surfaces must say the same thing.
+    """
+    rendered_page.evaluate("wrapWorkingNode('/metrics', 'weighted')")
+    summary = rendered_page.locator("#summary-text").first
+    cls = summary.get_attribute("class") or ""
+    text = summary.text_content() or ""
+    pill = rendered_page.locator(
+        '#nodes-full [data-path="/metrics"] > .node-header > .node-status'
+    ).first
+    pill_text = (pill.text_content() or "").strip()
+    root_verdict = rendered_page.evaluate(
+        "() => recomputePassStates(currentTree())['/metrics']"
+    )
+
+    assert root_verdict is None, "fixture no longer models a pending root"
+    assert pill_text == "—"
+    assert "fail" not in cls, (
+        f"summary painted {cls!r} while the root pill reads pending — a "
+        "verdict that does not exist must not render as a failure."
+    )
+    assert "pending" in cls
+    assert "pending" in text.lower()
+
+
+def test_pending_non_root_still_does_not_pass_its_ancestors(rendered_page: Page):
+    """The tri-state is scoped to the ROOT summary. A pending node deeper
+    in the tree still propagates as not-a-pass, so an `and` above it cannot
+    claim a pass it has no basis for.
+    """
+    verdicts = rendered_page.evaluate("""
+        () => {
+            wrapWorkingNode('/metrics/children/0', 'weighted');
+            const m = recomputePassStates(currentTree());
+            return {child: m['/metrics/children/0'], root: m['/metrics']};
+        }
+    """)
+    summary_cls = (
+        rendered_page.locator("#summary-text").first.get_attribute("class") or ""
+    )
+    assert verdicts["child"] is None
+    assert verdicts["root"] is False
+    # Root has a real verdict here (false) — it is not pending.
+    assert "fail" in summary_cls

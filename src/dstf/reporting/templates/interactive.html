@@ -3,7 +3,13 @@
 <head>
 <meta charset="utf-8">
 <title>{{ model_id }} — Interactive</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.0/plotly.min.js" charset="utf-8"></script>
+{# Plotly ships with the report (report_suite.write_report_assets), not
+   from a CDN: an air-gapped lab rendered a plot-less report with no error
+   at all. Pinned to the version the CDN tag used to name — plotly.js
+   v2.35.0. ONE copy per suite, at the reports root — hence ``../``; a
+   copy per test dir cost 1.25 MB × N. Moving a single test's report dir
+   elsewhere means bringing ``plotly.min.js`` along beside it. #}
+<script src="../plotly.min.js" charset="utf-8"></script>
 <style>
 * { box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; margin: 0; padding: 1.5em; background: #fafafa; color: #333; }
@@ -12,6 +18,9 @@ h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
 
 .summary { font-size: 1.1em; margin-bottom: 0.5em; }
 .pass { color: #4CAF50; } .fail { color: #f44336; } .new { color: #FF9800; } .info { color: #607D8B; }
+/* Neutral headline for a root with no verdict to show (a browser-created
+   `weighted` root defers to the CLI) — matches its pill, which reads "—". */
+.summary .pending { color: #607d8b; }
 
 /* Key stats */
 .key-stats { display: flex; flex-wrap: wrap; gap: 0.8em; margin-bottom: 1.5em; }
@@ -23,29 +32,16 @@ h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
 
 /* Tolerance controls + export */
 .tolerance-panel { margin-bottom: 1.5em; padding: 1em; background: white; border: 1px solid #ddd; border-radius: 4px; }
-.tolerance-row { display: flex; align-items: center; gap: 1em; flex-wrap: wrap; margin-bottom: 0.5em; }
-.tolerance-row label { font-weight: 600; font-size: 0.9em; }
-.tolerance-row input[type="number"] { width: 10em; padding: 0.3em 0.5em; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.9em; }
-.tolerance-row .hint { font-size: 0.8em; color: #888; }
 .export-row { margin-top: 0.8em; border-top: 1px solid #eee; padding-top: 0.8em; }
 .export-row summary { cursor: pointer; font-weight: 500; color: #555; font-size: 0.9em; }
 .export-row textarea { width: 100%; min-height: 80px; font-family: monospace; font-size: 0.82em; padding: 0.5em; border: 1px solid #ccc; border-radius: 3px; resize: vertical; margin-top: 0.5em; }
 .export-buttons { display: flex; gap: 0.5em; margin-top: 0.5em; }
 .btn { padding: 0.4em 1em; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; font-size: 0.85em; background: white; }
 .btn:hover { background: #f0f0f0; }
-.overlay-select, .mode-select { font-size: 0.7em; padding: 0.2em 0.4em; vertical-align: middle; margin-left: 0.5em; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; }
-.tube-editor { margin: 0.5em 0 1em 0; padding: 0.8em; background: #f9f9f9; border: 1px solid #e0e0e0; border-radius: 4px; }
-.tube-controls { margin-bottom: 0.5em; }
-.tube-table { width: auto; min-width: 300px; margin-bottom: 0; }
-.tube-table input { width: 8em; padding: 2px 4px; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.85em; }
-.tube-table .btn-remove { font-size: 0.75em; padding: 0.1em 0.5em; color: #f44336; border-color: #f44336; }
 .tube-status .pass { font-weight: 600; }
 .tube-status .fail { font-weight: 600; }
-.tube-hint { font-size: 0.8em; color: #888; margin: 0.3em 0 0 0; }
 .btn-primary { background: #1976D2; color: white; border-color: #1976D2; }
 .btn-primary:hover { background: #1565C0; }
-.btn-success { background: #4CAF50; color: white; border-color: #4CAF50; }
-.btn-success:hover { background: #43A047; }
 .save-status { font-size: 0.85em; color: #4CAF50; margin-left: 0.5em; display: none; }
 
 /* Tables */
@@ -53,8 +49,6 @@ table { border-collapse: collapse; width: 100%; background: white; margin-bottom
 th, td { border: 1px solid #ddd; padding: 5px 8px; text-align: left; font-size: 0.85em; }
 th { background: #f5f5f5; font-weight: 600; }
 tr:hover { background: #f9f9f9; }
-.var-tol-input { width: 7em; padding: 2px 4px; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.85em; }
-.var-tol-input.modified { border-color: #FF9800; background: #fff9e6; }
 
 /* Plots */
 .plot-section { margin-bottom: 1.5em; background: white; padding: 1em; border: 1px solid #eee; border-radius: 4px; }
@@ -85,8 +79,17 @@ details summary:hover { color: #333; }
 .mode-controls input[type=number] { width: 6.5em; padding: 0.1em 0.25em; }
 .mode-controls input[type=text] { width: 7em; padding: 0.1em 0.25em; }
 .mode-controls select { padding: 0.1em 0.25em; }
-.mode-controls textarea { width: 12em; font-family: monospace; font-size: 0.85em; }
+/* Passthrough (raw-JSON) fields — e.g. scalar's Quantity. One line high,
+   wide enough for the values these actually hold ({"reduce": "final"});
+   the 12em × 2-row box wrapped that mid-token. Resizable both ways for
+   the rare long one. */
+.mode-controls textarea { width: 26em; max-width: 100%; min-height: 1.9em; height: 1.9em; font-family: monospace; font-size: 0.85em; padding: 0.15em 0.35em; white-space: pre; overflow-x: auto; resize: both; vertical-align: middle; }
+.mode-controls .mc-passthrough { align-items: center; }
 .cli-authoritative { display: inline-block; margin-left: 0.5em; padding: 0.1em 0.45em; border-radius: 3px; background: #eef3ff; border: 1px solid #b5c5e8; color: #3a5ba0; font-size: 0.75em; }
+/* Advisory (warn-wrapped) failure marker — C-v item (c). A leaf under a
+   warn wrapper cannot fail the root, so it must not paint the summary or
+   the variable pill red; it gets this amber chip instead. */
+.advisory-chip { display: inline-block; margin-left: 0.5em; padding: 0.05em 0.45em; border-radius: 3px; background: #fff3cd; border: 1px solid #ffc107; color: #8a6d00; font-size: 0.75em; font-weight: 600; vertical-align: middle; }
 /* 6.1.1 — idea #46 UI surfacing: universal window inputs for tree leaves */
 .window-controls { display: flex; flex-wrap: wrap; gap: 0.3em 0.6em; align-items: center; margin-top: 0.3em; padding-top: 0.3em; border-top: 1px dashed #e0e0e0; font-size: 0.8em; }
 .window-controls .wc-label { color: #888; font-weight: 500; }
@@ -117,10 +120,13 @@ details summary:hover { color: #333; }
 .node-status { display: inline-block; padding: 0.05em 0.4em; border-radius: 3px; font-size: 0.7em; font-weight: 600; letter-spacing: 0.05em; }
 .node-status.pass { background: #e8f5e9; color: #2e7d32; }
 .node-status.fail { background: #ffebee; color: #c62828; }
+.node-status.pending { background: #eceff1; color: #607d8b; }
 .node-visible { margin-right: 0.2em; }
 .node-controls { margin-top: 0.4em; padding-left: 1.4em; }
 .node-btn { margin-left: 0.3em; padding: 0 0.45em; border: 1px solid #ccc; border-radius: 3px; background: white; cursor: pointer; font-size: 0.85em; line-height: 1.3; }
 .node-btn:hover { background: #f0f0f0; }
+.node-btn:disabled, .node-btn-disabled { color: #bbb; border-color: #e0e0e0; background: #f7f7f7; cursor: not-allowed; }
+.node-btn:disabled:hover { background: #f7f7f7; }
 .node-btn-add { color: #2e7d32; border-color: #a5d6a7; }
 .node-btn-add:hover { background: #e8f5e9; }
 .node-btn-remove { color: #c62828; border-color: #ef9a9a; }
@@ -155,10 +161,6 @@ details summary:hover { color: #333; }
 .node-editor:empty { display: none; }
 .editor-title { font-weight: 600; color: #1976D2; margin-bottom: 0.3em; }
 .editor-hint { font-size: 0.8em; color: #666; margin-bottom: 0.5em; }
-.tube-table { width: auto; margin-bottom: 0.4em; }
-.tube-table th { background: #f0f4f8; padding: 2px 6px; font-size: 0.75em; text-align: left; }
-.tube-table td { padding: 2px 4px; }
-.tube-table input { width: 5em; padding: 1px 4px; font-size: 0.82em; }
 .window-brush-wrap { display: flex; gap: 0.3em; margin-top: 0.5em; padding-top: 0.4em; border-top: 1px dashed #cfd8dc; align-items: center; }
 .node-btn.brush-armed { background: #fff3e0; border-color: #ffb74d; color: #e65100; }
 /* Inline modal for the + add-leaf dialog (replaces window.prompt) */
@@ -177,12 +179,14 @@ details summary:hover { color: #333; }
 .tube-editor-controls .tube-status { margin-left: auto; font-size: 0.88em; }
 .tube-editor-controls .tube-status .pass { color: #2e7d32; font-weight: 600; }
 .tube-editor-controls .tube-status .fail { color: #c62828; font-weight: 600; }
-.tube-table { border-collapse: collapse; font-size: 0.85em; margin-bottom: 0.5em; }
+.tube-table { width: auto; min-width: 300px; border-collapse: collapse; font-size: 0.85em; margin-bottom: 0.5em; }
 .tube-table th { background: #eceff1; padding: 0.3em 0.6em; text-align: left; font-weight: 600; font-size: 0.8em; }
 .tube-table td { padding: 0.2em 0.4em; }
-.tube-table input { width: 6em; padding: 1px 4px; font-size: 0.85em; }
+.tube-table input { width: 6em; padding: 1px 4px; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.85em; }
 .tube-table select { font-size: 0.82em; padding: 0 0.2em; }
 .tube-summary { margin-top: 0.4em; padding-left: 1.4em; color: #607d8b; font-size: 0.8em; font-style: italic; }
+/* Reason a sentinel leaf could not be scored (misconfigured metric, empty window) */
+.node-error { margin-top: 0.3em; padding-left: 1.4em; color: #b71c1c; font-size: 0.8em; }
 /* Per-plot controls row */
 .plot-controls { display: flex; gap: 1em; align-items: center; margin-bottom: 0.5em; font-size: 0.85em; color: #555; }
 .plot-controls label { display: inline-flex; align-items: center; gap: 0.4em; }
@@ -391,7 +395,6 @@ details summary:hover { color: #333; }
   </div>
   {% endif %}
   <div class="plotly-chart plot-main" id="plot-{{ loop.index0 }}" style="height:300px"></div>
-  <div class="plotly-chart plot-spectrum" id="plot-spectrum-{{ loop.index0 }}" style="height:150px; display:none"></div>
   <div class="node-tree" id="nodes-{{ loop.index0 }}" data-variable="{{ varname }}"></div>
 </div>
 {% endfor %}
@@ -427,6 +430,9 @@ window.MT_REPORT = {
      element IDs from this template's loop.index0 numbering. #}
   VARIABLE_ORDER: {{ variables_by_name | list | tojson }},
   MODE_SCHEMAS: {{ mode_schemas | tojson }},
+  {# The add-leaf modal reads the soft_check rows to populate its "against"
+     selector — companions are never scorable (validator.py). #}
+  OVERLAY_ROWS: {{ overlay_rows | tojson }},
   DIAG_TRAJECTORIES: {{ diag_trajectories | tojson }},
   NB_TRAJECTORIES: {{ nobaseline_trajectories | tojson }},
 };

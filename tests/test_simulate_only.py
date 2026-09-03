@@ -8,7 +8,7 @@ import numpy as np
 
 from dstf.comparison.comparator import compare_test
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.base import TestResult, VariableResult
+from dstf.simulators.types import TestResult, VariableResult
 
 
 def _make_test(simulate_only: bool) -> TestModel:

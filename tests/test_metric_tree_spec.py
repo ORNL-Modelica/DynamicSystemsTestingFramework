@@ -9,6 +9,8 @@ from dstf.comparison.tree_spec import (
     LeafSpec,
     MetricSpecError,
     parse_metric_tree,
+    spec_to_raw,
+    synthesize_implicit_tree,
 )
 
 # ---------------------------------------------------------------------------
@@ -58,13 +60,13 @@ class TestLeafSpec:
             {
                 "metric": "range",
                 "variable": "h",
-                "min": 0.0,
-                "max": 1.1,
+                "min_value": 0.0,
+                "max_value": 1.1,
             }
         )
         assert isinstance(node, LeafSpec)
         assert node.metric == "range"
-        assert node.params == {"min": 0.0, "max": 1.1}
+        assert node.params == {"min_value": 0.0, "max_value": 1.1}
 
     def test_leaf_against_defaults_to_primary(self):
         node = parse_metric_tree({"metric": "nrmse", "variable": "h"})
@@ -297,3 +299,52 @@ class TestShape:
     def test_empty_node_rejected(self):
         with pytest.raises(MetricSpecError, match="must have either"):
             parse_metric_tree({})
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_reporter.py — 2026-07-06 review,
+# reporter batch (CODE_REVIEW_2026-07-06.md).
+#
+# ``spec_to_raw`` round-trips every parsed tree shape, including the
+# synthesized implicit tree (support for finding 41's materialization).
+# =========================================================================
+
+
+class TestSpecToRaw:
+    def test_round_trips_through_parse(self):
+        raw = {
+            "combinator": "k-of-n",
+            "k": 2,
+            "children": [
+                {"metric": "nrmse", "variable": "h", "tolerance": 1e-3},
+                {
+                    "metric": "tube",
+                    "variable": "v",
+                    "tube_width_mode": "rel",
+                    "tube_rel": 0.05,
+                    "against": "experiment",
+                    "window": {"start": 1.0, "end": 5.0},
+                },
+                {
+                    "combinator": "weighted",
+                    "children": [
+                        {"metric": "range", "variable": "p", "min_value": 0.0}
+                    ],
+                    "weights": [2.0],
+                    "threshold": 0.5,
+                    "direction": "greater",
+                },
+            ],
+        }
+        tree = parse_metric_tree(raw)
+        assert spec_to_raw(tree) == raw
+
+    def test_synthesized_implicit_tree_serializes_and_parses(self):
+        tree = synthesize_implicit_tree(
+            ["a", "b"],
+            variable_overrides={"b": {"mode": "range", "min_value": 0.0}},
+        )
+        raw = spec_to_raw(tree)
+        reparsed = parse_metric_tree(raw)
+        assert [leaf.metric for leaf in reparsed.children] == ["nrmse", "range"]
+        assert reparsed.children[1].params == {"min_value": 0.0}

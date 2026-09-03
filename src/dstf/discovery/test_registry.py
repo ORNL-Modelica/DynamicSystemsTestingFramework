@@ -69,9 +69,6 @@ class TestModel:
     # simulate_only: when True, the test passes iff the simulation completes
     # without error — no per-variable comparison. Wired end-to-end in PTA.5.
     simulate_only: bool = False
-    # requested_fmu_export: placeholder for 4.B (cross-backend verification).
-    # Recognizers can set this today; no consumer until 4.B lands.
-    requested_fmu_export: bool = False
     # requested_baselines: names of additional baselines to produce for this
     # test (e.g., ["dymola-via-fmpy"]). Placeholder for 4.B.
     requested_baselines: list[str] = field(default_factory=list)
@@ -167,8 +164,6 @@ def _build_test_model_from_recognizer_results(
             model.field_sources["output_interval"] = "annotation"
         if r.simulate_only is not None:
             model.simulate_only = r.simulate_only
-        if r.requested_fmu_export is not None:
-            model.requested_fmu_export = r.requested_fmu_export
         if r.requested_baselines is not None:
             model.requested_baselines = list(r.requested_baselines)
 

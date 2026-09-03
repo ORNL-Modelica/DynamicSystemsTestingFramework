@@ -220,7 +220,7 @@ def _strip_modelica_literals(text: str) -> str:
     return "".join(out)
 
 
-def _parse_unit_tests(text: str) -> UnitTestInfo | None:
+def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
     """Extract UnitTests block parameters from model text."""
     # Match the UnitTests declaration — may span multiple lines
     # Patterns: "UnitTests unitTests(" or "ErrorAnalysis.UnitTests unitTests("
@@ -297,13 +297,13 @@ def _parse_unit_tests(text: str) -> UnitTestInfo | None:
         raw = _extract_balanced_braces(param_text, brace_start)
         info.x_reference = _parse_float_list(raw)
 
-    # Extract errorExpected=
-    m = re.search(r"\berrorExpected\s*=\s*([0-9eE.+-]+)", param_text)
-    if m:
-        try:
-            info.error_expected = float(m.group(1))
-        except ValueError:
-            pass
+    # Extract errorExpected= (finding 56 applies here too: an expression like
+    # ``1e-3*2`` must warn and keep the default, not silently truncate)
+    error_expected = _parse_number(
+        param_text, r"\berrorExpected", source, "errorExpected"
+    )
+    if error_expected is not None:
+        info.error_expected = error_expected
 
     return info
 
@@ -414,7 +414,7 @@ def parse_mo_file(path: Path) -> MoParseResult | None:
     except OSError:
         return None
 
-    unit_test = _parse_unit_tests(text)
+    unit_test = _parse_unit_tests(text, source=path)
     if unit_test is None:
         return None
 

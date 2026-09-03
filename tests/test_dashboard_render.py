@@ -747,3 +747,102 @@ def test_resolution_column_shows_provenance(tmp_path):
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "test_spec" in out
     assert "Resolution" in out
+
+
+def test_model_id_is_escaped_in_the_final_page(tmp_path):
+    """The dashboard is the --report-format html surface now; the escaping
+    guard the retired html_report tests carried moves here (D117)."""
+    snapshot = {
+        "total": 1,
+        "elapsed": 1.0,
+        "eta_seconds": None,
+        "counts": {"queued": 0, "running": 0, "passed": 1, "failed": 0, "timed_out": 0},
+        "tests": [
+            {
+                "test_key": "test_0001",
+                "model_id": "Lib.<script>alert(1)</script>",
+                "status": "passed",
+                "elapsed": 1.0,
+                "worker_id": 0,
+                "report_dir": "test_0001",
+            }
+        ],
+        "updated_at": 0.0,
+    }
+    _write_status_json(tmp_path, snapshot)
+    render_final(tmp_path)
+    html = (tmp_path / "dashboard.html").read_text()
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def _one_test_snapshot() -> dict:
+    return {
+        "total": 1,
+        "elapsed": 5.0,
+        "eta_seconds": None,
+        "counts": {"passed": 1},
+        "tests": [
+            {
+                "test_key": "test_0001",
+                "model_id": "Lib.A",
+                "status": "passed",
+                "elapsed": 2.0,
+                "worker_id": 0,
+                "report_dir": "test_0001",
+            }
+        ],
+        "updated_at": 0.0,
+    }
+
+
+def _write_sidecar(work_dir: Path, summary: dict) -> None:
+    test_dir = work_dir / "reports" / "test_0001"
+    test_dir.mkdir(parents=True, exist_ok=True)
+    (test_dir / "comparison_data.json").write_text(
+        json.dumps({"model_id": "Lib.A", "summary": summary})
+    )
+
+
+class TestWorstNrmseColumn:
+    """A test whose only leaf is a sentinel has no score to show. It used
+    to read "—", the same as a test that had not been compared at all —
+    the inf/nan swallowed the per-test max in the sidecar. It now names
+    what happened."""
+
+    def test_unscored_count_reaches_the_row(self, tmp_path):
+        _write_status_json(tmp_path, _one_test_snapshot())
+        _write_sidecar(
+            tmp_path, {"model_id": "Lib.A", "worst_nrmse": None, "n_unscored": 1}
+        )
+        row = build_dashboard_context(tmp_path, mode="final")["tests"][0]
+        assert row["worst_nrmse"] is None
+        assert row["n_unscored"] == 1
+
+    def test_cell_says_n_a_with_the_count(self, tmp_path):
+        _write_status_json(tmp_path, _one_test_snapshot())
+        _write_sidecar(
+            tmp_path, {"model_id": "Lib.A", "worst_nrmse": None, "n_unscored": 2}
+        )
+        render_final(tmp_path)
+        html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+        assert "n/a (2 unscored)" in html
+
+    def test_a_finite_worst_still_wins_the_cell(self, tmp_path):
+        _write_status_json(tmp_path, _one_test_snapshot())
+        _write_sidecar(
+            tmp_path,
+            {"model_id": "Lib.A", "worst_nrmse": 1.25e-4, "n_unscored": 1},
+        )
+        render_final(tmp_path)
+        html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+        assert "1.2500e-04" in html
+        assert "n/a (" not in html
+
+    def test_uncompared_test_still_reads_em_dash(self, tmp_path):
+        """No sidecar at all — nothing was scored and nothing was skipped;
+        the honest cell is still "—"."""
+        _write_status_json(tmp_path, _one_test_snapshot())
+        render_final(tmp_path)
+        html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+        assert "n/a (" not in html

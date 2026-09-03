@@ -55,10 +55,10 @@ class TestOpenModelicaRunnerUnit:
         assert cls is OpenModelicaRunner
 
     def test_capabilities_batch_and_persistent(self):
-        from dstf.simulators.base import Capability
         from dstf.simulators.openmodelica.runner import (
             OpenModelicaRunner,
         )
+        from dstf.simulators.types import Capability
 
         assert OpenModelicaRunner.capabilities == frozenset(
             {Capability.BATCH_FALLBACK, Capability.PERSISTENT_WORKERS},
@@ -76,6 +76,55 @@ class TestOpenModelicaRunnerUnit:
         # No template placeholders
         for n in names:
             assert "{" not in n and "}" not in n
+
+    def test_read_result_warns_on_missing_unit_test_variable(self, tmp_path, caplog):
+        """U-3: OM used to skip an absent unitTests variable silently.
+
+        Both DSresult backends now share ``common.result_variables``, whose
+        missing-variable warning (previously Dymola-only) is the unified
+        behavior: a requested variable absent from the output is loud.
+        """
+        import logging
+
+        from dstf.simulators.openmodelica.runner import OpenModelicaRunner
+
+        (tmp_path / "package.mo").write_text("package Lib end Lib;")
+        cfg = Config(
+            source_path=tmp_path,
+            reference_root=tmp_path / "refs",
+            simulator="OpenModelica",
+            work_dir=tmp_path / "work",
+        )
+        runner = OpenModelicaRunner(cfg)
+        # The fixture was captured with variableFilter "^(time|inertia1.phi)$",
+        # so it carries no unitTests.x[i] — exactly the missing-variable case.
+        test_dir = cfg.work_dir / "test_0001"
+        test_dir.mkdir(parents=True)
+        shutil.copy(
+            FIXTURES / "pid_controller_res.mat",
+            test_dir / OpenModelicaRunner.RESULT_MAT_FILENAME,
+        )
+        test = TestModel(
+            model_id="Lib.Examples.MissingVar",
+            source_file=Path(""),
+            source_package="Lib.Examples",
+            short_name="MissingVar",
+            n_vars=1,
+            variable_patterns=[],
+            source="unit_tests",
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = runner.read_result(test, "test_0001", None)
+
+        assert result.success
+        assert result.variables == []
+        assert any(
+            "unitTests.x[1]" in r.getMessage()
+            and "Lib.Examples.MissingVar" in r.getMessage()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
 
     def test_run_single_test_writes_mos_and_calls_omc(
         self,
@@ -123,11 +172,20 @@ class TestOpenModelicaRunnerUnit:
             "end SimulationResult;\n"
         )
 
-        # The runner checks that result_res.mat EXISTS in the test dir before
-        # declaring success, so create a placeholder.
+        # The runner requires result_res.mat to exist AND reach stop_time
+        # before declaring success (D99 partial-result belt), so stage a
+        # real fixture mat (extents 0.0 → 1.0, matching stop_time=1.0) —
+        # a garbage placeholder is now correctly refused.
+        fixture_mat = (
+            Path(__file__).parent
+            / "fixtures"
+            / "results_openmodelica"
+            / "pid_controller_res.mat"
+        )
+
         def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
             # **kwargs absorbs encoding/errors (review 2026-07-06, finding 75)
-            (Path(cwd) / "result_res.mat").write_bytes(b"\x00")
+            shutil.copy(fixture_mat, Path(cwd) / "result_res.mat")
             captured_call["cmd"] = list(cmd)
             captured_call["cwd"] = cwd
             return CompletedProcess(

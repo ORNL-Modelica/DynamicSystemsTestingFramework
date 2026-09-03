@@ -7,8 +7,40 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from dstf.discovery.test_registry import TestModel
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 PROJECT_ROOT = Path(__file__).parent.parent
+
+
+def make_test_model(model_id: str = "Lib.T", **kw) -> TestModel:
+    """A directly-constructed :class:`TestModel` for runner-level tests.
+
+    Direct construction bypasses discovery's default resolution — finding 13
+    turned the simulation fields into ``None`` sentinels that ``discover_tests``
+    fills in — so ``stop_time`` / ``tolerance`` / ``method`` are given concrete
+    values here; runners read them unconditionally. Any field can be overridden
+    by keyword.
+
+    Lives in conftest rather than in one test module because four runner test
+    files had byte-identical copies of it. Import it as
+    ``from conftest import make_test_model`` (tests/ is on sys.path under
+    pytest's default prepend import mode).
+    """
+    parts = model_id.rsplit(".", 1)
+    defaults = dict(
+        model_id=model_id,
+        source_file=Path(""),
+        source_package=parts[0] if len(parts) > 1 else "",
+        short_name=parts[-1],
+        n_vars=0,
+        source="spec",
+        stop_time=1.0,
+        tolerance=1e-6,
+        method="Dassl",
+    )
+    defaults.update(kw)
+    return TestModel(**defaults)
 
 
 @pytest.fixture
@@ -93,3 +125,25 @@ def make_multi_event_time_series():
     time = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0, 2.0, 2.5, 3.0])
     values = np.array([0.0, 0.5, 0.9, 1.1, 1.5, 1.9, 2.1, 2.5, 3.0])
     return time, values
+
+
+@pytest.fixture(scope="module")
+def playwright_browser():
+    """Shared Chromium for the browser-driven reporter tests.
+
+    Lives in conftest — NOT imported between test modules — because a
+    fixture import is invisible to pyflakes (only the parameter name
+    appears in tests), and the D88 ruff F401 autofix stripped exactly
+    such imports from the per-mode browser files, silently breaking
+    them in every environment that has Playwright (undetected because
+    none did until 2026-08-31). conftest placement cannot be
+    autofix-stripped. Lazy import: environments without Playwright
+    skip at fixture setup, never at collection.
+    """
+    pytest.importorskip("playwright.sync_api")
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        yield browser
+        browser.close()

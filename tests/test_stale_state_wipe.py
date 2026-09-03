@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from dstf.cli import _wipe_stale_state_for_scope
+from dstf.cli.run_cmds import _wipe_stale_state_for_scope
 
 
 @dataclass

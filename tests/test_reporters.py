@@ -1,14 +1,16 @@
-"""Tests for the three output-formatter reporters (D88).
+"""Tests for the output-formatter reporters (D88).
 
-`junit_report`, `console_report`, and `html_report` sat at 0% coverage
-despite being pure functions — and the JUnit XML in particular is a
-contract with external CI systems, so a silent regression there breaks
-every downstream consumer. These tests pin the structural contract of
-each formatter across the pass / fail / sim-error / no-baseline / warning
-branches.
+`junit_report` and `console_report` sat at 0% coverage despite being pure
+functions — and the JUnit XML in particular is a contract with external
+CI systems, so a silent regression there breaks every downstream
+consumer. These tests pin the structural contract of each formatter
+across the pass / fail / sim-error / no-baseline / warning branches, plus
+the `--report-format` routing that selects between them.
 """
 
+import types
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 from dstf.comparison.types import (
     StructuralWarning,
@@ -16,7 +18,6 @@ from dstf.comparison.types import (
     VariableComparison,
 )
 from dstf.reporting.console_report import print_report
-from dstf.reporting.html_report import generate_html_report
 from dstf.reporting.junit_report import generate_junit_report
 
 
@@ -63,6 +64,38 @@ def _no_ref(model_id="Lib.Examples.D"):
     # evaluated. (A comp with passed=False now classifies as FAILED even
     # without a baseline — review 2026-07-06, finding 5.)
     return TestComparison(model_id=model_id, passed=True, has_reference=False)
+
+
+def _sentinel_var(
+    name="h", error="RangeConfig requires at least one of min_value / max_value"
+):
+    """A leaf whose metric config could not build (D107).
+
+    Every number is inf/nan — the reason in ``diagnostics["error"]`` is the
+    only informative field, so each surface must print it.
+    """
+    return VariableComparison(
+        index=0,
+        name=f"{name} (metric 'range' misconfigured)",
+        passed=False,
+        nrmse=float("inf"),
+        rmse=float("inf"),
+        signal_range=0.0,
+        max_abs_error=float("inf"),
+        max_abs_error_time=0.0,
+        reference_final=float("nan"),
+        actual_final=float("nan"),
+        mode="range",
+        diagnostics={"error": error},
+    )
+
+
+def _config_error(model_id="Lib.Examples.F"):
+    return TestComparison(
+        model_id=model_id,
+        passed=False,
+        variables=[_sentinel_var()],
+    )
 
 
 def _warned(model_id="Lib.Examples.E"):
@@ -113,6 +146,17 @@ class TestJUnitReport:
         assert "h:" in failure.text
         assert "NRMSE=" in failure.text
 
+    def test_config_error_failure_names_the_reason(self, tmp_path):
+        """A sentinel leaf's reason reaches CI, not a wall of inf/nan."""
+        out = tmp_path / "junit.xml"
+        generate_junit_report([_config_error()], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        assert failure is not None
+        assert "min_value / max_value" in failure.text
+        assert "not scored" in failure.text
+        # The meaningless numeric block is suppressed for this leaf.
+        assert "NRMSE=" not in failure.text
+
     def test_sim_failure_becomes_error_element(self, tmp_path):
         out = tmp_path / "junit.xml"
         generate_junit_report([_sim_failed()], out)
@@ -160,6 +204,12 @@ class TestConsoleReport:
         assert "Lib.Examples.B" in out
         assert "NRMSE" in out
 
+    def test_config_error_prints_the_reason(self, capsys):
+        assert print_report([_config_error()]) == 1
+        out = capsys.readouterr().out
+        assert "Not scored:" in out
+        assert "min_value / max_value" in out
+
     def test_sim_failure_returns_one(self, capsys):
         assert print_report([_sim_failed()]) == 1
         out = capsys.readouterr().out
@@ -187,67 +237,190 @@ class TestConsoleReport:
 
 
 # --------------------------------------------------------------------------
-# HTML report
+# --report-format routing
 # --------------------------------------------------------------------------
 
 
-class TestHtmlReport:
-    def test_title_uses_dstf_name(self, tmp_path):
-        # Title must track the DSTF rename (D81), not the legacy "Modelica".
-        out = tmp_path / "report.html"
-        generate_html_report([_passing()], out)
-        page = out.read_text()
-        assert "<title>DSTF Test Report</title>" in page
-        assert "Modelica" not in page
+def _fake_config(work_dir: Path):
+    """The two attributes `_output_report`'s html branch reads off Config."""
+    return types.SimpleNamespace(
+        work_dir=work_dir, config_file=None, source_path=None, reference_root=None
+    )
 
-    def test_writes_file_with_summary_counts(self, tmp_path):
-        out = tmp_path / "nested" / "report.html"
-        generate_html_report([_passing(), _failing(), _no_ref(), _warned()], out)
+
+class TestReportFormatRouting:
+    """`--report-format html` renders the dashboard page, not a third surface.
+
+    `html_report.py` was retired: one HTML surface (the dashboard) instead
+    of three overlapping ones. These pin the routing — a file appears at
+    the requested path, it is the dashboard renderer's output, and the
+    exit code still tracks failures.
+    """
+
+    def test_html_writes_dashboard_render_to_output_path(self, tmp_path):
+        from dstf.cli.run_cmds import _output_report
+        from dstf.reporting.dashboard_render import render_final
+
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        out = tmp_path / "nested" / "r.html"
+        args = types.SimpleNamespace(report_format="html", output=str(out))
+
+        code = _output_report([_passing()], args, _fake_config(work_dir))
+
+        assert code == 0
         assert out.exists()
-        page = out.read_text()
-        assert page.startswith("<!DOCTYPE html>")
-        # summary: 2 passed (passing + warned), 2 failed, 1 no-ref, 1 warning
-        assert "<strong>2</strong> passed" in page
-        assert "<strong>1</strong> no baseline" in page
+        # Byte-identical to what render_final writes for the same work_dir:
+        # same renderer, different destination.
+        render_final(work_dir)
+        assert out.read_text(encoding="utf-8") == (
+            work_dir / "dashboard.html"
+        ).read_text(encoding="utf-8")
 
-    def test_status_spans_present(self, tmp_path):
-        out = tmp_path / "report.html"
-        generate_html_report([_passing(), _failing(), _sim_failed(), _no_ref()], out)
-        page = out.read_text()
-        assert ">PASS<" in page
-        assert ">FAIL<" in page
-        assert ">SIM_FAIL<" in page
-        assert ">NO_REF<" in page
+    def test_html_exit_code_tracks_failures(self, tmp_path):
+        from dstf.cli.run_cmds import _output_report
 
-    def test_failing_variable_detail_row(self, tmp_path):
-        out = tmp_path / "report.html"
-        generate_html_report([_failing()], out)
-        page = out.read_text()
-        assert '<table class="details">' in page
-        assert "<td>h</td>" in page  # the failed variable
-
-    def test_model_id_is_html_escaped(self, tmp_path):
-        out = tmp_path / "report.html"
-        generate_html_report([_passing("Lib.<script>.X")], out)
-        page = out.read_text()
-        assert "&lt;script&gt;" in page
-        assert "<script>" not in page
-
-    def test_error_message_escaped_for_sim_failure(self, tmp_path):
-        comp = TestComparison(
-            model_id="Lib.Examples.C",
-            passed=False,
-            sim_success=False,
-            error_message="failed <b>hard</b>",
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        out = tmp_path / "r.html"
+        args = types.SimpleNamespace(report_format="html", output=str(out))
+        assert (
+            _output_report([_passing(), _failing()], args, _fake_config(work_dir)) == 1
         )
-        out = tmp_path / "report.html"
-        generate_html_report([comp], out)
-        page = out.read_text()
-        assert "&lt;b&gt;hard&lt;/b&gt;" in page
 
-    def test_structural_warning_table(self, tmp_path):
-        out = tmp_path / "report.html"
-        generate_html_report([_warned()], out)
-        page = out.read_text()
-        assert '<table class="warnings">' in page
-        assert "<td>Event count</td>" in page
+    def test_junit_route_unchanged(self, tmp_path):
+        from dstf.cli.run_cmds import _output_report
+
+        out = tmp_path / "r.xml"
+        args = types.SimpleNamespace(report_format="junit", output=str(out))
+        assert _output_report([_passing()], args, _fake_config(tmp_path)) == 0
+        assert ET.parse(out).getroot().tag == "testsuites"
+
+    def test_console_route_is_default(self, tmp_path, capsys):
+        from dstf.cli.run_cmds import _output_report
+
+        args = types.SimpleNamespace(report_format="console", output=None)
+        assert _output_report([_passing()], args, _fake_config(tmp_path)) == 0
+        assert "Results: 1/1 passed" in capsys.readouterr().out
+
+
+def test_unknown_mode_sentinel_is_not_captioned_nrmse():
+    """The flat-override unknown-mode sentinel resolved no mode at all.
+
+    ``VariableComparison.mode`` defaults to "nrmse", so this leaf used to
+    read "nrmse leaf not scored — unknown comparison mode 'tubee'" and
+    named a metric the user never wrote (H4).
+    """
+    import numpy as np
+
+    from dstf.comparison.comparator import compare_test
+    from dstf.discovery.test_registry import TestModel
+    from dstf.reporting.context_builder import _leaf_score_display
+    from dstf.simulators.types import TestResult, VariableResult
+
+    time = np.linspace(0.0, 1.0, 5)
+    test = TestModel(
+        model_id="Test.Model",
+        source_file=Path(""),
+        source_package="Test",
+        short_name="Model",
+        n_vars=1,
+        variable_overrides={"x": {"mode": "tubee"}},
+    )
+    result = TestResult(
+        model_id="Test.Model",
+        success=True,
+        variables=[VariableResult(index=1, name="x", time=time, values=time)],
+    )
+    reference = {
+        "test_id": "0001",
+        "variables": [
+            {"index": 1, "name": "x", "time": time.tolist(), "values": time.tolist()}
+        ],
+    }
+    comp = compare_test(test, result, reference)
+    vc = comp.variables[0]
+    assert not vc.passed
+    assert vc.diagnostics["config_error"] is True
+
+    _score, criterion = _leaf_score_display(vc)
+    # The caption names no metric — only the error text does (and it lists
+    # the valid mode names, so "nrmse" legitimately appears further in).
+    assert criterion.startswith("leaf not scored")
+    assert not criterion.startswith("nrmse leaf")
+    assert "tubee" in criterion
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_verdict.py — regression tests for the
+# 2026-07-06 review, Theme 1: verdict integrity (CODE_REVIEW_2026-07-06.md).
+#
+# Decision encoded here:
+#
+# * A failing test counts as FAILED on every report surface regardless of
+#   ``has_reference`` (baseline-free modes); NO_REF is reserved for tests
+#   where no comparison ran at all (``TestComparison.evaluated``).
+# =========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Report surfaces: failing baseline-free tests are FAILURES
+# ---------------------------------------------------------------------------
+
+
+def _failing_baseline_free_comp() -> TestComparison:
+    from dstf.comparison.metric_tree import MetricResult
+
+    return TestComparison(
+        model_id="MyLib.RangeTest",
+        passed=False,
+        sim_success=True,
+        has_reference=False,
+        metric_tree=MetricResult(passed=False, score=1.0, label="range"),
+    )
+
+
+def _no_ref_comp() -> TestComparison:
+    return TestComparison(
+        model_id="MyLib.FreshTest",
+        passed=True,
+        has_reference=False,
+        error_message="No reference baseline stored",
+    )
+
+
+class TestReportClassification:
+    def test_console_exit_code_nonzero_for_failing_baseline_free(self, capsys):
+        from dstf.reporting.console_report import print_report
+
+        rc = print_report([_failing_baseline_free_comp()])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "FAIL" in out
+
+    def test_console_no_ref_still_exit_zero(self, capsys):
+        from dstf.reporting.console_report import print_report
+
+        rc = print_report([_no_ref_comp()])
+        assert rc == 0
+        assert "NO_REF" in capsys.readouterr().out
+
+    def test_junit_failing_baseline_free_is_failure(self, tmp_path):
+        import xml.etree.ElementTree as ET
+
+        from dstf.reporting.junit_report import generate_junit_report
+
+        out = tmp_path / "junit.xml"
+        generate_junit_report([_failing_baseline_free_comp(), _no_ref_comp()], out)
+        root = ET.parse(out).getroot()
+        assert root.get("failures") == "1"
+        cases = {tc.get("name"): tc for tc in root.iter("testcase")}
+        assert cases["MyLib.RangeTest"].find("failure") is not None
+        assert cases["MyLib.RangeTest"].find("skipped") is None
+        assert cases["MyLib.FreshTest"].find("skipped") is not None
+
+    def test_should_review_failed_matches_baseline_free_failure(self):
+        from dstf.cli.common import _should_review
+
+        assert _should_review(_failing_baseline_free_comp(), {"failed"}) is True
+        assert _should_review(_no_ref_comp(), {"failed"}) is False

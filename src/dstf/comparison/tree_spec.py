@@ -25,17 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-VALID_COMBINATORS = frozenset({"and", "or", "k-of-n", "warn", "weighted"})
-VALID_METRICS = frozenset(
-    {
-        "nrmse",
-        "tube",
-        "points",
-        "range",
-        "event-timing",
-        "dominant-frequency",
-    }
-)
+from .registry import DEFAULT_METRIC, combinator_names, metric, metric_names
 
 
 class MetricSpecError(ValueError):
@@ -326,26 +316,16 @@ def synthesize_implicit_tree(
     leaves: list[LeafSpec] = []
     for var in variables:
         ov = dict(overrides.get(var, {}))
+        # The override-dict ``mode`` value and the spec ``metric``
+        # discriminator are the same identifier — no translation table, just
+        # a registry membership check. Absent or unrecognized falls back to
+        # the default metric, matching the flat-override scoring path.
         mode_key = ov.pop("mode", None)
-        metric = _MODE_TO_METRIC.get(mode_key, "nrmse")
+        metric_name = mode_key if mode_key and metric(mode_key) else DEFAULT_METRIC
         if base_tolerance is not None and "tolerance" not in ov:
             ov["tolerance"] = float(base_tolerance)
-        leaves.append(LeafSpec(metric=metric, variable=var, params=ov))
+        leaves.append(LeafSpec(metric=metric_name, variable=var, params=ov))
     return CombinatorSpec(combinator="and", children=list(leaves))
-
-
-# Inverse of tree_eval._METRIC_TO_MODE_KEY — translates the override-dict
-# ``mode`` value back into the spec ``metric`` discriminator. Kept here
-# (not in tree_eval) because synthesis is a tree_spec responsibility.
-_MODE_TO_METRIC = {
-    None: "nrmse",
-    "nrmse": "nrmse",
-    "tube": "tube",
-    "points": "points",
-    "range": "range",
-    "event-timing": "event-timing",
-    "dominant-frequency": "dominant-frequency",
-}
 
 
 def parse_metric_tree(raw: dict, _path: str = "metrics") -> SpecNode:
@@ -375,10 +355,10 @@ def parse_metric_tree(raw: dict, _path: str = "metrics") -> SpecNode:
 
 def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
     name = raw["combinator"]
-    if not isinstance(name, str) or name not in VALID_COMBINATORS:
+    if not isinstance(name, str) or name not in combinator_names():
         raise MetricSpecError(
             f"{path}.combinator: unknown combinator {name!r}; "
-            f"valid: {sorted(VALID_COMBINATORS)}"
+            f"valid: {sorted(combinator_names())}"
         )
 
     children_raw = raw.get("children")
@@ -459,13 +439,30 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
 
 
 def _parse_leaf(raw: dict, path: str) -> LeafSpec:
-    metric = raw["metric"]
-    if not isinstance(metric, str) or metric not in VALID_METRICS:
+    metric_name = raw["metric"]
+    if not isinstance(metric_name, str) or metric_name not in metric_names():
         raise MetricSpecError(
-            f"{path}.metric: unknown metric {metric!r}; valid: {sorted(VALID_METRICS)}"
+            f"{path}.metric: unknown metric {metric_name!r}; "
+            f"valid: {sorted(metric_names())}"
         )
 
     variable = raw.get("variable")
+    quantity = raw.get("quantity")
+    desc = metric(metric_name)
+    if (
+        variable is None
+        and desc is not None
+        and desc.accepts_quantity
+        and isinstance(quantity, str)
+        and quantity
+    ):
+        # For a metric that declares ``accepts_quantity``, a string quantity
+        # names a stored scalar (statistics path / diagnostics summary), so
+        # the leaf has no tracked series to name — the path doubles as the
+        # display label. An explicit ``variable`` alongside it stays as the
+        # label the user chose. Every other metric scores a trajectory and
+        # still requires ``variable``.
+        variable = quantity
     if not isinstance(variable, str) or not variable:
         raise MetricSpecError(f"{path}.variable: required string field")
 
@@ -510,7 +507,7 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
         if k not in {"metric", "variable", "against", "window"}
     }
     return LeafSpec(
-        metric=metric,
+        metric=metric_name,
         variable=variable,
         params=params,
         against=against,

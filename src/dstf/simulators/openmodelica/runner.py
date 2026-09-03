@@ -23,27 +23,26 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
-from pathlib import Path
-
-import numpy as np
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from .. import register
-from ..base import (
+from ..base import SimulatorRunner
+from ..common.mat_reader import mat_reaches_time, read_result_mat
+from ..common.proc_output import decode_output
+from ..common.result_variables import (
+    compute_needed_variables,
+    extract_variables,
+    fold_diagnostics_into_statistics,
+    merge_timing_stats,
+)
+from ..types import (
     Capability,
     DatasetType,
-    SimulatorRunner,
     TestResult,
     TestRunResult,
-    VariableResult,
-    resolve_variable_patterns,
+    timeout_message,
 )
-from ..common.mat_reader import (
-    list_result_mat_variables,
-    read_result_mat,
-)
-from ..common.proc_output import decode_output
 from .log_parser import parse_omc_stdout
 from .mos_generator import build_simulate_mos
 
@@ -183,7 +182,7 @@ class OpenModelicaRunner(SimulatorRunner):
                 decode_output(exc.stdout) + "\n[TimeoutExpired]\n",
                 encoding="utf-8",
             )
-            msg = f"omc exceeded {timeout}s timeout"
+            msg = timeout_message(f"omc exceeded {timeout}s timeout")
             logger.warning("Test %s: %s", test.model_id, msg)
             if self.progress:
                 self.progress.on_finish(
@@ -227,18 +226,33 @@ class OpenModelicaRunner(SimulatorRunner):
             )
             sim_wall = t.get("simulation")
 
-        if parsed.success and (test_dir / self.RESULT_MAT_FILENAME).exists():
-            if self.progress:
-                self.progress.on_phase(test_key, "simulating")
-                self.progress.on_finish(test_key, success=True, elapsed=elapsed)
-            return TestRunResult(
-                model_id=test.model_id,
-                test_key=test_key,
-                success=True,
-                elapsed=elapsed,
-                translation_wall=translation_wall,
-                sim_wall=sim_wall,
-                statistics=stats or None,
+        mat_path = test_dir / self.RESULT_MAT_FILENAME
+        if parsed.success and mat_path.exists():
+            # Belt on the accept-integrity invariant (D93 precedent): a
+            # partial .mat blessed by --accept poisons the baseline, so
+            # even a success-reporting record must show a trajectory that
+            # reached stop_time. Empirically (D99, omc 1.27) mid-run
+            # aborts return an EMPTY resultFile and never take this
+            # branch — this guards against a future omc populating
+            # resultFile on partial runs or a truncated write.
+            reached, last_time = mat_reaches_time(mat_path, float(test.stop_time))
+            if reached:
+                if self.progress:
+                    self.progress.on_phase(test_key, "simulating")
+                    self.progress.on_finish(test_key, success=True, elapsed=elapsed)
+                return TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=True,
+                    elapsed=elapsed,
+                    translation_wall=translation_wall,
+                    sim_wall=sim_wall,
+                    statistics=stats or None,
+                )
+            parsed.error_notices.append(
+                f"simulate() reported success but {self.RESULT_MAT_FILENAME} "
+                f"reaches t={last_time!r} of stop_time={test.stop_time} — "
+                f"partial result refused"
             )
 
         # Failure: build an error message that surfaces both pre-record
@@ -313,11 +327,7 @@ class OpenModelicaRunner(SimulatorRunner):
                 )
                 timing["other_wall"] = round(max(0.0, run_result.elapsed - acct), 2)
                 timing["total_wall"] = round(run_result.elapsed, 2)
-            if stats is None:
-                stats = {}
-            # Preserve the raw per-phase seconds stats["timing"] already has,
-            # and overlay these summary keys on top.
-            stats.setdefault("timing", {}).update(timing)
+            stats = merge_timing_stats(stats, timing)
 
         if not mat_path.exists():
             msg = (
@@ -331,7 +341,7 @@ class OpenModelicaRunner(SimulatorRunner):
             )
 
         diag_names = list(self.om_config.diagnostic_variables)
-        needed = _compute_needed_variables(mat_path, test, diag_names)
+        needed = compute_needed_variables(mat_path, test, diag_names)
 
         mat_data = read_result_mat(mat_path, variable_names=needed)
         if mat_data is None:
@@ -342,15 +352,8 @@ class OpenModelicaRunner(SimulatorRunner):
                 statistics=stats,
             )
 
-        variables, diagnostics = _extract_variables(mat_data, test, diag_names)
-
-        if diagnostics:
-            if stats is None:
-                stats = {}
-            for diag in diagnostics:
-                if len(diag.values) > 0:
-                    sig = 7 if diag.values.dtype == np.float32 else 15
-                    stats[diag.name] = float(f"%.{sig}g" % diag.values[-1])
+        variables, diagnostics = extract_variables(mat_data, test, diag_names)
+        stats = fold_diagnostics_into_statistics(stats, diagnostics)
 
         return TestResult(
             model_id=test.model_id,
@@ -359,108 +362,3 @@ class OpenModelicaRunner(SimulatorRunner):
             diagnostics=diagnostics,
             statistics=stats,
         )
-
-
-# ---------------------------------------------------------------------------
-# Helpers (free functions for testability)
-# ---------------------------------------------------------------------------
-
-
-def _compute_needed_variables(
-    mat_path: Path,
-    test: TestModel,
-    diagnostic_vars: list[str],
-) -> set[str] | None:
-    """Determine which variable names to extract.
-
-    Returns a set, or None to mean "load everything" (fallback if we can't
-    read the name matrix).
-    """
-    needed: set[str] = set()
-    # UnitTests component variables (same convention as Dymola runner)
-    if test.source in ("unit_tests", "both") and test.n_vars > 0:
-        for i in range(1, test.n_vars + 1):
-            needed.add(f"unitTests.x[{i}]")
-    # Pattern-based variables
-    if test.variable_patterns:
-        all_names = list_result_mat_variables(mat_path)
-        if all_names is None:
-            return None
-        resolved = resolve_variable_patterns(test.variable_patterns, all_names)
-        needed.update(resolved)
-    needed.update(diagnostic_vars)
-    return needed if needed else None
-
-
-def _extract_variables(
-    mat_data: dict,
-    test: TestModel,
-    diagnostic_vars: list[str],
-) -> tuple[list[VariableResult], list[VariableResult]]:
-    """Build VariableResult lists for tracked + diagnostic variables."""
-    results: list[VariableResult] = []
-    seen: set[str] = set()
-    idx = 1
-
-    # UnitTests variables (source = "unit_tests" or "both")
-    if test.source in ("unit_tests", "both") and test.n_vars > 0:
-        for i in range(1, test.n_vars + 1):
-            var_name = f"unitTests.x[{i}]"
-            if var_name in mat_data:
-                time_arr, values = mat_data[var_name]
-                if len(test.x_expressions) == test.n_vars:
-                    label = test.x_expressions[i - 1]
-                elif len(test.x_expressions) == 1 and test.n_vars > 1:
-                    label = f"{test.x_expressions[0]}[{i}]"
-                else:
-                    label = f"x[{i}]"
-                results.append(
-                    VariableResult(
-                        index=idx,
-                        time=time_arr,
-                        values=values,
-                        name=label,
-                    )
-                )
-                seen.add(var_name)
-                seen.add(label)
-                idx += 1
-
-    # Pattern-based variables
-    if test.variable_patterns:
-        available = list(mat_data.keys())
-        resolved = resolve_variable_patterns(test.variable_patterns, available)
-        for var_name in resolved:
-            if var_name in seen:
-                continue
-            if var_name in mat_data:
-                time_arr, values = mat_data[var_name]
-                results.append(
-                    VariableResult(
-                        index=idx,
-                        time=time_arr,
-                        values=values,
-                        name=var_name,
-                    )
-                )
-                seen.add(var_name)
-                idx += 1
-
-    # Diagnostics (stored as scalar summaries, not full trajectories —
-    # decision D54–D55)
-    diagnostics: list[VariableResult] = []
-    diag_idx = 1
-    for var_name in diagnostic_vars:
-        if var_name in mat_data:
-            time_arr, values = mat_data[var_name]
-            diagnostics.append(
-                VariableResult(
-                    index=diag_idx,
-                    time=time_arr,
-                    values=values,
-                    name=var_name,
-                )
-            )
-            diag_idx += 1
-
-    return results, diagnostics

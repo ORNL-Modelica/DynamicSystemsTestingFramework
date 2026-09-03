@@ -35,7 +35,12 @@ class TestValidatorRules:
                 "children": [
                     {"metric": "nrmse", "variable": "h", "tolerance": 1e-3},
                     {"metric": "nrmse", "variable": "v", "tolerance": 1e-3},
-                    {"metric": "range", "variable": "h", "min": -0.01, "max": 1.1},
+                    {
+                        "metric": "range",
+                        "variable": "h",
+                        "min_value": -0.01,
+                        "max_value": 1.1,
+                    },
                     {
                         "combinator": "warn",
                         "children": [
@@ -270,3 +275,63 @@ class TestRoleLookup:
     def test_companion_recognized(self):
         lookup = role_lookup_from_names(companions=["rig"])
         assert lookup("rig") is BaselineRole.COMPANION
+
+
+class TestWeightedDirectionConsistency:
+    """`weighted` sums child scores against ONE threshold with ONE
+    direction — mixing lower-is-better (nrmse) with higher-is-better
+    (tube fraction) children is meaningless and must be rejected at
+    validation time (D101; the registry's score_direction is the
+    authority)."""
+
+    def _tree(self, children):
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        return parse_metric_tree(
+            {
+                "combinator": "weighted",
+                "weights": [1.0] * len(children),
+                "threshold": 0.5,
+                "children": children,
+            }
+        )
+
+    def test_mixed_directions_rejected(self):
+        tree = self._tree(
+            [
+                {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+                {"metric": "tube", "variable": "y", "tube_width_mode": "rel"},
+            ]
+        )
+        errors = validate_tree(tree, role_lookup_from_names())
+        msgs = [e.message for e in errors]
+        assert any("mixes score directions" in m for m in msgs)
+        assert any("nrmse" in m and "tube" in m for m in msgs)
+
+    def test_uniform_directions_clean(self):
+        tree = self._tree(
+            [
+                {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+                {"metric": "points", "variable": "y"},
+            ]
+        )
+        errors = validate_tree(tree, role_lookup_from_names())
+        assert not any("mixes score directions" in e.message for e in errors)
+
+    def test_combinator_children_not_direction_checked(self):
+        """A combinator child's aggregate direction is ill-defined; the
+        eval layer already fails score-less children (warn) — only leaf
+        children participate in the direction check."""
+        tree = self._tree(
+            [
+                {"metric": "nrmse", "variable": "x", "tolerance": 1e-3},
+                {
+                    "combinator": "and",
+                    "children": [
+                        {"metric": "tube", "variable": "y", "tube_width_mode": "rel"}
+                    ],
+                },
+            ]
+        )
+        errors = validate_tree(tree, role_lookup_from_names())
+        assert not any("mixes score directions" in e.message for e in errors)

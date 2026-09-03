@@ -234,18 +234,11 @@ def _sibling_backend_index(
 def _ref_data_to_overlay_vars(ref_data: dict) -> dict[str, OverlayVariable]:
     """Flatten a raw ref-file dict (primary baseline shape) into overlay vars.
 
-    Ref files store ``{"simulation": {...}, "variables": [{"name":..., "values":[...]}, ...]}``
-    with the time vector either under ``time`` at top level or — for older
-    schemas — via :func:`storage.reference_store._extract_baselines`. We
-    go straight for the common shape and fall back to a safe no-op.
+    A ref file stores its primary flat: ``{"simulation": {...}, "time": [...],
+    "variables": [{"name":..., "values":[...]}, ...]}``. Anything else is a
+    safe no-op.
     """
     time = ref_data.get("time")
-    if not isinstance(time, list):
-        # Some schemas store time under a baseline entry. Try that.
-        baselines = ref_data.get("baselines") or {}
-        primary = baselines.get("primary") if isinstance(baselines, dict) else None
-        if isinstance(primary, dict):
-            time = primary.get("time")
     if not isinstance(time, list):
         return {}
     out: dict[str, OverlayVariable] = {}

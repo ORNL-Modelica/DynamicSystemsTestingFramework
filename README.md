@@ -22,7 +22,7 @@ Library-agnostic: tests can be discovered from in-model annotations (`UnitTests`
   | Julia / MTK | `.jl` ModelingToolkit | ✓ default | stdin-JSON pipe; Dyad untested |
   | Python | Any `simulate(stop_time, tol) -> dict` | subprocess-per-test | scipy, pandas, CSV loader, HTTP — anything |
 
-- **6 comparison modes**, composable via a `MetricTree`:
+- **7 comparison modes**, composable via a `MetricTree`:
 
   | Mode | What it scores |
   |---|---|
@@ -32,6 +32,7 @@ Library-agnostic: tests can be discovered from in-model annotations (`UnitTests`
   | `range` | Scalar `min_value` / `max_value` bounds — baseline-free |
   | `event-timing` | Match Modelica solver events against a declared list within per-event tolerance |
   | `dominant-frequency` | FFT peak matching against a declared peaks table — windowable |
+  | `scalar` | One number — a reduction of the signal (`max`/`min`/`mean`/`sample_mean`/`final`/`integral`) or a stored statistic by dotted path — vs a baseline scalar or declared bounds |
 
   Combinators: `and`, `or`, `k-of-n`, `warn` (relax to advisory), `weighted`. Leaves can scope to a time window and target named baselines (`primary`, soft-checks, companions).
 
@@ -154,7 +155,7 @@ uv run dstf --config testing.json import-baseline <model> <role> <name> <source>
 
 # Manifest / schema
 uv run dstf --config testing.json manifest dump
-uv run dstf --config testing.json manifest cleanup --orphans [--apply]
+uv run dstf --config testing.json manifest cleanup [--orphans] [--apply]   # dry-run by default
 uv run dstf --config testing.json export-schema --output schema.json
 
 # Diagnose Dymola Python interface discovery
@@ -190,4 +191,4 @@ For HTML reports as build artifacts, also pass `--report ./reports` and upload t
 
 ## Status
 
-5 simulator backends in production, 3 demo libraries, and a comprehensive pytest suite (a Playwright subset covers the interactive report). The reporter-as-IDE is feature-complete: per-leaf live scoring plus shift-click/drag editors for tube / point / range / peak criteria.
+5 simulator backends in production, 4 demo libraries, and a comprehensive pytest suite (a Playwright subset covers the interactive report). The reporter-as-IDE is feature-complete: per-leaf live scoring plus shift-click/drag editors for tube / point / range / peak criteria.

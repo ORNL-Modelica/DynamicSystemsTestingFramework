@@ -3,6 +3,7 @@
 import sys
 
 from ..comparison.comparator import TestComparison, VariableComparison
+from .status import FAIL, NO_REF, SIM_FAIL, classify
 
 # ANSI color codes
 _GREEN = "\033[92m"
@@ -19,12 +20,6 @@ def _color(text: str, code: str) -> str:
     return text
 
 
-def _pass_fail(passed: bool) -> str:
-    if passed:
-        return _color("PASS", _GREEN)
-    return _color("FAIL", _RED)
-
-
 def print_report(comparisons: list[TestComparison]) -> int:
     """Print a console report and return exit code (0=all passed, 1=failures)."""
     if not comparisons:
@@ -39,23 +34,21 @@ def print_report(comparisons: list[TestComparison]) -> int:
     warned: list[TestComparison] = []
 
     for comp in comparisons:
-        status = _pass_fail(comp.passed)
-
-        # Order matters: a failing test counts as FAILED even without a
-        # baseline (baseline-free modes carry a real verdict). NO_REF is
-        # reserved for tests where nothing was evaluated at all — review
-        # 2026-07-06, finding 5 (failing range-mode tests exited 0).
-        if not comp.sim_success:
+        # Ordering (SIM_FAIL > FAIL > NO_REF > PASS) and its rationale live
+        # in reporting.status — this is one of its call sites, not a copy.
+        state = classify(comp)
+        if state == SIM_FAIL:
             n_sim_fail += 1
             status = _color("SIM_FAIL", _RED)
-        elif not comp.passed:
+        elif state == FAIL:
             n_failed += 1
             status = _color("FAIL", _RED)
-        elif not comp.has_reference and not comp.evaluated:
+        elif state == NO_REF:
             n_no_ref += 1
             status = _color("NO_REF", _YELLOW)
         else:
             n_passed += 1
+            status = _color("PASS", _GREEN)
 
         # Show warning indicator if structural changes detected
         warn_tag = ""
@@ -118,6 +111,11 @@ def _print_var_failure(var: VariableComparison):
     """Print details for a failed variable comparison."""
     name = var.name or f"x[{var.index}]"
     print(f"    {name}:")
+    error = (var.diagnostics or {}).get("error")
+    if error:
+        # A sentinel (config that could not build, no data to compare) has
+        # no meaningful numbers — the reason is the whole finding.
+        print(f"      Not scored:         {error}")
     if var.is_constant:
         print(f"      RMSE:               {var.rmse:.6e} (constant signal)")
     else:

@@ -2,35 +2,29 @@
 
 Takes a :class:`SpecNode` from :mod:`tree_spec` plus the per-variable
 simulation result and reference dicts, and walks the tree to produce an
-evaluated :class:`MetricResult` root. Phase 3.3 is the first consumer of
-the spec form parsed in Phase 3.2.
+evaluated :class:`MetricResult` root.
 
 Leaves evaluate via the existing :func:`resolve_mode` factory — the spec
 is just a declarative envelope around the same per-variable comparison
 that :func:`compare_test` already does in the implicit-AND path. Internal
-nodes map ``spec.combinator`` to the concrete ``Combinator`` classes in
-:mod:`metric_tree`.
+nodes look ``spec.combinator`` up in :mod:`registry` to get the concrete
+``Combinator`` from :mod:`metric_tree`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from ..simulators import VariableResult
+from ..simulators.types import DatasetType
 from .comparator import VariableComparison
-from .metric_tree import (
-    AndCombinator,
-    Combinator,
-    KOfNCombinator,
-    MetricResult,
-    OrCombinator,
-    WarnCombinator,
-    WeightedCombinator,
-    leaf_from_variable,
-)
+from .metric_tree import Combinator, MetricResult, leaf_from_variable
 from .modes import resolve_mode
+from .registry import DEFAULT_METRIC, MetricDescriptor
+from .registry import combinator as registry_combinator
+from .registry import metric as registry_metric
 from .tree_spec import CombinatorSpec, LeafSpec, SpecNode
 
 PRIMARY_BASELINE = "primary"
@@ -42,26 +36,34 @@ class BaselineView:
 
     Packages the per-variable reference dicts and the shared time vector
     (or ``None`` when each variable carries its own time). Multiple named
-    baselines can coexist in the evaluator's input (``{"primary": ...,
-    "experiment": ...}``) — Phase 4.A.2 adds a leaf-level ``against``
-    field to pick which one a given leaf scores against.
+    baselines coexist in the evaluator's input (``{"primary": ...,
+    "experiment": ...}``); a leaf's ``against`` field picks which one it
+    scores against.
     """
 
     name: str
     ref_vars_by_name: dict[str, dict]
     shared_ref_time: np.ndarray | None = None
+    #: Statistics captured with the baseline (dotted keys like
+    #: ``translation.scalar_unknowns``) and the stored diagnostics summaries
+    #: (``{"name", "final", "min", "max"}``) — the baseline side of a
+    #: ``scalar`` leaf's stats-path quantity.
+    statistics: dict = field(default_factory=dict)
+    diagnostics: list[dict] = field(default_factory=list)
 
 
-# Spec-level metric names → the discriminator value in the override dict
-# consumed by resolve_mode. NRMSE is the default there (no "mode" key).
-_METRIC_TO_MODE_KEY = {
-    "nrmse": None,
-    "tube": "tube",
-    "points": "points",
-    "range": "range",
-    "event-timing": "event-timing",
-    "dominant-frequency": "dominant-frequency",
-}
+@dataclass(frozen=True)
+class ScalarSources:
+    """The current run's stored scalars, for stats-path ``scalar`` leaves.
+
+    Mirrors :class:`BaselineView`'s two scalar fields for the actual side.
+    The difference is the diagnostics shape: a run's diagnostics are
+    :class:`~dstf.simulators.VariableResult` trajectories, so ``final`` /
+    ``min`` / ``max`` are computed live rather than read from a summary.
+    """
+
+    statistics: dict = field(default_factory=dict)
+    diagnostics: list[VariableResult] = field(default_factory=list)
 
 
 def evaluate_spec(
@@ -69,6 +71,8 @@ def evaluate_spec(
     var_results_by_name: dict[str, VariableResult],
     baselines: dict[str, BaselineView],
     base_tolerance: float,
+    dataset_kind: DatasetType = DatasetType.TIME_SERIES,
+    scalars: ScalarSources | None = None,
 ) -> MetricResult:
     """Walk a spec tree and produce an evaluated :class:`MetricResult` root.
 
@@ -76,15 +80,28 @@ def evaluate_spec(
     per-test / config / default chain resolved by the caller).
 
     ``baselines`` maps baseline name (``"primary"``, ``"experiment"``, ...)
-    to a :class:`BaselineView`. Today every leaf scores against ``"primary"``
-    — a future ``against`` field on :class:`LeafSpec` (Phase 4.A.2) will
-    let a leaf pick a different baseline.
+    to a :class:`BaselineView`; each leaf's ``against`` field picks which
+    one it scores against, defaulting to ``"primary"``.
+
+    ``dataset_kind`` is the :class:`~dstf.simulators.types.DatasetType` the
+    supplied results carry. Every backend produces ``TIME_SERIES`` today,
+    so it is a parameter rather than a field on ``VariableResult`` — a leaf
+    whose metric doesn't accept the kind hard-fails with a diagnostic.
+
+    ``scalars`` carries the run's statistics + diagnostics for ``scalar``
+    leaves whose quantity is a stats path; leaves that reduce a tracked
+    series never touch it.
     """
+    sources = scalars if scalars is not None else ScalarSources()
     if isinstance(spec, LeafSpec):
-        return _evaluate_leaf(spec, var_results_by_name, baselines, base_tolerance)
+        return _evaluate_leaf(
+            spec, var_results_by_name, baselines, base_tolerance, dataset_kind, sources
+        )
 
     children = [
-        evaluate_spec(c, var_results_by_name, baselines, base_tolerance)
+        evaluate_spec(
+            c, var_results_by_name, baselines, base_tolerance, dataset_kind, sources
+        )
         for c in spec.children
     ]
     return _build_combinator(spec).combine(children)
@@ -203,19 +220,11 @@ def _walk_leaves(node: MetricResult, out: list[VariableComparison]) -> None:
 
 
 def _build_combinator(spec: CombinatorSpec) -> Combinator:
-    name = spec.combinator
-    if name == "and":
-        return AndCombinator()
-    if name == "or":
-        return OrCombinator()
-    if name == "k-of-n":
-        return KOfNCombinator(spec.k)
-    if name == "warn":
-        return WarnCombinator()
-    if name == "weighted":
-        return WeightedCombinator(spec.weights, spec.threshold, spec.direction)
-    # tree_spec validates on parse; this is just a defensive fallback.
-    raise ValueError(f"Unknown combinator: {name!r}")
+    desc = registry_combinator(spec.combinator)
+    if desc is None:
+        # tree_spec validates on parse; this is just a defensive fallback.
+        raise ValueError(f"Unknown combinator: {spec.combinator!r}")
+    return desc.build(spec)
 
 
 def _evaluate_leaf(
@@ -223,78 +232,237 @@ def _evaluate_leaf(
     var_results_by_name: dict[str, VariableResult],
     baselines: dict[str, BaselineView],
     base_tolerance: float,
+    dataset_kind: DatasetType = DatasetType.TIME_SERIES,
+    scalars: ScalarSources | None = None,
 ) -> MetricResult:
-    var_result = var_results_by_name.get(leaf.variable)
+    # A metric declares which dataset kinds it can score. Unscorable input
+    # is a hard fail with a diagnostic naming both sides, not a crash inside
+    # the mode. Unreachable for the builtins (all accept TIME_SERIES, which
+    # is all any backend produces) — it guards registered metrics.
+    desc = registry_metric(leaf.metric)
+    if desc is not None and dataset_kind not in desc.accepted_datasets:
+        return leaf_from_variable(
+            _incompatible_dataset_comparison(leaf, desc, dataset_kind)
+        )
+
     override = _leaf_override_dict(leaf)
     tolerance = float(leaf.params.get("tolerance", base_tolerance))
-    mode = resolve_mode(override, tolerance, default_points=False)
+    try:
+        mode = resolve_mode(override, tolerance, default_points=False)
+    except ValueError as exc:
+        # A misconfigured leaf fails that leaf, like the flat
+        # variable_overrides path — one bad spec entry must not abort the
+        # whole run with an anonymous traceback (D107).
+        return leaf_from_variable(_leaf_config_error_comparison(leaf, exc))
 
-    # Phase 4.A.2: leaf.against picks the named baseline. Missing name →
+    # leaf.against picks the named baseline. Missing name →
     # hard fail with a clear label (loud on user-facing reports). Unless
     # the leaf is baseline-free (range / declared-events / declared-peaks)
     # — then we don't need any baseline at all (idea #59 / D83).
     baseline = baselines.get(leaf.against)
     if baseline is None and not mode.is_baseline_free():
         return leaf_from_variable(_missing_baseline_comparison(leaf))
-    ref_var = baseline.ref_vars_by_name.get(leaf.variable) if baseline else None
 
-    if var_result is None:
-        # Missing actual result is always a hard fail — no mode can score
-        # without the actual trajectory.
-        return leaf_from_variable(
-            _missing_variable_comparison(leaf.variable, var_result)
+    quantity = leaf.params.get("quantity")
+    windowed = False
+    if desc is not None and desc.accepts_quantity and isinstance(quantity, str):
+        # A string ``quantity`` reads a stored scalar instead of a tracked
+        # series — where the data comes from is the evaluator's call, the
+        # same seam the window below occupies (a future ``{"expr": ...}``
+        # quantity extends this spot). The window is skipped deliberately:
+        # a stored scalar is not a time series.
+        #
+        # The switch is gated on the metric's ``accepts_quantity`` flag, not
+        # on the param alone: a stray ``quantity`` on an nrmse/tube/points
+        # leaf must leave that leaf scoring its trajectory. Ungated, both
+        # sides collapsed to one identical sample and a 2x-off signal passed.
+        resolved = _scalar_path_arrays(
+            leaf, quantity, mode, baseline, scalars or ScalarSources()
         )
+        if isinstance(resolved, VariableComparison):
+            return leaf_from_variable(resolved)
+        ref_time, ref_values, act_time, act_values = resolved
+        index = 0
+    else:
+        var_result = var_results_by_name.get(leaf.variable)
+        ref_var = baseline.ref_vars_by_name.get(leaf.variable) if baseline else None
 
-    if ref_var is None:
-        if not mode.is_baseline_free():
+        if var_result is None:
+            # Missing actual result is always a hard fail — no mode can score
+            # without the actual trajectory.
             return leaf_from_variable(
                 _missing_variable_comparison(leaf.variable, var_result)
             )
-        ref_time = np.array([])
-        ref_values = np.array([])
-    else:
-        if baseline is not None and baseline.shared_ref_time is not None:
-            ref_time = baseline.shared_ref_time
+
+        if ref_var is None:
+            if not mode.is_baseline_free():
+                return leaf_from_variable(
+                    _missing_variable_comparison(leaf.variable, var_result)
+                )
+            ref_time = np.array([])
+            ref_values = np.array([])
         else:
-            ref_time = np.array(ref_var["time"])
-        ref_values = np.array(ref_var["values"])
+            if baseline is not None and baseline.shared_ref_time is not None:
+                ref_time = baseline.shared_ref_time
+            else:
+                ref_time = np.array(ref_var["time"])
+            ref_values = np.array(ref_var["values"])
 
-    act_time = var_result.time
-    act_values = var_result.values
+        act_time = var_result.time
+        act_values = var_result.values
+        index = var_result.index
 
-    # Apply the leaf window (idea #46) — slice both sides uniformly before
-    # handing to mode.compare. Mode configs stay untouched; slicing is a
-    # cross-cutting leaf property. Skip the ref slice when there's no
-    # reference at all (baseline-free path).
-    if leaf.window_start is not None or leaf.window_end is not None:
-        if len(ref_time) > 0:
-            ref_time, ref_values = _slice_window(
-                ref_time,
-                ref_values,
+        # Apply the leaf window (idea #46) — slice both sides uniformly before
+        # handing to mode.compare. Mode configs stay untouched; slicing is a
+        # cross-cutting leaf property. Skip the ref slice when there's no
+        # reference at all (baseline-free path).
+        if leaf.window_start is not None or leaf.window_end is not None:
+            windowed = True
+            if len(ref_time) > 0:
+                ref_time, ref_values = _slice_window(
+                    ref_time,
+                    ref_values,
+                    leaf.window_start,
+                    leaf.window_end,
+                )
+            act_time, act_values = _slice_window(
+                act_time,
+                act_values,
                 leaf.window_start,
                 leaf.window_end,
             )
-        act_time, act_values = _slice_window(
-            act_time,
-            act_values,
-            leaf.window_start,
-            leaf.window_end,
-        )
 
-    vc = mode.compare(ref_time, ref_values, act_time, act_values)
-    vc.index = var_result.index
+    try:
+        vc = mode.compare(ref_time, ref_values, act_time, act_values)
+    except ValueError as exc:
+        # Config errors a mode can only detect at compare time (a tube
+        # control point with no widths, an unknown width mode) — same
+        # leaf-scoped failure as the resolve_mode guard above (D107).
+        return leaf_from_variable(_leaf_config_error_comparison(leaf, exc))
+    vc.index = index
     vc.name = leaf.variable
     vc.tolerance_used = tolerance
     leaf_result = leaf_from_variable(vc)
     # Record which baseline this leaf scored against, so the reporter can
     # show "against=experiment" on non-primary leaves.
     leaf_result.diagnostics["against"] = leaf.against
-    if leaf.window_start is not None or leaf.window_end is not None:
+    if quantity is not None:
+        leaf_result.diagnostics["quantity"] = quantity
+    if windowed:
         leaf_result.diagnostics["window"] = {
             "start": leaf.window_start,
             "end": leaf.window_end,
         }
     return leaf_result
+
+
+def _scalar_path_arrays(
+    leaf: LeafSpec,
+    path: str,
+    mode,
+    baseline: BaselineView | None,
+    scalars: ScalarSources,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | VariableComparison:
+    """Resolve a stats-path quantity on both sides into 1-sample arrays.
+
+    Returns ``(ref_time, ref_values, act_time, act_values)``, or a hard-fail
+    :class:`VariableComparison` naming the path and the side it is missing
+    from. The reference side is left empty when the leaf scores against
+    declared bounds (baseline-free) — there may be no baseline at all.
+    """
+    act = _resolve_scalar_path(path, scalars.statistics, scalars.diagnostics)
+    if act is None:
+        return _missing_scalar_path_comparison(leaf, path, "current run")
+
+    empty = np.array([])
+    ref_time, ref_values = empty, empty
+    if baseline is not None:
+        ref = _resolve_scalar_path(path, baseline.statistics, baseline.diagnostics)
+        if ref is None:
+            if not mode.is_baseline_free():
+                return _missing_scalar_path_comparison(
+                    leaf, path, f"baseline {baseline.name!r}"
+                )
+        else:
+            ref_time, ref_values = np.array([0.0]), np.array([ref])
+    return ref_time, ref_values, np.array([0.0]), np.array([act])
+
+
+def _resolve_scalar_path(
+    path: str,
+    statistics: dict,
+    diagnostics: list,
+) -> float | None:
+    """Resolve a dotted quantity path to a number, or ``None`` if absent.
+
+    Two lookups, in order, applied identically to both sides:
+
+    1. a dotted walk into ``statistics`` (``translation.scalar_unknowns``);
+    2. the last segment read as a diagnostics-summary field —
+       ``"CPUtime.final"`` means diagnostic ``CPUtime``, field ``final``
+       (one of final / min / max).
+
+    Statistics win on a collision: ``EventCounter`` lives in both maps, and
+    the statistics entry is the one the structural-warning checks already
+    treat as authoritative.
+
+    Diagnostics come in three shapes: the baseline's stored summaries
+    (``{"name", "final", "min", "max"}``), pre-summary baselines carrying
+    the full ``{"name", "values"}`` array (old data — the reporter's
+    ``_build_trajectories`` still back-reads it), and the current run's
+    ``VariableResult`` trajectories. The last two are summarized here; the
+    run's trajectories are deliberately not stored (reference_store:
+    CPUtime is nondeterministic).
+    """
+    value = _dotted_lookup(statistics, path)
+    if value is not None:
+        return value
+
+    name, _, field_name = path.rpartition(".")
+    if not name or field_name not in ("final", "min", "max"):
+        return None
+    for entry in diagnostics or []:
+        if isinstance(entry, VariableResult):
+            if entry.name != name:
+                continue
+            return _summarize_values(entry.values, field_name)
+        if isinstance(entry, dict) and entry.get("name") == name:
+            if field_name in entry:
+                return _as_float(entry.get(field_name))
+            # Pre-summary baseline: derive from the stored full array.
+            return _summarize_values(entry.get("values"), field_name)
+    return None
+
+
+def _summarize_values(values, field_name: str) -> float | None:
+    """Return the ``final`` / ``min`` / ``max`` of a diagnostic's array."""
+    if values is None:
+        return None
+    array = np.asarray(values, dtype=float)
+    if array.size == 0:
+        return None
+    if field_name == "final":
+        return float(array[-1])
+    return float(array.min() if field_name == "min" else array.max())
+
+
+def _dotted_lookup(statistics: dict, path: str) -> float | None:
+    """Walk ``path`` through nested dicts; ``None`` unless it lands on a number."""
+    node: object = statistics or {}
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return _as_float(node)
+
+
+def _as_float(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _slice_window(
@@ -305,29 +473,92 @@ def _slice_window(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return ``(t, v)`` restricted to ``[start, end]`` (inclusive).
 
-    Open-ended on either side supported. Falls back to the original
-    arrays if the window leaves nothing — the downstream mode will
-    produce its own zero-sample failure rather than crashing here.
+    Open-ended on either side supported. A degenerate window returns empty
+    arrays — modes that can't handle empty data (NRMSE / tube) then fail
+    loudly downstream with a clear error, rather than being silently
+    widened back to the full trace here.
     """
     mask = np.ones(len(t), dtype=bool)
     if start is not None:
         mask &= t >= start
     if end is not None:
         mask &= t <= end
-    if not mask.any():
-        # Degenerate window — return empty arrays; modes that can't handle
-        # empty data (NRMSE / tube) will fail loudly with a clear error.
-        return t[:0], v[:0]
     return t[mask], v[mask]
 
 
 def _leaf_override_dict(leaf: LeafSpec) -> dict:
-    """Translate a LeafSpec to the flat override dict resolve_mode expects."""
+    """Translate a LeafSpec to the flat override dict resolve_mode expects.
+
+    Spec metric names and override ``mode`` strings are the same identifier,
+    so this is the identity mapping plus one rule: the default metric has no
+    ``mode`` key (its absence is what selects it).
+    """
     override = dict(leaf.params)
-    mode_key = _METRIC_TO_MODE_KEY.get(leaf.metric)
-    if mode_key is not None:
-        override["mode"] = mode_key
+    if leaf.metric != DEFAULT_METRIC:
+        override["mode"] = leaf.metric
     return override
+
+
+def _incompatible_dataset_comparison(
+    leaf: LeafSpec,
+    desc: MetricDescriptor,
+    dataset_kind: DatasetType,
+) -> VariableComparison:
+    """Build a hard-fail sentinel for a metric that can't score this data.
+
+    Takes the already-resolved descriptor — the caller just checked its
+    ``accepted_datasets``, and a re-lookup here would need a dead None
+    branch (mypy union-attr).
+    """
+    accepted = ", ".join(sorted(d.value for d in desc.accepted_datasets))
+    return VariableComparison(
+        index=0,
+        name=(
+            f"{leaf.variable} (metric {leaf.metric!r} accepts {accepted}; "
+            f"got {dataset_kind.value})"
+        ),
+        passed=False,
+        nrmse=float("inf"),
+        rmse=float("inf"),
+        signal_range=0.0,
+        max_abs_error=float("inf"),
+        max_abs_error_time=0.0,
+        reference_final=float("nan"),
+        actual_final=float("nan"),
+        mode=leaf.metric,
+    )
+
+
+def _leaf_config_error_comparison(
+    leaf: LeafSpec,
+    exc: ValueError,
+) -> VariableComparison:
+    """Hard-fail sentinel for a leaf whose metric config is invalid.
+
+    Names the variable and the metric so the report says which leaf to fix;
+    the raised message (which names the correct key) rides in
+    ``diagnostics["error"]``, matching the flat-override path's shape.
+
+    ``config_error`` distinguishes this from a data-shaped sentinel like
+    ``_no_data_failure``: a config that never built has no live-scoring
+    state, so the reporter pins the leaf CLI-authoritative. An empty window
+    is data, not config — that leaf stays live so dragging the window back
+    over the samples re-scores it.
+    """
+    return VariableComparison(
+        index=0,
+        name=f"{leaf.variable} (metric {leaf.metric!r} misconfigured)",
+        passed=False,
+        nrmse=float("inf"),
+        rmse=float("inf"),
+        signal_range=0.0,
+        max_abs_error=float("inf"),
+        max_abs_error_time=0.0,
+        reference_final=float("nan"),
+        actual_final=float("nan"),
+        mode=leaf.metric,
+        diagnostics={"error": str(exc), "config_error": True},
+    )
 
 
 def _missing_baseline_comparison(leaf: LeafSpec) -> VariableComparison:
@@ -343,6 +574,35 @@ def _missing_baseline_comparison(leaf: LeafSpec) -> VariableComparison:
         max_abs_error_time=0.0,
         reference_final=float("nan"),
         actual_final=float("nan"),
+        mode=leaf.metric,
+    )
+
+
+def _missing_scalar_path_comparison(
+    leaf: LeafSpec,
+    path: str,
+    side: str,
+) -> VariableComparison:
+    """Hard-fail sentinel for a quantity path absent from one side.
+
+    Names the path and the side (``"current run"`` / ``"baseline 'x'"``) —
+    a stats path that silently scored as 0 would be a green regression
+    test measuring nothing. When the leaf took its label from the path
+    (no authored ``variable``), the path is stated once, not twice.
+    """
+    label = "" if leaf.variable == path else f"{leaf.variable} "
+    return VariableComparison(
+        index=0,
+        name=f"{label}(quantity {path!r} not found in {side})",
+        passed=False,
+        nrmse=float("inf"),
+        rmse=float("inf"),
+        signal_range=0.0,
+        max_abs_error=float("inf"),
+        max_abs_error_time=0.0,
+        reference_final=float("nan"),
+        actual_final=float("nan"),
+        mode=leaf.metric,
     )
 
 

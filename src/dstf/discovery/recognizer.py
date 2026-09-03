@@ -29,7 +29,7 @@ class RecognizerResult:
 
     The shape today mirrors what the bundled Modelica recognizer extracts.
     PTA.4 broadens this with runtime-behavior fields (``simulate_only``,
-    ``requested_fmu_export``, ...).
+    ``requested_baselines``, ...).
     """
 
     model_id: str
@@ -47,10 +47,9 @@ class RecognizerResult:
     number_of_intervals: int | None = None
     output_interval: float | None = None
     # PTA.4 — richer-contract runtime-behavior fields. Recognizers can set
-    # these; TestModel carries them through. Consumers land in PTA.5 (for
-    # simulate_only) and 4.B (for requested_fmu_export / requested_baselines).
+    # these; TestModel carries them through. Consumed by PTA.5 (simulate_only)
+    # and 4.B's cross-backend chain (requested_baselines).
     simulate_only: bool | None = None
-    requested_fmu_export: bool | None = None
     requested_baselines: list[str] | None = None
 
 

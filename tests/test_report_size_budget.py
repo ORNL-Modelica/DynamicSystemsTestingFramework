@@ -13,7 +13,7 @@ import math
 
 import numpy as np
 
-from dstf.reporting.plot_comparison import _decimate_context_for_html
+from dstf.reporting.report_suite import _decimate_context_for_html
 
 BUDGET_BYTES = 5 * 1024 * 1024  # 5 MB
 N_VARS = 50

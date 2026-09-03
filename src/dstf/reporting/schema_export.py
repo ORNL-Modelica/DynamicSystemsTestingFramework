@@ -1,8 +1,8 @@
 """JSON-Schema export for ``test_spec.json`` (PHASE_6_PLAN 6.4.5).
 
 Derives a JSON-Schema document from:
-  * the six :class:`ComparisonMode` Config dataclasses (reusing the
-    6.1.1 introspection — one definition per mode);
+  * every registered metric's Config dataclass (reusing the 6.1.1
+    introspection — one definition per mode);
   * the :class:`LeafSpec` / :class:`CombinatorSpec` grammar (the
     MetricTree shape);
   * the per-test entry shape (simulation block, comparison block,
@@ -17,15 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..comparison.modes import (
-    DominantFrequencyConfig,
-    EventTimingConfig,
-    NrmseConfig,
-    PointsConfig,
-    RangeConfig,
-    TubeConfig,
-)
-from ..comparison.tree_spec import VALID_COMBINATORS, VALID_METRICS
+from ..comparison.registry import combinator_names, metric_names, metrics
 from .ui.mode_controls import derive_schema
 
 _JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
@@ -61,20 +53,50 @@ def _field_to_schema(field) -> dict:
     return node
 
 
-# The six comparison modes, in spec order. Single source for both the
-# ``$defs`` emission and the leaf's if/then wiring (finding 72).
-_MODES: list[tuple[str, type]] = [
-    ("nrmse", NrmseConfig),
-    ("tube", TubeConfig),
-    ("points", PointsConfig),
-    ("range", RangeConfig),
-    ("event-timing", EventTimingConfig),
-    ("dominant-frequency", DominantFrequencyConfig),
-]
+def _modes() -> list[tuple[str, type]]:
+    """Registered metrics in registration order, as ``(name, config_cls)``.
+
+    Single source for both the ``$defs`` emission and the leaf's if/then
+    wiring (finding 72) — and the reason a registered metric shows up in
+    the exported schema without editing this module.
+    """
+    return [(desc.name, desc.config_cls) for desc in metrics()]
 
 
 def _mode_def_name(mode_name: str) -> str:
     return f"mode_{mode_name.replace('-', '_')}"
+
+
+def _quantity_metric_names() -> list[str]:
+    """Registered metrics whose ``quantity`` may stand in for ``variable``.
+
+    Mirrors the parser rule in :func:`~dstf.comparison.tree_spec._parse_leaf`
+    — both read ``MetricDescriptor.accepts_quantity``, so the exported
+    grammar and the one the CLI enforces can't drift apart.
+    """
+    return [desc.name for desc in metrics() if desc.accepts_quantity]
+
+
+def _leaf_identity_rule() -> dict:
+    """The "how a leaf names its data" requirement, as JSON-Schema.
+
+    Every leaf needs ``metric``. It then needs either a ``variable`` (the
+    tracked series it scores) or — only for a metric that declares
+    ``accepts_quantity`` — a string ``quantity`` naming a stored scalar.
+    """
+    alternatives: list[dict] = [{"required": ["variable"]}]
+    quantity_metrics = _quantity_metric_names()
+    if quantity_metrics:
+        alternatives.append(
+            {
+                "properties": {
+                    "metric": {"enum": quantity_metrics},
+                    "quantity": {"type": "string", "minLength": 1},
+                },
+                "required": ["metric", "quantity"],
+            }
+        )
+    return {"anyOf": alternatives}
 
 
 def _leaf_common_properties() -> dict[str, Any]:
@@ -88,7 +110,7 @@ def _leaf_common_properties() -> dict[str, Any]:
     return {
         "metric": {
             "type": "string",
-            "enum": sorted(VALID_METRICS),
+            "enum": sorted(metric_names()),
             "description": "The per-variable metric to score with.",
         },
         "variable": {
@@ -138,12 +160,17 @@ def _mode_def(config_cls: type, mode_name: str) -> dict:
 
 def build_schema() -> dict:
     """Build the top-level JSON-Schema document."""
-    mode_defs = {_mode_def_name(name): _mode_def(cls, name) for name, cls in _MODES}
+    modes = _modes()
+    mode_defs = {_mode_def_name(name): _mode_def(cls, name) for name, cls in modes}
 
     leaf_spec = {
         "type": "object",
         "title": "Metric tree leaf",
-        "required": ["metric", "variable"],
+        # ``variable`` is not unconditionally required: a metric that
+        # declares ``accepts_quantity`` may name its data with a string
+        # ``quantity`` instead (see _leaf_identity_rule, folded into allOf
+        # below so it composes with the per-mode if/then clauses).
+        "required": ["metric"],
         # Mode-specific knobs live inline alongside metric/variable per the
         # historical override shape — e.g., a leaf with metric=tube may set
         # tube_rel, tube_width_mode, etc. (typed via the allOf below).
@@ -153,14 +180,17 @@ def build_schema() -> dict:
         # ``metric`` discriminator selects the matching mode definition, so
         # validators type-check mode knobs and editors get autocomplete.
         "allOf": [
-            {
-                "if": {
-                    "properties": {"metric": {"const": name}},
-                    "required": ["metric"],
-                },
-                "then": {"$ref": f"#/$defs/{_mode_def_name(name)}"},
-            }
-            for name, _ in _MODES
+            _leaf_identity_rule(),
+            *(
+                {
+                    "if": {
+                        "properties": {"metric": {"const": name}},
+                        "required": ["metric"],
+                    },
+                    "then": {"$ref": f"#/$defs/{_mode_def_name(name)}"},
+                }
+                for name, _ in modes
+            ),
         ],
     }
 
@@ -171,7 +201,7 @@ def build_schema() -> dict:
         "properties": {
             "combinator": {
                 "type": "string",
-                "enum": sorted(VALID_COMBINATORS),
+                "enum": sorted(combinator_names()),
             },
             "children": {
                 "type": "array",
@@ -199,9 +229,12 @@ def build_schema() -> dict:
         "required": ["model"],
         "properties": {
             "model": {"type": "string"},
-            "fmu": {
+            "source": {
                 "type": "string",
-                "description": "Path to FMU (relative to config).",
+                "description": (
+                    "Path to the simulation source file "
+                    "(.jl / .py / .fmu), relative to the spec file."
+                ),
             },
             "variables": {"type": "array", "items": {"type": "string"}},
             "simulation": {
@@ -210,6 +243,8 @@ def build_schema() -> dict:
                     "stop_time": {"type": "number"},
                     "tolerance": {"type": "number"},
                     "method": {"type": "string"},
+                    "number_of_intervals": {"type": "integer"},
+                    "output_interval": {"type": "number"},
                     "timeout": {"type": "integer"},
                 },
                 "additionalProperties": True,

@@ -405,7 +405,12 @@ class TestCollectVariables:
                 "combinator": "and",
                 "children": [
                     {"metric": "nrmse", "variable": "h"},
-                    {"metric": "range", "variable": "h", "min": -1.0, "max": 1.0},
+                    {
+                        "metric": "range",
+                        "variable": "h",
+                        "min_value": -1.0,
+                        "max_value": 1.0,
+                    },
                     {"metric": "nrmse", "variable": "v"},
                     {"metric": "tube", "variable": "h", "tube_rel": 0.02},
                 ],
@@ -422,7 +427,12 @@ class TestLeavesForVariable:
                 "children": [
                     {"metric": "nrmse", "variable": "h"},
                     {"metric": "nrmse", "variable": "v"},
-                    {"metric": "range", "variable": "h", "min": 0.0, "max": 1.0},
+                    {
+                        "metric": "range",
+                        "variable": "h",
+                        "min_value": 0.0,
+                        "max_value": 1.0,
+                    },
                 ],
             }
         )
@@ -475,11 +485,13 @@ class TestSynthesizeImplicitTree:
     def test_override_range_metric(self):
         tree = synthesize_implicit_tree(
             ["h"],
-            variable_overrides={"h": {"mode": "range", "min": -1.0, "max": 1.0}},
+            variable_overrides={
+                "h": {"mode": "range", "min_value": -1.0, "max_value": 1.0}
+            },
         )
         leaf = tree.children[0]
         assert leaf.metric == "range"
-        assert leaf.params == {"min": -1.0, "max": 1.0}
+        assert leaf.params == {"min_value": -1.0, "max_value": 1.0}
 
     def test_base_tolerance_filled_when_override_silent(self):
         tree = synthesize_implicit_tree(["h"], base_tolerance=1e-3)

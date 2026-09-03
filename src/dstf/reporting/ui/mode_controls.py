@@ -20,9 +20,10 @@ import dataclasses
 import html
 import types
 import typing
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Union
+
+from ...comparison.registry import metric, metrics
 
 # ---------------------------------------------------------------------------
 # Schema types
@@ -272,51 +273,14 @@ def _render_field(f: FieldSpec, value: Any) -> str:
         f'<label class="mc-field mc-passthrough"{help_attr}>'
         f"<span>{label}</span>"
         f'<textarea data-field="{name_attr}" '
-        'data-passthrough="true" rows="2">'
+        'data-passthrough="true" rows="1">'
         f"{html.escape(raw)}</textarea></label>"
     )
 
 
 # ---------------------------------------------------------------------------
-# Registry
+# Mode UI lookup
 # ---------------------------------------------------------------------------
-
-#: Optional override callable: takes (schema, *, mode, variable, values)
-#: and returns an HTML fragment. Registered per mode for cases where the
-#: auto-derived form is insufficient (tube with conditional rel/abs/min
-#: fields; range with visual handles on the plot — 6.1.4 territory).
-CustomRenderer = Callable[..., str]
-
-
-@dataclass
-class PlotContribution:
-    """Declarative description of a leaf's contribution to its variable plot.
-
-    Server-side stub — the Stage-2 JS-side ``MODE_PLOT_CONTRIBUTIONS``
-    registry is what actually mutates Plotly. This dataclass exists so
-    that every mode's contract is represented in the Python registry too,
-    which is the source of truth for "what does this mode contribute,
-    visually?" for tooling like the recommender (Phase 7) and the
-    JSON-Schema export.
-
-    Fields are intentionally Plotly-shaped — `shapes` and `annotations`
-    map 1:1 to ``layout.shapes`` / ``layout.annotations``; ``traces`` is
-    a list of trace specs added to the plot. ``secondary_panel`` requests
-    a sibling panel (e.g., dominant-frequency's spectrum view) keyed by
-    panel name; the template allocates one ``<div>`` per requested panel.
-    """
-
-    traces: list[dict] = field(default_factory=list)
-    shapes: list[dict] = field(default_factory=list)
-    annotations: list[dict] = field(default_factory=list)
-    secondary_panel: str | None = None  # e.g. "spectrum" for dominant-frequency
-
-
-#: A mode's plot-contribution function takes the leaf's config values dict
-#: and returns a :class:`PlotContribution`. Static contributions only here
-#: — interactive editing (tube shaping) lives JS-side. Default ``None``
-#: means "no intrinsic plot artifact" (NRMSE).
-PlotContributionFn = Callable[[dict[str, Any]], PlotContribution]
 
 
 @dataclass
@@ -324,26 +288,10 @@ class ModeUI:
     name: str
     config_cls: type
     schema: Schema
-    custom_renderer: CustomRenderer | None = None
-    plot_contribution: PlotContributionFn | None = None
-    # Marker that the mode has a JS-side interactive plot editor
-    # registered under ``MODE_PLOT_EDITORS[name]``. Python-side is just
-    # the declaration; the editor itself lives in the template JS
-    # (Shift+click handlers, drag, control-point markers). Having the
-    # slot here keeps "what does this mode support" discoverable from
-    # the single Python registry (recommender, schema export, etc.).
-    has_plot_editor: bool = False
 
     def render(
         self, *, variable: str | None = None, values: dict[str, Any] | None = None
     ) -> str:
-        if self.custom_renderer is not None:
-            return self.custom_renderer(
-                self.schema,
-                mode=self.name,
-                variable=variable,
-                values=values,
-            )
         return render_schema_html(
             self.schema,
             mode=self.name,
@@ -351,53 +299,51 @@ class ModeUI:
             values=values,
         )
 
-    def contribute_to_plot(self, values: dict[str, Any]) -> PlotContribution | None:
-        """Return the leaf's static plot contribution, or ``None``.
 
-        Stage-1 stub — Stage 2 implements per-mode contributions
-        (tube polygon, range dashed lines, final-only marker, etc.).
-        """
-        if self.plot_contribution is None:
-            return None
-        return self.plot_contribution(values)
-
-
-_REGISTRY: dict[str, ModeUI] = {}
-
-
-def register_mode_ui(
-    name: str,
-    config_cls: type,
-    *,
-    custom_renderer: CustomRenderer | None = None,
-    plot_contribution: PlotContributionFn | None = None,
-    has_plot_editor: bool = False,
-) -> ModeUI:
-    """Register a mode's UI. Returns the :class:`ModeUI` for test/inspection."""
-    schema = derive_schema(config_cls, mode=name)
-    entry = ModeUI(
-        name=name,
-        config_cls=config_cls,
-        schema=schema,
-        custom_renderer=custom_renderer,
-        plot_contribution=plot_contribution,
-        has_plot_editor=has_plot_editor,
-    )
-    _REGISTRY[name] = entry
-    return entry
+#: Memoized auto-derivations, keyed by metric name. Invalidated by
+#: comparing the cached ``config_cls`` against the registry's — so a
+#: registry reset or re-registration under the same name re-derives.
+_DERIVED: dict[str, ModeUI] = {}
 
 
 def get_mode_ui(name: str) -> ModeUI | None:
-    """Return the registered ModeUI for ``name`` or None if not registered."""
-    return _REGISTRY.get(name)
+    """Return the ModeUI for ``name``, or None if there is no such mode.
+
+    Derived from the metric registry's ``config_cls`` — registering a
+    metric is the only way to get controls, so the UI mode set and the
+    metric set cannot drift apart.
+    """
+    return _derived_mode_ui(name)
+
+
+def _derived_mode_ui(name: str) -> ModeUI | None:
+    desc = metric(name)
+    if desc is None:
+        return None
+    cached = _DERIVED.get(name)
+    if cached is not None and cached.config_cls is desc.config_cls:
+        return cached
+    entry = ModeUI(
+        name=name,
+        config_cls=desc.config_cls,
+        schema=derive_schema(desc.config_cls, mode=name),
+    )
+    _DERIVED[name] = entry
+    return entry
 
 
 def registered_modes() -> list[str]:
-    return list(_REGISTRY.keys())
+    """Mode names with a UI, in metric-registration order.
+
+    Exactly the metric registry's names — the add-leaf dropdown,
+    :func:`emit_mode_schemas`, the schema export and ``tree_spec``
+    parsing all read this one list.
+    """
+    return [desc.name for desc in metrics()]
 
 
 def emit_mode_schemas() -> dict[str, dict]:
-    """Return ``{mode_name: schema_dict}`` for every registered mode.
+    """Return ``{mode_name: schema_dict}`` for every mode with a UI.
 
     The Stage-2 JS-side recursive UI renders leaf controls from these
     schemas rather than from pre-rendered HTML — that way newly-added
@@ -405,7 +351,12 @@ def emit_mode_schemas() -> dict[str, dict]:
     without a server round-trip. Python stays the single source of truth
     for field types / defaults / Literal choices.
     """
-    return {name: ui.schema.to_dict() for name, ui in _REGISTRY.items()}
+    out: dict[str, dict] = {}
+    for name in registered_modes():
+        ui = get_mode_ui(name)
+        if ui is not None:
+            out[name] = ui.schema.to_dict()
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -461,38 +412,3 @@ def render_window_controls_html(
         "</label>"
         "</div>"
     )
-
-
-# ---------------------------------------------------------------------------
-# Bundled registrations — six comparison modes
-# ---------------------------------------------------------------------------
-
-
-def _register_bundled() -> None:
-    """Register the six built-in modes' UI at import time."""
-    from ...comparison.modes import (
-        DominantFrequencyConfig,
-        EventTimingConfig,
-        NrmseConfig,
-        PointsConfig,
-        RangeConfig,
-        TubeConfig,
-    )
-
-    register_mode_ui("nrmse", NrmseConfig)
-    # Tube has a JS-side interactive plot editor (MODE_PLOT_EDITORS.tube)
-    # for shaping time-varying control points. The schema-driven inputs
-    # (tube_width_mode, tube_rel, tube_abs, tube_min_width,
-    # tube_interpolation, passthrough tube_points) remain; the editor
-    # sits on top of them, activated by clicking the leaf node.
-    register_mode_ui("tube", TubeConfig, has_plot_editor=True)
-    register_mode_ui("points", PointsConfig, has_plot_editor=True)
-    # Range has a JS-side interactive plot editor — drag the dashed
-    # min/max reference lines directly on the plot. Scalar inputs in
-    # the leaf's controls also edit the same state (bidirectional sync).
-    register_mode_ui("range", RangeConfig, has_plot_editor=True)
-    register_mode_ui("event-timing", EventTimingConfig)
-    register_mode_ui("dominant-frequency", DominantFrequencyConfig)
-
-
-_register_bundled()

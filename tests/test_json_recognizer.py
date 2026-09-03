@@ -761,8 +761,8 @@ class TestExperimentAnnotationField:
         assert result.simulate_only is True
 
     def test_constant_bool_field(self, tmp_path):
-        # PTA.4 — recognizer can stamp a constant boolean (e.g., "all my
-        # tests should request FMU export")
+        # PTA.4 — recognizer can stamp a constant boolean (e.g., "every model
+        # matching this pattern is simulate-only")
         mo = _write_mo(
             tmp_path,
             "FooTest",
@@ -778,12 +778,12 @@ class TestExperimentAnnotationField:
                 "name": "test",
                 "match": {"type": "extends", "class_pattern": "*Icons.Example"},
                 "fields": {
-                    "requested_fmu_export": {"from": "constant", "value": True},
+                    "simulate_only": {"from": "constant", "value": True},
                 },
             }
         )
         result = rec.recognize(mo)
-        assert result.requested_fmu_export is True
+        assert result.simulate_only is True
 
     def test_constant_list_field(self, tmp_path):
         mo = _write_mo(
@@ -883,3 +883,74 @@ class TestExperimentAnnotationField:
         )
         result = rec.recognize(mo)
         assert result.method == "Cvode"
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_discovery.py — regression tests for
+# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+#
+# Finding 50: component parameter values are extracted from the ORIGINAL text
+# span so string-valued parameters (algorithm="Dassl") are extractable.
+# =========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Finding 50 — string-valued component parameters
+# ---------------------------------------------------------------------------
+
+
+class TestFinding50StringParameters:
+    def test_quoted_string_parameter_is_extractable(self, tmp_path):
+        from dstf.discovery.json_recognizer import parse_recognizer_spec
+
+        mo = tmp_path / "FooTest.mo"
+        mo.write_text(
+            "within MyLib.Examples;\n"
+            "model FooTest\n"
+            '  MyLib.Testing.SafetyTest myTest(numTracked=2, algorithm="Dassl");\n'
+            "end FooTest;\n",
+            encoding="utf-8",
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "MyLib.Testing.SafetyTest",
+                },
+                "fields": {
+                    "method": {"from": "parameter", "name": "algorithm"},
+                    "n_vars": {"from": "parameter", "name": "numTracked"},
+                },
+            }
+        )
+        result = rec.recognize(mo)
+        assert result is not None
+        assert result.method == "Dassl"
+        assert result.n_vars == 2
+
+    def test_experiment_annotation_field_ignores_commented_annotation(self, tmp_path):
+        from dstf.discovery.json_recognizer import parse_recognizer_spec
+
+        mo = tmp_path / "FooTest.mo"
+        mo.write_text(
+            "within MyLib.Examples;\n"
+            "model FooTest\n"
+            "  extends Modelica.Icons.Example;\n"
+            "  // experiment(StopTime=5)\n"
+            "  annotation(experiment(StopTime=42));\n"
+            "end FooTest;\n",
+            encoding="utf-8",
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {"type": "extends", "class_pattern": "*Icons.Example"},
+                "fields": {
+                    "stop_time": {"from": "experiment-annotation", "name": "StopTime"},
+                },
+            }
+        )
+        result = rec.recognize(mo)
+        assert result is not None
+        assert result.stop_time == 42

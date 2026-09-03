@@ -13,8 +13,10 @@ Benefits:
   - Per-test timeout isolation: a hung test kills one worker (we restart it)
     while the others keep running
 
-Gated behind the `--persistent` CLI flag; the default batched runner is
-preserved untouched.
+This is the default runner; pass `--batch` to opt out and use the `.mos`
+batched runner instead. There is no automatic fallback: if the Dymola
+Python interface can't be imported, `preflight` raises and the CLI aborts
+with a message naming both fixes (see `cli._get_runner`).
 """
 
 from __future__ import annotations
@@ -27,12 +29,9 @@ from pathlib import Path
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
-from ..base import (
-    PersistentRunnerBase,
-    TestRunResult,
-    Worker,
-)
 from ..common.mat_reader import read_mat_time_extents
+from ..persistent import PersistentRunnerBase, Worker
+from ..types import Capability, TestRunResult
 from .interface_loader import load_dymola_interface
 from .log_parser import parse_dslog
 from .runner import DymolaConfig, DymolaRunner
@@ -185,6 +184,13 @@ def _classify_translation_error(log_path: Path) -> str:
 class DymolaWorker(Worker):
     """One live Dymola process wrapped as a test runner."""
 
+    kill_name_hint = "dymola"
+    exec_thread_prefix = "dym"
+    # Give Dymola a real chance to flush its open dslog.txt handle before
+    # psutil escalates to SIGKILL — diagnostic loss on timeout was a real
+    # reported pain point on TRANSFORM/Linux.
+    timeout_kill_grace = 5.0
+
     def __init__(
         self,
         worker_id: int,
@@ -196,9 +202,7 @@ class DymolaWorker(Worker):
         self.dymola_config = dymola_config
         self._DI = dymola_interface_cls
         self.dymola = None  # the DymolaInterface instance
-        self.pids: set[int] = set()  # PIDs attributed to this worker's Dymola
         self._n_tests_run = 0
-        self._n_restarts = 0
 
     def start(self) -> None:
         """Launch Dymola and apply startup: settings + library loads.
@@ -283,24 +287,32 @@ class DymolaWorker(Worker):
             shutil.rmtree(test_dir)
         test_dir.mkdir(parents=True, exist_ok=True)
 
+        # Bind the interface once. run_test executes on a thread the watchdog
+        # abandons on timeout (`t.join(0.5)`); the pool then restarts this
+        # worker and `self.dymola` becomes a *new* interface. An abandoned
+        # thread that later unblocks must keep talking to the dead interface —
+        # re-reading the attribute would let it issue RPCs against the fresh
+        # one concurrently with the next test, which is exactly the "Mismatch
+        # request/response ID" poisoning documented below.
+        dymola = self.dymola
         start = time.monotonic()
         translation_wall: float | None = None
         sim_wall: float | None = None
         try:
-            self.dymola.cd(str(test_dir))
-            self.dymola.clearlog()
+            dymola.cd(str(test_dir))
+            dymola.clearlog()
 
             # Phase 1: translate (may reuse cached translation — nearly free in that case)
             if progress is not None:
                 progress.on_phase(test_key, "translating")
             t_trans_start = time.monotonic()
-            translation_ok = bool(self.dymola.translateModel(test.model_id))
+            translation_ok = bool(dymola.translateModel(test.model_id))
             translation_wall = time.monotonic() - t_trans_start
 
             if not translation_ok:
                 # Save log, fail fast — skip the simulate call
                 try:
-                    self.dymola.savelog(str(test_dir / "translation_log.txt"))
+                    dymola.savelog(str(test_dir / "translation_log.txt"))
                 except Exception:
                     pass
                 elapsed = time.monotonic() - start
@@ -323,10 +335,18 @@ class DymolaWorker(Worker):
                 # broken state is permanent).
                 log_path = test_dir / "translation_log.txt"
                 if (not log_path.exists()) or log_path.stat().st_size < 50:
-                    try:
-                        self.close(grace=1.0)
-                    except Exception:
-                        pass
+                    # Close only OUR interface: if the watchdog abandoned
+                    # this thread and the pool already restarted the worker,
+                    # self.dymola is a fresh interface serving the next test
+                    # — closing it here would kill the new worker mid-test
+                    # (the cross-thread poisoning the pinned local exists
+                    # to prevent). self.close() reads self.*, so it is only
+                    # safe while self.dymola is still the pinned instance.
+                    if self.dymola is dymola:
+                        try:
+                            self.close(grace=1.0)
+                        except Exception:
+                            pass
                     return TestRunResult(
                         model_id=test.model_id,
                         test_key=test_key,
@@ -368,13 +388,13 @@ class DymolaWorker(Worker):
             t_sim_start = time.monotonic()
             # simulateModel returns bool; actual success/failure determined
             # by on-disk artifacts in _evaluate_from_disk
-            _ = self.dymola.simulateModel(test.model_id, **call_kwargs)
+            _ = dymola.simulateModel(test.model_id, **call_kwargs)
             sim_wall = time.monotonic() - t_sim_start
 
             # Phase 3: finalize (savelog)
             if progress is not None:
                 progress.on_phase(test_key, "finalizing")
-            self.dymola.savelog(str(test_dir / "translation_log.txt"))
+            dymola.savelog(str(test_dir / "translation_log.txt"))
         except Exception as exc:  # DymolaException or connection loss
             elapsed = time.monotonic() - start
             self._n_tests_run += 1
@@ -561,136 +581,21 @@ class DymolaWorker(Worker):
             statistics=statistics,
         )
 
-    def close(self, grace: float = 5.0) -> None:
-        """Terminate the Dymola subprocess. Tries graceful close first, then
-        hard-kills tracked PIDs via psutil if close hangs or fails.
-        Safe to call multiple times; idempotent.
-        """
+    def _detach_interface(self) -> object | None:
         d = self.dymola
         self.dymola = None
-        if d is not None:
-            done = threading.Event()
+        return d
 
-            def _try():
-                try:
-                    d.close()
-                except Exception:
-                    pass
-                finally:
-                    done.set()
+    def _shutdown_interface(self, handle: object, grace: float) -> None:
+        handle.close()  # type: ignore[attr-defined]
 
-            t = threading.Thread(target=_try, daemon=True)
-            t.start()
-            done.wait(grace)
-        self._kill_tracked_pids()
-
-    def _kill_tracked_pids(self) -> None:
-        """Force-kill any still-running Dymola process we attributed to this worker."""
-        if not self.pids:
-            return
-        import psutil
-
-        for pid in list(self.pids):
-            try:
-                p = psutil.Process(pid)
-                if "dymola" in (p.name() or "").lower():
-                    p.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        self.pids = set()
+    def _quiet(self):
+        # Stale JSON-RPC retries against the Dymola we are killing spam the
+        # terminal with urlopen/WinError noise; mute them for the teardown.
+        return _suppress_stderr_noise()
 
     def is_alive(self) -> bool:
         return self.dymola is not None
-
-    def run_test_with_timeout(
-        self,
-        test: TestModel,
-        test_key: str,
-        timeout: float,
-        progress=None,
-    ) -> TestRunResult:
-        """Run the test with a watchdog. On timeout, hard-kill Dymola.
-
-        After a timeout or worker-level exception, `self.dymola` is None and
-        the worker must be restarted before further tests are dispatched.
-        """
-        result_box: list[TestRunResult | None] = [None]
-        exc_box: list[BaseException | None] = [None]
-        start_ts = time.monotonic()
-
-        def _runner():
-            try:
-                result_box[0] = self.run_test(test, test_key, progress=progress)
-            except BaseException as e:
-                exc_box[0] = e
-
-        t = threading.Thread(
-            target=_runner, daemon=True, name=f"dym-exec-{self.worker_id}"
-        )
-        t.start()
-        t.join(timeout)
-
-        if t.is_alive():
-            # Hard-kill Dymola. Inner thread becomes daemon noise. Grace bumped
-            # from 1.0s to 5.0s so Dymola has a real chance to flush its open
-            # dslog.txt handle before psutil escalates to SIGKILL — diagnostic
-            # loss on timeout was a real reported pain point on TRANSFORM/Linux.
-            with _suppress_stderr_noise():
-                self.close(grace=5.0)
-                t.join(0.5)
-            elapsed = time.monotonic() - start_ts
-
-            # Even after a watchdog kill, the simulation may have completed
-            # and written dsres.mat just before/during the kill. Trust disk.
-            # Either way the worker is dead now — flag worker_killed=True so
-            # the dispatch loop knows the next restart is benign-bench, not
-            # bound-budget-counted (we deliberately killed a healthy worker
-            # because the *test* was slow, not the worker).
-            disk_result = self._evaluate_from_disk(test, test_key, elapsed)
-            if disk_result.success:
-                disk_result.worker_killed = True
-                return disk_result
-
-            return TestRunResult(
-                model_id=test.model_id,
-                test_key=test_key,
-                success=False,
-                elapsed=elapsed,
-                error_message=f"Timed out after {timeout:.0f}s",
-                timed_out=True,
-                worker_killed=True,
-            )
-
-        if exc_box[0] is not None:
-            # Worker-level exception (e.g., DymolaInterface dropped its JSON-RPC
-            # connection mid-call). Check whether the simulation completed
-            # anyway — Dymola often crashes/disconnects after writing the result.
-            # Both close() calls are wrapped in the urlopen-noise suppression so
-            # stale RPC retries during teardown don't spam the terminal — same
-            # pattern as the timeout path above. Worker exceptions DO count
-            # against the restart budget — they signal a real worker-side
-            # malfunction (RPC dropped, etc.), so worker_killed stays False
-            # and the dispatch loop ticks the budget on the next restart.
-            elapsed = time.monotonic() - start_ts
-            disk_result = self._evaluate_from_disk(test, test_key, elapsed)
-            if disk_result.success:
-                # Worker connection is still considered broken — restart on next iter
-                with _suppress_stderr_noise():
-                    self.close(grace=1.0)
-                return disk_result
-
-            with _suppress_stderr_noise():
-                self.close(grace=1.0)
-            exc = exc_box[0]
-            return TestRunResult(
-                model_id=test.model_id,
-                test_key=test_key,
-                success=False,
-                elapsed=elapsed,
-                error_message=f"Worker exception: {type(exc).__name__}: {exc}",
-            )
-
-        return result_box[0]  # type: ignore[return-value]
 
     # -----------------------------------------------------------------
     def _exec_setting(self, cmd: str) -> None:
@@ -802,6 +707,18 @@ class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
 
     worker_cls = DymolaWorker
     backend_label = "Dymola"
+
+    #: FMU export lives HERE, not on the batch class: it needs a live
+    #: DymolaInterface (`translateModelFMU` over the running session).
+    #: Declared on the class the cross-backend chain actually holds an
+    #: instance of, so its `Capability.FMU_EXPORT` gate is truthful.
+    #: `_validate_capabilities` doesn't see this class (it isn't
+    #: `@register`-ed — it's reached via `DymolaRunner.persistent_runner_cls`),
+    #: so `tests/test_capability_gating.py` asserts the flag/override pairing.
+    #: Declared explicitly, not inherited-and-extended: this class does
+    #: persistent orchestration, so the batch class's BATCH_FALLBACK
+    #: would be a false claim here (B2 review finding 5).
+    capabilities = frozenset({Capability.PERSISTENT_WORKERS, Capability.FMU_EXPORT})
 
     @classmethod
     def preflight(cls, config) -> None:

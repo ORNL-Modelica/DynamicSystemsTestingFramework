@@ -8,7 +8,8 @@ The comparison surface is split across three modules:
     consume it without an import cycle.
   * :mod:`.algorithms` — per-mode math (``_compare_trajectories`` /
     ``_compare_tube`` / ``_compare_points`` / ``_compare_range`` /
-    ``_compare_event_timing`` / ``_compare_dominant_frequency`` plus
+    ``_compare_scalar`` / ``_compare_event_timing`` /
+    ``_compare_dominant_frequency`` plus
     their FFT/event-detection helpers). Pure compute; mirrors the JS
     ``MODE_SCORERS`` for the live-preview live-recompute path.
   * THIS MODULE — :func:`compare_test` and :func:`compare_all`
@@ -29,6 +30,7 @@ import numpy as np
 
 from ..discovery.test_registry import TestModel
 from ..simulators import TestResult
+from ..simulators.types import DatasetType
 from ..storage.reference_store import ReferenceStore
 
 # Re-export facade (see module docstring): modes/tree_eval/metric_tree and the
@@ -40,6 +42,7 @@ from .algorithms import (  # noqa: F401
     _compare_event_timing,
     _compare_points,
     _compare_range,
+    _compare_scalar,
     _compare_trajectories,
     _compare_tube,
     _compute_fft_spectrum,
@@ -51,6 +54,7 @@ from .algorithms import (  # noqa: F401
     _min_delta_in_box,
     _split_segments,
 )
+from .registry import metric as registry_metric
 from .types import (
     DEFAULT_TOLERANCE,
     StructuralWarning,
@@ -129,6 +133,7 @@ def compare_test(
     default_tolerance: float = DEFAULT_TOLERANCE,
     default_points: bool = False,
     store=None,  # Optional[ReferenceStore] — if provided, soft_checks from the new subdir layout are merged in
+    dataset_kind: DatasetType = DatasetType.TIME_SERIES,
 ) -> TestComparison:
     """Compare a test's simulation results against its reference.
 
@@ -142,6 +147,11 @@ def compare_test(
             override use points-mode (with empty points list = final-value
             comparison) instead of full NRMSE. Variables with
             ``mode: "tube"`` are *not* affected.
+        dataset_kind: The :class:`~dstf.simulators.types.DatasetType` the
+            backend that produced *result* declares it emits. Threaded into
+            the MetricTree evaluator so a leaf whose metric doesn't accept
+            the kind hard-fails with a diagnostic naming both. Defaults to
+            ``TIME_SERIES`` — the only kind any backend produces today.
     """
     from .metric_tree import implicit_and_tree
     from .modes import resolve_mode
@@ -176,6 +186,7 @@ def compare_test(
             test_id=ref_test_id,
             variables=[],
             metric_tree=leaf,
+            simulate_only=True,
         )
 
     structural_warnings = _check_structural_changes(reference, result)
@@ -212,14 +223,14 @@ def compare_test(
     # path (documented — same fields move into each leaf's params).
     if test.metric_tree_spec is not None:
         from ..storage.reference_store import _extract_baselines
-        from .tree_eval import BaselineView
+        from .tree_eval import BaselineView, ScalarSources
 
         var_results_by_name = {v.name: v for v in result.variables if v.name}
         # Load primary from the flat ref file; merge in soft_checks from the
         # `soft_checks/ref_NNNN/` subdir when a store is supplied (D66). Leaves
         # pick which baseline to score against via `leaf.against` (defaults
-        # to primary). The transition also reads any pre-migration flat
-        # `baselines` dict so unmigrated ref files still evaluate correctly.
+        # to primary). With no store there are no named baselines, so an
+        # `against: <name>` leaf gets the missing-baseline sentinel.
         all_baselines = _extract_baselines(reference)
         if store is not None:
             all_baselines.update(store.get_soft_checks(test.model_id))
@@ -235,12 +246,21 @@ def compare_test(
                 name=name,
                 ref_vars_by_name=refs_by_name,
                 shared_ref_time=bl_time,
+                statistics=bl.statistics,
+                diagnostics=bl.diagnostics,
             )
         tree = evaluate_spec(
             test.metric_tree_spec,
             var_results_by_name,
             baselines,
             base_tolerance,
+            dataset_kind,
+            # Stored scalars for `scalar` leaves reading a statistics /
+            # diagnostics path instead of a tracked series.
+            ScalarSources(
+                statistics=result.statistics or {},
+                diagnostics=result.diagnostics,
+            ),
         )
         return TestComparison(
             model_id=test.model_id,
@@ -293,7 +313,11 @@ def compare_test(
         except ValueError as exc:
             # An unrecognized mode string must fail the variable loudly —
             # silently falling back to NRMSE changed the scoring algorithm
-            # on a typo (review 2026-07-06).
+            # on a typo (review 2026-07-06). ``mode=""`` rather than the
+            # "nrmse" field default: no mode resolved, so the report must
+            # not caption this "nrmse leaf not scored". The offending
+            # string isn't stamped either — it would feed a bogus name to
+            # the reporter's mode lookups; it rides in the error text.
             comparisons.append(
                 VariableComparison(
                     index=var_result.index,
@@ -306,7 +330,42 @@ def compare_test(
                     max_abs_error_time=0.0,
                     reference_final=float("nan"),
                     actual_final=float("nan"),
-                    diagnostics={"error": str(exc)},
+                    mode="",
+                    diagnostics={"error": str(exc), "config_error": True},
+                )
+            )
+            continue
+
+        # A stats-path quantity is resolved by the tree evaluator from the
+        # run's statistics/diagnostics; this flat path only has the
+        # variable's own trajectory, and ScalarMode would silently reduce
+        # THAT instead (review finding, D106).
+        desc = registry_metric(mode.name)
+        if (
+            desc is not None
+            and desc.accepts_quantity
+            and isinstance(var_override.get("quantity"), str)
+        ):
+            comparisons.append(
+                VariableComparison(
+                    index=var_result.index,
+                    name=name,
+                    passed=False,
+                    nrmse=float("inf"),
+                    rmse=float("inf"),
+                    signal_range=0.0,
+                    max_abs_error=float("inf"),
+                    max_abs_error_time=0.0,
+                    reference_final=float("nan"),
+                    actual_final=float("nan"),
+                    mode=mode.name,
+                    diagnostics={
+                        "error": (
+                            f"quantity {var_override['quantity']!r}: a stats-path "
+                            "quantity needs a `metrics` tree; variable_overrides "
+                            "can only reduce the variable's own trajectory"
+                        )
+                    },
                 )
             )
             continue
@@ -455,8 +514,14 @@ def compare_all(
     store: ReferenceStore,
     default_tolerance: float = DEFAULT_TOLERANCE,
     default_points: bool = False,
+    dataset_kind: DatasetType = DatasetType.TIME_SERIES,
 ) -> list[TestComparison]:
-    """Compare all test results against stored references."""
+    """Compare all test results against stored references.
+
+    ``dataset_kind`` is what the backend that produced *results* declares it
+    emits (see :func:`dstf.cli.run_cmds._dataset_kind_for`); it is forwarded to every
+    :func:`compare_test`.
+    """
     import sys as _sys
 
     print(f"Comparing {len(tests)} tests against references...", file=_sys.stderr)
@@ -529,6 +594,7 @@ def compare_all(
             default_tolerance=default_tolerance,
             default_points=default_points,
             store=store,
+            dataset_kind=dataset_kind,
         )
         if reference is None:
             # Record that no baseline was stored even though the

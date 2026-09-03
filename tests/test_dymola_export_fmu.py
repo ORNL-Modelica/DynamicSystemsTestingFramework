@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from conftest import make_test_model as _tm
 from dstf.discovery.test_registry import TestModel
 from dstf.simulators.dymola.persistent_runner import DymolaWorker
 
@@ -140,3 +141,60 @@ class TestAbstractExportFmuDefault:
             pytest.skip("fmpy not installed")
         with pytest.raises(NotImplementedError, match="FMU_EXPORT"):
             runner.export_fmu(_mock_test(), tmp_path)
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
+# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+#
+# Finding 76-part — the one-shot export worker is torn down through the
+# guarded ``worker.close()`` hard-kill path, not ``worker.dymola.close()``.
+# =========================================================================
+
+
+class TestExportFmuCleanup:
+    def test_one_shot_worker_closed_via_guarded_close(self, tmp_path, monkeypatch):
+        from dstf.simulators.dymola import persistent_runner as pr
+
+        created: list = []
+        closed: list = []
+
+        def fake_start(self):
+            self.dymola = MagicMock()
+            created.append(self)
+
+        orig_close = pr.DymolaWorker.close
+
+        def spy_close(self, grace: float = 5.0):
+            closed.append(self)
+            orig_close(self, grace=0.1)
+
+        monkeypatch.setattr(pr.DymolaWorker, "start", fake_start)
+        monkeypatch.setattr(pr.DymolaWorker, "close", spy_close)
+        monkeypatch.setattr(pr, "load_dymola_interface", lambda p=None: MagicMock())
+        monkeypatch.setattr(
+            pr.DymolaWorker,
+            "export_fmu",
+            lambda self, test, output_dir: output_dir / "X.fmu",
+        )
+
+        cfg = SimpleNamespace(
+            show_ide=False,
+            simulator_setup=[],
+            diagnostic_variables=[],
+            work_dir=tmp_path,
+            dymola_interface_path=None,
+            simulator_path=None,
+            dependencies=[],
+            library_dir=tmp_path,
+        )
+        runner = pr.PersistentDymolaRunner(cfg)
+        out = tmp_path / "out"
+        out.mkdir()
+        runner.export_fmu(_tm("M.X"), out)
+
+        assert created, "worker was never started"
+        assert created[0] in closed, (
+            "export_fmu cleanup must call worker.close() (guarded hard-kill "
+            "path), not worker.dymola.close()"
+        )

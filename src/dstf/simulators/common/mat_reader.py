@@ -289,6 +289,10 @@ def read_mat_time_extents(mat_path: Path) -> tuple[float, float] | None:
     try:
         with open(mat_path, "rb") as f:
             blocks = _scan_mat4_headers(f)
+            # review 2026-07-06 (finding 74) applies here too: in a binNormal
+            # file data_2 is stored untransposed, so row 0 is not time — the
+            # extents would be garbage. The raise lands in the handler below.
+            _raise_if_binnormal(f, blocks, mat_path)
         if "data_2" not in blocks:
             return None
         d2_offset, d2_dtype, d2_mrows, d2_ncols = blocks["data_2"]
@@ -306,6 +310,25 @@ def read_mat_time_extents(mat_path: Path) -> tuple[float, float] | None:
         return float(data_2[0, 0]), float(data_2[0, -1])
     except Exception:
         return None
+
+
+def mat_reaches_time(
+    mat_path: Path,
+    target_time: float,
+) -> tuple[bool, float | None]:
+    """Did the trajectory in ``mat_path`` reach ``target_time``?
+
+    Returns ``(reached, last_time)``; ``last_time`` is None when the file
+    is unreadable. The relative tolerance mirrors the persistent-OM
+    disk-rescue rule so success-path and rescue-path verdicts can't
+    disagree about the same file (D99).
+    """
+    extents = read_mat_time_extents(mat_path)
+    if extents is None:
+        return False, None
+    last_time = extents[1]
+    tol = max(1e-6, abs(target_time) * 1e-6)
+    return last_time + tol >= target_time, last_time
 
 
 def _parse_name_matrix(name_matrix: np.ndarray) -> list[str]:

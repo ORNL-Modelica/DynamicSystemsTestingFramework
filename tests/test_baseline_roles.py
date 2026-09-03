@@ -16,7 +16,8 @@ import pytest
 
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.base import TestResult, VariableResult
+from dstf.reporting.overlay_loader import load_overlays
+from dstf.simulators.types import TestResult, VariableResult
 from dstf.storage.reference_store import (
     ReferenceStore,
 )
@@ -234,6 +235,66 @@ class TestCompanionStorage:
         assert companions["rig"].kind == "frozen"
         assert companions["rig"].data_file == "rig.csv"
         assert companions["rig"].path is None
+
+    def test_freeze_json_keeps_data_and_metadata_apart(
+        self, store_with_primary, tmp_path
+    ):
+        """A frozen JSON companion's data goes to ``<name>.data.json``.
+
+        The metadata file is ``<name>.json``; writing the data there too
+        meant the metadata write destroyed the trajectory that had just
+        been copied, leaving a companion that could never be plotted.
+        """
+        store, test = store_with_primary
+        payload = {
+            "time": [0.0, 1.0],
+            "variables": [{"name": "x", "values": [1.0, 2.0]}],
+        }
+        external = tmp_path / "analytical.json"
+        external.write_text(json.dumps(payload), encoding="utf-8")
+        store.add_companion(test.model_id, "analytical", path=external)
+
+        assert store.freeze_companion(test.model_id, "analytical") is True
+
+        co_dir = store.ref_dir / "companions" / "ref_0001"
+        assert json.loads((co_dir / "analytical.data.json").read_text()) == payload
+
+        companions = store.get_companions(test.model_id)
+        assert set(companions) == {"analytical"}
+        assert companions["analytical"].kind == "frozen"
+        assert companions["analytical"].format == "json"
+        assert companions["analytical"].data_file == "analytical.data.json"
+
+        overlays = load_overlays(store, test.model_id)
+        by_name = {ov.name: ov for ov in overlays}
+        assert by_name["analytical"].status == "loaded"
+        assert by_name["analytical"].variables["x"].values == [1.0, 2.0]
+
+    def test_freeze_does_not_clobber_another_companion(
+        self, store_with_primary, tmp_path
+    ):
+        store, test = store_with_primary
+        other = tmp_path / "rig.csv"
+        other.write_text("time,value\n0,0\n", encoding="utf-8")
+        store.add_companion(test.model_id, "rig", path=other)
+        store.freeze_companion(test.model_id, "rig")
+
+        src = tmp_path / "analytical.json"
+        src.write_text('{"time": [], "variables": []}', encoding="utf-8")
+        store.add_companion(test.model_id, "analytical", path=src)
+        store.freeze_companion(test.model_id, "analytical")
+
+        co_dir = store.ref_dir / "companions" / "ref_0001"
+        assert (co_dir / "rig.csv").read_text() == "time,value\n0,0\n"
+        assert set(store.get_companions(test.model_id)) == {"rig", "analytical"}
+
+    def test_data_suffix_name_rejected(self, store_with_primary, tmp_path):
+        """``<x>.data`` would own the filename a frozen ``<x>`` writes into."""
+        store, test = store_with_primary
+        src = tmp_path / "x.json"
+        src.write_text("{}", encoding="utf-8")
+        with pytest.raises(ValueError, match=r"\.data"):
+            store.add_companion(test.model_id, "analytical.data", path=src)
 
     def test_freeze_already_frozen_is_noop(self, store_with_primary, tmp_path):
         store, test = store_with_primary

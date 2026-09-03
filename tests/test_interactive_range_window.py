@@ -18,6 +18,8 @@ import pytest
 
 pytest.importorskip("playwright.sync_api")
 
+pytestmark = pytest.mark.playwright
+
 
 from test_interactive_playwright import (  # noqa: E402
     _fixture_context,
@@ -162,17 +164,17 @@ def _context_with_windowed_range(window_start, window_end, min_value, max_value)
 
 def _render_with_context(tmp_path, ctx):
     """Like _render_report, but accepts a custom context."""
-    import shutil
 
     from jinja2 import Environment, FileSystemLoader
 
-    from test_interactive_playwright import _JS_SRC, _TEMPLATE_DIR
+    from dstf.reporting.report_suite import write_report_assets
+    from test_interactive_playwright import _TEMPLATE_DIR
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
-    shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    write_report_assets(tmp_path)
     return html_path
 
 
@@ -393,11 +395,21 @@ def test_nrmse_window_edits_rescore_in_browser(tmp_path, playwright_browser):
 
 
 def test_range_plot_dual_style_when_window_set(tmp_path, playwright_browser):
-    """When a range leaf has both window endpoints, the plot contribution
-    should emit SIX shapes per bound-pair (gray outside + red inside ×
-    min + max = 6), each with explicit x coordinates. Without a window,
-    it should emit TWO (one min line + one max line, full-width in
-    paper coords) — the pre-fix baseline.
+    """When a range leaf has both window endpoints, each bound renders as
+    three segments in data coords: gray pre-window, red in-window, gray
+    post-window.
+
+    The in-window RED segment is a SHAPE (Plotly's edits.shapePosition
+    makes it draggable, and MODE_PLOT_EDITORS['range'] routes the drag
+    back to min_value/max_value). The out-of-window GRAY segments are
+    TRACES, which are never draggable — as shapes they accepted a drag the
+    handler deliberately ignores and snapped back on the next render.
+    Per-shape ``editable: false`` does not help: verified against the
+    vendored plotly 2.35.0, edits.shapePosition makes every shape
+    draggable regardless.
+
+    Without a window: one full-width (paper-coord) red line per bound and
+    no gray segments at all.
     """
     ctx = _fixture_context()
     # Unwindowed range leaf — baseline count check.
@@ -433,29 +445,48 @@ def test_range_plot_dual_style_when_window_set(tmp_path, playwright_browser):
             const leaf = TREE_VIEW.children[1];
             const traj = (VARIABLES_BY_NAME['h'] || {}).trajectory || {};
             const contrib = MODE_PLOT_CONTRIBUTIONS['range'](leaf, traj);
-            // Group shapes by dashed-line color so the test can assert
+            // Group by dashed-line color so the test can assert
             // gray-outside / red-inside without being brittle about
-            // exact shape ordering.
-            const colors = contrib.shapes.map(s => (s.line || {}).color);
-            const xrefs = contrib.shapes.map(s => s.xref);
+            // exact ordering.
+            const shapeColors = contrib.shapes.map(s => (s.line || {}).color);
+            const grayTraces = (contrib.traces || []).filter(
+                t => ((t.line || {}).color) === '#9e9e9e');
             return {
-                total: contrib.shapes.length,
-                grayCount: colors.filter(c => c === '#9e9e9e').length,
-                redCount: colors.filter(c => c === '#f44336').length,
-                allXAxis: xrefs.every(xr => xr === 'x'),
+                shapes: contrib.shapes.length,
+                shapeGray: shapeColors.filter(c => c === '#9e9e9e').length,
+                shapeRed: shapeColors.filter(c => c === '#f44336').length,
+                allXAxis: contrib.shapes.every(s => s.xref === 'x'),
+                grayTraceCount: grayTraces.length,
+                grayNames: grayTraces.map(t => t.name),
+                grayXs: grayTraces.map(t => t.x),
+                grayInLegend: grayTraces.some(t => t.showlegend !== false),
             };
         }
     """)
     page.close()
-    assert windowed["total"] == 6, (
-        "Windowed range should emit 6 shapes: 3 segments per bound "
-        "(pre-window gray + in-window red + post-window gray) × 2 bounds."
+    assert windowed["shapes"] == 2, (
+        "Only the two in-window (authoritative, draggable) segments may be "
+        "shapes — one per bound."
     )
-    assert windowed["grayCount"] == 4, "4 gray segments (2 per bound × 2)"
-    assert windowed["redCount"] == 2, "2 red in-window segments (1 per bound)"
+    assert windowed["shapeRed"] == 2
+    assert windowed["shapeGray"] == 0, (
+        "Out-of-window segments must NOT be shapes: Plotly's global "
+        "edits.shapePosition makes every shape draggable, so a gray shape "
+        "accepted drags the handler ignores and snapped back."
+    )
     assert windowed["allXAxis"], (
-        "All segments must use xref='x' with explicit time coords so "
+        "In-window segments must use xref='x' with explicit time coords so "
         "they actually land in window coordinates — not 'paper'."
+    )
+    assert windowed["grayTraceCount"] == 4, (
+        "4 gray segments as traces (pre + post, per bound × 2 bounds)."
+    )
+    assert all("_pre:" in n or "_post:" in n for n in windowed["grayNames"])
+    # Data coords, spanning to the window edges (1.0 / 2.0 in this fixture).
+    flat = [x for xs in windowed["grayXs"] for x in xs]
+    assert 1.0 in flat and 2.0 in flat
+    assert not windowed["grayInLegend"], (
+        "Pinned bound segments are decoration; they must not add legend rows."
     )
 
 
@@ -734,4 +765,100 @@ def test_window_edit_rescores_every_mode(
         f"either _sliceLeafTrajectory isn't wired into this metric's "
         f"scorer, or the scorer falls back to CLI value before "
         f"consulting the helper."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Out-of-window range segments are pinned (C-v item (e))
+# ---------------------------------------------------------------------------
+
+
+def _windowed_range_page(tmp_path, playwright_browser):
+    """A range leaf on 'h' with a window, rendered and activated."""
+    ctx = _fixture_context()
+    leaf = ctx["tree_view"]["children"][1]
+    leaf["params"] = {"min_value": -0.01, "max_value": 1.1}
+    leaf["mode_values"] = {"min_value": -0.01, "max_value": 1.1}
+    leaf["window"] = {"start": 1.0, "end": 2.0}
+    leaf["window_values"] = {"start": 1.0, "end": 2.0}
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    page.wait_for_function(
+        "() => { const el = document.getElementById('plot-0');"
+        "        return el && el._mt_plotted === true; }"
+    )
+    return page
+
+
+def test_out_of_window_range_segments_are_not_draggable_shapes(
+    tmp_path,
+    playwright_browser,
+):
+    """The gray out-of-window segments must not reach Plotly's shape-drag
+    machinery at all.
+
+    Before: they were shapes, so ``edits.shapePosition`` let the user drag
+    them; MODE_PLOT_EDITORS['range'] matches only ``range_(min|max):<path>``
+    so the drag wrote nothing and the segment snapped back on the next
+    render — a control that moves and then undoes itself. Now they are
+    traces, which Plotly never drags.
+    """
+    page = _windowed_range_page(tmp_path, playwright_browser)
+    facts = page.evaluate("""
+        () => {
+            const el = document.getElementById('plot-0');
+            const shapes = (el.layout.shapes || []);
+            const names = shapes.map(s => s.name || '');
+            return {
+                shapeNames: names,
+                anyPinnedShape: names.some(
+                    n => n.includes('_pre:') || n.includes('_post:')),
+                // What the editor's relayout handler will ever match.
+                draggableNames: names.filter(n => /^range_(min|max):/.test(n)),
+            };
+        }
+    """)
+    page.close()
+    assert facts["anyPinnedShape"] is False, (
+        f"an out-of-window segment is still a draggable shape: {facts['shapeNames']}"
+    )
+    assert len(facts["draggableNames"]) == 2, (
+        "both in-window bound segments must stay draggable shapes — the "
+        "user edits the bound by dragging the authoritative segment"
+    )
+
+
+def test_dragging_an_out_of_window_segment_changes_no_bound(
+    tmp_path,
+    playwright_browser,
+):
+    """End-to-end with real mouse events: press on the gray segment's line
+    and drag it 40px; min_value / max_value must be untouched.
+    """
+    page = _windowed_range_page(tmp_path, playwright_browser)
+    before = page.evaluate("() => ({...leafState['/metrics/children/1'].params})")
+    # Screen position of the max bound (y = 1.1) at t = 0.4 — inside the
+    # PRE-window gray segment (window starts at 1.0).
+    pos = page.evaluate("""
+        () => {
+            const gd = document.getElementById('plot-0');
+            const r = gd.getBoundingClientRect();
+            const m = gd._fullLayout.margin;
+            return {
+                x: r.left + m.l + gd._fullLayout.xaxis.l2p(0.4),
+                y: r.top + m.t + gd._fullLayout.yaxis.l2p(1.1),
+            };
+        }
+    """)
+    page.mouse.move(pos["x"], pos["y"])
+    page.mouse.down()
+    page.mouse.move(pos["x"], pos["y"] + 40, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(200)
+    after = page.evaluate("() => ({...leafState['/metrics/children/1'].params})")
+    page.close()
+    assert after == before, (
+        f"dragging a pinned out-of-window segment changed the bounds: "
+        f"{before} -> {after}"
     )

@@ -88,3 +88,48 @@ class TestAsDict:
         d = RunMetadata.from_config(_stub_config(), now=1.0).as_dict()
         # must survive the status.json round-trip
         assert json.loads(json.dumps(d))["backend"] == "Dymola"
+
+
+class TestBatchDymolaStampsProvenance:
+    def test_batch_run_writes_metadata_into_status_json(self, tmp_path, monkeypatch):
+        """``--batch`` Dymola once had its own copy of the ``run_tests``
+        prologue and skipped the metadata — leaving status.json (and therefore
+        the report banner) with ``metadata: null``.
+        """
+        import json
+        from pathlib import Path
+
+        from dstf.config import Config
+        from dstf.discovery.test_registry import TestModel
+        from dstf.simulators.dymola.runner import DymolaRunner
+
+        lib = tmp_path / "Lib"
+        lib.mkdir()
+        (lib / "package.mo").write_text("package Lib end Lib;")
+        cfg = Config(
+            source_path=lib,
+            reference_root=tmp_path / "refs",
+            simulator="Dymola",
+            work_dir=tmp_path / "work",
+        )
+        runner = DymolaRunner(cfg)
+        # Don't spawn Dymola — the prologue is what's under test.
+        monkeypatch.setattr(DymolaRunner, "_run_batch", lambda *a, **k: [])
+
+        test = TestModel(
+            model_id="Lib.A",
+            source_file=Path(""),
+            source_package="Lib",
+            short_name="A",
+            n_vars=0,
+            variable_patterns=["x"],
+            stop_time=1.0,
+            tolerance=1e-6,
+            method="dassl",
+        )
+        runner.run_tests([test])
+
+        status = json.loads((cfg.work_dir / "status.json").read_text())
+        assert status["metadata"]["backend"] == "Dymola"
+        assert status["metadata"]["os"] == cfg.os_name
+        assert status["metadata"]["dstf_version"]

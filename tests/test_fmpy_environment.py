@@ -114,7 +114,7 @@ def test_fmpy_backend_registers_under_name():
     runner = get_runner(_FakeConfig())
     assert isinstance(runner, FmpyRunner)
     # Capabilities declared as advertised in docs/extensibility.md §3
-    from dstf.simulators.base import Capability, DatasetType
+    from dstf.simulators.types import Capability, DatasetType
 
     # review 2026-07-06 (finding 28): PERSISTENT_WORKERS was aspirational —
     # FmpyRunner ships no persistent runner, and the repaired capability-

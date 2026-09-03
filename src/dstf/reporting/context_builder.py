@@ -1,12 +1,13 @@
-"""Generate comparison plots and HTML viewer for interactive review."""
+"""Build the per-test template context from comparison results.
 
-import json
+The pure ``results -> context dict`` side of the per-test report: every
+helper here takes already-extracted inputs and returns one named slice of
+the context that :mod:`dstf.reporting.report_suite` renders. Nothing in
+this module touches Jinja, the filesystem, or the decimation pass.
+"""
+
 import logging
 import math
-import platform
-import re
-import shutil
-import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -14,45 +15,6 @@ import numpy as np
 from ..comparison.comparator import VariableComparison
 
 logger = logging.getLogger(__name__)
-
-_TEMPLATE_DIR = Path(__file__).parent / "templates"
-
-
-def _json_sanitize(obj):
-    """Recursively replace non-finite floats (inf / -inf / nan) with None.
-
-    review 2026-07-06 finding 68: ``comparison_data.json`` is the documented
-    downstream artifact and the same context is embedded into
-    interactive.html — dumping with ``allow_nan=True`` injected literal
-    ``Infinity`` / ``NaN`` tokens (e.g. from missing-baseline sentinel
-    comparisons), which is invalid JSON for every strict consumer. Returns
-    new containers; the input is not mutated.
-    """
-    if isinstance(obj, float):
-        return obj if math.isfinite(obj) else None
-    if isinstance(obj, dict):
-        return {k: _json_sanitize(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_json_sanitize(v) for v in obj]
-    return obj
-
-
-def _sanitize_filename(name: str) -> str:
-    """Sanitize a variable name for use in a filename.
-
-    Collapses whitespace (including newlines), replaces Modelica
-    punctuation, and removes any remaining filesystem-unsafe characters.
-    """
-    # Collapse all whitespace (newlines, spaces, tabs) into single underscore
-    name = re.sub(r"\s+", "_", name)
-    # Replace common Modelica punctuation
-    name = name.replace("[", "_").replace("]", "").replace(".", "_")
-    name = name.replace(",", "_").replace("(", "").replace(")", "")
-    # Remove anything that's not alphanumeric, underscore, or hyphen
-    name = re.sub(r"[^\w\-]", "", name)
-    # Collapse multiple underscores
-    name = re.sub(r"_+", "_", name).strip("_")
-    return name
 
 
 def _format_value(val) -> str:
@@ -155,8 +117,8 @@ def _extract_mode_values(
         # Range bounds live in diagnostics because _compare_range re-stashes
         # them for consistent reporting; spec overrides if the user edited.
         return {
-            "min_value": pick("min_value", "min"),
-            "max_value": pick("max_value", "max"),
+            "min_value": pick("min_value"),
+            "max_value": pick("max_value"),
         }
     if mode == "event-timing":
         return {
@@ -168,6 +130,14 @@ def _extract_mode_values(
             "peaks": list(
                 pick("peaks", default=None) or diag.get("peaks_declared") or []
             ),
+        }
+    if mode == "scalar":
+        return {
+            "quantity": pick("quantity"),
+            "tolerance": float(vc.tolerance_used),
+            "tolerance_mode": pick("tolerance_mode", default="abs"),
+            "min_value": pick("min_value"),
+            "max_value": pick("max_value"),
         }
     return {}
 
@@ -188,6 +158,34 @@ def _render_mode_controls(variable: str, mode: str, values: dict) -> str:
     return ui.render(variable=variable, values=values)
 
 
+# Metrics the template JS can live-rescore (interactive.js MODE_SCORERS —
+# keep in sync with that table). Anything else is badged CLI-authoritative:
+# event-timing (its optimal matcher stays Python-side), scalar (its stats-path
+# quantities read data the report never embeds), and every metric a third
+# party registers Python-side only. The JS scorer lookup would keep the CLI
+# verdict for those anyway; the badge tells the user why.
+_JS_SCORED_METRICS = frozenset(
+    {"nrmse", "tube", "points", "range", "dominant-frequency"}
+)
+
+
+def worst_finite_score(comparisons: list) -> tuple[float | None, int]:
+    """Return ``(worst finite score, count of unscored leaves)``.
+
+    ``VariableComparison.nrmse`` carries the mode's score, and a sentinel
+    leaf (metric config that would not build, no data to compare) sets it
+    to ``inf``/``nan``. A plain ``max()`` over the leaves therefore returns
+    a non-finite value for the whole test, which the strict-JSON pass then
+    writes as ``null`` — the dashboard's "Worst NRMSE" read "—" for a test
+    whose other leaves scored perfectly well. Report the worst among the
+    leaves that HAVE a score, and count the rest so the surface can say so
+    instead of implying there was nothing to measure.
+    """
+    finite = [vc.nrmse for vc in comparisons if math.isfinite(vc.nrmse)]
+    n_unscored = sum(1 for vc in comparisons if not math.isfinite(vc.nrmse))
+    return (max(finite) if finite else None, n_unscored)
+
+
 def _leaf_score_display(vc: VariableComparison) -> tuple[str, str]:
     """Return ``(score_display, criterion)`` for a leaf's UI labels.
 
@@ -196,6 +194,16 @@ def _leaf_score_display(vc: VariableComparison) -> tuple[str, str]:
     Extracted here so the two renderers agree on wording.
     """
     mode = vc.mode or "nrmse"
+    error = (vc.diagnostics or {}).get("error")
+    if error:
+        # Any sentinel carrying a reason — a leaf config that could not
+        # build, an empty-data failure — shows that reason instead of a
+        # numeric score there is none of. Mode-agnostic on purpose: the
+        # flat variable_overrides path emits the same shape. Uses vc.mode
+        # raw, not the nrmse-defaulted ``mode``: the unknown-mode sentinel
+        # has no mode, and "nrmse leaf" would name the wrong metric.
+        label = f"{vc.mode} leaf" if vc.mode else "leaf"
+        return ("not scored", f"{label} not scored — {error}")
     if mode == "tube" and vc.tube_points_inside is not None:
         return (
             f"{vc.tube_points_inside * 100:.1f}% in tube",
@@ -213,6 +221,34 @@ def _leaf_score_display(vc: VariableComparison) -> tuple[str, str]:
             f"|err| {vc.max_abs_error:.3e}",
             f"Final value error {vc.max_abs_error:.3e} vs tolerance "
             f"{vc.tolerance_used:.3e} → {'PASS' if vc.passed else 'FAIL'}",
+        )
+    if mode == "scalar":
+        diag = vc.diagnostics or {}
+        verdict = "PASS" if vc.passed else "FAIL"
+        if not math.isfinite(vc.actual_final):
+            # Hard-fail sentinel (unresolvable quantity, no samples): there
+            # is no scalar to show, so surface the reason instead of
+            # "Scalar nan vs baseline nan". A diagnostics["error"] would
+            # already have been caught by the generic branch above.
+            reason = vc.name or "quantity could not be resolved"
+            return ("not scored", f"Scalar leaf not scored — {reason}")
+        lo, hi = diag.get("min_value"), diag.get("max_value")
+        if lo is not None or hi is not None:
+            lo_s = "-inf" if lo is None else f"{lo:g}"
+            hi_s = "inf" if hi is None else f"{hi:g}"
+            return (
+                f"value {vc.actual_final:.6g}",
+                f"Scalar {vc.actual_final:.6g} within [{lo_s}, {hi_s}] → {verdict}",
+            )
+        fallback = bool(diag.get("abs_fallback"))
+        rel = diag.get("tolerance_mode") == "rel" and not fallback
+        criterion = "relative" if rel else "absolute"
+        note = " (|ref|=0 → absolute)" if fallback else ""
+        return (
+            (f"rel Δ {vc.nrmse:.3e}" if rel else f"|Δ| {vc.nrmse:.3e}"),
+            f"Scalar {vc.actual_final:.6g} vs baseline {vc.reference_final:.6g}: "
+            f"{criterion} deviation {vc.nrmse:.3e} vs "
+            f"tolerance {vc.tolerance_used:.3e}{note} → {verdict}",
         )
     if mode == "event-timing":
         diag = vc.diagnostics or {}
@@ -254,6 +290,7 @@ def _augment_tree_view(
     comparisons_by_path: dict[str, VariableComparison],
     *,
     time_bounds_by_variable: dict[str, tuple[float, float]] | None = None,
+    embedded_baselines_by_variable: dict[str, set[str]] | None = None,
 ) -> None:
     """Walk ``view`` in place, enriching leaf nodes with render artifacts.
 
@@ -267,6 +304,10 @@ def _augment_tree_view(
     ``time_bounds_by_variable`` feeds ``(t_start, t_end)`` into each
     window control's ``placeholder`` so users see the simulation range
     as a hint without auto-committing it.
+
+    ``embedded_baselines_by_variable`` names, per variable, the soft_check
+    baselines whose trajectory is embedded in the page. It decides whether
+    an ``against``-leaf can be live-scored (see ``cli_authoritative``).
     """
     if view.get("kind") == "leaf":
         path = view.get("path", "")
@@ -279,11 +320,28 @@ def _augment_tree_view(
         # extract_mode_values prefers them over diagnostic fallbacks.
         spec_params = view.get("params") or {}
         mode_values = _extract_mode_values(vc, mode, spec_params=spec_params)
-        window_values = _extract_window_values(vc)
+        # Seed the window inputs from the AUTHORED window on the spec view
+        # (spec_to_view emits it from the LeafSpec). The old helper read
+        # vc.diagnostics['window'], which nothing ever set — the evaluator
+        # stashes the window on the MetricResult, not the
+        # VariableComparison — so authored windows never pre-filled the
+        # inputs, masked by browser fixtures hand-setting window_values
+        # (found eyeballing the D103 demo report).
+        window_values = dict(view.get("window") or {})
         var_label = vc.name or view.get("variable", "")
         score_display, criterion = _leaf_score_display(vc)
         bounds = (time_bounds_by_variable or {}).get(var_label)
         t_start, t_end = bounds if bounds else (None, None)
+        # An against-leaf is live-scorable exactly when the named
+        # baseline's curve for THIS variable rode into the page as an
+        # overlay — that is the array the JS scorer swaps in for the
+        # primary reference. Absent (overlay missing / didn't carry this
+        # variable), there is nothing to score against and the CLI verdict
+        # stands.
+        against = view.get("against") or "primary"
+        against_unavailable = against != "primary" and against not in (
+            (embedded_baselines_by_variable or {}).get(var_label, frozenset())
+        )
         view.update(
             {
                 "mode_effective": mode,  # runtime mode (e.g., "points"); not the spec metric
@@ -325,10 +383,35 @@ def _augment_tree_view(
                     time_end=t_end,
                 ),
                 "window_values": window_values,
-                # Dominant-frequency now has a live JS scorer (D75) — only
-                # event-timing remains CLI-authoritative (event pairing stays
-                # Python-side).
-                "cli_authoritative": mode == "event-timing",
+                # event-timing is always CLI-authoritative (event pairing
+                # stays Python-side). Dominant-frequency has a live JS scorer
+                # (D75) whose FFT is bit-identical with Python's ONLY on the
+                # full-resolution trajectory; leaves whose embedded arrays got
+                # LTTB-decimated are flipped to CLI-authoritative afterwards by
+                # report_suite._mark_decimated_cli_authoritative (decimation
+                # happens later, so it can't be decided here). A leaf scored
+                # against a NAMED baseline used to be pinned unconditionally
+                # for the same reason; the page embeds each soft_check's
+                # trajectory as an overlay, and the JS scorers now resolve an
+                # against-leaf to that curve, so the pin narrows to the case
+                # where the named overlay is genuinely absent for this
+                # variable (D105's remaining half).
+                # So is a leaf whose mode never built (``config_error``):
+                # there is no live-scoring state for the JS to re-derive, and
+                # a `range` sentinel would have flipped to PASS on the next
+                # refresh back when absent bounds read as unbounded. Gated on
+                # ``config_error``, NOT on ``error`` alone — a data-shaped
+                # sentinel (empty window, empty trajectory) must stay live so
+                # dragging the window back over the samples re-scores it.
+                "cli_authoritative": (
+                    mode not in _JS_SCORED_METRICS
+                    or against_unavailable
+                    or bool((vc.diagnostics or {}).get("config_error"))
+                ),
+                # Reason a sentinel leaf could not be scored. Rendered as the
+                # score pill's tooltip plus a muted line beneath it; None on
+                # every normally-scored leaf.
+                "error": (vc.diagnostics or {}).get("error"),
                 # Dominant-frequency leaves carry their spectrum arrays so the
                 # reporter's editor-slot subplot can render without recomputing.
                 # Empty dict for other modes; the JS editor short-circuits.
@@ -343,6 +426,7 @@ def _augment_tree_view(
             child,
             comparisons_by_path,
             time_bounds_by_variable=time_bounds_by_variable,
+            embedded_baselines_by_variable=embedded_baselines_by_variable,
         )
 
 
@@ -370,25 +454,6 @@ def _extract_spectrum(vc: VariableComparison) -> dict:
             diag.get("detected_reference_peaks_hz") or []
         ),
     }
-
-
-def _extract_window_values(vc: VariableComparison) -> dict:
-    """Pull ``{"start": ..., "end": ...}`` from a leaf's recorded window.
-
-    ``tree_eval._evaluate_leaf`` stashes the window on the leaf's
-    ``diagnostics['window']`` dict when the LeafSpec declared one. Empty
-    dict when no window — the reporter omits the window UI in that case.
-    """
-    diag = vc.diagnostics or {}
-    window = diag.get("window")
-    if not isinstance(window, dict):
-        return {}
-    out = {}
-    if window.get("start") is not None:
-        out["start"] = float(window["start"])
-    if window.get("end") is not None:
-        out["end"] = float(window["end"])
-    return out
 
 
 def _render_window_controls(
@@ -451,7 +516,7 @@ def _build_ref_info(
             ref_info.append({"label": label, "value": _format_value(ref_val)})
 
     if ref_data and ref_data.get("test_id"):
-        from ..storage.reference_store import RefIndex
+        from ..storage.ref_index import RefIndex
 
         ref_filename = RefIndex.ref_filename(ref_data["test_id"])
         row = {"label": "Reference File", "value": ref_filename}
@@ -745,10 +810,39 @@ def _build_key_stats(
     # better); for range/tube leaves the nrmse field carries mode-specific
     # content (max_violation / fraction-inside). Mixed-mode tests get the
     # worst across whatever leaves they contain.
-    worst_score = max((vc.nrmse for vc in comparisons), default=None)
+    # Sentinel leaves (inf/nan score) are excluded and counted instead —
+    # one unscored leaf used to swallow every real number on the test.
+    worst_score, n_unscored = worst_finite_score(comparisons)
+    # The unscored count rides in ``current`` (the template prefixes
+    # ``reference`` with "ref:", which this is not).
+    unscored_note = (
+        ""
+        if not n_unscored
+        else (
+            " (1 leaf unscored)"
+            if n_unscored == 1
+            else f" ({n_unscored} leaves unscored)"
+        )
+    )
     if worst_score is not None:
         key_stats.append(
-            {"label": "Worst Score", "current": f"{worst_score:.4e}", "reference": ""}
+            {
+                "label": "Worst Score",
+                "current": f"{worst_score:.4e}{unscored_note}",
+                "reference": "",
+            }
+        )
+    elif n_unscored:
+        key_stats.append(
+            {
+                "label": "Worst Score",
+                "current": (
+                    "n/a (1 unscored leaf)"
+                    if n_unscored == 1
+                    else f"n/a ({n_unscored} unscored leaves)"
+                ),
+                "reference": "",
+            }
         )
 
     stat_picks = [
@@ -870,6 +964,13 @@ def _build_tree_view_and_variables(
         comparisons_by_path = dict(zip(leaf_paths_full, comparisons))
     else:
         comparisons_by_path = {}
+        logger.warning(
+            "%s: metric-tree leaf count (%d) does not match comparison count "
+            "(%d) — per-leaf render artifacts omitted from the report",
+            getattr(test_model, "model_id", "<unknown model>"),
+            len(leaf_paths_full),
+            len(comparisons),
+        )
 
     # Collect per-variable simulation bounds so window inputs show the
     # full-trajectory range as placeholder hints.
@@ -882,11 +983,24 @@ def _build_tree_view_and_variables(
                 float(ref_time[-1]),
             )
 
+    # Which named baselines actually rode into the page for each variable.
+    # Companions are excluded on purpose: the validator forbids scoring
+    # against them, so a companion sharing a soft_check's name must never
+    # make an against-leaf look live-scorable.
+    embedded_baselines: dict[str, set[str]] = {}
+    for traj in trajectories:
+        embedded_baselines[traj["name"]] = {
+            ov["name"]
+            for ov in (traj.get("overlays") or [])
+            if ov.get("role") == "soft_check" and ov.get("name")
+        }
+
     tree_view = _spec_to_view(spec, evaluation_by_path=eval_by_path)
     _augment_tree_view(
         tree_view,
         comparisons_by_path,
         time_bounds_by_variable=time_bounds,
+        embedded_baselines_by_variable=embedded_baselines,
     )
 
     # Dedupe trajectories by variable name into a per-variable dict.
@@ -1007,543 +1121,3 @@ def _build_template_context(
         # the dashboard's, formatted by dashboard_render.format_run_metadata.
         "run_metadata": run_metadata,
     }
-
-
-def generate_comparison_plots(
-    model_id: str,
-    ref_data: dict | None,
-    result,
-    comparisons: list[VariableComparison],
-    plot_dir: Path,
-    test_dir: Path | None = None,
-    test_model=None,
-    ref_file: Path | None = None,
-    warnings: list | None = None,
-    last_run_at: float | None = None,
-    metric_tree=None,
-    artifact_files: tuple[tuple[str, str], ...] = (),
-    max_embedded_samples: int = 2000,
-    overlays: list | None = None,
-    status_text: str | None = None,
-    status_class: str | None = None,
-    ref_id: str | None = None,
-    run_metadata: dict | None = None,
-) -> Path | None:
-    """Render this test's interactive.html (Plotly) + comparison_data.json sidecar.
-
-    Returns the path to the rendered interactive.html.
-    """
-    if plot_dir.exists():
-        shutil.rmtree(plot_dir)
-    plot_dir.mkdir(parents=True, exist_ok=True)
-
-    # Stage 5 — static matplotlib per-variable PNGs were retired along
-    # with ``comparison.html``. Plotly inside interactive.html provides
-    # every plot the PNGs showed plus interactivity; nothing linked to
-    # the PNGs anymore.
-    cur_stats = result.statistics if result else None
-    context = _build_template_context(
-        model_id,
-        comparisons,
-        ref_data,
-        cur_stats,
-        test_dir,
-        test_model,
-        result,
-        ref_file=ref_file,
-        warnings=warnings,
-        last_run_at=last_run_at,
-        metric_tree=metric_tree,
-        artifact_files=artifact_files,
-        overlays=overlays,
-        run_metadata=run_metadata,
-    )
-
-    # Write comparison_data.json alongside the HTML. This is the
-    # full-resolution data artifact for downstream tooling (notebooks,
-    # future JS lazy-fetch on zoom). Decimation below only touches the
-    # in-memory context that flows into interactive.html — the sidecar
-    # stays untouched.
-    data_path = plot_dir / "comparison_data.json"
-    # Summary block for the unified dashboard. The full context dict is
-    # the per-variable rendering input; the dashboard only needs row-level
-    # summary fields, exposed under "summary" so build_dashboard_context
-    # can read them without parsing the heavy variable arrays.
-    # `written_at` + `model_id` form a defensive double-entry-bookkeeping
-    # check for the dashboard's enricher: stale sidecars from a prior run
-    # (written_at < snapshot start_wall) and bookkeeping drift (sidecar's
-    # model_id ≠ row's model_id) are both filtered out so they can't
-    # override a fresh verdict.
-    import time as _time
-
-    context["summary"] = {
-        "model_id": model_id,
-        "written_at": _time.time(),
-        "status_text": status_text,
-        "status_class": status_class,
-        "ref_id": ref_id,
-        # file:// URL so the dashboard's Reference column can hyperlink
-        # directly to the stored reference JSON.
-        "ref_file": ref_file.as_uri() if ref_file else None,
-        "worst_nrmse": (
-            max((v.nrmse for v in comparisons), default=None) if comparisons else None
-        ),
-        "n_vars": len(comparisons) if comparisons else 0,
-        "n_vars_passed": (
-            sum(1 for v in comparisons if v.passed) if comparisons else 0
-        ),
-        "n_warnings": len(warnings) if warnings else 0,
-        "translation_wall": (
-            cur_stats.get("timing", {}).get("translation_wall")
-            if isinstance(cur_stats, dict)
-            else None
-        ),
-        "sim_wall": (
-            cur_stats.get("timing", {}).get("sim_wall")
-            if isinstance(cur_stats, dict)
-            else None
-        ),
-        "total_wall": (
-            cur_stats.get("timing", {}).get("total_wall")
-            if isinstance(cur_stats, dict)
-            else None
-        ),
-        "field_sources": (
-            test_model.field_sources
-            if test_model and hasattr(test_model, "field_sources")
-            else {}
-        ),
-    }
-    # review 2026-07-06 finding 68: strict JSON — sanitize non-finite
-    # floats to null and forbid NaN/Infinity tokens at dump time.
-    data_path.write_text(
-        json.dumps(_json_sanitize(context), indent=2, default=str, allow_nan=False),
-        encoding="utf-8",
-    )
-
-    # Decimate trajectory arrays embedded into interactive.html. This
-    # caps the HTML payload for Plotly rendering; pass/fail scoring,
-    # stored baselines, and comparison_data.json are unaffected.
-    _decimate_context_for_html(context, max_embedded_samples)
-
-    # review 2026-07-06 finding 68: the embedded page context must be
-    # strict JSON too — Jinja's |tojson would otherwise emit Infinity/NaN
-    # literals into window.MT_REPORT. Sanitize AFTER decimation so the
-    # recursive pass runs over the capped arrays, not the full-resolution
-    # ones.
-    context = _json_sanitize(context)
-
-    # Render interactive HTML (Plotly, inline data — now decimated).
-    # Stage 5: the static ``comparison.html`` path was retired. The index
-    # page linked only to interactive.html; the per-variable PNGs still
-    # render next to it for direct reference.
-    interactive_path = plot_dir / "interactive.html"
-    _render_template("interactive.html", context, interactive_path)
-
-    # Copy the standalone interactive.js next to the HTML so the
-    # `<script src="interactive.js">` tag resolves. The JS is pure-static
-    # (no Jinja interpolations) — the HTML marshals the per-report data
-    # into window.MT_REPORT; the JS reads from there.
-    shutil.copyfile(_TEMPLATE_DIR / "interactive.js", plot_dir / "interactive.js")
-
-    return interactive_path
-
-
-def _decimate_context_for_html(context: dict, max_samples: int) -> None:
-    """LTTB-decimate trajectory arrays embedded into interactive.html.
-
-    Mutates ``context`` in place. Only touches ``trajectories``,
-    ``diag_trajectories``, and ``nobaseline_trajectories`` — everything
-    else (scores, statistics, ref info) passes through unchanged.
-    """
-    from .decimate import decimate_pair
-
-    if max_samples is None or max_samples <= 0:
-        return
-
-    def _stamp_full_samples(traj: dict) -> None:
-        # review 2026-07-06 finding 37: record pre-decimation sample counts
-        # so interactive.js can disclose "live scores computed on decimated
-        # data (N of M samples)". setdefault — trajectory dicts are shared
-        # between context['trajectories'] and variables_by_name, so the
-        # first stamp (pre-decimation) must win.
-        traj.setdefault(
-            "full_samples",
-            {
-                "act": len(traj.get("act_time") or []),
-                "ref": len(traj.get("ref_time") or []),
-            },
-        )
-
-    for traj in context.get("trajectories", []) or []:
-        _stamp_full_samples(traj)
-        traj["act_time"], traj["act_values"] = decimate_pair(
-            traj.get("act_time"), traj.get("act_values"), max_samples
-        )
-        traj["ref_time"], traj["ref_values"] = decimate_pair(
-            traj.get("ref_time"), traj.get("ref_values"), max_samples
-        )
-        # A2 — decimate overlay trajectories too. The embedded HTML already
-        # enforces a tight payload budget; overlays must share that cap
-        # rather than piggybacking a parallel full-resolution copy.
-        for ov in traj.get("overlays", []) or []:
-            ov["time"], ov["values"] = decimate_pair(
-                ov.get("time"), ov.get("values"), max_samples
-            )
-
-    # Stage-2 per-variable dict carries its own trajectory copy + overlays;
-    # decimate in place so the Stage-2 UI path shares the same budget.
-    for var_data in (context.get("variables_by_name") or {}).values():
-        traj = var_data.get("trajectory") or {}
-        if "act_time" in traj:
-            _stamp_full_samples(traj)
-            traj["act_time"], traj["act_values"] = decimate_pair(
-                traj.get("act_time"), traj.get("act_values"), max_samples
-            )
-            traj["ref_time"], traj["ref_values"] = decimate_pair(
-                traj.get("ref_time"), traj.get("ref_values"), max_samples
-            )
-        for ov in var_data.get("overlays", []) or []:
-            ov["time"], ov["values"] = decimate_pair(
-                ov.get("time"), ov.get("values"), max_samples
-            )
-
-    for traj in context.get("diag_trajectories", []) or []:
-        traj["act_time"], traj["act_values"] = decimate_pair(
-            traj.get("act_time"), traj.get("act_values"), max_samples
-        )
-        traj["ref_time"], traj["ref_values"] = decimate_pair(
-            traj.get("ref_time"), traj.get("ref_values"), max_samples
-        )
-
-    for traj in context.get("nobaseline_trajectories", []) or []:
-        traj["time"], traj["values"] = decimate_pair(
-            traj.get("time"), traj.get("values"), max_samples
-        )
-        # review 2026-07-06 finding 71: nobaseline trajectories carry the
-        # same sibling-backend / companion / soft_check overlays as
-        # baselined ones — decimate them under the same payload budget
-        # (undecimated overlays produced multi-MB HTML in exactly the
-        # sibling-backend cross-check case).
-        for ov in traj.get("overlays", []) or []:
-            ov["time"], ov["values"] = decimate_pair(
-                ov.get("time"), ov.get("values"), max_samples
-            )
-
-
-def _render_template(template_name: str, context: dict, output_path: Path) -> None:
-    """Render a Jinja2 template with the given context."""
-    from jinja2 import Environment, FileSystemLoader
-
-    env = Environment(
-        loader=FileSystemLoader(str(_TEMPLATE_DIR)),
-        autoescape=True,
-    )
-    template = env.get_template(template_name)
-    html = template.render(**context)
-    output_path.write_text(html, encoding="utf-8")
-
-
-def _build_per_test_args(
-    comp, results, test_lookup, store, config, manifest_meta_by_model, artifact_files=()
-):
-    """Resolve all per-test inputs needed to render that test's report."""
-    from .overlay_loader import load_overlays
-
-    model_id = comp.model_id
-    result = results.get(model_id)
-    test = test_lookup.get(model_id)
-    ref_data = store.get_reference(model_id)
-    meta = manifest_meta_by_model.get(model_id, {})
-    test_key = meta.get("test_key")
-    last_run_at = meta.get("last_run_at")
-    # A2 — load every registered overlay for this model (soft_checks +
-    # companions). Failures are absorbed into Overlay.status so the
-    # report never breaks on a moved/renamed companion file.
-    # Passing ``config`` also auto-discovers peer-backend refs as
-    # sibling-backend companions (visual-only pre-accept cross-check).
-    overlays = load_overlays(store, model_id, config=config)
-
-    if not comp.sim_success:
-        status_text, status_class = "SIM_FAIL", "sim-fail"
-    elif test and getattr(test, "simulate_only", False):
-        # simulate_only tests pass iff the simulation ran — presence of a
-        # baseline is irrelevant. Keep the PASS/FAIL signal instead of
-        # falling through to NO_REF.
-        status_text, status_class = (
-            ("PASS", "pass") if comp.passed else ("FAIL", "fail")
-        )
-    elif not comp.passed:
-        # A failing verdict wins over NO_REF — baseline-free modes carry
-        # a real verdict without a stored baseline (review 2026-07-06).
-        status_text, status_class = "FAIL", "fail"
-    elif not comp.has_reference and not comp.evaluated:
-        status_text, status_class = "NO_REF", "no-ref"
-    else:
-        status_text, status_class = "PASS", "pass"
-
-    n_vars = len(comp.variables) if comp.variables else 0
-    n_vars_passed = sum(1 for v in comp.variables if v.passed) if comp.variables else 0
-    worst_nrmse = max((v.nrmse for v in comp.variables), default=None)
-
-    test_dir = config.work_dir / test_key if test_key else None
-
-    ref_file = None
-    test_id = store.index.get_id(model_id)
-    if test_id:
-        from ..storage.reference_store import RefIndex
-
-        ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
-
-    if comp.test_id:
-        report_id = f"ref_{comp.test_id}"
-    elif test_key:
-        report_id = test_key
-    else:
-        report_id = _sanitize_filename(model_id)
-
-    # Pull phase-timing breakdown out of stats if present (runner stashes it)
-    cur_stats = result.statistics if result and result.statistics else {}
-    timing = (
-        cur_stats.get("timing") if isinstance(cur_stats.get("timing"), dict) else {}
-    )
-
-    return {
-        "model_id": model_id,
-        "ref_data": ref_data,
-        "result": result,
-        "test": test,
-        "test_dir": test_dir,
-        "ref_file": ref_file,
-        "warnings": comp.warnings,
-        "report_id": report_id,
-        "test_key": test_key,
-        "status_text": status_text,
-        "status_class": status_class,
-        "n_vars": n_vars,
-        "n_vars_passed": n_vars_passed,
-        "worst_nrmse": worst_nrmse,
-        "n_warnings": len(comp.warnings) if comp.warnings else 0,
-        "ref_id": f"ref_{comp.test_id}" if comp.test_id else None,
-        "last_run_at": last_run_at,
-        "translation_wall": timing.get("translation_wall"),
-        "sim_wall": timing.get("sim_wall"),
-        "total_wall": timing.get("total_wall"),
-        "comp_variables": comp.variables,
-        "metric_tree": comp.metric_tree,
-        "artifact_files": artifact_files,
-        "max_embedded_samples": config.max_embedded_samples,
-        "overlays": overlays,
-    }
-
-
-def _render_one_test(args: dict, report_dir: Path) -> dict:
-    """Render a single test's report. Returns the index entry."""
-    import time as _time
-
-    t0 = _time.monotonic()
-    plot_dir = report_dir / args["report_id"]
-    html_path = generate_comparison_plots(
-        model_id=args["model_id"],
-        ref_data=args["ref_data"],
-        result=args["result"],
-        comparisons=args["comp_variables"],
-        plot_dir=plot_dir,
-        test_dir=args["test_dir"],
-        test_model=args["test"],
-        ref_file=args["ref_file"],
-        warnings=args["warnings"],
-        last_run_at=args["last_run_at"],
-        metric_tree=args.get("metric_tree"),
-        artifact_files=args.get("artifact_files", ()),
-        max_embedded_samples=args.get("max_embedded_samples", 2000),
-        overlays=args.get("overlays"),
-        status_text=args.get("status_text"),
-        status_class=args.get("status_class"),
-        ref_id=args.get("ref_id"),
-        run_metadata=args.get("run_metadata"),
-    )
-    render_elapsed = _time.monotonic() - t0
-    return {
-        "model_id": args["model_id"],
-        "status_text": args["status_text"],
-        "status_class": args["status_class"],
-        "ref_id": args["ref_id"],
-        "test_key": args["test_key"],
-        "worst_nrmse": args["worst_nrmse"],
-        "n_vars": args["n_vars"],
-        "n_vars_passed": args["n_vars_passed"],
-        "n_warnings": args["n_warnings"],
-        "last_run_at": args["last_run_at"],
-        "translation_wall": args.get("translation_wall"),
-        "sim_wall": args.get("sim_wall"),
-        "total_wall": args.get("total_wall"),
-        "report_path": f"{args['report_id']}/interactive.html" if html_path else None,
-        "_render_elapsed": render_elapsed,
-    }
-
-
-def _read_run_metadata(work_dir: Path) -> dict | None:
-    """Read + shape the run provenance from ``work_dir/status.json`` for the
-    per-test banner. Returns None (banner omitted) when status.json is absent,
-    unreadable, or predates the ``metadata`` field. Never raises."""
-    import json as _json
-
-    from .dashboard_render import format_run_metadata
-
-    status_path = work_dir / "status.json"
-    try:
-        snapshot = _json.loads(status_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return format_run_metadata(snapshot.get("metadata"))
-
-
-def generate_report_suite(
-    comparisons: list,
-    results: dict,
-    tests: list,
-    store,
-    config,
-) -> Path:
-    """Generate per-test comparison reports.
-
-    Per-test report rendering runs on a thread pool sized by config.parallel.
-    The hot work is Plotly trace JSON serialization + comparison_data.json
-    dump + decimation; numpy/json release the GIL well enough that threads
-    give a meaningful speedup without the pickling cost of a process pool.
-
-    Returns the path to the unified dashboard HTML file (rendered separately
-    by ``dashboard_render.render_final``).
-    """
-    import time as _time
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    report_wall_start = _time.monotonic()
-    report_dir = config.work_dir / "reports"
-    report_dir.mkdir(parents=True, exist_ok=True)
-
-    test_lookup = {t.model_id: t for t in tests}
-
-    # Resolve the backend's artifact file list once up front — class attribute,
-    # no runner instantiation needed (avoids triggering the fmpy import if the
-    # extra isn't installed).
-    from ..simulators import get_runner_class
-
-    try:
-        artifact_files = tuple(get_runner_class(config).artifact_files)
-    except ValueError:
-        artifact_files = ()
-
-    # Cache test_key + last_run_at lookup once instead of scanning manifests per test
-    manifest_meta_by_model: dict[str, dict] = {}
-    manifest_paths = sorted(config.work_dir.glob("batch_manifest.json"))
-    if manifest_paths:
-        from ..simulators import BatchManifest
-
-        for mp in manifest_paths:
-            bm = BatchManifest.load(mp)
-            for tk, entry in bm.manifest.items():
-                manifest_meta_by_model.setdefault(
-                    entry["model_id"],
-                    {
-                        "test_key": tk,
-                        "last_run_at": entry.get("last_run_at"),
-                    },
-                )
-
-    # Run provenance for the per-test banner — read once from status.json and
-    # shaped by the same formatter the dashboard uses, so both surfaces agree.
-    # None when status.json predates the metadata field (banner is omitted).
-    run_metadata = _read_run_metadata(config.work_dir)
-
-    # Resolve per-test args sequentially (cheap dict/store lookups), then
-    # render reports in parallel
-    work = [
-        _build_per_test_args(
-            comp,
-            results,
-            test_lookup,
-            store,
-            config,
-            manifest_meta_by_model,
-            artifact_files,
-        )
-        for comp in comparisons
-    ]
-    for args in work:
-        args["run_metadata"] = run_metadata
-
-    n_workers = max(1, min(getattr(config, "parallel", 1) or 1, len(work)))
-    index_tests: list[dict] = []
-    total_reports = len(work)
-
-    from ..simulators.base import _print_progress
-
-    print(f"Generating {total_reports} reports (parallel={n_workers})...")
-
-    if n_workers <= 1 or len(work) <= 1:
-        for i, args in enumerate(work, 1):
-            index_tests.append(_render_one_test(args, report_dir))
-            short = args["model_id"].rsplit(".", 1)[-1]
-            _print_progress(i, total_reports, short, "ok")
-    else:
-        # Preserve original test order in the index
-        results_by_model: dict[str, dict] = {}
-        completed = 0
-        with ThreadPoolExecutor(
-            max_workers=n_workers, thread_name_prefix="report"
-        ) as pool:
-            futures = {
-                pool.submit(_render_one_test, args, report_dir): args["model_id"]
-                for args in work
-            }
-            for future in as_completed(futures):
-                entry = future.result()
-                results_by_model[entry["model_id"]] = entry
-                completed += 1
-                short = entry["model_id"].rsplit(".", 1)[-1]
-                _print_progress(completed, total_reports, short, "ok")
-        index_tests = [results_by_model[args["model_id"]] for args in work]
-
-    # Per-test interactive.html + comparison_data.json sidecars are
-    # written above. The unified work_dir/dashboard.html is rendered
-    # by cli._generate_report_suite via dashboard_render.render_final;
-    # the standalone index.html that used to live here is retired.
-
-    # Phase timing — exposes whether parallelism is helping
-    wall = _time.monotonic() - report_wall_start
-    elapsed = [t.get("_render_elapsed", 0.0) for t in index_tests]
-    total_work = sum(elapsed)
-    if elapsed:
-        slowest = max(elapsed)
-        avg = total_work / len(elapsed)
-        speedup = (total_work / wall) if wall > 0 else 0.0
-        print(
-            f"Report phase: {wall:.0f}s wall, {total_work:.0f}s total work, "
-            f"{speedup:.1f}x parallel speedup (avg {avg:.1f}s/test, slowest {slowest:.1f}s)"
-        )
-    return config.work_dir / "dashboard.html"
-
-
-def open_in_browser(path: Path) -> None:
-    """Open a file in the system's default browser/viewer.
-
-    Always prints a ``file://`` URL so the user has a clickable fallback
-    (most terminals make it clickable). Subprocess stdout/stderr are
-    silenced — on headless Linux/WSL ``xdg-open`` prints a long list of
-    "Permission denied" candidates when no browser is registered, and
-    that noise has no actionable signal for the user.
-    """
-    print(f"View: {path.resolve().as_uri()}")
-    system = platform.system()
-    silent = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-    try:
-        if system == "Windows":
-            subprocess.Popen(["start", "", str(path)], shell=True, **silent)
-        elif system == "Darwin":
-            subprocess.Popen(["open", str(path)], **silent)
-        else:
-            subprocess.Popen(["xdg-open", str(path)], **silent)
-    except OSError:
-        pass

@@ -177,7 +177,7 @@ Playwright covers correctness. These check the UX:
 
 - [ ] `uv run dstf export-schema` emits valid JSON-Schema
       2020-12 to stdout.
-- [ ] `$defs` contains entries for all six modes.
+- [ ] `$defs` contains entries for every registered mode.
 - [ ] Pass it to any JSON-Schema validator; parses without errors.
 
 ## Known limitations / deferred (don't file as bugs)

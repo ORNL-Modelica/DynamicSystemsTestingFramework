@@ -81,6 +81,13 @@ class TestComparison:
     error_message: str | None = None
     sim_success: bool = True
     has_reference: bool = True
+    # PTA.5 — this test's pass criterion is "the simulation ran"; no
+    # baseline is consulted and ``variables`` is empty by construction.
+    # Carried on the comparison (not just on the TestModel) so every
+    # report surface can classify it from the comparison alone —
+    # reporting.status is the one classifier, and this is the input it
+    # used to be missing (D117).
+    simulate_only: bool = False
     # Phase 3.1: MetricTree root for this test. Today populated as the
     # implicit flat-AND over per-variable comparisons (matches `passed`
     # exactly). Phase 3.2+ replaces with user-authored trees from

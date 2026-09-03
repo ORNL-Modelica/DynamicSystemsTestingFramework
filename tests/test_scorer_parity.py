@@ -20,9 +20,11 @@ only ran under Playwright, so environments without browsers never
 executed it at all):
 
 * **Node** (``test_js_scorers_agree_with_python_node``) — loads
-  interactive.js into a bare ``node`` process with a tiny window/document
-  stub and calls ``MODE_SCORERS`` directly. Skipped when ``node`` is not
-  on PATH.
+  ``templates/scorers.js`` ALONE into a bare ``node`` process and calls
+  ``MODE_SCORERS`` directly. That fragment loads DOM-free (its pill updater touches the DOM only at call time) (it only reads
+  ``window.MT_REPORT`` at load), so the parity path needs no document
+  stub — which is the point of keeping the scorers in their own file.
+  Skipped when ``node`` is not on PATH.
 * **Playwright** (``test_js_scorers_agree_with_python``) — renders the
   full interactive.html and evaluates in Chromium. Skipped when
   Playwright isn't installed.
@@ -44,15 +46,15 @@ from typing import Any
 import numpy as np
 import pytest
 
-_JS_SRC = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "dstf"
-    / "reporting"
-    / "templates"
-    / "interactive.js"
+from dstf.reporting.report_suite import interactive_js_source, write_report_assets
+
+_TEMPLATE_DIR = (
+    Path(__file__).resolve().parents[1] / "src" / "dstf" / "reporting" / "templates"
 )
-_TEMPLATE_DIR = _JS_SRC.parent
+# The scorer parity path loads this fragment on its own; the two
+# state/trust node tests below exercise editors + export and need the whole
+# concatenated bundle (``interactive_js_source()``).
+_SCORERS_JS = _TEMPLATE_DIR / "scorers.js"
 
 _NODE = shutil.which("node")
 
@@ -173,6 +175,7 @@ def _tone(freqs_amps: list[tuple[float, float]]) -> dict:
 
 
 _TRAJ_BUILDERS = {
+    "ramp_identical": lambda: _ramp(0.0),
     "ramp_small": lambda: _ramp(1e-4),
     "ramp_large": lambda: _ramp(5e-2),
     "sine_off_002": lambda: _sine_tube(0.02),
@@ -275,6 +278,16 @@ _PARITY_CASES: list[dict[str, Any]] = [
         "verdict": "fail",
         "params": {"min_value": 0.0, "max_value": 1.0},
         "traj": "range_outside",
+    },
+    {
+        # D107: no bounds is a config error, not "unbounded → everything
+        # passes". Python raises from RangeMode.__init__; the JS scorer
+        # returns false rather than passing a leaf that never scored.
+        "id": "range-no-bounds-fail",
+        "mode": "range",
+        "verdict": "fail",
+        "params": {},
+        "traj": "range_inside",
     },
     {
         "id": "points-final-pass",
@@ -552,6 +565,41 @@ _PARITY_CASES: list[dict[str, Any]] = [
         "params": {"peaks": [{"freq": 5.0, "tolerance_mode": "rel"}]},
         "traj": "tone5",
     },
+    # ---- explicit tolerance of 0 --------------------------------------
+    # 0 is the strictest possible tolerance, and Python honors it: the
+    # pass rule is a strict ``nrmse < tolerance`` / ``delta < tolerance``,
+    # so even identical signals FAIL. ``tolerance_used`` carries the
+    # pre-edit tolerance the CLI scored with — exactly what a user sees
+    # after typing 0 into the reporter — so a JS helper that treats 0 as
+    # "unset" would silently fall back to it and pass.
+    {
+        "id": "nrmse-zero-tolerance-fail",
+        "mode": "nrmse",
+        "verdict": "fail",
+        "params": {"tolerance": 0},
+        "tolerance_used": 1e-2,
+        "traj": "ramp_identical",
+    },
+    {
+        "id": "points-final-zero-tolerance-fail",
+        "mode": "points",
+        "verdict": "fail",
+        "params": {"tolerance": 0, "points": []},
+        "tolerance_used": 1e-2,
+        "traj": "ramp_identical",
+    },
+    # A NEGATIVE tolerance is authoring nonsense, but the exported patch
+    # carries it raw and the CLI fails everything with it — so the live
+    # pill must too. A JS guard that clamps or falls back on negatives
+    # (review of the zero-tolerance fix) would show green here.
+    {
+        "id": "nrmse-negative-tolerance-fail",
+        "mode": "nrmse",
+        "verdict": "fail",
+        "params": {"tolerance": -0.01},
+        "tolerance_used": 1e-2,
+        "traj": "ramp_identical",
+    },
 ]
 
 
@@ -607,10 +655,27 @@ def _python_verdict(case: dict) -> bool:
         result = cmp._compare_tube(rt, rv, at, av, params)
         return bool(result.passed)
     if mode == "range":
-        result = cmp._compare_range(
-            at, av, params.get("min_value"), params.get("max_value")
-        )
-        return bool(result.passed)
+        # Through RangeMode, not _compare_range directly: the "no bounds
+        # declared" guard lives in the mode's constructor, and a leaf that
+        # never built is a FAIL on both sides (D107).
+        from dstf.comparison.modes import RangeConfig, RangeMode
+
+        try:
+            mode_obj = RangeMode(
+                RangeConfig(
+                    min_value=params.get("min_value"),
+                    max_value=params.get("max_value"),
+                )
+            )
+        except ValueError as exc:
+            # Only the opted-in no-bounds case may raise here. A future
+            # construction-time raise on a BOUNDED case would otherwise be
+            # silently read as "both sides fail" — i.e. false parity.
+            assert "at least one of min_value / max_value" in str(exc), (
+                f"{case['id']}: unexpected raise from RangeMode: {exc}"
+            )
+            return False
+        return bool(mode_obj.compare(rt, rv, at, av).passed)
     if mode == "points":
         result = cmp._compare_points(
             rt,
@@ -687,7 +752,12 @@ def _build_leaf(idx: int, case: dict, expected: bool) -> dict:
         "reference_final": 0.0,
         "actual_final": 0.0,
         "is_constant": False,
-        "tolerance_used": case["params"].get("tolerance", 1e-4),
+        # The CLI-computed tolerance the leaf was scored with. Cases may
+        # override it to differ from the live param (see the
+        # zero-tolerance rows) so a JS fallback to it is detectable.
+        "tolerance_used": case.get(
+            "tolerance_used", case["params"].get("tolerance", 1e-4)
+        ),
         "score_display": "",
         "criterion": "",
         "tube_points_inside": None,
@@ -798,9 +868,18 @@ def _assert_verdicts_agree(js_verdicts: list[dict], expected: list[bool]) -> Non
 # Node runner — no browser needed
 # ---------------------------------------------------------------------------
 
-# Minimal DOM shim: interactive.js only needs window.MT_REPORT and a
-# document object at load time (DOMContentLoaded registration); scorers
-# themselves are DOM-free.
+# scorers.js touches no DOM at load — it reads window.MT_REPORT and builds
+# leafState — so the parity runner hands it a window and nothing else. Keeping
+# that stub this small is the standing check that the scoring math stays
+# browser-independent: if it ever needs `document`, the scorers grew a UI
+# dependency and belong on the other side of the seam.
+_SCORERS_PRELUDE_TEMPLATE = """
+globalThis.window = { MT_REPORT: %s };
+"""
+
+# Full-bundle shim: the state / trust runners below load the concatenated
+# interactive.js, which registers a DOMContentLoaded handler and builds
+# editor controls, so those need a document object too.
 _NODE_PRELUDE_TEMPLATE = """
 globalThis.window = { MT_REPORT: %s };
 globalThis.document = {
@@ -843,8 +922,8 @@ def test_js_scorers_agree_with_python_node(tmp_path):
         "NB_TRAJECTORIES": [],
     }
     script = (
-        _NODE_PRELUDE_TEMPLATE % json.dumps(mt_report)
-        + _JS_SRC.read_text(encoding="utf-8")
+        _SCORERS_PRELUDE_TEMPLATE % json.dumps(mt_report)
+        + _SCORERS_JS.read_text(encoding="utf-8")
         + _NODE_EPILOGUE
     )
     script_path = tmp_path / "parity_runner.js"
@@ -918,7 +997,7 @@ def test_js_state_behaviors_node(tmp_path):
 """ % {"tube_path": json.dumps(tube_path), "win_path": json.dumps(win_path)}
     script = (
         _NODE_PRELUDE_TEMPLATE % json.dumps(mt_report)
-        + _JS_SRC.read_text(encoding="utf-8")
+        + interactive_js_source()
         + epilogue
     )
     script_path = tmp_path / "state_runner.js"
@@ -949,6 +1028,278 @@ def test_js_state_behaviors_node(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Reporter-trust fixtures — browser table / band / export must agree with
+# what ``dstf run`` would say. Each block below has a Python counterpart
+# asserted in the same test.
+# ---------------------------------------------------------------------------
+
+# Declared A is wide (t=1.0 ±0.5) and covers BOTH actual events; declared B
+# is narrow (t=1.3 ±0.05) and covers only the first. Greedy nearest-unclaimed
+# gives A the 1.25 event and leaves B unmatched; the optimal right-endpoint
+# rule Python uses gives B the 1.25 event and A the 1.4 one, matching both.
+_STEALING_DECLARED = [
+    {"time": 1.0, "tolerance": 0.5},
+    {"time": 1.3, "tolerance": 0.05},
+]
+# Modelica-style duplicate-time events at t=1.25 and t=1.4.
+_STEALING_ACT_TIME = [0.0, 0.5, 1.25, 1.25, 1.3, 1.4, 1.4, 2.0]
+
+
+def _trust_fixture_context() -> dict:
+    """MT_REPORT for the reporter-trust checks (Fixes 2, 4, 6)."""
+    ev_traj = {
+        "ref_time": list(_STEALING_ACT_TIME),
+        "ref_values": [0.0] * len(_STEALING_ACT_TIME),
+        "act_time": list(_STEALING_ACT_TIME),
+        "act_values": [0.0] * len(_STEALING_ACT_TIME),
+    }
+    # ref constant 1.0, act constant 1.1 — outside a zero-width 'rel' tube,
+    # inside a 0.2 band. Which one the report DRAWS must be the one it scores.
+    t = np.linspace(0.0, 1.0, 20)
+    tube_traj = _traj(t, np.ones_like(t), t, np.ones_like(t) + 0.1)
+    flat_traj = _ramp(0.0)
+
+    leaves = [
+        {
+            "kind": "leaf",
+            "path": "/metrics/children/0",
+            "metric": "event-timing",
+            "variable": "ev",
+            "params": {"events": _STEALING_DECLARED, "time_tolerance": 1e-3},
+            "mode_values": {"events": _STEALING_DECLARED, "time_tolerance": 1e-3},
+            "window": {},
+            "children": [],
+            "name": "ev",
+            "mode_effective": "event-timing",
+            "cli_authoritative": True,
+        },
+        {
+            "kind": "leaf",
+            "path": "/metrics/children/1",
+            "metric": "tube",
+            "variable": "tb",
+            # tube_width_mode deliberately UNSET.
+            "params": {"tube_abs": 0.2},
+            "mode_values": {"tube_abs": 0.2, "tube_rel": 0.0},
+            "window": {},
+            "children": [],
+            "name": "tb",
+            "mode_effective": "tube",
+            "cli_authoritative": False,
+        },
+        {
+            # Flat-override leaf: the spec authored NO tolerance; the CLI's
+            # inherited config.tolerance arrives only via mode_values.
+            "kind": "leaf",
+            "path": "/metrics/children/2",
+            "metric": "nrmse",
+            "variable": "inherited",
+            "params": {},
+            "mode_values": {"tolerance": 1e-4},
+            "window": {},
+            "children": [],
+            "name": "inherited",
+            "mode_effective": "nrmse",
+            "cli_authoritative": False,
+        },
+        {
+            # Spec-authored tolerance — must round-trip verbatim.
+            "kind": "leaf",
+            "path": "/metrics/children/3",
+            "metric": "nrmse",
+            "variable": "authored",
+            "params": {"tolerance": 0.01},
+            "mode_values": {"tolerance": 0.01},
+            "window": {},
+            "children": [],
+            "name": "authored",
+            "mode_effective": "nrmse",
+            "cli_authoritative": False,
+        },
+    ]
+    variables = {
+        "ev": {"name": "ev", "trajectory": ev_traj, "overlays": []},
+        "tb": {"name": "tb", "trajectory": tube_traj, "overlays": []},
+        "inherited": {"name": "inherited", "trajectory": flat_traj, "overlays": []},
+        "authored": {"name": "authored", "trajectory": flat_traj, "overlays": []},
+    }
+    return {
+        "MODEL_ID": "Fixture.ReporterTrust",
+        "TREE_VIEW": {
+            "kind": "combinator",
+            "combinator": "and",
+            "path": "/metrics",
+            "children": leaves,
+        },
+        "VARIABLES_BY_NAME": variables,
+        "VARIABLE_ORDER": list(variables.keys()),
+        "MODE_SCHEMAS": {},
+        "DIAG_TRAJECTORIES": [],
+        "NB_TRAJECTORIES": [],
+    }
+
+
+_TRUST_EPILOGUE = """
+;(() => {
+  const results = {};
+
+  // --- event-timing live match table (Fix 2) ---
+  const evLeaf = findLeaf(TREE_VIEW, '/metrics/children/0');
+  results.evMatches = MODE_PLOT_EDITORS['event-timing']._evaluateLiveMatches(evLeaf);
+
+  // --- tube: drawn band vs scored band with tube_width_mode unset (Fix 4) ---
+  const tbLeaf = findLeaf(TREE_VIEW, '/metrics/children/1');
+  const tbTraj = VARIABLES_BY_NAME['tb'].trajectory;
+  const contrib = MODE_PLOT_CONTRIBUTIONS['tube'](tbLeaf, tbTraj);
+  const n = tbTraj.ref_time.length;
+  const y = contrib.traces[0].y;
+  const upper = y.slice(0, n);
+  const lower = y.slice(n).reverse();
+  results.insideDrawnBand = tbTraj.act_values.every(
+    (v, i) => v >= lower[i] && v <= upper[i]);
+  results.tubeScorerVerdict = MODE_SCORERS['tube'](tbLeaf);
+
+  // --- structural export: inherited vs authored params (Fix 6) ---
+  results.inheritedSpec = nodeToSpec(findLeaf(WORKING_TREE, '/metrics/children/2'));
+  results.authoredSpec = nodeToSpec(findLeaf(WORKING_TREE, '/metrics/children/3'));
+  leafState['/metrics/children/2'].params.tolerance = 0.5;   // user edit
+  results.editedSpec = nodeToSpec(findLeaf(WORKING_TREE, '/metrics/children/2'));
+
+  // --- passthrough JSON textarea: malformed input never reaches params (Fix 5) ---
+  const ta = {
+    type: 'textarea', value: '[{"time": 2.0}]',
+    dataset: { passthrough: 'true' }, style: {},
+    classList: { toggle() {} },
+  };
+  onLeafFieldChange(evLeaf, 'events', ta);
+  results.eventsAfterGood = leafState['/metrics/children/0'].params.events;
+  ta.value = '[{"time": 2.0';                 // malformed
+  onLeafFieldChange(evLeaf, 'events', ta);
+  results.eventsAfterBad = leafState['/metrics/children/0'].params.events;
+  results.badTitle = ta.title;
+  results.badBorder = ta.style.borderColor;
+  results.badExport = JSON.stringify(buildPatchData());
+  ta.value = '';                              // clearing still works
+  onLeafFieldChange(evLeaf, 'events', ta);
+  results.eventsAfterClear = leafState['/metrics/children/0'].params.events;
+
+  // --- Shift+click add survives sub-pixel jitter (Fix 3) ---
+  // Recording DOM stub: 1 data unit == 100 screen px, so a 1 px wobble is a
+  // 0.01 data-unit change — far above the data-space epsilon this replaced.
+  const handlers = {};
+  document.addEventListener = (name, fn) => { handlers[name] = fn; };
+  const axis = { p2d: px => px / 100, d2p: d => d * 100 };
+  const plotEl = {
+    _fullLayout: { xaxis: axis, yaxis: axis },
+    querySelector: () => ({ getBoundingClientRect: () => ({ left: 0, top: 0 }) }),
+    addEventListener: (name, fn) => { handlers['el:' + name] = fn; },
+    removeEventListener: () => {},
+  };
+  let added = 0;
+  createPointPlotEditor({
+    getAnchors: () => [],
+    onClickAdd: () => { added++; },
+    onDragStep: () => {},
+  }).attach(tbLeaf, plotEl, () => {});
+  const noop = () => {};
+  const down = (x, y) => handlers['el:mousedown']({
+    shiftKey: true, button: 0, clientX: x, clientY: y,
+    stopPropagation: noop, stopImmediatePropagation: noop, preventDefault: noop,
+  });
+  const move = (x, y) => handlers['mousemove']({ clientX: x, clientY: y, preventDefault: noop });
+
+  down(100, 100); move(101, 100); handlers['mouseup']();     // 1 px jitter
+  results.addsAfterJitter = added;
+  down(100, 100); move(160, 140); handlers['mouseup']();     // real 72 px drag
+  results.addsAfterDrag = added;
+
+  console.log(JSON.stringify(results));
+})();
+"""
+
+
+@pytest.mark.skipif(_NODE is None, reason="node executable not on PATH")
+def test_js_reporter_trust_fixes_node(tmp_path):
+    """Browser-side artifacts must agree with what ``dstf run`` reports.
+
+    * event-timing's live Match column pairs declared/actual events with the
+      same optimal interval matching the Python scorer uses (a greedy rule
+      showed rows red that the CLI scores green).
+    * a tube leaf with ``tube_width_mode`` unset DRAWS the band it SCORES.
+    * a structural export never freezes an inherited config.tolerance into a
+      leaf, but keeps spec-authored and user-edited params.
+    """
+    mt_report = _trust_fixture_context()
+    script = (
+        _NODE_PRELUDE_TEMPLATE % json.dumps(mt_report)
+        + interactive_js_source()
+        + _TRUST_EPILOGUE
+    )
+    script_path = tmp_path / "trust_runner.js"
+    script_path.write_text(script, encoding="utf-8")
+    proc = subprocess.run(
+        [_NODE, str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, (
+        f"node failed (rc={proc.returncode}):\n{proc.stderr}\n{proc.stdout}"
+    )
+    results = json.loads(proc.stdout.strip().splitlines()[-1])
+
+    # --- Fix 2: the JS Match column must reproduce Python's pairing ---
+    from dstf.comparison.algorithms import _compare_event_timing
+
+    py = _compare_event_timing(
+        np.array(_STEALING_ACT_TIME),
+        np.array(_STEALING_ACT_TIME),
+        time_tolerance=1e-3,
+        count_must_match=True,
+        declared_events=_STEALING_DECLARED,
+    )
+    assert py.passed, "fixture must be a PASS Python-side (both events paired)"
+    assert [m["matched"] for m in results["evMatches"]] == [True, True], (
+        f"live Match column disagrees with the Python pairing: {results['evMatches']}"
+    )
+    # A takes 1.4 and B takes 1.25 under the right-endpoint rule.
+    assert results["evMatches"][0]["at"] == 1.4
+    assert results["evMatches"][1]["at"] == 1.25
+
+    # --- Fix 4: unset tube_width_mode — drawn band == scored band ---
+    assert results["tubeScorerVerdict"] == results["insideDrawnBand"], (
+        "tube plot and tube scorer default tube_width_mode differently"
+    )
+
+    # --- Fix 6: structural export omits inherited-only params ---
+    assert "tolerance" not in results["inheritedSpec"], (
+        "structural export froze the inherited config.tolerance into the leaf"
+    )
+    assert results["inheritedSpec"]["metric"] == "nrmse"
+    assert results["authoredSpec"]["tolerance"] == 0.01
+    assert results["editedSpec"]["tolerance"] == 0.5
+
+    # --- Fix 5: malformed passthrough JSON is refused, not stored/exported ---
+    assert results["eventsAfterGood"] == [{"time": 2.0}]
+    assert results["eventsAfterBad"] == [{"time": 2.0}], (
+        "malformed JSON overwrote the last-good passthrough value"
+    )
+    assert results["badTitle"], "invalid textarea carries no explanatory title"
+    assert results["badBorder"] == "#d32f2f"
+    assert '[{"time": 2.0' not in results["badExport"], (
+        "raw unparsed JSON string leaked into the exported patch"
+    )
+    # Clearing the field is still a real edit → null.
+    assert results["eventsAfterClear"] is None
+
+    # --- Fix 3: a 1 px wobble still counts as a click; a real drag doesn't ---
+    assert results["addsAfterJitter"] == 1, (
+        "Shift+click add cancelled by sub-pixel mouse drift"
+    )
+    assert results["addsAfterDrag"] == 1, "a real drag must not add a point"
+
+
+# ---------------------------------------------------------------------------
 # Playwright runner — renders the real interactive.html
 # ---------------------------------------------------------------------------
 
@@ -961,19 +1312,12 @@ def _render_report(tmp_path: Path) -> tuple[Path, list[bool]]:
     html = env.get_template("interactive.html").render(**context)
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
-    shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    write_report_assets(tmp_path)
     return html_path, expected
 
 
-@pytest.fixture(scope="module")
-def playwright_browser():
-    pytest.importorskip("playwright.sync_api")
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        yield browser
-        browser.close()
+# playwright_browser lives in conftest.py — see its docstring for why it
+# must not be defined here or imported between test modules (D97).
 
 
 @pytest.fixture
@@ -990,6 +1334,7 @@ def parity_page(tmp_path, playwright_browser) -> Iterator[tuple[Any, list[bool]]
     context.close()
 
 
+@pytest.mark.playwright
 def test_js_scorers_agree_with_python(parity_page):
     """For every fixture leaf, the JS ``MODE_SCORERS[mode](leaf)`` verdict
     must match the Python ``_compare_<mode>`` verdict on the same data.

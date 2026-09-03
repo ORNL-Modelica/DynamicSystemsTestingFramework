@@ -5,6 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from dstf.comparison.algorithms import (
+    _compare_dominant_frequency,
+    _compare_event_timing,
+)
 from dstf.comparison.modes import (
     DominantFrequencyConfig,
     DominantFrequencyMode,
@@ -12,6 +16,8 @@ from dstf.comparison.modes import (
     EventTimingMode,
     resolve_mode,
 )
+
+EMPTY = np.array([])
 
 
 class TestEventTimingMode:
@@ -340,3 +346,69 @@ class TestEventTimingDeclaredEvents:
         result = mode.compare(ref_t, ref_v, act_t, act_v)
         assert not result.passed
         assert result.diagnostics["act_event_count"] == 1
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_verdict.py — regression tests for the
+# 2026-07-06 review, Theme 1: verdict integrity (CODE_REVIEW_2026-07-06.md).
+#
+# Decisions encoded here:
+#
+# * Declared dominant-frequency peaks each claim a distinct actual peak.
+# * Declared event matching finds a feasible assignment when one exists
+#   (no spurious FAIL from greedy declaration-order matching).
+# =========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Dominant frequency: declared peaks claim distinct actual peaks
+# ---------------------------------------------------------------------------
+
+
+class TestDominantFrequencyClaiming:
+    def test_two_declared_peaks_cannot_share_one_actual_peak(self):
+        t = np.linspace(0.0, 100.0, 4096)
+        v = np.sin(2 * np.pi * 1.0 * t)
+        peaks = [
+            {"freq": 0.9, "tolerance": 0.2, "tolerance_mode": "abs"},
+            {"freq": 1.1, "tolerance": 0.2, "tolerance_mode": "abs"},
+        ]
+        vc = _compare_dominant_frequency(EMPTY, EMPTY, t, v, peaks=peaks)
+        assert not vc.passed
+
+    def test_two_distinct_peaks_both_match(self):
+        t = np.linspace(0.0, 100.0, 4096)
+        v = np.sin(2 * np.pi * 0.9 * t) + np.sin(2 * np.pi * 1.1 * t)
+        peaks = [
+            {"freq": 0.9, "tolerance": 0.05, "tolerance_mode": "abs"},
+            {"freq": 1.1, "tolerance": 0.05, "tolerance_mode": "abs"},
+        ]
+        vc = _compare_dominant_frequency(EMPTY, EMPTY, t, v, peaks=peaks)
+        assert vc.passed
+
+
+# ---------------------------------------------------------------------------
+# Event timing: feasible assignment must pass
+# ---------------------------------------------------------------------------
+
+
+class TestEventAssignment:
+    def test_alternate_assignment_found(self):
+        """declared 1.0→act 0.96 / declared 1.02→act 1.01 satisfies both
+        tolerances; nearest-first greedy would steal 1.01 for declared 1.0."""
+        act_t = np.array([0.0, 0.96, 0.96, 1.01, 1.01, 2.0])
+        declared = [
+            {"time": 1.0, "tolerance": 0.05},
+            {"time": 1.02, "tolerance": 0.05},
+        ]
+        vc = _compare_event_timing(EMPTY, act_t, declared_events=declared)
+        assert vc.passed
+
+    def test_truly_unmatchable_still_fails(self):
+        act_t = np.array([0.0, 0.5, 0.5, 2.0])
+        declared = [
+            {"time": 1.0, "tolerance": 0.05},
+            {"time": 1.02, "tolerance": 0.05},
+        ]
+        vc = _compare_event_timing(EMPTY, act_t, declared_events=declared)
+        assert not vc.passed

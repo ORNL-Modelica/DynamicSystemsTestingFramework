@@ -6,47 +6,55 @@ without writing Python. Schema:
     {
       "name": "<unique recognizer name>",
       "applies_to": ["modelica"],          # Config.source_type values
+      "paths_include": ["Examples/*"],     # optional fnmatch globs on the
+      "paths_exclude": ["**/Internal/*"],  #   source-relative file path
       "match": {
-        "type": "component-instantiation" | "extends",
+        "type": "component-instantiation" | "extends" | "class-name-glob"
+                | "all-of" | "any-of",
         ...                                # match-type-specific keys
       },
       "fields": {
         "<TestModel-field-name>": {
-          "from": "parameter" | "constant" | "experiment-annotation",
+          "from": "parameter" | "constant" | "annotation"
+                  | "experiment-annotation",
           ...                              # source-specific keys
         },
         ...
       }
     }
 
-Modelica match types:
+Modelica match types (registered via `@_register_match`):
   - `component-instantiation` (`component_name`): match any Modelica class
     that instantiates a component of the given class. Accepts the fully
     qualified name and any tail-suffix (Modelica's import rules).
   - `extends` (`class_pattern`): match any class with `extends X` where X
     matches the given fnmatch glob (e.g. `*Icons.Example`).
+  - `class-name-glob` (`class_pattern`): match on the class's own fully
+    qualified name (`within` + class name).
+  - `all-of` / `any-of` (`matchers`): compose child match specs. `all-of`
+    requires every child and aggregates their contexts; `any-of` takes the
+    first child that matches.
 
-Field sources:
+Field sources (registered via `@_register_field`):
   - `parameter` (`name`, optional `shape`): extract from the matched
-    component's parameter list. Only valid with `component-instantiation`
-    matches. `shape`: `scalar` (default), `array`, `array_floats`.
+    component's parameter list. Only valid where the spec contains a
+    `component-instantiation` leaf. `shape`: `scalar` (default), `array`,
+    `array_floats`.
   - `constant` (`value`): use the literal value verbatim.
+  - `annotation` (`annotation`, `name`, optional `shape`): extract a key
+    from an arbitrary annotation block (e.g. `__MyVendor_Test`).
   - `experiment-annotation` (`name`): extract from the standard Modelica
     `experiment(...)` annotation. Case-insensitive first letter (handles
     `StopTime` vs. `stopTime`).
 
-Deferred (capture-and-revisit, see SESSION_HANDOFF.md and vision.md):
-  - Match composition (`all-of` / `any-of`) — needed when multiple match
-    patterns must combine (e.g. "extends X AND in folder Y").
-  - Folder filter (`paths_include` / `paths_exclude`) — orthogonal to
-    match patterns; constrains which files feed the recognizer.
-  - More match types: `class-name-glob`, `annotation`. Add when asked.
-  - More field sources: `annotation`. Add when asked.
+`_MATCH_TYPE_ALLOWED_FIELD_SOURCES` gates which sources a given match type
+admits, validated at parse time.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -63,6 +71,8 @@ from .mo_parser import (
     _strip_modelica_literals,
 )
 from .recognizer import Recognizer, RecognizerResult
+
+logger = logging.getLogger(__name__)
 
 
 class RecognizerSpecError(ValueError):
@@ -85,10 +95,63 @@ _VALID_FIELDS = frozenset(
         "output_interval",
         # PTA.4 — richer-contract fields
         "simulate_only",
-        "requested_fmu_export",
         "requested_baselines",
     }
 )
+
+# Subset of _VALID_FIELDS that RecognizerResult types as a number. A spec may
+# only write a number into these — see _numeric_or_none. The int subset gets
+# an exact-integer check: n_vars=2.5 is spec garbage, not a count.
+_NUMERIC_FIELDS = frozenset(
+    {
+        "n_vars",
+        "error_expected",
+        "stop_time",
+        "tolerance",
+        "number_of_intervals",
+        "output_interval",
+    }
+)
+_INT_FIELDS = frozenset({"n_vars", "number_of_intervals"})
+
+
+def _numeric_or_none(model_id: str, field_name: str, value: Any) -> Any:
+    """Return ``value`` if it is a number, else None after warning.
+
+    ``_coerce_scalar`` is best-effort and falls back to the raw string for
+    anything it cannot parse (``StopTime=0.5*3600``). Setting that string on a
+    float-typed field pushes the failure into a runner far from its cause, so
+    leave the field unset instead — the annotation / test_spec layer can still
+    supply a value.
+    """
+
+    def _reject() -> None:
+        logger.warning(
+            "%s: ignoring non-numeric recognizer value for %s=%r",
+            model_id,
+            field_name,
+            value,
+        )
+
+    # bool is an int subclass AND float(True) == 1.0 — a bare float()
+    # fallback would silently turn `true` into 1.0 (A5 review finding 2).
+    if isinstance(value, bool):
+        _reject()
+        return None
+    if isinstance(value, (int, float)):
+        num: float = value
+    else:
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            _reject()
+            return None
+    if field_name in _INT_FIELDS:
+        if num != int(num):
+            _reject()
+            return None
+        return int(num)
+    return num
 
 
 # ---------------------------------------------------------------------------
@@ -504,8 +567,13 @@ class JsonRecognizer(Recognizer):
         for field_name, field_spec in self._field_specs.items():
             field_fn = _FIELD_INTERPRETERS[field_spec["from"]]
             value = field_fn(content, match_ctx, field_spec)
-            if value is not None:
-                setattr(result, field_name, value)
+            if value is None:
+                continue
+            if field_name in _NUMERIC_FIELDS:
+                value = _numeric_or_none(model_id, field_name, value)
+                if value is None:
+                    continue
+            setattr(result, field_name, value)
         return result
 
 

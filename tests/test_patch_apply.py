@@ -367,7 +367,7 @@ class TestWholesaleMetricsReplace:
             "combinator": "and",
             "children": [
                 {"metric": "nrmse", "variable": "y"},
-                {"metric": "range", "variable": "y", "min": -1, "max": 1},
+                {"metric": "range", "variable": "y", "min_value": -1, "max_value": 1},
             ],
         }
         apply_patch(
@@ -631,3 +631,128 @@ class TestRejectionEdges:
                 "M",
                 [{"op": "replace", "path": "/comparison/a/-", "value": 0}],
             )
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_discovery.py — regression tests for
+# the 2026-07-06 review, Themes 2 & 6 (CODE_REVIEW_2026-07-06.md).
+#
+# Finding 49: RFC 6902 `add` at an existing array index INSERTS; index == len
+# appends; index > len raises PatchError; auto-creating a dict parent where
+# the next token is an array index raises PatchError (no silent corruption).
+# =========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Finding 49 — RFC 6902 array `add` semantics
+# ---------------------------------------------------------------------------
+
+
+class TestFinding49ArrayAdd:
+    def _spec(self, tmp_path) -> Path:
+        spec_path = tmp_path / "spec.json"
+        spec_path.write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {
+                            "model": "M",
+                            "metrics": {
+                                "combinator": "and",
+                                "children": [
+                                    {"metric": "nrmse", "variable": "x"},
+                                    {"metric": "nrmse", "variable": "y"},
+                                ],
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return spec_path
+
+    def test_add_at_existing_index_inserts(self, tmp_path):
+        spec_path = self._spec(tmp_path)
+        new_leaf = {"metric": "range", "variable": "z"}
+        apply_patch(
+            spec_path,
+            "M",
+            [{"op": "add", "path": "/metrics/children/1", "value": new_leaf}],
+        )
+        children = json.loads(spec_path.read_text(encoding="utf-8"))["tests"][0][
+            "metrics"
+        ]["children"]
+        assert [c["variable"] for c in children] == ["x", "z", "y"]
+
+    def test_add_dash_appends(self, tmp_path):
+        spec_path = self._spec(tmp_path)
+        apply_patch(
+            spec_path,
+            "M",
+            [
+                {
+                    "op": "add",
+                    "path": "/metrics/children/-",
+                    "value": {"metric": "nrmse", "variable": "z"},
+                }
+            ],
+        )
+        children = json.loads(spec_path.read_text(encoding="utf-8"))["tests"][0][
+            "metrics"
+        ]["children"]
+        assert [c["variable"] for c in children] == ["x", "y", "z"]
+
+    def test_add_at_len_appends(self, tmp_path):
+        spec_path = self._spec(tmp_path)
+        apply_patch(
+            spec_path,
+            "M",
+            [
+                {
+                    "op": "add",
+                    "path": "/metrics/children/2",
+                    "value": {"metric": "nrmse", "variable": "z"},
+                }
+            ],
+        )
+        children = json.loads(spec_path.read_text(encoding="utf-8"))["tests"][0][
+            "metrics"
+        ]["children"]
+        assert [c["variable"] for c in children] == ["x", "y", "z"]
+
+    def test_add_beyond_len_raises_patch_error(self, tmp_path):
+        spec_path = self._spec(tmp_path)
+        with pytest.raises(PatchError, match="out of range"):
+            apply_patch(
+                spec_path,
+                "M",
+                [
+                    {
+                        "op": "add",
+                        "path": "/metrics/children/9",
+                        "value": {"metric": "nrmse", "variable": "z"},
+                    }
+                ],
+            )
+
+    def test_add_refuses_dict_autocreate_for_array_index(self, tmp_path):
+        """A per-leaf patch against a test with no metrics tree must fail
+        loudly instead of silently creating {"children": {"0": ...}}."""
+        spec_path = tmp_path / "spec.json"
+        original = {"tests": [{"model": "M", "comparison": {"tolerance": 1e-4}}]}
+        spec_path.write_text(json.dumps(original), encoding="utf-8")
+        with pytest.raises(PatchError, match="array index"):
+            apply_patch(
+                spec_path,
+                "M",
+                [
+                    {
+                        "op": "add",
+                        "path": "/metrics/children/0/tolerance",
+                        "value": 0.01,
+                    }
+                ],
+            )
+        # Nothing was written — the spec is not corrupted.
+        assert json.loads(spec_path.read_text(encoding="utf-8")) == original

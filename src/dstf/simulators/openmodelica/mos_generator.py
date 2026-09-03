@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from ...discovery.test_registry import TestModel
-from ..base import _pattern_to_regex
+from ..types import _pattern_to_regex
 
 
 def classify_dependency(entry: str) -> tuple[str, str]:
@@ -50,8 +50,7 @@ def classify_dependency(entry: str) -> tuple[str, str]:
 
     p = Path(entry)
     if entry.endswith(".mo"):
-        resolved = p.resolve() if p.is_absolute() else p.resolve()
-        return ("loadFile", str(resolved).replace("\\", "/"))
+        return ("loadFile", str(p.resolve()).replace("\\", "/"))
     # Directory form — append package.mo
     resolved = p.resolve() / "package.mo"
     return ("loadFile", str(resolved).replace("\\", "/"))

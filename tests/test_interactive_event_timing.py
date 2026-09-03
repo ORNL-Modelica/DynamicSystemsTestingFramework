@@ -11,12 +11,13 @@ fixture + render helpers come from test_interactive_playwright.py.
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
 
 pytest.importorskip("playwright.sync_api")
+
+pytestmark = pytest.mark.playwright
 
 
 from test_interactive_playwright import (
@@ -84,13 +85,14 @@ def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
     """Like _render_report, but accepts a custom context."""
     from jinja2 import Environment, FileSystemLoader
 
-    from test_interactive_playwright import _JS_SRC, _TEMPLATE_DIR
+    from dstf.reporting.report_suite import write_report_assets
+    from test_interactive_playwright import _TEMPLATE_DIR
 
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
     html = env.get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
-    shutil.copyfile(_JS_SRC, tmp_path / "interactive.js")
+    write_report_assets(tmp_path)
     return html_path
 
 

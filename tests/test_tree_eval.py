@@ -15,7 +15,7 @@ from dstf.comparison.tree_eval import (
 )
 from dstf.comparison.tree_spec import parse_metric_tree
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.base import TestResult, VariableResult
+from dstf.simulators.types import TestResult, VariableResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -290,8 +290,8 @@ class TestLeafEval:
             {
                 "metric": "range",
                 "variable": "x",
-                "min": 0.0,
-                "max": 2.0,
+                "min_value": 0.0,
+                "max_value": 2.0,
             }
         )
         t, ref_vals = _linear()  # 0..1
@@ -322,8 +322,8 @@ class TestLeafEval:
             {
                 "metric": "range",
                 "variable": "x",
-                "min": 0.0,
-                "max": 0.5,
+                "min_value": 0.0,
+                "max_value": 0.5,
             }
         )
         t, ref_vals = _linear()
@@ -354,7 +354,7 @@ class TestLeafEval:
             {
                 "metric": "range",
                 "variable": "x",
-                "min": 0.0,
+                "min_value": 0.0,
             }
         )
         t, ref_vals = _linear()
@@ -378,6 +378,34 @@ class TestLeafEval:
             base_tolerance=1e-4,
         )
         assert tree.passed
+
+    def test_range_leaf_rejects_min_max_shorthand(self):
+        """Bounds are `min_value` / `max_value` — the short names don't score.
+
+        The leaf hard-fails with the error named (D107), rather than raising
+        out of the evaluator and taking the whole comparison with it.
+        """
+        spec = parse_metric_tree(
+            {
+                "metric": "range",
+                "variable": "x",
+                "min": 0.0,
+                "max": 2.0,
+            }
+        )
+        t, act_vals = _linear()
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={
+                "x": VariableResult(index=1, name="x", time=t, values=act_vals)
+            },
+            baselines=_primary({}, None),
+            base_tolerance=1e-4,
+        )
+        assert not tree.passed
+        assert "misconfigured" in tree.label
+        vc = tree.diagnostics["variable"]
+        assert "min_value / max_value" in vc.diagnostics["error"]
 
     def test_default_points_leaf(self):
         spec = parse_metric_tree(
@@ -666,25 +694,23 @@ class TestCompareTestIntegration:
         comp = compare_test(test, result, reference)
         assert comp.passed  # Tree's 0.1 tolerance wins; override ignored
 
-    def test_tree_leaf_against_non_primary_baseline(self):
-        """compare_test loads all named baselines; a leaf's ``against`` picks one.
+    def test_named_baseline_needs_a_store(self):
+        """Named baselines come only from `store.get_soft_checks` (D66).
 
-        Reference file carries a ``primary`` baseline (flat top-level fields)
-        plus an ``experiment`` baseline under ``baselines``. The test's tree
-        has two leaves: one against primary (strict), one against experiment
-        wrapped in warn. Actual matches experiment exactly but drifts from
-        primary — overall passes (strict fails, but warn doesn't gate).
+        With no store, the reference file supplies `primary` and nothing
+        else — an `against: <name>` leaf gets the missing-baseline sentinel,
+        even if the ref file still carries a pre-D66 `baselines` map.
         """
         t, primary_vals = _linear()
         _, exp_vals = _linear(offset=0.05)
         _, act_vals = _linear(offset=0.05)  # matches experiment, drifts from primary
 
         result = _result_with({"x": (t, act_vals)})
-        # Reference: primary (flat) + experiment (under baselines)
         reference = {
             "test_id": "0001",
             "time": t.tolist(),
             "variables": [{"index": 1, "name": "x", "values": primary_vals.tolist()}],
+            # Stale key from before the soft_checks split — ignored.
             "baselines": {
                 "experiment": {
                     "time": t.tolist(),
@@ -697,11 +723,59 @@ class TestCompareTestIntegration:
 
         test = _test_model(
             {
+                "metric": "nrmse",
+                "variable": "x",
+                "against": "experiment",
+                "tolerance": 0.01,
+            }
+        )
+        comp = compare_test(test, result, reference)
+        assert not comp.passed
+        assert comp.metric_tree is not None
+        assert "experiment" in comp.metric_tree.label
+
+    def test_tree_leaf_scores_against_a_store_soft_check(self):
+        """A store's soft_checks feed the tree's ``against:`` lookup (D66).
+
+        Primary and the soft_check carry different trajectories, and the
+        actual matches the soft_check. A leaf scored against primary would
+        fail; the ``against: "experiment"`` leaf passes — so this fails if
+        the soft_check merge is ever dropped from compare_test.
+        """
+        from dstf.storage.baseline import Baseline
+
+        t, primary_vals = _linear()
+        _, exp_vals = _linear(offset=0.5)
+        _, act_vals = _linear(offset=0.5)  # matches experiment, far from primary
+
+        class _StubStore:
+            def get_soft_checks(self, model_id):
+                assert model_id == "Test.Model"
+                return {
+                    "experiment": Baseline(
+                        name="experiment",
+                        time=t.tolist(),
+                        variables=[
+                            {"index": 1, "name": "x", "values": exp_vals.tolist()}
+                        ],
+                    )
+                }
+
+        result = _result_with({"x": (t, act_vals)})
+        reference = {
+            "test_id": "0001",
+            "time": t.tolist(),
+            "variables": [{"index": 1, "name": "x", "values": primary_vals.tolist()}],
+        }
+
+        test = _test_model(
+            {
                 "combinator": "and",
                 "children": [
                     {
                         "combinator": "warn",
                         "children": [
+                            # Primary drifted — hard-fails, but warn-wrapped.
                             {"metric": "nrmse", "variable": "x", "tolerance": 1e-6},
                         ],
                     },
@@ -714,11 +788,17 @@ class TestCompareTestIntegration:
                 ],
             }
         )
-        comp = compare_test(test, result, reference)
-        # warn-wrapped primary drift doesn't fail; experiment match passes → overall pass.
+        comp = compare_test(test, result, reference, store=_StubStore())
+
         assert comp.passed
-        # Tree should have the warn branch and the against-experiment leaf.
         assert comp.metric_tree is not None
+        warn_branch, exp_leaf = comp.metric_tree.children
+        # The soft_check resolved: not the missing-baseline sentinel.
+        assert exp_leaf.passed
+        assert exp_leaf.diagnostics["against"] == "experiment"
+        assert "not found" not in exp_leaf.label
+        # Same variable scored against primary genuinely fails.
+        assert not warn_branch.children[0].passed
 
     def test_spec_variables_list_matches_tree_leaves(self):
         """TestComparison.variables comes from collect_leaf_variables."""

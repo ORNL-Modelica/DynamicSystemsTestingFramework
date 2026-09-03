@@ -11,7 +11,7 @@ from dstf.comparison.comparator import (
     _find_event_boundaries,
     _split_segments,
 )
-from dstf.simulators.base import TestResult
+from dstf.simulators.types import TestResult
 
 # ---------------------------------------------------------------------------
 # Event boundary detection
@@ -411,7 +411,7 @@ from dstf.comparison.comparator import (
     compare_test,
 )
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.base import VariableResult
+from dstf.simulators.types import VariableResult
 
 
 def _make_test(comparison_tolerance=None, variable_overrides=None):
@@ -518,20 +518,26 @@ class TestToleranceResolution:
 
 class TestTubeInterpolation:
     def test_single_point_constant(self):
-        """Single control point applies everywhere (legacy abs format)."""
+        """Single control point applies everywhere."""
         times = np.array([0.0, 50.0, 100.0])
-        points = [{"time": 0.0, "abs": 10.0, "rel": 0.05}]
+        points = [{"time": 0.0, "upper": 10.0, "lower": 10.0}]
         upper, lower = _interpolate_tube_widths(times, points)
-        # Legacy format: abs field used as symmetric width
         np.testing.assert_array_equal(upper, [10.0, 10.0, 10.0])
         np.testing.assert_array_equal(lower, [10.0, 10.0, 10.0])
 
+    def test_points_without_upper_or_lower_are_rejected(self):
+        """`abs` / `rel` control points are not a control-point format."""
+        times = np.array([0.0, 50.0, 100.0])
+        points = [{"time": 0.0, "abs": 10.0, "rel": 0.05}]
+        with pytest.raises(ValueError, match="'upper' and/or 'lower'"):
+            _interpolate_tube_widths(times, points)
+
     def test_linear_interpolation(self):
-        """Linear interpolation between two points (legacy format)."""
+        """Linear interpolation between two points."""
         times = np.array([0.0, 50.0, 100.0])
         points = [
-            {"time": 0.0, "abs": 10.0},
-            {"time": 100.0, "abs": 20.0},
+            {"time": 0.0, "upper": 10.0, "lower": 10.0},
+            {"time": 100.0, "upper": 20.0, "lower": 20.0},
         ]
         upper, lower = _interpolate_tube_widths(times, points, "linear")
         np.testing.assert_allclose(upper, [10.0, 15.0, 20.0])
@@ -541,8 +547,8 @@ class TestTubeInterpolation:
         """Values before first and after last point are held."""
         times = np.array([0.0, 50.0, 100.0, 200.0])
         points = [
-            {"time": 50.0, "abs": 10.0},
-            {"time": 100.0, "abs": 20.0},
+            {"time": 50.0, "upper": 10.0, "lower": 10.0},
+            {"time": 100.0, "upper": 20.0, "lower": 20.0},
         ]
         upper, _ = _interpolate_tube_widths(times, points, "linear")
         assert upper[0] == 10.0  # Before first point: hold
@@ -552,8 +558,8 @@ class TestTubeInterpolation:
         """Constant mode uses stepwise (hold previous)."""
         times = np.array([0.0, 25.0, 75.0, 100.0])
         points = [
-            {"time": 0.0, "abs": 10.0},
-            {"time": 50.0, "abs": 20.0},
+            {"time": 0.0, "upper": 10.0, "lower": 10.0},
+            {"time": 50.0, "upper": 20.0, "lower": 20.0},
         ]
         upper, _ = _interpolate_tube_widths(times, points, "constant")
         assert upper[0] == 10.0
@@ -662,8 +668,8 @@ class TestTubeComparison:
             {
                 "tube_width_mode": "band",
                 "tube_points": [
-                    {"time": 0.0, "abs": 1.0, "rel": 0.0},
-                    {"time": 100.0, "abs": 10.0, "rel": 0.0},
+                    {"time": 0.0, "upper": 1.0, "lower": 1.0},
+                    {"time": 100.0, "upper": 10.0, "lower": 10.0},
                 ],
                 "tube_interpolation": "linear",
             },
@@ -687,8 +693,8 @@ class TestTubeComparison:
             {
                 "tube_width_mode": "band",
                 "tube_points": [
-                    {"time": 0.0, "abs": 1.0, "rel": 0.0},
-                    {"time": 100.0, "abs": 10.0, "rel": 0.0},
+                    {"time": 0.0, "upper": 1.0, "lower": 1.0},
+                    {"time": 100.0, "upper": 10.0, "lower": 10.0},
                 ],
             },
         )
@@ -945,7 +951,7 @@ class TestTubeConfigToDict:
         assert "tube_rel" not in d  # Zero values omitted
 
     def test_with_points(self):
-        points = [{"time": 0.0, "abs": 1.0}]
+        points = [{"time": 0.0, "upper": 1.0, "lower": 1.0}]
         cfg = TubeConfig(tube_points=points, tube_interpolation="constant")
         d = cfg.to_dict()
         assert d["tube_points"] == points
@@ -1485,3 +1491,618 @@ class TestPointsDeclaredPath:
         )
         # Linear interp at t=3 gives act=30, delta=0 → PASS.
         assert result.passed
+
+
+# ---------------------------------------------------------------------------
+# Tree-path config errors are labeled leaf failures, not crashes (D107)
+# ---------------------------------------------------------------------------
+
+
+class TestTreeConfigErrorIsALeafFailure:
+    """A misconfigured leaf fails that leaf and lets the run finish.
+
+    The flat ``variable_overrides`` path has always caught ValueError from
+    ``resolve_mode`` and failed only the offending variable. The tree path
+    used to let it escape and abort all of ``compare_all`` with an anonymous
+    traceback — one bad spec entry took the whole run down.
+    """
+
+    def _tree_test(self, metrics_raw, model_id="Test.Bad"):
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        return TestModel(
+            model_id=model_id,
+            source_file=Path(""),
+            source_package="Test",
+            short_name="Model",
+            n_vars=1,
+            metric_tree_spec=parse_metric_tree(metrics_raw),
+        )
+
+    def _two_test_run(self, bad_leaf):
+        """One misconfigured test + one healthy test, through compare_all."""
+        from dstf.comparison.comparator import compare_all
+
+        class _StoreWithRef:
+            """Minimal ReferenceStore stand-in serving one flat primary."""
+
+            def get_reference(self, _model_id):
+                return {
+                    "test_id": "0001",
+                    "time": [0.0, 0.25, 0.5, 0.75, 1.0],
+                    "variables": [
+                        {
+                            "index": 1,
+                            "name": "x",
+                            "values": [0.1, 0.5, 1.0, 1.5, 1.9],
+                        }
+                    ],
+                }
+
+            def get_soft_checks(self, _model_id):
+                return {}
+
+            def get_companions(self, _model_id):
+                return {}
+
+        bad = self._tree_test(
+            {
+                "combinator": "and",
+                "children": [
+                    bad_leaf,
+                    {
+                        "metric": "range",
+                        "variable": "x",
+                        "min_value": 0.0,
+                        "max_value": 2.0,
+                    },
+                ],
+            },
+            model_id="Test.Bad",
+        )
+        good = self._tree_test(
+            {"metric": "range", "variable": "x", "min_value": 0.0, "max_value": 2.0},
+            model_id="Test.Good",
+        )
+        values = np.array([0.1, 0.5, 1.0, 1.5, 1.9])
+        results = {
+            "Test.Bad": _result_only(values),
+            "Test.Good": _result_only(values),
+        }
+        results["Test.Bad"].model_id = "Test.Bad"
+        results["Test.Good"].model_id = "Test.Good"
+        # No exception may escape: the whole run must complete.
+        comps = compare_all([bad, good], results, _StoreWithRef())
+        by_id = {c.model_id: c for c in comps}
+        return by_id["Test.Bad"], by_id["Test.Good"]
+
+    def _error_text(self, comp) -> str:
+        """The raised message rides on the leaf's VariableComparison."""
+        assert comp.metric_tree is not None
+        bad_leaf = comp.metric_tree.children[0]
+        assert not bad_leaf.passed
+        vc = bad_leaf.diagnostics["variable"]
+        assert "misconfigured" in vc.name
+        return str(vc.diagnostics.get("error", ""))
+
+    def test_range_leaf_with_min_max_shorthand(self):
+        """Deleted `min`/`max` shorthand → leaf failure naming the real keys."""
+        bad, good = self._two_test_run(
+            {"metric": "range", "variable": "x", "min": 0, "max": 2}
+        )
+        assert not bad.passed
+        # The sibling leaf still evaluated, and the other test still ran.
+        assert bad.metric_tree.children[1].passed
+        assert good.passed
+        assert "min_value / max_value" in self._error_text(bad)
+
+    def test_scalar_leaf_without_quantity(self):
+        bad, good = self._two_test_run({"metric": "scalar", "variable": "x"})
+        assert not bad.passed
+        assert good.passed
+        assert "quantity" in self._error_text(bad)
+
+    def test_tube_leaf_with_symmetric_control_points(self):
+        """Raised from mode.compare, not resolve_mode — the second catch."""
+        bad, good = self._two_test_run(
+            {
+                "metric": "tube",
+                "variable": "x",
+                "tube_width_mode": "band",
+                "tube_points": [{"time": 0.0, "abs": 1.0, "rel": 0.0}],
+            }
+        )
+        assert not bad.passed
+        assert good.passed
+        assert "'upper' and/or 'lower'" in self._error_text(bad)
+
+    def test_sentinel_leaf_is_cli_authoritative_and_carries_the_reason(self):
+        """A leaf whose config never built must not be live-rescored.
+
+        ``range`` is in ``_JS_SCORED_METRICS``. The JS scorer now returns
+        false for absent bounds, but a leaf whose mode never built has no
+        live-scoring state to re-derive at all, so it is pinned
+        CLI-authoritative rather than relying on each scorer's own guard.
+        """
+        from dstf.reporting.context_builder import _build_template_context
+
+        bad, _good = self._two_test_run(
+            {"metric": "range", "variable": "x", "min": 0, "max": 2}
+        )
+        values = np.array([0.1, 0.5, 1.0, 1.5, 1.9])
+        result = _result_only(values)
+        result.model_id = "Test.Bad"
+        reference = {
+            "test_id": "0001",
+            "time": [0.0, 0.25, 0.5, 0.75, 1.0],
+            "variables": [{"index": 1, "name": "x", "values": values.tolist()}],
+        }
+        context = _build_template_context(
+            model_id="Test.Bad",
+            comparisons=bad.variables,
+            ref_data=reference,
+            cur_stats=None,
+            test_dir=None,
+            test_model=self._tree_test(
+                {
+                    "combinator": "and",
+                    "children": [
+                        {"metric": "range", "variable": "x", "min": 0, "max": 2},
+                        {
+                            "metric": "range",
+                            "variable": "x",
+                            "min_value": 0.0,
+                            "max_value": 2.0,
+                        },
+                    ],
+                },
+                model_id="Test.Bad",
+            ),
+            result=result,
+            metric_tree=bad.metric_tree,
+        )
+        bad_leaf, good_leaf = context["tree_view"]["children"]
+
+        assert bad_leaf["cli_authoritative"] is True
+        assert "min_value / max_value" in bad_leaf["error"]
+        assert bad_leaf["score_display"] == "not scored"
+        assert "min_value / max_value" in bad_leaf["criterion"]
+        # A well-formed range leaf stays live-scored, with no error stamped.
+        assert good_leaf["cli_authoritative"] is False
+        assert good_leaf["error"] is None
+
+    def test_empty_window_sentinel_stays_live_scorable(self):
+        """A data-shaped sentinel is NOT pinned CLI-authoritative.
+
+        A window that slices away every sample produces a
+        ``_no_data_failure`` carrying ``diagnostics["error"]`` too — but
+        the mode built fine, and the JS scorer already fails empty slices
+        (parity row ``range-empty-window-fail``). Pinning it would freeze
+        the leaf red after the user drags the window back over the data.
+        """
+        from dstf.reporting.context_builder import _build_template_context
+
+        test = self._tree_test(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "tolerance": 0.1,
+                "window": {"start": 50.0, "end": 60.0},  # 1 s run → empty
+            },
+            model_id="Test.Window",
+        )
+        values = np.array([0.1, 0.5, 1.0, 1.5, 1.9])
+        result = _result_only(values)
+        result.model_id = "Test.Window"
+        reference = {
+            "test_id": "0001",
+            "time": np.linspace(0.0, 1.0, 5).tolist(),
+            "variables": [{"index": 1, "name": "x", "values": values.tolist()}],
+        }
+        comp = compare_test(test, result, reference)
+
+        assert not comp.passed
+        leaf_vc = comp.metric_tree.diagnostics["variable"]
+        # It carries an error, but it is not a config error.
+        assert leaf_vc.diagnostics["error"]
+        assert "config_error" not in leaf_vc.diagnostics
+
+        context = _build_template_context(
+            model_id="Test.Window",
+            comparisons=comp.variables,
+            ref_data=reference,
+            cur_stats=None,
+            test_dir=None,
+            test_model=test,
+            result=result,
+            metric_tree=comp.metric_tree,
+        )
+        leaf = context["tree_view"]
+        assert leaf["cli_authoritative"] is False
+        # The reason still reaches the panel.
+        assert leaf["score_display"] == "not scored"
+        assert leaf["error"]
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_verdict.py — regression tests for the
+# 2026-07-06 review, Theme 1: verdict integrity (CODE_REVIEW_2026-07-06.md).
+#
+# Decisions encoded here:
+#
+# * "Nothing to compare" (empty window slice, empty baseline, empty actual)
+#   is a hard FAIL with a diagnostic — never a vacuous pass, never a crash.
+# * A declared checkpoint whose time-box lies outside the actual trajectory
+#   FAILS that point (a truncated simulation must not pass its tail checks).
+# * An explicit tolerance of 0 is honored, not replaced by a default.
+# * Reference variables pair to result variables by NAME, falling back to
+#   index only when names are unavailable.
+# =========================================================================
+
+
+from dstf.comparison.algorithms import _compare_range
+from dstf.comparison.comparator import _test_is_baseline_free, compare_all
+
+
+def _mk_test(model_id="MyLib.Test", **kw) -> TestModel:
+    return TestModel(
+        model_id=model_id,
+        source_file=Path("x.mo"),
+        source_package="MyLib",
+        short_name="Test",
+        n_vars=1,
+        **kw,
+    )
+
+
+def _mk_result(name="x", time=None, values=None, index=1) -> TestResult:
+    time = np.linspace(0.0, 10.0, 11) if time is None else np.asarray(time, float)
+    values = np.ones_like(time) if values is None else np.asarray(values, float)
+    return TestResult(
+        model_id="MyLib.Test",
+        success=True,
+        variables=[VariableResult(index=index, time=time, values=values, name=name)],
+    )
+
+
+EMPTY = np.array([])
+
+
+# ---------------------------------------------------------------------------
+# Empty data → hard fail (never vacuous pass, never crash)
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyDataFails:
+    def test_nrmse_empty_reference_fails(self):
+        vc = _compare_trajectories(
+            EMPTY, EMPTY, np.array([0.0, 1.0]), np.array([5.0, 5.0]), 1e-4
+        )
+        assert not vc.passed
+        assert "error" in vc.diagnostics
+
+    def test_nrmse_empty_actual_fails_without_crashing(self):
+        vc = _compare_trajectories(
+            np.array([0.0, 1.0]), np.array([1.0, 1.0]), EMPTY, EMPTY, 1e-4
+        )
+        assert not vc.passed
+
+    def test_tube_empty_reference_fails_without_crashing(self):
+        cfg = {"tube_width_mode": "band", "tube_abs": 0.5}
+        vc = _compare_tube(
+            EMPTY, EMPTY, np.array([0.0, 1.0]), np.array([0.0, 0.0]), cfg
+        )
+        assert not vc.passed
+
+    def test_tube_empty_actual_fails_without_crashing(self):
+        cfg = {"tube_width_mode": "band", "tube_abs": 0.5}
+        vc = _compare_tube(
+            np.array([0.0, 1.0]), np.array([1.0, 1.0]), EMPTY, EMPTY, cfg
+        )
+        assert not vc.passed
+
+    def test_range_empty_actual_fails(self):
+        vc = _compare_range(EMPTY, EMPTY, 0.0, 1.0)
+        assert not vc.passed
+        assert "error" in vc.diagnostics
+
+    def test_windowed_leaf_excluding_everything_fails(self):
+        """A window that slices away every sample must fail the leaf."""
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        spec = parse_metric_tree(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "window": {"start": 50.0, "end": 60.0},
+            }
+        )
+        test = _mk_test(metric_tree_spec=spec)
+        result = _mk_result()
+        reference = {
+            "variables": [
+                {
+                    "index": 1,
+                    "name": "x",
+                    "time": [0.0, 5.0, 10.0],
+                    "values": [1.0, 1.0, 1.0],
+                }
+            ]
+        }
+        comp = compare_test(test, result, reference)
+        assert not comp.passed
+
+
+# ---------------------------------------------------------------------------
+# Points mode: clipped checkpoints fail
+# ---------------------------------------------------------------------------
+
+
+class TestPointsClipping:
+    def test_fully_clipped_point_fails(self):
+        """Checkpoint at t=90 on a sim that died at t=40 must FAIL, not skip."""
+        ref_t = np.linspace(0.0, 100.0, 101)
+        ref_v = ref_t.copy()
+        act_t = np.linspace(0.0, 40.0, 41)
+        act_v = act_t.copy()
+        points = [
+            {"time": 20.0, "tolerance": 0.5},
+            {"time": 90.0, "tolerance": 0.5},
+        ]
+        vc = _compare_points(ref_t, ref_v, act_t, act_v, points=points)
+        assert not vc.passed
+        assert vc.diagnostics.get("failed_points", 0) >= 1
+
+    def test_empty_actual_with_declared_points_fails(self):
+        ref_t = np.linspace(0.0, 100.0, 101)
+        vc = _compare_points(ref_t, ref_t, EMPTY, EMPTY, points=[{"time": 20.0}])
+        assert not vc.passed
+
+    def test_unclipped_points_still_pass(self):
+        ref_t = np.linspace(0.0, 100.0, 101)
+        act_t = np.linspace(0.0, 100.0, 201)
+        vc = _compare_points(
+            ref_t, ref_t, act_t, act_t, points=[{"time": 20.0, "tolerance": 0.5}]
+        )
+        assert vc.passed
+
+    def test_ref_relative_point_beyond_reference_end_fails(self):
+        """np.interp would clamp to ref_final — that target is untrustworthy."""
+        ref_t = np.linspace(0.0, 40.0, 41)
+        ref_v = ref_t.copy()  # still rising at truncation
+        act_t = np.linspace(0.0, 100.0, 101)
+        act_v = act_t.copy()
+        vc = _compare_points(
+            ref_t, ref_v, act_t, act_v, points=[{"time": 90.0, "tolerance": 0.5}]
+        )
+        assert not vc.passed
+
+
+# ---------------------------------------------------------------------------
+# Tolerance resolution: explicit zero honored
+# ---------------------------------------------------------------------------
+
+
+class TestExplicitZeroTolerance:
+    def test_zero_test_tolerance_fails_nonzero_error(self):
+        test = _mk_test(comparison_tolerance=0.0)
+        result = _mk_result(values=np.ones(11) + 1e-6)
+        reference = {
+            "variables": [
+                {
+                    "index": 1,
+                    "name": "x",
+                    "time": list(np.linspace(0.0, 10.0, 11)),
+                    "values": [1.0] * 11,
+                }
+            ]
+        }
+        comp = compare_test(test, result, reference)
+        assert not comp.passed
+        assert comp.variables[0].tolerance_used == 0.0
+
+    def test_zero_reference_tolerance_honored(self):
+        test = _mk_test()
+        result = _mk_result(values=np.ones(11) + 1e-6)
+        reference = {
+            "comparison": {"tolerance": 0.0},
+            "variables": [
+                {
+                    "index": 1,
+                    "name": "x",
+                    "time": list(np.linspace(0.0, 10.0, 11)),
+                    "values": [1.0] * 11,
+                }
+            ],
+        }
+        comp = compare_test(test, result, reference)
+        assert not comp.passed
+
+
+# ---------------------------------------------------------------------------
+# Baseline-free classification
+# ---------------------------------------------------------------------------
+
+
+class TestBaselineFreeClassification:
+    def test_mixed_test_is_not_baseline_free(self):
+        """A tracked variable without an override needs a baseline."""
+        test = _mk_test(
+            variable_patterns=["a", "b"],
+            variable_overrides={
+                "a": {"mode": "range", "min_value": -10, "max_value": 10}
+            },
+        )
+        assert _test_is_baseline_free(test, 1e-4) is False
+
+    def test_fully_covered_range_test_is_baseline_free(self):
+        test = _mk_test(
+            variable_patterns=["a", "b"],
+            variable_overrides={
+                "a": {"mode": "range", "min_value": -10, "max_value": 10},
+                "b": {"mode": "range", "min_value": 0, "max_value": 1},
+            },
+        )
+        assert _test_is_baseline_free(test, 1e-4) is True
+
+
+# ---------------------------------------------------------------------------
+# Structural warnings: no phantoms when statistics are absent
+# ---------------------------------------------------------------------------
+
+
+class TestStructuralWarnings:
+    def test_no_phantom_warnings_without_reference_statistics(self):
+        result = TestResult(
+            model_id="MyLib.Test",
+            success=True,
+            statistics={
+                "translation": {"continuous_time_states": 5},
+                "EventCounter": 3,
+            },
+        )
+        assert _check_structural_changes({}, result) == []
+
+
+# ---------------------------------------------------------------------------
+# Name-based reference pairing
+# ---------------------------------------------------------------------------
+
+
+class TestNameBasedPairing:
+    def test_reference_pairs_by_name_after_spec_reorder(self):
+        """Baseline stored with [a, b]; 'a' later removed from the spec.
+        'b' (now index 1) must score against ref 'b', not ref 'a'."""
+        reference = {
+            "variables": [
+                {"index": 1, "name": "a", "time": [0.0, 1.0], "values": [0.0, 0.0]},
+                {"index": 2, "name": "b", "time": [0.0, 1.0], "values": [10.0, 10.0]},
+            ]
+        }
+        result = TestResult(
+            model_id="MyLib.Test",
+            success=True,
+            variables=[
+                VariableResult(
+                    index=1,
+                    time=np.array([0.0, 1.0]),
+                    values=np.array([10.0, 10.0]),
+                    name="b",
+                )
+            ],
+        )
+        comp = compare_test(_mk_test(), result, reference)
+        assert comp.passed
+
+    def test_unnamed_variable_falls_back_to_index(self):
+        reference = {
+            "variables": [
+                {"index": 1, "name": "a", "time": [0.0, 1.0], "values": [1.0, 1.0]},
+            ]
+        }
+        result = TestResult(
+            model_id="MyLib.Test",
+            success=True,
+            variables=[
+                VariableResult(
+                    index=1,
+                    time=np.array([0.0, 1.0]),
+                    values=np.array([1.0, 1.0]),
+                    name="",
+                )
+            ],
+        )
+        comp = compare_test(_mk_test(), result, reference)
+        assert comp.passed
+
+
+# ---------------------------------------------------------------------------
+# Unknown comparison mode: loud, not silent NRMSE
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownMode:
+    def test_resolve_mode_raises_on_unknown_mode(self):
+        with pytest.raises(ValueError, match="[Uu]nknown.*mode"):
+            resolve_mode({"mode": "Tube"}, 0.01)
+
+    def test_typo_mode_fails_variable_not_silently_nrmse(self):
+        test = _mk_test(variable_overrides={"x": {"mode": "Tube", "tube_abs": 5.0}})
+        result = _mk_result()
+        reference = {
+            "variables": [
+                {
+                    "index": 1,
+                    "name": "x",
+                    "time": list(np.linspace(0.0, 10.0, 11)),
+                    "values": [1.0] * 11,
+                }
+            ]
+        }
+        comp = compare_test(test, result, reference)
+        assert not comp.passed
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-07 — sim-failure without a baseline must be SIM_FAIL, not NO_REF
+# ---------------------------------------------------------------------------
+
+
+class _NoRefStore:
+    """Minimal ReferenceStore stub: every model has no stored baseline."""
+
+    def get_reference(self, model_id):
+        return None
+
+
+class TestSimFailWithoutBaselineIsSimFail:
+    """compare_all's no-baseline short-circuit ran BEFORE any sim-success
+    check, so a test that failed to SIMULATE *and* has no baseline was masked
+    as NO_REF with passed=True. OM's read_result returns a success=False
+    TestResult (not None) for a missing .mat, so it slipped past the
+    `result is None` guard. Surfaced across 91 OM/TRANSFORM tests (compile /
+    solver failures on models that never got OM baselines)."""
+
+    def test_failed_sim_no_baseline_is_sim_fail(self):
+        test = _mk_test(model_id="MyLib.Failed")
+        results = {
+            "MyLib.Failed": TestResult(
+                model_id="MyLib.Failed",
+                success=False,
+                error_message="Result file not found",
+            )
+        }
+        (c,) = compare_all([test], results, _NoRefStore())
+        assert c.sim_success is False  # was True (default) -> NO_REF
+        assert c.passed is False  # was True
+
+    def test_successful_sim_no_baseline_still_no_ref(self):
+        """Regression guard: a SUCCESSFUL sim with no baseline must stay
+        NO_REF (has_reference False, sim_success True) — the fix must not
+        turn genuine no-baseline into SIM_FAIL."""
+        test = _mk_test(model_id="MyLib.Ok")
+        results = {
+            "MyLib.Ok": TestResult(
+                model_id="MyLib.Ok",
+                success=True,
+                variables=[
+                    VariableResult(
+                        index=1,
+                        time=np.linspace(0.0, 1.0, 5),
+                        values=np.ones(5),
+                        name="x",
+                    )
+                ],
+            )
+        }
+        (c,) = compare_all([test], results, _NoRefStore())
+        assert c.sim_success is True
+        assert c.has_reference is False
+
+    def test_missing_result_object_still_sim_fail(self):
+        """The pre-existing `result is None` path (backends that omit failed
+        tests, e.g. Dymola with no .mat) must keep reporting SIM_FAIL."""
+        test = _mk_test(model_id="MyLib.Gone")
+        (c,) = compare_all([test], {}, _NoRefStore())
+        assert c.sim_success is False
+        assert c.passed is False

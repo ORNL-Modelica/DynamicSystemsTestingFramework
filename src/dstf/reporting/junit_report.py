@@ -5,6 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from ..comparison.comparator import TestComparison
+from .status import FAIL, NO_REF, SIM_FAIL, classify, count_by_status
 
 
 def generate_junit_report(
@@ -26,16 +27,14 @@ def generate_junit_report(
     for suite_name in sorted(suites.keys()):
         suite_comps = suites[suite_name]
         n_tests = len(suite_comps)
-        # Failing tests count as failures even without a baseline
-        # (baseline-free modes carry a real verdict) — review 2026-07-06,
-        # finding 5: they were emitted as <skipped> with failures="0".
-        n_failures = sum(1 for c in suite_comps if not c.passed and c.sim_success)
-        n_errors = sum(1 for c in suite_comps if not c.sim_success)
-        n_skipped = sum(
-            1
-            for c in suite_comps
-            if c.sim_success and c.passed and not c.has_reference and not c.evaluated
-        )
+        # Buckets are the shared ones from reporting.status, so the JUnit
+        # counters can't drift from the console's — review 2026-07-06,
+        # finding 5: failing baseline-free tests were emitted as <skipped>
+        # with failures="0".
+        counts = count_by_status(suite_comps)
+        n_failures = counts[FAIL]
+        n_errors = counts[SIM_FAIL]
+        n_skipped = counts[NO_REF]
 
         suite_elem = ET.SubElement(
             root,
@@ -59,7 +58,8 @@ def generate_junit_report(
                 },
             )
 
-            if not comp.sim_success:
+            state = classify(comp)
+            if state == SIM_FAIL:
                 ET.SubElement(
                     tc,
                     "error",
@@ -68,10 +68,10 @@ def generate_junit_report(
                         "type": "SimulationError",
                     },
                 )
-            elif comp.passed and not comp.has_reference and not comp.evaluated:
+            elif state == NO_REF:
                 # No baseline AND nothing evaluated — a genuinely skipped
-                # test. Failing baseline-free tests fall through to the
-                # <failure> branch below.
+                # test. Failing baseline-free tests classify as FAIL and
+                # land in the <failure> branch below.
                 ET.SubElement(
                     tc,
                     "skipped",
@@ -79,11 +79,17 @@ def generate_junit_report(
                         "message": "No reference baseline stored",
                     },
                 )
-            elif not comp.passed:
+            elif state == FAIL:
                 msgs = []
                 for var in comp.variables:
                     if not var.passed:
                         name = var.name or f"x[{var.index}]"
+                        error = (var.diagnostics or {}).get("error")
+                        if error:
+                            # Sentinel leaf: the numbers are all inf/nan, so
+                            # CI sees the reason instead of a wall of them.
+                            msgs.append(f"{name}: not scored — {error}")
+                            continue
                         msgs.append(
                             f"{name}: "
                             f"NRMSE={var.nrmse:.6e}, "
@@ -95,7 +101,7 @@ def generate_junit_report(
                     tc,
                     "failure",
                     {
-                        "message": f"{len(msgs)} variable(s) exceeded tolerance",
+                        "message": f"{len(msgs)} variable(s) failed",
                         "type": "RegressionFailure",
                     },
                 )

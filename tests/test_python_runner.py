@@ -6,11 +6,18 @@ The registration test doesn't need scipy and always runs.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from conftest import make_test_model as _tm
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 _EXAMPLES_DIR = (
     Path(__file__).resolve().parents[1] / "examples" / "python" / "PythonTestingLib"
@@ -268,3 +275,105 @@ def test_python_simple_ramp_self_regression(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "PASS" in result.stdout, result.stdout
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
+# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+#
+# Finding 29 — non-numeric driver output, both sides: the driver rejects it
+# with a named error, and the runner turns a tampered/legacy result.json into
+# one failed test instead of aborting the whole read phase.
+# =========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Finding 29 — non-numeric driver output: driver + runner sides
+# ---------------------------------------------------------------------------
+
+_PY_DRIVER = PROJECT_ROOT / "src" / "dstf" / "simulators" / "python" / "run_test.py"
+
+
+class TestPythonNonNumericValues:
+    def test_driver_rejects_non_numeric_values(self, tmp_path):
+        import shutil as _sh
+
+        user = tmp_path / "bad_types.py"
+        user.write_text(
+            "def simulate(stop_time, tolerance):\n"
+            "    return {'time': [0.0, 1.0], 'variables': {'x': ['a', 'b']}}\n"
+        )
+        result = tmp_path / "result.json"
+        proc = subprocess.run(
+            [
+                _sh.which("python") or "python3",
+                str(_PY_DRIVER),
+                str(user),
+                "1.0",
+                "1e-6",
+                str(result),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert proc.returncode != 0
+        payload = json.loads(result.read_text())
+        assert payload["success"] is False
+        assert "'x'" in payload["error"]
+        assert "non-numeric" in payload["error"]
+
+    def test_driver_rejects_non_numeric_time(self, tmp_path):
+        import shutil as _sh
+
+        user = tmp_path / "bad_time.py"
+        user.write_text(
+            "def simulate(stop_time, tolerance):\n"
+            "    return {'time': ['zero'], 'variables': {'x': [1.0]}}\n"
+        )
+        result = tmp_path / "result.json"
+        proc = subprocess.run(
+            [
+                _sh.which("python") or "python3",
+                str(_PY_DRIVER),
+                str(user),
+                "1.0",
+                "1e-6",
+                str(result),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert proc.returncode != 0
+        payload = json.loads(result.read_text())
+        assert payload["success"] is False
+        assert "time" in payload["error"]
+
+    def test_read_result_turns_non_numeric_into_failed_test(self, tmp_path):
+        """Runner-side belt: a hand-tampered/legacy result.json with string
+        values must fail the one test, not abort the whole read phase."""
+        from dstf.simulators.python import runner as pr
+
+        cfg = SimpleNamespace(
+            simulator_path=None,
+            source_path=tmp_path,
+            work_dir=tmp_path / "work",
+            timeout=1,
+        )
+        runner = pr.PythonRunner(cfg)
+        test_dir = tmp_path / "work" / "test_0001"
+        test_dir.mkdir(parents=True)
+        (test_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": [0.0, 1.0],
+                    "variables": {"x": ["not", "numbers"]},
+                }
+            )
+        )
+        test = _tm("T", variable_patterns=["x"])
+        res = runner.read_result(test, "test_0001", None)
+        assert res.success is False
+        assert "x" in (res.error_message or "")

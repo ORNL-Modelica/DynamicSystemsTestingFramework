@@ -24,7 +24,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dstf.reporting.plot_comparison import _decimate_context_for_html
+from dstf.reporting.report_suite import (
+    _decimate_context_for_html,
+    interactive_js_source,
+)
 from dstf.reporting.ui.mode_controls import emit_mode_schemas
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
@@ -34,15 +37,6 @@ UPDATE = os.environ.get("UPDATE_GOLDEN") == "1"
 # ---------------------------------------------------------------------------
 # Fixture synthesis — minimal template context per mode
 # ---------------------------------------------------------------------------
-
-_MODE_TO_METRIC = {
-    "nrmse": "nrmse",
-    "tube": "tube",
-    "points": "points",
-    "range": "range",
-    "event-timing": "event-timing",
-    "dominant-frequency": "dominant-frequency",
-}
 
 
 def _trajectory(name: str, n: int = 50) -> dict:
@@ -65,7 +59,8 @@ def _leaf(
     mode_controls_html: str = "",
     window_controls_html: str = "",
 ) -> dict:
-    metric = _MODE_TO_METRIC[mode]
+    # Mode names and spec metric discriminators are the same identifier.
+    metric = mode
     cli_auth = metric in ("event-timing", "dominant-frequency")
     return {
         "kind": "leaf",
@@ -202,18 +197,11 @@ _NOISE_PATTERNS = [
 ]
 
 
-_JS_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "dstf"
-    / "reporting"
-    / "templates"
-    / "interactive.js"
-)
-
-
 def _read_js() -> str:
-    return _JS_PATH.read_text(encoding="utf-8")
+    """The concatenated interactive.js a report actually ships — the source
+    lives in five fragments (report_suite.INTERACTIVE_JS_PARTS), so grepping
+    any one of them would miss symbols that moved to a sibling."""
+    return interactive_js_source()
 
 
 def _structural_hash(html: str) -> str:

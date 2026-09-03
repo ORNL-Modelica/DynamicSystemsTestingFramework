@@ -4,9 +4,45 @@ import json
 import logging
 from pathlib import Path
 
+from ..config import ConfigError
+from ..storage.ref_index import _atomic_write_text
 from .test_registry import TestModel
 
 logger = logging.getLogger(__name__)
+
+
+def _load_spec_for_edit(spec_path: Path) -> dict:
+    """Load a spec about to be modified in place.
+
+    A missing file is a new spec (``{"tests": []}``). An EXISTING file that
+    cannot be read or parsed raises :class:`ConfigError`: the edit helpers
+    below load-modify-write, so swallowing the parse error and carrying on
+    with an empty dict replaced the user's hand-authored spec with a
+    near-empty one on a single JSON typo.
+    """
+    if not spec_path.exists():
+        return {"tests": []}
+    try:
+        text = spec_path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise ConfigError(f"Cannot read test spec {spec_path}: {e}") from e
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"Malformed JSON in test spec {spec_path}: {e}") from e
+    if not isinstance(data, dict):
+        raise ConfigError(f"Test spec {spec_path} root must be a JSON object")
+    data.setdefault("tests", [])
+    if not isinstance(data["tests"], list):
+        raise ConfigError(f"Test spec {spec_path}: 'tests' must be a list")
+    return data
+
+
+def _write_spec(spec_path: Path, data: dict) -> None:
+    """Persist an edited spec atomically — an interrupted write must not
+    leave the user's spec truncated."""
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(spec_path, json.dumps(data, indent=2) + "\n")
 
 
 def _spec_number(section: dict, key: str, conv, model_id: str):
@@ -133,25 +169,19 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
         source_package = parts[0] if len(parts) > 1 else ""
         short_name = parts[-1]
 
-        # Optional source-file field: path (relative to spec file) to a
-        # simulation source. Generic across non-Modelica backends:
-        #   "source" → the source file (.jl for Julia, .py for Python,
-        #              .fmu also accepted here for symmetry).
-        #   "fmu"    → legacy FMPy-specific alias (pre-D77); still
-        #              supported but "source" is preferred for new tests.
+        # Optional "source" field: path (relative to spec file) to the
+        # simulation source — .jl for Julia, .py for Python, .fmu for FMPy.
         # Modelica tests omit this and source_file stays empty (the .mo
         # lives in the package discovered via source_package).
         source_file = Path("")
-        fmu_rel = entry.get("fmu")
+        if "fmu" in entry and "source" not in entry:
+            logger.warning(
+                "Test '%s' declares 'fmu' — not a spec field; rename it to "
+                "'source'. The test will run without a source file.",
+                model_id,
+            )
         source_rel = entry.get("source")
-        if fmu_rel:
-            fmu_path = (spec_path.parent / fmu_rel).resolve()
-            if not fmu_path.exists():
-                logger.warning(
-                    "Test '%s' references missing FMU: %s", model_id, fmu_path
-                )
-            source_file = fmu_path
-        elif source_rel:
+        if source_rel:
             source_path_resolved = (spec_path.parent / source_rel).resolve()
             if not source_path_resolved.exists():
                 logger.warning(
@@ -226,12 +256,18 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
         # is loud at discovery, not silently ignored at compare time.
         metrics_raw = entry.get("metrics")
         if metrics_raw is not None:
-            from ..comparison.tree_spec import parse_metric_tree
+            from ..comparison.tree_spec import MetricSpecError, parse_metric_tree
 
-            test.metric_tree_spec = parse_metric_tree(
-                metrics_raw,
-                _path=f"tests[{model_id}].metrics",
-            )
+            try:
+                test.metric_tree_spec = parse_metric_tree(
+                    metrics_raw,
+                    _path=f"tests[{model_id}].metrics",
+                )
+            except MetricSpecError as e:
+                # Still loud at discovery (never silently ignored), but as a
+                # user error: one "Config error: ..." line and exit 2 rather
+                # than a traceback out of the parser.
+                raise ConfigError(f"{spec_path}: {e}") from e
 
         tests.append(test)
 
@@ -249,15 +285,7 @@ def add_to_test_spec(
     Returns True if the entry was added/updated, False if it already existed
     and overwrite was not set.
     """
-    # Load existing or create new
-    data: dict = {"tests": []}
-    if spec_path.exists():
-        try:
-            data = json.loads(spec_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-        if "tests" not in data:
-            data["tests"] = []
+    data = _load_spec_for_edit(spec_path)
 
     # Check if model already exists (non-dict entries skipped — finding 53;
     # duplicates: first wins with a warning — finding 51)
@@ -275,8 +303,7 @@ def add_to_test_spec(
     else:
         data["tests"].append({"model": model_id, "variables": variables})
 
-    spec_path.parent.mkdir(parents=True, exist_ok=True)
-    spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _write_spec(spec_path, data)
     return True
 
 
@@ -286,14 +313,7 @@ def update_test_variables(
     additional_patterns: list[str],
 ) -> None:
     """Add variable patterns to an existing test entry, or create a new one."""
-    data: dict = {"tests": []}
-    if spec_path.exists():
-        try:
-            data = json.loads(spec_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-        if "tests" not in data:
-            data["tests"] = []
+    data = _load_spec_for_edit(spec_path)
 
     # Find existing entry (non-dict entries skipped, duplicates warned —
     # review 2026-07-06 findings 53/51)
@@ -311,70 +331,4 @@ def update_test_variables(
             }
         )
 
-    spec_path.parent.mkdir(parents=True, exist_ok=True)
-    spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-
-def update_test_comparison(
-    spec_path: Path,
-    update_data: dict,
-) -> None:
-    """Update or add a test entry's comparison settings in test_spec.json.
-
-    Preserves existing simulation settings and variables. Only merges
-    the comparison section from update_data.
-
-    update_data format: {"model": "...", "comparison": {"tolerance": 0.05, ...}}
-    """
-    data: dict = {"tests": []}
-    if spec_path.exists():
-        try:
-            data = json.loads(spec_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-        if "tests" not in data:
-            data["tests"] = []
-
-    model_id = update_data.get("model")
-    if not model_id:
-        return
-
-    comparison = update_data.get("comparison", {})
-
-    # Find existing entry and merge comparison, preserve everything else
-    # (review 2026-07-06 finding 54: this used to REPLACE the section
-    # wholesale, dropping variable_overrides — merge per the docstring:
-    # keys present in update_data win, other keys survive, and
-    # variable_overrides merge per-variable).
-    matches = _find_entry_indices(data, model_id)
-    if matches:
-        entry = data["tests"][matches[0]]
-        existing_comp = entry.get("comparison")
-        if not isinstance(existing_comp, dict):
-            existing_comp = {}
-        entry["comparison"] = existing_comp
-        for key, value in comparison.items():
-            if key == "variable_overrides" and isinstance(value, dict):
-                overrides = existing_comp.setdefault("variable_overrides", {})
-                if not isinstance(overrides, dict):
-                    overrides = {}
-                    existing_comp["variable_overrides"] = overrides
-                for var, override in value.items():
-                    if isinstance(override, dict) and isinstance(
-                        overrides.get(var), dict
-                    ):
-                        overrides[var].update(override)
-                    else:
-                        overrides[var] = override
-            else:
-                existing_comp[key] = value
-    else:
-        data["tests"].append(
-            {
-                "model": model_id,
-                "comparison": comparison,
-            }
-        )
-
-    spec_path.parent.mkdir(parents=True, exist_ok=True)
-    spec_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _write_spec(spec_path, data)

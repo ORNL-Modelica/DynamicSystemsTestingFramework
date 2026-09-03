@@ -27,22 +27,22 @@ The framework is a pipeline of six typed, plug-in layers:
 
 **Backend capabilities** are declared on the runner contract, not inferred from type:
 - `supports_persistent_workers`, `supports_batch_fallback`, `supports_fmu_export`,
-  `supports_experiment_ingest`, `produced_datasets`.
+  `produced_datasets`.
 Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` → `FMPy.simulate()`) are composed from capabilities, not hardcoded modes.
 
 ### Layer ↔ Code mapping (Current)
 
 | Layer | Current implementation | Status |
 |---|---|---|
-| Source | Two concrete types: `"modelica"` (`config.source_path` → `package.mo` dir) and `"fmu"` (`config.source_path` → FMU dir; per-test `"fmu"` field in spec). `Config.source_type` gates Discovery + backend selection. | Julia / Simulink / data-file remain names only |
+| Source | Two concrete types: `"modelica"` (`config.source_path` → `package.mo` dir) and `"fmu"` (`config.source_path` → FMU dir; per-test `"source"` field in spec). `Config.source_type` gates Discovery + backend selection. | Julia / Simulink / data-file remain names only |
 | Discovery | Pluggable `Recognizer` registry (`discovery/recognizer.py`). Bundled: `BundledModelicaUnitTestsRecognizer` (UnitTests + experiment) in `mo_parser.py`. User-provided: `JsonRecognizer` (`discovery/json_recognizer.py`) — declarative JSON in `testing.json`'s `"recognizers"` list, no Python. Plus `spec_parser.py` for `test_spec.json` (universal fallback). Merged by `model_id`. | Phase 5 / PTA: registry + bundled + JSON-driven all live; cross-source recognizers (FMU vendor-ext, Julia macros) unimplemented |
 | Backend | `simulators/` registry with five concrete backends: `DymolaRunner` / `OpenModelicaRunner` (native Modelica), `FmpyRunner` (FMU via FMPy), `JuliaRunner` (ModelingToolkit), and `PythonRunner` (arbitrary `simulate()`). Each declares `capabilities` + `produced_datasets`; Dymola/OpenModelica/Julia ship persistent-worker variants. `DymolaRunner` implements `export_fmu` via `translateModelFMU`. | Cross-backend chain (`simulators/cross_backend.py`) wires Dymola export → FMPy simulate → named baseline. Validation caveat: export step requires Windows + Dymola FMI license (D63). |
 | Dataset | Implicit `TimeSeries` returned by `read_result()`; `DatasetType` enum declared on backends | one concrete type materialized; additional types reserved for Phase 3 metrics |
-| Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `PointsMode`, `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`; `VariableComparison.diagnostics` carries structured extras | 6 concrete leaf types spanning trajectory-comparison, signal-only bounds, event-timing, and spectral shapes |
+| Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `PointsMode`, `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`, `ScalarMode`; `VariableComparison.diagnostics` carries structured extras | 7 concrete leaf types spanning trajectory-comparison, signal-only bounds, event-timing, spectral shapes, and single-number (reduction / stored-statistic) checks |
 | MetricTree | `comparison/metric_tree.py` (`And`/`Or`/`KOfN`/`Warn`/`Weighted` + `MetricResult`), `comparison/tree_spec.py`, `comparison/tree_eval.py`. `compare_test` derives `passed` from the tree root; users author trees via `test_spec.json` `"metrics"` block | 5 combinators (weighted is direction-aware); `simulate_only` leaf short-circuits comparison entirely |
-| Reference | Hybrid-schema storage; `Baseline` view presents named baselines uniformly | primary baseline flat-at-top-level; additional baselines under optional `baselines` key |
+| Reference | Role-partitioned storage; `Baseline` view presents named baselines uniformly | primary baseline flat-at-top-level; soft_checks and companions in role subdirs beside it |
 
-Forward work: multi-baseline reads into tree leaves (hybrid schema is there, but reading non-primary baselines into the tree is not), cross-backend verification (requires `DymolaRunner` FMU export), and richer metrics (event-timing, spectral, Fréchet, KS). See [extensibility.md](extensibility.md) for per-layer plug-in contracts.
+Forward work: cross-backend verification (requires `DymolaRunner` FMU export), and richer metrics (event-timing, spectral, Fréchet, KS). See [extensibility.md](extensibility.md) for per-layer plug-in contracts.
 
 ---
 
@@ -64,8 +64,8 @@ DynamicSystemsTestingFramework/          # repo root (project name: DSTF)
 
 ```
 src/dstf/
-├── cli.py                    # argparse CLI: discover, run, compare, export, manifest, add, spec-update,
-│                             #   companion, soft-check, import-baseline, export-schema, migrate-baselines, check-dymola
+├── cli/                      # argparse CLI package: discover, run, compare, export, manifest, add, spec-update,
+│                             #   companion, soft-check, import-baseline, export-schema, check-dymola
 ├── config.py                 # Config dataclass, path resolution, testing.json loading, simulator auto-detect
 ├── discovery/
 │   ├── recognizer.py         # Recognizer registry (bundled + user-declared, merged by model_id)
@@ -76,9 +76,9 @@ src/dstf/
 │   └── test_registry.py      # TestModel dataclass, discover_tests() merges all sources
 ├── simulators/
 │   ├── __init__.py           # Simulator registry: @register decorator, get_runner() factory
-│   ├── base.py               # SimulatorRunner ABC, VariableResult, TestResult, BatchManifest, Capability flags
+│   ├── base.py               # SimulatorRunner ABC + RunSetup/_prepare_run (types/persistent/batch_manifest split out, D116)
 │   ├── progress.py           # Backend-agnostic ProgressReporter (status.json + auto-refresh dashboard.html)
-│   ├── common/               # Shared: mat_reader, persistent-worker dispatch scaffolding
+│   ├── common/               # Shared: mat_reader, process tree-kill, result variables, JSON-driver base
 │   ├── cross_backend.py      # EXPERIMENTAL Dymola → FMU → FMPy baseline chain
 │   ├── dymola/               # DymolaRunner (.mos batch) + PersistentDymolaRunner (Python interface)
 │   ├── fmpy/                 # FmpyRunner (in-process; per-test thread)
@@ -87,21 +87,26 @@ src/dstf/
 │   └── python/               # PythonRunner — subprocess-per-test, any `simulate(stop_time, tol) -> dict`
 ├── comparison/
 │   ├── comparator.py         # compare_test / compare_all orchestration; per-mode scoring functions
-│   ├── modes.py              # ComparisonMode ABC + 6 modes (nrmse, tube, points, range, event-timing,
-│   │                         #   dominant-frequency); typed configs; resolve_mode()
+│   ├── modes.py              # ComparisonMode ABC + 7 modes (nrmse, tube, points, range, event-timing,
+│   │                         #   dominant-frequency, scalar); typed configs; resolve_mode()
 │   ├── tree_spec.py          # MetricTree LeafSpec / CombinatorSpec + implicit_and_tree() builder
 │   ├── tree_eval.py          # Tree evaluator threading primary + named baselines
 │   └── validator.py          # Baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped)
 ├── storage/
-│   └── reference_store.py    # RefIndex + ReferenceStore: primary + soft_checks + companions CRUD
+│   ├── baseline.py           # Baseline value type + PRIMARY_BASELINE
+│   ├── ref_index.py          # RefIndex + atomic text writes
+│   ├── roles.py              # soft_check/companion CRUD mixin
+│   └── reference_store.py    # ReferenceStore: primary CRUD + accept path
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
     ├── junit_report.py       # JUnit XML for CI
-    ├── html_report.py        # Builds index.html across the suite
-    ├── plot_comparison.py    # Per-test interactive.html generator + comparison_data.json sidecar
+    ├── status.py             # Shared per-test status classifier (SIM_FAIL > FAIL > NO_REF > PASS)
+    ├── dashboard_render.py   # The one suite-wide HTML page (live + final + --report-format html)
+    ├── context_builder.py    # Per-test results → template context (the pure half)
+    ├── report_suite.py       # Per-test interactive.html render + comparison_data.json sidecar
     ├── overlay_loader.py     # Companion CSV/JSON ingest + soft-check baseline projection
     ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf export-schema`)
-    ├── templates/            # interactive.html + interactive.js (the reporter-as-IDE)
+│   └── templates/            # interactive.html + five JS fragments (scorers/editors/plots/tree-ui/export), concatenated at copy time via report_suite.INTERACTIVE_JS_PARTS
     └── ui/mode_controls.py   # Auto-derived per-mode UI from typed comparison configs
 ```
 
@@ -144,7 +149,7 @@ compare_all(tests, results, store, default_tolerance, default_points)
 
 reporters render TestComparison → console / JUnit / HTML / plots
     → HTML reporter builds a context dict and renders via Jinja2 templates
-    → generates comparison.html (static matplotlib) and interactive.html (Plotly.js)
+    → generates interactive.html (Plotly.js) + the comparison_data.json sidecar
     → per-test report directories named ref_NNNN (has reference) or test_NNNN (no baseline)
     → writes comparison_data.json sidecar (includes full trajectory data) for downstream tooling
 ```
@@ -155,12 +160,12 @@ reporters render TestComparison → console / JUnit / HTML / plots
 |------|----------|---------|
 | `Config` | `config.py` | All resolved paths, simulator settings, tolerances |
 | `TestModel` | `discovery/test_registry.py` | One test: model ID, sim params, tracked variables, source |
-| `TestResult` | `simulators/base.py` | Simulation output: success flag, variables, diagnostics, statistics |
-| `VariableResult` | `simulators/base.py` | One variable's time series (time + values arrays) |
+| `TestResult` | `simulators/types.py` | Simulation output: success flag, variables, diagnostics, statistics |
+| `VariableResult` | `simulators/types.py` | One variable's time series (time + values arrays) |
 | `TestComparison` | `comparison/comparator.py` | Comparison result: pass/fail, per-variable NRMSE, warnings |
 | `ReferenceStore` | `storage/reference_store.py` | CRUD for reference JSON files via RefIndex |
-| `RefIndex` | `storage/reference_store.py` | In-memory index mapping model IDs ↔ numeric IDs (built by scanning ref files) |
-| `BatchManifest` | `simulators/base.py` | Maps test keys to `{"model_id", "ref_id"}` within a batch run |
+| `RefIndex` | `storage/ref_index.py` | In-memory index mapping model IDs ↔ numeric IDs (built by scanning ref files) |
+| `BatchManifest` | `storage/batch_manifest.py` | Maps test keys to `{"model_id", "ref_id", "last_run_status"}` within a batch run |
 
 ## Reference File Structure
 
@@ -196,16 +201,12 @@ The `comparison` section is optional. When present, it stores the comparison tol
 No persistent manifest file for the index. The in-memory `RefIndex` is built by scanning ref files at startup.
 Valid statuses: `active` (normal), `skip` (temporarily excluded), `obsolete` (pending deletion).
 
-### Multiple named baselines (hybrid schema, Phase 1.7)
+### Multiple named baselines (D66)
 
-The reference file supports multiple named baselines via a **hybrid schema**:
-
-* The ``"primary"`` baseline is stored as flat top-level fields exactly as the
-  original format — no change to existing files, no migration utility, no
-  reader churn.
-* *Additional* named baselines (``experiment``, ``analytical``, user-defined)
-  live under an optional top-level ``baselines`` map. Primary is never
-  duplicated inside this map.
+A reference file carries exactly one baseline — the ``"primary"``, stored as
+flat top-level fields. Additional named baselines are separate files in the
+role subdirs beside it: ``soft_checks/ref_NNNN/<name>.json`` (scorable,
+warn-wrapped) and ``companions/ref_NNNN/<name>.{json,csv}`` (plot-only).
 
 ```json
 {
@@ -220,50 +221,50 @@ The reference file supports multiple named baselines via a **hybrid schema**:
   "diagnostics": [...],
   "n_vars": 3,
   "time": [...],
-  "variables": [...],
-
-  // --- optional: additional named baselines ---
-  "baselines": {
-    "experiment": {
-      "provenance": {
-        "origin": "rig-run-2024-03-15",
-        "captured_at": "2024-03-15T09:20:00Z",
-        "notes": "Benchmark 3B, lab 2 test stand.",
-        "citation": "Internal report XYZ-2024-042, §4.3"
-      },
-      "time": [...], "variables": [...]
-    },
-    "analytical": {
-      "provenance": {"origin": "closed-form", "citation": "Nomura et al. 2019, eq. 12"},
-      "time": [...], "variables": [...]
-    }
-  }
+  "variables": [...]
 }
 ```
 
-Readers use the ``Baseline`` view (``ReferenceStore.get_baseline(model_id, name="primary")``)
-which adapts both cases uniformly: for a file with no ``baselines`` key, only
-``primary`` is present (synthesized from flat fields, provenance filled in from
-``date_added`` / ``last_updated``). For a hybrid file, ``primary`` plus any
-additional entries are returned.
+A soft_check file holds the same per-baseline fields plus ``provenance``:
 
-Writer preservation: accepting fresh primary results carries any non-primary
-entries under ``baselines`` forward on rewrite; they are never clobbered.
+```json
+{
+  "provenance": {
+    "origin": "rig-run-2024-03-15",
+    "captured_at": "2024-03-15T09:20:00Z",
+    "notes": "Benchmark 3B, lab 2 test stand.",
+    "citation": "Internal report XYZ-2024-042, §4.3"
+  },
+  "time": [...], "variables": [...]
+}
+```
 
-Subsumes three distinct workflows in one schema:
+Readers use the ``Baseline`` view: ``ReferenceStore.get_baselines(model_id)``
+returns ``primary`` (synthesized from the flat fields, provenance filled in
+from ``date_added`` / ``last_updated``) merged with every soft_check.
+Companions are excluded — they cannot be scored against.
 
-* **Regression** — one primary baseline (current default).
-* **Validation against experiment** — primary + experiment baseline; a metric
-  referencing ``"against": "experiment"`` gates or warns on that comparison.
-* **Cross-simulator / cross-backend verification** — multiple simulator
-  baselines under different names; a metric compares them.
+Separate files mean accepting fresh primary results can never clobber a named
+baseline. A top-level ``baselines`` key left in an old ref file is ignored with
+a warning and dropped on the next accept.
 
-See ``src/dstf/storage/reference_store.py`` for the ``Baseline``
-dataclass and adapter logic. Comparator / reporter support for consuming
-non-primary baselines is deferred to a later phase and driven by real use cases.
+The three baseline roles serve three workflows:
+
+* **Regression** — the primary baseline alone (the default).
+* **Validation against experiment** — primary + an `experiment` soft_check; a
+  leaf referencing ``"against": "experiment"`` gates or warns on that
+  comparison.
+* **Cross-simulator / cross-backend verification** — several simulator
+  baselines registered as soft_checks under different names, each targetable
+  by its own leaf.
+
+See ``src/dstf/storage/baseline.py`` for the ``Baseline`` dataclass and
+the role CRUD. The comparator threads soft_checks into the tree evaluator and
+the reporter renders per-leaf `against=` provenance — both shipped in Phase 4 /
+D66.
 
 Two manifest files are written to the work directory before simulation starts:
-- `batch_manifest.json` — maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN"}` for all tests in the batch
+- `batch_manifest.json` — maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN", "last_run_status": "..."}` for all tests in the batch
 - `reference_manifest.json` — maps ref IDs to model names; also available via `manifest dump` CLI command
 
 ## Simulator Abstraction
@@ -313,9 +314,9 @@ Each runner declares its capabilities via `frozenset[Capability]`:
 
 - `PERSISTENT_WORKERS` — long-lived worker process; library loads once, amortized across N tests.
 - `BATCH_FALLBACK` — per-test subprocess; robust but slower per-test startup cost.
-- `FMU_EXPORT` — can export an FMU from the source (Dymola only today; OM deferred per D69).
+- `FMU_EXPORT` — can export an FMU from the source (`PersistentDymolaRunner` only today — the batch `DymolaRunner` has no `.mos` export path and does not declare it; OM deferred per D69).
 
-CLI's `_get_runner(persistent=True)` swaps to the persistent variant when the runner declares `PERSISTENT_WORKERS`; falls back to batch on `RuntimeError`.
+CLI's `_get_runner(persistent=True)` swaps to the persistent variant only when the runner **declares** `PERSISTENT_WORKERS`; a backend without the flag takes the batch path. A persistent preflight that raises `RuntimeError` aborts with a message pointing at `--batch` (no silent fallback). The cross-backend chain gates the same way on `FMU_EXPORT`.
 
 ### Forward
 
@@ -324,7 +325,7 @@ Rename to `Backend` (a `Runner` is one execution strategy *within* a Backend). E
 ```
 Backend (ABC)
   ├── capabilities: frozenset[Capability]           # supports_persistent_workers, supports_batch_fallback,
-  │                                                  # supports_fmu_export, supports_experiment_ingest, ...
+  │                                                  # supports_fmu_export, ...
   ├── produced_datasets: frozenset[DatasetType]    # {TimeSeries, Events}, or {TimeSeries} for data-file ingest
   ├── run_tests(tests) → list[BatchManifest]       # orchestration (persistent workers / batch / ingest)
   ├── read_result(test) → Dataset                  # typed result (not only TimeSeries)

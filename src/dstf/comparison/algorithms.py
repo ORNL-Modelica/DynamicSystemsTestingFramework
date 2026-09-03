@@ -480,11 +480,9 @@ def _interpolate_tube_widths(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Interpolate tube upper/lower widths at evaluation times.
 
-    Supports two point formats:
-    - Symmetric (legacy): {"time": t, "abs": a, "rel": r}
-      → upper = lower = value
-    - Asymmetric: {"time": t, "upper": u, "lower": l}
-      → independent upper/lower widths
+    Control-point format: ``{"time": t, "upper": u, "lower": l}``. A
+    symmetric tube sets ``upper == lower``; either side may be omitted and
+    defaults to 0.
 
     Returns (upper_widths, lower_widths) arrays matching eval_time.
     Before first point: hold. After last: hold.
@@ -495,15 +493,13 @@ def _interpolate_tube_widths(
     pts = sorted(tube_points, key=lambda p: p["time"])
     ctrl_times = np.array([p["time"] for p in pts])
 
-    # Determine field names — check first point for format
-    if "upper" in pts[0] or "lower" in pts[0]:
-        # Asymmetric format
-        ctrl_upper = np.array([p.get("upper", p.get("abs", 0.0)) for p in pts])
-        ctrl_lower = np.array([p.get("lower", p.get("abs", 0.0)) for p in pts])
-    else:
-        # Legacy symmetric format (abs/rel fields)
-        ctrl_upper = np.array([p.get("abs", p.get("rel", 0.0)) for p in pts])
-        ctrl_lower = ctrl_upper.copy()
+    if not any("upper" in p or "lower" in p for p in pts):
+        raise ValueError(
+            "tube_points entries need 'upper' and/or 'lower' widths; "
+            f"got keys {sorted(pts[0])}"
+        )
+    ctrl_upper = np.array([p.get("upper", 0.0) for p in pts])
+    ctrl_lower = np.array([p.get("lower", 0.0) for p in pts])
 
     if len(pts) == 1 or interpolation == "constant":
         indices = np.searchsorted(ctrl_times, eval_time, side="right") - 1
@@ -731,6 +727,154 @@ def _compare_range(
     )
 
 
+#: Series reductions a ``scalar`` leaf may declare. Closed set in v1 — the
+#: quantity field takes either one of these or a stats path, and grows an
+#: ``{"expr": ...}`` shape later without breaking either.
+SCALAR_REDUCTIONS = ("max", "min", "mean", "sample_mean", "final", "integral")
+
+
+def _reduce_series(time: np.ndarray, values: np.ndarray, reduction: str) -> float:
+    """Reduce a (already windowed) series to the number a scalar leaf scores.
+
+    ``mean`` is the TIME-WEIGHTED mean (integral / time span), not the
+    sample mean: a solver that emits a finer output grid, or extra samples
+    around events, must not move the score of an identical trajectory. It
+    degrades to the sample mean when the span is zero (a single sample, or
+    the 1-sample arrays a stats-path leaf is handed).
+
+    ``sample_mean`` is the plain arithmetic mean of the samples — it DOES
+    move with the output grid, and exists for parity with tools that report
+    that number.
+
+    ``integral`` is the trapezoid rule spelled out rather than
+    ``np.trapezoid`` — that spelling only exists from numpy 2.0 and the
+    package supports 1.20+.
+    """
+    if reduction == "final":
+        return float(values[-1])
+    if reduction == "max":
+        return float(np.max(values))
+    if reduction == "min":
+        return float(np.min(values))
+    if reduction == "mean":
+        span = float(time[-1] - time[0]) if len(time) > 1 else 0.0
+        if span <= 0.0:
+            return float(np.mean(values))
+        return _trapezoid(time, values) / span
+    if reduction == "sample_mean":
+        return float(np.mean(values))
+    if reduction == "integral":
+        return _trapezoid(time, values)
+    # Unreachable — ScalarMode validates the reduction at construction time.
+    raise ValueError(f"unknown scalar reduction {reduction!r}")
+
+
+def _trapezoid(time: np.ndarray, values: np.ndarray) -> float:
+    """Trapezoid-rule integral of ``values`` over ``time``."""
+    if len(values) < 2:
+        return 0.0
+    return float(np.sum(np.diff(time) * (values[:-1] + values[1:]) / 2.0))
+
+
+def _compare_scalar(
+    ref_time: np.ndarray,
+    ref_values: np.ndarray,
+    act_time: np.ndarray,
+    act_values: np.ndarray,
+    *,
+    reduction: str,
+    tolerance: float,
+    tolerance_mode: str,
+    min_value: float | None,
+    max_value: float | None,
+) -> VariableComparison:
+    """Score one number: reduced series (or resolved stats path) vs baseline.
+
+    Two forms, selected by whether bounds are declared:
+
+    * **bounds** (``min_value`` / ``max_value`` set) — baseline-free; pass
+      iff the actual scalar lies within the inclusive bounds. The score is
+      the distance outside them (0.0 inside), mirroring ``_compare_range``.
+    * **baseline** — ``err = |act - ref|``; ``abs`` passes when
+      ``err <= tolerance``, ``rel`` when ``err <= tolerance * |ref|``. A
+      zero-magnitude reference makes the relative criterion degenerate, so
+      ``rel`` falls back to the absolute comparison when ``|ref| == 0``.
+
+    The evaluator hands stats-path leaves 1-sample arrays, so the same
+    reduction path serves both quantity shapes.
+    """
+    if len(act_values) == 0:
+        return _no_data_failure(
+            "scalar", "no actual samples to reduce (empty trajectory or window)"
+        )
+    act_scalar = _reduce_series(act_time, act_values, reduction)
+
+    diagnostics: dict = {
+        "reduction": reduction,
+        "tolerance_mode": tolerance_mode,
+        "min_value": min_value,
+        "max_value": max_value,
+        "actual_scalar": act_scalar,
+    }
+
+    if min_value is not None or max_value is not None:
+        above = max(act_scalar - max_value, 0.0) if max_value is not None else 0.0
+        below = max(min_value - act_scalar, 0.0) if min_value is not None else 0.0
+        violation = max(above, below)
+        return VariableComparison(
+            index=0,
+            name="",
+            passed=violation <= 0.0,
+            # Signal-free metric: nrmse/rmse carry the score ("0 = in bounds,
+            # larger = farther out"), as in _compare_range.
+            nrmse=violation,
+            rmse=violation,
+            signal_range=0.0,
+            max_abs_error=violation,
+            max_abs_error_time=0.0,
+            reference_final=float("nan"),
+            actual_final=act_scalar,
+            mode="scalar",
+            tube_worst_violation=violation,
+            diagnostics=diagnostics,
+        )
+
+    if len(ref_values) == 0:
+        return _no_data_failure(
+            "scalar", "no reference samples to reduce (empty baseline or window)"
+        )
+    ref_scalar = _reduce_series(ref_time, ref_values, reduction)
+    err = abs(act_scalar - ref_scalar)
+    # A zero-magnitude reference makes the relative criterion degenerate —
+    # fall back to the absolute test and record that it fired, so the report
+    # can say which criterion actually decided the verdict.
+    abs_fallback = tolerance_mode == "rel" and abs(ref_scalar) == 0.0
+    if tolerance_mode == "rel" and not abs_fallback:
+        score = err / abs(ref_scalar)
+    else:
+        score = err
+    diagnostics["reference_scalar"] = ref_scalar
+    diagnostics["abs_fallback"] = abs_fallback
+
+    return VariableComparison(
+        index=0,
+        name="",
+        passed=bool(score <= tolerance),
+        nrmse=score,
+        rmse=err,
+        signal_range=abs(ref_scalar),
+        max_abs_error=err,
+        max_abs_error_time=0.0,
+        reference_final=ref_scalar,
+        actual_final=act_scalar,
+        # NOT is_constant: that flag means "the reference SIGNAL has zero
+        # range", which the console renders as "(constant signal)". A scalar
+        # leaf never compares signals, so the flag would be a false claim.
+        mode="scalar",
+        diagnostics=diagnostics,
+    )
+
+
 def _compare_event_timing(
     ref_time: np.ndarray,
     act_time: np.ndarray,
@@ -748,9 +892,10 @@ def _compare_event_timing(
       delta is within ``time_tolerance``.
 
     * ``declared_events is not None``: the declared list IS the reference
-      event set. The actual signal is still auto-detected; each declared
-      event claims the nearest actual event within its own tolerance
-      (``event["tolerance"]`` if set, else ``time_tolerance``). An
+      event set. The actual signal is still auto-detected; declared
+      windows (``event["tolerance"]`` if set, else ``time_tolerance``) are
+      then matched optimally — sorted by right endpoint, each claiming the
+      smallest unclaimed actual event inside it. An
       unclaimed declared event fails. Unclaimed actual events only fail
       if ``count_must_match`` is set (and declared count != actual count).
 
@@ -866,10 +1011,16 @@ def _compute_fft_spectrum(
 
     Resamples to a uniform grid sized at the **next power of 2** above
     ``max(len(t), 64)``, strips DC, takes the real-FFT. The pow-2 choice
-    matches the JS-side radix-2 implementation (D76) — both sides produce
-    bit-identical bin frequencies, so the CLI's `paired_peaks` agrees
-    with the browser's live scorer on a self-regression (no more
-    index-PASS vs per-test-FAIL disagreement).
+    matches the JS-side radix-2 implementation (D76): given the SAME input
+    samples both sides produce bit-identical bin frequencies, so the CLI's
+    `paired_peaks` agrees with the browser's live scorer.
+
+    That parity is exact only while the browser holds the full-resolution
+    trajectory. The reporter LTTB-decimates embedded arrays to
+    ``max_embedded_samples``, which changes ``len(t)`` and therefore the bin
+    grid — so a decimated dominant-frequency leaf is badge-gated as
+    CLI-authoritative and never live-re-scored (see
+    ``report_suite._mark_decimated_cli_authoritative``).
     """
     import math
 

@@ -6,11 +6,17 @@ if fmpy isn't installed or the Reference-FMUs binaries haven't been fetched.
 
 from __future__ import annotations
 
+import sys
+import time
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+
+from conftest import make_test_model as _tm
+from dstf.discovery.test_registry import TestModel
 
 PROJECT_ROOT = Path(__file__).parent.parent
 REFERENCE_FMUS_DIR = PROJECT_ROOT / "examples" / "fmu" / "reference-fmus-binaries"
@@ -29,8 +35,10 @@ def _reference_fmus_available() -> bool:
     return REFERENCE_FMUS_DIR.exists() and any(REFERENCE_FMUS_DIR.rglob("*.fmu"))
 
 
-# Gate the entire module on the two dependencies being present.
-pytestmark = [
+# Gate on the two dependencies being present. Carried by the classes that
+# simulate a real FMU rather than by the module: the runner regression tests
+# folded in at the bottom drive a fake `fmpy` module and need neither.
+_needs_real_fmpy = [
     pytest.mark.fmpy,
     pytest.mark.reference_fmus,
     pytest.mark.skipif(
@@ -57,7 +65,6 @@ def _make_config(tmp_path: Path) -> SimpleNamespace:
 
 def _make_test(fmu_path: Path, variables: list[str], stop_time: float = 3.0):
     """Build a TestModel pointing at an FMU with the given output variables."""
-    from dstf.discovery.test_registry import TestModel
 
     return TestModel(
         model_id=fmu_path.stem,
@@ -79,6 +86,8 @@ def _make_test(fmu_path: Path, variables: list[str], stop_time: float = 3.0):
 
 
 class TestFmpySimulation:
+    pytestmark = _needs_real_fmpy
+
     def test_bouncing_ball_simulates_end_to_end(self, tmp_path):
         """BouncingBall simulates, result round-trips through save/load.
 
@@ -171,6 +180,8 @@ class TestFmpySimulation:
 
 
 class TestFmpyHelpers:
+    pytestmark = _needs_real_fmpy
+
     def test_save_load_roundtrip(self, tmp_path):
         """Structured-array persistence preserves column names + data."""
         from dstf.simulators.fmpy.runner import _load_result, _save_result
@@ -202,3 +213,77 @@ class TestFmpyHelpers:
 
         test = _make_test(Path("x.fmu"), variables=[])
         assert _resolve_requested_outputs(test, ["h", "v"]) == []
+
+
+# =========================================================================
+# Folded in from tests/test_review_fixes_backends.py — 2026-07-06 review,
+# backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
+#
+# Finding 73 — the FMPy timeout result sets ``timed_out``, and the result
+# save happens inside the try so an OSError fails the one test, not the run.
+#
+# These run against a fake ``fmpy`` module injected into ``sys.modules``, so
+# unlike the simulation tests above they need neither fmpy nor the
+# Reference-FMU binaries — which is why the dependency gate moved from a
+# module-level ``pytestmark`` onto the classes that actually need it.
+# =========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Finding 73 — FMPy timeout flag + save inside try
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_fmpy(monkeypatch, simulate_fn):
+    fake = types.ModuleType("fmpy")
+    fake.read_model_description = lambda p: SimpleNamespace(
+        modelVariables=[SimpleNamespace(name="h")]
+    )
+    fake.simulate_fmu = simulate_fn
+    monkeypatch.setitem(sys.modules, "fmpy", fake)
+
+
+class TestFmpyRunnerFixes:
+    def _make_runner(self, tmp_path, monkeypatch, simulate_fn):
+        _install_fake_fmpy(monkeypatch, simulate_fn)
+        from dstf.simulators.fmpy.runner import FmpyRunner
+
+        cfg = SimpleNamespace(
+            work_dir=tmp_path / "work",
+            source_type="fmu",
+            simulator="FMPy",
+            parallel=1,
+            timeout=60,
+        )
+        return FmpyRunner(cfg)
+
+    def _make_fmu_test(self, tmp_path, **kw):
+        fmu = tmp_path / "Model.fmu"
+        fmu.write_bytes(b"fake fmu")
+        return _tm("Model", source_file=fmu, variable_patterns=["h"], **kw)
+
+    def test_timeout_result_sets_timed_out_flag(self, tmp_path, monkeypatch):
+        def slow_sim(**kw):
+            time.sleep(0.5)
+            return None
+
+        runner = self._make_runner(tmp_path, monkeypatch, slow_sim)
+        test = self._make_fmu_test(tmp_path, timeout=1)
+        test.timeout = None
+        runner.config.timeout = 0.05
+        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        assert rr.success is False
+        assert (
+            rr.timed_out is True
+        )  # finding 73: was False → dashboard/console disagreed
+
+    def test_save_oserror_fails_single_test_not_run(self, tmp_path, monkeypatch):
+        runner = self._make_runner(tmp_path, monkeypatch, lambda **kw: object())
+        monkeypatch.setattr(
+            "dstf.simulators.fmpy.runner._save_result",
+            lambda path, arr: (_ for _ in ()).throw(OSError("disk full")),
+        )
+        test = self._make_fmu_test(tmp_path)
+        rr = runner.run_single_test(test, "test_0001", 1, 1)  # must NOT raise
+        assert rr.success is False
+        assert "disk full" in (rr.error_message or "")

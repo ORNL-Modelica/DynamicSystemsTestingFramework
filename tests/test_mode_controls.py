@@ -16,11 +16,9 @@ from dstf.comparison.modes import (
     TubeConfig,
 )
 from dstf.reporting.ui.mode_controls import (
-    PlotContribution,
     derive_schema,
     emit_mode_schemas,
     get_mode_ui,
-    register_mode_ui,
     registered_modes,
     render_schema_html,
     render_window_controls_html,
@@ -198,6 +196,7 @@ class TestRegistry:
             "range",
             "event-timing",
             "dominant-frequency",
+            "scalar",
         }
 
     def test_get_returns_mode_ui(self):
@@ -209,29 +208,28 @@ class TestRegistry:
     def test_unknown_mode_returns_none(self):
         assert get_mode_ui("does-not-exist") is None
 
-    def test_register_and_render_custom_mode(self):
+    def test_registered_modes_is_exactly_the_metric_registry(self):
+        """Every UI mode is a registered metric, in registration order —
+        the add-leaf dropdown, emit_mode_schemas, the schema export and
+        tree_spec parsing all read this one list."""
+        from dstf.comparison.registry import metrics
+
+        assert registered_modes() == [d.name for d in metrics()]
+
+    def test_derive_and_render_arbitrary_dataclass(self):
+        """Derivation and rendering work on any config dataclass, not just
+        the bundled ones."""
+
         @dataclass
         class CustomCfg:
             rate: float = 1.0
             enabled: bool = True
 
-        ui = register_mode_ui("custom-test", CustomCfg)
-        html = ui.render(variable="y")
+        schema = derive_schema(CustomCfg, mode="custom-test")
+        html = render_schema_html(schema, variable="y")
         assert 'data-mode="custom-test"' in html
         assert 'data-field="rate"' in html
         assert 'data-field="enabled"' in html
-
-    def test_custom_renderer_overrides_default(self):
-        @dataclass
-        class C:
-            tol: float = 0.1
-
-        def custom(schema, *, mode, variable, values):
-            return f"<custom-panel mode='{mode}'/>"
-
-        ui = register_mode_ui("custom-over", C, custom_renderer=custom)
-        html = ui.render(variable="z")
-        assert html == "<custom-panel mode='custom-over'/>"
 
 
 class TestWindowControls:
@@ -284,85 +282,6 @@ class TestWindowControls:
         assert "value=" not in html
 
 
-class TestPlotContributionSlot:
-    """Stage 1 — every ModeUI carries an optional plot_contribution callable.
-    Default None means 'no static visual' (NRMSE today). Stage 2 fills in
-    the per-mode functions alongside the JS-side registry."""
-
-    def test_default_is_none(self):
-        ui = get_mode_ui("nrmse")
-        assert ui is not None
-        assert ui.plot_contribution is None
-        assert ui.contribute_to_plot({"tolerance": 1e-3}) is None
-
-    def test_contribute_to_plot_invokes_registered_fn(self):
-        from dataclasses import dataclass as _dc
-
-        @_dc
-        class Cfg:
-            min_value: float = 0.0
-
-        def contrib(values):
-            return PlotContribution(
-                shapes=[
-                    {
-                        "type": "line",
-                        "y0": values["min_value"],
-                        "y1": values["min_value"],
-                    }
-                ],
-            )
-
-        ui = register_mode_ui("contrib-test", Cfg, plot_contribution=contrib)
-        result = ui.contribute_to_plot({"min_value": -0.5})
-        assert isinstance(result, PlotContribution)
-        assert result.shapes == [{"type": "line", "y0": -0.5, "y1": -0.5}]
-        assert result.traces == []
-
-    def test_secondary_panel_request(self):
-        from dataclasses import dataclass as _dc
-
-        @_dc
-        class Cfg:
-            pass
-
-        def contrib(_values):
-            return PlotContribution(secondary_panel="spectrum")
-
-        ui = register_mode_ui("panel-test", Cfg, plot_contribution=contrib)
-        assert ui.contribute_to_plot({}).secondary_panel == "spectrum"
-
-
-class TestHasPlotEditor:
-    """Python-side marker that MODE_PLOT_EDITORS[name] is wired JS-side.
-    Used by the recommender / schema export for discoverability."""
-
-    def test_tube_has_plot_editor(self):
-        ui = get_mode_ui("tube")
-        assert ui is not None
-        assert ui.has_plot_editor is True
-
-    def test_range_has_plot_editor(self):
-        ui = get_mode_ui("range")
-        assert ui is not None
-        assert ui.has_plot_editor is True
-
-    def test_nrmse_has_no_plot_editor(self):
-        ui = get_mode_ui("nrmse")
-        assert ui is not None
-        assert ui.has_plot_editor is False
-
-    def test_flag_exposed_on_register(self):
-        from dataclasses import dataclass as _dc
-
-        @_dc
-        class Cfg:
-            pass
-
-        ui = register_mode_ui("editor-test", Cfg, has_plot_editor=True)
-        assert ui.has_plot_editor is True
-
-
 class TestEmitModeSchemas:
     """Bulk export for embedding into interactive.html (Stage 2 JS renderer)."""
 
@@ -375,6 +294,7 @@ class TestEmitModeSchemas:
             "range",
             "event-timing",
             "dominant-frequency",
+            "scalar",
         ):
             assert mode in schemas, f"{mode} missing from emit_mode_schemas"
 

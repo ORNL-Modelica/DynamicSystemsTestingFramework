@@ -8,8 +8,10 @@ test carries `simulate_only=True` plus the experiment-annotation values.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+from dstf.comparison.registry import combinator_names, metric_names
 from dstf.config import Config
 from dstf.discovery.test_registry import discover_tests
 
@@ -23,6 +25,7 @@ TESTING_JSON = (
     / "ReferenceResults"
     / "testing.json"
 )
+TEST_SPEC_JSON = TESTING_JSON.parent / "test_spec.json"
 
 
 def test_demo_recognizer_finds_simulate_only_model():
@@ -66,3 +69,53 @@ def test_simulate_only_model_does_not_trigger_bundled():
     # nor demo recognizer (no n_vars field) sets it.
     assert sim_only.n_vars == 1
     assert sim_only.x_expressions == []
+
+
+# ---------------------------------------------------------------------------
+# Demo spec coverage — every metric and every combinator runs in the demo
+# ---------------------------------------------------------------------------
+
+
+def _demo_spec_usage() -> tuple[set[str], set[str]]:
+    """Return the (metrics, combinators) the bundled demo spec exercises."""
+    spec = json.loads(TEST_SPEC_JSON.read_text(encoding="utf-8"))
+    metrics: set[str] = set()
+    combinators: set[str] = set()
+
+    def walk(node: dict) -> None:
+        if "combinator" in node:
+            combinators.add(node["combinator"])
+            for child in node.get("children", []):
+                walk(child)
+            return
+        metrics.add(node["metric"])
+
+    for entry in spec["tests"]:
+        if "metrics" in entry:
+            walk(entry["metrics"])
+        overrides = entry.get("comparison", {}).get("variable_overrides", {})
+        for override in overrides.values():
+            metrics.add(override.get("mode", "nrmse"))
+    return metrics, combinators
+
+
+def test_demo_spec_exercises_every_metric_and_combinator():
+    """The bundled demo is the framework's own end-to-end coverage: a metric
+    or combinator nobody runs there is one nobody runs at all (D103)."""
+    metrics, combinators = _demo_spec_usage()
+    assert metric_names() - metrics == set()
+    assert combinator_names() - combinators == set()
+
+
+def test_demo_simple_test_carries_the_scalar_leaf():
+    """SimpleTest's tree is and[k-of-n(...), scalar] — the k-of-n coverage
+    stays, and the scalar leaf reduces the tracked ``x`` series."""
+    spec = json.loads(TEST_SPEC_JSON.read_text(encoding="utf-8"))
+    entry = next(t for t in spec["tests"] if t["model"].endswith("Examples.SimpleTest"))
+    root = entry["metrics"]
+    assert root["combinator"] == "and"
+    kinds = [c.get("combinator") or c.get("metric") for c in root["children"]]
+    assert kinds == ["k-of-n", "scalar"]
+    scalar = root["children"][1]
+    assert scalar["variable"] == "x"
+    assert scalar["quantity"] == {"reduce": "final"}

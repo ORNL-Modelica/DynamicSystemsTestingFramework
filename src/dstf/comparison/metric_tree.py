@@ -2,26 +2,25 @@
 
 See docs/vision.md "Metric composition" and docs/extensibility.md §6.
 
-This module introduces the abstraction. In Phase 1 it is wired as a degenerate
-flat-AND over per-variable ``VariableComparison`` results — matching the
-existing implicit semantics exactly. Phase 3 exposes OR / weighted / K-of-N /
-warn via ``test_spec.json`` to users and grows the leaf types beyond the
-current per-variable NRMSE/tube.
+A spec with no ``metrics`` tree collapses to a degenerate flat-AND over
+per-variable ``VariableComparison`` results (``implicit_and_tree``), which is
+exactly the implicit semantics. An explicit ``metrics`` tree in
+``test_spec.json`` reaches the and / or / k-of-n / warn / weighted
+combinators below.
 
 Design contract:
 
 * Combinators are pure functions of child ``MetricResult``s. No I/O, no mutation.
 * A combinator's output ``diagnostics`` must preserve enough of its children's
   diagnostics that a report can show which branch failed and why.
-* Leaves wrap an existing ``VariableComparison`` today; future leaves will wrap
-  other metric-result types (test-level scores, cross-baseline comparisons).
+* Leaves wrap a ``VariableComparison``.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from .comparator import VariableComparison
 
@@ -74,10 +73,16 @@ class Combinator(ABC):
 
 
 class AndCombinator(Combinator):
-    """All children must pass. Score is the worst (min) child score.
+    """All children must pass. Score is ``min`` over the children's scores.
 
-    Matches the current implicit behavior: a test passes iff every variable's
-    metric passes.
+    Matches the implicit behavior of a spec with no ``metrics`` tree: a test
+    passes iff every variable's metric passes.
+
+    ``min`` is only "the worst child" for lower-is-better metrics. Children
+    can mix directions (the registry's ``score_direction`` is ``"lower"``
+    for NRMSE-like scores, ``"higher"`` for tube coverage), and this node
+    does not consult it — ``passed`` is a pure Boolean AND and is always
+    right; the reported score is a summary number, not a ranking.
     """
 
     name = "and"
@@ -99,7 +104,12 @@ class AndCombinator(Combinator):
 
 
 class OrCombinator(Combinator):
-    """At least one child must pass. Score is the best (max) child score."""
+    """At least one child must pass. Score is ``max`` over the children's scores.
+
+    Same caveat as :class:`AndCombinator`: ``max`` is only "the best child"
+    for higher-is-better metrics, and this node does not consult the
+    registry's ``score_direction``. ``passed`` (a Boolean OR) is unaffected.
+    """
 
     name = "or"
 
@@ -196,10 +206,9 @@ class WeightedCombinator(Combinator):
                 },
                 children=list(children),
             )
-        # Weighted children are numeric leaves; a missing score contributes 0.
+        # Every child has a numeric score — the guard above returned otherwise.
         weighted_sum = sum(
-            w * (c.score if c.score is not None else 0.0)
-            for w, c in zip(self.weights, children)
+            w * cast(float, c.score) for w, c in zip(self.weights, children)
         )
         passed = (
             weighted_sum < self.threshold

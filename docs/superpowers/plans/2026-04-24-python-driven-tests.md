@@ -932,7 +932,7 @@ EOF
 
 Run: `uv run python -c "import scipy; print(scipy.__version__)"`
 
-If this fails, install scipy into whichever Python `uv run which python` points at. Note the venv-drift caveat in `docs/SESSION_HANDOFF.md` — on this machine `uv run` may resolve miniforge3. If `uv run` can't find scipy, try: `uv pip install scipy` or `/home/fig/miniforge3/bin/pip install scipy`.
+If this fails, install scipy into whichever Python `uv run which python` points at. Note the venv-drift caveat in `docs/SESSION_HANDOFF.md` — on this machine `uv run` may resolve miniforge3. If `uv run` can't find scipy, try: `uv pip install scipy` or `<your-python>/bin/pip install scipy`.
 
 - [ ] **Step 2: Create `SimpleRamp.py`**
 

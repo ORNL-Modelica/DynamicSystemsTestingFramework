@@ -61,7 +61,7 @@ A recognizer declares:
 
 - **What it looks for** (Modelica class name / annotation pattern / FMU vendor extension / Julia macro / …)
 - **How fields map** to the framework's `TestModel` (which parameter holds the variables-to-track, which holds the timeout, …)
-- **What it can extract** as a capability profile — `{variables, reference_signals, timeout, tolerance, requested_fmu_export, simulate_only, …}`. Recognizers don't need to extract everything; a "minimal" recognizer can declare only "this is a test, simulate it" and pass on success.
+- **What it can extract** as a capability profile — `{variables, reference_signals, timeout, tolerance, simulate_only, …}`. Recognizers don't need to extract everything; a "minimal" recognizer can declare only "this is a test, simulate it" and pass on success.
 
 Discovery composes results from every registered recognizer, merging by model_id. A library can ship its own recognizer alongside the bundled default — both run; results combine.
 
@@ -80,7 +80,6 @@ Runners are not all equivalent. Rather than assume every backend supports every 
 - `supports_persistent_workers` — can hold a loaded model in memory and simulate many tests per worker (Dymola Python: yes, batch `.mos`: no, FMPy: trivially yes, CSV ingest: N/A).
 - `supports_batch_fallback` — exposes a script-driven non-interactive fallback (Dymola: yes via `.mos`, OMC: yes via `.mos`, FMPy: no, MATLAB: yes).
 - `supports_fmu_export` — can export a test artefact as an FMU (Dymola: yes, OMC: yes, FMPy: N/A). Enables cross-backend verification (see below).
-- `supports_experiment_ingest` — reads recorded data rather than simulating (data-file "runner").
 - `produced_datasets` — set of `Dataset` types this runner can yield (most produce `TimeSeries` and `Events`; a data-file runner may produce only `TimeSeries`).
 
 Capabilities let the framework enable/disable features per backend without special-casing, and let users query at config time ("does this backend support what my test needs?").
@@ -103,7 +102,7 @@ The interactive HTML report is the **primary authoring surface** for acceptance 
 
 **Per-leaf modularity**: `ComparisonMode` stays pure compute (no UI coupling). UI controls are **auto-derived from each mode's typed Config dataclass** (NrmseConfig, TubeConfig, …) with override slots where richer UI makes sense (tube conditional fields, range visual handles). Tightening Config types to use `Literal[...]` for enum-like fields buys JSON-Schema export as a first-class handoff artifact.
 
-**Live preview policy**: modes with tractable math ship an in-browser JS recompute function so users see pass/fail update as they drag. Today this covers `nrmse`, `tube`, `range`, `points`, and `dominant-frequency` (the FFT path was added in D75-D76 once both sides agreed on a power-of-2 resampling that gives bit-identical bin frequencies). `event-timing` is the only mode that stays CLI-authoritative — its event-pairing algorithm has too many tie-breakers to mirror cleanly.
+**Live preview policy**: modes with tractable math ship an in-browser JS recompute function so users see pass/fail update as they drag. Today this covers `nrmse`, `tube`, `range`, `points`, and `dominant-frequency` (the FFT path was added in D75-D76 once both sides agreed on a power-of-2 resampling that gives bit-identical bin frequencies). Two modes stay CLI-authoritative: `event-timing` (its event-pairing algorithm has too many tie-breakers to mirror cleanly) and `scalar` (a stats-path quantity reads statistics / diagnostics the report never embeds).
 
 **Testing asymmetry, with a parity floor**: the Python data contract (patch schema, spec-update round-trip, JSON-Schema export, validator rules) is exhaustively tested. The JS layer's structural shape is covered by golden-file HTML snapshots; behavioral correctness of the live-preview scorers is covered by `tests/test_scorer_parity.py`, which renders a synthetic fixture suite, runs the Python `_compare_*` functions for the authoritative verdict, and asserts every JS `MODE_SCORERS[mode](leaf)` agrees. Drift between the two implementations is the only failure mode this catches mechanically — interaction bugs (drag handlers, plot wiring) still rely on the human QA checklist (`docs/qa/reporter_checklist.md`).
 

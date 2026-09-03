@@ -456,6 +456,11 @@
       localStorage.setItem(STATE_KEY, JSON.stringify({
         activeStatuses: Array.from(activeStatuses),
         colFilterValues: { ...colFilterValues },
+        // Stamped with the report the selection was made in — see the
+        // restore step for why. Filters / sort / widths are user
+        // preferences and deliberately carry across reports; a selection
+        // is a claim about a specific run's rows and does not.
+        selectionKey: REPORT_KEY,
         selection: selectedRows().map(r => r.dataset.model),
         sort: lastSorted.th
           ? { key: lastSorted.th.dataset.key, dir: lastSorted.dir }
@@ -500,7 +505,14 @@
     renderCounters(initialCountsFromRows(), DASHBOARD_TOTAL);
     applyFilters();
 
-    if (s.selection && Array.isArray(s.selection)) {
+    // Selection is restored ONLY when it was made in THIS report. The
+    // storage key is location.pathname, which every run into the same
+    // work_dir shares, so a prior run's selection used to be re-applied
+    // to whichever of its models still existed — and then rode silently
+    // into the rerun command the user built from a fresh selection here.
+    // A selection stamped with any other report (or with none, from a
+    // page written before this stamp existed) is dropped on load.
+    if (s.selection && Array.isArray(s.selection) && s.selectionKey === REPORT_KEY) {
       const wantSet = new Set(s.selection);
       Array.from(tbody.querySelectorAll('tr')).forEach(row => {
         if (wantSet.has(row.dataset.model)) setRowSelected(row, true);

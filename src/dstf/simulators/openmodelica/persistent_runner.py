@@ -13,10 +13,11 @@ Benefits:
   - Natural work-stealing: whichever worker finishes first grabs the next test
   - Per-test timeout isolation: a hung test kills one worker, not the batch
 
-The default CLI mode selects this runner; pass ``--batch`` to fall back to
-the subprocess-per-test runner, which doesn't require OMPython. Persistent
-mode also falls back to batch automatically if OMPython can't be imported
-(mirrors the Dymola Python-interface fallback).
+The default CLI mode selects this runner; pass ``--batch`` to opt out and
+use the subprocess-per-test runner, which doesn't require OMPython. There
+is no automatic fallback: if OMPython can't be imported, ``preflight``
+raises and the CLI aborts with a message naming both fixes (see
+``cli._get_runner``).
 
 Phase labels are cosmetic — OM's ``simulate()`` bundles build + run in one
 call with no mid-call progress hook, so we emit ``translating`` before the
@@ -30,18 +31,14 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import threading
 import time
 from pathlib import Path
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
-from ..base import (
-    PersistentRunnerBase,
-    TestRunResult,
-    Worker,
-)
-from ..common.mat_reader import read_mat_time_extents
+from ..common.mat_reader import mat_reaches_time
+from ..persistent import PersistentRunnerBase, Worker
+from ..types import TestRunResult
 from .log_parser import _TIMING_KEYS, ParsedOmcOutput, parse_omc_stdout
 from .mos_generator import build_simulate_args, classify_dependency
 from .runner import OpenModelicaConfig, OpenModelicaRunner
@@ -182,6 +179,32 @@ def _synthesize_stdout_artifact(
     return "\n".join(parts) + "\n"
 
 
+def _resolve_session_pid(session) -> int | None:
+    """The omc PID behind *session*, or ``None`` if it can't be resolved.
+
+    This PID is the watchdog's only kill target: without it a timeout
+    leaves omc (and the compiled model binary under it) running for the
+    rest of the machine's day. Two probes, because the session's API is
+    version-dependent — OMPython used to expose ``getpid()`` and the
+    build in use here does not, keeping its ``subprocess.Popen`` at
+    ``omc_process._omc_process`` instead. Both are private-ish, so every
+    step is guarded and the caller warns when both come up empty.
+    """
+    getpid = getattr(session, "getpid", None)
+    if callable(getpid):
+        try:
+            pid = getpid()
+        except Exception:  # pragma: no cover — best-effort probe
+            pid = None
+        if pid:
+            return int(pid)
+    proc = getattr(getattr(session, "omc_process", None), "_omc_process", None)
+    pid = getattr(proc, "pid", None)
+    if pid:
+        return int(pid)
+    return None
+
+
 def _is_notice_line(line: str) -> bool:
     lower = line.lower()
     return (
@@ -194,6 +217,9 @@ def _is_notice_line(line: str) -> bool:
 class OpenModelicaWorker(Worker):
     """One live OMCSessionZMQ process wrapped as a test runner."""
 
+    kill_name_hint = "omc"
+    exec_thread_prefix = "om"
+
     def __init__(
         self,
         worker_id: int,
@@ -205,9 +231,7 @@ class OpenModelicaWorker(Worker):
         self.om_config = om_config
         self._OMCSession = session_cls
         self.session = None  # the OMCSessionZMQ instance
-        self.pids: set[int] = set()
         self._n_tests_run = 0
-        self._n_restarts = 0
 
     def start(self) -> None:
         """Launch omc via OMCSessionZMQ and apply the load/setup sequence.
@@ -238,12 +262,18 @@ class OpenModelicaWorker(Worker):
                         omc_path,
                     )
         self.session = self._OMCSession()
-        try:
-            pid = self.session.getpid()
-            if pid:
-                self.pids = {int(pid)}
-        except Exception:  # pragma: no cover — best-effort
+        pid = _resolve_session_pid(self.session)
+        if pid is None:
+            logger.warning(
+                "Worker %s: could not resolve the omc PID — the timeout "
+                "watchdog has no kill target, so a hung omc will survive "
+                "the run. Report the OMPython version; the session exposes "
+                "neither getpid() nor a reachable Popen handle.",
+                self.worker_id,
+            )
             self.pids = set()
+        else:
+            self.pids = {pid}
 
         self._exec(f'setCommandLineOptions("--std={self.om_config.std_version}")')
 
@@ -261,7 +291,7 @@ class OpenModelicaWorker(Worker):
             else:
                 ok = self._exec(f'loadFile("{arg}")')
             if not ok:
-                err = self._get_error_string()
+                err = _raw_get_error_string(self.session)
                 raise RuntimeError(
                     f"Worker {self.worker_id}: failed to load dependency "
                     f"{dep!r} — {err.strip()[:400]}"
@@ -271,7 +301,7 @@ class OpenModelicaWorker(Worker):
         main_pkg_fwd = str(main_pkg.resolve()).replace("\\", "/")
         ok = self._exec(f'loadFile("{main_pkg_fwd}")')
         if not ok:
-            err = self._get_error_string()
+            err = _raw_get_error_string(self.session)
             raise RuntimeError(
                 f"Worker {self.worker_id}: failed to load library {main_pkg} "
                 f"— {err.strip()[:400]}"
@@ -300,10 +330,6 @@ class OpenModelicaWorker(Worker):
         """
         assert self.session is not None
         return _raw_exec_bool(self.session, expr)
-
-    def _get_error_string(self) -> str:
-        assert self.session is not None
-        return _raw_get_error_string(self.session)
 
     def tool_version(self) -> str | None:
         """Actual omc version via ``getVersion()`` (wire format is a quoted
@@ -373,6 +399,13 @@ class OpenModelicaWorker(Worker):
         )
         simulate_expr = f"simulate({test.model_id}, {', '.join(sim_args)})"
 
+        # Bind the session once. run_test executes on a thread the watchdog
+        # abandons on timeout (`t.join(0.5)`); the pool then restarts this
+        # worker and `self.session` becomes a *new* OMCSessionZMQ. An
+        # abandoned thread that later unblocks must keep talking to the dead
+        # session — re-reading the attribute would let it drive the fresh one
+        # concurrently with the next test.
+        session = self.session
         start = time.monotonic()
         translation_wall: float | None = None
         sim_wall: float | None = None
@@ -380,13 +413,13 @@ class OpenModelicaWorker(Worker):
         try:
             test_dir_fwd = str(test_dir).replace("\\", "/")
             # cd() returns the new cwd as a quoted string — raw mode is fine.
-            self.session.sendExpression(f'cd("{test_dir_fwd}")', parsed=False)
+            session.sendExpression(f'cd("{test_dir_fwd}")', parsed=False)
 
             if progress is not None:
                 progress.on_phase(test_key, "translating")
 
             record_dict, _raw_simulate_response = _raw_send_simulate(
-                self.session,
+                session,
                 simulate_expr,
             )
         except Exception as exc:
@@ -406,7 +439,7 @@ class OpenModelicaWorker(Worker):
                 sim_wall=sim_wall,
             )
 
-        error_string = self._get_error_string()
+        error_string = _raw_get_error_string(session)
         error_notices = [
             line.strip()
             for line in error_string.splitlines()
@@ -457,14 +490,32 @@ class OpenModelicaWorker(Worker):
             stats["timing"] = dict(parsed.timings)
 
         if parsed.success and mat_path.exists():
+            # Belt on the accept-integrity invariant (D93 precedent / D99):
+            # even a success-reporting simulate() record must show a
+            # trajectory that reached stop_time — a partial .mat blessed
+            # by --accept poisons the baseline. Same rule + tolerance as
+            # the disk rescue below, so the two paths can't disagree.
+            reached, last_time = mat_reaches_time(mat_path, float(test.stop_time))
+            if reached:
+                return TestRunResult(
+                    model_id=test.model_id,
+                    test_key=test_key,
+                    success=True,
+                    elapsed=elapsed,
+                    translation_wall=translation_wall,
+                    sim_wall=sim_wall,
+                    statistics=stats or None,
+                )
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
-                success=True,
+                success=False,
                 elapsed=elapsed,
-                translation_wall=translation_wall,
-                sim_wall=sim_wall,
-                statistics=stats or None,
+                error_message=(
+                    f"simulate() reported success but result_res.mat reaches "
+                    f"t={last_time!r} of stop_time={test.stop_time} — "
+                    f"partial result refused"
+                ),
             )
 
         # Disk-based cross-check — record may have misread success.
@@ -525,8 +576,8 @@ class OpenModelicaWorker(Worker):
                 elapsed=elapsed,
                 error_message="No result file produced",
             )
-        extents = read_mat_time_extents(mat_path)
-        if extents is None:
+        reached, last_time = mat_reaches_time(mat_path, float(test.stop_time))
+        if last_time is None:
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
@@ -534,10 +585,7 @@ class OpenModelicaWorker(Worker):
                 elapsed=elapsed,
                 error_message="result_res.mat unreadable",
             )
-        last_time = extents[1]
-        stop_time = float(test.stop_time)
-        tol = max(1e-6, abs(stop_time) * 1e-6)
-        if last_time + tol >= stop_time:
+        if reached:
             return TestRunResult(
                 model_id=test.model_id,
                 test_key=test_key,
@@ -549,110 +597,37 @@ class OpenModelicaWorker(Worker):
             test_key=test_key,
             success=False,
             elapsed=elapsed,
-            error_message=f"Stopped early at T={last_time:.6g} of {stop_time:.6g}",
+            error_message=(
+                f"Stopped early at T={last_time:.6g} of {float(test.stop_time):.6g}"
+            ),
         )
 
-    def close(self, grace: float = 5.0) -> None:
-        """Terminate the omc subprocess. Graceful ``quit()`` first, then
-        psutil hard-kill of tracked PIDs if that hangs. Idempotent.
-        """
+    def _detach_interface(self) -> object | None:
         s = self.session
         self.session = None
-        if s is not None:
-            done = threading.Event()
+        return s
 
-            def _quit():
-                try:
-                    s.sendExpression("quit()")
-                except Exception:
-                    pass
-                finally:
-                    done.set()
-
-            t = threading.Thread(target=_quit, daemon=True)
-            t.start()
-            done.wait(grace)
-        self._kill_tracked_pids()
-
-    def _kill_tracked_pids(self) -> None:
-        if not self.pids:
-            return
-        import psutil
-
-        for pid in list(self.pids):
-            try:
-                p = psutil.Process(pid)
-                if "omc" in (p.name() or "").lower():
-                    p.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        self.pids = set()
+    def _shutdown_interface(self, handle: object, grace: float) -> None:
+        try:
+            handle.sendExpression("quit()")  # type: ignore[attr-defined]
+        except Exception as exc:
+            if type(exc).__name__ != "ZMQError":
+                raise
+            # Expected on the timeout path: the abandoned exec thread left a
+            # simulate() in flight, so the REQ socket is still awaiting its
+            # reply and refuses the send with EFSM. The PID kill is the real
+            # teardown here; let the template's warning stay for genuinely
+            # unexpected failures. The socket is deliberately NOT closed —
+            # a zmq socket must not be closed under a thread parked in
+            # recv() on it, which is exactly where the exec thread is.
+            logger.debug(
+                "Worker %s: omc refused the graceful quit() (%s)",
+                self.worker_id,
+                exc,
+            )
 
     def is_alive(self) -> bool:
         return self.session is not None
-
-    def run_test_with_timeout(
-        self,
-        test: TestModel,
-        test_key: str,
-        timeout: float,
-        progress=None,
-    ) -> TestRunResult:
-        """Run a test with a watchdog. On timeout, hard-kill omc. After a
-        timeout or worker-level exception, :meth:`is_alive` is False and
-        the worker must be restarted before another test is dispatched.
-        """
-        result_box: list[TestRunResult | None] = [None]
-        exc_box: list[BaseException | None] = [None]
-        start_ts = time.monotonic()
-
-        def _runner():
-            try:
-                result_box[0] = self.run_test(test, test_key, progress=progress)
-            except BaseException as e:
-                exc_box[0] = e
-
-        t = threading.Thread(
-            target=_runner,
-            daemon=True,
-            name=f"om-exec-{self.worker_id}",
-        )
-        t.start()
-        t.join(timeout)
-
-        if t.is_alive():
-            self.close(grace=1.0)
-            t.join(0.5)
-            elapsed = time.monotonic() - start_ts
-            disk_result = self._evaluate_from_disk(test, test_key, elapsed)
-            if disk_result.success:
-                return disk_result
-            return TestRunResult(
-                model_id=test.model_id,
-                test_key=test_key,
-                success=False,
-                elapsed=elapsed,
-                error_message=f"Timed out after {timeout:.0f}s",
-                timed_out=True,
-            )
-
-        if exc_box[0] is not None:
-            elapsed = time.monotonic() - start_ts
-            disk_result = self._evaluate_from_disk(test, test_key, elapsed)
-            if disk_result.success:
-                self.close(grace=1.0)
-                return disk_result
-            self.close(grace=1.0)
-            exc = exc_box[0]
-            return TestRunResult(
-                model_id=test.model_id,
-                test_key=test_key,
-                success=False,
-                elapsed=elapsed,
-                error_message=f"Worker exception: {type(exc).__name__}: {exc}",
-            )
-
-        return result_box[0]  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------

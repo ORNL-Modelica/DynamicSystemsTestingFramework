@@ -3,14 +3,19 @@
 One Jinja template (`dashboard.html`) feeds both live progress
 during a run and the post-comparison report. The template renders
 gracefully whether comparison data is present (post-run) or absent
-(during run); JS-fetch on the client side keeps the page fresh
-without full-page reloads.
+(during run).
 
-Live mode is triggered every state change by ProgressReporter.
+Live mode re-renders the whole page to disk on every state change
+(driven by ProgressReporter) and emits `<meta http-equiv="refresh"
+content="5">`, so the browser full-reloads every 5s. JS-fetch was
+tried first and is silently blocked on `file://` URLs — see the
+comment in `templates/dashboard.js`. Between reloads a 1s JS timer
+ticks the elapsed counters so they don't look frozen.
+
 Final mode is triggered after comparison from cli.cmd_run /
-cmd_compare; it strips the JS-fetch poll and adds per-test report
-links + post-run columns (worst_nrmse, warnings, translate/sim/total
-wall times).
+cmd_compare; it drops the refresh meta tag (the page becomes static)
+and adds per-test report links + post-run columns (worst_nrmse,
+warnings, translate/sim/total wall times).
 """
 
 from __future__ import annotations
@@ -112,6 +117,7 @@ def _enrich_row_from_comparison(
 
     for key in (
         "worst_nrmse",
+        "n_unscored",
         "n_vars",
         "n_vars_passed",
         "n_warnings",
@@ -267,6 +273,9 @@ def build_dashboard_context(
             "ref_file": None,  # Populated from sidecar in final mode
             # Post-run fields default to None; populated below in final mode
             "worst_nrmse": None,
+            # Leaves with no score at all (sentinels). Used by the
+            # Worst-NRMSE cell to say "n/a (N unscored)" instead of "—".
+            "n_unscored": None,
             "n_vars": None,
             "n_vars_passed": None,
             "n_warnings": None,
@@ -305,6 +314,17 @@ def build_dashboard_context(
         # This works between meta-refresh ticks (when the snapshot is stale)
         # and right after a refresh (when it's fresh).
         "start_wall": snapshot.get("start_wall"),
+        # Identity of the report this page IS: work dir + the wall clock
+        # the run started at. The dashboard's localStorage state is keyed
+        # by location.pathname, which two successive runs into the same
+        # work_dir share — so a selection made in run N was restored into
+        # run N+1's page and silently joined the rerun command the user
+        # built there. JS scopes the selection to this key and drops a
+        # selection stamped with any other.
+        "report_key": (
+            f"{work_dir.resolve().as_posix()}@"
+            f"{snapshot.get('start_wall') or snapshot.get('updated_at') or 0}"
+        ),
         # Run provenance (backend/simulator/version/os) for the banner. None
         # for snapshots written before this field existed.
         "run_metadata": format_run_metadata(snapshot.get("metadata")),
@@ -336,11 +356,18 @@ def _atomic_write(path: Path, text: str) -> None:
         raise last_err
 
 
-def _render(work_dir: Path, mode: str, rerun_prefix: str | None = None) -> None:
+def _render(
+    work_dir: Path,
+    mode: str,
+    rerun_prefix: str | None = None,
+    output_path: Path | None = None,
+) -> None:
     ctx = build_dashboard_context(work_dir, mode=mode, rerun_prefix=rerun_prefix)
     template = _env.get_template("dashboard.html")
     html = template.render(**ctx)
-    _atomic_write(work_dir / "dashboard.html", html)
+    dest = output_path or (work_dir / "dashboard.html")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(dest, html)
 
 
 def render_live(work_dir: Path, rerun_prefix: str | None = None) -> None:
@@ -351,3 +378,16 @@ def render_live(work_dir: Path, rerun_prefix: str | None = None) -> None:
 def render_final(work_dir: Path, rerun_prefix: str | None = None) -> None:
     """Render dashboard.html in final mode (refresh stripped, sidecars merged)."""
     _render(work_dir, mode="final", rerun_prefix=rerun_prefix)
+
+
+def render_final_to(
+    work_dir: Path, output_path: Path, rerun_prefix: str | None = None
+) -> None:
+    """Render the final-mode dashboard page to a caller-chosen path.
+
+    Backs ``--report-format html``: the same page ``render_final`` writes,
+    just to ``output_path``. The page is self-contained (dashboard.js is
+    ``{% include %}``d), but its per-test links are relative to ``work_dir``
+    — they only resolve when the output lands inside the work dir.
+    """
+    _render(work_dir, mode="final", rerun_prefix=rerun_prefix, output_path=output_path)

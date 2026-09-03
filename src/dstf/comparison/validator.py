@@ -83,9 +83,50 @@ def _walk(
         _check_leaf(node, role_of, path, in_warn, errors)
         return
     if isinstance(node, CombinatorSpec):
+        if node.combinator == "weighted":
+            _check_weighted_directions(node, path, errors)
         child_in_warn = in_warn or node.combinator == "warn"
         for i, child in enumerate(node.children):
             _walk(child, role_of, f"{path}.children[{i}]", child_in_warn, errors)
+
+
+def _check_weighted_directions(
+    node: CombinatorSpec,
+    path: str,
+    errors: list[ValidationError],
+) -> None:
+    """Reject weighted nodes whose leaf children score in opposite directions.
+
+    ``weighted`` compares one summed score against one threshold with one
+    comparison direction, so summing a lower-is-better score (NRMSE-like
+    error) with a higher-is-better one (tube's in-band fraction) is
+    meaningless — the sum can move toward the threshold for opposite
+    reasons. The metric registry's ``score_direction`` is the authority
+    (D101).
+    """
+    from .registry import metric as registry_metric
+
+    directions: dict[str, list[str]] = {}
+    for child in node.children:
+        if not isinstance(child, LeafSpec):
+            continue
+        desc = registry_metric(child.metric)
+        if desc is None:
+            continue  # unknown metric fails loudly at parse/eval, not here
+        directions.setdefault(desc.score_direction, []).append(child.metric)
+    if len(directions) > 1:
+        parts = "; ".join(
+            f"{d}: {', '.join(sorted(set(ms)))}" for d, ms in sorted(directions.items())
+        )
+        errors.append(
+            ValidationError(
+                path,
+                f"'weighted' mixes score directions ({parts}) — a single "
+                f"threshold cannot compare a sum of lower-is-better and "
+                f"higher-is-better scores; split them into separate "
+                f"weighted nodes",
+            )
+        )
 
 
 def _check_leaf(

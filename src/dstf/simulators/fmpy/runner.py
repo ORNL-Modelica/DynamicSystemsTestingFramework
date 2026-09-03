@@ -6,7 +6,7 @@ comparator, storage, and reporting layers work unchanged.
 
 Simulation flow per test (``run_single_test``):
   1. Resolve the FMU path from ``test.source_file`` (spec_parser puts it
-     there when the spec entry has an ``"fmu"`` field).
+     there when the spec entry has a ``"source"`` field).
   2. Read the model description to discover scalar variables.
   3. Resolve ``test.variable_patterns`` against the declared names.
   4. Call ``fmpy.simulate_fmu`` with the resolved settings.
@@ -47,14 +47,15 @@ import numpy as np
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from .. import register
-from ..base import (
+from ..base import SimulatorRunner
+from ..types import (
     Capability,
     DatasetType,
-    SimulatorRunner,
     TestResult,
     TestRunResult,
     VariableResult,
     resolve_variable_patterns,
+    timeout_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,6 @@ class FmpyRunner(SimulatorRunner):
     #     repaired capability-honesty check. Re-add when one actually ships.
     #   BATCH_FALLBACK — FMPy *is* the Python path; no script fallback exists
     #   FMU_EXPORT — FMPy consumes FMUs, doesn't produce them
-    #   EXPERIMENT_INGEST — not applicable
     capabilities: frozenset[Capability] = frozenset()
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
     artifact_files = (("result.npz", "Result file"),)
@@ -190,10 +190,10 @@ class FmpyRunner(SimulatorRunner):
                 result = future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
                 elapsed = time.monotonic() - wall_start
-                msg = (
-                    f"FMPy simulation exceeded {timeout}s timeout "
-                    f"(worker thread continues until the FMU returns; "
-                    f"can't be force-killed in-process)"
+                msg = timeout_message(
+                    f"FMPy simulation exceeded {timeout}s timeout; the worker "
+                    f"thread continues until the FMU returns and can't be "
+                    f"force-killed in-process"
                 )
                 logger.warning("Test %s: %s", test.model_id, msg)
                 if self.progress:
@@ -320,7 +320,7 @@ def _resolve_fmu_path(test: TestModel) -> Path | None:
     """Get the FMU binary path for a test.
 
     spec_parser stores the resolved path in ``test.source_file`` when the
-    spec entry has an ``"fmu"`` field.
+    spec entry has a ``"source"`` field.
     """
     p = test.source_file
     return p if p and str(p) else None

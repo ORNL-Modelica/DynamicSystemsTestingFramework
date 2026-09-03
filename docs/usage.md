@@ -120,7 +120,7 @@ Variable patterns support `*` and `?` wildcards. `["*"]` tracks all non-paramete
 | `output_interval` | float | Output interval (alternative to `number_of_intervals`). |
 | `timeout` | int | Per-test timeout in seconds. Overrides the global `--timeout` flag. Honored by both backends — Dymola via the persistent-runner watchdog, FMPy via `concurrent.futures` (worker thread is left to finish in background since FMPy runs in-process). |
 
-**FMU backend only**: add an `"fmu": "path/to/Model.fmu"` field (path relative to the spec file) to point at a prebuilt FMU.
+**Non-Modelica backends**: add a `"source": "path/to/Model.fmu"` field (path relative to the spec file) to point at the simulation source — a prebuilt `.fmu` for FMPy, a `.jl` for Julia, a `.py` for Python.
 
 **MetricTree**: add a top-level `"metrics"` block to author an explicit pass/fail tree — see `docs/extensibility.md` §6 for the schema.
 
@@ -139,9 +139,40 @@ Use case for the two layers: a model author can write `experiment(StopTime=100)`
 
 **Components.UnitTests** (the in-source `n=N, x={...}` block) is a **discovery marker** carrying the variable list only. It deliberately does not carry simulation parameters — those live in the annotation (model-author-facing, editor-honored) or in `test_spec.json` (test-author-facing, override-only). Keeping the third layer out is what makes the contract teachable.
 
+### Scalar leaves — comparing one number
+
+The `scalar` metric scores a single number instead of a trajectory. Its required `quantity` field says which number, in one of two forms.
+
+**Series reduction** — reduce the leaf's tracked `variable` (after the leaf window, if any) on both sides. Reductions: `max`, `min`, `final`, `integral` (trapezoid over the windowed series), and two means — `mean` is the **time-weighted** mean (that integral divided by the time span), so a finer output grid or extra samples around an event can't shift the score of an identical trajectory, while `sample_mean` is the plain arithmetic mean of the samples, for parity with tools that report that number. A single sample degrades `mean` to the sample mean.
+
+```json
+{
+  "metric": "scalar",
+  "variable": "tank.level",
+  "quantity": {"reduce": "max"},
+  "tolerance": 0.02,
+  "tolerance_mode": "rel"
+}
+```
+
+**Stats path** — a dotted string reads a stored scalar: first a lookup into the run's `statistics`, then the last segment as a diagnostics summary field (`final` / `min` / `max`). Statistics win on a name collision (`EventCounter` appears in both). `variable` is optional here — the path is the label unless you set one.
+
+```json
+{"metric": "scalar", "quantity": "translation.scalar_unknowns", "tolerance": 0}
+{"metric": "scalar", "variable": "solver cost", "quantity": "CPUtime.final", "tolerance": 0.5}
+```
+
+`tolerance_mode` is `"abs"` (default; `|actual - reference| <= tolerance`) or `"rel"` (`<= tolerance * |reference|`, falling back to the absolute test when the reference is 0). Declaring `min_value` and/or `max_value` switches the leaf to a **baseline-free bounds check** — the scalar must lie inside the inclusive bounds, and no reference is consulted:
+
+```json
+{"metric": "scalar", "variable": "pump.W", "quantity": {"reduce": "mean"}, "max_value": 5000}
+```
+
+A window on a stats-path leaf is ignored — a stored scalar is not a time series. A stats-path leaf needs a `metrics` tree: in a flat `comparison.variable_overrides` entry the leaf only has the variable's own trajectory, so a string `quantity` there is a hard failure rather than a silent reduction of the wrong signal (a `{"reduce": ...}` override is fine). Scalar leaves are always CLI-authoritative in the interactive report (no in-browser rescore).
+
 ### Multiple named baselines
 
-A reference file can carry more than one baseline: the `primary` baseline (what the framework writes on `--accept`, stored at the flat top level) plus any number of named baselines under a `baselines` map — `experiment`, `analytical`, `dymola`, etc. MetricTree leaves can pick which baseline to score against via `"against": "<name>"` (default is `"primary"`):
+A test can be scored against more than one baseline: the `primary` baseline (what the framework writes on `--accept`, stored at the flat top level of `ref_NNNN.json`) plus any number of named soft_checks, each its own file under `<reference_root>/<Backend>/<os>/soft_checks/ref_NNNN/<name>.json` — `experiment`, `analytical`, `dymola`, etc. MetricTree leaves pick which baseline to score against via `"against": "<name>"` (default is `"primary"`):
 
 ```json
 {
@@ -159,7 +190,7 @@ A reference file can carry more than one baseline: the `primary` baseline (what 
 }
 ```
 
-Non-primary baselines can be added programmatically:
+Soft_checks are added from the CLI with `dstf import-baseline <model> soft_check <name> <source>`, or programmatically:
 
 ```python
 from dstf.config import Config
@@ -167,7 +198,7 @@ from dstf.storage.reference_store import ReferenceStore
 
 config = Config(config_file="path/to/testing.json")
 store = ReferenceStore(config)
-store.add_named_baseline(
+store.add_soft_check(
     model_id="MyLib.HeatExchanger",
     name="experiment",
     time=[0.0, 1.0, 2.0],
@@ -176,7 +207,7 @@ store.add_named_baseline(
 )
 ```
 
-The model must already have a primary baseline (run with `--accept` once). Primary stays untouched by subsequent accepts — see `docs/decisions.md` for schema details.
+The model must already have a primary baseline (run with `--accept` once). A soft_check is a separate file, so accepting fresh primary results never touches it.
 
 ---
 
@@ -189,7 +220,11 @@ All commands accept these global options:
 --source-path PATH     Path to library source location (Modelica package dir, FMU dir, ...)
 --reference-root PATH  Path to reference results root
 --test-spec PATH       Path to test_spec.json
+--dymola-interface PATH  Path to Dymola's Python interface archive or its directory
 ```
+
+They work on **either side of the subcommand** — `dstf --config x run` and
+`dstf run --config x` are equivalent. A value given after the subcommand wins.
 
 If `testing.json` includes `source_path`, you only need `--config` or `--reference-root`.
 
@@ -221,7 +256,7 @@ uv run dstf --config testing.json run
 # Run a subset
 uv run dstf --config testing.json run --package MyLib.Fluid
 
-# Run with 4 parallel Dymola instances
+# Run with 4 concurrent simulation workers
 uv run dstf --config testing.json run --parallel 4
 
 # Accept all results as new baselines (first run, or after intentional changes)
@@ -237,7 +272,7 @@ uv run dstf --config testing.json run -i
 |------|-------------|
 | `--accept` | Store all results as new reference baselines |
 | `-i`, `--interactive` | Review each test interactively |
-| `--parallel N` | Number of parallel Dymola instances |
+| `--parallel N` | Number of concurrent **simulation workers** (any backend, not just Dymola). Note: the same flag on `compare` means report-**rendering** threads — see below. |
 | `--simulator NAME` | Override simulator (e.g., `"Dymola 2025"`) |
 | `--simulator-path PATH` | Override simulator executable path |
 | `--show-ide` | Show Dymola GUI instead of headless |
@@ -245,7 +280,7 @@ uv run dstf --config testing.json run -i
 | `--default-points` | Use PointsMode by default (empty list ⇒ final-value-only check) |
 | `--timeout SECS` | Per-test timeout in seconds (default: 600) |
 | `--work-dir PATH` | Override output directory |
-| `--report-format` | `console` (default), `junit`, or `html` |
+| `--report-format` | `console` (default), `junit`, or `html` (the dashboard page, written to `--output`) |
 
 **Interactive mode (`-i`) actions:**
 
@@ -268,6 +303,28 @@ DSTF writes a single `dashboard.html` to your `work_dir` that serves as both the
 The dashboard supports status filter buttons, per-column text filtering, and a 3-state sort cycle (none → sorted → reverse → none) on every column. Numeric columns sort descending first (largest first when triaging failures); text columns sort ascending first.
 
 The **Resolution** column shows where each test's simulation parameters came from: `annotation` (from the `experiment(...)` annotation in the .mo file), `test_spec` (overridden in test_spec.json), or `mixed` (some fields from each — hover to see the per-field breakdown). This is the resolution-explainer for the two-layer contract documented above.
+
+#### Report layout and offline use
+
+`--report` writes one directory per test plus a single shared copy of Plotly:
+
+```
+work_dir/
+├── dashboard.html                    # draws no charts — needs no Plotly
+└── reports/
+    ├── plotly.min.js                 # ONE copy per suite (~1.25 MB)
+    ├── ref_0001/
+    │   ├── interactive.html          # loads ../plotly.min.js
+    │   ├── interactive.js
+    │   └── comparison_data.json
+    └── ref_0002/…
+```
+
+Plotly ships with the report rather than loading from a CDN, so the pages render fully on a machine with no network (air-gapped labs included). It is stored **once per suite**, not once per test — a per-test copy cost 1.25 MB × N (≈ 414 MB for a 331-test suite).
+
+**Portability cost of the shared copy**: `reports/` as a whole moves, zips, or copies cleanly. A *single* test's directory does not — `reports/ref_0007/` on its own has a dangling `../plotly.min.js` and renders without plots. Copy `plotly.min.js` in beside it (then edit the tag to `plotly.min.js`), or copy the parent directory instead.
+
+`--report-format html --output <path>` writes the dashboard page anywhere; because that page draws no charts it renders fully wherever it lands. Its per-test row links (and the Plotly those pages load) are relative to the work dir, so they only resolve from inside it — the command prints a note saying so.
 
 ### `compare` — Re-compare without simulating
 
@@ -299,9 +356,6 @@ uv run dstf --config testing.json export --format csv
 
 # Export to specific file
 uv run dstf --config testing.json export --output results.csv --format csv
-
-# Export subset
-uv run dstf --config testing.json export --package MyLib.Fluid
 ```
 
 ### `manifest` — Manage test IDs
@@ -315,8 +369,8 @@ uv run dstf --config testing.json manifest show
 # Also show obsolete (retired) tests
 uv run dstf --config testing.json manifest show --show-obsolete
 
-# Delete reference files for obsolete tests
-uv run dstf --config testing.json manifest cleanup
+# List reference files for obsolete tests (dry-run by default; --apply deletes)
+uv run dstf --config testing.json manifest cleanup [--apply]
 
 # Write the ref ID → model ID mapping to the work directory
 uv run dstf --config testing.json manifest dump
@@ -371,8 +425,9 @@ uv run dstf --config testing.json run -i
 # JUnit output for CI systems
 uv run dstf --config testing.json run --report-format junit
 
-# HTML report
-uv run dstf --config testing.json run --report-format html
+# HTML report — the same dashboard page `run --report` produces, at a path you pick.
+# Its per-test links resolve only when the output lands inside the work dir.
+uv run dstf --config testing.json run --report-format html --output report.html
 ```
 
 ---
@@ -397,7 +452,7 @@ Each ref file also contains simulation params, statistics, diagnostic trajectori
 **Status field:** Each ref file has a `status` field:
 - `active` — normal, included in test runs
 - `skip` — temporarily excluded from comparison
-- `obsolete` — pending deletion (remove with `manifest cleanup`)
+- `obsolete` — pending deletion (list with `manifest cleanup`, delete with `manifest cleanup --apply`)
 
 ---
 

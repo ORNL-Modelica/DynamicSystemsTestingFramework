@@ -6,7 +6,7 @@
 - `startup.mos`: `cd()`, load dependencies, load main library, framework settings (`OutputCPUtime`, `Advanced.UI.TranslationInCommandLog`), user setup commands
 - `simulate.mos`: `cd()` to test subdir, `clearlog()`, `simulateModel(...)`, `savelog("translation_log.txt")` — result saved as `dsres.mat` (Dymola default)
 - `shutdown.mos`: `Modelica.Utilities.System.exit()`
-- `batch_manifest.json`: written before simulation, maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN"}`
+- `batch_manifest.json`: written before simulation, maps `test_key -> {"model_id": "...", "ref_id": "ref_NNNN"}`; after the run each entry records `last_run_status` (passed/failed/timed_out) — the verdict compare trusts (status.json survives as the fallback for pre-field manifests)
 - `reference_manifest.json`: written before simulation, maps ref IDs to model names
 - `batch.mos`: `RunScript()` calls chaining startup + all tests + shutdown
 - Each test gets its own subdirectory to prevent file conflicts (`dsin.txt`, `dslog.txt`, `dsfinal.txt`, `dsres.mat`, `translation_log.txt` are per-simulation)
@@ -136,8 +136,8 @@
 - `EventCounter` changes trigger a warning; `CPUtime` does not (too noisy)
 
 ### Data-driven HTML reports via Jinja2 templates
-- `html_report.py` builds a context dict from `TestComparison` and renders through Jinja2 templates
-- Two report variants generated per test: `comparison.html` (static matplotlib plots) and `interactive.html` (Plotly.js interactive charts)
+- `context_builder.py` builds a context dict from `TestComparison`; `report_suite.py` renders it through Jinja2 templates
+- One report per test: `interactive.html` (Plotly.js interactive charts); the suite-wide page is the dashboard
 - Per-test reports open `interactive.html` by default
 - A `comparison_data.json` sidecar is written alongside the HTML, containing the same data plus full trajectory time series (`act_time`, `act_values`, `ref_time`, `ref_values` per variable) for downstream tooling
 - The static template uses progressive disclosure: key stats cards at top, condensed variable table, then collapsible `<details>` sections for full variable details, statistics, simulation parameters, diagnostics, and reference info
@@ -146,7 +146,7 @@
 - Trajectory plots open by default; metadata sections are collapsed
 
 ### Interactive Plotly report UX
-- `interactive.html` uses Plotly.js via CDN for interactive charts — zoom, pan, hover tooltips on all data points
+- `interactive.html` uses a vendored Plotly.js (cartesian bundle, one copy per report suite at reports/plotly.min.js — offline-capable) for interactive charts — zoom, pan, hover tooltips on all data points
 - Three-panel layout per variable: trajectory (actual vs reference), absolute error, and NRMSE — the NRMSE panel shows a tolerance line that updates live
 - Error overlay dropdown on each variable plot: overlay signed error, absolute error, or NRMSE on the trajectory chart (right y-axis)
 - Live tolerance editing: global test tolerance input at the top recomputes all pass/fail; per-variable tolerance inputs in the variable table override the global value when modified (highlighted orange); summary stats and key cards update live
@@ -187,7 +187,7 @@
 - `PersistentDymolaRunner` subclasses `DymolaRunner` and overrides only `run_tests`; inherits `read_result` and config extraction. Each worker is a `DymolaWorker` wrapping one `DymolaInterface` instance
 - Reliable per-worker PID tracking: pulled directly from `DymolaInterface._dymola_process.pid` (the internal `subprocess.Popen` handle), so we own the kill target without snapshot diffs
 - Parallel startup: monkey-patch Dymola's `dymola_interface_internal.dymola_lock` to a no-op (broad lock that holds for the whole `__init__` including `_check_dymola`'s ~7s ping wait), and add a narrow lock around `_find_available_port` so two workers can't pick the same random port. Without this patch, N workers serialize on Dymola's lock and startup is N×7s
-- Timeout watchdog: `run_test_with_timeout` spawns a daemon runner thread, joins with the test's timeout. On expiry: `close(grace=1s)` attempts graceful shutdown, then `psutil.Process(pid).kill()` on tracked PIDs. Inner thread finishes cleanup out-of-band (short `join(0.5)` is enough; the thread is daemon and its result is already discarded)
+- Timeout watchdog: `Worker.run_test_with_timeout` (shared template in `simulators/persistent.py`, used by every backend whose execution is a blocking call) spawns a daemon runner thread and joins with the test's timeout. On expiry: `close(grace=timeout_kill_grace)` attempts graceful shutdown — 5s for Dymola so it flushes `dslog.txt`, 1s elsewhere — then `kill_process_tree` on tracked PIDs plus every child seen by the tree walks `close()` takes before the graceful attempt *and every 0.25s during it* (a parent that exits cleanly orphans dymosim otherwise — and a timeout during translation means dymosim only appears mid-window, so one walk up front cannot see it). Recorded children carry their `create_time` and are killed only if it still matches, since a PID freed inside the window can be reissued. Inner thread finishes cleanup out-of-band (short `join(0.5)` is enough; the thread is daemon and its result is already discarded)
 - Worker restart: after a timeout/exception, `w.dymola = None`. Next iteration of `_worker_loop` sees `is_alive() == False` and calls `_try_restart(w)` — new `DymolaInterface` + library reload. Cap at `MAX_RESTARTS_PER_WORKER = 3`; after that, tests dispatched to that slot get a clean "Worker dead; restart exhausted" failure
 - Noise suppression: Dymola's `DymolaLogger._PrintMessage` uses `print(msg)` to stdout, so stderr filters don't catch its urllib-retry noise. We monkey-patch `DymolaLogger._PrintMessage` instead — during kill-window grace periods, lines matching `WinError 10054/10061` or `urlopen error` are silently dropped. Outside the window, full passthrough
 
@@ -196,7 +196,7 @@
 - A model always gets the same `test_NNNN` for its lifetime — reruns naturally overwrite their own slot, prior dirs of unrelated tests stay intact
 - Per-test work directories are `rmtree`'d only for tests being run *this invocation* (`for test, test_key in test_items`), not for everything in the manifest
 - Both `base.SimulatorRunner.run_tests` and `DymolaRunner.run_tests` go through the same helper to keep behavior consistent across backends
-- Manifest entry shape: `{model_id, ref_id, last_run_at}`. Legacy plain-string-value format still loadable via `BatchManifest.load()`
+- Manifest entry shape: `{model_id, ref_id, last_run_at, last_run_status}`. Legacy plain-string-value format still loadable via `BatchManifest.load()`
 - Orphan handling: `run` and `compare` notify (one line) when the manifest contains entries for models no longer discovered. `manifest cleanup --orphans` lists them with their on-disk dirs (work + report); `--apply` removes entries and dirs. Never auto-prunes — discovery is too fragile (transient parse errors, missing deps) to trust as a delete trigger
 
 ### Index-page batch actions feed the CLI filter
