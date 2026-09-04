@@ -18,10 +18,10 @@ def _build_config(args: argparse.Namespace) -> Config:
         kwargs["config_file"] = Path(args.config)
     if hasattr(args, "reference_root") and args.reference_root:
         kwargs["reference_root"] = Path(args.reference_root)
-    if hasattr(args, "simulator") and args.simulator:
-        kwargs["backend_name"] = args.simulator
-    if hasattr(args, "simulator_path") and args.simulator_path:
-        kwargs["backend_path"] = args.simulator_path
+    if hasattr(args, "backend") and args.backend:
+        kwargs["backend_name"] = args.backend
+    if hasattr(args, "backend_path") and args.backend_path:
+        kwargs["backend_path"] = args.backend_path
     if hasattr(args, "show_ide") and args.show_ide:
         kwargs["show_ide"] = True
     if hasattr(args, "work_dir") and args.work_dir:

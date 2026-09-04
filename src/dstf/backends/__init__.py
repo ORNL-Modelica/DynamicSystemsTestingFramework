@@ -112,7 +112,7 @@ def register(name: str):
 
 
 def get_backend(config: Config) -> Backend:
-    """Instantiate the simulator backend specified in *config*.
+    """Instantiate the backend specified in *config*.
 
     Backends self-register via the ``@register`` decorator.  Importing the
     backend module triggers registration.
@@ -134,7 +134,7 @@ def get_backend_class(config: Config) -> type[Backend]:
     if cls is None:
         available = ", ".join(sorted(_REGISTRY)) or "(none)"
         raise ValueError(
-            f"Unsupported simulator backend: {backend} "
+            f"Unsupported backend: {backend} "
             f"(from '{config.backend_name}'). Available: {available}"
         )
     return cls

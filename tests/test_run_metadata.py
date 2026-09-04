@@ -1,4 +1,4 @@
-"""Tests for RunMetadata — run-level provenance (backend/simulator/version)."""
+"""Tests for RunMetadata — run-level provenance (backend family, configured name, version)."""
 
 from types import SimpleNamespace
 
@@ -15,10 +15,10 @@ def _stub_config(backend_name="Dymola 2026x", backend="Dymola", os_name="linux")
 
 
 class TestFromConfig:
-    def test_copies_backend_simulator_os(self):
+    def test_copies_backend_name_os(self):
         meta = RunMetadata.from_config(_stub_config(), now=1000.0)
         assert meta.backend == "Dymola"
-        assert meta.simulator == "Dymola 2026x"  # user-configured label preserved
+        assert meta.backend_name == "Dymola 2026x"  # user-configured label preserved
         assert meta.os == "linux"
 
     def test_injectable_timestamp_is_deterministic(self):
@@ -36,10 +36,10 @@ class TestFromConfig:
         assert meta.dstf_version  # non-empty string, never None
         assert isinstance(meta.dstf_version, str)
 
-    def test_simulator_falls_back_to_backend_when_unset(self):
+    def test_backend_name_falls_back_to_backend_when_unset(self):
         cfg = _stub_config(backend_name=None, backend="Dymola")
         meta = RunMetadata.from_config(cfg)
-        assert meta.simulator == "Dymola"
+        assert meta.backend_name == "Dymola"
 
     def test_os_falls_back_when_unset(self):
         cfg = _stub_config(os_name=None)
@@ -50,7 +50,7 @@ class TestAsDict:
     def test_roundtrips_all_fields(self):
         meta = RunMetadata(
             backend="Julia",
-            simulator="Julia",
+            backend_name="Julia",
             os="linux",
             tool_version="1.11.2",
             dstf_version="0.1.0",
@@ -60,7 +60,7 @@ class TestAsDict:
         d = meta.as_dict()
         assert d == {
             "backend": "Julia",
-            "simulator": "Julia",
+            "backend_name": "Julia",
             "os": "linux",
             "tool_version": "1.11.2",
             "dstf_version": "0.1.0",

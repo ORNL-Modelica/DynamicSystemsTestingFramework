@@ -52,7 +52,7 @@ class JuliaConfig:
     @classmethod
     def from_config(cls, config: Config) -> JuliaConfig:
         # Config.backend_path is already resolved in __post_init__ via the
-        # simulators map + PATH fallback. If that lookup didn't produce
+        # backends map + PATH fallback. If that lookup didn't produce
         # anything (e.g., user omitted the path and PATH doesn't include
         # julia), try shutil.which() once more before giving up.
         resolved: Path | None = None
@@ -68,7 +68,7 @@ class JuliaConfig:
             raise RuntimeError(
                 "Julia binary not found. Install Julia (https://julialang.org/"
                 "downloads/) and ensure 'julia' is on PATH, or set an explicit "
-                "path under testing.json's 'simulators' map."
+                "path under testing.json's 'backends' map."
             )
         project = config.source_path or Path.cwd()
         return cls(julia_binary=resolved, project_dir=project)

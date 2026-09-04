@@ -31,7 +31,7 @@ BACKEND_FAMILIES = {
     "Julia": "Julia",
     # review 2026-07-06 finding 67: "Python" was missing, so the documented
     # versioned-name convention ("Python 3.12") failed backend detection
-    # with "Unsupported simulator backend".
+    # with "Unsupported backend".
     "Python": "Python",
 }
 
@@ -113,6 +113,19 @@ class ConfigError(ValueError):
     missing explicit --config path)."""
 
 
+#: testing.json keys renamed when the "simulator" vocabulary became Backend.
+#: Reading one fails loudly: an untouched config still using these would
+#: otherwise keep PARSING while every setting in it silently did nothing,
+#: which a user experiences as "the tool ignores my config" with no
+#: diagnostic. Naming the replacement is a diagnostic, not a deprecation
+#: path — the old key never works again, it just says so.
+_RENAMED_CONFIG_KEYS = {
+    "simulator": "backend",
+    "simulators": "backends",
+    "simulator_setup": "backend_setup",
+}
+
+
 def load_config_file(path: Path) -> dict:
     """Load a testing.json config file.
 
@@ -130,16 +143,25 @@ def load_config_file(path: Path) -> dict:
     except OSError as e:
         raise ConfigError(f"Cannot read config file {path}: {e}") from e
     try:
-        return json.loads(text)
+        data = json.loads(text)
     except json.JSONDecodeError as e:
         raise ConfigError(f"Malformed JSON in config file {path}: {e}") from e
+    if isinstance(data, dict):
+        stale = [k for k in _RENAMED_CONFIG_KEYS if k in data]
+        if stale:
+            renames = ", ".join(f"{k!r} -> {_RENAMED_CONFIG_KEYS[k]!r}" for k in stale)
+            raise ConfigError(
+                f"{path} uses renamed key(s): {renames}. The old names are no "
+                f"longer read; rename them so the settings take effect."
+            )
+    return data
 
 
 def _create_default_config(config_dir: Path, library_name: str) -> dict:
     """Create a default testing.json and return its contents."""
     config = {
-        "simulator": "Dymola",
-        "simulators": {},
+        "backend": "Dymola",
+        "backends": {},
         "dependencies": [],
     }
     config_path = config_dir / CONFIG_FILENAME
@@ -182,7 +204,7 @@ def _auto_detect_backend(
     """Pick the first simulator in ``backends_config`` whose binary resolves.
 
     Resolution order per candidate entry:
-      1. Any path in its ``simulators`` list that exists on disk or resolves
+      1. Any path in its ``backends`` list that exists on disk or resolves
          on ``PATH`` (via :func:`_resolve_backend_path`).
       2. If the list contains no absolute paths (empty or bare-binary names
          only), fall back to the backend's canonical binary
@@ -283,10 +305,10 @@ class Config:
     reference_root: Path | None = None
 
     # Simulator selection. ``None`` means "not explicitly chosen" — the
-    # post-init resolution then consults testing.json's ``simulator`` key,
-    # then auto-detect from the ``simulators`` map, then falls back to
+    # post-init resolution then consults testing.json's ``backend`` key,
+    # then auto-detect from the ``backends`` map, then falls back to
     # ``"Dymola"`` as the historical default. A non-None value (typically
-    # from a CLI ``--simulator`` flag) is treated as authoritative and is
+    # from a CLI ``--backend`` flag) is treated as authoritative and is
     # NOT overridden by anything from testing.json.
     backend_name: str | None = None
     backend_path: str | None = None
@@ -477,21 +499,21 @@ class Config:
 
         # Simulator selection. Resolution order, first match wins:
         #   1. Explicit constructor / CLI value (self.backend_name is not None)
-        #   2. testing.json explicit "simulator" key
-        #   3. testing.json "simulators" map auto-detect (first entry whose
+        #   2. testing.json explicit "backend" key
+        #   3. testing.json "backends" map auto-detect (first entry whose
         #      binary resolves on the current machine / PATH)
         #   4. Default "Dymola" (historical fallback)
         if self.backend_name is None:
-            if "simulator" in file_config:
-                self.backend_name = file_config["simulator"]
+            if "backend" in file_config:
+                self.backend_name = file_config["backend"]
             else:
-                backends_config = file_config.get("simulators", {})
+                backends_config = file_config.get("backends", {})
                 detected = _auto_detect_backend(backends_config)
                 if detected:
                     self.backend_name = detected[0]
                     # review 2026-07-06 finding 18: auto-detect may fill the
                     # simulator NAME, but must never clobber an explicitly
-                    # supplied backend_path (CLI --simulator-path).
+                    # supplied backend_path (CLI --backend-path).
                     if self.backend_path is None:
                         self.backend_path = detected[1]
                 else:
@@ -502,8 +524,8 @@ class Config:
             self.show_ide = file_config["show_ide"]
 
         # Simulator setup commands
-        if not self.backend_setup and "simulator_setup" in file_config:
-            self.backend_setup = file_config["simulator_setup"]
+        if not self.backend_setup and "backend_setup" in file_config:
+            self.backend_setup = file_config["backend_setup"]
 
         # Diagnostic variables
         if "diagnostic_variables" in file_config:
@@ -556,14 +578,14 @@ class Config:
 
         # Resolve simulator executable path
         if self.backend_path is None:
-            backends_config = file_config.get("simulators", {})
+            backends_config = file_config.get("backends", {})
             if backends_config:
                 resolved = _resolve_backend_path(backends_config, self.backend_name)
                 if resolved:
                     self.backend_path = resolved
                 else:
                     logger.warning(
-                        "No working path found for simulator '%s' in config. "
+                        "No working path found for backend '%s' in testing.json's 'backends' map. "
                         "Falling back to PATH lookup.",
                         self.backend_name,
                     )

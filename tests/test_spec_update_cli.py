@@ -26,7 +26,7 @@ def _run_spec_update(spec_path: Path, update_json_path: Path) -> int:
             json.dumps(
                 {
                     "source_type": "fmu",
-                    "simulator": "FMPy",
+                    "backend": "FMPy",
                     "reference_root": ".",
                 }
             ),

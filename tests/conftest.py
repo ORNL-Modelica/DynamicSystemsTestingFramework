@@ -74,8 +74,8 @@ def tmp_reference_dir(tmp_path):
     ref_dir.mkdir()
 
     config = {
-        "simulator": "Dymola",
-        "simulators": {},
+        "backend": "Dymola",
+        "backends": {},
         "dependencies": [],
     }
     (ref_dir / "testing.json").write_text(
@@ -96,10 +96,10 @@ def tmp_config_dir(tmp_path, sample_models_dir):
 
     config = {
         "source_path": "ModelicaTestingLib",
-        "simulator": "Dymola",
-        "simulators": {},
+        "backend": "Dymola",
+        "backends": {},
         "dependencies": [],
-        "simulator_setup": ["OutputCPUtime := true;"],
+        "backend_setup": ["OutputCPUtime := true;"],
     }
     (config_dir / "testing.json").write_text(
         json.dumps(config, indent=2), encoding="utf-8"

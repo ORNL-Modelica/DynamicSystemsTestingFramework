@@ -136,7 +136,7 @@ class TestBuildSimulateMos:
         load_main_line = mos.index('loadFile("/lib/package.mo")')
         assert load_model_line < load_file_line < load_main_line
 
-    def test_simulator_setup_between_loads_and_cd(self):
+    def test_backend_setup_between_loads_and_cd(self):
         mos = build_simulate_mos(
             test=_make_test(),
             test_dir=Path("/tmp/test_0001"),

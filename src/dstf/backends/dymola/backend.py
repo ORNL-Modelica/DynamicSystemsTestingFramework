@@ -665,10 +665,10 @@ def _generate_startup_mos(config: Config, dymola_config: DymolaConfig) -> Path:
         f'Modelica.Utilities.Streams.print(DymolaVersion(), "{version_file}");'
     )
 
-    # Simulator setup commands (e.g., OutputCPUtime = true)
+    # Backend setup commands (e.g., OutputCPUtime = true)
     if dymola_config.backend_setup:
         lines.append("")
-        lines.append("// Simulator setup")
+        lines.append("// Backend setup")
         for cmd in dymola_config.backend_setup:
             # Ensure command ends with semicolon
             cmd = cmd.strip()

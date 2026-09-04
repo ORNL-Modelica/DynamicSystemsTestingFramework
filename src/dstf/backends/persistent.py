@@ -590,7 +590,7 @@ class PersistentBackendBase(Backend):
         # Now that a worker is live, ask it for the real tool version and the
         # loaded library versions (e.g. MSL) and stamp them into the run
         # provenance. Best-effort — a failed probe leaves the configured
-        # simulator label as the shown version and omits the library line.
+        # backend label as the shown version and omits the library line.
         updates: dict = {}
         version = self._safe_probe_worker_version(live_workers)
         if version:

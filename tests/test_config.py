@@ -11,6 +11,7 @@ from dstf.backends.openmodelica.mos_generator import classify_dependency
 from dstf.config import (
     BACKEND_FAMILIES,
     Config,
+    ConfigError,
     _detect_backend,
     detect_os,
     find_package_dir,
@@ -57,8 +58,8 @@ class TestUtilityFunctions:
     def test_load_config_file(self, fixtures_dir):
         """Load testing.json from fixtures."""
         config = load_config_file(fixtures_dir)
-        assert config["simulator"] == "Dymola"
-        assert config["simulator_setup"] == ["OutputCPUtime := true;"]
+        assert config["backend"] == "Dymola"
+        assert config["backend_setup"] == ["OutputCPUtime := true;"]
 
     def test_load_config_file_missing(self, tmp_path):
         """Missing config file returns empty dict."""
@@ -78,7 +79,7 @@ class TestConfig:
         assert config.source_path == sample_models_dir.resolve()
         assert config.library_name == "ModelicaTestingLib"
 
-    def test_default_simulator(self, sample_models_dir):
+    def test_default_backend(self, sample_models_dir):
         """Default simulator is Dymola."""
         config = Config(source_path=sample_models_dir)
         assert config.backend_name == "Dymola"
@@ -116,7 +117,7 @@ class TestConfig:
         # Create config pointing to spec
         cfg = {
             "source_path": "ModelicaTestingLib",
-            "simulator": "Dymola",
+            "backend": "Dymola",
             "test_spec": "my_spec.json",
         }
         (config_dir / "testing.json").write_text(json.dumps(cfg))
@@ -138,7 +139,7 @@ class TestConfig:
 
         cfg = {
             "source_path": "ModelicaTestingLib",
-            "simulator": "Dymola",
+            "backend": "Dymola",
             "dependencies": ["deps/SomeLib"],
         }
         (config_dir / "testing.json").write_text(json.dumps(cfg))
@@ -163,7 +164,7 @@ class TestConfig:
         ``"Dymola"`` and the resolution code used ``self.backend_name == "Dymola"``
         as a sentinel meaning "user didn't choose one." That collapsed the
         two cases — explicitly chose Dymola vs. didn't choose — and let
-        testing.json silently override an explicit ``--simulator Dymola``.
+        testing.json silently override an explicit ``--backend Dymola``.
         Default is now ``None``; only ``None`` triggers file/auto-detect.
         """
         lib_dir = tmp_path / "Lib"
@@ -175,7 +176,7 @@ class TestConfig:
             json.dumps(
                 {
                     "source_path": str(lib_dir),
-                    "simulator": "OpenModelica",
+                    "backend": "OpenModelica",
                 }
             )
         )
@@ -193,7 +194,7 @@ class TestConfig:
         models_dest = tmp_path / "models"
         shutil.copytree(sample_models_dir, models_dest)
 
-        cfg = {"source_path": "../models", "simulator": "Dymola"}
+        cfg = {"source_path": "../models", "backend": "Dymola"}
         (ref_dir / "testing.json").write_text(json.dumps(cfg))
 
         config = Config(config_file=str(ref_dir / "testing.json"))
@@ -252,7 +253,7 @@ class TestConfig:
 
         cfg = {
             "source_path": "ModelicaTestingLib",
-            "simulator": "Dymola",
+            "backend": "Dymola",
             "diagnostic_variables": ["CPUtime", "EventCounter", "MyCustomVar"],
         }
         (config_dir / "testing.json").write_text(json.dumps(cfg))
@@ -261,9 +262,9 @@ class TestConfig:
         assert config.diagnostic_variables == ["CPUtime", "EventCounter", "MyCustomVar"]
 
 
-class TestAutoDetectSimulator:
+class TestAutoDetectBackend:
     """Unit tests for the `_auto_detect_backend` helper + integration
-    through Config.__post_init__ when testing.json omits the `simulator` key."""
+    through Config.__post_init__ when testing.json omits the `backend` key."""
 
     def test_looks_like_path_linux(self):
         from dstf.config import _looks_like_path
@@ -331,9 +332,9 @@ class TestAutoDetectSimulator:
         }
         assert _auto_detect_backend(simulators) is None
 
-    def test_config_autopicks_when_simulator_key_omitted(self, tmp_path, monkeypatch):
+    def test_config_autopicks_when_backend_key_omitted(self, tmp_path, monkeypatch):
         """Config.__post_init__ auto-picks when testing.json omits the
-        `simulator` key AND no --simulator CLI override was passed."""
+        `backend` key AND no --backend CLI override was passed."""
         fake_omc = tmp_path / "omc"
         fake_omc.write_text("#!/bin/sh\n")
         fake_omc.chmod(0o755)
@@ -349,7 +350,7 @@ class TestAutoDetectSimulator:
             json.dumps(
                 {
                     "source_path": str(lib_dir),
-                    "simulators": {
+                    "backends": {
                         "Dymola": ["C:\\nope\\dymola.exe"],  # pinned, missing
                         "OpenModelica": ["omc"],  # PATH lookup → hits fake
                     },
@@ -360,8 +361,8 @@ class TestAutoDetectSimulator:
         assert config.backend_name == "OpenModelica"
         assert config.backend_path == str(fake_omc)
 
-    def test_config_preserves_explicit_simulator_in_file(self, tmp_path, monkeypatch):
-        """If testing.json has an explicit "simulator" key, auto-pick must
+    def test_config_preserves_explicit_backend_in_file(self, tmp_path, monkeypatch):
+        """If testing.json has an explicit "backend" key, auto-pick must
         not override it — behavior change would be a breaking surprise."""
         lib_dir = tmp_path / "Lib"
         lib_dir.mkdir()
@@ -372,8 +373,8 @@ class TestAutoDetectSimulator:
             json.dumps(
                 {
                     "source_path": str(lib_dir),
-                    "simulator": "Dymola",
-                    "simulators": {"Dymola": ["C:\\nope\\dymola.exe"]},
+                    "backend": "Dymola",
+                    "backends": {"Dymola": ["C:\\nope\\dymola.exe"]},
                 }
             )
         )
@@ -422,6 +423,46 @@ def _make_lib(parent: Path, name: str = "Lib") -> Path:
 # ---------------------------------------------------------------------------
 
 
+class TestRenamedKeysAreRejected:
+    """The old vocabulary must fail loudly, never be silently ignored.
+
+    Renaming `simulator`/`simulators`/`simulator_setup` with no alias is the
+    decision. The hazard it creates is that an untouched testing.json keeps
+    PARSING while every setting in it does nothing — which a user experiences
+    as "the tool ignores my config", with no diagnostic anywhere. Erroring is
+    not a compatibility path: the old key never works again, it just says so.
+    Without this test nothing in the tree fails if a rebase or cherry-pick
+    restores an old-key read.
+    """
+
+    @pytest.mark.parametrize(
+        "key,replacement",
+        [
+            ("simulator", "backend"),
+            ("simulators", "backends"),
+            ("simulator_setup", "backend_setup"),
+        ],
+    )
+    def test_old_key_raises_and_names_its_replacement(self, tmp_path, key, replacement):
+        cfg = tmp_path / "testing.json"
+        value = {} if key == "simulators" else "x"
+        cfg.write_text(json.dumps({key: value}), encoding="utf-8")
+
+        with pytest.raises(ConfigError, match="renamed key") as exc:
+            load_config_file(cfg)
+
+        assert replacement in str(exc.value)
+
+    def test_new_keys_load_clean(self, tmp_path):
+        cfg = tmp_path / "testing.json"
+        cfg.write_text(
+            json.dumps({"backend": "Dymola", "backends": {}, "backend_setup": ["x;"]}),
+            encoding="utf-8",
+        )
+
+        assert load_config_file(cfg)["backend"] == "Dymola"
+
+
 class TestFinding11MalformedConfig:
     def test_load_config_file_missing_returns_empty(self, tmp_path):
         """A genuinely missing file is still 'no config' — empty dict."""
@@ -432,7 +473,7 @@ class TestFinding11MalformedConfig:
         """An existing file with a JSON syntax error raises a clear error
         that names the file and the parse problem — not a silent ``{}``."""
         cfg = tmp_path / "testing.json"
-        cfg.write_text('{"simulator": "Dymola",}', encoding="utf-8")  # trailing comma
+        cfg.write_text('{"backend": "Dymola",}', encoding="utf-8")  # trailing comma
         with pytest.raises(ValueError) as exc_info:
             load_config_file(tmp_path)
         assert "testing.json" in str(exc_info.value)
@@ -460,7 +501,7 @@ class TestFinding11MalformedConfig:
         monkeypatch.chdir(tmp_path)
         _make_lib(tmp_path)
         cfg = tmp_path / "testing.json"
-        original = '{"simulator": "Dymola", "dependencies": [,]}'
+        original = '{"backend": "Dymola", "dependencies": [,]}'
         cfg.write_text(original, encoding="utf-8")
         with pytest.raises(ValueError):
             Config(config_file=str(cfg))
@@ -575,7 +616,7 @@ class TestFinding12ToleranceFromFile:
     def _config_dir(self, tmp_path: Path, extra: dict) -> Path:
         cfg_dir = tmp_path / "proj"
         _make_lib(cfg_dir)
-        cfg = {"source_path": "Lib", "simulator": "Dymola", **extra}
+        cfg = {"source_path": "Lib", "backend": "Dymola", **extra}
         (cfg_dir / "testing.json").write_text(json.dumps(cfg), encoding="utf-8")
         return cfg_dir
 
@@ -620,7 +661,7 @@ class TestFinding15WorkDir:
     def test_relative_work_dir_resolves_against_config_dir(self, tmp_path, monkeypatch):
         cfg_dir = tmp_path / "proj"
         _make_lib(cfg_dir)
-        cfg = {"source_path": "Lib", "simulator": "Dymola", "work_dir": "out/work"}
+        cfg = {"source_path": "Lib", "backend": "Dymola", "work_dir": "out/work"}
         (cfg_dir / "testing.json").write_text(json.dumps(cfg), encoding="utf-8")
 
         elsewhere = tmp_path / "elsewhere"
@@ -636,7 +677,7 @@ class TestFinding15WorkDir:
         abs_work = tmp_path / "abs_out"
         cfg = {
             "source_path": "Lib",
-            "simulator": "Dymola",
+            "backend": "Dymola",
             "work_dir": str(abs_work),
         }
         (cfg_dir / "testing.json").write_text(json.dumps(cfg), encoding="utf-8")
@@ -654,9 +695,9 @@ class TestFinding15WorkDir:
 # ---------------------------------------------------------------------------
 
 
-class TestFinding18SimulatorPath:
+class TestFinding18BackendPath:
     def _autodetect_setup(self, tmp_path: Path, monkeypatch) -> Path:
-        """testing.json with no `simulator` key and a simulators map whose
+        """testing.json with no `backend` key and a backends map whose
         OpenModelica entry resolves via a fake `omc` on PATH."""
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -669,13 +710,13 @@ class TestFinding18SimulatorPath:
         _make_lib(cfg_dir)
         cfg = {
             "source_path": "Lib",
-            "simulators": {"OpenModelica": ["omc"]},  # no "simulator" key
+            "backends": {"OpenModelica": ["omc"]},  # no "backend" key
         }
         (cfg_dir / "testing.json").write_text(json.dumps(cfg), encoding="utf-8")
         return cfg_dir
 
-    def test_cli_simulator_path_survives_autodetect(self, tmp_path, monkeypatch):
-        """--simulator-path without --simulator: auto-detect may fill the
+    def test_cli_backend_path_survives_autodetect(self, tmp_path, monkeypatch):
+        """--backend-path without --backend: auto-detect may fill the
         simulator NAME, but the explicit path must win."""
         cfg_dir = self._autodetect_setup(tmp_path, monkeypatch)
         config = Config(
@@ -699,7 +740,7 @@ class TestFinding18SimulatorPath:
 # 2026-07-06 review, final CLI/config/manifest batch (CODE_REVIEW_2026-07-06.md).
 #
 # Finding 67 — "Python" is a recognized simulator backend prefix, so
-# ``"simulator": "Python 3.12"`` resolves.
+# ``"backend": "Python 3.12"`` resolves.
 # =========================================================================
 
 
@@ -732,8 +773,8 @@ class TestFinding17BareDependencyNames:
             json.dumps(
                 {
                     "source_path": ".",
-                    "simulator": "OpenModelica",
-                    "simulators": {},
+                    "backend": "OpenModelica",
+                    "backends": {},
                     "dependencies": deps,
                 }
             ),

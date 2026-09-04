@@ -35,7 +35,7 @@ class Baseline:
     comparison: dict = field(default_factory=dict)
     #: Statistics captured at baseline-acceptance time.
     statistics: dict = field(default_factory=dict)
-    #: Provenance metadata: origin, captured_at, simulator, os, notes,
+    #: Provenance metadata: origin, captured_at, backend, os, notes,
     #: citation, plus arbitrary user metadata. For a ref file's primary this
     #: is synthesized from ``date_added`` / ``last_updated``.
     provenance: dict = field(default_factory=dict)

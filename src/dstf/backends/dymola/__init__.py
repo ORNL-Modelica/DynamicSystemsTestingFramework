@@ -1,4 +1,4 @@
-"""Dymola simulator backend."""
+"""Dymola backend."""
 
 from .backend import DymolaBackend, DymolaConfig
 

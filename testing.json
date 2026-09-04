@@ -1,5 +1,5 @@
 {
-  "simulator": "Dymola",
-  "simulators": {},
+  "backend": "Dymola",
+  "backends": {},
   "dependencies": []
 }

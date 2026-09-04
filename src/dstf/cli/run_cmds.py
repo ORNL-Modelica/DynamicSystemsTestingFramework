@@ -405,25 +405,41 @@ def _recorded_backend(work_dir: Path) -> str | None:
     except (OSError, ValueError):
         return None
     meta = snap.get("metadata") or {}
-    label = meta.get("simulator") or meta.get("backend")
-    return label if isinstance(label, str) and label else None
+    label = meta.get("backend_name")
+    if isinstance(label, str) and label:
+        return label
+    if meta:
+        # Metadata exists but names no backend: written before the Backend
+        # rename (D123), when the key was "simulator". The guard this
+        # function exists for (D120) cannot fire, so `compare` would fall
+        # back to environment auto-detect and could score, say, an
+        # OpenModelica work dir against the Dymola partition — SIM_FAIL for
+        # every test, with nothing said. Reading the old key would be a
+        # compatibility path; saying so is not.
+        print(
+            f"Warning: {work_dir / 'status.json'} predates the Backend rename "
+            "and does not record which backend produced it. Pass --backend "
+            "explicitly, or re-run instead of comparing.",
+            file=sys.stderr,
+        )
+    return None
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
     """Compare last run results against stored references."""
     config = _build_config(args)
 
-    # Without --simulator, `compare` used to auto-detect a backend from the
+    # Without --backend, `compare` used to auto-detect a backend from the
     # environment — which on a machine with Dymola installed meant comparing
     # an OpenModelica work dir against the Dymola reference partition and
     # reporting SIM_FAIL for every test. The work dir knows what produced it:
-    # prefer the run's own recorded backend. An explicit --simulator still
+    # prefer the run's own recorded backend. An explicit --backend still
     # wins, and a work dir with no metadata keeps the auto-detect behaviour.
-    if not getattr(args, "simulator", None):
+    if not getattr(args, "backend", None):
         work_dir = config.work_dir
         recorded = _recorded_backend(work_dir)
         if recorded and recorded != config.backend_name:
-            args.simulator = recorded
+            args.backend = recorded
             config = _build_config(args)
             # status.json is data, and data can name a backend this install
             # can't resolve — a plug-in that isn't loaded here, a snapshot
@@ -438,11 +454,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
                 raise ConfigError(
                     f"The last run in {work_dir} recorded backend "
                     f"'{recorded}', which is not registered here: {exc} "
-                    f"Pass --simulator to choose one explicitly."
+                    f"Pass --backend to choose one explicitly."
                 ) from exc
             print(
                 f"Using backend '{recorded}' recorded by the last run in "
-                f"{work_dir} (pass --simulator to override)."
+                f"{work_dir} (pass --backend to override)."
             )
 
     all_tests = discover_tests(config)

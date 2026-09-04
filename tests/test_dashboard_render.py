@@ -142,7 +142,7 @@ def test_run_metadata_flows_to_context(tmp_path):
         "updated_at": 0.0,
         "metadata": {
             "backend": "Dymola",
-            "simulator": "Dymola 2026x",
+            "backend_name": "Dymola 2026x",
             "os": "linux",
             "tool_version": "Dymola 2026x Refresh 1",
             "dstf_version": "0.1.0",
@@ -168,7 +168,7 @@ def test_run_metadata_surfaces_msl_from_library_versions(tmp_path):
         "updated_at": 0.0,
         "metadata": {
             "backend": "Dymola",
-            "simulator": "Dymola 2026x",
+            "backend_name": "Dymola 2026x",
             "os": "linux",
             "library_versions": {"Modelica": "4.1.0"},
         },
@@ -187,7 +187,7 @@ def test_render_final_shows_msl_in_banner(tmp_path):
         "updated_at": 0.0,
         "metadata": {
             "backend": "Dymola",
-            "simulator": "Dymola 2026x",
+            "backend_name": "Dymola 2026x",
             "os": "linux",
             "library_versions": {"Modelica": "4.0.0"},
         },
@@ -214,7 +214,7 @@ def test_render_final_shows_metadata_banner(tmp_path):
         "updated_at": 0.0,
         "metadata": {
             "backend": "Dymola",
-            "simulator": "Dymola 2026x",
+            "backend_name": "Dymola 2026x",
             "os": "linux",
             "tool_version": "Dymola 2026x Refresh 1",
             "dstf_version": "0.1.0",

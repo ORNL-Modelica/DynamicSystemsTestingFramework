@@ -477,8 +477,8 @@ def _write_lib(
     )
     cfg: dict = {
         "source_path": ".",
-        "simulator": "Dymola",
-        "simulators": {},
+        "backend": "Dymola",
+        "backends": {},
         "dependencies": [],
     }
     if spec is not None:

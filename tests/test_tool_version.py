@@ -277,8 +277,8 @@ class TestPythonBackendVersion:
         cfg_path = ref_root / "testing.json"
         cfg_path.write_text(
             '{"source_type": "python", "source_path": "../..", '
-            '"library_name": "MyPyLib", "simulators": {"Python": ["python"]}, '
-            '"simulator": "Python"}'
+            '"library_name": "MyPyLib", "backends": {"Python": ["python"]}, '
+            '"backend": "Python"}'
         )
         cfg = Config(config_file=cfg_path)
         version = PythonBackend(cfg).describe_tool_version()
@@ -299,8 +299,8 @@ class TestFmpyBackendVersion:
         cfg_path = ref_root / "testing.json"
         cfg_path.write_text(
             '{"source_type": "fmu", "source_path": "../..", '
-            '"library_name": "fmus", "simulators": {"FMPy": ["fmpy"]}, '
-            '"simulator": "FMPy"}'
+            '"library_name": "fmus", "backends": {"FMPy": ["fmpy"]}, '
+            '"backend": "FMPy"}'
         )
         cfg = Config(config_file=cfg_path)
         version = FmpyBackend(cfg).describe_tool_version()

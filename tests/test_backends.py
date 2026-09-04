@@ -363,7 +363,7 @@ from dstf.backends import (
 )
 
 
-class TestSimulatorRegistry:
+class TestBackendRegistry:
     def test_dymola_registered_after_import(self):
         """Importing the dymola module registers 'Dymola'."""
         _import_builtin_backend("Dymola")
@@ -390,7 +390,7 @@ class TestSimulatorRegistry:
         config.backend = "NoSuchSimulator"
         config.backend_name = "NoSuchSimulator"
 
-        with pytest.raises(ValueError, match="Unsupported simulator backend"):
+        with pytest.raises(ValueError, match="Unsupported backend"):
             get_backend(config)
 
 

@@ -1,6 +1,6 @@
 {
   "source_type": "fmu",
-  "simulator": "FMPy",
+  "backend": "FMPy",
   "reference_root": "./ReferenceResults",
   "test_spec": "./test_spec.json"
 }

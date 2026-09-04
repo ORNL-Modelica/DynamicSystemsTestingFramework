@@ -31,8 +31,8 @@ def _write_testing_json(config_dir: Path, source_path_rel: str, **extra) -> Path
     """Write a minimal testing.json with optional recognizer config."""
     cfg = {
         "source_path": source_path_rel,
-        "simulator": "Dymola",
-        "simulators": {},
+        "backend": "Dymola",
+        "backends": {},
         **extra,
     }
     p = config_dir / "testing.json"

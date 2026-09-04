@@ -4,9 +4,9 @@
   "library_name": "PythonTestingLib",
   "test_spec": "./test_spec.json",
   "reference_root": "./",
-  "simulators": {
+  "backends": {
     "Python": ["python", "python3"]
   },
-  "simulator": "Python",
+  "backend": "Python",
   "tolerance": 0.01
 }

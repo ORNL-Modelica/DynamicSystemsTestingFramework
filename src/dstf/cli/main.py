@@ -192,13 +192,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Accept results as new baseline references",
     )
+    p_run.add_argument("--backend", type=str, help="Backend name (e.g., 'Dymola 2025')")
     p_run.add_argument(
-        "--simulator", type=str, help="Simulator name (e.g., 'Dymola 2025')"
-    )
-    p_run.add_argument(
-        "--simulator-path",
+        "--backend-path",
         type=str,
-        help="Absolute path to simulator executable (overrides config)",
+        help="Absolute path to the backend's executable (overrides config)",
     )
     p_run.add_argument(
         "--show-ide",
@@ -256,15 +254,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Compare last results against references",
     )
     p_compare.add_argument(
-        "--simulator",
+        "--backend",
         type=str,
-        help="Simulator name (e.g., 'Dymola 2025'). Affects which "
+        help="Backend name (e.g., 'Dymola 2025'). Affects which "
         "<reference_root>/<Backend>/<os>/ partition is read.",
     )
     p_compare.add_argument(
-        "--simulator-path",
+        "--backend-path",
         type=str,
-        help="Absolute path to simulator executable (overrides config). "
+        help="Absolute path to the backend's executable (overrides config). "
         "Mainly affects which backend identity is used for partition lookup.",
     )
     p_compare.add_argument(

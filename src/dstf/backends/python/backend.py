@@ -64,7 +64,7 @@ class PythonConfig:
             raise RuntimeError(
                 "Python binary not found. Ensure 'python' or 'python3' is on "
                 "PATH, or set an explicit path under testing.json's "
-                '\'simulators\' map, e.g. {"Python": ["/path/to/venv/bin/python"]}.'
+                '\'backends\' map, e.g. {"Python": ["/path/to/venv/bin/python"]}.'
             )
         return cls(python_binary=resolved)
 

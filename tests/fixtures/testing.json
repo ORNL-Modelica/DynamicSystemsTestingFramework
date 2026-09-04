@@ -1,8 +1,8 @@
 {
   "source_path": "../../ModelicaTestingLib",
-  "simulator": "Dymola",
-  "simulators": {},
+  "backend": "Dymola",
+  "backends": {},
   "dependencies": [],
-  "simulator_setup": ["OutputCPUtime := true;"],
+  "backend_setup": ["OutputCPUtime := true;"],
   "test_spec": "test_spec.json"
 }

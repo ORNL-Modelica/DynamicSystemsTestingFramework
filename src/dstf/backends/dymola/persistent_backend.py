@@ -220,7 +220,7 @@ class DymolaWorker(Worker):
             # with confusing "shared library not found" + "Mismatching Dymola
             # version" errors — DymolaInterface only sees an unstartable child
             # process. Surface this as a friendlier check at config-resolution
-            # time once we have a Linux-aware simulator-path validator.
+            # time once we have a Linux-aware backend-path validator.
             kwargs["dymolapath"] = str(self.config.backend_path)
 
         self.dymola = self._DI(**kwargs)

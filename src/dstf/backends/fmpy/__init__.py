@@ -1,4 +1,4 @@
-"""FMPy-backed simulator backend.
+"""FMPy backend.
 
 Phase 2 adds FMPy as the second backend — the first that exercises the
 ``Capability`` + ``DatasetType`` + ``Baseline`` abstractions declared on the

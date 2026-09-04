@@ -118,7 +118,7 @@ def _print_run_header(
         # Provenance line so the terminal (like the dashboard) says which
         # backend/version produced these results — the tool_version may still
         # be None here for persistent backends and is filled in on the report.
-        label = metadata.get("simulator") or metadata.get("backend") or "unknown"
+        label = metadata.get("backend_name") or "unknown"
         bits = [label]
         if metadata.get("os"):
             bits.append(metadata["os"])
@@ -359,7 +359,7 @@ class Backend(ABC):
         persistent classes inherit it (Julia does this). Only a version that
         NEEDS a live session belongs in :meth:`_probe_worker_version`, which
         the persistent template calls after startup. MUST NOT raise — a failed
-        version probe degrades to the configured simulator label, never an
+        version probe degrades to the configured backend label, never an
         aborted run.
         """
         return None

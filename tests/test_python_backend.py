@@ -76,8 +76,8 @@ def test_python_config_loads_without_package_mo(tmp_path):
     cfg_path = ref_root / "testing.json"
     cfg_path.write_text(
         '{"source_type": "python", "source_path": "../..", '
-        '"library_name": "MyPyLib", "simulators": {"Python": ["python"]}, '
-        '"simulator": "Python"}'
+        '"library_name": "MyPyLib", "backends": {"Python": ["python"]}, '
+        '"backend": "Python"}'
     )
     from dstf.config import Config
 

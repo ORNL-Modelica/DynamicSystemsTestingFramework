@@ -1,4 +1,4 @@
-"""Run-level provenance metadata: which simulator/backend/version produced
+"""Run-level provenance metadata: which backend/version produced
 a set of results.
 
 Motivation (2026-07-07): a report showed *what* the verdicts were but never
@@ -7,11 +7,11 @@ change?" — e.g. Dymola 2025x vs 2026x, or an MSL bump. Without the backend +
 version stamped on the report, that question needs a full re-investigation.
 
 Design: the identity that's always available comes from ``Config`` for free
-(``backend``, the user-configured ``simulator`` label, ``os_name``).
+(``backend``, the user-configured ``backend_name`` label, ``os_name``).
 The *actual* tool-reported version (``DymolaVersion()``, ``getVersion()``, …)
 is best-effort — captured from a live backend when obtainable, ``None`` when
 not, and never allowed to fail a run. ``tool_version`` is therefore the gold
-standard when present and the configured ``simulator`` label is the reliable
+standard when present and the configured ``backend_name`` label is the reliable
 floor.
 
 This dataclass is constructed once per run by the runner, serialized into
@@ -50,7 +50,7 @@ class RunMetadata:
     """Provenance for one test run.
 
     ``backend``       resolved backend family (e.g. ``"Dymola"``).
-    ``simulator``     the label the user configured (e.g. ``"Dymola 2026x"``);
+    ``backend_name``     the label the user configured (e.g. ``"Dymola 2026x"``);
                       equals ``backend`` when no version suffix was given.
     ``os``            ``"linux"`` / ``"macos"`` / ``"windows"``.
     ``tool_version``  actual tool-reported version, or ``None`` when the
@@ -66,7 +66,7 @@ class RunMetadata:
     """
 
     backend: str
-    simulator: str
+    backend_name: str
     os: str
     tool_version: str | None = None
     dstf_version: str = ""
@@ -88,7 +88,7 @@ class RunMetadata:
         """
         return cls(
             backend=config.backend,
-            simulator=config.backend_name or config.backend,
+            backend_name=config.backend_name or config.backend,
             os=config.os_name or "unknown",
             tool_version=tool_version,
             dstf_version=_dstf_version(),

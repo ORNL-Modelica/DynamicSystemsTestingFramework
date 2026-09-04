@@ -817,7 +817,7 @@ class TestExportOutputPath:
 #   3. Every `manifest cleanup` path is a dry-run without --apply.
 #   4. --parallel means different things on `run` and `compare`; both
 #      subparsers say so.
-#   8. `compare` without --simulator uses the backend the work dir's run
+#   8. `compare` without --backend uses the backend the work dir's run
 #      recorded, not environment auto-detect.
 # =========================================================================
 
@@ -1117,12 +1117,12 @@ def test_parallel_help_disambiguates_run_from_compare():
 # --- 8. compare takes its backend from the run's metadata ----------------
 
 
-def _work_dir_with_metadata(tmp_path, simulator):
+def _work_dir_with_metadata(tmp_path, backend):
     work = tmp_path / "work"
     work.mkdir(parents=True, exist_ok=True)
     (work / "status.json").write_text(
         json.dumps(
-            {"tests": [], "metadata": {"simulator": simulator, "backend": simulator}}
+            {"tests": [], "metadata": {"backend_name": backend, "backend": backend}}
         ),
         encoding="utf-8",
     )
@@ -1169,12 +1169,49 @@ def test_unregistered_recorded_backend_is_a_config_error(tmp_path, capsys):
     err = capsys.readouterr().err
     assert err.startswith("Config error: ")
     assert "NoSuchBackend" in err
-    assert "--simulator" in err
+    assert "--backend" in err
     assert "Traceback" not in err
 
 
-def test_an_explicit_simulator_bypasses_the_recorded_backend_check(tmp_path, capsys):
-    """--simulator still wins outright: the adoption branch (and therefore
+def test_stale_work_dir_without_backend_name_warns(tmp_path, capsys):
+    """A work dir written before the Backend rename must say so.
+
+    Its status.json records the backend under the old key, so
+    _recorded_backend cannot read it and the D120 guard silently stops
+    firing — `compare` falls back to auto-detect and could score an
+    OpenModelica work dir against the Dymola partition, SIM_FAIL for every
+    test, with nothing said. Reading the old key would be a compatibility
+    path; warning is not.
+    """
+    from dstf.cli.run_cmds import _recorded_backend
+
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "status.json").write_text(
+        json.dumps({"tests": [], "metadata": {"simulator": "OpenModelica"}}),
+        encoding="utf-8",
+    )
+
+    assert _recorded_backend(work) is None
+    err = capsys.readouterr().err
+    assert "predates the Backend rename" in err
+    assert "--backend" in err
+
+
+def test_work_dir_with_no_metadata_at_all_is_silent(tmp_path, capsys):
+    """Only a STALE stamp warrants the warning; an unstamped run is normal."""
+    from dstf.cli.run_cmds import _recorded_backend
+
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "status.json").write_text(json.dumps({"tests": []}), encoding="utf-8")
+
+    assert _recorded_backend(work) is None
+    assert capsys.readouterr().err == ""
+
+
+def test_an_explicit_backend_bypasses_the_recorded_backend_check(tmp_path, capsys):
+    """--backend still wins outright: the adoption branch (and therefore
     its validation) is skipped entirely."""
     lib = _fake_library(tmp_path)
     work = _work_dir_with_metadata(tmp_path, "NoSuchBackend")
@@ -1186,7 +1223,7 @@ def test_an_explicit_simulator_bypasses_the_recorded_backend_check(tmp_path, cap
             "compare",
             "--work-dir",
             str(work),
-            "--simulator",
+            "--backend",
             "Dymola",
         ]
     )

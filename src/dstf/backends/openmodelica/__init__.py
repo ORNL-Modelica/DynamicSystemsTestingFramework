@@ -1,4 +1,4 @@
-"""OpenModelica simulator backend.
+"""OpenModelica backend.
 
 Two modes:
 

@@ -63,7 +63,7 @@ class ProgressReporter:
         # from any CWD. Computed by callers via dashboard_render.build_
         # rerun_prefix(config).
         self.rerun_prefix = rerun_prefix
-        # Run-level provenance (backend/simulator/os/version). Serialized into
+        # Run-level provenance (backend family/configured name/os/version). Serialized into
         # status.json under "metadata" and rendered as a banner by the
         # reporters. None → the "metadata" key stays null (backward compat with
         # snapshots written before this field existed). See run_metadata.py.

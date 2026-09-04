@@ -188,7 +188,7 @@ def format_run_metadata(meta: dict | None) -> dict | None:
     """
     if not meta:
         return None
-    label = meta.get("simulator") or meta.get("backend") or "unknown"
+    label = meta.get("backend_name") or "unknown"
     generated_at = meta.get("generated_at")
     generated_str = None
     if generated_at:
