@@ -769,6 +769,45 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   Needs a spec before it can be reviewed. Sequenced after the tube fix and
   cubic tubes, before the funnel (#25).
 
+  **The authoring tier is a front end, not a criteria editor** (owner,
+  2026-09-04, and a REQUIREMENT on the spec rather than a wish): it must be
+  structured so new capabilities attach without restructuring. The risk named is
+  concrete — building it narrowly around the one job it replaces (editing tubes,
+  points and peaks on a plot) and then rebuilding for every capability after
+  that. Note the asymmetry in how it has been described so far: by what it
+  REPLACES, not by what it must ACCOMMODATE. Those produce different designs, and
+  the second is the one wanted.
+  Candidates named, as evidence for the constraint rather than as v1 scope:
+  - Selecting tests and rerunning them. Logged twice already (#42, and the
+    report → CLI action menu) but both as copy-a-command affordances; with the
+    Python underneath it becomes actual execution, which is a different feature
+    wearing the same name.
+  - Setting up a new library, and remembering which libraries and configs have
+    been used — a local user config / recent-projects notion. Nothing in this
+    file covers that today. It also re-values #10 (interactive setup wizard,
+    rated Low on the grounds that power users skip a wizard): "a front end that
+    knows your libraries" is a different proposition from "a wizard you run
+    once".
+  - Broader uncertainty quantification and test sweeps — flagged by the owner
+    with a boundary concern rather than proposed. See below.
+  Report REVIEW inside the tool (rather than only authoring) was raised the same
+  day and deliberately kept out of v1: the design should not preclude it, and the
+  cheap first step is a link to the existing HTML report rather than a second
+  rendering of it. If it ever lands, the HTML report's audience narrows to CI,
+  archiving and people without the tool — which is a cleaner definition than
+  "light viewing for humans" but decides how much polish that report deserves, so
+  it should not be discovered late.
+
+- **Where does DSTF end and the next tool begin?** (owner, 2026-09-04, open
+  question, not a work item): uncertainty quantification and test sweeps might
+  belong to a SIBLING tool in a DSTF ecosystem rather than inside DSTF, the same
+  way D66 puts calibration, root-cause analysis and parameter estimation
+  downstream. The owner's framing, worth keeping because it is not re-derivable:
+  building the authoring front end may be how that line gets FOUND — the
+  capabilities that feel natural to attach to it are DSTF's, and the ones that
+  feel like they want their own home are the next tool's. No decision is being
+  taken here; the note exists so the question is not re-derived later.
+
 - **Formal documentation site (Sphinx, code-doc-first)** (2026-09-02, owner):
   build DSTF's user and API documentation with a proper documentation tool
   such as Sphinx, relying on docstrings and code documentation as much as
