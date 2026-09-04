@@ -743,6 +743,32 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   Cosmetic; the honest-display work of D121 covers the all-unscored
   case already.
 
+- **Two-tier split: a reporting tier that mutates nothing, and a server-based
+  authoring tier** (2026-09-04, owner): the authoring layer is written in
+  JavaScript and therefore duplicates the Python — 6,170 lines under
+  `reporting/templates/`, of which roughly 87% (`editors.js`, `tree-ui.js`,
+  `export.js`, plus `scorers.js` which exists only to give authoring live
+  feedback) serve authoring, against ~808 lines of actual reporting, guarded by
+  a 1,350-line parity suite. The duplication is wider than JS-vs-Python: there
+  are THREE renderers of the same data — matplotlib in `cli/review.py`,
+  matplotlib in `report_suite.py:149`, and Plotly/JS in the templates.
+  Target shape: one figure layer in Python that both tiers consume (the
+  authoring tool's figures ARE the reporter's figures, one interactive and one
+  not); the reporter plots bounds arrays Python already resolved, so no
+  interpolation, geometry or scoring survives in the browser and
+  `tests/test_scorer_parity.py` is deleted rather than maintained; everything
+  that mutates a spec or launches work moves behind the RFC 6902 JSON-Patch
+  contract `spec-update` already round-trips. This also gives a home to three
+  things logged separately and half-built: #29 (optional server), #42
+  (quick-save selected results without resimulating), and the report → CLI
+  action-menu entry.
+  The line is MUTATION, not interactivity: filtering, zoom, sweeping a
+  selection to build a rerun command and copying values off a plot are viewing
+  operations and stay in the reporter. They should be built once, on the shared
+  figure layer, rather than against the path it replaces.
+  Needs a spec before it can be reviewed. Sequenced after the tube fix and
+  cubic tubes, before the funnel (#25).
+
 - **Formal documentation site (Sphinx, code-doc-first)** (2026-09-02, owner):
   build DSTF's user and API documentation with a proper documentation tool
   such as Sphinx, relying on docstrings and code documentation as much as
@@ -752,7 +778,20 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   documentation as much as possible.
 
 - **Tube evaluation on the union of the reference and actual grids**
-  (2026-09-02, from a design review): `_compare_tube` interpolates the
+  (2026-09-02; PLANNED 2026-09-04, see
+  `docs/superpowers/plans/2026-09-04-tube-union-grid.md`). Two things the
+  original note did not know. First, the union grid is provably as strict as
+  continuous checking, so no crossing solver is needed: between consecutive
+  breakpoints neither curve has a knot, both are linear, and a linear
+  difference peaks at an endpoint (checked over 20,000 random cases against a
+  20,000-point dense scan — the dense scan never found more). Second, there is
+  a SEPARATE bug in the same function: the band itself is resampled onto the
+  reference grid, so a `tube_points` control point at a time the baseline does
+  not sample is rounded away — declare an upper bound of 0.10 at t=1.5 with a
+  baseline sampling 0,1,2,3 and the code scores against 0.25. Grid density
+  cannot fix that one; the control-point times have to be on the evaluation
+  grid. Both are fixed by one change. Original note:
+  `_compare_tube` interpolates the
   actual trajectory onto `ref_time` and checks only those points, so an
   excursion contained entirely within one reference interval is invisible.
   Evaluate the band at every actual sample as well (interpolate the
