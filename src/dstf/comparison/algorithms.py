@@ -511,6 +511,132 @@ def _interpolate_tube_widths(
     return upper_widths, lower_widths
 
 
+def _tube_bounds(
+    eval_time: np.ndarray,
+    ref_at_eval: np.ndarray,
+    tube_config: dict,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Upper and lower band edges at ``eval_time``.
+
+    Split out so the envelope is built by ONE piece of code whichever points it
+    is asked about — the union grid, or the reference grid. ``_compare_tube``
+    scores both and takes the stricter verdict, and that argument only holds if
+    the two bands are constructed identically.
+    """
+    tube_width_mode = tube_config.get("tube_width_mode")
+    if tube_width_mode not in ("band", "rel", "abs"):
+        raise ValueError(
+            f"tube_width_mode must be 'band', 'rel', or 'abs'; got {tube_width_mode!r}"
+        )
+    tube_points = tube_config.get("tube_points")
+    if tube_points:
+        raw_upper, raw_lower = _interpolate_tube_widths(
+            eval_time,
+            tube_points,
+            tube_config.get("tube_interpolation", "linear"),
+        )
+    else:
+        # Constant-tube shorthand — only 'band' and 'rel' supported. 'abs'
+        # (literal y-bounds) needs both bounds explicitly, so it must use
+        # tube_points.
+        const_abs = tube_config.get("tube_abs", 0.0)
+        const_rel = tube_config.get("tube_rel", 0.0)
+        if tube_width_mode == "band":
+            raw_upper = np.full_like(eval_time, const_abs)
+            raw_lower = raw_upper.copy()
+        elif tube_width_mode == "rel":
+            raw_upper = np.full_like(eval_time, const_rel)
+            raw_lower = raw_upper.copy()
+        else:  # abs
+            raise ValueError(
+                "tube_width_mode='abs' requires tube_points; "
+                "constant-tube shorthand supports only 'band' and 'rel'."
+            )
+
+    if tube_width_mode == "abs":
+        return raw_upper, raw_lower  # literal y-axis bounds
+
+    if tube_width_mode == "rel":
+        upper_width = raw_upper * np.abs(ref_at_eval)
+        lower_width = raw_lower * np.abs(ref_at_eval)
+    else:  # band
+        upper_width = raw_upper
+        lower_width = raw_lower
+
+    min_width = tube_config.get("tube_min_width", 0.0)
+    if min_width > 0:
+        upper_width = np.maximum(upper_width, min_width)
+        lower_width = np.maximum(lower_width, min_width)
+
+    return ref_at_eval + upper_width, ref_at_eval - lower_width
+
+
+def _tube_eval_grid(
+    ref_time: np.ndarray,
+    act_time: np.ndarray,
+    ctrl_times: np.ndarray | None,
+) -> np.ndarray:
+    """Breakpoints of both curves, so the band is enforced between samples.
+
+    A tube is a continuous envelope; the reference grid is only the coarse
+    basis on which it is declared. Evaluating on ``ref_time`` alone cannot see
+    an excursion that lives between two baseline samples, and rounds away the
+    band's own corners when a ``tube_points`` control point falls off that grid
+    (declare an upper bound of 0.10 at t=1.5 against a baseline sampling
+    0,1,2,3 and the reconstructed bound there is 0.25).
+
+    EXACTNESS, AND ITS LIMITS. For ``band`` and ``abs`` width modes with linear
+    width interpolation, checking every breakpoint is exactly as strict as
+    checking the envelope continuously: between two consecutive breakpoints
+    neither curve has a knot, so both are linear, their difference is linear,
+    and a linear function attains its extremum at an endpoint. Verified over
+    20,000 random reference/actual/band combinations against a dense scan.
+
+    That argument does NOT cover three configurations, because each puts a kink
+    in the violation function at a time this grid does not carry, leaving it
+    concave on a segment so the endpoints understate the true maximum:
+
+    * ``rel`` width mode -- ``|ref|`` kinks at every reference zero crossing,
+      which is where a relative band pinches to zero width.
+    * ``tube_min_width`` -- ``max(width, min_width)`` kinks where the clamp
+      starts binding.
+    * ``tube_interpolation="constant"`` -- a step width means the segment left
+      of a widening step is checked with the new, wider width.
+
+    Each of those kinks is computable in closed form and adding them here makes
+    the guarantee unconditional; that is a separate change. Until then this
+    grid is strictly stricter than evaluating on ``ref_time``, but exhaustive
+    only for the two modes named above.
+
+    DUPLICATE TIMESTAMPS, AND A KNOWN GAP. A discontinuity is stored as two
+    samples at one instant. ``np.unique`` collapses it and ``np.interp`` then
+    yields the post-event value, so the pre-event band centre is not checked.
+    Evaluating ``ref_values`` by index instead does check both, but pairs the
+    pre-event CENTRE against the post-event ACTUAL, which false-FAILS a perfect
+    reproduction of the baseline -- so that is not a fix, and keeping it
+    alongside this grid would preserve the false failure. Away from a duplicated
+    instant the two approaches agree exactly, because interpolating at a node
+    returns the node.
+
+    The residual gap is therefore narrow: an actual whose value is wrong ONLY at
+    a duplicated timestamp and correct at every surrounding sample. Handling a
+    jump properly -- pairing pre with pre and post with post, and widening to the
+    union of both bands where only one series carries the duplicate -- is a
+    separate change with its own design question. ``TestKnownGapAtDiscontinuities``
+    pins the current behaviour so that change has a target.
+
+    The grid is clipped to the reference's span because that is where the band
+    is declared -- an actual sample past the end of the baseline has no
+    envelope to be judged against, which also keeps the evaluated span
+    identical to what this function used before.
+    """
+    parts = [np.asarray(ref_time, dtype=float), np.asarray(act_time, dtype=float)]
+    if ctrl_times is not None and len(ctrl_times) > 0:
+        parts.append(np.asarray(ctrl_times, dtype=float))
+    grid = np.unique(np.concatenate(parts))
+    return grid[(grid >= ref_time[0]) & (grid <= ref_time[-1])]
+
+
 def _compare_tube(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -548,78 +674,42 @@ def _compare_tube(
         return _no_data_failure(
             "tube", "no actual samples to compare (empty trajectory or window)"
         )
-    act_interp = np.interp(ref_time, act_time, act_values)
-
-    tube_width_mode = tube_config.get("tube_width_mode")
-    if tube_width_mode not in ("band", "rel", "abs"):
-        raise ValueError(
-            f"tube_width_mode must be 'band', 'rel', or 'abs'; got {tube_width_mode!r}"
-        )
-    min_width = tube_config.get("tube_min_width", 0.0)
-
+    # Width-mode validation and the min-width floor live in _tube_bounds, which
+    # is the single place the envelope is constructed.
     tube_points = tube_config.get("tube_points")
-    if tube_points:
-        interpolation = tube_config.get("tube_interpolation", "linear")
-        raw_upper, raw_lower = _interpolate_tube_widths(
-            ref_time,
-            tube_points,
-            interpolation,
-        )
-    else:
-        # Constant-tube shorthand — only 'band' and 'rel' supported.
-        # 'abs' (literal y-bounds) needs both bounds explicitly, so it
-        # must use tube_points.
-        const_abs = tube_config.get("tube_abs", 0.0)
-        const_rel = tube_config.get("tube_rel", 0.0)
-        if tube_width_mode == "band":
-            raw_upper = np.full_like(ref_time, const_abs)
-            raw_lower = raw_upper.copy()
-        elif tube_width_mode == "rel":
-            raw_upper = np.full_like(ref_time, const_rel)
-            raw_lower = raw_upper.copy()
-        else:  # abs
-            raise ValueError(
-                "tube_width_mode='abs' requires tube_points; "
-                "constant-tube shorthand supports only 'band' and 'rel'."
-            )
+    ctrl_times = (
+        np.array([p["time"] for p in tube_points], dtype=float) if tube_points else None
+    )
 
-    if tube_width_mode == "abs":
-        # Literal y-axis bounds.
-        tube_upper = raw_upper
-        tube_lower = raw_lower
-    else:
-        # 'rel' or 'band' — raw values are offsets from reference.
-        if tube_width_mode == "rel":
-            upper_width = raw_upper * np.abs(ref_values)
-            lower_width = raw_lower * np.abs(ref_values)
-        else:  # band
-            upper_width = raw_upper
-            lower_width = raw_lower
-
-        # Apply minimum width floor
-        if min_width > 0:
-            upper_width = np.maximum(upper_width, min_width)
-            lower_width = np.maximum(lower_width, min_width)
-
-        tube_upper = ref_values + upper_width
-        tube_lower = ref_values - lower_width
+    # The envelope is continuous: evaluate every breakpoint of either curve.
+    grid = _tube_eval_grid(ref_time, act_time, ctrl_times)
+    ref_on_grid = np.interp(grid, ref_time, ref_values)
+    act_on_grid = np.interp(grid, act_time, act_values)
+    tube_upper, tube_lower = _tube_bounds(grid, ref_on_grid, tube_config)
 
     # Check: tube_lower <= actual <= tube_upper
-    above_upper = act_interp - tube_upper  # Positive = above tube
-    below_lower = tube_lower - act_interp  # Positive = below tube
-    violations = np.maximum(above_upper, below_lower)
+    violations = np.maximum(act_on_grid - tube_upper, tube_lower - act_on_grid)
 
-    n_total = len(ref_time)
+    n_total = len(violations)
+    if n_total == 0:
+        return _no_data_failure(
+            "tube", "no evaluable samples (non-finite or disjoint time span)"
+        )
     n_inside = int(np.sum(violations <= 0))
-    fraction_inside = n_inside / n_total if n_total > 0 else 1.0
+    fraction_inside = n_inside / n_total
 
     worst_idx = int(np.argmax(violations))
     worst_violation = float(max(violations[worst_idx], 0.0))
-    worst_violation_time = float(ref_time[worst_idx])
+    worst_violation_time = float(grid[worst_idx])
 
     passed = n_inside == n_total
 
-    # NRMSE for reporting (always based on actual vs reference difference)
+    # NRMSE for reporting stays on the REFERENCE grid. The verdict moved to
+    # the union grid above, but this figure feeds the dashboard's "Worst NRMSE"
+    # column, and a mean taken over a denser grid is a different number --
+    # changing it would drift the reported error on tests whose verdict did not
+    # change. _compare_trajectories remains the authority on trajectory error.
+    act_interp = np.interp(ref_time, act_time, act_values)
     diff = act_interp - ref_values
     abs_error = np.abs(diff)
     rmse = float(np.sqrt(np.mean(abs_error**2)))

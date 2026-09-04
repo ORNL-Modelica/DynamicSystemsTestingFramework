@@ -52,7 +52,8 @@
 - Tube visualization: `fill:'toself'` polygon for the shaded band + separate upper/lower line traces for hover readout
 - All plot traces share the reference time grid for unified hover alignment
 - Interactive tube editing: Shift+click to add, Shift+drag to move, Shift+right-click to delete — no mode toggle, coexists with normal Plotly zoom/pan/scroll
-- Tube rendering grid = ref grid ∪ control point times — ensures tube lines pass through CP markers when zoomed in. Pass/fail check uses ref grid only (matches backend comparator)
+- Tube rendering grid = ref grid ∪ control point times — ensures tube lines pass through CP markers when zoomed in.
+- Tube pass/fail is checked on the union of ref times, actual times and control-point times, because the band is a continuous envelope: an excursion inside one reference interval, or a control point off the reference grid, is invisible on the ref grid alone. Exact for `band`/`abs` widths with linear interpolation; `rel`, `tube_min_width` and `constant` interpolation put a kink between grid points and are not yet covered (see `_tube_eval_grid`). The browser's live tube scorer still uses the ref grid only, so it can disagree with the CLI until authoring moves server-side
 - Control point times are rounded to 6 significant figures on placement/drag to avoid floating point noise
 
 ### Tolerance resolution order
