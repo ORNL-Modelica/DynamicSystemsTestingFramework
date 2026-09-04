@@ -136,11 +136,11 @@ class TestAbstractExportFmuDefault:
         )
         # Skip if fmpy not installed — instantiation would fail before our test
         try:
-            runner = FmpyBackend(config)  # type: ignore[arg-type]
+            backend = FmpyBackend(config)  # type: ignore[arg-type]
         except ImportError:
             pytest.skip("fmpy not installed")
         with pytest.raises(NotImplementedError, match="FMU_EXPORT"):
-            runner.export_fmu(_mock_test(), tmp_path)
+            backend.export_fmu(_mock_test(), tmp_path)
 
 
 # =========================================================================
@@ -188,10 +188,10 @@ class TestExportFmuCleanup:
             dependencies=[],
             library_dir=tmp_path,
         )
-        runner = pr.PersistentDymolaBackend(cfg)
+        backend = pr.PersistentDymolaBackend(cfg)
         out = tmp_path / "out"
         out.mkdir()
-        runner.export_fmu(_tm("M.X"), out)
+        backend.export_fmu(_tm("M.X"), out)
 
         assert created, "worker was never started"
         assert created[0] in closed, (

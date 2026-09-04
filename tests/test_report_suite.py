@@ -66,7 +66,7 @@ def test_nobaseline_overlays_are_decimated():
 #   explicit JSON array so integer-like variable names can't desync plot IDs.
 #
 # The JS-side behavior for findings 37-40, 42-47, and 76 is exercised by
-# ``tests/test_scorer_parity.py`` (node runner) and the Playwright suite.
+# ``tests/test_scorer_parity.py`` (node harness) and the Playwright suite.
 # =========================================================================
 
 

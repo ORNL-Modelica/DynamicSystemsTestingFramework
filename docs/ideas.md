@@ -1172,12 +1172,24 @@ planning.
   weighing against the cost of a test that reads the source tree — those go
   stale in their own way when the import style changes.
 
-- **Finish the role vocabulary inside `tests/`** (2026-09-04, scope decision
-  deferred during the Backend rename): the rename covered `src/`, the docs and
-  the test *files* it renamed, but roughly 277 `runner` occurrences remain
-  across test bodies — local variables, and helper class names like
-  `_ProbeRunner` / `_ProbePersistentRunner`. That matters more than tidiness
-  in one place: `docs/extensibility.md` points a third-party backend author at
-  `tests/test_capability_gating.py` as the reference for how capability
-  declarations are covered, so the file they are told to copy from still
-  teaches the dead word. A clean standalone commit; no behaviour to change.
+- **~~Finish the role vocabulary inside `tests/`~~** (2026-09-04) — **DONE**.
+  The residual was 326 `runner` occurrences (not the ~277 logged), plus four
+  that the D123 sweep had left in `src/`: two `Worker`-subclass docstrings
+  calling the class "a test runner", and a `_runner()` thread closure in
+  `backends/persistent.py`. The mapping turned out to have no judgment in it —
+  every `*Runner` class in `tests/` subclassed `Backend`,
+  `PersistentBackendBase` or `JsonDriverBackend` and NONE subclassed `Worker`,
+  so `runner` → `backend` applied uniformly.
+  What the sweep must NOT touch, and why a future grep still returns hits:
+  `tests/test_scorer_parity.py` writes three temp node scripts named
+  `parity_runner.js` / `state_runner.js` / `trust_runner.js`. That is a
+  different and correct sense of the word — a script that runs, not a DSTF
+  backend — so those literals and the comments referencing them stay. The
+  invariant to check is "every surviving `runner` is a `*_runner.js`
+  reference", not a raw count.
+  Two prose traps found by review, both worth knowing before the next sweep:
+  a "test runner" in `test_python_backend.py` meant *pytest*, and became a
+  false "test backend" until it was corrected to "the pytest process"; and
+  renaming the JS-harness comments to "harness" severed a pointer to the
+  `*_runner.js` filenames it was describing. A vocabulary rename is mechanical
+  in code and emphatically not in prose.

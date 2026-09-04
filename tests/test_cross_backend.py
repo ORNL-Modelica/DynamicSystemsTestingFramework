@@ -113,7 +113,7 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
     )
     store = ReferenceStore(config)
 
-    # Mock primary runner: it declares FMU_EXPORT (the chain gates on the
+    # Mock primary backend: it declares FMU_EXPORT (the chain gates on the
     # capability, not on export_fmu raising) and its export_fmu just returns
     # the staged FMU path.
     primary_backend = MagicMock()

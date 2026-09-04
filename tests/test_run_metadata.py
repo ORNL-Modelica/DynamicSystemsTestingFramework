@@ -112,7 +112,7 @@ class TestBatchDymolaStampsProvenance:
             backend_name="Dymola",
             work_dir=tmp_path / "work",
         )
-        runner = DymolaBackend(cfg)
+        backend = DymolaBackend(cfg)
         # Don't spawn Dymola — the prologue is what's under test.
         monkeypatch.setattr(DymolaBackend, "_run_batch", lambda *a, **k: [])
 
@@ -127,7 +127,7 @@ class TestBatchDymolaStampsProvenance:
             tolerance=1e-6,
             method="dassl",
         )
-        runner.run_tests([test])
+        backend.run_tests([test])
 
         status = json.loads((cfg.work_dir / "status.json").read_text())
         assert status["metadata"]["backend"] == "Dymola"

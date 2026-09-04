@@ -36,7 +36,7 @@ def _reference_fmus_available() -> bool:
 
 
 # Gate on the two dependencies being present. Carried by the classes that
-# simulate a real FMU rather than by the module: the runner regression tests
+# simulate a real FMU rather than by the module: the backend regression tests
 # folded in at the bottom drive a fake `fmpy` module and need neither.
 _needs_real_fmpy = [
     pytest.mark.fmpy,
@@ -52,7 +52,7 @@ _needs_real_fmpy = [
 
 
 def _make_config(tmp_path: Path) -> SimpleNamespace:
-    """Minimal config stand-in — the runner only reads work_dir + progress."""
+    """Minimal config stand-in — the backend only reads work_dir + progress."""
     return SimpleNamespace(
         work_dir=tmp_path,
         progress=None,
@@ -101,15 +101,15 @@ class TestFmpySimulation:
         test = _make_test(fmu, variables=["h"], stop_time=3.0)
         config = _make_config(tmp_path)
 
-        runner = FmpyBackend(config)  # type: ignore[arg-type]
-        run_result = runner.run_single_test(test, "test_0001", index=1, total=1)
+        backend = FmpyBackend(config)  # type: ignore[arg-type]
+        run_result = backend.run_single_test(test, "test_0001", index=1, total=1)
 
         assert run_result.success, f"Simulation failed: {run_result.error_message}"
         assert run_result.elapsed > 0
         assert (tmp_path / "test_0001" / "result.npz").exists()
 
         # Read back
-        result = runner.read_result(test, "test_0001", run_result)
+        result = backend.read_result(test, "test_0001", run_result)
         assert result.success
         assert len(result.variables) == 1
         h = result.variables[0]
@@ -129,11 +129,11 @@ class TestFmpySimulation:
         test = _make_test(fmu, variables=["*"], stop_time=5.0)
         config = _make_config(tmp_path)
 
-        runner = FmpyBackend(config)  # type: ignore[arg-type]
-        run_result = runner.run_single_test(test, "test_0001", index=1, total=1)
+        backend = FmpyBackend(config)  # type: ignore[arg-type]
+        run_result = backend.run_single_test(test, "test_0001", index=1, total=1)
         assert run_result.success
 
-        result = runner.read_result(test, "test_0001", run_result)
+        result = backend.read_result(test, "test_0001", run_result)
         assert result.success
         # VanDerPol has at least x0 + x1 as states; expect at least 2 tracked
         names = [v.name for v in result.variables]
@@ -146,8 +146,8 @@ class TestFmpySimulation:
         test = _make_test(Path("/nonexistent/fake.fmu"), variables=["h"])
         config = _make_config(tmp_path)
 
-        runner = FmpyBackend(config)  # type: ignore[arg-type]
-        run_result = runner.run_single_test(test, "test_0001", index=1, total=1)
+        backend = FmpyBackend(config)  # type: ignore[arg-type]
+        run_result = backend.run_single_test(test, "test_0001", index=1, total=1)
 
         assert not run_result.success
         assert "not found" in (run_result.error_message or "").lower()
@@ -160,9 +160,9 @@ class TestFmpySimulation:
         test = _make_test(fmu, variables=["x"], stop_time=2.0)
         config = _make_config(tmp_path)
 
-        runner = FmpyBackend(config)  # type: ignore[arg-type]
-        runner.run_single_test(test, "test_0001", index=1, total=1)
-        result = runner.read_result(
+        backend = FmpyBackend(config)  # type: ignore[arg-type]
+        backend.run_single_test(test, "test_0001", index=1, total=1)
+        result = backend.read_result(
             test,
             "test_0001",
             run_result=None,  # type: ignore[arg-type]
@@ -244,7 +244,7 @@ def _install_fake_fmpy(monkeypatch, simulate_fn):
 
 
 class TestFmpyBackendFixes:
-    def _make_runner(self, tmp_path, monkeypatch, simulate_fn):
+    def _make_backend(self, tmp_path, monkeypatch, simulate_fn):
         _install_fake_fmpy(monkeypatch, simulate_fn)
         from dstf.backends.fmpy.backend import FmpyBackend
 
@@ -267,23 +267,23 @@ class TestFmpyBackendFixes:
             time.sleep(0.5)
             return None
 
-        runner = self._make_runner(tmp_path, monkeypatch, slow_sim)
+        backend = self._make_backend(tmp_path, monkeypatch, slow_sim)
         test = self._make_fmu_test(tmp_path, timeout=1)
         test.timeout = None
-        runner.config.timeout = 0.05
-        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        backend.config.timeout = 0.05
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False
         assert (
             rr.timed_out is True
         )  # finding 73: was False → dashboard/console disagreed
 
     def test_save_oserror_fails_single_test_not_run(self, tmp_path, monkeypatch):
-        runner = self._make_runner(tmp_path, monkeypatch, lambda **kw: object())
+        backend = self._make_backend(tmp_path, monkeypatch, lambda **kw: object())
         monkeypatch.setattr(
             "dstf.backends.fmpy.backend._save_result",
             lambda path, arr: (_ for _ in ()).throw(OSError("disk full")),
         )
         test = self._make_fmu_test(tmp_path)
-        rr = runner.run_single_test(test, "test_0001", 1, 1)  # must NOT raise
+        rr = backend.run_single_test(test, "test_0001", 1, 1)  # must NOT raise
         assert rr.success is False
         assert "disk full" in (rr.error_message or "")

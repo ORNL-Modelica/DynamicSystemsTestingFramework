@@ -14,15 +14,15 @@ PROJECT_ROOT = Path(__file__).parent.parent
 
 
 def make_test_model(model_id: str = "Lib.T", **kw) -> TestModel:
-    """A directly-constructed :class:`TestModel` for runner-level tests.
+    """A directly-constructed :class:`TestModel` for backend-level tests.
 
     Direct construction bypasses discovery's default resolution — finding 13
     turned the simulation fields into ``None`` sentinels that ``discover_tests``
     fills in — so ``stop_time`` / ``tolerance`` / ``method`` are given concrete
-    values here; runners read them unconditionally. Any field can be overridden
+    values here; backends read them unconditionally. Any field can be overridden
     by keyword.
 
-    Lives in conftest rather than in one test module because four runner test
+    Lives in conftest rather than in one test module because four backend test
     files had byte-identical copies of it. Import it as
     ``from conftest import make_test_model`` (tests/ is on sys.path under
     pytest's default prepend import mode).

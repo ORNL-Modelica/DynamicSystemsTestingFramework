@@ -865,11 +865,11 @@ def _assert_verdicts_agree(js_verdicts: list[dict], expected: list[bool]) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Node runner — no browser needed
+# Node harness — no browser needed
 # ---------------------------------------------------------------------------
 
 # scorers.js touches no DOM at load — it reads window.MT_REPORT and builds
-# leafState — so the parity runner hands it a window and nothing else. Keeping
+# leafState — so the parity harness hands it a window and nothing else. Keeping
 # that stub this small is the standing check that the scoring math stays
 # browser-independent: if it ever needs `document`, the scorers grew a UI
 # dependency and belong on the other side of the seam.
@@ -877,9 +877,10 @@ _SCORERS_PRELUDE_TEMPLATE = """
 globalThis.window = { MT_REPORT: %s };
 """
 
-# Full-bundle shim: the state / trust runners below load the concatenated
-# interactive.js, which registers a DOMContentLoaded handler and builds
-# editor controls, so those need a document object too.
+# Full-bundle shim: the ``state_runner.js`` / ``trust_runner.js`` scripts
+# below load the concatenated interactive.js, which registers a
+# DOMContentLoaded handler and builds editor controls, so those need a
+# document object too.
 _NODE_PRELUDE_TEMPLATE = """
 globalThis.window = { MT_REPORT: %s };
 globalThis.document = {
@@ -1300,7 +1301,7 @@ def test_js_reporter_trust_fixes_node(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Playwright runner — renders the real interactive.html
+# Playwright harness — renders the real interactive.html
 # ---------------------------------------------------------------------------
 
 

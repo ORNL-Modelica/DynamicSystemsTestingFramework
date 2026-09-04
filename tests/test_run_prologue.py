@@ -42,7 +42,7 @@ def _config(tmp_path: Path, **kwargs) -> Config:
     )
 
 
-class _FakeBatchRunner(Backend):
+class _FakeBatchBackend(Backend):
     """Site A: the default batch loop, with the simulation stubbed out."""
 
     def describe_tool_version(self) -> str | None:
@@ -79,7 +79,7 @@ class _FakeWorker(Worker):
         self._up = False
 
 
-class _FakePersistentRunner(PersistentBackendBase):
+class _FakePersistentBackend(PersistentBackendBase):
     """Site B: the persistent template driving workers that never spawn."""
 
     worker_cls = _FakeWorker
@@ -92,7 +92,7 @@ class _FakePersistentRunner(PersistentBackendBase):
         raise AssertionError
 
 
-def _dymola_runner(config: Config, monkeypatch):
+def _dymola_backend(config: Config, monkeypatch):
     """Site C: batch Dymola with the ``.mos`` execution stubbed out."""
     from dstf.backends.dymola.backend import DymolaBackend
 
@@ -117,9 +117,9 @@ def _dymola_runner(config: Config, monkeypatch):
 class TestPrepareRun:
     def test_manifest_saved_with_a_key_per_test(self, tmp_path):
         cfg = _config(tmp_path)
-        runner = _FakeBatchRunner(cfg)
+        backend = _FakeBatchBackend(cfg)
 
-        setup = runner._prepare_run([_tm("Lib.A"), _tm("Lib.B")])
+        setup = backend._prepare_run([_tm("Lib.A"), _tm("Lib.B")])
 
         saved = json.loads((cfg.work_dir / "batch_manifest.json").read_text())
         assert {k: v["model_id"] for k, v in saved.items()} == {
@@ -131,10 +131,10 @@ class TestPrepareRun:
 
     def test_keyed_tests_follow_the_caller_order(self, tmp_path):
         cfg = _config(tmp_path)
-        runner = _FakeBatchRunner(cfg)
+        backend = _FakeBatchBackend(cfg)
         tests = [_tm("Lib.C"), _tm("Lib.A"), _tm("Lib.B")]
 
-        setup = runner._prepare_run(tests)
+        setup = backend._prepare_run(tests)
 
         assert [t for t, _ in setup.keyed_tests] == tests
         assert [k for _, k in setup.keyed_tests] == [
@@ -145,10 +145,12 @@ class TestPrepareRun:
 
     def test_progress_registers_every_test_with_ref_id_report_dir(self, tmp_path):
         cfg = _config(tmp_path)
-        runner = _FakeBatchRunner(cfg)
-        runner.ref_id_map = {"Lib.A": "ref_0042"}  # Lib.B has no baseline yet
+        backend = _FakeBatchBackend(cfg)
+        backend.ref_id_map = {"Lib.A": "ref_0042"}  # Lib.B has no baseline yet
 
-        setup = runner._prepare_run([_tm("Lib.A", {"stop_time": "spec"}), _tm("Lib.B")])
+        setup = backend._prepare_run(
+            [_tm("Lib.A", {"stop_time": "spec"}), _tm("Lib.B")]
+        )
 
         status = json.loads((cfg.work_dir / "status.json").read_text())
         entries = {e["model_id"]: e for e in status["tests"]}
@@ -156,11 +158,11 @@ class TestPrepareRun:
         assert entries["Lib.A"]["report_dir"] == "ref_0042"
         assert entries["Lib.B"]["report_dir"] == "test_0002"  # falls back to test_key
         assert entries["Lib.A"]["field_sources"] == {"stop_time": "spec"}
-        assert setup.progress is runner.progress
+        assert setup.progress is backend.progress
 
     def test_run_metadata_carries_the_tool_version(self, tmp_path):
         cfg = _config(tmp_path)
-        setup = _FakeBatchRunner(cfg)._prepare_run([_tm("Lib.A")])
+        setup = _FakeBatchBackend(cfg)._prepare_run([_tm("Lib.A")])
 
         assert setup.run_metadata["tool_version"] == "FakeTool 1.2.3"
         assert setup.run_metadata["backend"] == cfg.backend
@@ -175,9 +177,9 @@ class TestAllThreeSitesAgree:
     """Batch loop, persistent template and batch Dymola write the same
     manifest and the same run provenance for the same test list."""
 
-    def _run(self, runner, tests) -> tuple[dict, dict]:
-        runner.run_tests(tests)
-        work_dir = runner.config.work_dir
+    def _run(self, backend, tests) -> tuple[dict, dict]:
+        backend.run_tests(tests)
+        work_dir = backend.config.work_dir
         manifest = json.loads((work_dir / "batch_manifest.json").read_text())
         metadata = json.loads((work_dir / "status.json").read_text())["metadata"]
         return manifest, metadata
@@ -185,14 +187,14 @@ class TestAllThreeSitesAgree:
     def test_manifest_and_metadata_are_identical(self, tmp_path, monkeypatch):
         tests = [_tm("Lib.A"), _tm("Lib.B")]
         sites = {
-            "batch": _FakeBatchRunner(_config(tmp_path / "a")),
-            "persistent": _FakePersistentRunner(_config(tmp_path / "b")),
-            "dymola-batch": _dymola_runner(_config(tmp_path / "c"), monkeypatch),
+            "batch": _FakeBatchBackend(_config(tmp_path / "a")),
+            "persistent": _FakePersistentBackend(_config(tmp_path / "b")),
+            "dymola-batch": _dymola_backend(_config(tmp_path / "c"), monkeypatch),
         }
 
         outputs = {}
-        for name, runner in sites.items():
-            manifest, metadata = self._run(runner, tests)
+        for name, backend in sites.items():
+            manifest, metadata = self._run(backend, tests)
             # Drop what is legitimately per-run: the manifest's run timestamps
             # and the provenance generation time.
             outputs[name] = (
@@ -213,9 +215,9 @@ class TestRunSummary:
     ):
         """The batch Dymola summary used to print total work only; it now goes
         through the shared ``_print_run_summary`` and reports wall clock too."""
-        runner = _dymola_runner(_config(tmp_path), monkeypatch)
+        backend = _dymola_backend(_config(tmp_path), monkeypatch)
 
-        runner.run_tests([_tm("Lib.A"), _tm("Lib.B")])
+        backend.run_tests([_tm("Lib.A"), _tm("Lib.B")])
 
         err = capsys.readouterr().err
         assert "Simulations complete: 2 ok, 0 failed, 0 timed out" in err
@@ -224,9 +226,9 @@ class TestRunSummary:
         assert "parallel speedup" in err
 
     def test_persistent_summary_keeps_its_backend_phrase(self, tmp_path, capsys):
-        runner = _FakePersistentRunner(_config(tmp_path))
+        backend = _FakePersistentBackend(_config(tmp_path))
 
-        runner.run_tests([_tm("Lib.A")])
+        backend.run_tests([_tm("Lib.A")])
 
         assert "Persistent Fake run complete: 1 ok, 0 failed, 0 timed out" in (
             capsys.readouterr().err
@@ -246,9 +248,9 @@ class TestRunSummary:
 class TestPrepareRunMarksScopePending:
     def test_in_scope_entries_are_pending_before_any_test_runs(self, tmp_path):
         cfg = _config(tmp_path)
-        runner = _FakeBatchRunner(cfg)
+        backend = _FakeBatchBackend(cfg)
 
-        setup = runner._prepare_run([_tm("Lib.A"), _tm("Lib.B")])
+        setup = backend._prepare_run([_tm("Lib.A"), _tm("Lib.B")])
 
         saved = json.loads((cfg.work_dir / "batch_manifest.json").read_text())
         assert {e["last_run_status"] for e in saved.values()} == {"pending"}
@@ -258,12 +260,12 @@ class TestPrepareRunMarksScopePending:
         """The abort window, at the prologue: run 1 passes, run 2 re-runs the
         same test — the manifest it opens must not still say 'passed'."""
         cfg = _config(tmp_path)
-        runner = _FakeBatchRunner(cfg)
-        runner.run_tests([_tm("Lib.A")])
+        backend = _FakeBatchBackend(cfg)
+        backend.run_tests([_tm("Lib.A")])
         after_run_1 = json.loads((cfg.work_dir / "batch_manifest.json").read_text())
         assert after_run_1["test_0001"]["last_run_status"] == "passed"
 
-        _FakeBatchRunner(cfg)._prepare_run([_tm("Lib.A")])
+        _FakeBatchBackend(cfg)._prepare_run([_tm("Lib.A")])
 
         after_prologue = json.loads((cfg.work_dir / "batch_manifest.json").read_text())
         assert after_prologue["test_0001"]["last_run_status"] == "pending"
@@ -272,9 +274,9 @@ class TestPrepareRunMarksScopePending:
         """--filter / --rerun: tests this run isn't touching keep the record
         their own last run left, which is what --merge reports over."""
         cfg = _config(tmp_path)
-        _FakeBatchRunner(cfg).run_tests([_tm("Lib.A"), _tm("Lib.B")])
+        _FakeBatchBackend(cfg).run_tests([_tm("Lib.A"), _tm("Lib.B")])
 
-        _FakeBatchRunner(cfg)._prepare_run([_tm("Lib.A")])  # filtered rerun
+        _FakeBatchBackend(cfg)._prepare_run([_tm("Lib.A")])  # filtered rerun
 
         saved = json.loads((cfg.work_dir / "batch_manifest.json").read_text())
         assert saved["test_0001"]["last_run_status"] == "pending"  # in scope
@@ -286,7 +288,7 @@ class TestPrepareRunMarksScopePending:
         cfg = _config(tmp_path)
         seen: list[dict] = []
 
-        class _ObservingRunner(_FakeBatchRunner):
+        class _ObservingBackend(_FakeBatchBackend):
             def run_single_test(self, test, test_key, index, total):
                 # Snapshot what is ALREADY persisted when this test starts.
                 seen.append(
@@ -294,7 +296,7 @@ class TestPrepareRunMarksScopePending:
                 )
                 return super().run_single_test(test, test_key, index, total)
 
-        _ObservingRunner(cfg).run_tests([_tm("Lib.A"), _tm("Lib.B")])
+        _ObservingBackend(cfg).run_tests([_tm("Lib.A"), _tm("Lib.B")])
 
         # Before test 2 ran, test 1's verdict was already durable on disk.
         assert seen[1]["test_0001"]["last_run_status"] == "passed"
@@ -318,9 +320,9 @@ class TestBatchDymolaRecordsVerdicts:
 
     def test_sequential_batches_record_every_verdict(self, tmp_path, monkeypatch):
         cfg = _config(tmp_path, parallel=1)
-        runner = _dymola_runner(cfg, monkeypatch)
+        backend = _dymola_backend(cfg, monkeypatch)
 
-        runner.run_tests([_tm("Lib.A"), _tm("Lib.B"), _tm("Lib.C")])
+        backend.run_tests([_tm("Lib.A"), _tm("Lib.B"), _tm("Lib.C")])
 
         statuses = self._statuses(cfg)
         assert set(statuses.values()) == {"passed"}
@@ -329,9 +331,9 @@ class TestBatchDymolaRecordsVerdicts:
     def test_pooled_batches_record_every_verdict(self, tmp_path, monkeypatch):
         """The parallel path lands results through a different call site."""
         cfg = _config(tmp_path, parallel=3, batch_size=1)
-        runner = _dymola_runner(cfg, monkeypatch)
+        backend = _dymola_backend(cfg, monkeypatch)
 
-        runner.run_tests([_tm("Lib.A"), _tm("Lib.B"), _tm("Lib.C")])
+        backend.run_tests([_tm("Lib.A"), _tm("Lib.B"), _tm("Lib.C")])
 
         statuses = self._statuses(cfg)
         assert set(statuses.values()) == {"passed"}
@@ -342,7 +344,7 @@ class TestBatchDymolaRecordsVerdicts:
         from dstf.backends.dymola.backend import DymolaBackend
 
         cfg = _config(tmp_path, parallel=1)
-        runner = _dymola_runner(cfg, monkeypatch)
+        backend = _dymola_backend(cfg, monkeypatch)
 
         def _mixed(self, batch, *a, **k):
             out = []
@@ -360,7 +362,7 @@ class TestBatchDymolaRecordsVerdicts:
 
         monkeypatch.setattr(DymolaBackend, "_run_batch", _mixed)
 
-        runner.run_tests([_tm("Lib.A"), _tm("Lib.B"), _tm("Lib.C")])
+        backend.run_tests([_tm("Lib.A"), _tm("Lib.B"), _tm("Lib.C")])
 
         assert self._statuses(cfg) == {
             "test_0001": "passed",
@@ -387,10 +389,10 @@ class TestBatchDymolaRecordsVerdicts:
                 for t, tk in batch
             ]
 
-        runner = _dymola_runner(cfg, monkeypatch)
+        backend = _dymola_backend(cfg, monkeypatch)
         monkeypatch.setattr(DymolaBackend, "_run_batch", _observing)
 
-        runner.run_tests([_tm("Lib.A"), _tm("Lib.B")])
+        backend.run_tests([_tm("Lib.A"), _tm("Lib.B")])
 
         assert seen[1]["test_0001"]["last_run_status"] == "passed"
         assert seen[1]["test_0002"]["last_run_status"] == "pending"

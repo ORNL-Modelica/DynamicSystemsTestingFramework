@@ -1,7 +1,7 @@
 """Tests for the shared DSresult-MAT result-extraction helpers (U-3).
 
 ``compute_needed_variables`` / ``extract_variables`` / the statistics folds
-used to be duplicated in the Dymola and OpenModelica runners. They now live in
+used to be duplicated in the Dymola and OpenModelica backends. They now live in
 ``dstf.backends.common.result_variables`` and both backends call them, so the
 behavior is pinned once here.
 """

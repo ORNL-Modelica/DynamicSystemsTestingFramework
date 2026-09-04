@@ -215,7 +215,7 @@ def _is_notice_line(line: str) -> bool:
 
 
 class OpenModelicaWorker(Worker):
-    """One live OMCSessionZMQ process wrapped as a test runner."""
+    """One live OMCSessionZMQ process wrapped as a test worker."""
 
     kill_name_hint = "omc"
     exec_thread_prefix = "om"

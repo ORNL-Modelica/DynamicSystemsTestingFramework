@@ -1,4 +1,4 @@
-"""OpenModelica runner tests.
+"""OpenModelica backend tests.
 
 Unit tests here stub subprocess.run so they don't require an omc binary.
 Integration tests at the bottom exercise real omc and are gated on
@@ -95,7 +95,7 @@ class TestOpenModelicaBackendUnit:
             backend_name="OpenModelica",
             work_dir=tmp_path / "work",
         )
-        runner = OpenModelicaBackend(cfg)
+        backend = OpenModelicaBackend(cfg)
         # The fixture was captured with variableFilter "^(time|inertia1.phi)$",
         # so it carries no unitTests.x[i] — exactly the missing-variable case.
         test_dir = cfg.work_dir / "test_0001"
@@ -115,7 +115,7 @@ class TestOpenModelicaBackendUnit:
         )
 
         with caplog.at_level(logging.WARNING):
-            result = runner.read_result(test, "test_0001", None)
+            result = backend.read_result(test, "test_0001", None)
 
         assert result.success
         assert result.variables == []
@@ -144,7 +144,7 @@ class TestOpenModelicaBackendUnit:
             backend_name="OpenModelica",
             work_dir=tmp_path / "work",
         )
-        runner = OpenModelicaBackend(cfg)
+        backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Lib.A",
             source_file=Path(""),
@@ -172,7 +172,7 @@ class TestOpenModelicaBackendUnit:
             "end SimulationResult;\n"
         )
 
-        # The runner requires result_res.mat to exist AND reach stop_time
+        # The backend requires result_res.mat to exist AND reach stop_time
         # before declaring success (D99 partial-result belt), so stage a
         # real fixture mat (extents 0.0 → 1.0, matching stop_time=1.0) —
         # a garbage placeholder is now correctly refused.
@@ -198,7 +198,7 @@ class TestOpenModelicaBackendUnit:
             fake_run,
         )
 
-        result = runner.run_single_test(test, test_key="test_0001", index=1, total=1)
+        result = backend.run_single_test(test, test_key="test_0001", index=1, total=1)
         # Subprocess invocation
         assert (
             captured_call["cmd"][0].endswith("omc") or captured_call["cmd"][0] == "omc"
@@ -232,7 +232,7 @@ class TestOpenModelicaBackendUnit:
             backend_name="OpenModelica",
             work_dir=tmp_path / "work",
         )
-        runner = OpenModelicaBackend(cfg)
+        backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Lib.DoesNotExist",
             source_file=Path(""),
@@ -270,7 +270,7 @@ class TestOpenModelicaBackendUnit:
             fake_run,
         )
 
-        result = runner.run_single_test(test, test_key="test_0001", index=1, total=1)
+        result = backend.run_single_test(test, test_key="test_0001", index=1, total=1)
         assert result.success is False
         assert result.error_message
         low = result.error_message.lower()
@@ -305,7 +305,7 @@ class TestOpenModelicaIntegration:
             dependencies=["Modelica"],
             timeout=120,
         )
-        runner = OpenModelicaBackend(cfg)
+        backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Modelica.Blocks.Examples.PID_Controller",
             source_file=Path(""),
@@ -319,7 +319,7 @@ class TestOpenModelicaIntegration:
             method="dassl",
             source="spec",
         )
-        run_result = runner.run_single_test(
+        run_result = backend.run_single_test(
             test,
             test_key="test_0001",
             index=1,
@@ -329,7 +329,7 @@ class TestOpenModelicaIntegration:
         assert run_result.translation_wall is not None
         assert run_result.sim_wall is not None
 
-        test_result = runner.read_result(test, "test_0001", run_result)
+        test_result = backend.read_result(test, "test_0001", run_result)
         assert test_result.success is True
         var_names = [v.name for v in test_result.variables]
         assert "inertia1.phi" in var_names
@@ -352,7 +352,7 @@ class TestOpenModelicaIntegration:
             dependencies=["Modelica"],
             timeout=120,
         )
-        runner = OpenModelicaBackend(cfg)
+        backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Modelica.Blocks.Examples.PID_Controller",
             source_file=Path(""),
@@ -365,7 +365,7 @@ class TestOpenModelicaIntegration:
             number_of_intervals=20,
             source="spec",
         )
-        rr = runner.run_single_test(test, test_key="t", index=1, total=1)
+        rr = backend.run_single_test(test, test_key="t", index=1, total=1)
         assert rr.success is True, rr.error_message
 
         mat = cfg.work_dir / "t" / OpenModelicaBackend.RESULT_MAT_FILENAME
@@ -389,7 +389,7 @@ class TestOpenModelicaIntegration:
             dependencies=[],
             timeout=30,
         )
-        runner = OpenModelicaBackend(cfg)
+        backend = OpenModelicaBackend(cfg)
         test = TestModel(
             model_id="Definitely.Not.Here",
             source_file=Path(""),
@@ -401,7 +401,7 @@ class TestOpenModelicaIntegration:
             tolerance=1e-6,  # explicit: direct construction bypasses discovery defaults (review 2026-07-06, finding 13)
             source="spec",
         )
-        rr = runner.run_single_test(test, test_key="t", index=1, total=1)
+        rr = backend.run_single_test(test, test_key="t", index=1, total=1)
         assert rr.success is False
         assert rr.error_message
         low = rr.error_message.lower()

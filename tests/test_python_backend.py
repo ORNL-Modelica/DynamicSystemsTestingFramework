@@ -29,10 +29,10 @@ def _scipy_available() -> bool:
     """True iff scipy is importable from the *subprocess* Python that dstf
     will spawn for end-to-end tests.
 
-    The test runner and the dstf subprocess can resolve to different Python
+    The pytest process and the dstf subprocess can resolve to different Python
     interpreters (e.g. ``uv run pytest`` falling through to a global pytest
     on PATH while ``uv run dstf`` uses the project ``.venv``). Probing the
-    test runner's own ``sys.path`` would lie about whether the simulation
+    pytest process's own ``sys.path`` would lie about whether the simulation
     will actually find scipy. Subprocess-probing is slow (~150ms) but only
     runs once at module load.
     """
@@ -44,8 +44,8 @@ def _scipy_available() -> bool:
     return result.returncode == 0
 
 
-def test_python_runner_registered():
-    """The Python runner registers when its submodule is imported."""
+def test_python_backend_registered():
+    """The Python backend registers when its submodule is imported."""
     from dstf.backends import get_backend_class
     from dstf.config import Config
 
@@ -282,13 +282,13 @@ def test_python_simple_ramp_self_regression(tmp_path):
 # backend fixes (findings 20-29 and 73-75, CODE_REVIEW_2026-07-06.md).
 #
 # Finding 29 — non-numeric driver output, both sides: the driver rejects it
-# with a named error, and the runner turns a tampered/legacy result.json into
+# with a named error, and the backend turns a tampered/legacy result.json into
 # one failed test instead of aborting the whole read phase.
 # =========================================================================
 
 
 # ---------------------------------------------------------------------------
-# Finding 29 — non-numeric driver output: driver + runner sides
+# Finding 29 — non-numeric driver output: driver + backend sides
 # ---------------------------------------------------------------------------
 
 _PY_DRIVER = PROJECT_ROOT / "src" / "dstf" / "backends" / "python" / "run_test.py"
@@ -351,7 +351,7 @@ class TestPythonNonNumericValues:
         assert "time" in payload["error"]
 
     def test_read_result_turns_non_numeric_into_failed_test(self, tmp_path):
-        """Runner-side belt: a hand-tampered/legacy result.json with string
+        """Backend-side belt: a hand-tampered/legacy result.json with string
         values must fail the one test, not abort the whole read phase."""
         from dstf.backends.python import backend as pr
 
@@ -361,7 +361,7 @@ class TestPythonNonNumericValues:
             work_dir=tmp_path / "work",
             timeout=1,
         )
-        runner = pr.PythonBackend(cfg)
+        backend = pr.PythonBackend(cfg)
         test_dir = tmp_path / "work" / "test_0001"
         test_dir.mkdir(parents=True)
         (test_dir / "result.json").write_text(
@@ -374,6 +374,6 @@ class TestPythonNonNumericValues:
             )
         )
         test = _tm("T", variable_patterns=["x"])
-        res = runner.read_result(test, "test_0001", None)
+        res = backend.read_result(test, "test_0001", None)
         assert res.success is False
         assert "x" in (res.error_message or "")

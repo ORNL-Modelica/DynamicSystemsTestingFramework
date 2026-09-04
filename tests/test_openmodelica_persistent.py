@@ -1,4 +1,4 @@
-"""Unit + integration tests for the persistent-worker OpenModelica runner.
+"""Unit + integration tests for the persistent-worker OpenModelica backend.
 
 Unit tests use a FakeSession that quacks like ``OMCSessionZMQ`` — no
 dependency on real OMPython. Integration tests require both omc on PATH
@@ -138,7 +138,7 @@ def _make_config(tmp_path: Path, **overrides) -> Config:
 class TestWorkerStartup:
     def test_startup_sequence_with_msl_auto_injection(self, tmp_path):
         """Empty `dependencies` still triggers loadModel(Modelica) — matches
-        the batch runner's auto-injection so a unified testing.json works."""
+        the batch backend's auto-injection so a unified testing.json works."""
         from dstf.backends.openmodelica.backend import (
             OpenModelicaConfig,
         )
@@ -353,7 +353,7 @@ class TestWorkerRunTest:
         assert result.translation_wall == pytest.approx(0.1 + 0.05 + 0.01 + 0.02 + 0.9)
         assert result.sim_wall == pytest.approx(0.03)
         assert result.statistics["timing"]["total"] == pytest.approx(1.11)
-        # Artifact written (parity with batch runner)
+        # Artifact written (parity with batch backend)
         stdout_artifact = test_dir / "omc_stdout.txt"
         assert stdout_artifact.exists()
         assert "record SimulationResult" in stdout_artifact.read_text()
@@ -621,7 +621,7 @@ class TestWorkerLifecycle:
 
             return FakeSession(responses={"cd(": _cd, "simulate(": _hang})
 
-        runner = PersistentOpenModelicaBackend(cfg)
+        backend = PersistentOpenModelicaBackend(cfg)
         worker = OpenModelicaWorker(0, cfg, om_cfg, make_session)
         worker.start()
         items = [
@@ -629,12 +629,12 @@ class TestWorkerLifecycle:
             for i in range(1, 4)
         ]
 
-        results = runner._dispatch_with_restart(
+        results = backend._dispatch_with_restart(
             [worker],
             items,
             total=len(items),
             manifest=BatchManifest(
-                work_dir=runner.config.work_dir,
+                work_dir=backend.config.work_dir,
                 manifest={tk: {"model_id": t.model_id} for t, tk in items},
             ),
         )
@@ -767,8 +767,8 @@ class TestCLISelectionWiring:
             "dstf.backends.openmodelica.session_loader.load_omc_session",
             lambda: FakeSession,
         )
-        runner = cli_mod._get_backend(cfg, persistent=True)
-        assert isinstance(runner, PersistentOpenModelicaBackend)
+        backend = cli_mod._get_backend(cfg, persistent=True)
+        assert isinstance(backend, PersistentOpenModelicaBackend)
 
     def test_get_backend_aborts_when_ompython_missing(
         self,
@@ -812,15 +812,15 @@ class TestCLISelectionWiring:
             "dstf.backends.openmodelica.session_loader.load_omc_session",
             lambda: FakeSession,
         )
-        runner = cli_mod._get_backend(cfg, persistent=False)
-        assert not isinstance(runner, PersistentOpenModelicaBackend)
+        backend = cli_mod._get_backend(cfg, persistent=False)
+        assert not isinstance(backend, PersistentOpenModelicaBackend)
 
     def test_run_tests_raises_when_all_workers_fail_to_start(
         self,
         tmp_path,
         monkeypatch,
     ):
-        """Regression for a bug where the persistent runner printed
+        """Regression for a bug where the persistent backend printed
         ``"All workers failed to start. Aborting."`` but then *returned* the
         empty manifest, letting the read/compare/report phases run on
         non-existent results and emit fake "ok" outcomes. The fix raises
@@ -842,9 +842,9 @@ class TestCLISelectionWiring:
 
         monkeypatch.setattr(OpenModelicaWorker, "start", _always_fail)
 
-        runner = PersistentOpenModelicaBackend(cfg)
+        backend = PersistentOpenModelicaBackend(cfg)
         with pytest.raises(RuntimeError, match="All OpenModelica persistent workers"):
-            runner.run_tests([_make_test()])
+            backend.run_tests([_make_test()])
 
 
 # ---------------------------------------------------------------------------

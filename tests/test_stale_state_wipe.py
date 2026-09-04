@@ -120,7 +120,7 @@ def test_wipe_preserves_out_of_scope_dirs(tmp_path):
 def test_wipe_first_time_test_no_op(tmp_path):
     """A test running for the first time (no batch_manifest entry,
     no prior dirs) is a no-op — the wipe must not crash, and the
-    runner will create the dir from scratch.
+    backend will create the dir from scratch.
     """
     # No batch_manifest.json, no dirs at all
     _wipe_stale_state_for_scope(

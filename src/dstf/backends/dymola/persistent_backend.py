@@ -182,7 +182,7 @@ def _classify_translation_error(log_path: Path) -> str:
 
 
 class DymolaWorker(Worker):
-    """One live Dymola process wrapped as a test runner."""
+    """One live Dymola process wrapped as a test worker."""
 
     kill_name_hint = "dymola"
     exec_thread_prefix = "dym"

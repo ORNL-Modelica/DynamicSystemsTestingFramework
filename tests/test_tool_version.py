@@ -109,7 +109,7 @@ class TestOpenModelicaWorkerVersion:
 
 
 # ---------------------------------------------------------------------------
-# Probe orchestration on PersistentBackendBase / concrete runners
+# Probe orchestration on PersistentBackendBase / concrete backends
 # ---------------------------------------------------------------------------
 
 
@@ -218,20 +218,20 @@ class TestProbeOrchestration:
     def test_dymola_probe_first_non_none_wins(self):
         from dstf.backends.dymola.persistent_backend import PersistentDymolaBackend
 
-        runner = PersistentDymolaBackend.__new__(PersistentDymolaBackend)
+        backend = PersistentDymolaBackend.__new__(PersistentDymolaBackend)
         workers = [
             SimpleNamespace(tool_version=lambda: None),
             SimpleNamespace(tool_version=lambda: "Dymola 2026x"),
             SimpleNamespace(tool_version=lambda: "Dymola 2025x"),
         ]
-        assert runner._probe_worker_version(workers) == "Dymola 2026x"
+        assert backend._probe_worker_version(workers) == "Dymola 2026x"
 
     def test_dymola_probe_none_when_all_none(self):
         from dstf.backends.dymola.persistent_backend import PersistentDymolaBackend
 
-        runner = PersistentDymolaBackend.__new__(PersistentDymolaBackend)
+        backend = PersistentDymolaBackend.__new__(PersistentDymolaBackend)
         workers = [SimpleNamespace(tool_version=lambda: None)]
-        assert runner._probe_worker_version(workers) is None
+        assert backend._probe_worker_version(workers) is None
 
     def test_base_library_probe_returns_none(self):
         base = _ConcretePersistent.__new__(_ConcretePersistent)
@@ -249,12 +249,12 @@ class TestProbeOrchestration:
     def test_dymola_library_probe_first_nonempty_wins(self):
         from dstf.backends.dymola.persistent_backend import PersistentDymolaBackend
 
-        runner = PersistentDymolaBackend.__new__(PersistentDymolaBackend)
+        backend = PersistentDymolaBackend.__new__(PersistentDymolaBackend)
         workers = [
             SimpleNamespace(library_versions=lambda: {}),
             SimpleNamespace(library_versions=lambda: {"Modelica": "4.1.0"}),
         ]
-        assert runner._probe_library_versions(workers) == {"Modelica": "4.1.0"}
+        assert backend._probe_library_versions(workers) == {"Modelica": "4.1.0"}
 
 
 # ---------------------------------------------------------------------------

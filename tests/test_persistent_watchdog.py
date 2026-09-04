@@ -1135,7 +1135,7 @@ class TestCloseHonoursTheGraceBudget:
 # ---------------------------------------------------------------------------
 
 
-class _StubRunner(PersistentBackendBase):
+class _StubBackend(PersistentBackendBase):
     backend_label = "Stub"
     # The production default is seconds (a licence seat takes a moment to be
     # released); tests only care that the retry happens, not that it waits.
@@ -1210,21 +1210,21 @@ def _scratch_manifest(tmp_path, items=()) -> BatchManifest:
     )
 
 
-def _stub_runner(tmp_path) -> _StubRunner:
+def _stub_backend(tmp_path) -> _StubBackend:
     cfg = SimpleNamespace(timeout=5.0, parallel=2, work_dir=tmp_path)
-    return _StubRunner(cfg)
+    return _StubBackend(cfg)
 
 
 class TestDispatchDeadWorker:
     def test_dead_worker_exits_thread_instead_of_draining_queue(self, tmp_path):
         """Finding 20: the dead worker fail-marks ONLY its held item and
         exits; the healthy worker runs everything else."""
-        runner = _stub_runner(tmp_path)
-        dead = _DeadWorker(0, runner.config)
-        good = _GoodWorker(1, runner.config, delay=0.05)
+        backend = _stub_backend(tmp_path)
+        dead = _DeadWorker(0, backend.config)
+        good = _GoodWorker(1, backend.config, delay=0.05)
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(6)]
 
-        results = runner._dispatch_with_restart(
+        results = backend._dispatch_with_restart(
             [dead, good], items, total=6, manifest=_scratch_manifest(tmp_path, items)
         )
 
@@ -1237,14 +1237,14 @@ class TestDispatchDeadWorker:
     def test_last_dead_worker_drains_queue_without_hanging(self, tmp_path):
         """Finding 20: with no live worker left, the queue is drained and
         every remaining test still gets a recorded result."""
-        runner = _stub_runner(tmp_path)
-        dead = _DeadWorker(0, runner.config)
+        backend = _stub_backend(tmp_path)
+        dead = _DeadWorker(0, backend.config)
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(4)]
 
         box: dict = {}
 
         def run():
-            box["results"] = runner._dispatch_with_restart(
+            box["results"] = backend._dispatch_with_restart(
                 [dead], items, total=4, manifest=_scratch_manifest(tmp_path, items)
             )
 
@@ -1262,11 +1262,11 @@ class TestDispatchWorkerRaise:
     def test_worker_raise_is_recorded_and_loop_continues(self, tmp_path):
         """Finding 21: a raise from run_test_with_timeout must not kill the
         dispatch thread — the test gets a failed result, the rest still run."""
-        runner = _stub_runner(tmp_path)
-        w = _RaiseOnceWorker(0, runner.config)
+        backend = _stub_backend(tmp_path)
+        w = _RaiseOnceWorker(0, backend.config)
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(3)]
 
-        results = runner._dispatch_with_restart(
+        results = backend._dispatch_with_restart(
             [w], items, total=3, manifest=_scratch_manifest(tmp_path, items)
         )
 
@@ -1300,10 +1300,10 @@ class TestStartupFailureCleanup:
     def test_failed_start_worker_is_closed(self, tmp_path):
         """Finding 24: a worker whose start() raised may have spawned a real
         process (license seat) — it must be close()d."""
-        runner = _stub_runner(tmp_path)
-        w0 = _FailStartWorker(0, runner.config)
-        w1 = _FailStartWorker(1, runner.config)
-        live = runner._start_workers_parallel([w0, w1])
+        backend = _stub_backend(tmp_path)
+        w0 = _FailStartWorker(0, backend.config)
+        w1 = _FailStartWorker(1, backend.config)
+        live = backend._start_workers_parallel([w0, w1])
         assert live == []
         assert w0.n_closed >= 1
         assert w1.n_closed >= 1
@@ -1322,7 +1322,7 @@ class TestStartupFailureCleanup:
 
         created: list[_FailStartWorker] = []
 
-        class _FailingRunner(_StubRunner):
+        class _FailingBackend(_StubBackend):
             worker_cls = _FailStartWorker
 
             def make_worker(self, worker_id):
@@ -1330,9 +1330,9 @@ class TestStartupFailureCleanup:
                 created.append(w)
                 return w
 
-        runner = _FailingRunner(cfg)
+        backend = _FailingBackend(cfg)
         with pytest.raises(RuntimeError, match="failed to start"):
-            runner.run_tests([_tm("Lib.A"), _tm("Lib.B")])
+            backend.run_tests([_tm("Lib.A"), _tm("Lib.B")])
         assert created
         assert all(w.n_closed >= 1 for w in created)
 
@@ -1380,12 +1380,12 @@ def test_timeout_message_names_the_per_test_override(tmp_path):
 def test_timeout_detail_is_not_truncated_past_the_hint(tmp_path, capsys):
     """The dispatcher's progress line clipped a failure detail at 80 chars —
     exactly where the hint starts. Timeouts print in full."""
-    runner = _stub_runner(tmp_path)
-    worker = _AlwaysTimeoutWorker(0, runner.config)
-    runner.config.timeout = 0.05
+    backend = _stub_backend(tmp_path)
+    worker = _AlwaysTimeoutWorker(0, backend.config)
+    backend.config.timeout = 0.05
 
     items = [(_tm("Lib.A"), "test_0001")]
-    runner._dispatch_with_restart(
+    backend._dispatch_with_restart(
         [worker], items, total=1, manifest=_scratch_manifest(tmp_path, items)
     )
 
@@ -1420,11 +1420,11 @@ class TestRestartRetry:
     def test_one_retry_rescues_a_transient_start_failure(self, tmp_path, capsys):
         """Item 6: start() fails once then succeeds — the retry must bring
         the worker back and the queue must finish, not be fail-marked."""
-        runner = _stub_runner(tmp_path)
-        w = _FlakyStartWorker(0, runner.config, n_start_failures=1)
+        backend = _stub_backend(tmp_path)
+        w = _FlakyStartWorker(0, backend.config, n_start_failures=1)
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(3)]
 
-        results = runner._dispatch_with_restart(
+        results = backend._dispatch_with_restart(
             [w], items, total=3, manifest=_scratch_manifest(tmp_path, items)
         )
 
@@ -1438,11 +1438,11 @@ class TestRestartRetry:
     ):
         """The retry is one extra attempt, not an unbounded loop: two
         start() calls per restart, then the worker is retired."""
-        runner = _stub_runner(tmp_path)
-        w = _FlakyStartWorker(0, runner.config, n_start_failures=None)
+        backend = _stub_backend(tmp_path)
+        w = _FlakyStartWorker(0, backend.config, n_start_failures=None)
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(3)]
 
-        results = runner._dispatch_with_restart(
+        results = backend._dispatch_with_restart(
             [w], items, total=3, manifest=_scratch_manifest(tmp_path, items)
         )
 
@@ -1473,12 +1473,12 @@ class TestRestartRetry:
                     error_message="model did not translate",
                 )
 
-        runner = _stub_runner(tmp_path)
-        w = _FailingTest(0, runner.config, n_start_failures=1)
+        backend = _stub_backend(tmp_path)
+        w = _FailingTest(0, backend.config, n_start_failures=1)
         w.alive = False
 
         items = [(_tm("Lib.A"), "test_0001")]
-        results = runner._dispatch_with_restart(
+        results = backend._dispatch_with_restart(
             [w], items, total=1, manifest=_scratch_manifest(tmp_path, items)
         )
         assert results[0].error_message == "model did not translate"
@@ -1501,7 +1501,7 @@ class TestDispatchRecordsIncrementally:
         """An abort in the dispatch loop skips every epilogue, so the
         manifest must already hold what the run reached. The dispatcher is
         the one place ALL persistent results pass through."""
-        runner = _stub_runner(tmp_path)
+        backend = _stub_backend(tmp_path)
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(3)]
         manifest = _scratch_manifest(tmp_path, items)
         for entry in manifest.manifest.values():
@@ -1518,8 +1518,8 @@ class TestDispatchRecordsIncrementally:
                 )
                 return super().run_test_with_timeout(test, test_key, timeout, progress)
 
-        runner._dispatch_with_restart(
-            [_Observing(0, runner.config)], items, total=3, manifest=manifest
+        backend._dispatch_with_restart(
+            [_Observing(0, backend.config)], items, total=3, manifest=manifest
         )
 
         # By the time test 3 started, tests 1 and 2 were durable.
@@ -1530,13 +1530,13 @@ class TestDispatchRecordsIncrementally:
     def test_restart_exhausted_failures_are_recorded_too(self, tmp_path):
         """The synthetic failures a retired worker produces are real verdicts
         — they must not read back as 'pending' and slip past the guard."""
-        runner = _stub_runner(tmp_path)
+        backend = _stub_backend(tmp_path)
         items = [(_tm(f"Lib.T{i}"), f"test_{i:04d}") for i in range(2)]
         manifest = _scratch_manifest(tmp_path, items)
         manifest.mark_pending({t.model_id for t, _ in items})
 
-        runner._dispatch_with_restart(
-            [_DeadWorker(0, runner.config)], items, total=2, manifest=manifest
+        backend._dispatch_with_restart(
+            [_DeadWorker(0, backend.config)], items, total=2, manifest=manifest
         )
 
         saved = json.loads((tmp_path / "batch_manifest.json").read_text())
@@ -1555,8 +1555,8 @@ def test_dashboard_detail_keeps_the_whole_timeout_hint(tmp_path):
         def on_finish(self, test_key, success, elapsed, detail=None, timed_out=False):
             captured["detail"] = detail
 
-    runner = _stub_runner(tmp_path)
-    runner.progress = _Progress()
+    backend = _stub_backend(tmp_path)
+    backend.progress = _Progress()
     long_msg = timeout_message("Julia simulation exceeded 600.0s timeout")
     assert len(long_msg) > 120, "the regression needs an over-120-char message"
 
@@ -1571,8 +1571,8 @@ def test_dashboard_detail_keeps_the_whole_timeout_hint(tmp_path):
             )
 
     items = [(_tm("Lib.A"), "test_0001")]
-    runner._dispatch_with_restart(
-        [_TimeoutWorker(0, runner.config)],
+    backend._dispatch_with_restart(
+        [_TimeoutWorker(0, backend.config)],
         items,
         total=1,
         manifest=_scratch_manifest(tmp_path, items),
@@ -1594,8 +1594,8 @@ def test_a_non_timeout_failure_detail_is_still_clipped(tmp_path):
         def on_finish(self, test_key, success, elapsed, detail=None, timed_out=False):
             captured["detail"] = detail
 
-    runner = _stub_runner(tmp_path)
-    runner.progress = _Progress()
+    backend = _stub_backend(tmp_path)
+    backend.progress = _Progress()
 
     class _FailWorker(_GoodWorker):
         def run_test_with_timeout(self, test, test_key, timeout, progress=None):
@@ -1607,8 +1607,8 @@ def test_a_non_timeout_failure_detail_is_still_clipped(tmp_path):
             )
 
     items = [(_tm("Lib.A"), "test_0001")]
-    runner._dispatch_with_restart(
-        [_FailWorker(0, runner.config)],
+    backend._dispatch_with_restart(
+        [_FailWorker(0, backend.config)],
         items,
         total=1,
         manifest=_scratch_manifest(tmp_path, items),

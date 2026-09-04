@@ -45,8 +45,8 @@ _CONFIG = _EXAMPLES_DIR / "Resources" / "ReferenceResults" / "testing.json"
 
 
 @pytest.mark.julia
-def test_julia_runner_registered():
-    """The Julia runner registers when its submodule is imported."""
+def test_julia_backend_registered():
+    """The Julia backend registers when its submodule is imported."""
     from dstf.backends import get_backend_class
     from dstf.config import Config
 

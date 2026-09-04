@@ -319,14 +319,14 @@ class Worker(ABC):
         exc_box: list[BaseException | None] = [None]
         start_ts = time.monotonic()
 
-        def _runner():
+        def _worker_body():
             try:
                 result_box[0] = self.run_test(test, test_key, progress=progress)
             except BaseException as e:
                 exc_box[0] = e
 
         t = threading.Thread(
-            target=_runner,
+            target=_worker_body,
             daemon=True,
             name=f"{self.exec_thread_prefix}-exec-{self.worker_id}",
         )

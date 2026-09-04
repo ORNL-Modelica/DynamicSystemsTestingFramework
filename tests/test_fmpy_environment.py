@@ -38,7 +38,7 @@ def test_fmpy_importable():
     """fmpy package imports and exposes expected API surface."""
     import fmpy
 
-    # Minimum API we'll rely on in the runner
+    # Minimum API we'll rely on in the backend
     assert hasattr(fmpy, "read_model_description")
     assert hasattr(fmpy, "simulate_fmu")
 
@@ -111,15 +111,15 @@ def test_fmpy_backend_registers_under_name():
         def backend(self):
             return "FMPy"
 
-    runner = get_backend(_FakeConfig())
-    assert isinstance(runner, FmpyBackend)
+    backend = get_backend(_FakeConfig())
+    assert isinstance(backend, FmpyBackend)
     # Capabilities declared as advertised in docs/extensibility.md §3
     from dstf.backends.types import Capability, DatasetType
 
     # review 2026-07-06 (finding 28): PERSISTENT_WORKERS was aspirational —
-    # FmpyBackend ships no persistent runner, and the repaired capability-
+    # FmpyBackend ships no persistent backend, and the repaired capability-
     # honesty check now rejects the unbacked flag at registration.
-    assert Capability.PERSISTENT_WORKERS not in runner.capabilities
-    assert Capability.BATCH_FALLBACK not in runner.capabilities
-    assert Capability.FMU_EXPORT not in runner.capabilities
-    assert runner.produced_datasets == frozenset({DatasetType.TIME_SERIES})
+    assert Capability.PERSISTENT_WORKERS not in backend.capabilities
+    assert Capability.BATCH_FALLBACK not in backend.capabilities
+    assert Capability.FMU_EXPORT not in backend.capabilities
+    assert backend.produced_datasets == frozenset({DatasetType.TIME_SERIES})

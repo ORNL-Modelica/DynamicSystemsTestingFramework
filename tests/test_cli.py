@@ -318,7 +318,7 @@ def _mk_result(
     )
 
 
-class _FakeRunner:
+class _FakeBackend:
     """Stands in for a Backend in cmd_run — no simulator involved."""
 
     artifact_files: tuple = ()
@@ -361,14 +361,14 @@ def run_env(tmp_config_dir, tmp_path, monkeypatch):
     monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
 
     def make(tests, results, prior_results=None, manifest_map=None):
-        runner = _FakeRunner(work_dir, results, prior_results, manifest_map)
+        backend = _FakeBackend(work_dir, results, prior_results, manifest_map)
         monkeypatch.setattr(
             "dstf.cli.run_cmds.discover_tests", lambda config: list(tests)
         )
         monkeypatch.setattr(
-            "dstf.cli.run_cmds._get_backend", lambda config, persistent=False: runner
+            "dstf.cli.run_cmds._get_backend", lambda config, persistent=False: backend
         )
-        return runner
+        return backend
 
     return SimpleNamespace(config_dir=tmp_config_dir, work_dir=work_dir, make=make)
 

@@ -551,7 +551,7 @@ class TestFinding13SpecOverridesAnnotation:
 
     def test_discovered_tests_never_expose_none_sim_fields(self, tmp_path):
         """finalize_defaults runs at the end of discover_tests — downstream
-        consumers (runners format these into scripts) must see concrete values."""
+        consumers (backends format these into scripts) must see concrete values."""
         config = _write_lib(
             tmp_path,
             annotation=None,

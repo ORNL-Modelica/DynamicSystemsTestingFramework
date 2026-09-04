@@ -373,12 +373,12 @@ class TestBackendRegistry:
         """@register adds a class to the registry."""
 
         @register("TestBackend")
-        class _TestRunner(Backend):
+        class _TestBackend(Backend):
             def read_result(self, test, test_key, run_result):
                 pass
 
         assert "TestBackend" in _REGISTRY
-        assert _REGISTRY["TestBackend"] is _TestRunner
+        assert _REGISTRY["TestBackend"] is _TestBackend
         # Clean up
         del _REGISTRY["TestBackend"]
 
@@ -551,7 +551,7 @@ class TestTimeoutExpiredBytesHandling:
     """Finding 23: TimeoutExpired.stdout/.stderr are bytes even with
     text=True; the timeout handlers must not TypeError on them."""
 
-    def test_julia_runner_timeout_with_bytes_output(self, tmp_path, monkeypatch):
+    def test_julia_backend_timeout_with_bytes_output(self, tmp_path, monkeypatch):
         from dstf.backends.julia import backend as jr
 
         fake_julia = tmp_path / "julia"
@@ -564,7 +564,7 @@ class TestTimeoutExpiredBytesHandling:
             work_dir=tmp_path / "work",
             timeout=1,
         )
-        runner = jr.JuliaBackend(cfg)
+        backend = jr.JuliaBackend(cfg)
 
         def fake_run(*a, **kw):
             raise subprocess.TimeoutExpired(
@@ -573,13 +573,13 @@ class TestTimeoutExpiredBytesHandling:
 
         monkeypatch.setattr(jr.subprocess, "run", fake_run)
         test = _tm("T", source_file=user, variable_patterns=["x"])
-        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False
         assert rr.timed_out is True
         stdout_txt = (tmp_path / "work" / "test_0001" / "julia_stdout.txt").read_text()
         assert "partial out" in stdout_txt
 
-    def test_python_runner_timeout_with_bytes_output(self, tmp_path, monkeypatch):
+    def test_python_backend_timeout_with_bytes_output(self, tmp_path, monkeypatch):
         from dstf.backends.python import backend as pr
 
         user = tmp_path / "T.py"
@@ -590,7 +590,7 @@ class TestTimeoutExpiredBytesHandling:
             work_dir=tmp_path / "work",
             timeout=1,
         )
-        runner = pr.PythonBackend(cfg)
+        backend = pr.PythonBackend(cfg)
 
         def fake_run(*a, **kw):
             raise subprocess.TimeoutExpired(
@@ -599,14 +599,16 @@ class TestTimeoutExpiredBytesHandling:
 
         monkeypatch.setattr(pr.subprocess, "run", fake_run)
         test = _tm("T", source_file=user, variable_patterns=["x"])
-        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False
         assert rr.timed_out is True
         assert (
             "po" in (tmp_path / "work" / "test_0001" / "python_stdout.txt").read_text()
         )
 
-    def test_openmodelica_runner_timeout_with_bytes_output(self, tmp_path, monkeypatch):
+    def test_openmodelica_backend_timeout_with_bytes_output(
+        self, tmp_path, monkeypatch
+    ):
         from dstf.backends.openmodelica.backend import OpenModelicaBackend
         from dstf.config import Config
 
@@ -617,7 +619,7 @@ class TestTimeoutExpiredBytesHandling:
             backend_name="OpenModelica",
             work_dir=tmp_path / "work",
         )
-        runner = OpenModelicaBackend(cfg)
+        backend = OpenModelicaBackend(cfg)
 
         def fake_run(*a, **kw):
             raise subprocess.TimeoutExpired(
@@ -628,7 +630,7 @@ class TestTimeoutExpiredBytesHandling:
             "dstf.backends.openmodelica.backend.subprocess.run", fake_run
         )
         test = _tm("Lib.A", variable_patterns=["x"])
-        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False
         assert rr.timed_out is True
         stdout_txt = (tmp_path / "work" / "test_0001" / "omc_stdout.txt").read_text()
@@ -655,7 +657,7 @@ class TestStderrTailGuard:
             work_dir=tmp_path / "work",
             timeout=1,
         )
-        runner = jr.JuliaBackend(cfg)
+        backend = jr.JuliaBackend(cfg)
         monkeypatch.setattr(
             jr.subprocess,
             "run",
@@ -664,7 +666,7 @@ class TestStderrTailGuard:
             ),
         )
         test = _tm("T", source_file=user, variable_patterns=["x"])
-        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False
         assert "returned 1" in (rr.error_message or "")
 
@@ -679,7 +681,7 @@ class TestStderrTailGuard:
             work_dir=tmp_path / "work",
             timeout=1,
         )
-        runner = pr.PythonBackend(cfg)
+        backend = pr.PythonBackend(cfg)
         monkeypatch.setattr(
             pr.subprocess,
             "run",
@@ -688,7 +690,7 @@ class TestStderrTailGuard:
             ),
         )
         test = _tm("T", source_file=user, variable_patterns=["x"])
-        rr = runner.run_single_test(test, "test_0001", 1, 1)
+        rr = backend.run_single_test(test, "test_0001", 1, 1)
         assert rr.success is False
         assert "returned 1" in (rr.error_message or "")
 
@@ -828,7 +830,7 @@ class TestDymolaBatchTimeout:
             timeout=1,
             parallel=1,
         )
-        runner = dr.DymolaBackend(cfg)
+        backend = dr.DymolaBackend(cfg)
 
         test_a = _tm("Lib.A", stop_time=1.0)
         test_b = _tm("Lib.B", stop_time=1.0)
@@ -861,7 +863,7 @@ class TestDymolaBatchTimeout:
         startup.write_text("// stub")
         shutdown.write_text("// stub")
 
-        results = runner._run_batch(items, startup, shutdown, 0, 2)
+        results = backend._run_batch(items, startup, shutdown, 0, 2)
 
         # Tree-kill happened, and the post-kill communicate was bounded.
         assert killed == [(fake.pid, "dymola")]
@@ -894,7 +896,7 @@ class TestDymolaBatchTimeout:
             timeout=1,
             parallel=1,
         )
-        runner = dr.DymolaBackend(cfg)
+        backend = dr.DymolaBackend(cfg)
         items = [(_tm("Lib.A", stop_time=1.0), "test_0001")]
         (wd / "test_0001").mkdir()
 
@@ -911,7 +913,7 @@ class TestDymolaBatchTimeout:
         startup.write_text("// stub")
         shutdown.write_text("// stub")
 
-        runner._run_batch(items, startup, shutdown, 0, 1)
+        backend._run_batch(items, startup, shutdown, 0, 1)
 
         assert fake.killed is True  # by the tree kill
         assert fake.kill_calls == 0  # poll() reads dead, so no second kill
@@ -923,7 +925,7 @@ class TestDymolaBatchTimeout:
 # The batch lane stamped tool_version null: unlike the persistent lane it has
 # no live session to ask, and launching a Dymola purely to probe would cost a
 # licence seat. The startup .mos script it already runs reports the version to
-# a file, which the runner reads back after a batch returns.
+# a file, which the backend reads back after a batch returns.
 # =========================================================================
 
 
@@ -947,7 +949,7 @@ class TestBatchDymolaToolVersion:
         text = script.read_text(encoding="utf-8")
         assert "DymolaVersion()" in text
         assert TOOL_VERSION_FILENAME in text
-        # It must land in the work dir the runner reads back from.
+        # It must land in the work dir the backend reads back from.
         assert (tmp_path / TOOL_VERSION_FILENAME).as_posix() in text
 
     def test_a_stale_version_file_is_cleared_before_the_run(self, tmp_path):

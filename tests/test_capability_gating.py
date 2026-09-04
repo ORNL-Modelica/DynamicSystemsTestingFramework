@@ -23,7 +23,7 @@ from dstf.backends.types import Capability, DatasetType
 from dstf.cli import run_cmds as cli_mod
 
 
-class _ProbeRunner(Backend):
+class _ProbeBackend(Backend):
     """A backend that ships a persistent variant but does NOT declare it.
 
     Mirrors a real situation: an experimental persistent path that exists in
@@ -40,13 +40,13 @@ class _ProbeRunner(Backend):
     @classmethod
     def persistent_backend_cls(cls):
         cls.persistent_cls_asked = True
-        return _ProbePersistentRunner
+        return _ProbePersistentBackend
 
     def read_result(self, test, test_key, run_result):
         raise NotImplementedError
 
 
-class _ProbePersistentRunner(_ProbeRunner):
+class _ProbePersistentBackend(_ProbeBackend):
     capabilities = frozenset({Capability.PERSISTENT_WORKERS})
 
     preflighted = False
@@ -56,7 +56,7 @@ class _ProbePersistentRunner(_ProbeRunner):
         cls.preflighted = True
 
 
-def _use_probe(monkeypatch, cls=_ProbeRunner):
+def _use_probe(monkeypatch, cls=_ProbeBackend):
     monkeypatch.setattr("dstf.backends.get_backend_class", lambda config: cls)
 
 
@@ -78,29 +78,29 @@ def _all_registered_backends():
 
 class TestPersistentWorkersGate:
     def test_undeclared_backend_never_reaches_its_persistent_variant(self, monkeypatch):
-        _ProbeRunner.persistent_cls_asked = False
-        _ProbePersistentRunner.preflighted = False
+        _ProbeBackend.persistent_cls_asked = False
+        _ProbePersistentBackend.preflighted = False
         _use_probe(monkeypatch)
 
-        runner = cli_mod._get_backend(SimpleNamespace(), persistent=True)
+        backend = cli_mod._get_backend(SimpleNamespace(), persistent=True)
 
-        assert type(runner) is _ProbeRunner
-        assert _ProbeRunner.persistent_cls_asked is False
-        assert _ProbePersistentRunner.preflighted is False
+        assert type(backend) is _ProbeBackend
+        assert _ProbeBackend.persistent_cls_asked is False
+        assert _ProbePersistentBackend.preflighted is False
 
     def test_declared_backend_still_gets_the_persistent_variant(self, monkeypatch):
-        class _Declared(_ProbeRunner):
+        class _Declared(_ProbeBackend):
             capabilities = frozenset(
                 {Capability.BATCH_FALLBACK, Capability.PERSISTENT_WORKERS}
             )
 
-        _ProbePersistentRunner.preflighted = False
+        _ProbePersistentBackend.preflighted = False
         _use_probe(monkeypatch, _Declared)
 
-        runner = cli_mod._get_backend(SimpleNamespace(), persistent=True)
+        backend = cli_mod._get_backend(SimpleNamespace(), persistent=True)
 
-        assert type(runner) is _ProbePersistentRunner
-        assert _ProbePersistentRunner.preflighted is True
+        assert type(backend) is _ProbePersistentBackend
+        assert _ProbePersistentBackend.preflighted is True
 
     def test_every_builtin_pairs_its_flag_with_a_real_hook(self):
         """The gate must not change behaviour for any shipped backend.
@@ -116,13 +116,13 @@ class TestPersistentWorkersGate:
 
 class TestDatasetKindThreading:
     def test_single_declared_kind_is_used(self):
-        class _Spectral(_ProbeRunner):
+        class _Spectral(_ProbeBackend):
             produced_datasets = frozenset({DatasetType.SPECTRUM})
 
         assert cli_mod._dataset_kind_for(_Spectral(None)) is DatasetType.SPECTRUM
 
     def test_multi_kind_backend_falls_back_to_time_series(self):
-        class _Both(_ProbeRunner):
+        class _Both(_ProbeBackend):
             produced_datasets = frozenset({DatasetType.TIME_SERIES, DatasetType.EVENTS})
 
         assert cli_mod._dataset_kind_for(_Both(None)) is DatasetType.TIME_SERIES
@@ -175,16 +175,16 @@ class TestFmuExportGate:
             method="Dassl",
         )
 
-        primary_runner = MagicMock()
-        primary_runner.capabilities = frozenset()  # e.g. batch-mode Dymola
+        primary_backend = MagicMock()
+        primary_backend.capabilities = frozenset()  # e.g. batch-mode Dymola
 
         with caplog.at_level(logging.WARNING):
             ok = produce_dymola_via_fmpy_baseline(
-                test, primary_runner, config, ReferenceStore(config)
+                test, primary_backend, config, ReferenceStore(config)
             )
 
         assert ok is False
-        primary_runner.export_fmu.assert_not_called()
+        primary_backend.export_fmu.assert_not_called()
         assert "Capability.FMU_EXPORT" in caplog.text
 
     def test_batch_dymola_does_not_claim_fmu_export(self):
@@ -210,7 +210,7 @@ class TestFmuExportGate:
 #
 # Finding 28 — the capability-honesty check must compare classmethod
 # ``__func__``, otherwise a declared PERSISTENT_WORKERS backend with no
-# persistent runner sails through registration.
+# persistent backend sails through registration.
 # =========================================================================
 
 
@@ -258,8 +258,8 @@ class TestCapabilityHonesty:
         finally:
             _REGISTRY.pop("HonestPersistentBackend", None)
 
-    def test_fmpy_runner_dropped_aspirational_persistent_flag(self):
-        """FmpyBackend has no persistent runner; the flag was aspirational
+    def test_fmpy_backend_dropped_aspirational_persistent_flag(self):
+        """FmpyBackend has no persistent backend; the flag was aspirational
         and now trips the (repaired) honesty check."""
         from dstf.backends.fmpy.backend import FmpyBackend
 

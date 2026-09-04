@@ -41,7 +41,7 @@ def _tm(model_id: str = "Lib.A", *, source: Path | None = None) -> TestModel:
     )
 
 
-class _FakeRunner(JsonDriverBackend):
+class _FakeBackend(JsonDriverBackend):
     """A JSON-driver backend whose 'tool' is never actually spawned."""
 
     driver_path = Path("/nonexistent/driver.ext")
@@ -74,11 +74,11 @@ def _config(tmp_path: Path, **kwargs) -> Config:
     )
 
 
-def _fake_runner(tmp_path: Path) -> tuple[_FakeRunner, TestModel]:
+def _fake_backend(tmp_path: Path) -> tuple[_FakeBackend, TestModel]:
     cfg = _config(tmp_path)
     user_file = cfg.source_path / "Lib.A.ext"
     user_file.write_text("# user source")
-    return _FakeRunner(cfg), _tm()
+    return _FakeBackend(cfg), _tm()
 
 
 def _patch_run(monkeypatch, fn):
@@ -99,9 +99,9 @@ def _proc(returncode=0, stdout="", stderr=""):
 class TestSourceResolution:
     def test_missing_source_fails_before_spawning(self, tmp_path):
         cfg = _config(tmp_path)  # no Lib.A.ext written
-        runner = _FakeRunner(cfg)
+        backend = _FakeBackend(cfg)
 
-        result = runner.run_single_test(_tm(), "test_0001", 1, 1)
+        result = backend.run_single_test(_tm(), "test_0001", 1, 1)
 
         assert result.success is False
         assert result.error_message.startswith("Fake source not found for Lib.A.")
@@ -111,16 +111,16 @@ class TestSourceResolution:
         cfg = _config(tmp_path)
         explicit = cfg.source_path / "elsewhere.ext"
         explicit.write_text("# user source")
-        runner = _FakeRunner(cfg)
+        backend = _FakeBackend(cfg)
 
-        assert runner._resolve_source(_tm(source=Path("elsewhere.ext"))) == explicit
+        assert backend._resolve_source(_tm(source=Path("elsewhere.ext"))) == explicit
 
 
 class TestTimeoutMapping:
     def test_timeout_is_reported_as_timed_out_with_the_tool_label(
         self, tmp_path, monkeypatch
     ):
-        runner, test = _fake_runner(tmp_path)
+        backend, test = _fake_backend(tmp_path)
 
         def boom(*a, **kw):
             raise subprocess.TimeoutExpired(
@@ -132,7 +132,7 @@ class TestTimeoutMapping:
 
         _patch_run(monkeypatch, boom)
 
-        result = runner.run_single_test(test, "test_0001", 1, 1)
+        result = backend.run_single_test(test, "test_0001", 1, 1)
 
         assert result.success is False
         assert result.timed_out is True
@@ -140,12 +140,12 @@ class TestTimeoutMapping:
         # C-v item 5: every timeout names the per-test escape hatch.
         assert "simulation.timeout" in result.error_message
         # review finding 23: bytes on TimeoutExpired still reach the artifacts.
-        test_dir = runner.config.work_dir / "test_0001"
+        test_dir = backend.config.work_dir / "test_0001"
         assert (test_dir / "fake_stdout.txt").read_text() == "partial out"
         assert (test_dir / "fake_stderr.txt").read_text() == "partial err"
 
     def test_per_test_timeout_overrides_the_config_timeout(self, tmp_path, monkeypatch):
-        runner, test = _fake_runner(tmp_path)
+        backend, test = _fake_backend(tmp_path)
         test.timeout = 99
         seen: dict = {}
 
@@ -155,7 +155,7 @@ class TestTimeoutMapping:
 
         _patch_run(monkeypatch, boom)
 
-        result = runner.run_single_test(test, "test_0001", 1, 1)
+        result = backend.run_single_test(test, "test_0001", 1, 1)
 
         assert seen["timeout"] == 99.0
         assert result.error_message.startswith("Fake execution exceeded 99.0s timeout")
@@ -166,8 +166,8 @@ class TestFailureMessagePrecedence:
     generic 'returned N'."""
 
     def _run(self, tmp_path, monkeypatch, *, stderr, failure_json=None):
-        runner, test = _fake_runner(tmp_path)
-        result_path = runner.config.work_dir / "test_0001" / "result.json"
+        backend, test = _fake_backend(tmp_path)
+        result_path = backend.config.work_dir / "test_0001" / "result.json"
 
         def fake(*a, **kw):
             if failure_json is not None:
@@ -175,7 +175,7 @@ class TestFailureMessagePrecedence:
             return _proc(returncode=3, stderr=stderr)
 
         _patch_run(monkeypatch, fake)
-        return runner.run_single_test(test, "test_0001", 1, 1)
+        return backend.run_single_test(test, "test_0001", 1, 1)
 
     def test_driver_error_wins_over_stderr(self, tmp_path, monkeypatch):
         result = self._run(
@@ -196,10 +196,10 @@ class TestFailureMessagePrecedence:
         assert result.error_message == "Fake execution failed: fake returned 3"
 
     def test_success_records_the_wall_time(self, tmp_path, monkeypatch):
-        runner, test = _fake_runner(tmp_path)
+        backend, test = _fake_backend(tmp_path)
         _patch_run(monkeypatch, lambda *a, **kw: _proc(returncode=0))
 
-        result = runner.run_single_test(test, "test_0001", 1, 1)
+        result = backend.run_single_test(test, "test_0001", 1, 1)
 
         assert result.success is True
         assert result.statistics["simulation"]["wall_time"] == result.elapsed
@@ -210,7 +210,7 @@ class TestFailureMessagePrecedence:
 # ---------------------------------------------------------------------------
 
 
-def _julia_runner(tmp_path: Path):
+def _julia_backend(tmp_path: Path):
     """A real JuliaBackend whose 'julia binary' is this interpreter — nothing
     is spawned, but JuliaConfig.from_config resolves without julia on PATH."""
     from dstf.backends.julia.backend import JuliaBackend
@@ -230,8 +230,8 @@ def _julia_runner(tmp_path: Path):
     return JuliaBackend(cfg)
 
 
-def _write_payload(runner, payload: dict) -> None:
-    test_dir = runner.config.work_dir / "test_0001"
+def _write_payload(backend, payload: dict) -> None:
+    test_dir = backend.config.work_dir / "test_0001"
     test_dir.mkdir(parents=True, exist_ok=True)
     (test_dir / "result.json").write_text(json.dumps(payload))
 
@@ -242,9 +242,9 @@ class TestJuliaPayloadHardening:
     THIS test instead of raising through the whole read phase."""
 
     def test_non_numeric_variable_fails_the_test_without_raising(self, tmp_path):
-        runner = _julia_runner(tmp_path)
+        backend = _julia_backend(tmp_path)
         _write_payload(
-            runner,
+            backend,
             {
                 "success": True,
                 "time": [0.0, 1.0],
@@ -252,50 +252,50 @@ class TestJuliaPayloadHardening:
             },
         )
 
-        result = runner.read_result(_tm(), "test_0001", None)
+        result = backend.read_result(_tm(), "test_0001", None)
 
         assert result.success is False
         assert "Variable 'x' has non-numeric values" in result.error_message
 
     def test_non_numeric_time_fails_the_test(self, tmp_path):
-        runner = _julia_runner(tmp_path)
+        backend = _julia_backend(tmp_path)
         _write_payload(
-            runner,
+            backend,
             {"success": True, "time": ["t0"], "variables": {"x": [1.0]}},
         )
 
-        result = runner.read_result(_tm(), "test_0001", None)
+        result = backend.read_result(_tm(), "test_0001", None)
 
         assert result.success is False
         assert "Non-numeric 'time' array" in result.error_message
 
     def test_numeric_payload_still_reads(self, tmp_path):
-        runner = _julia_runner(tmp_path)
+        backend = _julia_backend(tmp_path)
         _write_payload(
-            runner,
+            backend,
             {"success": True, "time": [0.0, 1.0], "variables": {"x": [0.0, 2.0]}},
         )
 
-        result = runner.read_result(_tm(), "test_0001", None)
+        result = backend.read_result(_tm(), "test_0001", None)
 
         assert result.success is True
         assert [v.name for v in result.variables] == ["x"]
         assert result.variables[0].values[-1] == pytest.approx(2.0)
 
     def test_missing_result_names_the_backend(self, tmp_path):
-        runner = _julia_runner(tmp_path)
+        backend = _julia_backend(tmp_path)
 
-        result = runner.read_result(_tm(), "test_0001", None)
+        result = backend.read_result(_tm(), "test_0001", None)
 
         assert result.success is False
         assert "No Julia result at" in result.error_message
         assert "(did simulation run?)" in result.error_message
 
     def test_driver_failure_payload_is_surfaced(self, tmp_path):
-        runner = _julia_runner(tmp_path)
-        _write_payload(runner, {"success": False, "error": "MTK blew up"})
+        backend = _julia_backend(tmp_path)
+        _write_payload(backend, {"success": False, "error": "MTK blew up"})
 
-        result = runner.read_result(_tm(), "test_0001", None)
+        result = backend.read_result(_tm(), "test_0001", None)
 
         assert result.success is False
         assert result.error_message == "MTK blew up"
@@ -322,22 +322,22 @@ def _patch_julia_version(monkeypatch, *, banner="julia version 1.11.2\n", boom=F
 
 class TestJuliaToolVersion:
     def test_describe_reports_the_binary_banner(self, tmp_path, monkeypatch):
-        runner = _julia_runner(tmp_path)
+        backend = _julia_backend(tmp_path)
         _patch_julia_version(monkeypatch)
 
-        assert runner.describe_tool_version() == "julia version 1.11.2"
+        assert backend.describe_tool_version() == "julia version 1.11.2"
 
     def test_describe_degrades_to_none(self, tmp_path, monkeypatch):
-        runner = _julia_runner(tmp_path)
+        backend = _julia_backend(tmp_path)
         _patch_julia_version(monkeypatch, boom=True)
 
-        assert runner.describe_tool_version() is None
+        assert backend.describe_tool_version() is None
 
     def test_batch_run_stamps_a_non_null_tool_version(self, tmp_path, monkeypatch):
         """The batch lane used to stamp null — the probe only existed on the
         persistent class."""
-        runner = _julia_runner(tmp_path)
-        (runner.config.source_path / "Lib.A.jl").write_text("# user source")
+        backend = _julia_backend(tmp_path)
+        (backend.config.source_path / "Lib.A.jl").write_text("# user source")
 
         # The version probe and the driver invocation go through the same
         # subprocess.run, so one stub serves both, dispatching on argv.
@@ -351,9 +351,9 @@ class TestJuliaToolVersion:
 
         _patch_run(monkeypatch, fake)
 
-        runner.run_tests([_tm()])
+        backend.run_tests([_tm()])
 
-        status = json.loads((runner.config.work_dir / "status.json").read_text())
+        status = json.loads((backend.config.work_dir / "status.json").read_text())
         assert status["metadata"]["tool_version"] == "julia version 1.11.2"
 
     def test_persistent_lane_still_stamps_without_a_worker_probe(
@@ -364,12 +364,12 @@ class TestJuliaToolVersion:
         — so PersistentJuliaBackend needs no ``_probe_worker_version``."""
         from dstf.backends.julia.persistent_backend import PersistentJuliaBackend
 
-        runner = _julia_runner(tmp_path)
-        persistent = PersistentJuliaBackend(runner.config)
+        backend = _julia_backend(tmp_path)
+        persistent = PersistentJuliaBackend(backend.config)
         _patch_julia_version(monkeypatch)
 
         setup = persistent._prepare_run([_tm()])
 
         assert setup.run_metadata["tool_version"] == "julia version 1.11.2"
-        status = json.loads((runner.config.work_dir / "status.json").read_text())
+        status = json.loads((backend.config.work_dir / "status.json").read_text())
         assert status["metadata"]["tool_version"] == "julia version 1.11.2"

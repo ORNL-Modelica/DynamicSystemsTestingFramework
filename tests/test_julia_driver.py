@@ -4,7 +4,7 @@ The ``.jl`` drivers cannot be executed here (no julia binary on this
 machine), so these tests read the shipped scripts and pin the decisions
 textually; the worker test drives ``Popen`` through a fake. Nothing here
 needs julia, which is why it lives outside the julia-gated
-``tests/test_julia_runner.py``.
+``tests/test_julia_backend.py``.
 """
 
 from __future__ import annotations
