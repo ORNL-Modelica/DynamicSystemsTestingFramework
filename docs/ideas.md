@@ -1111,3 +1111,35 @@ planning.
   and only fall back to the literal string when it does not. Needs grilling
   first — "relative to what" is the actual question, and provenance that
   cannot be resolved later is worse than none.
+
+- **Raise the timeout on `SteamWater_HCSG`, or the default** (2026-09-04, from
+  the pre/post-rename verification runs against the external TRANSFORM
+  library): that test is the only one of 331 that does not pass, and it fails
+  as `SimulationError: Timed out after 60s` — a slow model against the default
+  budget, not a wrong answer. It reproduced identically before and after the
+  Backend rename, so it is unrelated to that work, but a timeout-flaky test in
+  the flagship external library is a poor first impression for a public 1.0.
+  Fix is one field: `simulation.timeout` for that entry in its test_spec.json,
+  or a higher global `--timeout`. Worth deciding which, since the same
+  question applies to any long-running model a new user brings.
+
+- **CI's `ruff format --check` is red on a fresh checkout** (2026-09-04, found
+  while verifying a "ruff clean" claim): `quality.yml` runs the format check
+  over the whole repo, `pyproject.toml` pins only `ruff>=0.6`, and current
+  ruff formats Markdown code blocks — so eleven files fail, nine of them
+  historical plan documents nobody intends to reformat. Pre-existing and
+  unrelated to any recent change; it means a green local run does not predict
+  CI. Two candidate fixes, and they differ in spirit: pin ruff to a known
+  version (reproducible, but freezes the formatter), or scope the format check
+  to `src` and `tests` as the lint check effectively already is (accepts that
+  historical prose is not formatted code). Grill before choosing.
+
+- **Finish the role vocabulary inside `tests/`** (2026-09-04, scope decision
+  deferred during the Backend rename): the rename covered `src/`, the docs and
+  the test *files* it renamed, but roughly 277 `runner` occurrences remain
+  across test bodies — local variables, and helper class names like
+  `_ProbeRunner` / `_ProbePersistentRunner`. That matters more than tidiness
+  in one place: `docs/extensibility.md` points a third-party backend author at
+  `tests/test_capability_gating.py` as the reference for how capability
+  declarations are covered, so the file they are told to copy from still
+  teaches the dead word. A clean standalone commit; no behaviour to change.
