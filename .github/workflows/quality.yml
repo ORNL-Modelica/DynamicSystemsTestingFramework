@@ -27,8 +27,13 @@ jobs:
       # creates .venv from uv.lock, and installs the project + dev extra.
       # Tools are then run via `uv run` so they resolve against that venv —
       # no PATH / interpreter ambiguity.
+      # `--locked` makes the lockfile an assertion rather than a convention:
+      # plain `uv sync` SILENTLY RE-LOCKS when uv.lock has drifted from
+      # pyproject.toml (exit 0, no warning), so a raised dependency floor that
+      # nobody re-locked would have CI resolve against a lock no one reviewed
+      # or committed. With the flag, that drift fails the job instead.
       - name: Sync dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --locked
 
       - name: Ruff lint
         run: uv run ruff check

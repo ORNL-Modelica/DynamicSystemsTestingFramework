@@ -12,10 +12,11 @@ from __future__ import annotations
 from typing import Any
 
 _INSTALL_HINT = (
-    "OMPython is not installed. The persistent-worker OpenModelica backend "
-    "needs it to drive omc over ZMQ. Install the optional extra:\n"
+    "OMPython is not installed. The persistent-worker OpenModelica\n"
+    "backend needs it to drive omc over ZMQ. Install the optional extra:\n"
     "\n"
-    '    uv pip install -e ".[om]"'
+    "    source checkout:  uv sync --extra om --locked --inexact\n"
+    "    installed tool:   reinstall with the [om] extra"
 )
 
 

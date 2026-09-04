@@ -12,6 +12,11 @@ Install via:
     uv pip install pytest-playwright
     uv run playwright install chromium
 
+pytest-playwright is not in ``uv.lock``, so a later ``uv sync`` deletes it and
+these tests silently return to skipping. Pass ``--inexact`` to keep it:
+
+    uv sync --extra dev --locked --inexact
+
 Tests render a canonical BouncingBall-shaped fixture (one primary tree
 with four leaves across two variables) into a temp directory — copying
 the standalone ``interactive.js`` alongside the HTML so the

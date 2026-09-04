@@ -1123,25 +1123,43 @@ planning.
   or a higher global `--timeout`. Worth deciding which, since the same
   question applies to any long-running model a new user brings.
 
-- **Three sources decide which ruff runs, and only one of them is the lock**
-  (2026-09-04): CI runs `uv sync --extra dev`, which installs exactly what
-  `uv.lock` pins; `CLAUDE.md` and `docs/usage.md` both tell a developer to set
-  up with `uv pip install -e ".[dev]"`, which ignores the lock and resolves
-  fresh against the floor in `pyproject.toml`; and `.pre-commit-config.yaml`
-  pins its own `rev:`. That drift already produced one false alarm — a session
-  measured `ruff format --check` as failing on eleven files when CI's pinned
-  ruff never looked at them, and logged "CI is red" as an entry here. All three
-  now agree on 0.16.6, but nothing keeps them agreeing.
-  Two independent hardenings, both one line, neither taken yet. (1) Recommend
-  `uv sync --extra dev` in the two docs. It is NOT a trade against the editable
-  install — `uv sync` installs the project editable by default; the real
-  difference is that it prunes anything absent from the lock, so a dev who
-  hand-installs `fmpy` or `OMPython` needs `--extra fmpy --extra om` rather
-  than a bare sync. (2) Pass `--locked` in `quality.yml`. Plain `uv sync`
-  silently RE-LOCKS when the lock has drifted from `pyproject.toml`, so a floor
-  raised without re-locking would have CI upgrade the tool on its own; the flag
-  turns "CI gets exactly the lock" from a convention into an assertion that
-  fails loudly. The second is the sharper of the two.
+- **~~Three sources decide which ruff runs, and only one of them is the lock~~**
+  (2026-09-04) — **DONE**. `uv.lock` and `.pre-commit-config.yaml` both pin
+  0.16.6; `pyproject.toml` carries a floor of `>=0.16`, which still permits
+  0.16.0-0.16.5, so the two pins agree and the floor merely rules out the
+  pre-0.16 behaviour the false alarm turned on. Markdown is excluded from
+  formatting. `quality.yml` passes `--locked` so CI asserts the lock rather than
+  silently re-locking on drift; the documented developer setup is `uv sync
+  --extra dev --locked` in every doc; and the runtime hints for a missing extra
+  (an ImportError for FMPy, a RuntimeError for OMPython, a printed line in
+  `check-openmodelica`) give the additive `--extra <x> --locked --inexact` form
+  rather than one that prunes.
+  Worth keeping from the investigation, because two reviews had to correct it:
+  `uv sync` prunes anything you did not name **on that command line** — being
+  present in the lock does not save it — so extras must all be named at once,
+  and packages outside the lock entirely (`pytest-playwright`, `pre-commit`)
+  need `--inexact` or a standalone `uv tool install`. What remains unpinned is
+  the interpreter: the same lock resolves numpy 2.2/scipy 1.15 on 3.10 and
+  numpy 2.4/scipy 1.17 on 3.12, and neither the repo (no `.python-version`) nor
+  `quality.yml` pins one, so "the same lock as CI" is true while "the same
+  versions as CI" is not. A `.python-version` would close that; it also freezes
+  the dev interpreter, which is why it was not taken silently.
+
+- **The PyPI name `dstf` belongs to someone else — a v1.0 publishing blocker**
+  (2026-09-04, found while reviewing the install instructions): `README.md`
+  tells end users `uv tool install dstf` / `pipx install dstf`, and that
+  currently installs "A framework for Deterministic Scheduling Theory" by
+  Anthony Dugois (v0.0.12, last released 2020-08-06, unrelated). Verified
+  against the PyPI JSON API, and reproduced in a sandboxed tool dir: uv fetches
+  `dstf==0.0.12` and then fails with `No executables are provided by package
+  dstf`. So the front-door instruction in a public README does not work, and no
+  amount of local polish changes that. Three ways out, and they are the owner's
+  call: publish under a different DISTRIBUTION name while keeping `import dstf`
+  and the `dstf` console script (`dynamic-systems-testing-framework`, say —
+  nothing in the code changes, only `[project] name`); pick a different short
+  name; or ask the current owner about the name. Until it is settled, runtime
+  hints for a missing extra deliberately say "reinstall with the [fmpy] extra"
+  rather than printing a command that resolves to the wrong package.
 
 - **Finish the role vocabulary inside `tests/`** (2026-09-04, scope decision
   deferred during the Backend rename): the rename covered `src/`, the docs and

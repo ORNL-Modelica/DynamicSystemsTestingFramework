@@ -52,10 +52,16 @@ uv tool install dstf       # then run plain: dstf ...
 Developers:
 
 ```bash
-uv pip install -e ".[dev]"             # core + pytest
-uv pip install -e ".[dev,fmpy,om]"     # plus FMPy + OpenModelica extras
+uv sync --extra dev --locked                             # core + pytest, from uv.lock
+uv sync --extra dev --extra fmpy --extra om --locked     # plus FMPy + OpenModelica extras
 uv run dstf --help
 ```
+
+`uv sync` installs the project editable and pins every dependency to `uv.lock`,
+the same lock CI uses; `--locked` fails instead of silently re-locking when the
+lock has drifted from `pyproject.toml`. It prunes anything you did not ask for
+on that command line — being in the lock does not save it — so name every extra
+at once.
 
 For the Julia backend, install Julia 1.11+ and instantiate the demo project once:
 
@@ -64,7 +70,13 @@ curl -fsSL https://install.julialang.org | sh -s -- -y --default-channel 1.11
 cd examples/julia/JuliaMtkTestingLib && julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
-For the Python `SimpleRamp` example: `uv pip install scipy`.
+The Python examples (`SimpleRamp`, `PointsCheck`) need scipy, which the `dev`
+extra installs. Reach them through `uv run dstf ...`: the Python backend takes
+the interpreter from `testing.json`'s `backends: {"Python": [...]}` entry and
+falls back to `PATH` — and the shipped example names `python`, so either route
+ends at the first `python` on `PATH`, which `uv run` points at `.venv`. Run the
+same examples from a tool-installed `dstf` and that is whatever comes first on
+your PATH — a conda env, often — which needs its own scipy.
 
 ## First 5 minutes
 

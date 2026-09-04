@@ -102,8 +102,9 @@ class FmpyBackend(Backend):
             import fmpy  # noqa: F401
         except ImportError as exc:
             raise ImportError(
-                "The FMPy backend requires the optional 'fmpy' extra: "
-                'uv pip install -e ".[fmpy]"'
+                "The FMPy backend requires the optional 'fmpy' extra.\n"
+                "  source checkout:  uv sync --extra fmpy --locked --inexact\n"
+                "  installed tool:   reinstall with the [fmpy] extra"
             ) from exc
 
     def describe_tool_version(self) -> str | None:

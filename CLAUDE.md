@@ -106,10 +106,31 @@ uv run dstf check-dymola
 ## Running Tests
 
 ```bash
-uv pip install -e ".[dev]"        # One-time: install package + pytest
+uv sync --extra dev --locked       # One-time: build .venv from uv.lock (what CI runs)
 uv run pytest                      # Run the suite
 uv run pytest -m "not playwright"  # Skip browser-driven interactive-HTML tests
 ```
+
+`uv sync` installs the project editable, exactly like `uv pip install -e`, but
+pins every dependency to the same `uv.lock` CI uses. (Not the same *versions* —
+the lock resolves different numpy/scipy on 3.10 than on 3.12, and neither the
+repo nor CI pins an interpreter.) `--locked` makes it fail rather than silently
+re-lock when `uv.lock` has drifted from `pyproject.toml`; if you change a
+dependency, run `uv lock` and commit `uv.lock`. Skip that and CI fails while you
+stay green: `uv run` re-locks silently where `uv sync --locked` refuses. In a
+`uv run`-only session the sole local sign is a modified `uv.lock` in
+`git status`.
+
+`uv sync` prunes anything you did not ask for **on that command line**, lock
+member or not, so name every extra at once (`uv sync --extra dev --extra fmpy
+--extra om --locked`). A package inside `.venv` but outside the lock — `pytest-playwright`
+for the browser tests — needs `--inexact` or the next sync removes it.
+(`pre-commit` sidesteps this: install it with `uv tool install`, outside
+`.venv`, as `.pre-commit-config.yaml` documents.)
+
+A green local `pytest` does not predict CI, which also runs `ruff check`, `ruff
+format --check`, `mypy`, and pytest under a 66% coverage floor with the
+hardware-dependent markers deselected.
 
 ## Configuration
 

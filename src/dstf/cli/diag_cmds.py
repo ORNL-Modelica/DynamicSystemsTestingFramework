@@ -276,7 +276,8 @@ def cmd_check_openmodelica(args: argparse.Namespace) -> int:
         return 0
     print("\nFAIL — fix one of:")
     if not info["import_ok"]:
-        print('  - Install OMPython:   uv pip install -e ".[om]"')
+        print("  - Install OMPython:   uv sync --extra om --locked --inexact")
+        print("                          (or reinstall dstf with the [om] extra)")
     if not omc_path:
         print("  - Install OpenModelica and ensure `omc` is on PATH")
     print(

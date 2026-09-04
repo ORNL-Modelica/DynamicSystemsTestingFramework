@@ -467,12 +467,54 @@ Each ref file also contains simulation params, statistics, diagnostic trajectori
 ### Setup
 
 ```bash
-# Install the package in editable mode (links to source, changes take effect immediately)
-uv pip install -e .
+# Build .venv from the lock. The project installs editable (source changes take
+# effect immediately) and every dependency is pinned to the same lock CI uses.
+# --locked fails loudly if uv.lock has drifted from pyproject.toml, instead of
+# silently re-locking and giving you an environment nobody reviewed.
+uv sync --extra dev --locked
 
-# Install with dev dependencies (includes pytest)
-uv pip install -e ".[dev]"
+# Plus the optional backends. uv sync prunes whatever you did NOT name on this
+# command line — being present in the lock does not save it — so ask for every
+# extra at once rather than adding one later.
+uv sync --extra dev --extra fmpy --extra om --locked
 ```
+
+Bare `uv sync` is not the setup command: it installs the runtime dependencies
+only, and removes pytest, ruff, mypy, pytest-cov and scipy if they were there.
+
+Change a dependency in `pyproject.toml` and the lock goes stale: run `uv lock`
+and commit `uv.lock` alongside it. Skipping that fails CI and not your machine —
+`uv run` re-locks silently, so your tests stay green while `--locked` refuses in
+CI.
+
+Two dev tools are outside the lock. Install them like this — note the second
+lands outside `.venv`, which is what keeps a sync from touching it:
+
+```bash
+# Browser-driven interactive tests
+uv pip install pytest-playwright && uv run playwright install chromium
+# Commit hooks (D88), installed as a standalone tool rather than into .venv
+uv tool install pre-commit && pre-commit install
+
+# ...after which every sync needs --inexact to leave pytest-playwright alone
+uv sync --extra dev --locked --inexact
+```
+
+Without `--inexact` the Playwright package is removed and those tests go back to
+skipping. The board stays green; what moves is the arithmetic — the module-level
+`importorskip` collapses the whole file into a single skip (verified: running
+that file with Playwright absent reports `1 skipped`), so the collected count
+drops by every test in it.
+
+Reach for `uv pip install -e ".[dev]"` instead only when you are deliberately
+outside this workflow: installing DSTF into an environment you manage yourself
+(conda, system Python, another project's venv), or testing against
+newer-than-locked dependencies without touching `uv.lock`.
+
+In that second case, do not then reach for `uv run`. It does not prune, but it
+*does* reconcile locked packages back to their locked versions — so the newer
+package you installed by hand is swapped out from under the very test you meant
+to run. Use `uv run --no-sync pytest`, or call `.venv/bin/pytest` directly.
 
 ### Running the test suite
 
