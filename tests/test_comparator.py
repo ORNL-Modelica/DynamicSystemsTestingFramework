@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from dstf.backends.types import TestResult
 from dstf.comparison.comparator import (
     _check_structural_changes,
     _compare_points,
@@ -11,7 +12,6 @@ from dstf.comparison.comparator import (
     _find_event_boundaries,
     _split_segments,
 )
-from dstf.simulators.types import TestResult
 
 # ---------------------------------------------------------------------------
 # Event boundary detection
@@ -405,13 +405,13 @@ class TestStructuralChanges:
 
 from pathlib import Path
 
+from dstf.backends.types import VariableResult
 from dstf.comparison.comparator import (
     _compare_tube,
     _interpolate_tube_widths,
     compare_test,
 )
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.types import VariableResult
 
 
 def _make_test(comparison_tolerance=None, variable_overrides=None):

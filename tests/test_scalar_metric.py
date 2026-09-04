@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.algorithms import SCALAR_REDUCTIONS
 from dstf.comparison.modes import ScalarConfig, ScalarMode, resolve_mode
 from dstf.comparison.tree_eval import (
@@ -23,7 +24,6 @@ from dstf.comparison.tree_eval import (
 )
 from dstf.comparison.tree_spec import parse_metric_tree
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.types import TestResult, VariableResult
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,4 +1,4 @@
-"""The `run` and `compare` commands, plus the runner selection and report
+"""The `run` and `compare` commands, plus the backend selection and report
 routing they share."""
 
 import argparse
@@ -50,19 +50,19 @@ def _wipe_stale_state_for_scope(
        when a baseline exists for the model, else ``test_NNNN``.
 
     2. Per-test sim work dir at ``<work_dir>/<test_key>/``. Holds the
-       runner's outputs (.mat, log, dsfinal, etc.). ``wipe_sim_dirs=True``
+       backend's outputs (.mat, log, dsfinal, etc.). ``wipe_sim_dirs=True``
        only for ``cmd_run`` — ``cmd_compare`` reads these dirs to
        re-evaluate prior sims and must not erase them.
 
     test_key for an in-scope test is read from the persistent
     ``batch_manifest.json``. Tests not yet in the manifest (first-time
-    runs) have nothing to wipe — the runner will create a fresh dir.
+    runs) have nothing to wipe — the backend will create a fresh dir.
     """
     import shutil
 
     manifest_path = config.work_dir / "batch_manifest.json"
     if manifest_path.exists():
-        from ..simulators import BatchManifest
+        from ..backends import BatchManifest
 
         manifest = BatchManifest.load(manifest_path).manifest
         model_to_key = {entry["model_id"]: tk for tk, entry in manifest.items()}
@@ -83,8 +83,8 @@ def _wipe_stale_state_for_scope(
                 shutil.rmtree(rep_dir)
 
 
-def _get_runner(config, persistent: bool = False):
-    """Get the appropriate simulator runner for the configured simulator.
+def _get_backend(config, persistent: bool = False):
+    """Get the appropriate backend for the configured simulator.
 
     When *persistent* is True and the backend **declares**
     :attr:`Capability.PERSISTENT_WORKERS`, pre-flight the variant's
@@ -94,21 +94,21 @@ def _get_runner(config, persistent: bool = False):
     silent fallback.
 
     The declaration is what gates, not the presence of the hook: a backend
-    that ships an experimental ``persistent_runner_cls`` it isn't ready to
+    that ships an experimental ``persistent_backend_cls`` it isn't ready to
     have driven says so by leaving the flag off, and lands on the batch
     path. Registration-time validation
-    (:func:`simulators._validate_capabilities`) guarantees the converse —
+    (:func:`backends._validate_capabilities`) guarantees the converse —
     flag implies a real override — so a declaring backend always has a
     class to return.
 
     Backend-agnostic: no string matching on backend names. New persistent
     backends plug in by declaring the capability and overriding
-    ``persistent_runner_cls`` + ``preflight`` on their runner classes.
+    ``persistent_backend_cls`` + ``preflight`` on their backend classes.
     """
-    from ..simulators import get_runner_class
-    from ..simulators.types import Capability
+    from ..backends import get_backend_class
+    from ..backends.types import Capability
 
-    batch_cls = get_runner_class(config)
+    batch_cls = get_backend_class(config)
     if not persistent:
         return batch_cls(config)
     if Capability.PERSISTENT_WORKERS not in batch_cls.capabilities:
@@ -116,7 +116,7 @@ def _get_runner(config, persistent: bool = False):
         # no-op rather than an error so a single CLI works across mixed
         # backends in a multi-library config.
         return batch_cls(config)
-    pcls = batch_cls.persistent_runner_cls()
+    pcls = batch_cls.persistent_backend_cls()
     if pcls is None:
         # Unreachable for a validated backend (the flag implies the
         # override); kept as the type narrowing for the calls below.
@@ -124,21 +124,21 @@ def _get_runner(config, persistent: bool = False):
     try:
         pcls.preflight(config)
     except RuntimeError as exc:
-        backend = config.simulator_backend
+        backend = config.backend
         print(
             f"Persistent-worker {backend} unavailable. Aborting.\n"
             f"\n"
             f"{exc}\n"
             f"\n"
-            f"Or re-run with `--batch` to use the per-test subprocess runner instead.",
+            f"Or re-run with `--batch` to use the per-test subprocess backend instead.",
             file=sys.stderr,
         )
         sys.exit(1)
     return pcls(config)
 
 
-def _dataset_kind_for(runner):
-    """The single :class:`DatasetType` *runner* declares, else the default.
+def _dataset_kind_for(backend):
+    """The single :class:`DatasetType` *backend* declares, else the default.
 
     ``produced_datasets`` is the backend's declaration of what shape its
     results carry; the MetricTree evaluator refuses a leaf whose metric
@@ -151,9 +151,9 @@ def _dataset_kind_for(runner):
     first backend to declare something else is scored against the right
     metric set without a second wiring pass.
     """
-    from ..simulators.types import DatasetType
+    from ..backends.types import DatasetType
 
-    kinds = type(runner).produced_datasets
+    kinds = type(backend).produced_datasets
     if len(kinds) == 1:
         return next(iter(kinds))
     return DatasetType.TIME_SERIES
@@ -171,7 +171,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     store = ReferenceStore(config)
     _write_id_mapping(store, config)
 
-    runner = _get_runner(config, persistent=not getattr(args, "batch", False))
+    backend = _get_backend(config, persistent=not getattr(args, "batch", False))
 
     # --rerun selects tests by status from prior comparisons (no new sim yet).
     # Default category: failed. Implies --merge so the report covers the full suite.
@@ -180,7 +180,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         rerun_filter = args.rerun or "failed"
         rerun_categories = _parse_review_filter(rerun_filter)
-        prior_results = runner.read_last_results(all_tests)
+        prior_results = backend.read_last_results(all_tests)
         if not prior_results:
             print(
                 "--rerun requires prior results in the work directory. Run a full pass first."
@@ -192,7 +192,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             store,
             config.tolerance,
             config.default_points,
-            dataset_kind=_dataset_kind_for(runner),
+            dataset_kind=_dataset_kind_for(backend),
         )
         rerun_models = {
             c.model_id for c in prior_comps if _should_review(c, rerun_categories)
@@ -232,7 +232,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     for test in tests:
         ref_id = store.index.get_id(test.model_id)
         if ref_id:
-            runner.ref_id_map[test.model_id] = f"ref_{ref_id}"
+            backend.ref_id_map[test.model_id] = f"ref_{ref_id}"
 
     # Clean each in-scope test's prior footprint before running. Without
     # this, a prior run's stale `comparison_data.json` sidecar could bleed
@@ -243,7 +243,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     _wipe_stale_state_for_scope(
         config,
         tests,
-        runner.ref_id_map,
+        backend.ref_id_map,
         wipe_sim_dirs=True,
     )
 
@@ -258,11 +258,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     open_in_browser(config.work_dir / "dashboard.html")
 
     try:
-        manifests = runner.run_tests(tests)
+        manifests = backend.run_tests(tests)
     except RuntimeError as exc:
         # Runners raise on unrecoverable startup conditions (e.g. all persistent
         # workers failed to spawn). Convert to a clean exit instead of dumping a
-        # traceback — the runner has typically already printed the cause.
+        # traceback — the backend has typically already printed the cause.
         print(f"\nRun aborted: {exc}", file=sys.stderr)
         return 1
 
@@ -274,7 +274,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     # requested_baselines to include a known chain target (today only
     # "dymola-via-fmpy") get a second baseline produced by chaining backends.
     # MetricTree leaves can then score against it via "against": "<chain-name>".
-    _run_cross_backend_chains(tests, runner, config, store)
+    _run_cross_backend_chains(tests, backend, config, store)
 
     # --merge expands the read/compare/report scope to every test that has
     # results on disk (per the persistent batch manifest), not just what was
@@ -288,7 +288,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         scope_tests = tests
 
-    results = runner.read_results(manifests, scope_tests)
+    results = backend.read_results(manifests, scope_tests)
 
     if args.accept:
         # review 2026-07-06 finding 30 (part 2): accept ONLY the tests
@@ -316,7 +316,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             store,
             config.tolerance,
             config.default_points,
-            dataset_kind=_dataset_kind_for(runner),
+            dataset_kind=_dataset_kind_for(backend),
         )
         return _interactive_review(
             scope_tests,
@@ -335,7 +335,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             store,
             config.tolerance,
             config.default_points,
-            dataset_kind=_dataset_kind_for(runner),
+            dataset_kind=_dataset_kind_for(backend),
         )
 
         # Always refresh the unified dashboard before any --report work.
@@ -354,7 +354,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return _output_report(comparisons, args, config)
 
 
-def _run_cross_backend_chains(tests, runner, config, store) -> None:
+def _run_cross_backend_chains(tests, backend, config, store) -> None:
     """For each test with ``requested_baselines`` listing a known chain target,
     invoke the chain and store the resulting named baseline (4.B.4).
 
@@ -363,7 +363,7 @@ def _run_cross_backend_chains(tests, runner, config, store) -> None:
     Requires Windows + Dymola (with FMI export) for the export step — the chain
     silently no-ops on platforms that don't support it (logs a warning).
     """
-    from ..simulators.cross_backend import (
+    from ..backends.cross_backend import (
         CROSS_BACKEND_BASELINE_NAME,
         produce_dymola_via_fmpy_baseline,
     )
@@ -383,7 +383,7 @@ def _run_cross_backend_chains(tests, runner, config, store) -> None:
     print(f"Running cross-backend chains for {len(chain_tests)} test(s)...")
     n_ok = 0
     for t in chain_tests:
-        ok = produce_dymola_via_fmpy_baseline(t, runner, config, store)
+        ok = produce_dymola_via_fmpy_baseline(t, backend, config, store)
         if ok:
             n_ok += 1
             print(f"  {t.model_id}: '{CROSS_BACKEND_BASELINE_NAME}' baseline written")
@@ -422,18 +422,18 @@ def cmd_compare(args: argparse.Namespace) -> int:
     if not getattr(args, "simulator", None):
         work_dir = config.work_dir
         recorded = _recorded_backend(work_dir)
-        if recorded and recorded != config.simulator:
+        if recorded and recorded != config.backend_name:
             args.simulator = recorded
             config = _build_config(args)
             # status.json is data, and data can name a backend this install
             # can't resolve — a plug-in that isn't loaded here, a snapshot
-            # copied from another machine. get_runner_class raises a bare
+            # copied from another machine. get_backend_class raises a bare
             # ValueError that main() doesn't catch, so translate it before it
             # becomes a traceback.
-            from ..simulators import get_runner_class
+            from ..backends import get_backend_class
 
             try:
-                get_runner_class(config)
+                get_backend_class(config)
             except ValueError as exc:
                 raise ConfigError(
                     f"The last run in {work_dir} recorded backend "
@@ -452,7 +452,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     from ..comparison.comparator import compare_all
     from ..storage.reference_store import ReferenceStore
 
-    runner = _get_runner(config)
+    backend = _get_backend(config)
     store = ReferenceStore(config)
     _write_id_mapping(store, config)
 
@@ -463,16 +463,16 @@ def cmd_compare(args: argparse.Namespace) -> int:
     for test in tests:
         ref_id = store.index.get_id(test.model_id)
         if ref_id:
-            runner.ref_id_map[test.model_id] = f"ref_{ref_id}"
+            backend.ref_id_map[test.model_id] = f"ref_{ref_id}"
     config.work_dir.mkdir(parents=True, exist_ok=True)
     _wipe_stale_state_for_scope(
         config,
         tests,
-        runner.ref_id_map,
+        backend.ref_id_map,
         wipe_sim_dirs=False,
     )
 
-    results = runner.read_last_results(tests)
+    results = backend.read_last_results(tests)
 
     if getattr(args, "accept", False):
         # Accept-without-rerun: store the last run's on-disk results as
@@ -491,7 +491,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         # `--accept` exists to re-baseline.
         # Terminal, mirroring `run --accept` (finding 30: partial accept
         # exits nonzero).
-        from ..simulators.base import unfinished_run_models
+        from ..backends.base import unfinished_run_models
 
         unfinished = unfinished_run_models(config.work_dir) & {
             t.model_id for t in tests
@@ -522,7 +522,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         store,
         config.tolerance,
         config.default_points,
-        dataset_kind=_dataset_kind_for(runner),
+        dataset_kind=_dataset_kind_for(backend),
     )
 
     # Always refresh the unified dashboard, even without --report. Without

@@ -3,7 +3,7 @@
 import json
 import threading
 
-from dstf.simulators.progress import ProgressReporter
+from dstf.backends.progress import ProgressReporter
 
 
 def _status(work_dir):
@@ -88,7 +88,7 @@ def test_update_metadata_noop_without_base_metadata(tmp_path):
 
 class TestProgressSnapshotUnderLock:
     def test_snapshot_taken_while_write_lock_held(self, tmp_path, monkeypatch):
-        from dstf.simulators.progress import ProgressReporter
+        from dstf.backends.progress import ProgressReporter
 
         pr = ProgressReporter(tmp_path, total=1)
         monkeypatch.setattr(pr, "_render_dashboard", lambda mode: None)
@@ -104,7 +104,7 @@ class TestProgressSnapshotUnderLock:
         assert held and all(held)
 
     def test_written_snapshots_never_regress_under_threads(self, tmp_path, monkeypatch):
-        from dstf.simulators.progress import ProgressReporter
+        from dstf.backends.progress import ProgressReporter
 
         n = 40
         pr = ProgressReporter(tmp_path, total=n)

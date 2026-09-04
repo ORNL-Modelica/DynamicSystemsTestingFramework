@@ -1,7 +1,7 @@
 """`Capability` flags and `produced_datasets` as runtime gates, not decoration.
 
 Before these, the declarations were validated at registration and then
-consulted nowhere: `_get_runner` branched on whether `persistent_runner_cls()`
+consulted nowhere: `_get_backend` branched on whether `persistent_backend_cls()`
 happened to return something, and the cross-backend chain branched on whether
 `export_fmu` happened to raise. A backend could therefore be driven down a
 path it had explicitly not declared. These tests pin the declaration as the
@@ -18,12 +18,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from dstf.backends.base import Backend
+from dstf.backends.types import Capability, DatasetType
 from dstf.cli import run_cmds as cli_mod
-from dstf.simulators.base import SimulatorRunner
-from dstf.simulators.types import Capability, DatasetType
 
 
-class _ProbeRunner(SimulatorRunner):
+class _ProbeRunner(Backend):
     """A backend that ships a persistent variant but does NOT declare it.
 
     Mirrors a real situation: an experimental persistent path that exists in
@@ -38,7 +38,7 @@ class _ProbeRunner(SimulatorRunner):
         self.config = config
 
     @classmethod
-    def persistent_runner_cls(cls):
+    def persistent_backend_cls(cls):
         cls.persistent_cls_asked = True
         return _ProbePersistentRunner
 
@@ -57,7 +57,7 @@ class _ProbePersistentRunner(_ProbeRunner):
 
 
 def _use_probe(monkeypatch, cls=_ProbeRunner):
-    monkeypatch.setattr("dstf.simulators.get_runner_class", lambda config: cls)
+    monkeypatch.setattr("dstf.backends.get_backend_class", lambda config: cls)
 
 
 def _all_registered_backends():
@@ -68,10 +68,10 @@ def _all_registered_backends():
     """
     from types import SimpleNamespace
 
-    from dstf.simulators import _REGISTRY, get_runner_class
+    from dstf.backends import _REGISTRY, get_backend_class
 
     for name in ("Dymola", "FMPy", "OpenModelica", "Julia", "Python"):
-        get_runner_class(SimpleNamespace(simulator_backend=name))
+        get_backend_class(SimpleNamespace(backend=name))
     assert len(_REGISTRY) >= 5
     return dict(_REGISTRY)
 
@@ -82,7 +82,7 @@ class TestPersistentWorkersGate:
         _ProbePersistentRunner.preflighted = False
         _use_probe(monkeypatch)
 
-        runner = cli_mod._get_runner(SimpleNamespace(), persistent=True)
+        runner = cli_mod._get_backend(SimpleNamespace(), persistent=True)
 
         assert type(runner) is _ProbeRunner
         assert _ProbeRunner.persistent_cls_asked is False
@@ -97,7 +97,7 @@ class TestPersistentWorkersGate:
         _ProbePersistentRunner.preflighted = False
         _use_probe(monkeypatch, _Declared)
 
-        runner = cli_mod._get_runner(SimpleNamespace(), persistent=True)
+        runner = cli_mod._get_backend(SimpleNamespace(), persistent=True)
 
         assert type(runner) is _ProbePersistentRunner
         assert _ProbePersistentRunner.preflighted is True
@@ -111,7 +111,7 @@ class TestPersistentWorkersGate:
         """
         for name, cls in _all_registered_backends().items():
             declared = Capability.PERSISTENT_WORKERS in cls.capabilities
-            assert declared is (cls.persistent_runner_cls() is not None), name
+            assert declared is (cls.persistent_backend_cls() is not None), name
 
 
 class TestDatasetKindThreading:
@@ -149,9 +149,9 @@ class TestFmuExportGate:
         from pathlib import Path
         from unittest.mock import MagicMock
 
+        from dstf.backends.cross_backend import produce_dymola_via_fmpy_baseline
         from dstf.config import Config
         from dstf.discovery.test_registry import TestModel
-        from dstf.simulators.cross_backend import produce_dymola_via_fmpy_baseline
         from dstf.storage.reference_store import ReferenceStore
 
         source = tmp_path / "fmu_examples"
@@ -160,7 +160,7 @@ class TestFmuExportGate:
             source_path=source,
             reference_root=tmp_path / "refs",
             source_type="fmu",
-            simulator="FMPy",
+            backend_name="FMPy",
             work_dir=tmp_path / "work",
         )
         test = TestModel(
@@ -191,17 +191,17 @@ class TestFmuExportGate:
         """Honesty: only the class that implements export_fmu declares the flag.
 
         `_validate_capabilities` can't police this — it runs on
-        `@register`-ed classes only, and PersistentDymolaRunner is reached via
-        `DymolaRunner.persistent_runner_cls`, never the registry.
+        `@register`-ed classes only, and PersistentDymolaBackend is reached via
+        `DymolaBackend.persistent_backend_cls`, never the registry.
         """
-        from dstf.simulators.dymola.persistent_runner import PersistentDymolaRunner
-        from dstf.simulators.dymola.runner import DymolaRunner
+        from dstf.backends.dymola.backend import DymolaBackend
+        from dstf.backends.dymola.persistent_backend import PersistentDymolaBackend
 
-        assert Capability.FMU_EXPORT not in DymolaRunner.capabilities
-        assert DymolaRunner.export_fmu is SimulatorRunner.export_fmu
+        assert Capability.FMU_EXPORT not in DymolaBackend.capabilities
+        assert DymolaBackend.export_fmu is Backend.export_fmu
 
-        assert Capability.FMU_EXPORT in PersistentDymolaRunner.capabilities
-        assert PersistentDymolaRunner.export_fmu is not SimulatorRunner.export_fmu
+        assert Capability.FMU_EXPORT in PersistentDymolaBackend.capabilities
+        assert PersistentDymolaBackend.export_fmu is not Backend.export_fmu
 
 
 # =========================================================================
@@ -221,14 +221,14 @@ class TestFmuExportGate:
 
 class TestCapabilityHonesty:
     def test_persistent_workers_without_override_trips(self):
-        from dstf.simulators import _REGISTRY, register
-        from dstf.simulators.base import SimulatorRunner
+        from dstf.backends import _REGISTRY, register
+        from dstf.backends.base import Backend
 
         try:
             with pytest.raises(TypeError, match="PERSISTENT_WORKERS"):
 
                 @register("BogusPersistentBackend")
-                class Bogus(SimulatorRunner):
+                class Bogus(Backend):
                     capabilities = frozenset({Capability.PERSISTENT_WORKERS})
 
                     def read_result(self, test, test_key, run_result):
@@ -238,17 +238,17 @@ class TestCapabilityHonesty:
             _REGISTRY.pop("BogusPersistentBackend", None)
 
     def test_persistent_workers_with_override_passes(self):
-        from dstf.simulators import _REGISTRY, register
-        from dstf.simulators.base import SimulatorRunner
+        from dstf.backends import _REGISTRY, register
+        from dstf.backends.base import Backend
 
         try:
 
             @register("HonestPersistentBackend")
-            class Honest(SimulatorRunner):
+            class Honest(Backend):
                 capabilities = frozenset({Capability.PERSISTENT_WORKERS})
 
                 @classmethod
-                def persistent_runner_cls(cls):
+                def persistent_backend_cls(cls):
                     return cls
 
                 def read_result(self, test, test_key, run_result):
@@ -259,9 +259,9 @@ class TestCapabilityHonesty:
             _REGISTRY.pop("HonestPersistentBackend", None)
 
     def test_fmpy_runner_dropped_aspirational_persistent_flag(self):
-        """FmpyRunner has no persistent runner; the flag was aspirational
+        """FmpyBackend has no persistent runner; the flag was aspirational
         and now trips the (repaired) honesty check."""
-        from dstf.simulators.fmpy.runner import FmpyRunner
+        from dstf.backends.fmpy.backend import FmpyBackend
 
-        assert Capability.PERSISTENT_WORKERS not in FmpyRunner.capabilities
-        assert FmpyRunner.persistent_runner_cls() is None
+        assert Capability.PERSISTENT_WORKERS not in FmpyBackend.capabilities
+        assert FmpyBackend.persistent_backend_cls() is None

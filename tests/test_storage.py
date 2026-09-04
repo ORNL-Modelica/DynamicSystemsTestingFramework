@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 
 import dstf.storage.ref_index as ri_mod
+from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.types import TestResult, VariableResult
 from dstf.storage.baseline import PRIMARY_BASELINE, Baseline
 from dstf.storage.ref_index import RefIndex, _atomic_write_text
 from dstf.storage.reference_store import (

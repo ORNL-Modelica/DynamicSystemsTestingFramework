@@ -10,6 +10,11 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from dstf.backends.types import (
+    DatasetType,
+    TestResult,
+    VariableResult,
+)
 from dstf.cli import main
 from dstf.cli.common import (
     _filter_tests,
@@ -23,11 +28,6 @@ from dstf.cli.review import _interactive_review
 from dstf.cli.run_cmds import cmd_run
 from dstf.config import detect_os
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.types import (
-    DatasetType,
-    TestResult,
-    VariableResult,
-)
 from dstf.storage.batch_manifest import BatchManifest
 
 
@@ -319,10 +319,10 @@ def _mk_result(
 
 
 class _FakeRunner:
-    """Stands in for a SimulatorRunner in cmd_run — no simulator involved."""
+    """Stands in for a Backend in cmd_run — no simulator involved."""
 
     artifact_files: tuple = ()
-    # Class-level declarations every SimulatorRunner carries; cmd_run reads
+    # Class-level declarations every Backend carries; cmd_run reads
     # produced_datasets to pick the dataset kind it threads into comparison.
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
 
@@ -366,7 +366,7 @@ def run_env(tmp_config_dir, tmp_path, monkeypatch):
             "dstf.cli.run_cmds.discover_tests", lambda config: list(tests)
         )
         monkeypatch.setattr(
-            "dstf.cli.run_cmds._get_runner", lambda config, persistent=False: runner
+            "dstf.cli.run_cmds._get_backend", lambda config, persistent=False: runner
         )
         return runner
 
@@ -727,7 +727,7 @@ class TestBatchManifestRobustness:
     def test_assign_test_keys_survives_corrupt_manifest(self, tmp_path):
         """The startup-crash regression: run/compare must proceed with fresh
         keys instead of dying on a torn manifest."""
-        from dstf.simulators.base import assign_test_keys
+        from dstf.backends.base import assign_test_keys
 
         (tmp_path / "batch_manifest.json").write_text("garbage", encoding="utf-8")
         manifest_map, items = assign_test_keys(tmp_path, [_mk_test("Lib.T1")])
@@ -1159,7 +1159,7 @@ def test_compare_backend_metadata_absent_falls_back(tmp_path):
 def test_unregistered_recorded_backend_is_a_config_error(tmp_path, capsys):
     """Review K2: status.json is data, and a recorded label this install
     can't resolve (an unloaded plug-in, a snapshot copied from another
-    machine) flowed into get_runner_class's bare ValueError, which main()
+    machine) flowed into get_backend_class's bare ValueError, which main()
     does not catch — a traceback on someone else's data."""
     lib = _fake_library(tmp_path)
     work = _work_dir_with_metadata(tmp_path, "NoSuchBackend")

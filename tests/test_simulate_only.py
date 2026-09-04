@@ -6,9 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
+from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.comparator import compare_test
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.types import TestResult, VariableResult
 
 
 def _make_test(simulate_only: bool) -> TestModel:

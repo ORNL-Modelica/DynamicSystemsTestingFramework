@@ -456,12 +456,12 @@ class TestDecimatedDominantFrequencyIsCliAuthoritative:
         """
         import numpy as np
 
+        from dstf.backends import TestResult, VariableResult
         from dstf.comparison.algorithms import _compare_dominant_frequency
         from dstf.comparison.metric_tree import leaf_from_variable
         from dstf.comparison.tree_spec import parse_metric_tree
         from dstf.discovery.test_registry import TestModel
         from dstf.reporting.context_builder import _build_template_context
-        from dstf.simulators import TestResult, VariableResult
 
         n = 5000  # over the 1000-sample embed cap
         t = np.linspace(0.0, 1.0, n)
@@ -545,12 +545,12 @@ class TestAuthoredWindowSeedsTheInputs:
         fixtures hand-setting window_values (found on the D103 demo)."""
         import numpy as np
 
+        from dstf.backends import TestResult, VariableResult
         from dstf.comparison.algorithms import _compare_trajectories
         from dstf.comparison.metric_tree import leaf_from_variable
         from dstf.comparison.tree_spec import parse_metric_tree
         from dstf.discovery.test_registry import TestModel
         from dstf.reporting.context_builder import _build_template_context
-        from dstf.simulators import TestResult, VariableResult
 
         t = np.linspace(0.0, 10.0, 50)
         v = 1.0 - np.exp(-t)
@@ -607,12 +607,12 @@ class TestAgainstLeafIsCliAuthoritative:
     def _leaf_view(against: str | None, overlays=None) -> dict:
         import numpy as np
 
+        from dstf.backends import TestResult, VariableResult
         from dstf.comparison.algorithms import _compare_trajectories
         from dstf.comparison.metric_tree import leaf_from_variable
         from dstf.comparison.tree_spec import parse_metric_tree
         from dstf.discovery.test_registry import TestModel
         from dstf.reporting.context_builder import _build_template_context
-        from dstf.simulators import TestResult, VariableResult
 
         t = np.linspace(0.0, 10.0, 50)
         v = 1.0 - np.exp(-t)

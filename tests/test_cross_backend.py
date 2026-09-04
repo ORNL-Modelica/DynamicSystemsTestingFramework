@@ -16,8 +16,8 @@ import numpy as np
 import pytest
 
 from conftest import make_test_model as _tm
+from dstf.backends.types import Capability, TestRunResult
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.types import Capability, TestRunResult
 
 PROJECT_ROOT = Path(__file__).parent.parent
 REFERENCE_FMUS_DIR = PROJECT_ROOT / "examples" / "fmu" / "reference-fmus-binaries"
@@ -37,7 +37,7 @@ def _reference_fmus_available() -> bool:
 
 
 # Carried by the two chain tests rather than the module: the soft-check
-# regression folded in at the bottom drives a fake FmpyRunner and needs
+# regression folded in at the bottom drives a fake FmpyBackend and needs
 # neither fmpy nor the binaries.
 _needs_real_fmpy = pytest.mark.skipif(
     not _fmpy_available() or not _reference_fmus_available(),
@@ -84,11 +84,11 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
     then verify the FMPy result lands as a 'dymola-via-fmpy' baseline on
     the primary reference file.
     """
-    from dstf.config import Config
-    from dstf.simulators.cross_backend import (
+    from dstf.backends.cross_backend import (
         CROSS_BACKEND_BASELINE_NAME,
         produce_dymola_via_fmpy_baseline,
     )
+    from dstf.config import Config
     from dstf.storage.reference_store import ReferenceStore
 
     # Set up an FMU example directory + reference store
@@ -108,7 +108,7 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
         source_path=fmu_examples_dir,
         reference_root=store_root,
         source_type="fmu",
-        simulator="FMPy",
+        backend_name="FMPy",
         work_dir=tmp_path / "work",
     )
     store = ReferenceStore(config)
@@ -116,14 +116,14 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
     # Mock primary runner: it declares FMU_EXPORT (the chain gates on the
     # capability, not on export_fmu raising) and its export_fmu just returns
     # the staged FMU path.
-    primary_runner = MagicMock()
-    primary_runner.capabilities = frozenset({Capability.FMU_EXPORT})
-    primary_runner.export_fmu.return_value = (
+    primary_backend = MagicMock()
+    primary_backend.capabilities = frozenset({Capability.FMU_EXPORT})
+    primary_backend.export_fmu.return_value = (
         fmu_examples_dir / "BouncingBall.fmu"
     ).resolve()
 
     test = _make_chain_test("BouncingBall")
-    ok = produce_dymola_via_fmpy_baseline(test, primary_runner, config, store)
+    ok = produce_dymola_via_fmpy_baseline(test, primary_backend, config, store)
     assert ok is True
 
     # Verify the soft_check landed in the new on-disk layout (D66)
@@ -143,10 +143,10 @@ def test_chain_writes_named_baseline_with_mock_export(tmp_path):
 @_needs_real_fmpy
 def test_chain_returns_false_when_export_fails(tmp_path):
     """A declared exporter whose export blows up: chain logs + returns False."""
-    from dstf.config import Config
-    from dstf.simulators.cross_backend import (
+    from dstf.backends.cross_backend import (
         produce_dymola_via_fmpy_baseline,
     )
+    from dstf.config import Config
     from dstf.storage.reference_store import ReferenceStore
 
     fmu_examples_dir = tmp_path / "fmu_examples"
@@ -160,19 +160,19 @@ def test_chain_returns_false_when_export_fails(tmp_path):
         source_path=fmu_examples_dir,
         reference_root=tmp_path / "refs",
         source_type="fmu",
-        simulator="FMPy",
+        backend_name="FMPy",
         work_dir=tmp_path / "work",
     )
     store = ReferenceStore(config)
 
-    primary_runner = MagicMock()
-    primary_runner.capabilities = frozenset({Capability.FMU_EXPORT})
-    primary_runner.export_fmu.side_effect = RuntimeError(
+    primary_backend = MagicMock()
+    primary_backend.capabilities = frozenset({Capability.FMU_EXPORT})
+    primary_backend.export_fmu.side_effect = RuntimeError(
         "no FMI export option in license"
     )
 
     test = _make_chain_test()
-    ok = produce_dymola_via_fmpy_baseline(test, primary_runner, config, store)
+    ok = produce_dymola_via_fmpy_baseline(test, primary_backend, config, store)
     assert ok is False
 
 
@@ -183,7 +183,7 @@ def test_chain_returns_false_when_export_fails(tmp_path):
 # Finding 76-part — a ValueError from ``add_soft_check`` (name collision) is
 # logged and skipped, not raised out of the chain.
 #
-# This one drives a fake FmpyRunner and needs neither fmpy nor the
+# This one drives a fake FmpyBackend and needs neither fmpy nor the
 # Reference-FMU binaries, which is why the dependency gate moved from a
 # module-level ``pytestmark`` onto the two chain tests that do need it.
 # =========================================================================
@@ -193,9 +193,9 @@ class TestCrossBackendSoftCheckValueError:
     def test_valueerror_from_add_soft_check_is_logged_and_skipped(
         self, tmp_path, monkeypatch, caplog
     ):
+        from dstf.backends.cross_backend import produce_dymola_via_fmpy_baseline
+        from dstf.backends.types import TestResult, VariableResult
         from dstf.config import Config
-        from dstf.simulators.cross_backend import produce_dymola_via_fmpy_baseline
-        from dstf.simulators.types import TestResult, VariableResult
 
         fmu_dir = tmp_path / "fmu_examples"
         fmu_dir.mkdir()
@@ -206,11 +206,11 @@ class TestCrossBackendSoftCheckValueError:
             source_path=fmu_dir,
             reference_root=tmp_path / "refs",
             source_type="fmu",
-            simulator="FMPy",
+            backend_name="FMPy",
             work_dir=tmp_path / "work",
         )
 
-        class _FakeFmpyRunner:
+        class _FakeFmpyBackend:
             def __init__(self, cfg):
                 self.config = cfg
 
@@ -233,7 +233,7 @@ class TestCrossBackendSoftCheckValueError:
                     ],
                 )
 
-        monkeypatch.setattr("dstf.simulators.fmpy.runner.FmpyRunner", _FakeFmpyRunner)
+        monkeypatch.setattr("dstf.backends.fmpy.backend.FmpyBackend", _FakeFmpyBackend)
 
         primary = MagicMock()
         primary.capabilities = frozenset({Capability.FMU_EXPORT})

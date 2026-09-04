@@ -313,10 +313,10 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     """
     import numpy as np
 
+    from dstf.backends.types import TestResult, VariableResult
     from dstf.comparison.comparator import compare_test
     from dstf.discovery.test_registry import TestModel
     from dstf.reporting.context_builder import _leaf_score_display
-    from dstf.simulators.types import TestResult, VariableResult
 
     time = np.linspace(0.0, 1.0, 5)
     test = TestModel(

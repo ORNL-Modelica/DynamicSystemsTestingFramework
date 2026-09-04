@@ -22,19 +22,19 @@ def _interactive_review(
     review_filter: str = "all",
 ) -> int:
     """Interactively review each test and accept/reject results."""
-    from ..discovery.spec_parser import update_test_variables
-    from ..simulators import resolve_variable_patterns
+    from ..backends import resolve_variable_patterns
 
     # review 2026-07-06 (found while testing finding 62): the old import
-    # `from .simulators.dymola.mat_reader import read_dymola_mat` pointed at
-    # a module removed in the simulators/common refactor, so EVERY -i
+    # `from .backends.dymola.mat_reader import read_dymola_mat` pointed at
+    # a module removed in the backends/common refactor, so EVERY -i
     # invocation crashed with ModuleNotFoundError before the loop started.
     # The [v] path only needs variable names — use the names-only reader.
-    from ..simulators.common.mat_reader import list_result_mat_variables
+    from ..backends.common.mat_reader import list_result_mat_variables
+    from ..discovery.spec_parser import update_test_variables
 
     # Deferred: run_cmds imports this module at module scope, so the
-    # dependency back on its runner selection has to resolve at call time.
-    from .run_cmds import _get_runner
+    # dependency back on its backend selection has to resolve at call time.
+    from .run_cmds import _get_backend
 
     filters = _parse_review_filter(review_filter)
 
@@ -144,8 +144,8 @@ def _interactive_review(
                     )
                     test_key = _find_test_key(model_id, config)
                     if test_key:
-                        runner = _get_runner(config)
-                        result = runner.read_result(test, test_key, None)
+                        backend = _get_backend(config)
+                        result = backend.read_result(test, test_key, None)
 
                 stored_ok = False
                 store_err = None
@@ -263,10 +263,10 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
 
         ref_file = store.ref_dir / RefIndex.ref_filename(test_id)
 
-    from ..simulators import get_runner_class
+    from ..backends import get_backend_class
 
     try:
-        artifact_files = tuple(get_runner_class(config).artifact_files)
+        artifact_files = tuple(get_backend_class(config).artifact_files)
     except ValueError:
         artifact_files = ()
 
@@ -294,7 +294,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
 
 def _find_test_key(model_id: str, config) -> str | None:
     """Find the test_NNNN key for a model from the batch manifest."""
-    from ..simulators import BatchManifest
+    from ..backends import BatchManifest
 
     mp = config.work_dir / "batch_manifest.json"
     if not mp.exists():

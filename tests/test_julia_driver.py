@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-JULIA_DRIVER_DIR = PROJECT_ROOT / "src" / "dstf" / "simulators" / "julia"
+JULIA_DRIVER_DIR = PROJECT_ROOT / "src" / "dstf" / "backends" / "julia"
 
 
 # =========================================================================
@@ -75,7 +75,7 @@ class TestJuliaPersistentPipeEncoding:
     def test_worker_popen_uses_utf8_replace(self, tmp_path, monkeypatch):
         """Finding 75: on cp1252 Windows a UTF-8 Julia backtrace kills the
         reader thread unless the pipes decode utf-8 with errors=replace."""
-        from dstf.simulators.julia import persistent_runner as jpr
+        from dstf.backends.julia import persistent_backend as jpr
 
         captured: dict = {}
 

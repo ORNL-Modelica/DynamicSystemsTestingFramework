@@ -185,7 +185,7 @@ def _cleanup_orphans(config, apply: bool) -> int:
 
     import shutil
 
-    from ..simulators import BatchManifest
+    from ..backends import BatchManifest
 
     manifest_path = config.work_dir / "batch_manifest.json"
     manifest = BatchManifest.load(manifest_path)
@@ -215,7 +215,7 @@ def _cleanup_orphans(config, apply: bool) -> int:
 
 def cmd_check_dymola(args: argparse.Namespace) -> int:
     """Diagnose discovery of Dymola's Python interface."""
-    from ..simulators.dymola.interface_loader import describe_dymola_interface
+    from ..backends.dymola.interface_loader import describe_dymola_interface
 
     override = (
         Path(args.dymola_interface) if getattr(args, "dymola_interface", None) else None
@@ -256,7 +256,7 @@ def cmd_check_openmodelica(args: argparse.Namespace) -> int:
     """Diagnose OMPython availability + the `omc` binary."""
     import shutil as _shutil
 
-    from ..simulators.openmodelica.session_loader import describe_om_session
+    from ..backends.openmodelica.session_loader import describe_om_session
 
     info = describe_om_session()
     omc_path = _shutil.which("omc")

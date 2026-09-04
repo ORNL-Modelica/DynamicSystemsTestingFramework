@@ -19,9 +19,9 @@ def _build_config(args: argparse.Namespace) -> Config:
     if hasattr(args, "reference_root") and args.reference_root:
         kwargs["reference_root"] = Path(args.reference_root)
     if hasattr(args, "simulator") and args.simulator:
-        kwargs["simulator"] = args.simulator
+        kwargs["backend_name"] = args.simulator
     if hasattr(args, "simulator_path") and args.simulator_path:
-        kwargs["simulator_path"] = args.simulator_path
+        kwargs["backend_path"] = args.simulator_path
     if hasattr(args, "show_ide") and args.show_ide:
         kwargs["show_ide"] = True
     if hasattr(args, "work_dir") and args.work_dir:
@@ -139,7 +139,7 @@ def _find_orphan_manifest_entries(config, all_tests: list) -> dict[str, str]:
     manifest_path = config.work_dir / "batch_manifest.json"
     if not manifest_path.exists():
         return {}
-    from ..simulators import BatchManifest
+    from ..backends import BatchManifest
 
     manifest = BatchManifest.load(manifest_path)
     discovered = {t.model_id for t in all_tests}

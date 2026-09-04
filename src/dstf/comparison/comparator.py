@@ -28,9 +28,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ..backends import TestResult
+from ..backends.types import DatasetType
 from ..discovery.test_registry import TestModel
-from ..simulators import TestResult
-from ..simulators.types import DatasetType
 from ..storage.reference_store import ReferenceStore
 
 # Re-export facade (see module docstring): modes/tree_eval/metric_tree and the
@@ -147,7 +147,7 @@ def compare_test(
             override use points-mode (with empty points list = final-value
             comparison) instead of full NRMSE. Variables with
             ``mode: "tube"`` are *not* affected.
-        dataset_kind: The :class:`~dstf.simulators.types.DatasetType` the
+        dataset_kind: The :class:`~dstf.backends.types.DatasetType` the
             backend that produced *result* declares it emits. Threaded into
             the MetricTree evaluator so a leaf whose metric doesn't accept
             the kind hard-fails with a diagnostic naming both. Defaults to

@@ -267,9 +267,9 @@ class TestSimulateOnlyClassification:
         """The flag is set where the verdict is made, not inferred later."""
         import numpy as np
 
+        from dstf.backends.types import TestResult, VariableResult
         from dstf.comparison.comparator import compare_test
         from dstf.discovery.test_registry import TestModel
-        from dstf.simulators.types import TestResult, VariableResult
 
         t = np.linspace(0, 1, 11)
         comp = compare_test(

@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import json
 
-from dstf.simulators.base import _apply_run_verdicts, _apply_status_verdicts
-from dstf.simulators.types import TestResult, TestRunResult
+from dstf.backends.base import _apply_run_verdicts, _apply_status_verdicts
+from dstf.backends.types import TestResult, TestRunResult
 from dstf.storage.batch_manifest import BatchManifest
 
 
@@ -378,7 +378,7 @@ class TestAbortWindow:
 
 class TestUnfinishedRunModels:
     def test_pending_entries_are_reported(self, tmp_path):
-        from dstf.simulators.base import unfinished_run_models
+        from dstf.backends.base import unfinished_run_models
 
         _manifest(
             tmp_path,
@@ -395,7 +395,7 @@ class TestUnfinishedRunModels:
         """Old data, not old code: a manifest predating the field says nothing
         about completeness, so it must not be treated as unfinished — those
         keep today's status.json-guard behaviour."""
-        from dstf.simulators.base import unfinished_run_models
+        from dstf.backends.base import unfinished_run_models
 
         _manifest(
             tmp_path, {"test_0001": {"model_id": "Lib.Old", "ref_id": None}}
@@ -403,7 +403,7 @@ class TestUnfinishedRunModels:
         assert unfinished_run_models(tmp_path) == set()
 
     def test_no_manifest_is_empty(self, tmp_path):
-        from dstf.simulators.base import unfinished_run_models
+        from dstf.backends.base import unfinished_run_models
 
         assert unfinished_run_models(tmp_path) == set()
 
@@ -458,7 +458,7 @@ def _good_result(model_id):
     The whole point of L2 is that this is not enough to accept."""
     import numpy as np
 
-    from dstf.simulators.types import VariableResult
+    from dstf.backends.types import VariableResult
 
     return TestResult(
         model_id=model_id,
@@ -477,7 +477,7 @@ def _good_result(model_id):
 class TestAcceptRefusesPending:
     def _accept(self, config, tests, results):
         """Drive the same refusal cmd_compare's accept branch applies."""
-        from dstf.simulators.base import unfinished_run_models
+        from dstf.backends.base import unfinished_run_models
         from dstf.storage.reference_store import ReferenceStore
 
         unfinished = unfinished_run_models(config.work_dir) & {

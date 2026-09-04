@@ -104,12 +104,12 @@ source = ["dstf"]
 # just deflates the metric. Coverage here reflects CI-runnable code.
 omit = [
     "*/dstf/__main__.py",
-    "*/simulators/dymola/*",
-    "*/simulators/julia/*",
-    "*/simulators/fmpy/runner.py",
-    "*/simulators/openmodelica/session_loader.py",
-    "*/simulators/python/run_test.py",
-    "*/simulators/cross_backend.py",
+    "*/backends/dymola/*",
+    "*/backends/julia/*",
+    "*/backends/fmpy/backend.py",
+    "*/backends/openmodelica/session_loader.py",
+    "*/backends/python/run_test.py",
+    "*/backends/cross_backend.py",
 ]
 
 [tool.coverage.report]

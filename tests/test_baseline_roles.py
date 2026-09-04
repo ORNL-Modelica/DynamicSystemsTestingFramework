@@ -14,10 +14,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
 from dstf.reporting.overlay_loader import load_overlays
-from dstf.simulators.types import TestResult, VariableResult
 from dstf.storage.reference_store import (
     ReferenceStore,
 )

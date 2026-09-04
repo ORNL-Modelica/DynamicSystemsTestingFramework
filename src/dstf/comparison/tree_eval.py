@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..simulators import VariableResult
-from ..simulators.types import DatasetType
+from ..backends import VariableResult
+from ..backends.types import DatasetType
 from .comparator import VariableComparison
 from .metric_tree import Combinator, MetricResult, leaf_from_variable
 from .modes import resolve_mode
@@ -58,7 +58,7 @@ class ScalarSources:
 
     Mirrors :class:`BaselineView`'s two scalar fields for the actual side.
     The difference is the diagnostics shape: a run's diagnostics are
-    :class:`~dstf.simulators.VariableResult` trajectories, so ``final`` /
+    :class:`~dstf.backends.VariableResult` trajectories, so ``final`` /
     ``min`` / ``max`` are computed live rather than read from a summary.
     """
 
@@ -83,7 +83,7 @@ def evaluate_spec(
     to a :class:`BaselineView`; each leaf's ``against`` field picks which
     one it scores against, defaulting to ``"primary"``.
 
-    ``dataset_kind`` is the :class:`~dstf.simulators.types.DatasetType` the
+    ``dataset_kind`` is the :class:`~dstf.backends.types.DatasetType` the
     supplied results carry. Every backend produces ``TIME_SERIES`` today,
     so it is a parameter rather than a field on ``VariableResult`` — a leaf
     whose metric doesn't accept the kind hard-fails with a diagnostic.

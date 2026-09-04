@@ -10,7 +10,7 @@ of them. Now each of those derives from the descriptors registered here,
 so a third-party metric only has to call :func:`register_metric`.
 
 Builtins register in :mod:`dstf.comparison.builtins`, imported by the
-package ``__init__`` — mirroring how ``simulators`` self-registers its
+package ``__init__`` — mirroring how ``backends`` self-registers its
 backends.
 """
 
@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from ..simulators.types import DatasetType
+from ..backends.types import DatasetType
 
 if TYPE_CHECKING:
     from .metric_tree import Combinator
@@ -47,7 +47,7 @@ class MetricDescriptor:
     ``score_direction`` says which way a better score runs: ``"lower"``
     for error-like scores (NRMSE, point violations) and ``"higher"`` for
     coverage-like ones (tube's in-band fraction). ``accepted_datasets``
-    declares which :class:`~dstf.simulators.types.DatasetType` kinds the
+    declares which :class:`~dstf.backends.types.DatasetType` kinds the
     metric can score — a leaf handed anything else hard-fails in
     :func:`~.tree_eval._evaluate_leaf`.
 

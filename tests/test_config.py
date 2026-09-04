@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from dstf.backends.openmodelica.mos_generator import classify_dependency
 from dstf.config import (
-    SIMULATOR_BACKENDS,
+    BACKEND_FAMILIES,
     Config,
     _detect_backend,
     detect_os,
@@ -16,7 +17,6 @@ from dstf.config import (
     load_config_file,
     read_package_name,
 )
-from dstf.simulators.openmodelica.mos_generator import classify_dependency
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -81,8 +81,8 @@ class TestConfig:
     def test_default_simulator(self, sample_models_dir):
         """Default simulator is Dymola."""
         config = Config(source_path=sample_models_dir)
-        assert config.simulator == "Dymola"
-        assert config.simulator_backend == "Dymola"
+        assert config.backend_name == "Dymola"
+        assert config.backend == "Dymola"
 
     def test_config_from_file(self, tmp_config_dir):
         """Config loaded from testing.json with source_path."""
@@ -90,7 +90,7 @@ class TestConfig:
             config_file=str(tmp_config_dir / "testing.json"),
         )
         assert config.library_name == "ModelicaTestingLib"
-        assert config.simulator_setup == ["OutputCPUtime := true;"]
+        assert config.backend_setup == ["OutputCPUtime := true;"]
 
     def test_config_relative_source_path(self, tmp_config_dir):
         """source_path in testing.json resolves relative to config file."""
@@ -151,16 +151,16 @@ class TestConfig:
         """CLI args take precedence over config file values."""
         config = Config(
             config_file=str(tmp_config_dir / "testing.json"),
-            simulator="OpenModelica",  # Override config's "Dymola"
+            backend_name="OpenModelica",  # Override config's "Dymola"
         )
-        assert config.simulator == "OpenModelica"
+        assert config.backend_name == "OpenModelica"
 
     def test_explicit_dymola_cli_overrides_config_file(self, tmp_path):
-        """Regression: a CLI passing ``simulator="Dymola"`` is authoritative
+        """Regression: a CLI passing ``backend_name="Dymola"`` is authoritative
         even when testing.json says something else.
 
-        Pre-fix, ``Config.simulator`` defaulted to the literal string
-        ``"Dymola"`` and the resolution code used ``self.simulator == "Dymola"``
+        Pre-fix, ``Config.backend_name`` defaulted to the literal string
+        ``"Dymola"`` and the resolution code used ``self.backend_name == "Dymola"``
         as a sentinel meaning "user didn't choose one." That collapsed the
         two cases — explicitly chose Dymola vs. didn't choose — and let
         testing.json silently override an explicit ``--simulator Dymola``.
@@ -181,9 +181,9 @@ class TestConfig:
         )
         config = Config(
             config_file=str(cfg_dir / "testing.json"),
-            simulator="Dymola",  # CLI says Dymola
+            backend_name="Dymola",  # CLI says Dymola
         )
-        assert config.simulator == "Dymola"
+        assert config.backend_name == "Dymola"
 
     def test_reference_root_auto_detect(self, tmp_path, sample_models_dir):
         """When testing.json is in ReferenceResults/, that becomes reference_root."""
@@ -198,6 +198,34 @@ class TestConfig:
 
         config = Config(config_file=str(ref_dir / "testing.json"))
         assert config.reference_root == ref_dir.resolve()
+
+    def test_versioned_name_partitions_on_the_canonical_family(
+        self, sample_models_dir, tmp_path
+    ):
+        """A versioned backend name must partition on its FAMILY, not itself.
+
+        ``backend_name`` is what the user supplied ("Dymola 2026x");
+        ``backend`` is the canonical family ("Dymola") that owns the
+        reference tree. Collapsing the two — trivially done by a later
+        refactor, since the names now differ by one word — sends every
+        versioned-name user's lookups to a directory none of their stored
+        baselines live in: the whole suite reports NO_BASELINE, and an
+        --accept then writes a full parallel reference tree in the wrong
+        place. The other reference_dir test cannot catch it, because its
+        unversioned default makes the two strings equal.
+        """
+        config = Config(
+            source_path=sample_models_dir,
+            reference_root=tmp_path / "refs",
+            backend_name="Dymola 2026x",
+        )
+
+        assert config.backend_name == "Dymola 2026x"
+        assert config.backend == "Dymola"
+        # reference tree: canonical family
+        assert config.reference_dir.parts[-2] == "Dymola"
+        # work dir: the versioned name, so two versions do not collide
+        assert "Dymola_2026x" in config.work_dir.parts
 
     def test_reference_dir_partitioned(self, sample_models_dir):
         """reference_dir is partitioned by simulator backend and OS."""
@@ -234,7 +262,7 @@ class TestConfig:
 
 
 class TestAutoDetectSimulator:
-    """Unit tests for the `_auto_detect_simulator` helper + integration
+    """Unit tests for the `_auto_detect_backend` helper + integration
     through Config.__post_init__ when testing.json omits the `simulator` key."""
 
     def test_looks_like_path_linux(self):
@@ -255,7 +283,7 @@ class TestAutoDetectSimulator:
         """First entry whose binary resolves wins. If an earlier entry has
         pinned absolute paths that don't exist, that entry is skipped (no
         fallback to a same-named binary on PATH)."""
-        from dstf.config import _auto_detect_simulator
+        from dstf.config import _auto_detect_backend
 
         # Create a fake "omc" binary on a temp PATH — simulate OM available.
         fake_omc = tmp_path / "omc"
@@ -269,7 +297,7 @@ class TestAutoDetectSimulator:
             ],
             "OpenModelica": ["omc"],  # bare name → PATH lookup
         }
-        name, path = _auto_detect_simulator(simulators)
+        name, path = _auto_detect_backend(simulators)
         assert name == "OpenModelica"
         assert path == str(fake_omc)
 
@@ -277,7 +305,7 @@ class TestAutoDetectSimulator:
         """If a simulator's list is entirely pinned absolute paths and NONE
         exist, we must NOT fall back to a same-named binary on PATH — the
         pinned list expresses intent to use *that* install."""
-        from dstf.config import _auto_detect_simulator
+        from dstf.config import _auto_detect_backend
 
         fake_dymola = tmp_path / "dymola"
         fake_dymola.write_text("#!/bin/sh\n")
@@ -290,10 +318,10 @@ class TestAutoDetectSimulator:
             ],
         }
         # Fallback suppressed ⇒ nothing resolves despite `dymola` on PATH.
-        assert _auto_detect_simulator(simulators) is None
+        assert _auto_detect_backend(simulators) is None
 
     def test_auto_detect_none_if_nothing_resolves(self, tmp_path, monkeypatch):
-        from dstf.config import _auto_detect_simulator
+        from dstf.config import _auto_detect_backend
 
         # Empty PATH and bogus paths — nothing resolves.
         monkeypatch.setenv("PATH", str(tmp_path))
@@ -301,7 +329,7 @@ class TestAutoDetectSimulator:
             "Dymola": ["C:\\nope\\dymola.exe"],
             "OpenModelica": ["/nope/omc"],
         }
-        assert _auto_detect_simulator(simulators) is None
+        assert _auto_detect_backend(simulators) is None
 
     def test_config_autopicks_when_simulator_key_omitted(self, tmp_path, monkeypatch):
         """Config.__post_init__ auto-picks when testing.json omits the
@@ -329,8 +357,8 @@ class TestAutoDetectSimulator:
             )
         )
         config = Config(config_file=str(cfg_dir / "testing.json"))
-        assert config.simulator == "OpenModelica"
-        assert config.simulator_path == str(fake_omc)
+        assert config.backend_name == "OpenModelica"
+        assert config.backend_path == str(fake_omc)
 
     def test_config_preserves_explicit_simulator_in_file(self, tmp_path, monkeypatch):
         """If testing.json has an explicit "simulator" key, auto-pick must
@@ -350,7 +378,7 @@ class TestAutoDetectSimulator:
             )
         )
         config = Config(config_file=str(cfg_dir / "testing.json"))
-        assert config.simulator == "Dymola"
+        assert config.backend_name == "Dymola"
 
 
 # =========================================================================
@@ -376,7 +404,7 @@ class TestAutoDetectSimulator:
 # * Finding 15 — a relative ``work_dir`` in testing.json resolves against the
 #   config file's directory (like test_spec / dependencies), not the CWD.
 # * Finding 18 — simulator auto-detect never clobbers an explicitly supplied
-#   ``simulator_path``; it may fill the simulator *name*, but only fills the
+#   ``backend_path``; it may fill the simulator *name*, but only fills the
 #   path when none was given.
 # =========================================================================
 
@@ -535,7 +563,7 @@ class TestFinding19AutoCreate:
         cfg.write_text("{}", encoding="utf-8")
         config = Config(source_path=lib)
         assert cfg.read_text(encoding="utf-8") == "{}"
-        assert config.simulator == "Dymola"  # historical default still applies
+        assert config.backend_name == "Dymola"  # historical default still applies
 
 
 # ---------------------------------------------------------------------------
@@ -622,7 +650,7 @@ class TestFinding15WorkDir:
 
 
 # ---------------------------------------------------------------------------
-# Finding 18 — auto-detect must not clobber an explicit simulator_path
+# Finding 18 — auto-detect must not clobber an explicit backend_path
 # ---------------------------------------------------------------------------
 
 
@@ -652,18 +680,18 @@ class TestFinding18SimulatorPath:
         cfg_dir = self._autodetect_setup(tmp_path, monkeypatch)
         config = Config(
             config_file=str(cfg_dir / "testing.json"),
-            simulator_path="/my/custom/omc",
+            backend_path="/my/custom/omc",
         )
-        assert config.simulator == "OpenModelica"
-        assert config.simulator_path == "/my/custom/omc"
+        assert config.backend_name == "OpenModelica"
+        assert config.backend_path == "/my/custom/omc"
 
     def test_autodetect_still_fills_path_when_unset(self, tmp_path, monkeypatch):
-        """Guard the happy path: with no explicit simulator_path, auto-detect
+        """Guard the happy path: with no explicit backend_path, auto-detect
         fills both name and path as before."""
         cfg_dir = self._autodetect_setup(tmp_path, monkeypatch)
         config = Config(config_file=str(cfg_dir / "testing.json"))
-        assert config.simulator == "OpenModelica"
-        assert config.simulator_path == str(tmp_path / "bin" / "omc")
+        assert config.backend_name == "OpenModelica"
+        assert config.backend_path == str(tmp_path / "bin" / "omc")
 
 
 # =========================================================================
@@ -676,7 +704,7 @@ class TestFinding18SimulatorPath:
 
 
 def test_python_backend_name_resolves():
-    assert "Python" in SIMULATOR_BACKENDS
+    assert "Python" in BACKEND_FAMILIES
     assert _detect_backend("Python 3.12") == "Python"
     assert _detect_backend("Python") == "Python"
 

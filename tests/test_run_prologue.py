@@ -1,4 +1,4 @@
-"""The shared ``run_tests`` prologue (``SimulatorRunner._prepare_run``).
+"""The shared ``run_tests`` prologue (``Backend._prepare_run``).
 
 The prologue used to be copy-pasted into three ``run_tests`` bodies (default
 batch loop, persistent template, batch Dymola) and drifted: C-9/D96 found the
@@ -12,11 +12,11 @@ import json
 from pathlib import Path
 
 from conftest import make_test_model
+from dstf.backends.base import Backend
+from dstf.backends.persistent import PersistentBackendBase, Worker
+from dstf.backends.types import TestRunResult
 from dstf.config import Config
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.base import SimulatorRunner
-from dstf.simulators.persistent import PersistentRunnerBase, Worker
-from dstf.simulators.types import TestRunResult
 
 
 def _tm(model_id: str, field_sources: dict | None = None) -> TestModel:
@@ -36,13 +36,13 @@ def _config(tmp_path: Path, **kwargs) -> Config:
     return Config(
         source_path=lib,
         reference_root=tmp_path / "refs",
-        simulator="Dymola",
+        backend_name="Dymola",
         work_dir=tmp_path / "work",
         **kwargs,
     )
 
 
-class _FakeBatchRunner(SimulatorRunner):
+class _FakeBatchRunner(Backend):
     """Site A: the default batch loop, with the simulation stubbed out."""
 
     def describe_tool_version(self) -> str | None:
@@ -79,7 +79,7 @@ class _FakeWorker(Worker):
         self._up = False
 
 
-class _FakePersistentRunner(PersistentRunnerBase):
+class _FakePersistentRunner(PersistentBackendBase):
     """Site B: the persistent template driving workers that never spawn."""
 
     worker_cls = _FakeWorker
@@ -94,15 +94,15 @@ class _FakePersistentRunner(PersistentRunnerBase):
 
 def _dymola_runner(config: Config, monkeypatch):
     """Site C: batch Dymola with the ``.mos`` execution stubbed out."""
-    from dstf.simulators.dymola.runner import DymolaRunner
+    from dstf.backends.dymola.backend import DymolaBackend
 
     monkeypatch.setattr(
-        DymolaRunner,
+        DymolaBackend,
         "describe_tool_version",
         lambda self: "FakeTool 1.2.3",
     )
     monkeypatch.setattr(
-        DymolaRunner,
+        DymolaBackend,
         "_run_batch",
         lambda self, batch, *a, **k: [
             TestRunResult(
@@ -111,7 +111,7 @@ def _dymola_runner(config: Config, monkeypatch):
             for test, test_key in batch
         ],
     )
-    return DymolaRunner(config)
+    return DymolaBackend(config)
 
 
 class TestPrepareRun:
@@ -163,7 +163,7 @@ class TestPrepareRun:
         setup = _FakeBatchRunner(cfg)._prepare_run([_tm("Lib.A")])
 
         assert setup.run_metadata["tool_version"] == "FakeTool 1.2.3"
-        assert setup.run_metadata["backend"] == cfg.simulator_backend
+        assert setup.run_metadata["backend"] == cfg.backend
         assert setup.run_metadata["os"] == cfg.os_name
         assert setup.run_metadata["dstf_version"]
 
@@ -339,7 +339,7 @@ class TestBatchDymolaRecordsVerdicts:
     def test_failures_and_timeouts_are_recorded_not_left_pending(
         self, tmp_path, monkeypatch
     ):
-        from dstf.simulators.dymola.runner import DymolaRunner
+        from dstf.backends.dymola.backend import DymolaBackend
 
         cfg = _config(tmp_path, parallel=1)
         runner = _dymola_runner(cfg, monkeypatch)
@@ -358,7 +358,7 @@ class TestBatchDymolaRecordsVerdicts:
                 )
             return out
 
-        monkeypatch.setattr(DymolaRunner, "_run_batch", _mixed)
+        monkeypatch.setattr(DymolaBackend, "_run_batch", _mixed)
 
         runner.run_tests([_tm("Lib.A"), _tm("Lib.B"), _tm("Lib.C")])
 
@@ -373,7 +373,7 @@ class TestBatchDymolaRecordsVerdicts:
     ):
         """Recording is per result as each batch lands, not in an epilogue an
         abort would skip."""
-        from dstf.simulators.dymola.runner import DymolaRunner
+        from dstf.backends.dymola.backend import DymolaBackend
 
         cfg = _config(tmp_path, parallel=1, batch_size=1)
         seen: list[dict] = []
@@ -388,7 +388,7 @@ class TestBatchDymolaRecordsVerdicts:
             ]
 
         runner = _dymola_runner(cfg, monkeypatch)
-        monkeypatch.setattr(DymolaRunner, "_run_batch", _observing)
+        monkeypatch.setattr(DymolaBackend, "_run_batch", _observing)
 
         runner.run_tests([_tm("Lib.A"), _tm("Lib.B")])
 

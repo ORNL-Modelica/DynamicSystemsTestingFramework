@@ -23,9 +23,9 @@ from typing import Any
 
 import numpy as np
 
+from ..backends import TestResult
 from ..config import Config
 from ..discovery.test_registry import TestModel
-from ..simulators import TestResult
 from .baseline import PRIMARY_BASELINE, Baseline
 from .ref_index import RefIndex, _atomic_write_text
 from .roles import _companion_dir, _RolesMixin, _soft_check_dir

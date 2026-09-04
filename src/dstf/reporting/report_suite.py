@@ -627,10 +627,10 @@ def generate_report_suite(
     # Resolve the backend's artifact file list once up front — class attribute,
     # no runner instantiation needed (avoids triggering the fmpy import if the
     # extra isn't installed).
-    from ..simulators import get_runner_class
+    from ..backends import get_backend_class
 
     try:
-        artifact_files = tuple(get_runner_class(config).artifact_files)
+        artifact_files = tuple(get_backend_class(config).artifact_files)
     except ValueError:
         artifact_files = ()
 
@@ -638,7 +638,7 @@ def generate_report_suite(
     manifest_meta_by_model: dict[str, dict] = {}
     manifest_paths = sorted(config.work_dir.glob("batch_manifest.json"))
     if manifest_paths:
-        from ..simulators import BatchManifest
+        from ..backends import BatchManifest
 
         for mp in manifest_paths:
             bm = BatchManifest.load(mp)
@@ -677,7 +677,7 @@ def generate_report_suite(
     index_tests: list[dict] = []
     total_reports = len(work)
 
-    from ..simulators.base import _print_progress
+    from ..backends.base import _print_progress
 
     print(f"Generating {total_reports} reports (parallel={n_workers})...")
 

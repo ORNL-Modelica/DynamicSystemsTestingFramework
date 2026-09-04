@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.comparator import compare_test
 from dstf.comparison.tree_eval import (
     PRIMARY_BASELINE,
@@ -15,7 +16,6 @@ from dstf.comparison.tree_eval import (
 )
 from dstf.comparison.tree_spec import parse_metric_tree
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.types import TestResult, VariableResult
 
 # ---------------------------------------------------------------------------
 # Helpers

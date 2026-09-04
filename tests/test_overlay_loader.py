@@ -379,9 +379,9 @@ class TestStoreExceptionsSwallowed:
 class _FakeConfigForSibling:
     """Minimum surface load_sibling_backend_overlays touches."""
 
-    def __init__(self, reference_root, simulator_backend, os_name):
+    def __init__(self, reference_root, backend, os_name):
         self.reference_root = reference_root
-        self.simulator_backend = simulator_backend
+        self.backend = backend
         self.os_name = os_name
 
 

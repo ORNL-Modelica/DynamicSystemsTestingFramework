@@ -2,14 +2,14 @@
 
 from types import SimpleNamespace
 
-from dstf.simulators.run_metadata import RunMetadata
+from dstf.backends.run_metadata import RunMetadata
 
 
-def _stub_config(simulator="Dymola 2026x", backend="Dymola", os_name="linux"):
+def _stub_config(backend_name="Dymola 2026x", backend="Dymola", os_name="linux"):
     """Duck-typed Config: from_config only reads these three members."""
     return SimpleNamespace(
-        simulator=simulator,
-        simulator_backend=backend,
+        backend_name=backend_name,
+        backend=backend,
         os_name=os_name,
     )
 
@@ -37,7 +37,7 @@ class TestFromConfig:
         assert isinstance(meta.dstf_version, str)
 
     def test_simulator_falls_back_to_backend_when_unset(self):
-        cfg = _stub_config(simulator=None, backend="Dymola")
+        cfg = _stub_config(backend_name=None, backend="Dymola")
         meta = RunMetadata.from_config(cfg)
         assert meta.simulator == "Dymola"
 
@@ -99,9 +99,9 @@ class TestBatchDymolaStampsProvenance:
         import json
         from pathlib import Path
 
+        from dstf.backends.dymola.backend import DymolaBackend
         from dstf.config import Config
         from dstf.discovery.test_registry import TestModel
-        from dstf.simulators.dymola.runner import DymolaRunner
 
         lib = tmp_path / "Lib"
         lib.mkdir()
@@ -109,12 +109,12 @@ class TestBatchDymolaStampsProvenance:
         cfg = Config(
             source_path=lib,
             reference_root=tmp_path / "refs",
-            simulator="Dymola",
+            backend_name="Dymola",
             work_dir=tmp_path / "work",
         )
-        runner = DymolaRunner(cfg)
+        runner = DymolaBackend(cfg)
         # Don't spawn Dymola — the prologue is what's under test.
-        monkeypatch.setattr(DymolaRunner, "_run_batch", lambda *a, **k: [])
+        monkeypatch.setattr(DymolaBackend, "_run_batch", lambda *a, **k: [])
 
         test = TestModel(
             model_id="Lib.A",

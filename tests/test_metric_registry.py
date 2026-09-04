@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pytest
 
+from dstf.backends import VariableResult
+from dstf.backends.types import DatasetType
 from dstf.comparison import registry
 from dstf.comparison.modes import ComparisonMode, resolve_mode
 from dstf.comparison.registry import (
@@ -25,8 +27,6 @@ from dstf.comparison.registry import (
 from dstf.comparison.tree_eval import evaluate_spec
 from dstf.comparison.tree_spec import MetricSpecError, parse_metric_tree
 from dstf.comparison.types import VariableComparison
-from dstf.simulators import VariableResult
-from dstf.simulators.types import DatasetType
 
 
 @pytest.fixture(autouse=True)
@@ -368,10 +368,10 @@ class TestThirdPartyMetricInTheReporter:
         'not JS-scored', no longer 'event-timing only')."""
         from pathlib import Path
 
+        from dstf.backends import TestResult, VariableResult
         from dstf.comparison.metric_tree import leaf_from_variable
         from dstf.discovery.test_registry import TestModel
         from dstf.reporting.context_builder import _build_template_context
-        from dstf.simulators import TestResult, VariableResult
 
         register_metric(_final_slope_descriptor())
         t = np.linspace(0.0, 1.0, 20)

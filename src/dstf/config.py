@@ -22,8 +22,9 @@ DEFAULT_COMPARISON_TOLERANCE = 1e-4
 # Config filename looked for near the package or in working directory
 CONFIG_FILENAME = "testing.json"
 
-# Maps simulator entry names to their backend type
-SIMULATOR_BACKENDS = {
+# Maps a user-supplied backend name prefix to its canonical family:
+# "Dymola 2026x" -> "Dymola". NOT the set of registered backends.
+BACKEND_FAMILIES = {
     "Dymola": "Dymola",
     "OpenModelica": "OpenModelica",
     "FMPy": "FMPy",
@@ -38,7 +39,7 @@ SIMULATOR_BACKENDS = {
 # doesn't list an explicit path. Backend-name lowercase happens to match for
 # Dymola; OpenModelica's binary is ``omc`` (not ``openmodelica``). An empty
 # string marks backends that don't ship a standalone binary (FMPy is a
-# Python library — simulator_path is unused for it).
+# Python library — backend_path is unused for it).
 BACKEND_BINARY_NAMES = {
     "Dymola": "dymola",
     "OpenModelica": "omc",
@@ -48,15 +49,15 @@ BACKEND_BINARY_NAMES = {
 }
 
 
-def _detect_backend(simulator_name: str) -> str:
+def _detect_backend(backend_name: str) -> str:
     """Determine the simulator backend type from a named entry.
 
     E.g., "Dymola 2025" -> "Dymola", "OpenModelica 1.23" -> "OpenModelica"
     """
-    for prefix, backend in SIMULATOR_BACKENDS.items():
-        if simulator_name.startswith(prefix):
+    for prefix, backend in BACKEND_FAMILIES.items():
+        if backend_name.startswith(prefix):
             return backend
-    return simulator_name
+    return backend_name
 
 
 def detect_os() -> str:
@@ -155,16 +156,16 @@ def _create_default_config(config_dir: Path, library_name: str) -> dict:
     return config
 
 
-def _resolve_simulator_path(
-    simulators_config: dict[str, list[str]],
-    simulator_name: str,
+def _resolve_backend_path(
+    backends_config: dict[str, list[str]],
+    backend_name: str,
 ) -> str | None:
-    """Resolve a simulator executable path from the simulators config.
+    """Resolve a backend's executable path from the backends config.
 
     Looks up the named entry and returns the first path that exists on disk.
     Falls back to checking if the name is on PATH.
     """
-    paths = simulators_config.get(simulator_name, [])
+    paths = backends_config.get(backend_name, [])
     for p in paths:
         path = Path(p)
         if path.is_absolute() and path.exists():
@@ -175,14 +176,14 @@ def _resolve_simulator_path(
     return None
 
 
-def _auto_detect_simulator(
-    simulators_config: dict[str, list[str]],
+def _auto_detect_backend(
+    backends_config: dict[str, list[str]],
 ) -> tuple[str, str] | None:
-    """Pick the first simulator in ``simulators_config`` whose binary resolves.
+    """Pick the first simulator in ``backends_config`` whose binary resolves.
 
     Resolution order per candidate entry:
       1. Any path in its ``simulators`` list that exists on disk or resolves
-         on ``PATH`` (via :func:`_resolve_simulator_path`).
+         on ``PATH`` (via :func:`_resolve_backend_path`).
       2. If the list contains no absolute paths (empty or bare-binary names
          only), fall back to the backend's canonical binary
          (``BACKEND_BINARY_NAMES``) on ``PATH``.
@@ -198,11 +199,11 @@ def _auto_detect_simulator(
     Iteration follows dict insertion order so users can express preference
     (list Dymola first on Windows; list OpenModelica first on Linux) —
     "first available wins" across both Windows and Linux machines with the
-    same ``testing.json``. Returns ``(simulator_name, resolved_path)`` or
+    same ``testing.json``. Returns ``(backend_name, resolved_path)`` or
     ``None`` if no entry resolves.
     """
-    for name, paths in simulators_config.items():
-        path = _resolve_simulator_path(simulators_config, name)
+    for name, paths in backends_config.items():
+        path = _resolve_backend_path(backends_config, name)
         if path:
             return name, path
         # No explicit entry resolved. Only fall back to a generic PATH
@@ -287,10 +288,10 @@ class Config:
     # ``"Dymola"`` as the historical default. A non-None value (typically
     # from a CLI ``--simulator`` flag) is treated as authoritative and is
     # NOT overridden by anything from testing.json.
-    simulator: str | None = None
-    simulator_path: str | None = None
+    backend_name: str | None = None
+    backend_path: str | None = None
     show_ide: bool = False
-    simulator_setup: list[str] = field(
+    backend_setup: list[str] = field(
         default_factory=list
     )  # Commands run after loading libraries
 
@@ -435,7 +436,7 @@ class Config:
             # Non-modelica source: no package.mo to discover. The "library"
             # is conceptually the FMU set / data set / Julia project / etc.
             # described by the config. Resolve source_path here too so
-            # backends that need it (JuliaRunner for --project=) find the
+            # backends that need it (JuliaBackend for --project=) find the
             # right directory. CLI arg > config file > config dir > cwd.
             if self.source_path is not None:
                 self.source_path = Path(self.source_path).resolve()
@@ -475,34 +476,34 @@ class Config:
             self.os_name = file_config.get("os", detect_os())
 
         # Simulator selection. Resolution order, first match wins:
-        #   1. Explicit constructor / CLI value (self.simulator is not None)
+        #   1. Explicit constructor / CLI value (self.backend_name is not None)
         #   2. testing.json explicit "simulator" key
         #   3. testing.json "simulators" map auto-detect (first entry whose
         #      binary resolves on the current machine / PATH)
         #   4. Default "Dymola" (historical fallback)
-        if self.simulator is None:
+        if self.backend_name is None:
             if "simulator" in file_config:
-                self.simulator = file_config["simulator"]
+                self.backend_name = file_config["simulator"]
             else:
-                simulators_config = file_config.get("simulators", {})
-                detected = _auto_detect_simulator(simulators_config)
+                backends_config = file_config.get("simulators", {})
+                detected = _auto_detect_backend(backends_config)
                 if detected:
-                    self.simulator = detected[0]
+                    self.backend_name = detected[0]
                     # review 2026-07-06 finding 18: auto-detect may fill the
                     # simulator NAME, but must never clobber an explicitly
-                    # supplied simulator_path (CLI --simulator-path).
-                    if self.simulator_path is None:
-                        self.simulator_path = detected[1]
+                    # supplied backend_path (CLI --simulator-path).
+                    if self.backend_path is None:
+                        self.backend_path = detected[1]
                 else:
-                    self.simulator = "Dymola"
+                    self.backend_name = "Dymola"
 
         # Show IDE
         if not self.show_ide and "show_ide" in file_config:
             self.show_ide = file_config["show_ide"]
 
         # Simulator setup commands
-        if not self.simulator_setup and "simulator_setup" in file_config:
-            self.simulator_setup = file_config["simulator_setup"]
+        if not self.backend_setup and "simulator_setup" in file_config:
+            self.backend_setup = file_config["simulator_setup"]
 
         # Diagnostic variables
         if "diagnostic_variables" in file_config:
@@ -554,23 +555,23 @@ class Config:
             self.disabled_bundled = list(file_config["disable_bundled"])
 
         # Resolve simulator executable path
-        if self.simulator_path is None:
-            simulators_config = file_config.get("simulators", {})
-            if simulators_config:
-                resolved = _resolve_simulator_path(simulators_config, self.simulator)
+        if self.backend_path is None:
+            backends_config = file_config.get("simulators", {})
+            if backends_config:
+                resolved = _resolve_backend_path(backends_config, self.backend_name)
                 if resolved:
-                    self.simulator_path = resolved
+                    self.backend_path = resolved
                 else:
                     logger.warning(
                         "No working path found for simulator '%s' in config. "
                         "Falling back to PATH lookup.",
-                        self.simulator,
+                        self.backend_name,
                     )
-            if self.simulator_path is None:
-                backend = self.simulator_backend
+            if self.backend_path is None:
+                backend = self.backend
                 binary = BACKEND_BINARY_NAMES.get(backend, backend.lower())
                 if binary:
-                    self.simulator_path = shutil.which(binary) or binary
+                    self.backend_path = shutil.which(binary) or binary
 
         # Reference root (may already be set from CLI arg)
         if self.reference_root is None:
@@ -634,7 +635,7 @@ class Config:
                     work_path = (config_found_dir or repo_root) / work_path
                 self.work_dir = work_path.resolve()
             else:
-                sim_dir = self.simulator.replace(" ", "_")
+                sim_dir = self.backend_name.replace(" ", "_")
                 self.work_dir = (
                     Path.cwd()
                     / "testing_output"
@@ -646,10 +647,10 @@ class Config:
             self.work_dir = Path(self.work_dir).resolve()
 
     @property
-    def simulator_backend(self) -> str:
+    def backend(self) -> str:
         """The simulator backend type (e.g., 'Dymola' from 'Dymola 2025')."""
-        assert self.simulator is not None  # resolved in __post_init__
-        return _detect_backend(self.simulator)
+        assert self.backend_name is not None  # resolved in __post_init__
+        return _detect_backend(self.backend_name)
 
     @property
     def library_dir(self) -> Path:
@@ -666,4 +667,4 @@ class Config:
         """Reference results directory, partitioned by simulator backend and OS."""
         assert self.reference_root is not None  # resolved in __post_init__
         assert self.os_name is not None  # resolved in __post_init__
-        return self.reference_root / self.simulator_backend / self.os_name
+        return self.reference_root / self.backend / self.os_name

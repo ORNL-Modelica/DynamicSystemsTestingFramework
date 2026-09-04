@@ -94,30 +94,30 @@ def test_fmpy_can_read_bouncing_ball():
 @pytest.mark.fmpy
 @pytest.mark.skipif(not _fmpy_available(), reason="fmpy not installed")
 def test_fmpy_backend_registers_under_name():
-    """``get_runner`` with ``simulator='FMPy'`` returns an FmpyRunner.
+    """``get_backend`` with ``backend_name='FMPy'`` returns an FmpyBackend.
 
     Proves the registry + config._detect_backend + lazy-import wiring is
     correct end-to-end. Does not attempt simulation (Phase 2.3).
     """
-    from dstf.simulators import get_runner
-    from dstf.simulators.fmpy import FmpyRunner
+    from dstf.backends import get_backend
+    from dstf.backends.fmpy import FmpyBackend
 
     # Minimal config that doesn't need a real library — we only test the factory
     class _FakeConfig:
-        simulator = "FMPy"
+        backend_name = "FMPy"
         source_type = "fmu"
 
         @property
-        def simulator_backend(self):
+        def backend(self):
             return "FMPy"
 
-    runner = get_runner(_FakeConfig())
-    assert isinstance(runner, FmpyRunner)
+    runner = get_backend(_FakeConfig())
+    assert isinstance(runner, FmpyBackend)
     # Capabilities declared as advertised in docs/extensibility.md §3
-    from dstf.simulators.types import Capability, DatasetType
+    from dstf.backends.types import Capability, DatasetType
 
     # review 2026-07-06 (finding 28): PERSISTENT_WORKERS was aspirational —
-    # FmpyRunner ships no persistent runner, and the repaired capability-
+    # FmpyBackend ships no persistent runner, and the repaired capability-
     # honesty check now rejects the unbacked flag at registration.
     assert Capability.PERSISTENT_WORKERS not in runner.capabilities
     assert Capability.BATCH_FALLBACK not in runner.capabilities

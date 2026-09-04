@@ -37,7 +37,7 @@ partition) and surface them as read-only companions with
 but not yet been baselined — the user can eyeball "does this new sim's
 trajectory match the old simulator's stored reference?" on the same
 plot. No persistence — purely a visual overlay at report time. Gated
-by passing a ``config`` (with ``reference_root`` + ``simulator_backend``
+by passing a ``config`` (with ``reference_root`` + ``backend``
 + ``os_name``) into :func:`load_overlays`; omit the config and only
 user-registered overlays are returned (existing behavior).
 """
@@ -139,7 +139,7 @@ def load_sibling_backend_overlays(config, model_id: str) -> list[Overlay]:
     """Find peer-backend references for ``model_id`` and render them as overlays.
 
     Scans ``<reference_root>/<backend>/<os>/`` directories, excluding the
-    current partition (``config.simulator_backend`` + ``config.os_name``),
+    current partition (``config.backend`` + ``config.os_name``),
     for ``ref_*.json`` files whose ``model_id`` matches. Each match becomes
     an :class:`Overlay` with ``role="companion"`` + ``kind="sibling-backend"``
     and ``name`` like ``"Dymola/windows"``. Every failure mode
@@ -151,7 +151,7 @@ def load_sibling_backend_overlays(config, model_id: str) -> list[Overlay]:
     reference_root = getattr(config, "reference_root", None)
     if reference_root is None:
         return []
-    current_backend = getattr(config, "simulator_backend", None) or ""
+    current_backend = getattr(config, "backend", None) or ""
     current_os = getattr(config, "os_name", None) or ""
     index = _sibling_backend_index(
         str(reference_root),

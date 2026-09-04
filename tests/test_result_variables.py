@@ -2,7 +2,7 @@
 
 ``compute_needed_variables`` / ``extract_variables`` / the statistics folds
 used to be duplicated in the Dymola and OpenModelica runners. They now live in
-``dstf.simulators.common.result_variables`` and both backends call them, so the
+``dstf.backends.common.result_variables`` and both backends call them, so the
 behavior is pinned once here.
 """
 
@@ -11,14 +11,14 @@ from pathlib import Path
 
 import numpy as np
 
-from dstf.discovery.test_registry import TestModel
-from dstf.simulators.common.result_variables import (
+from dstf.backends.common.result_variables import (
     compute_needed_variables,
     extract_variables,
     fold_diagnostics_into_statistics,
     merge_timing_stats,
 )
-from dstf.simulators.types import VariableResult
+from dstf.backends.types import VariableResult
+from dstf.discovery.test_registry import TestModel
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SAMPLE_MAT = FIXTURES_DIR / "results" / "Dymola" / "dsres.mat"

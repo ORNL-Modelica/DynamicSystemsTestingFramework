@@ -1,7 +1,7 @@
 """Registration of the built-in metrics and combinators.
 
 Imported for its side effect by the package ``__init__`` — the same shape
-``simulators`` uses for its backends. Each ``build`` here reproduces the
+``backends`` uses for its backends. Each ``build`` here reproduces the
 per-mode construction that used to live in ``modes.resolve_mode``'s
 if/elif chain, so it is the single place that knows how an override dict
 turns into a configured mode.
@@ -9,7 +9,7 @@ turns into a configured mode.
 
 from __future__ import annotations
 
-from ..simulators.types import DatasetType
+from ..backends.types import DatasetType
 from .metric_tree import (
     AndCombinator,
     KOfNCombinator,

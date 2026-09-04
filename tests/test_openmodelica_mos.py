@@ -2,12 +2,12 @@
 
 from pathlib import Path
 
-from dstf.discovery.test_registry import TestModel
-from dstf.simulators.openmodelica.mos_generator import (
+from dstf.backends.openmodelica.mos_generator import (
     build_simulate_mos,
     build_variable_filter,
     classify_dependency,
 )
+from dstf.discovery.test_registry import TestModel
 
 
 def _make_test(**overrides) -> TestModel:
@@ -116,7 +116,7 @@ class TestBuildSimulateMos:
             test_dir=Path("/tmp/test_0001"),
             library_package_mo=Path("/lib/package.mo"),
             dependencies=[],
-            simulator_setup=[],
+            backend_setup=[],
             diagnostic_vars=[],
             std_version="latest",
         )
@@ -128,7 +128,7 @@ class TestBuildSimulateMos:
             test_dir=Path("/tmp/test_0001"),
             library_package_mo=Path("/lib/package.mo"),
             dependencies=["Modelica", "/other/Lib"],
-            simulator_setup=[],
+            backend_setup=[],
             diagnostic_vars=[],
         )
         load_model_line = mos.index("loadModel(Modelica)")
@@ -142,7 +142,7 @@ class TestBuildSimulateMos:
             test_dir=Path("/tmp/test_0001"),
             library_package_mo=Path("/lib/package.mo"),
             dependencies=[],
-            simulator_setup=['setDebugFlags("foo")'],
+            backend_setup=['setDebugFlags("foo")'],
             diagnostic_vars=[],
         )
         setup_pos = mos.index('setDebugFlags("foo")')
@@ -156,7 +156,7 @@ class TestBuildSimulateMos:
             test_dir=Path("/tmp/test_0001"),
             library_package_mo=Path("/lib/package.mo"),
             dependencies=[],
-            simulator_setup=[],
+            backend_setup=[],
             diagnostic_vars=[],
         )
         assert "simulate(Demo.Example.A" in mos
@@ -176,7 +176,7 @@ class TestBuildSimulateMos:
             test_dir=Path("/tmp/test_0001"),
             library_package_mo=Path("/lib/package.mo"),
             dependencies=[],
-            simulator_setup=[],
+            backend_setup=[],
             diagnostic_vars=[],
         )
         assert "<<<" not in mos
@@ -192,7 +192,7 @@ class TestBuildSimulateMos:
             test_dir=Path("C:/work/test_0001"),
             library_package_mo=Path("C:/lib/package.mo"),
             dependencies=[],
-            simulator_setup=[],
+            backend_setup=[],
             diagnostic_vars=[],
         )
         assert 'cd("C:/work/test_0001")' in mos
@@ -204,7 +204,7 @@ class TestBuildSimulateMos:
             test_dir=Path("/tmp/test_0001"),
             library_package_mo=Path("/lib/package.mo"),
             dependencies=[],
-            simulator_setup=[],
+            backend_setup=[],
             diagnostic_vars=[],
         )
         assert "loadModel(" not in mos

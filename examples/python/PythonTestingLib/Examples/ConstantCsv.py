@@ -3,7 +3,7 @@
 This file contains zero numerical-integration code. The ``simulate()``
 function loads pre-recorded (t, x) pairs from a CSV and returns them
 verbatim. It exists to prove the backend abstraction is not secretly
-shaped around ODE simulation: a "SimulatorRunner" can serve any
+shaped around ODE simulation: a "Backend" can serve any
 source of time-series data, including pure data playback.
 
 The ``stop_time`` argument is respected as a clip window — samples with

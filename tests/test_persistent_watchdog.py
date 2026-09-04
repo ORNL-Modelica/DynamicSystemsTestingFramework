@@ -18,9 +18,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from dstf.backends.persistent import PersistentBackendBase, Worker
+from dstf.backends.types import TestRunResult, timeout_message
 from dstf.discovery.test_registry import TestModel
-from dstf.simulators.persistent import PersistentRunnerBase, Worker
-from dstf.simulators.types import TestRunResult, timeout_message
 from dstf.storage.batch_manifest import BatchManifest
 
 
@@ -93,7 +93,7 @@ class TestKillsWholeProcessTree:
     rmtree with PermissionError)."""
 
     def test_dymola_worker_kills_dymosim_child(self, tmp_path, monkeypatch):
-        from dstf.simulators.dymola.persistent_runner import DymolaWorker
+        from dstf.backends.dymola.persistent_backend import DymolaWorker
 
         child = _FakeProcess(1002, "dymosim")
         parent = _FakeProcess(1001, "dymola.exe", children=[child])
@@ -103,13 +103,13 @@ class TestKillsWholeProcessTree:
             worker_id=0,
             config=SimpleNamespace(
                 work_dir=tmp_path,
-                simulator_path=None,
+                backend_path=None,
                 dependencies=[],
                 library_dir=tmp_path,
             ),
             dymola_config=SimpleNamespace(
                 show_ide=False,
-                simulator_setup=[],
+                backend_setup=[],
                 diagnostic_variables=[],
             ),
             dymola_interface_cls=object,
@@ -122,7 +122,7 @@ class TestKillsWholeProcessTree:
         assert worker.pids == set()
 
     def test_om_worker_kills_model_binary_child(self, tmp_path, monkeypatch):
-        from dstf.simulators.openmodelica.persistent_runner import (
+        from dstf.backends.openmodelica.persistent_backend import (
             OpenModelicaWorker,
         )
 
@@ -145,7 +145,7 @@ class TestKillsWholeProcessTree:
     def test_recycled_pid_is_left_alone(self, tmp_path, monkeypatch):
         """The tracked PID may have been reused by an unrelated process —
         the name guard is what stops us killing it."""
-        from dstf.simulators.dymola.persistent_runner import DymolaWorker
+        from dstf.backends.dymola.persistent_backend import DymolaWorker
 
         child = _FakeProcess(3002, "some-child")
         stranger = _FakeProcess(3001, "python", children=[child])
@@ -155,13 +155,13 @@ class TestKillsWholeProcessTree:
             worker_id=0,
             config=SimpleNamespace(
                 work_dir=tmp_path,
-                simulator_path=None,
+                backend_path=None,
                 dependencies=[],
                 library_dir=tmp_path,
             ),
             dymola_config=SimpleNamespace(
                 show_ide=False,
-                simulator_setup=[],
+                backend_setup=[],
                 diagnostic_variables=[],
             ),
             dymola_interface_cls=object,
@@ -188,7 +188,7 @@ class TestKillProcessTreeRealProcesses:
 
         import psutil
 
-        from dstf.simulators.common.proc_kill import kill_process_tree
+        from dstf.backends.common.proc_kill import kill_process_tree
 
         # Parent spawns a child and idles — the pre-fix parent-only kill
         # left exactly this child running.
@@ -288,7 +288,7 @@ class TestExecThreadPinsItsInterface:
     poisoning."""
 
     def test_dymola_run_test_uses_the_interface_it_started_with(self, tmp_path):
-        from dstf.simulators.dymola.persistent_runner import DymolaWorker
+        from dstf.backends.dymola.persistent_backend import DymolaWorker
 
         gate = threading.Event()
         first = _BlockingDymolaInterface(gate=gate)
@@ -298,13 +298,13 @@ class TestExecThreadPinsItsInterface:
             worker_id=0,
             config=SimpleNamespace(
                 work_dir=tmp_path,
-                simulator_path=None,
+                backend_path=None,
                 dependencies=[],
                 library_dir=tmp_path,
             ),
             dymola_config=SimpleNamespace(
                 show_ide=False,
-                simulator_setup=[],
+                backend_setup=[],
                 diagnostic_variables=[],
             ),
             dymola_interface_cls=object,
@@ -327,7 +327,7 @@ class TestExecThreadPinsItsInterface:
         assert "savelog" in first.calls
 
     def test_om_run_test_uses_the_session_it_started_with(self, tmp_path):
-        from dstf.simulators.openmodelica.persistent_runner import (
+        from dstf.backends.openmodelica.persistent_backend import (
             OpenModelicaWorker,
         )
 
@@ -379,7 +379,7 @@ class TestJuliaRestartQueue:
     def test_start_discards_the_killed_process_stdout(self, tmp_path, monkeypatch):
         """A stale 'ready' pulse left by the killed process would satisfy
         _wait_for_ready before the new process has loaded anything."""
-        from dstf.simulators.julia import persistent_runner as jpr
+        from dstf.backends.julia import persistent_backend as jpr
 
         worker = jpr.JuliaWorker(
             0,
@@ -412,8 +412,8 @@ class TestJuliaTimeoutKill:
         """The deadline poll uses the shared kill, and the result says the
         worker died — the dispatch loop's benign-restart accounting keys on
         ``timed_out or worker_killed``."""
-        from dstf.simulators import persistent as sim_persistent
-        from dstf.simulators.julia import persistent_runner as jpr
+        from dstf.backends import persistent as sim_persistent
+        from dstf.backends.julia import persistent_backend as jpr
 
         (tmp_path / "Lib.A.jl").write_text("# stub")
         worker = jpr.JuliaWorker(
@@ -461,7 +461,7 @@ class TestOrphanedChildIsStillKilled:
         dymosim/the model binary orphaned — unreachable from a tree walk that
         starts at the (now gone) parent. close() snapshots the children first
         so they are still killable afterwards."""
-        from dstf.simulators.persistent import Worker
+        from dstf.backends.persistent import Worker
 
         child = _FakeProcess(5002, "dymosim")
         parent = _FakeProcess(5001, "dymola.exe", children=[child])
@@ -502,7 +502,7 @@ class TestOrphanedChildIsStillKilled:
         be reissued — on Windows almost immediately, possibly to another
         worker's fresh dymosim. The snapshot records each child's creation
         time; a different one means a different process."""
-        from dstf.simulators.persistent import Worker
+        from dstf.backends.persistent import Worker
 
         child = _FakeProcess(6002, "dymosim", create_time=100.0)
         parent = _FakeProcess(6001, "dymola.exe", children=[child])
@@ -543,7 +543,7 @@ class TestOrphanedChildIsStillKilled:
         """A recycled *parent* PID must not hand us a stranger's children to
         kill later — the guard belongs on the snapshot too, not only on the
         kill."""
-        from dstf.simulators.common.proc_kill import snapshot_children
+        from dstf.backends.common.proc_kill import snapshot_children
 
         child = _FakeProcess(7002, "some-child")
         stranger = _FakeProcess(7001, "python", children=[child])
@@ -562,7 +562,7 @@ class TestOrphanedChildIsStillKilled:
         window — while the parent is still alive to be walked — can reach it;
         a walk after the graceful attempt finds no parent left (measured
         live: two surviving `sh -c ./dymosim` processes)."""
-        from dstf.simulators.persistent import Worker
+        from dstf.backends.persistent import Worker
 
         parent = _FakeProcess(8001, "dymola.exe")
         late_child = _FakeProcess(8002, "dymosim", create_time=200.0)
@@ -643,7 +643,7 @@ class _TemplateWorker:
             raise self.raise_exc
         if self.block:
             self.gate.wait(10)
-        from dstf.simulators.types import TestRunResult
+        from dstf.backends.types import TestRunResult
 
         return TestRunResult(
             model_id=test.model_id,
@@ -657,7 +657,7 @@ class _TemplateWorker:
 
 
 def _template_worker(tmp_path, **kwargs):
-    from dstf.simulators.persistent import Worker
+    from dstf.backends.persistent import Worker
 
     cls = type("_FakeTemplateWorker", (_TemplateWorker, Worker), {})
     return cls(0, SimpleNamespace(work_dir=tmp_path), **kwargs)
@@ -665,7 +665,7 @@ def _template_worker(tmp_path, **kwargs):
 
 class TestSharedWatchdogTemplate:
     def test_timeout_kills_and_reports_timed_out(self, tmp_path, monkeypatch):
-        from dstf.simulators import persistent as sim_persistent
+        from dstf.backends import persistent as sim_persistent
 
         killed: list[int] = []
         monkeypatch.setattr(
@@ -689,7 +689,7 @@ class TestSharedWatchdogTemplate:
         assert worker.is_alive() is False
 
     def test_timeout_rescued_from_disk_still_flags_worker_killed(self, tmp_path):
-        from dstf.simulators.types import TestRunResult
+        from dstf.backends.types import TestRunResult
 
         worker = _template_worker(tmp_path, block=True)
         worker.rescue = TestRunResult(
@@ -723,7 +723,7 @@ class TestSharedWatchdogTemplate:
         assert worker.closed == 1
 
     def test_exception_path_rescues_a_completed_simulation(self, tmp_path):
-        from dstf.simulators.types import TestRunResult
+        from dstf.backends.types import TestRunResult
 
         worker = _template_worker(tmp_path, raise_exc=RuntimeError("rpc dropped"))
         worker.rescue = TestRunResult(
@@ -754,8 +754,8 @@ class TestSharedWatchdogTemplate:
         ``worker_killed`` flag, so the restart it forces is charged against
         the budget. The watchdog reaps the process (and drops the handle)
         before returning."""
-        from dstf.simulators import persistent as sim_persistent
-        from dstf.simulators.julia import persistent_runner as jpr
+        from dstf.backends import persistent as sim_persistent
+        from dstf.backends.julia import persistent_backend as jpr
 
         (tmp_path / "Lib.A.jl").write_text("# stub")
         worker = jpr.JuliaWorker(
@@ -805,8 +805,8 @@ class TestSharedWatchdogTemplate:
     ):
         """A process that outlives the reap window must still leave the
         worker dead — otherwise the dispatcher hands it the next test."""
-        from dstf.simulators import persistent as sim_persistent
-        from dstf.simulators.julia import persistent_runner as jpr
+        from dstf.backends import persistent as sim_persistent
+        from dstf.backends.julia import persistent_backend as jpr
 
         (tmp_path / "Lib.A.jl").write_text("# stub")
         worker = jpr.JuliaWorker(
@@ -849,7 +849,7 @@ class TestCloseHookContract:
         """The graceful thread only logs what it catches, so a worker that
         detaches a handle it can't shut down would hard-kill its way through
         the whole run in silence. Fail loudly instead."""
-        from dstf.simulators.persistent import Worker
+        from dstf.backends.persistent import Worker
 
         class _HalfWorker(Worker):
             def start(self):  # pragma: no cover — never called
@@ -866,7 +866,7 @@ class TestCloseHookContract:
             worker.close()
 
     def test_graceful_failure_is_logged_not_swallowed(self, tmp_path, caplog):
-        from dstf.simulators.persistent import Worker
+        from dstf.backends.persistent import Worker
 
         class _RaisingShutdownWorker(Worker):
             def start(self):  # pragma: no cover — never called
@@ -894,7 +894,7 @@ class TestCloseHookContract:
 
 class TestJuliaCloseAndReap:
     def _worker(self, tmp_path):
-        from dstf.simulators.julia import persistent_runner as jpr
+        from dstf.backends.julia import persistent_backend as jpr
 
         return jpr.JuliaWorker(
             0,
@@ -950,8 +950,8 @@ class TestJuliaCloseAndReap:
         reader threads: they are parked in readline() holding the
         BufferedReader lock, so closing those pipes here blocks the dispatch
         thread until the child exits — at --parallel 1, the whole run."""
-        from dstf.simulators import persistent as sim_persistent
-        from dstf.simulators.julia import persistent_runner as jpr
+        from dstf.backends import persistent as sim_persistent
+        from dstf.backends.julia import persistent_backend as jpr
 
         (tmp_path / "Lib.A.jl").write_text("# stub")
         worker = self._worker(tmp_path)
@@ -1004,7 +1004,7 @@ class TestJuliaCloseAndReap:
     def test_tree_kill_no_op_still_kills_the_owned_popen(self, tmp_path, monkeypatch):
         """kill_process_tree does nothing without psutil, on a name-guard
         miss or on AccessDenied. We own the Popen — use it."""
-        from dstf.simulators import persistent as sim_persistent
+        from dstf.backends import persistent as sim_persistent
 
         (tmp_path / "Lib.A.jl").write_text("# stub")
         worker = self._worker(tmp_path)
@@ -1075,8 +1075,8 @@ class TestCloseHonoursTheGraceBudget:
         """The orphan walks are paid out of *grace*, not added to it: a
         recursive children() call costs tens of ms on Windows and close()
         runs ~20 of them inside a 5s Dymola grace."""
-        from dstf.simulators import persistent as sim_persistent
-        from dstf.simulators.persistent import Worker
+        from dstf.backends import persistent as sim_persistent
+        from dstf.backends.persistent import Worker
 
         def _slow_walk(pid, name_hint=None):
             time.sleep(0.05)  # a slow psutil walk
@@ -1135,7 +1135,7 @@ class TestCloseHonoursTheGraceBudget:
 # ---------------------------------------------------------------------------
 
 
-class _StubRunner(PersistentRunnerBase):
+class _StubRunner(PersistentBackendBase):
     backend_label = "Stub"
     # The production default is seconds (a licence seat takes a moment to be
     # released); tests only care that the retry happens, not that it waits.
@@ -1315,7 +1315,7 @@ class TestStartupFailureCleanup:
         cfg = Config(
             source_path=tmp_path,
             reference_root=tmp_path / "refs",
-            simulator="OpenModelica",
+            backend_name="OpenModelica",
             work_dir=tmp_path / "work",
             parallel=2,
         )
@@ -1488,7 +1488,7 @@ class TestRestartRetry:
     def test_the_production_backoff_is_a_few_seconds(self):
         """The stub subclass shortens it; the shipped default must be long
         enough for a licence seat to actually come back."""
-        assert 1.0 <= PersistentRunnerBase.restart_retry_backoff_seconds <= 30.0
+        assert 1.0 <= PersistentBackendBase.restart_retry_backoff_seconds <= 30.0
 
 
 # =========================================================================

@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from dstf.backends import VariableResult
 from dstf.comparison.tree_eval import (
     BaselineView,
     evaluate_spec,
@@ -26,7 +27,6 @@ from dstf.comparison.tree_spec import (
     spec_to_view,
     synthesize_implicit_tree,
 )
-from dstf.simulators import VariableResult
 
 
 def _var(time, values, index=1, name="x"):

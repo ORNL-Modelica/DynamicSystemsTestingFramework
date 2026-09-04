@@ -1,6 +1,6 @@
 """Entry-point plug-in loading — the seam third-party packages register through.
 
-Every extension registry in the framework (``simulators.register``,
+Every extension registry in the framework (``backends.register``,
 ``discovery.recognizer.register``, ``comparison.registry.register_metric`` /
 ``register_combinator``) is populated by *importing* the module that calls it.
 Builtins are imported by their package ``__init__``; a third-party plug-in

@@ -2,12 +2,12 @@
 
 Lives in :mod:`dstf.storage` with the other on-disk record keepers — it is a
 JSON file in the work dir, written through the same atomic primitive as the
-reference files. The simulator package re-exports it (``from dstf.simulators
+reference files. The backends package re-exports it (``from dstf.backends
 import BatchManifest``) because every runner's ``run_tests`` returns one.
 
 ``TestRunResult`` is imported only for typing: keeping it out of the runtime
 import graph is what lets ``dstf.storage.batch_manifest`` be imported first,
-before ``dstf.simulators`` has run its package ``__init__``.
+before ``dstf.backends`` has run its package ``__init__``.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from .ref_index import _atomic_write_text
 
 if TYPE_CHECKING:
-    from ..simulators.types import TestRunResult
+    from ..backends.types import TestRunResult
 
 logger = logging.getLogger(__name__)
 
