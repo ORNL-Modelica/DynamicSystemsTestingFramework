@@ -1123,16 +1123,25 @@ planning.
   or a higher global `--timeout`. Worth deciding which, since the same
   question applies to any long-running model a new user brings.
 
-- **CI's `ruff format --check` is red on a fresh checkout** (2026-09-04, found
-  while verifying a "ruff clean" claim): `quality.yml` runs the format check
-  over the whole repo, `pyproject.toml` pins only `ruff>=0.6`, and current
-  ruff formats Markdown code blocks — so eleven files fail, nine of them
-  historical plan documents nobody intends to reformat. Pre-existing and
-  unrelated to any recent change; it means a green local run does not predict
-  CI. Two candidate fixes, and they differ in spirit: pin ruff to a known
-  version (reproducible, but freezes the formatter), or scope the format check
-  to `src` and `tests` as the lint check effectively already is (accepts that
-  historical prose is not formatted code). Grill before choosing.
+- **Three sources decide which ruff runs, and only one of them is the lock**
+  (2026-09-04): CI runs `uv sync --extra dev`, which installs exactly what
+  `uv.lock` pins; `CLAUDE.md` and `docs/usage.md` both tell a developer to set
+  up with `uv pip install -e ".[dev]"`, which ignores the lock and resolves
+  fresh against the floor in `pyproject.toml`; and `.pre-commit-config.yaml`
+  pins its own `rev:`. That drift already produced one false alarm — a session
+  measured `ruff format --check` as failing on eleven files when CI's pinned
+  ruff never looked at them, and logged "CI is red" as an entry here. All three
+  now agree on 0.16.6, but nothing keeps them agreeing.
+  Two independent hardenings, both one line, neither taken yet. (1) Recommend
+  `uv sync --extra dev` in the two docs. It is NOT a trade against the editable
+  install — `uv sync` installs the project editable by default; the real
+  difference is that it prunes anything absent from the lock, so a dev who
+  hand-installs `fmpy` or `OMPython` needs `--extra fmpy --extra om` rather
+  than a bare sync. (2) Pass `--locked` in `quality.yml`. Plain `uv sync`
+  silently RE-LOCKS when the lock has drifted from `pyproject.toml`, so a floor
+  raised without re-locking would have CI upgrade the tool on its own; the flag
+  turns "CI gets exactly the lock" from a convention into an assertion that
+  fails loudly. The second is the sharper of the two.
 
 - **Finish the role vocabulary inside `tests/`** (2026-09-04, scope decision
   deferred during the Backend rename): the rename covered `src/`, the docs and

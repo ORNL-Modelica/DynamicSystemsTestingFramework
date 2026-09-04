@@ -19,7 +19,7 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "scipy>=1.10",
-    "ruff>=0.6",
+    "ruff>=0.16",
     "mypy>=1.10",
     "pytest-cov>=5.0",
 ]
@@ -62,6 +62,18 @@ filterwarnings = [
 [tool.ruff]
 target-version = "py310"
 src = ["src", "tests"]
+
+[tool.ruff.format]
+# Ruff 0.16 began formatting code blocks inside Markdown. This repo's docs are
+# prose with illustrative snippets — reformatting them splits aligned trailing
+# comments across lines and would churn ~1,900 changed lines, 97% of them in
+# docs/superpowers/ plan documents nobody edits. Lint is unaffected because
+# `ruff check` does not read Markdown at all; this exclude is format-only by
+# construction. Caveat: an exclude is honored in discovery mode and under
+# `--force-exclude` (which the pre-commit hook passes), but NOT when a `.md`
+# path is passed explicitly — an editor-on-save integration can still
+# reformat one.
+exclude = ["*.md"]
 
 [tool.ruff.lint]
 # Curated starter set (D88): real-bug rules + import sort + modernization,
