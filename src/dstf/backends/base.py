@@ -95,10 +95,10 @@ def _print_run_header(
 ) -> None:
     """Print the standard "Running N tests..." header + dashboard URL.
 
-    Single source of truth for the header style across all runners (default
+    Single source of truth for the header style across all backends (default
     batch loop, persistent template, batch Dymola's batched-mos override).
     *suffix_phrase* differentiates modes — empty for the default loop,
-    ``"via persistent <Backend> workers"`` for persistent runners, or
+    ``"via persistent <Backend> workers"`` for persistent backends, or
     ``"in M batch(es) of up to K"`` for the legacy Dymola batch path.
 
     *timeout_per_test* toggles the units in the timeout label: the default
@@ -309,7 +309,7 @@ class Backend(ABC):
     #: Per-test files the backend produces that should appear in the report's
     #: "Simulation Artifacts" section as ``(filename, label)`` pairs.
     #: Backend-agnostic reporter walks this list and skips files that don't
-    #: exist — lets each runner own its artifact names without the reporter
+    #: exist — lets each backend own its artifact names without the reporter
     #: hardcoding anyone's on-disk conventions.
     artifact_files: tuple[tuple[str, str], ...] = ()
 
@@ -322,15 +322,15 @@ class Backend(ABC):
 
     @classmethod
     def persistent_backend_cls(cls) -> type["Backend"] | None:
-        """Return the persistent-worker variant of this runner, or ``None``
+        """Return the persistent-worker variant of this backend, or ``None``
         if the backend is batch-only.
 
-        Override on backends that ship a persistent runner; the override
+        Override on backends that ship a persistent variant; the override
         lazy-imports its sibling persistent module so the optional dep
         (DymolaInterface, OMPython, ``julia`` binary) is not pulled in
         during a plain batch run. The CLI calls this — keeping the lookup
-        on the runner class rather than in CLI code means a new persistent
-        backend is purely a runner-module change with no CLI edit.
+        on the backend class rather than in CLI code means a new persistent
+        backend is purely a backend-module change with no CLI edit.
         """
         return None
 
@@ -338,12 +338,12 @@ class Backend(ABC):
     def preflight(cls, config: Config) -> None:
         """Cheap pre-startup dependency probe.
 
-        Override on persistent runners that have an external dependency
+        Override on persistent backends that have an external dependency
         (Python module, native binary, license file) to raise
         :class:`RuntimeError` with an install hint when it's missing.
         Cheap probes only — full failure modes (worker compile errors,
         license issues) still surface from ``run_tests``. Default is a
-        no-op for runners with no extra dependencies beyond what the
+        no-op for backends with no extra dependencies beyond what the
         package declares.
         """
         return None

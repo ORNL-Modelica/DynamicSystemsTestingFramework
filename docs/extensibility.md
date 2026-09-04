@@ -2,13 +2,13 @@
 
 > This is the contract every new Source, Discovery, Backend, Dataset, Metric, or Combinator must honor. It aligns with the six-layer abstraction in [architecture.md](architecture.md) and the vision in [vision.md](vision.md). Contracts here are specifications — not all are realized in code yet; a layer's "Current" box shows what exists today.
 
-The framework's promise: **every layer is a plug-in point**. Adding a new simulator, a new metric, or a new way to discover tests must not require changes to the framework core. If a plug-in forces a core change, the abstraction is wrong and we fix the abstraction, not special-case the plug-in.
+The framework's promise: **every layer is a plug-in point**. Adding a new backend, a new metric, or a new way to discover tests must not require changes to the framework core. If a plug-in forces a core change, the abstraction is wrong and we fix the abstraction, not special-case the plug-in.
 
 ---
 
 ## Registry pattern
 
-Every layer uses the same `@register("name")` decorator pattern already established for simulators:
+Every layer uses the same `@register("name")` decorator pattern already established for backends:
 
 ```python
 from dstf.backends import register, Backend
@@ -53,7 +53,7 @@ A Source describes *what* holds the behavior under test. Sources are not classes
 
 ### Current
 
-Two source types live today: `"modelica"` (default — `Config.source_path` points at a `package.mo` directory) and `"fmu"` (Phase 2 — `Config.source_path` is the FMU dir; per-test `"source"` field in `test_spec.json` names the binary). Discovery and backend selection gate on `Config.source_type`. Adding a new source means setting `source_type` and teaching `discover_tests` how to enumerate its tests; the backend layer below is independent.
+Four source types live today: `"modelica"` (default — `Config.source_path` points at a `package.mo` directory), `"fmu"`, `"julia"` and `"python"` (`Config.source_path` is the FMU / project / script dir; the per-test `"source"` field in `test_spec.json` names the binary or file). Only `"modelica"` is branched on in framework code — the package.mo lookup in `config.py` and the `.mo` recognizer scan in `discover_tests`; the other values simply skip both and select recognizers via `Recognizer.applies_to`. Adding a new source means setting `source_type` and teaching `discover_tests` how to enumerate its tests; the backend layer below is independent.
 
 ---
 
@@ -124,22 +124,26 @@ Backends execute tests and produce Datasets. See [architecture.md](architecture.
 
 ### Capabilities (mandatory to declare)
 
-Each Backend declares a frozen set of capabilities:
+Each Backend declares a frozen set of capabilities as a class attribute:
 
-| Capability | Meaning |
+```python
+capabilities: frozenset[Capability]  # members of backends.types.Capability
+```
+
+| `Capability` member | Meaning |
 |---|---|
-| `supports_persistent_workers` | Holds loaded model(s) in memory across tests (performance: no per-test startup). |
-| `supports_batch_fallback` | Exposes a non-interactive script-driven mode when persistent workers aren't available. |
-| `supports_fmu_export` | Can export a test artefact as an FMU (enables cross-backend verification). |
+| `PERSISTENT_WORKERS` | Holds loaded model(s) in memory across tests (performance: no per-test startup). |
+| `BATCH_FALLBACK` | Exposes a non-interactive script-driven mode when persistent workers aren't available. |
+| `FMU_EXPORT` | Can export a test artefact as an FMU (enables cross-backend verification). |
 
-Features in the framework (CLI flags, report sections, cross-backend chains) gate on capabilities, not on backend names. A new backend that declares `supports_fmu_export` automatically participates in cross-backend verification with no framework change.
+Features in the framework (CLI flags, report sections, cross-backend chains) gate on capabilities, not on backend names. A new backend that declares `FMU_EXPORT` automatically participates in cross-backend verification with no framework change.
 
-Declare a capability on the class that actually has it. Where a backend ships a persistent variant, the two classes can differ — Dymola's FMU export needs a live `DymolaInterface`, so `PersistentDymolaRunner` declares `FMU_EXPORT` and the batch `DymolaRunner` does not. Registration-time validation (`simulators._validate_capabilities`) enforces flag ⟹ method override, but only for `@register`-ed classes; persistent variants are reached through `persistent_runner_cls`, so their declarations are covered by tests.
+Declare a capability on the class that actually has it. Where a backend ships a persistent variant, the two classes can differ — Dymola's FMU export needs a live `DymolaInterface`, so `PersistentDymolaBackend` declares `FMU_EXPORT` and the batch `DymolaBackend` does not. Registration-time validation (`backends._validate_capabilities`) enforces flag ⟹ method override, but only for `@register`-ed classes; persistent variants are reached through `persistent_backend_cls`, so their declarations are covered by tests.
 
 ### Produced datasets (mandatory to declare)
 
 ```python
-produced_datasets: frozenset[DatasetType]  # e.g. {DatasetType.TimeSeries, DatasetType.Events}
+produced_datasets: frozenset[DatasetType]  # e.g. {DatasetType.TIME_SERIES, DatasetType.EVENTS}
 ```
 
 Metrics check at config-resolution time that the Backend produces the Dataset types they need, and error early with a clear message if not.
@@ -150,15 +154,15 @@ A Backend must:
 1. Declare `capabilities` and `produced_datasets` as class attributes.
 2. Implement `run_tests(tests) -> list[BatchManifest]` (or inherit a default that uses `run_single_test`).
 3. Implement `read_result(test) -> Dataset` returning a typed Dataset.
-4. Implement `export_fmu(test) -> Path` iff `supports_fmu_export`.
+4. Implement `export_fmu(test) -> Path` iff the class declares `Capability.FMU_EXPORT`.
 5. Use `ProgressReporter` (backend-agnostic, already exists) for live-dashboard status.
 6. Put all tool-specific code under `backends/<name>/`. No tool-specific imports in framework core.
 
 ### Persistent-worker contract
 
-If your backend can hold a loaded model in memory across tests (declares `Capability.PERSISTENT_WORKERS`), inherit from `PersistentRunnerBase` (in `simulators/persistent.py`) and supply a `Worker` subclass — you do **not** re-implement the dispatch loop. The template owns the orchestration; you fill in backend-specific construction and lifecycle hooks.
+If your backend can hold a loaded model in memory across tests (declares `Capability.PERSISTENT_WORKERS`), inherit from `PersistentBackendBase` (in `backends/persistent.py`) and supply a `Worker` subclass — you do **not** re-implement the dispatch loop. The template owns the orchestration; you fill in backend-specific construction and lifecycle hooks.
 
-**`Worker` ABC** (in `simulators/persistent.py`) declares the long-lived-process contract every persistent backend's worker must satisfy. Two of its methods — `run_test_with_timeout` and `close` — are **template methods** implemented once in the base: the watchdog thread, the timeout kill, the process-tree kill, the disk rescue and the restart-accounting flags were identical in every backend. You supply hooks, not a watchdog.
+**`Worker` ABC** (in `backends/persistent.py`) declares the long-lived-process contract every persistent backend's worker must satisfy. Two of its methods — `run_test_with_timeout` and `close` — are **template methods** implemented once in the base: the watchdog thread, the timeout kill, the process-tree kill, the disk rescue and the restart-accounting flags were identical in every backend. You supply hooks, not a watchdog.
 
 What the base guarantees, for every worker: `run_test` executes on a daemon exec thread joined with the test's timeout; on expiry the worker is `close()`d (graceful attempt on its own daemon thread, abandoned after `timeout_kill_grace`, then `kill_process_tree` on every tracked PID and on the children recorded by the tree walks `close()` takes before the graceful attempt and every 0.25 s during it — a child that first appears *inside* that window, as dymosim does when the timeout lands during translation, is only reachable while its parent is still alive); `_evaluate_from_disk` then gets a chance to rescue a simulation that finished just before the kill. Timeout results carry `worker_killed=True` (a *healthy* worker died because the test was slow — the dispatch loop must not charge it against `max_restarts_per_worker`); worker exceptions leave it `False` (a genuinely broken worker DOES cost budget). `self.pids` and `self._n_restarts` are declared by `Worker.__init__`, so `super().__init__(worker_id, config)` is not optional.
 
@@ -181,7 +185,7 @@ What the base guarantees, for every worker: `run_test` executes on a daemon exec
 | `close(grace=5.0)` | template | Implemented by the base and idempotent. Do not override. |
 | `export_fmu(test, output_dir)` | iff `FMU_EXPORT` | Default raises `NotImplementedError`. |
 
-**`PersistentRunnerBase`** (subclass of `SimulatorRunner`) provides the full `run_tests` template:
+**`PersistentBackendBase`** (subclass of `Backend`) provides the full `run_tests` template:
 
 ```
 setup_before_workers → _prepare_run (progress + keys + manifest)
@@ -201,33 +205,35 @@ You fill in:
 | `preflight(config)` (classmethod) | no-op | Backend has an external dependency (Python module, native binary, license file). Raise `RuntimeError` with an install hint when missing — the CLI surfaces it verbatim. |
 | `starting_workers_message(n)` | `"Starting N <label> worker(s)..."` | You want a backend-specific notice (Julia: warmup-time warning). |
 | `max_restarts_per_worker` (class attr) | `3` | Restart budget needs tuning. |
-| `persistent_runner_cls()` (classmethod) | `cls` | Don't override — the default returns self so the CLI doesn't recurse. |
+| `persistent_backend_cls()` (classmethod) | `cls` | Don't override — the default returns self so the CLI doesn't recurse. |
 
-Plus on the **batch** runner class (the one decorated with `@register("YourBackend")`):
+Plus on the **batch** backend class (the one decorated with `@register("YourBackend")`):
 
 | Hook | Default | Override when |
 |---|---|---|
-| `persistent_runner_cls()` (classmethod) | `None` (batch-only) | Backend ships a persistent variant. Lazy-import + return its class so the optional dep isn't pulled in during a plain batch run. |
+| `persistent_backend_cls()` (classmethod) | `None` (batch-only) | Backend ships a persistent variant. Lazy-import + return its class so the optional dep isn't pulled in during a plain batch run. |
 
-**Inheritance order matters.** Persistent runners inherit from both `PersistentRunnerBase` *and* the batch runner. The MRO must put `PersistentRunnerBase` first so its `run_tests` template wins over the batch runner's per-test override:
+**Inheritance order matters.** Persistent backends inherit from both `PersistentBackendBase` *and* the batch backend. The MRO must put `PersistentBackendBase` first so its `run_tests` template wins over the batch backend's per-test override:
 
 ```python
-class PersistentDymolaRunner(PersistentRunnerBase, DymolaRunner):
+class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
     worker_cls = DymolaWorker
     backend_label = "Dymola"
     ...
 ```
 
-Worked example: `simulators/openmodelica/persistent_runner.py` is the smallest of the three live persistent runners — read it as the canonical reference.
+Worked example: `backends/openmodelica/persistent_backend.py` has the most compact of the three persistent backends' class bodies — read it as the canonical reference.
 
 ### Current
 
-`SimulatorRunner` ABC with five concrete implementations: `DymolaRunner`, `OpenModelicaRunner` (native Modelica), `FmpyRunner` (FMU), `JuliaRunner` (ModelingToolkit), and `PythonRunner` (arbitrary `simulate()`). The `Capability` + `DatasetType` enums and the `capabilities` / `produced_datasets` class-attribute contract gate feature availability per backend.
+`Backend` ABC with five concrete implementations: `DymolaBackend`, `OpenModelicaBackend` (native Modelica), `FmpyBackend` (FMU), `JuliaBackend` (ModelingToolkit), and `PythonBackend` (arbitrary `simulate()`). The `Capability` + `DatasetType` enums and the `capabilities` / `produced_datasets` class-attribute contract gate feature availability per backend.
 
-- `DymolaRunner` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK, FMU_EXPORT}` — the last is currently a placeholder until a cross-backend verification feature wires it.
-- `FmpyRunner` declares `{PERSISTENT_WORKERS}` — no batch fallback (FMPy *is* the Python path), no FMU export (FMPy consumes FMUs), no experiment ingest.
+- `DymolaBackend` declares `{PERSISTENT_WORKERS, BATCH_FALLBACK}`. `FMU_EXPORT` sits on `PersistentDymolaBackend`, not here — batch mode has no `.mos` export path (see the note above about declaring a capability on the class that actually has it).
+- `OpenModelicaBackend` and `JuliaBackend` declare `{PERSISTENT_WORKERS, BATCH_FALLBACK}` (`PersistentJuliaBackend` re-declares the same pair; `PersistentOpenModelicaBackend` inherits it).
+- `PythonBackend` declares `{BATCH_FALLBACK}` — subprocess per test; a long-lived Python worker is deferred, and FMU export isn't meaningful for arbitrary `simulate()` scripts.
+- `FmpyBackend` declares `frozenset()` — no persistent worker exists, no batch fallback (FMPy *is* the Python path), no FMU export (FMPy consumes FMUs).
 
-Both produce `{TIME_SERIES}`. The framework doesn't yet *gate* features on the declarations — consumers of `capabilities` (feature toggling, CLI warnings) are a later phase once a concrete decision depends on capability flags. Rename `SimulatorRunner` → `Backend` is still deferred; the existing name now applies to both a Modelica-backed *and* FMU-backed implementation, which makes the rename more valuable but also a cleaner one-shot change to land at a single time.
+All five produce `{TIME_SERIES}`. The framework *does* gate on the declarations: `cli/run_cmds.py` swaps to the persistent variant only when `PERSISTENT_WORKERS` is declared, `backends/__init__.py` rejects a registration whose flags have no matching method override, and `backends/cross_backend.py` refuses the export chain unless the primary backend declares `FMU_EXPORT`.
 
 ---
 

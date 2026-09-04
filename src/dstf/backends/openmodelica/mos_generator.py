@@ -1,6 +1,6 @@
 """Pure-text builders for OpenModelica .mos scripts.
 
-No I/O beyond string assembly — trivially unit-testable. The runner calls
+No I/O beyond string assembly — trivially unit-testable. The backend calls
 :func:`build_simulate_mos` per test, writes the result to
 ``<test_dir>/simulate.mos``, then invokes ``omc`` on it.
 
@@ -65,7 +65,7 @@ def build_variable_filter(
 
     OM's ``variableFilter`` is a regex over variable names. We escape each
     name literally and join with ``|``. ``time`` is always included; so are
-    the diagnostic variables and any ``extra_names`` the runner passes
+    the diagnostic variables and any ``extra_names`` the backend passes
     (e.g. ``unitTests.x[1]``, ..., ``unitTests.x[N]`` for unit_tests-sourced
     tests). Returning a regex (not ``.*``) keeps the .mat small — OM dumps
     all parameters/aliases/derivatives by default.
@@ -80,7 +80,7 @@ def build_variable_filter(
     # the set for the pass/fail comparison).
     for pat in patterns:
         alternatives.append(_pattern_to_regex(pat).pattern)
-    # Extra literal names (no globs). Runner uses this for UnitTests
+    # Extra literal names (no globs). The backend uses this for UnitTests
     # component variables (``unitTests.x[i]``) that the spec doesn't list.
     for n in extra_names:
         alternatives.append(re.escape(n))
@@ -125,7 +125,7 @@ def build_simulate_args(
     """Build the ``key=value`` strings for an OM ``simulate(...)`` call.
 
     Pure string assembly; used both by :func:`build_simulate_mos` (batch
-    path) and by the persistent-worker runner, which passes the same args
+    path) and by the persistent-worker backend, which passes the same args
     to ``session.sendExpression("simulate(<model>, <args>)")``.
 
     OM's ``simulate()`` has ``numberOfIntervals`` but not ``outputInterval``

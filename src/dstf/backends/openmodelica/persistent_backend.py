@@ -1,7 +1,7 @@
-"""Persistent-worker OpenModelica runner using OMPython (OMCSessionZMQ).
+"""Persistent-worker OpenModelica backend using OMPython (OMCSessionZMQ).
 
-Unlike the default batched runner (which spawns one ``omc`` subprocess per
-test driven by a generated ``simulate.mos``), this runner keeps N long-lived
+Unlike the default batched backend (which spawns one ``omc`` subprocess per
+test driven by a generated ``simulate.mos``), this backend keeps N long-lived
 ``OMCSessionZMQ`` processes alive for the whole run. Each worker loads MSL
 + the library once and then pulls tests off a shared queue.
 
@@ -13,15 +13,15 @@ Benefits:
   - Natural work-stealing: whichever worker finishes first grabs the next test
   - Per-test timeout isolation: a hung test kills one worker, not the batch
 
-The default CLI mode selects this runner; pass ``--batch`` to opt out and
-use the subprocess-per-test runner, which doesn't require OMPython. There
+The default CLI mode selects this backend; pass ``--batch`` to opt out and
+use the subprocess-per-test backend, which doesn't require OMPython. There
 is no automatic fallback: if OMPython can't be imported, ``preflight``
 raises and the CLI aborts with a message naming both fixes (see
 ``cli._get_backend``).
 
 Phase labels are cosmetic — OM's ``simulate()`` bundles build + run in one
 call with no mid-call progress hook, so we emit ``translating`` before the
-call and ``simulating`` after (matching the existing batch runner pattern).
+call and ``simulating`` after (matching the existing batch backend pattern).
 Per-phase wall timings are still accurate in the final report because they
 come from the returned ``SimulationResult`` record.
 """
@@ -153,7 +153,7 @@ def _synthesize_stdout_artifact(
     error_string: str,
 ) -> str:
     """Render a text document equivalent to ``omc_stdout.txt`` so the report's
-    artifact list matches the batch-runner shape. Diagnostic only — nothing
+    artifact list matches the batch-backend shape. Diagnostic only — nothing
     downstream parses it.
     """
     parts = [
@@ -277,7 +277,7 @@ class OpenModelicaWorker(Worker):
 
         self._exec(f'setCommandLineOptions("--std={self.om_config.std_version}")')
 
-        # Auto-inject MSL if the user didn't list it — matches batch runner.
+        # Auto-inject MSL if the user didn't list it — matches the batch backend.
         deps = list(self.config.dependencies)
         if "Modelica" not in deps and not any(
             str(d).rstrip("/\\").endswith("Modelica") for d in deps
@@ -385,7 +385,7 @@ class OpenModelicaWorker(Worker):
             shutil.rmtree(test_dir)
         test_dir.mkdir(parents=True, exist_ok=True)
 
-        # UnitTests component auto-names (same convention as batch runner).
+        # UnitTests component auto-names (same convention as the batch backend).
         extra_filter_names: list[str] = []
         if test.source in ("unit_tests", "both") and test.n_vars > 0:
             extra_filter_names = [
@@ -634,12 +634,12 @@ class OpenModelicaWorker(Worker):
 
 
 class PersistentOpenModelicaBackend(PersistentBackendBase, OpenModelicaBackend):
-    """OpenModelica runner using persistent OMCSessionZMQ workers + a queue.
+    """OpenModelica backend using persistent OMCSessionZMQ workers + a queue.
 
     Inherits the dispatch-loop machinery from :class:`PersistentBackendBase`
     and the batch :class:`OpenModelicaBackend` for ``read_result`` + config
     extraction. Order matters — ``PersistentBackendBase`` first so its
-    ``run_tests`` template wins over the batch runner's per-test override.
+    ``run_tests`` template wins over the batch backend's per-test override.
     """
 
     worker_cls = OpenModelicaWorker

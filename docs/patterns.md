@@ -78,11 +78,11 @@
 - Falls back to raw RMSE only when magnitude is also near-zero (true zero constant)
 - Consistent with how `_compare_final_values` normalizes by `|ref_final|`
 
-### Simulator registry and lazy backend imports
-- Backends self-register via `@register(name)` class decorator in `simulators/__init__.py`
-- `get_runner(config)` factory looks up the backend by `config.simulator_backend` and instantiates it
+### Backend registry and lazy imports
+- Backends self-register via `@register(name)` class decorator in `backends/__init__.py`
+- `get_backend(config)` factory looks up the backend by `config.backend` and instantiates it
 - Built-in backends are lazy-imported on first use via `_import_builtin_backend()` — avoids loading all backends at startup
-- `DymolaRunner` extracts Dymola-specific settings into an immutable `DymolaConfig` dataclass at init
+- `DymolaBackend` extracts Dymola-specific settings into an immutable `DymolaConfig` dataclass at init
 
 ### Variable naming from UnitTests expressions
 - Simple case (`x={a, b, c}`): parsed into individual expression names `["a", "b", "c"]`
@@ -159,16 +159,16 @@
 - Use the custom `_pattern_to_regex()` instead
 
 ### Backend-agnostic live progress via meta-refresh dashboard
-- `ProgressReporter` (`simulators/progress.py`) holds in-memory `TestStatus` per test (`queued` / `running` / `passed` / `failed` / `timed_out`) plus elapsed/detail/worker_id
+- `ProgressReporter` (`backends/progress.py`) holds in-memory `TestStatus` per test (`queued` / `running` / `passed` / `failed` / `timed_out`) plus elapsed/detail/worker_id
 - Writes `status.json` (structured, for tooling) + `dashboard.html` (auto-refreshes via `<meta http-equiv="refresh" content="2">`) to `work_dir` on every state change — no server needed, works over `file://`
 - Atomic write pattern: unique tmp filenames (`status.json.{pid}.{uuid}.tmp`) + a dedicated `_write_lock` serializing the write+replace. Both are required on Windows where `replace` fails when another thread holds the file
 - `register(test_key, model_id, report_dir)` accepts a per-test report dir name (`"ref_NNNN"` or `"test_NNNN"`) so the dashboard's model-name link points at the canonical per-test report (`reports/{report_dir}/interactive.html`) — matches `generate_report_suite` naming
-- `runner.ref_id_map: dict[model_id, "ref_NNNN"]` is populated by the CLI before `run_tests` (from `ReferenceStore.index`); runner consults it at registration time so links work even mid-run before the report is generated
+- `backend.ref_id_map: dict[model_id, "ref_NNNN"]` is populated by the CLI before `run_tests` (from `ReferenceStore.index`); the backend consults it at registration time so links work even mid-run before the report is generated
 - `finalize()` strips the meta-refresh tag so the final dashboard doesn't keep reloading after the run completes
 
-### Per-phase timing on the persistent runner
+### Per-phase timing on the persistent backend
 - `DymolaWorker.run_test` splits `simulateModel` into explicit `translateModel` + `simulateModel` + `savelog` so each phase is measured independently. Timings (`translation_wall`, `sim_wall`) are fields on `TestRunResult`; total wall is `elapsed`
-- `runner.read_result` stashes the breakdown under `stats["timing"]` with keys `translation_wall`, `sim_wall`, `other_wall` (= total − translation − sim), `total_wall`. Values are rounded to 2 decimals at storage time so reference JSON stays clean
+- `backend.read_result` stashes the breakdown under `stats["timing"]` with keys `translation_wall`, `sim_wall`, `other_wall` (= total − translation − sim), `total_wall`. Values are rounded to 2 decimals at storage time so reference JSON stays clean
 - `ProgressReporter.on_phase(test_key, phase)` tracks `"translating"` / `"simulating"` / `"finalizing"` — dashboard status cell shows `running (simulating)` live, so translation time is visible before sim completes
 - Console progress line gains `[xlate 1.2s, sim 63.0s]` detail on success
 - Report's stats-section builder now iterates every top-level dict in `stats` (not just `translation` + `simulation`) and renders each as its own collapsible section. Any future stat category drops in for free; `_build_stats_section` accepts an optional `key_order` so the Timing section preserves operation order rather than sorting alphabetically
@@ -178,29 +178,29 @@
 ### Verify sim completion via dsfinal.txt + reached-stop-time
 - `dsres.mat` is written incrementally by Dymola — a killed-mid-sim leaves a partial-but-valid-looking file. Existence alone isn't sufficient proof of completion
 - `mat_reader.read_mat_time_extents(mat_path)` cheaply reads just row 0 of `data_2` (time) via memmap and returns `(first, last)`
-- Success criteria (applied in both batch and persistent runners): translation didn't abort AND `dsres.mat` exists AND `dsfinal.txt` exists AND `last_time ≥ stop_time − tol`
+- Success criteria (applied in both batch and persistent backends): translation didn't abort AND `dsres.mat` exists AND `dsfinal.txt` exists AND `last_time ≥ stop_time − tol`
 - Failure messages are specific so users know why: `"Translation failed"` / `"No result file produced"` / `"Simulation aborted (no dsfinal.txt)"` / `"Stopped early at T=4.7 of 10.0"` — plus last few ERROR lines from dslog appended
 - Lenient timeout: the watchdog kills but then checks disk; a sim that completed just past the deadline gets credit rather than being wasted
 
 ### Persistent Dymola workers via Python interface
-- `simulators/dymola/interface_loader.py` auto-discovers the `dymola` archive (`.whl` for ≥2025, `.egg` for older) under platform install roots (`C:\Program Files\Dymola *\Modelica\Library\python_interface/`). Wheels are extracted once into a user cache dir; eggs are added to `sys.path` directly (zipimport). Override via `--dymola-interface` / `dymola_interface_path` / `DYMOLA_INTERFACE_PATH`. Diagnose with `dstf check-dymola`
-- `PersistentDymolaRunner` subclasses `DymolaRunner` and overrides only `run_tests`; inherits `read_result` and config extraction. Each worker is a `DymolaWorker` wrapping one `DymolaInterface` instance
+- `backends/dymola/interface_loader.py` auto-discovers the `dymola` archive (`.whl` for ≥2025, `.egg` for older) under platform install roots (`C:\Program Files\Dymola *\Modelica\Library\python_interface/`). Wheels are extracted once into a user cache dir; eggs are added to `sys.path` directly (zipimport). Override via `--dymola-interface` / `dymola_interface_path` / `DYMOLA_INTERFACE_PATH`. Diagnose with `dstf check-dymola`
+- `PersistentDymolaBackend` subclasses `PersistentBackendBase` *and* `DymolaBackend` (in that MRO order, so the base's `run_tests` template wins). It overrides no `run_tests` of its own — only the template hooks `preflight` / `setup_before_workers` / `make_worker`, the `_probe_*` version probes, and `export_fmu`; `read_result` and config extraction come from `DymolaBackend`. Each worker is a `DymolaWorker` wrapping one `DymolaInterface` instance
 - Reliable per-worker PID tracking: pulled directly from `DymolaInterface._dymola_process.pid` (the internal `subprocess.Popen` handle), so we own the kill target without snapshot diffs
 - Parallel startup: monkey-patch Dymola's `dymola_interface_internal.dymola_lock` to a no-op (broad lock that holds for the whole `__init__` including `_check_dymola`'s ~7s ping wait), and add a narrow lock around `_find_available_port` so two workers can't pick the same random port. Without this patch, N workers serialize on Dymola's lock and startup is N×7s
-- Timeout watchdog: `Worker.run_test_with_timeout` (shared template in `simulators/persistent.py`, used by every backend whose execution is a blocking call) spawns a daemon runner thread and joins with the test's timeout. On expiry: `close(grace=timeout_kill_grace)` attempts graceful shutdown — 5s for Dymola so it flushes `dslog.txt`, 1s elsewhere — then `kill_process_tree` on tracked PIDs plus every child seen by the tree walks `close()` takes before the graceful attempt *and every 0.25s during it* (a parent that exits cleanly orphans dymosim otherwise — and a timeout during translation means dymosim only appears mid-window, so one walk up front cannot see it). Recorded children carry their `create_time` and are killed only if it still matches, since a PID freed inside the window can be reissued. Inner thread finishes cleanup out-of-band (short `join(0.5)` is enough; the thread is daemon and its result is already discarded)
+- Timeout watchdog: `Worker.run_test_with_timeout` (shared template in `backends/persistent.py`, used by every backend whose execution is a blocking call) spawns a daemon exec thread and joins with the test's timeout. On expiry: `close(grace=timeout_kill_grace)` attempts graceful shutdown — 5s for Dymola so it flushes `dslog.txt`, 1s elsewhere — then `kill_process_tree` on tracked PIDs plus every child seen by the tree walks `close()` takes before the graceful attempt *and every 0.25s during it* (a parent that exits cleanly orphans dymosim otherwise — and a timeout during translation means dymosim only appears mid-window, so one walk up front cannot see it). Recorded children carry their `create_time` and are killed only if it still matches, since a PID freed inside the window can be reissued. Inner thread finishes cleanup out-of-band (short `join(0.5)` is enough; the thread is daemon and its result is already discarded)
 - Worker restart: after a timeout/exception, `w.dymola = None`. Next iteration of `_worker_loop` sees `is_alive() == False` and calls `_try_restart(w)` — new `DymolaInterface` + library reload. Cap at `MAX_RESTARTS_PER_WORKER = 3`; after that, tests dispatched to that slot get a clean "Worker dead; restart exhausted" failure
 - Noise suppression: Dymola's `DymolaLogger._PrintMessage` uses `print(msg)` to stdout, so stderr filters don't catch its urllib-retry noise. We monkey-patch `DymolaLogger._PrintMessage` instead — during kill-window grace periods, lines matching `WinError 10054/10061` or `urlopen error` are silently dropped. Outside the window, full passthrough
 
 ### Persistent test_keys (manifest accumulates across runs)
-- `assign_test_keys()` (`simulators/base.py`) is the single allocation point. Loads existing `batch_manifest.json` if present, builds `model_id → test_key` reverse lookup, reuses existing test_keys for known models, assigns the next sequential `test_NNNN` for new models, stamps `last_run_at` on tests being run
+- `assign_test_keys()` (`backends/base.py`) is the single allocation point. Loads existing `batch_manifest.json` if present, builds `model_id → test_key` reverse lookup, reuses existing test_keys for known models, assigns the next sequential `test_NNNN` for new models, stamps `last_run_at` on tests being run
 - A model always gets the same `test_NNNN` for its lifetime — reruns naturally overwrite their own slot, prior dirs of unrelated tests stay intact
 - Per-test work directories are `rmtree`'d only for tests being run *this invocation* (`for test, test_key in test_items`), not for everything in the manifest
-- Both `base.SimulatorRunner.run_tests` and `DymolaRunner.run_tests` go through the same helper to keep behavior consistent across backends
+- Both `base.Backend.run_tests` and `DymolaBackend.run_tests` go through the same helper to keep behavior consistent across backends
 - Manifest entry shape: `{model_id, ref_id, last_run_at, last_run_status}`. Legacy plain-string-value format still loadable via `BatchManifest.load()`
 - Orphan handling: `run` and `compare` notify (one line) when the manifest contains entries for models no longer discovered. `manifest cleanup --orphans` lists them with their on-disk dirs (work + report); `--apply` removes entries and dirs. Never auto-prunes — discovery is too fragile (transient parse errors, missing deps) to trust as a delete trigger
 
 ### Index-page batch actions feed the CLI filter
-- Index template (`reporting/templates/index.html`) has a checkbox column + action panel. All selection state lives client-side in the DOM (rows get `.selected` class + a checked input)
+- Index template (`reporting/templates/dashboard.html`) has a checkbox column + action panel. All selection state lives client-side in the DOM (rows get `.selected` class + a checked input)
 - Bulk selectors (`+ Failed`, `+ Sim Failed`, `+ No Baseline`, `+ With Warnings`, `+ Stale`) operate over **visible** rows so the existing filter buttons act as a pre-filter for selection
 - Stale detection reuses the `last_run_at` heuristic (>60s older than newest); the row's `data-stale="1"` attribute is set by the same JS that renders the relative-time column
 - Three export formats: clipboard comma-list, downloaded `selected.txt` (one model_id per line — directly consumable by `--filter @file`), and a copyable command string that auto-switches between inline `"A,B,C"` (≤3 models) and `@selected.txt` (more)
@@ -209,7 +209,7 @@
 
 ### --merge expands report scope to the full manifest
 - `run --merge` keeps the *run* scope as `tests` (filtered) but expands the *read/compare/report* scope to every model in `manifest.manifest`
-- `runner.read_results` already handles `rr=None` for non-rerun tests by reading whatever `dsres.mat` exists in the test_dir on disk — so prior results merge naturally with fresh ones, no special path needed
+- `backend.read_results` already handles `rr=None` for non-rerun tests by reading whatever `dsres.mat` exists in the test_dir on disk — so prior results merge naturally with fresh ones, no special path needed
 - `--rerun` always sets `args.merge = True` since rerunning failed tests in isolation defeats the goal (you want to see them in context of the whole suite)
 - Stale-data visibility: `last_run_at` is rendered as a relative time on the index (with ISO tooltip); rows >60s older than the newest run are greyed out and tagged "Stale: from a prior run; rerun to refresh"
 

@@ -62,7 +62,7 @@ class Worker(ABC):
     calls it on every worker including ones that never started successfully.
 
     On failure, ``start()`` raises (typically :class:`RuntimeError`); the
-    runner records the failure and excludes that worker from the live pool.
+    backend records the failure and excludes that worker from the live pool.
     Inside the dispatch loop, ``run_test_with_timeout`` MUST NOT raise on
     test-level failures — return a ``TestRunResult`` with ``success=False``
     instead. Reserve raises for worker-level catastrophes (subprocess died,
@@ -399,7 +399,7 @@ class PersistentBackendBase(Backend):
     """Template-method class for persistent-worker backends.
 
     Owns the orchestration shared by Dymola / OpenModelica / Julia persistent
-    runners — so adding a new persistent backend is a one-class job, not a
+    backends — so adding a new persistent backend is a one-class job, not a
     250-line copy-paste of the dispatch loop.
 
     Subclass contract:

@@ -76,14 +76,14 @@ class FmpyBackend(Backend):
     """Runs FMU simulations using the FMPy Python library.
 
     Consumes prebuilt FMUs — does not compile from Modelica sources. For
-    Modelica → FMU conversion, a future ``supports_fmu_export`` capability
-    on a Modelica backend (Dymola / OMC) will chain into this runner for
-    cross-backend verification.
+    Modelica → FMU conversion, a backend declaring ``Capability.FMU_EXPORT``
+    (today: :class:`PersistentDymolaBackend`) chains into this one for
+    cross-backend verification — see ``backends/cross_backend.py``.
     """
 
     # Deliberately empty:
     #   PERSISTENT_WORKERS — review 2026-07-06 (finding 28): the flag was
-    #     aspirational (no persistent FMPy runner exists) and tripped the
+    #     aspirational (no persistent FMPy backend exists) and tripped the
     #     repaired capability-honesty check. Re-add when one actually ships.
     #   BATCH_FALLBACK — FMPy *is* the Python path; no script fallback exists
     #   FMU_EXPORT — FMPy consumes FMUs, doesn't produce them
@@ -97,7 +97,7 @@ class FmpyBackend(Backend):
     def __init__(self, config: Config):
         super().__init__(config)
         # Defer the fmpy import so a bare import of this module doesn't error
-        # when fmpy isn't installed — the runner only errors if actually used.
+        # when fmpy isn't installed — the backend only errors if actually used.
         try:
             import fmpy  # noqa: F401
         except ImportError as exc:

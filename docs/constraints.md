@@ -2,7 +2,7 @@
 
 ## Platform
 
-- **Windows MAX_PATH (260 chars)**: Modelica model paths are deeply nested. Reference filenames derived from model paths easily exceed this limit. Solved with numeric IDs (`ref_0001.json`), but `testing_output/` work directories can still hit this with deep library names + long simulator names.
+- **Windows MAX_PATH (260 chars)**: Modelica model paths are deeply nested. Reference filenames derived from model paths easily exceed this limit. Solved with numeric IDs (`ref_0001.json`), but `testing_output/` work directories can still hit this with deep library names + long backend names.
 
 - **Dymola working directory behavior**: `openModel()` changes Dymola's cwd to the model's directory. Every `.mos` script that writes output must explicitly `cd()` to the desired output directory after any `openModel()` call.
 
@@ -26,11 +26,11 @@
 
 ## Simulator Behavior
 
-- **Event handling varies by solver settings**: Dymola's `Evaluate=true` and `storeVariablesAtEvents` flags affect whether duplicate time points appear in results. The comparator handles both cases (with and without events), but reference results should be generated with consistent settings via `simulator_setup` in `testing.json`.
+- **Event handling varies by solver settings**: Dymola's `Evaluate=true` and `storeVariablesAtEvents` flags affect whether duplicate time points appear in results. The comparator handles both cases (with and without events), but reference results should be generated with consistent settings via `backend_setup` in `testing.json`.
 
 - **Triple time points at events**: Dymola sometimes produces 3 duplicate time points per event (pre-event, intermediate, post-event) rather than the expected 2. The comparator groups consecutive duplicates and uses the first as the segment end and the last as the next segment start, skipping intermediates.
 
-- **Numeric results are platform-dependent**: The same model with the same solver settings produces different floating-point results on Windows vs Linux, and between Dymola vs OpenModelica. References must be partitioned by simulator backend + OS.
+- **Numeric results are platform-dependent**: The same model with the same solver settings produces different floating-point results on Windows vs Linux, and between Dymola vs OpenModelica. References must be partitioned by backend + OS.
 
 - **Translation log capture requires Dymola 2025x+**: `Advanced.UI.TranslationInCommandLog := true;` is the correct flag for Dymola 2025x and newer. Older versions may use `Advanced.TranslationInCommandLog` (without `UI`). The framework hardcodes the 2025x+ syntax.
 

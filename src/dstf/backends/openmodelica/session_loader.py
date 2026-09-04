@@ -3,7 +3,7 @@
 OMPython is a regular pip package — unlike Dymola's shipped-in-install-tree
 interface, it's just a PyPI install away. The loader exists for symmetry
 with :mod:`backends.dymola.interface_loader` and so the persistent-worker
-runner can fail with a useful install hint when OMPython is missing
+backend can fail with a useful install hint when OMPython is missing
 (instead of an opaque :exc:`ImportError` deep in the worker thread).
 """
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 _INSTALL_HINT = (
-    "OMPython is not installed. The persistent-worker OpenModelica runner "
+    "OMPython is not installed. The persistent-worker OpenModelica backend "
     "needs it to drive omc over ZMQ. Install the optional extra:\n"
     "\n"
     '    uv pip install -e ".[om]"'

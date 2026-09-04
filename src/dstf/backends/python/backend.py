@@ -1,4 +1,4 @@
-"""Python / subprocess runner (D80).
+"""Python / subprocess backend (D80).
 
 Invokes a shipped driver script (``run_test.py``) via the configured
 Python interpreter. The driver loads the user's ``.py`` file — which
@@ -71,7 +71,7 @@ class PythonConfig:
 
 @register("Python")
 class PythonBackend(JsonDriverBackend):
-    """Subprocess-per-test Python runner."""
+    """Subprocess-per-test Python backend."""
 
     capabilities = frozenset(
         {

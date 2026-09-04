@@ -762,6 +762,16 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   in-band fraction's denominator becomes the union grid.
 
 - **Vocabulary cleanup pass on the code, before the public 1.0 announcement**
+  — DONE 2026-09-03 (D123). Shipped as the Backend rename: `src/dstf/simulators/`
+  → `src/dstf/backends/`, `SimulatorRunner` → `Backend`, `PersistentRunnerBase`
+  → `PersistentBackendBase`, `testing.json`'s `"simulator"` / `"simulators"` /
+  `"simulator_setup"` keys → `"backend"` / `"backends"` / `"backend_setup"`, and
+  the `--simulator` / `--simulator-path` CLI flags → `--backend` /
+  `--backend-path`. Tier (b) went through as the owner ruled — DSTF and
+  TRANSFORM-UnitTests updated in the same pass, no alias and no migration
+  layer — and the stored reference tree was unaffected, as the scope check
+  below predicted.
+  Original note:
   (2026-09-03, owner, from a design review): the documented vocabulary and
   the code's have drifted apart, and the documentation is what a new reader
   meets first. The code still says `simulator` where the architecture says
@@ -944,11 +954,11 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   simulators are selected): today one `dstf run` is one backend, and
   everything downstream is partitioned by it — references at
   `<reference_root>/<Backend>/<os>/`, work dir defaulting to
-  `testing_output/<library>/<Simulator>/<os>/` (`config.py:634`), and therefore
+  `testing_output/<library>/<Backend>/<os>/` (`config.py`), and therefore
   `dashboard.html`, `reports/` and the result sidecars too. That partitioning
   is why no fan-out layer was ever needed: two invocations, even concurrent
   ones, never collide, so the shell or a CI job matrix *is* the fan-out layer
-  (verified 2026-09-03; `--simulator` takes one name and there is no
+  (verified 2026-09-03; `--backend` takes one name and there is no
   matrix/all-backends flag anywhere in the CLI).
   What the partitioning does not give is a single view. Running a library
   against Dymola and OpenModelica yields two dashboards and two exit codes,

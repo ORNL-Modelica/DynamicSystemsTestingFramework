@@ -8,7 +8,7 @@ A **regression and unit-testing framework for any time-dependent system behavior
 - **How it is produced** (Dymola Python interface, OMPython, FMPy, JuliaCall, MATLAB engine, a subprocess, nothing at all for data-file ingest).
 - **What counts as "correct"** (NRMSE, tube envelope, event timing, spectral coherence, statistical distribution, domain-specific metrics the user writes).
 
-The current codebase is a strong, careful Modelica/Dymola implementation of this idea. The framework already has extension points (`@register` runners, `ComparisonMode` strategies); they have not been exercised. This document captures where we are going, so Phase 1+ refactors and new backends hit a consistent target.
+The current codebase is a strong, careful Modelica/Dymola implementation of this idea. The framework already has extension points (`@register` backends, `ComparisonMode` strategies); they have not been exercised. This document captures where we are going, so Phase 1+ refactors and new backends hit a consistent target.
 
 ---
 
@@ -35,7 +35,7 @@ The framework is structured around six layers. Each is a plug-in point; each has
   Discovery       — how tests are found from a Source (.mo scan, spec file, pytest-style, experiment registry)
     │
     ▼
-  Backend/Runner  — how a test is executed (Dymola Python, FMPy, OMPython, JuliaCall, MATLAB engine, nothing-for-data-file)
+  Backend         — how a test is executed (Dymola Python, FMPy, OMPython, JuliaCall, MATLAB engine, nothing-for-data-file)
     │
     ▼
   Dataset         — typed result (TimeSeries, Scalars, Events, Spectrum, Distribution; Field in future)
@@ -73,14 +73,14 @@ This is the natural completion of the "Modelica is the first consumer, not the r
 
 ---
 
-## Runner capabilities (first-class)
+## Backend capabilities (first-class)
 
-Runners are not all equivalent. Rather than assume every backend supports every workflow, runners declare **capabilities** on their contract:
+Backends are not all equivalent. Rather than assume every backend supports every workflow, backends declare **capabilities** on their contract — a `capabilities: frozenset[Capability]` class attribute. `Capability` has exactly three members:
 
-- `supports_persistent_workers` — can hold a loaded model in memory and simulate many tests per worker (Dymola Python: yes, batch `.mos`: no, FMPy: trivially yes, CSV ingest: N/A).
-- `supports_batch_fallback` — exposes a script-driven non-interactive fallback (Dymola: yes via `.mos`, OMC: yes via `.mos`, FMPy: no, MATLAB: yes).
-- `supports_fmu_export` — can export a test artefact as an FMU (Dymola: yes, OMC: yes, FMPy: N/A). Enables cross-backend verification (see below).
-- `produced_datasets` — set of `Dataset` types this runner can yield (most produce `TimeSeries` and `Events`; a data-file runner may produce only `TimeSeries`).
+- `PERSISTENT_WORKERS` — can hold a loaded model in memory and simulate many tests per worker (Dymola, OpenModelica and Julia: yes; FMPy: no — it runs in-process and declares nothing). Declare it on the **registered** class: `_get_backend` reads the batch class's `capabilities` to decide whether to select the persistent variant, so declaring it only on the persistent class means it is never seen.
+- `BATCH_FALLBACK` — exposes a script-driven non-interactive fallback (Dymola, OpenModelica, Julia and Python: yes; FMPy: no).
+- `FMU_EXPORT` — can export a test artefact as an FMU. Declared by `PersistentDymolaBackend`, since the export needs a live interface; the batch class does not have one. Enables cross-backend verification (see below).
+A separate class attribute, `produced_datasets: frozenset[DatasetType]`, declares the set of dataset kinds a backend can yield (most produce `TimeSeries` and `Events`; a data-file backend may produce only `TimeSeries`).
 
 Capabilities let the framework enable/disable features per backend without special-casing, and let users query at config time ("does this backend support what my test needs?").
 
@@ -88,9 +88,9 @@ Capabilities let the framework enable/disable features per backend without speci
 
 ## Cross-backend verification (forward bet)
 
-A deliberate forward architectural bet: if backend A declares `supports_fmu_export` and backend B can consume FMUs, the framework can run the same test through both and compare results. This is Gap E from the evaluation report ("cross-simulator validation") rendered as a composable feature on top of capabilities, not a hardcoded mode.
+A deliberate forward architectural bet: if backend A declares `FMU_EXPORT` and backend B can consume FMUs, the framework can run the same test through both and compare results. This is Gap E from the evaluation report ("cross-simulator validation") rendered as a composable feature on top of capabilities, not a hardcoded mode.
 
-Not implemented in initial broadening phases — but the capability hook is in the interface from day one so we don't have to re-break the contract later.
+Now implemented, and still marked EXPERIMENTAL: `backends/cross_backend.py` exports from Dymola and replays through FMPy, gated on the `FMU_EXPORT` declaration. Making every backend pair compare automatically is the part that remains forward-looking.
 
 ---
 
@@ -211,11 +211,11 @@ The single question this tool answers: *"does this time-dependent signal match t
 ## Forward-looking principles
 
 1. **The framework is the primitive; backends and metrics are plug-ins.** If we find ourselves writing backend-specific code in the framework core, we re-draw the line.
-2. **Capabilities over `isinstance`.** Feature availability is a runner-declared capability, not a type check.
+2. **Capabilities over `isinstance`.** Feature availability is a backend-declared capability, not a type check.
 3. **The baseline is the contract.** Tolerances, metric choices, and per-variable overrides live *with* the baseline so they travel with it — no separate config drift. (Already a strength of the current tool; preserve it.)
 4. **Clean breaks during development.** No backwards-compatibility shims while we are pre-1.0. Rename, restructure, remove as needed.
 5. **Modelica is the first consumer, not the reference model.** Design decisions must hold up when the source is an FMU or a CSV, not only when it's a `.mo` file.
 6. **Regression is the identity (D66).** The tool is a regression testing framework. Primary = stored regression anchor. Companions are visual-only. Soft_checks are warn-only. V&V against experiment is a composed use of the tool on experimental data, not a separate test shape.
 7. **Economy of tools (D66).** We do one thing well and emit well-shaped handoff artifacts. Calibration, RCA, parameter estimation, ML-backed ranking — those belong to downstream tools that consume our outputs. We do not grow into them.
 8. **Reporter is the authoring surface; CLI is the execution surface (D66).** No local servers, no live-apply. Download-patch + CLI-apply is the roundtrip.
-9. **Compute layers are UI-free (D66).** `ComparisonMode` and `SimulatorRunner` know nothing about presentation. Reporting is a parallel layer that derives UI from typed Config dataclasses + explicit overrides.
+9. **Compute layers are UI-free (D66).** `ComparisonMode` and `Backend` know nothing about presentation. Reporting is a parallel layer that derives UI from typed Config dataclasses + explicit overrides.

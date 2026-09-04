@@ -50,7 +50,7 @@ BACKEND_BINARY_NAMES = {
 
 
 def _detect_backend(backend_name: str) -> str:
-    """Determine the simulator backend type from a named entry.
+    """Determine the canonical backend family from a named entry.
 
     E.g., "Dymola 2025" -> "Dymola", "OpenModelica 1.23" -> "OpenModelica"
     """
@@ -201,7 +201,7 @@ def _resolve_backend_path(
 def _auto_detect_backend(
     backends_config: dict[str, list[str]],
 ) -> tuple[str, str] | None:
-    """Pick the first simulator in ``backends_config`` whose binary resolves.
+    """Pick the first backend in ``backends_config`` whose binary resolves.
 
     Resolution order per candidate entry:
       1. Any path in its ``backends`` list that exists on disk or resolves
@@ -304,7 +304,7 @@ class Config:
     # Reference results location (can be a separate repo/directory)
     reference_root: Path | None = None
 
-    # Simulator selection. ``None`` means "not explicitly chosen" — the
+    # Backend selection. ``None`` means "not explicitly chosen" — the
     # post-init resolution then consults testing.json's ``backend`` key,
     # then auto-detect from the ``backends`` map, then falls back to
     # ``"Dymola"`` as the historical default. A non-None value (typically
@@ -497,7 +497,7 @@ class Config:
         if self.os_name is None:
             self.os_name = file_config.get("os", detect_os())
 
-        # Simulator selection. Resolution order, first match wins:
+        # Backend selection. Resolution order, first match wins:
         #   1. Explicit constructor / CLI value (self.backend_name is not None)
         #   2. testing.json explicit "backend" key
         #   3. testing.json "backends" map auto-detect (first entry whose
@@ -523,7 +523,7 @@ class Config:
         if not self.show_ide and "show_ide" in file_config:
             self.show_ide = file_config["show_ide"]
 
-        # Simulator setup commands
+        # Backend setup commands
         if not self.backend_setup and "backend_setup" in file_config:
             self.backend_setup = file_config["backend_setup"]
 
@@ -576,7 +576,7 @@ class Config:
         if not self.disabled_bundled and "disable_bundled" in file_config:
             self.disabled_bundled = list(file_config["disable_bundled"])
 
-        # Resolve simulator executable path
+        # Resolve backend executable path
         if self.backend_path is None:
             backends_config = file_config.get("backends", {})
             if backends_config:
@@ -616,10 +616,10 @@ class Config:
         # so the OpenModelica backend's classify_dependency routes them to
         # ``loadModel(Modelica)`` instead of ``loadFile(<bogus path>)`` —
         # absolutizing them also suppressed the MSL auto-injection.
-        # Dymola note: its runners load dependencies via
+        # Dymola note: its backends load dependencies via
         # ``openModel(<dir>/package.mo)`` and cannot load by bare name, but
         # Dymola auto-loads MSL natively, so "Modelica" should simply be
-        # omitted there; a bare name reaching the Dymola runner fails at
+        # omitted there; a bare name reaching the Dymola backend fails at
         # startup with a clear message, exactly as the absolutized bogus
         # path did before this fix (no regression).
         if not self.dependencies and "dependencies" in file_config:
@@ -657,12 +657,12 @@ class Config:
                     work_path = (config_found_dir or repo_root) / work_path
                 self.work_dir = work_path.resolve()
             else:
-                sim_dir = self.backend_name.replace(" ", "_")
+                backend_dir = self.backend_name.replace(" ", "_")
                 self.work_dir = (
                     Path.cwd()
                     / "testing_output"
                     / self.library_name
-                    / sim_dir
+                    / backend_dir
                     / self.os_name
                 )
         else:
@@ -670,7 +670,7 @@ class Config:
 
     @property
     def backend(self) -> str:
-        """The simulator backend type (e.g., 'Dymola' from 'Dymola 2025')."""
+        """The canonical backend family (e.g., 'Dymola' from 'Dymola 2025')."""
         assert self.backend_name is not None  # resolved in __post_init__
         return _detect_backend(self.backend_name)
 
@@ -686,7 +686,7 @@ class Config:
 
     @property
     def reference_dir(self) -> Path:
-        """Reference results directory, partitioned by simulator backend and OS."""
+        """Reference results directory, partitioned by backend and OS."""
         assert self.reference_root is not None  # resolved in __post_init__
         assert self.os_name is not None  # resolved in __post_init__
         return self.reference_root / self.backend / self.os_name

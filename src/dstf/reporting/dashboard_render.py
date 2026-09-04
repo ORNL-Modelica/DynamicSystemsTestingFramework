@@ -181,8 +181,8 @@ def format_run_metadata(meta: dict | None) -> dict | None:
     """Turn the raw ``status.json`` ``metadata`` block into a template-friendly
     provenance dict, or ``None`` when no metadata was recorded.
 
-    Adds a display ``label`` (the configured simulator, falling back to the
-    backend family) and a human-readable ``generated_str`` from the epoch
+    Adds a display ``label`` (the configured backend name, or "unknown"
+    when a stale stamp does not record one) and a human-readable ``generated_str`` from the epoch
     timestamp. Kept separate from ``build_dashboard_context`` so the per-test
     interactive report can reuse the exact same shaping.
     """
@@ -250,7 +250,7 @@ def build_dashboard_context(
         )
         # Live-mode ref_id can be derived from report_dir when it follows
         # the "ref_NNNN" naming (set by cmd_run pre-populating
-        # runner.ref_id_map). For tests without a baseline yet, report_dir
+        # backend.ref_id_map). For tests without a baseline yet, report_dir
         # is the live test_key and ref_id stays None.
         live_ref_id = None
         rd = t.get("report_dir") or ""

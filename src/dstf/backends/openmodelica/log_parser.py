@@ -15,7 +15,7 @@ it REPL-echoes the returned record to stdout:
 
 This module extracts that block, classifies success/failure, and surfaces any
 Error/Warning/Notification lines that appeared BEFORE it. The return shape is
-a small ``ParsedOmcOutput`` dataclass the runner consumes to populate
+a small ``ParsedOmcOutput`` dataclass the backend consumes to populate
 ``TestRunResult``.
 
 The parser is total — any shape of input produces a ``ParsedOmcOutput``, with
@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ParsedOmcOutput:
-    """Structured view of what the runner needs from omc stdout."""
+    """Structured view of what the backend needs from omc stdout."""
 
     success: bool
     result_file: str = ""

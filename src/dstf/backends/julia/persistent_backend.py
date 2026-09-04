@@ -1,4 +1,4 @@
-"""Persistent-worker Julia runner (D78).
+"""Persistent-worker Julia backend (D78).
 
 Each worker is a long-lived ``julia --project=<dir> run_persistent.jl``
 subprocess that reads JSON-per-line test requests from stdin and writes
@@ -21,7 +21,7 @@ a test response. This way the per-test timing reported in the dashboard
 is just compile/solve of the user model, not the one-time package load
 that would have happened regardless of the test set.
 
-This is the default runner; pass ``--batch`` to opt out. There is no
+This is the default backend; pass ``--batch`` to opt out. There is no
 automatic fallback: if Julia's dependencies aren't ready (no Manifest.toml,
 failed `using`), ``preflight`` raises RuntimeError and the CLI aborts with
 a message naming both fixes — same pattern as Dymola and OpenModelica (see
@@ -453,17 +453,17 @@ class JuliaWorker(Worker):
 
 
 # ---------------------------------------------------------------------------
-# Runner
+# Backend
 # ---------------------------------------------------------------------------
 
 
 class PersistentJuliaBackend(PersistentBackendBase, JuliaBackend):
-    """Persistent-worker Julia runner.
+    """Persistent-worker Julia backend.
 
     Inherits dispatch-loop machinery from :class:`PersistentBackendBase`
     and ``read_result`` + config resolution from the batch
     :class:`JuliaBackend`. Order matters — ``PersistentBackendBase`` first so
-    its ``run_tests`` template wins over the batch runner's per-test
+    its ``run_tests`` template wins over the batch backend's per-test
     override.
     """
 
@@ -487,7 +487,7 @@ class PersistentJuliaBackend(PersistentBackendBase, JuliaBackend):
         if not shutil.which("julia"):
             raise RuntimeError(
                 "Julia binary not found on PATH. The persistent-worker Julia "
-                "runner spawns a long-lived `julia --project=...` subprocess "
+                "backend spawns a long-lived `julia --project=...` subprocess "
                 "and needs `julia` available.\n"
                 "\n"
                 "Install Julia from https://julialang.org/downloads/ "

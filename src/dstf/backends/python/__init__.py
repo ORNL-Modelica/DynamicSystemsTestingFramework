@@ -1,4 +1,4 @@
-"""Python subprocess runner (D80).
+"""Python subprocess backend (D80).
 
 Mirrors the Julia D77 pattern: framework-shipped driver script loads the
 user's ``.py`` file, calls ``simulate(stop_time, tolerance)``, and writes

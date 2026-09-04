@@ -1,10 +1,10 @@
-"""OpenModelica runner: omc subprocess + .mos scripts (batch fallback).
+"""OpenModelica backend: omc subprocess + .mos scripts (batch fallback).
 
 Per-test omc subprocess driven by a generated ``simulate.mos``. The
 persistent-worker counterpart lives in :mod:`.persistent_backend` and is the
-default CLI path; this one is kept as the fallback (``--batch`` CLI flag,
-or automatic on OMPython ImportError). FMU export (``buildModelFMU``) is
-still a follow-up.
+default CLI path; this one is reached with the ``--batch`` CLI flag. There is
+no automatic fallback — a missing OMPython aborts the run (see
+``cli.run_cmds._get_backend``). FMU export (``buildModelFMU``) is still a follow-up.
 
 One-time per machine (bootstrap MSL):
 

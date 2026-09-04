@@ -1,7 +1,7 @@
-"""Persistent-worker Dymola runner using the Python interface.
+"""Persistent-worker Dymola backend using the Python interface.
 
-Unlike the default batched runner (which launches Dymola per batch and drives
-it via generated `.mos` scripts), this runner keeps N long-lived
+Unlike the default batched backend (which launches Dymola per batch and drives
+it via generated `.mos` scripts), this backend keeps N long-lived
 `DymolaInterface` processes alive for the whole run. Each worker loads the
 library once and then pulls tests off a shared queue.
 
@@ -13,8 +13,8 @@ Benefits:
   - Per-test timeout isolation: a hung test kills one worker (we restart it)
     while the others keep running
 
-This is the default runner; pass `--batch` to opt out and use the `.mos`
-batched runner instead. There is no automatic fallback: if the Dymola
+This is the default backend; pass `--batch` to opt out and use the `.mos`
+batched backend instead. There is no automatic fallback: if the Dymola
 Python interface can't be imported, `preflight` raises and the CLI aborts
 with a message naming both fixes (see `cli._get_backend`).
 """
@@ -697,12 +697,12 @@ class DymolaWorker(Worker):
 
 
 class PersistentDymolaBackend(PersistentBackendBase, DymolaBackend):
-    """Dymola runner using persistent DymolaInterface workers + a queue.
+    """Dymola backend using persistent DymolaInterface workers + a queue.
 
     Inherits the dispatch-loop machinery from :class:`PersistentBackendBase`
     and the batched :class:`DymolaBackend` for ``read_result`` + config
     extraction. Order matters — ``PersistentBackendBase`` first so its
-    ``run_tests`` template wins over the batch ``.mos`` runner's override.
+    ``run_tests`` template wins over the batch ``.mos`` backend's override.
     """
 
     worker_cls = DymolaWorker

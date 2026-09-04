@@ -84,7 +84,7 @@ def _wipe_stale_state_for_scope(
 
 
 def _get_backend(config, persistent: bool = False):
-    """Get the appropriate backend for the configured simulator.
+    """Get the appropriate backend for the configured backend name.
 
     When *persistent* is True and the backend **declares**
     :attr:`Capability.PERSISTENT_WORKERS`, pre-flight the variant's
@@ -260,7 +260,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         manifests = backend.run_tests(tests)
     except RuntimeError as exc:
-        # Runners raise on unrecoverable startup conditions (e.g. all persistent
+        # Backends raise on unrecoverable startup conditions (e.g. all persistent
         # workers failed to spawn). Convert to a clean exit instead of dumping a
         # traceback — the backend has typically already printed the cause.
         print(f"\nRun aborted: {exc}", file=sys.stderr)
@@ -393,7 +393,7 @@ def _run_cross_backend_chains(tests, backend, config, store) -> None:
 
 
 def _recorded_backend(work_dir: Path) -> str | None:
-    """The simulator label the last run in *work_dir* used, per ``status.json``.
+    """The backend label the last run in *work_dir* used, per ``status.json``.
 
     ``None`` when the work dir has no snapshot, an unreadable one, or one
     written before run provenance was stamped (``metadata: null``).

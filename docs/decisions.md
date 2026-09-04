@@ -3802,3 +3802,103 @@ primitive, and a `Path.write_text` spy for each of the three direct writers
 — each mutation-checked by reverting the decision and confirming the test
 fails. **What remains unrun: an actual accept on Windows.** The platform
 where the defect manifests is the one that cannot be tested from here.
+
+## D123 — The "simulator" vocabulary becomes Backend; three config keys and two CLI flags break (2026-09-03)
+
+The architecture has called the abstraction a **Backend** — a role: test
+descriptor in, trajectories out — since the layer model was written, but the
+code said "simulator" throughout: the package, the ABC, every concrete class,
+the config keys, the CLI flags. Residue from ModelicaTesting; D81 renamed the
+project around it rather than through it. The word was not merely dated, it
+was false for one of the five — the Python backend runs an arbitrary
+`simulate()` — and for its shipped `ConstantCsv` example, which replays a
+recorded file and simulates nothing. That a backend need not be a simulator is the
+architecture's central claim, so the vocabulary contradicted the design it
+was supposed to document.
+
+**Why now rather than after 1.0.** The stage block names the `dstf` CLI and
+the `testing.json` format as promised surfaces whose change must be
+coordinated. Nothing is published — `origin/main` predates all of this — so
+today the coordination is one line in one consumer file. After a 1.0 release
+the identical rename becomes a breaking change against a published surface,
+and the realistic outcome is that it never happens and the wrong word becomes
+permanent. The cost of this decision only ever goes up.
+
+**The break, in three commits.** Internal names first (01e1a43): package
+`simulators/` → `backends/`, `SimulatorRunner` → `Backend`, the five
+`*Runner` families → `*Backend`, `get_runner*` → `get_backend*`,
+`persistent_runner_cls` → `persistent_backend_cls`. Then the promised
+surfaces (96a13a6): `simulator`/`simulators`/`simulator_setup` →
+`backend`/`backends`/`backend_setup`, `--simulator`/`--simulator-path` →
+`--backend`/`--backend-path`, `RunMetadata.simulator` → `backend_name`. Then
+docs. No aliases, no read-both shim, no migration utility: the stage rules ban
+deprecation paths, and an alias would have made the dead vocabulary permanent
+by being convenient.
+
+**`Worker` was not renamed, and "simulator" survives on purpose** where the
+referent is a real external tool — a binary on PATH, a long-lived simulator
+subprocess, a licence seat, "as reported by the simulator". Dymola is a
+simulator; the abstraction is not. Registered backend names, the
+`dstf.plugins` entry-point group, the reference-tree layout and the work_dir
+path shape are all values or structure, not vocabulary, and did not move.
+
+**The one real hazard was a name collision, not a rename.** `Config.simulator`
+and `Config.simulator_backend` were never synonyms: the first is the label the
+user configured and may carry a version ("Dymola 2026x"), the second the
+canonical family ("Dymola") that selects the reference partition. They are now
+`backend_name` and `backend` — one word apart, and trivially merged by a later
+refactor. Merging them sends every versioned-name user's lookups to a
+directory none of their baselines occupy: whole-suite NO_BASELINE, and an
+`--accept` then writes a full parallel reference tree in the wrong place. The
+existing `reference_dir` test could not catch it, because its unversioned
+default made the two strings equal. A new test pins a versioned name against
+both paths and was mutation-checked — collapsing the split fails it.
+
+**A hard break has a failure mode worse than either state, and it needed its
+own fix.** An untouched `testing.json` still PARSES with the old keys while
+every setting in it silently does nothing — experienced as "the tool ignores
+my config", with no diagnostic. `load_config_file` therefore rejects the three
+old keys by name and says what each became. That is a diagnostic, not a
+compatibility path: the old key never works again, it just stops failing
+silently. A parametrized test pins it, because nothing else in the tree failed
+if the break were undone — a rebase restoring an old-key read would have kept
+the suite green.
+
+**One field was deliberately NOT deleted despite an instruction to delete it.**
+`RunMetadata` carries `backend` (family) and the configured label as two
+fields by design, and they diverge in practice — TRANSFORM's own config
+auto-detects exactly that pair. `meta.get("simulator") or meta.get("backend")`
+was therefore "prefer the versioned label, else the family". The FIELD was
+never legacy; only the OR-arm was dead, and only because both fields are
+always written today. Deleting the field would have erased the version from
+every report
+banner — the provenance that module exists to capture. The field was renamed
+to `backend_name` instead. What *was* deleted is the `or meta.get("backend")`
+tail, which was dead for anything this version writes.
+
+Review caught that the first version of this entry claimed dropping that tail
+produced an explicit error. It does not, and the truth is worse: a work dir
+written before the rename records its backend under the old key, so
+`_recorded_backend` returns `None`, the adoption branch is skipped, and
+D120's guard stops firing precisely when it is needed — `compare` falls back
+to environment auto-detect and will score an OpenModelica work dir against
+the Dymola partition, SIM_FAIL for every test, silently. Reading the old key
+would be a compatibility path, so instead a stale stamp now warns and names
+`--backend`.
+
+**Known consequence, stated rather than discovered:** `compare` against a work
+dir produced before this change cannot identify its backend; it now warns and
+names `--backend`. Re-run rather than compare, once.
+
+**Verified.** 1410 hardware-free tests; ruff clean; live runs green on Dymola
+(12/12), OpenModelica batch (12/12) and Python (3/3) through the renamed key
+and flags; and a full 331-test run against TRANSFORM-UnitTests through the
+renamed key reproduced the pre-rename verdicts exactly — same test set, 330
+pass, the same single `SteamWater_HCSG` 60s timeout, zero regressions. The
+word "pre-existing" is anchored on a full pre-rename run captured in the same
+session before any file was touched — not on the last recorded 331/331, which
+was a `compare` and so could not have re-simulated. That timeout is a slow
+model against the 60s default, not a wrong answer, and is unrelated to this
+work. **Unrun:** Windows, and the Julia and FMPy backends (no `julia`
+on this machine, `fmpy` not installed) — both are covered by the hardware-free
+suite but were not exercised live.

@@ -14,7 +14,7 @@ not, and never allowed to fail a run. ``tool_version`` is therefore the gold
 standard when present and the configured ``backend_name`` label is the reliable
 floor.
 
-This dataclass is constructed once per run by the runner, serialized into
+This dataclass is constructed once per run by the backend, serialized into
 ``status.json`` under a ``"metadata"`` key, and read back by the reporters to
 render a provenance banner.
 """

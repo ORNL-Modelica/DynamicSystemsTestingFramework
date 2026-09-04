@@ -39,7 +39,7 @@ class TestModel:
     # a spec value that happened to equal the framework default. During
     # discovery they may be None; ``finalize_defaults()`` (called at the end
     # of discover_tests) resolves them to the framework defaults so
-    # downstream consumers (runners, reporters, storage) only ever see
+    # downstream consumers (backends, reporters, storage) only ever see
     # concrete values.
     stop_time: float | None = None
     tolerance: float | None = None

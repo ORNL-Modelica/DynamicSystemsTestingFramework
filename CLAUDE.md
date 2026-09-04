@@ -17,9 +17,9 @@ DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
 │   ├── cli/                      # CLI package: run, compare, discover, manifest, spec-update,
 │   │                             #      companion, soft-check, import-baseline, export-schema
-│   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect simulator
+│   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect backend
 │   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse, RFC 6902 patch_apply
-│   ├── simulators/               # Abstract runner + Dymola / FMPy / OpenModelica / Julia backends
+│   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
 │   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
 │   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers
@@ -30,11 +30,12 @@ DynamicSystemsTestingFramework/
 ├── examples/
 │   ├── modelica/ModelicaTestingLib/   # Demo Modelica library (UnitTests component + 10+ showcase tests)
 │   ├── fmu/                           # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)
-│   └── julia/JuliaMtkTestingLib/      # Julia/MTK demo library (mirrors ModelicaTestingLib layout)
-├── tests/                        # pytest suite (~750 tests; Playwright subset gated by importorskip)
+│   ├── julia/JuliaMtkTestingLib/      # Julia/MTK demo library (mirrors ModelicaTestingLib layout)
+│   └── python/PythonTestingLib/       # Python demo library (SimpleRamp via scipy, ConstantCsv data loader)
+├── tests/                        # pytest suite (~1400 tests; Playwright subset gated by importorskip)
 ├── docs/                         # decisions.md, vision.md, architecture.md, qa/reporter_checklist.md, ideas.md
 ├── scripts/                      # fetch_reference_fmus.py, smoke_test_dymola_export.py
-├── pyproject.toml                # uv/hatchling config; optional extras: [om], [julia]
+├── pyproject.toml                # uv/hatchling config; optional extras: [dev], [fmpy], [om]
 └── CLAUDE.md
 ```
 
@@ -95,7 +96,7 @@ uv run dstf --config testing.json manifest cleanup [--orphans] [--apply]   # dry
 uv run dstf --config testing.json export-schema --output schema.json
 
 # Persistent workers are the DEFAULT for Dymola and OpenModelica and Julia.
-# Force legacy batched runner (.mos / omc -s / per-test julia subprocess)
+# Force the legacy batched backend (.mos / omc -s / per-test julia subprocess)
 uv run dstf --config testing.json run --batch --parallel 4 --report
 
 # Diagnose Dymola Python interface discovery
@@ -115,10 +116,10 @@ uv run pytest -m "not playwright"  # Skip browser-driven interactive-HTML tests
 The tool looks for `testing.json` near the library root or reference root. Key fields:
 
 - `source_path` — path to the library's source location (Modelica package.mo directory, FMU directory, Julia project, ...; relative to testing.json)
-- `source_type` — `"modelica"` (default) / `"fmu"` / `"julia"` (usually auto-detected)
-- `simulator` — named entry like `"Dymola"` or `"OpenModelica"`; omit to auto-detect from the `simulators` map
-- `simulators` — map of simulator names to candidate executable paths
-- `simulator_setup` — list of Modelica commands run after library loading (user-specific settings)
+- `source_type` — `"modelica"` (default) / `"fmu"` / `"julia"` / `"python"`; only `"modelica"` changes framework behavior (package.mo lookup + `.mo` recognizer scan), the others skip it and select recognizers by name
+- `backend` — named entry like `"Dymola"` or `"OpenModelica"`; omit to auto-detect from the `backends` map
+- `backends` — map of backend names to candidate executable paths
+- `backend_setup` — list of Modelica commands run after library loading (user-specific settings)
 - `dependencies` — library names (e.g. `"Modelica"`) or paths to dependency roots loaded before simulation
 - `reference_root` — where reference results live (default: `<repo>/Resources/ReferenceResults`)
 - `test_spec` — path to external test definitions file
@@ -127,9 +128,9 @@ The tool looks for `testing.json` near the library root or reference root. Key f
 - `max_embedded_samples` — LTTB decimation cap per variable in `interactive.html` (default: 1000)
 - `diagnostic_variables` — variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`)
 
-Note: `OutputCPUtime := true;` and `Advanced.UI.TranslationInCommandLog := true;` are hardcoded in the Dymola runner.
+Note: `OutputCPUtime := true;` and `Advanced.UI.TranslationInCommandLog := true;` are hardcoded in the Dymola backend.
 
-Reference results are partitioned by `<reference_root>/<SimulatorBackend>/<os>/`. Soft-checks live under `.../soft_checks/ref_NNNN/<name>.json`, companions under `.../companions/ref_NNNN/<name>.{json,csv}`.
+Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-checks live under `.../soft_checks/ref_NNNN/<name>.json`, companions under `.../companions/ref_NNNN/<name>.{json,csv}`.
 
 ### test_spec.json format
 
@@ -172,11 +173,11 @@ Per-variable override (spec) > per-variable override (reference JSON) > per-test
 
 ## Key Abstractions
 
-- **`Config`** (`config.py`) — resolves all paths from CLI args + `testing.json` + defaults; passed to runners and reporters but not to comparison functions.
+- **`Config`** (`config.py`) — resolves all paths from CLI args + `testing.json` + defaults; passed to backends and reporters but not to comparison functions.
 - **`TestModel`** (`discovery/test_registry.py`) — fully resolved test: model ID, simulation params, tracked variables, source, `simulate_only`, `requested_baselines`, `requested_fmu_export`.
 - **`Recognizer`** (`discovery/recognizer.py`) — registry of source-scan rules; bundled + user-declared JSON recognizers merged by `model_id`.
-- **`SimulatorRunner`** (`simulators/base.py`) — abstract interface; backends self-register via `@register` and declare `Capability` flags (`BATCH_FALLBACK`, `FMU_EXPORT`, ...). Concrete backends: `DymolaRunner` / `PersistentDymolaRunner`, `FmpyRunner`, `OpenModelicaRunner` / `PersistentOpenModelicaRunner`, `JuliaRunner` / `PersistentJuliaRunner`.
-- **`Worker`** + **`PersistentRunnerBase`** (`simulators/persistent.py`) — `Worker` ABC declares the long-lived-process contract every persistent backend must satisfy. It is itself a template-method class: `run_test_with_timeout` / `close` / `_kill_tracked_pids` (watchdog thread, timeout kill, process-tree kill incl. orphan snapshot, disk rescue, restart-accounting flags) are implemented once in the base. A backend supplies abstract `start` / `is_alive`, the `run_test` hook, and optionally `_evaluate_from_disk` / `_detach_interface` + `_shutdown_interface` / `_quiet` / the `kill_name_hint`, `timeout_kill_grace`, `exec_thread_prefix` class attrs. `PersistentRunnerBase` is a template-method class owning the worker-pool orchestration (parallel startup, shared queue + sentinel dispatch, per-worker restart on death). New persistent backends supply a `Worker` subclass + a small set of hooks (`worker_cls`, `backend_label`, `make_worker`, `setup_before_workers`, `preflight`) — see [docs/extensibility.md](docs/extensibility.md) §3 "Persistent-worker contract".
+- **`Backend`** (`backends/base.py`) — abstract interface; backends self-register via `@register` and declare `Capability` flags (`BATCH_FALLBACK`, `FMU_EXPORT`, ...). Concrete backends: `DymolaBackend` / `PersistentDymolaBackend`, `FmpyBackend`, `OpenModelicaBackend` / `PersistentOpenModelicaBackend`, `JuliaBackend` / `PersistentJuliaBackend`, `PythonBackend`.
+- **`Worker`** + **`PersistentBackendBase`** (`backends/persistent.py`) — `Worker` ABC declares the long-lived-process contract every persistent backend must satisfy. It is itself a template-method class: `run_test_with_timeout` / `close` / `_kill_tracked_pids` (watchdog thread, timeout kill, process-tree kill incl. orphan snapshot, disk rescue, restart-accounting flags) are implemented once in the base. A backend supplies abstract `start` / `is_alive`, the `run_test` hook, and optionally `_evaluate_from_disk` / `_detach_interface` + `_shutdown_interface` / `_quiet` / the `kill_name_hint`, `timeout_kill_grace`, `exec_thread_prefix` class attrs. `PersistentBackendBase` is a template-method class owning the worker-pool orchestration (parallel startup, shared queue + sentinel dispatch, per-worker restart on death). New persistent backends supply a `Worker` subclass + a small set of hooks (`worker_cls`, `backend_label`, `make_worker`, `setup_before_workers`, `preflight`) — see [docs/extensibility.md](docs/extensibility.md) §3 "Persistent-worker contract".
 - **`ReferenceStore`** (`storage/reference_store.py`; role CRUD in `storage/roles.py`) — primary refs + soft_checks + companions; `RefIndex` (`storage/ref_index.py`) built in-memory from scanning.
 - **`ComparisonMode`** (`comparison/modes.py`) — strategy pattern for per-variable comparison with typed config dataclasses; field metadata (`label` / `help` / `ui_min` / `ui_max`) flows into auto-derived UI via `reporting/ui/mode_controls.py`.
 - **`MetricTree`** (`comparison/tree_spec.py` + `tree_eval.py`) — `LeafSpec` / `CombinatorSpec` + evaluator; `implicit_and_tree()` for specs without an explicit tree; `validator.py` enforces baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped; companions not targetable).
@@ -185,9 +186,9 @@ Per-variable override (spec) > per-variable override (reference JSON) > per-test
 ## Design Principles
 
 1. **Library-agnostic**: auto-detects library name from `package.mo` / project layout, all paths configurable.
-2. **Simulator-agnostic**: backend-specific code isolated under `simulators/<name>/`; abstract interface with registry + capability flags.
+2. **Backend-agnostic**: backend-specific code isolated under `backends/<name>/`; abstract interface with registry + capability flags.
 3. **Stable test IDs**: numeric IDs (`ref_0001.json`) with model ID inside each file; IDs never reused; in-memory index built by scanning.
-4. **Reference partitioning**: results split by simulator backend and OS since solvers produce platform-specific results.
+4. **Reference partitioning**: results split by backend and OS since solvers produce platform-specific results.
 5. **Batch / persistent execution**: load libraries once per worker, run N tests, exit — avoids per-test startup overhead.
 6. **No backward compatibility**: clean breaks during development; migration utilities provided for format changes.
 7. **Strategy over conditionals**: modes, backends, recognizers, and UI renderers all use registry + strategy patterns, not if/elif dispatch.

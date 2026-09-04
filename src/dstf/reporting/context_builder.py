@@ -747,7 +747,7 @@ def _build_artifacts(
     test_dir: Path | None,
     artifact_files: tuple[tuple[str, str], ...],
 ) -> list:
-    """Walk the runner-declared :attr:`Backend.artifact_files`
+    """Walk the backend-declared :attr:`Backend.artifact_files`
     list, return entries for files that exist on disk. Backend-agnostic
     — no hardcoded Dymola/OM/etc. names here.
     """

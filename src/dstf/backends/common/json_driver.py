@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 class JsonDriverBackend(Backend):
-    """Subprocess-per-test runner driving a shipped JSON-writing script."""
+    """Subprocess-per-test backend driving a shipped JSON-writing script."""
 
     #: Shipped driver script handed to the tool binary.
     driver_path: ClassVar[Path]
@@ -255,7 +255,7 @@ class JsonDriverBackend(Backend):
         # payload (a user script returning strings, a tampered file) must
         # fail THIS test, not raise through read_results and abort the whole
         # read phase for every test. The drivers validate too; this is the
-        # runner-side belt.
+        # backend-side belt.
         try:
             time_arr = np.asarray(payload.get("time", []), dtype=np.float64)
         except (ValueError, TypeError) as exc:
@@ -327,8 +327,8 @@ def resolve_source_file(test: TestModel, config, suffix: str) -> Path | None:
     Priority: ``test.source_file`` (spec_parser fills this when the entry has
     a ``"source"`` field) → ``<source_path>/<model_id><suffix>`` fallback.
 
-    Module-level rather than runner-only because the persistent Julia worker
-    resolves the same file without being a runner.
+    Module-level rather than backend-only because the persistent Julia worker
+    resolves the same file without being a backend.
     """
     if test.source_file is not None and str(test.source_file):
         p = Path(test.source_file)

@@ -115,7 +115,7 @@ def _leaf_common_properties() -> dict[str, Any]:
         },
         "variable": {
             "type": "string",
-            "description": "Variable name as reported by the simulator.",
+            "description": "Variable name as reported by the backend.",
         },
         "against": {
             "type": "string",

@@ -110,7 +110,7 @@ function handle_request(req)
         buf = IOBuffer()
         showerror(buf, e, catch_backtrace())
         msg = String(take!(buf))
-        # Best-effort failure payload so the runner's read_result path still
+        # Best-effort failure payload so the backend's read_result path still
         # gets a structured response.
         try
             open(result_path, "w") do io

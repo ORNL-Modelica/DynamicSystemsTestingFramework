@@ -4,7 +4,7 @@
 
 Regression and unit testing for time-dependent system behavior. Discovers tests, runs simulations, compares against versioned baselines, and reports — across **Modelica (Dymola, OpenModelica), FMU (FMPy), Julia/ModelingToolkit, and arbitrary Python**.
 
-Library-agnostic: tests can be discovered from in-model annotations (`UnitTests` components), declarative `test_spec.json`, or both. Reference results are partitioned per backend / OS so the same library can be regression-tested across simulators without ref drift.
+Library-agnostic: tests can be discovered from in-model annotations (`UnitTests` components), declarative `test_spec.json`, or both. Reference results are partitioned per backend / OS so the same library can be regression-tested across backends without ref drift.
 
 ![DSTF dashboard](docs/img/dashboard.png)
 
@@ -12,12 +12,12 @@ Library-agnostic: tests can be discovered from in-model annotations (`UnitTests`
 
 ## What's in the box
 
-- **5 simulator backends**, each with persistent-worker support where it pays off:
+- **5 backends**, each with persistent-worker support where it pays off:
 
   | Backend | Source kind | Persistent | Notes |
   |---|---|---|---|
-  | Dymola | Modelica `.mo` | ✓ default | Python interface; falls back to batched `.mos` |
-  | OpenModelica | Modelica `.mo` | ✓ default | OMPython ZMQ; falls back to `omc -s` |
+  | Dymola | Modelica `.mo` | ✓ default | Python interface; `--batch` selects the `.mos` path |
+  | OpenModelica | Modelica `.mo` | ✓ default | OMPython ZMQ; `--batch` selects the `omc -s` path |
   | FMPy | Pre-built FMU | per-test thread | `fmpy.simulate_fmu` in-process |
   | Julia / MTK | `.jl` ModelingToolkit | ✓ default | stdin-JSON pipe; Dyad untested |
   | Python | Any `simulate(stop_time, tol) -> dict` | subprocess-per-test | scipy, pandas, CSV loader, HTTP — anything |
@@ -77,7 +77,7 @@ uv run dstf --config examples/modelica/ModelicaTestingLib/Resources/ReferenceRes
 
 What this does:
 
-1. Reads `testing.json` to find the demo library, the simulator (Dymola or OpenModelica — first one whose binary exists wins), the reference root, and any per-test recognizers.
+1. Reads `testing.json` to find the demo library, the backend (Dymola or OpenModelica — first one whose binary exists wins), the reference root, and any per-test recognizers.
 2. Discovers the demo tests via the bundled `UnitTests` recognizer plus declarative recognizers in the JSON.
 3. Runs each in a persistent simulator worker, partitioning output under `testing_output/` by backend + OS.
 4. Compares against `Resources/ReferenceResults/<Backend>/<os>/ref_NNNN.json` baselines.
@@ -107,7 +107,7 @@ uv run dstf --config examples/fmu/testing.json run    # needs reference-fmus-bin
 ```json
 {
   "source_path": "../../MyLib",
-  "simulators": {
+  "backends": {
     "Dymola":       ["C:\\Program Files\\Dymola 2026x\\bin64\\Dymola.exe"],
     "OpenModelica": ["/usr/bin/omc"]
   },
@@ -118,7 +118,7 @@ uv run dstf --config examples/fmu/testing.json run    # needs reference-fmus-bin
 }
 ```
 
-The first `simulators` entry whose binary exists wins (no need for per-OS config files). `simulator: "Dymola"` (or any named entry) forces a specific one.
+The first `backends` entry whose binary exists wins (no need for per-OS config files). `backend: "Dymola"` (or any named entry) forces a specific one.
 
 ## Common commands
 
@@ -191,4 +191,4 @@ For HTML reports as build artifacts, also pass `--report ./reports` and upload t
 
 ## Status
 
-5 simulator backends in production, 4 demo libraries, and a comprehensive pytest suite (a Playwright subset covers the interactive report). The reporter-as-IDE is feature-complete: per-leaf live scoring plus shift-click/drag editors for tube / point / range / peak criteria.
+5 backends in production, 4 demo libraries, and a comprehensive pytest suite (a Playwright subset covers the interactive report). The reporter-as-IDE is feature-complete: per-leaf live scoring plus shift-click/drag editors for tube / point / range / peak criteria.

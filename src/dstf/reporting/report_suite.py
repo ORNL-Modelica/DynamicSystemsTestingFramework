@@ -499,7 +499,7 @@ def _build_per_test_args(
     else:
         report_id = _sanitize_filename(model_id)
 
-    # Pull phase-timing breakdown out of stats if present (runner stashes it)
+    # Pull phase-timing breakdown out of stats if present (the backend stashes it)
     cur_stats = result.statistics if result and result.statistics else {}
     timing = (
         cur_stats.get("timing") if isinstance(cur_stats.get("timing"), dict) else {}
@@ -625,7 +625,7 @@ def generate_report_suite(
     test_lookup = {t.model_id: t for t in tests}
 
     # Resolve the backend's artifact file list once up front — class attribute,
-    # no runner instantiation needed (avoids triggering the fmpy import if the
+    # no backend instantiation needed (avoids triggering the fmpy import if the
     # extra isn't installed).
     from ..backends import get_backend_class
 

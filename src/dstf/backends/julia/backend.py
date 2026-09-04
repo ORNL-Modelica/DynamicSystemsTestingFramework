@@ -1,4 +1,4 @@
-"""Julia / ModelingToolkit subprocess runner (D77).
+"""Julia / ModelingToolkit subprocess backend (D77).
 
 Invokes a shipped driver script (``run_test.jl``) via ``julia --project``.
 The driver loads the user's ``.jl`` file — which exports ``build_mtk_system()``

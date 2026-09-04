@@ -104,7 +104,7 @@ class TestRunResult:
     error_message: str | None = None
     timed_out: bool = False
     statistics: dict | None = None
-    # Phase breakdown (captured by the persistent runner; None in batch mode)
+    # Phase breakdown (captured by the persistent backend; None in batch mode)
     translation_wall: float | None = None
     sim_wall: float | None = None
     # Set by persistent workers when the test run left the worker process

@@ -72,7 +72,7 @@ class DymolaBackend(Backend):
     capabilities = frozenset(
         {
             Capability.PERSISTENT_WORKERS,  # DymolaInterface-based workers (default)
-            Capability.BATCH_FALLBACK,  # .mos script runner (--batch flag)
+            Capability.BATCH_FALLBACK,  # .mos script backend (--batch flag)
         }
     )
     produced_datasets = frozenset({DatasetType.TIME_SERIES})
@@ -108,7 +108,7 @@ class DymolaBackend(Backend):
         # Clean and recreate per-test directories ONLY for tests being run
         # this batch (preserves prior dirs for tests not in this run).
         # Note (D91): cmd_run.cli now centrally wipes in-scope test_dirs
-        # before runner.run_tests; this in-runner wipe is a defensive
+        # before backend.run_tests; this in-backend wipe is a defensive
         # duplicate that protects against future callers of run_tests
         # outside cmd_run (e.g., direct test harness calls). Cheap (rmtree
         # on empty) and self-documenting at the point freshness matters.
@@ -606,7 +606,7 @@ class DymolaBackend(Backend):
 #: session to ask for a version (that is what the persistent lane's
 #: ``_probe_worker_version`` is for), and launching a Dymola purely to probe
 #: would cost a licence seat and tens of seconds — so the script that is
-#: already being run does the reporting, and the runner reads the file back
+#: already being run does the reporting, and the backend reads the file back
 #: once a batch has returned. No file (MSL not loaded, Dymola never started)
 #: leaves ``tool_version`` null, exactly as before.
 TOOL_VERSION_FILENAME = "dymola_version.txt"
@@ -655,12 +655,12 @@ def _generate_startup_mos(config: Config, dymola_config: DymolaConfig) -> Path:
     lines.append("OutputCPUtime := true;")
     lines.append("Advanced.UI.TranslationInCommandLog := true;")
 
-    # Run provenance: report the actual tool version to a file the runner
+    # Run provenance: report the actual tool version to a file the backend
     # reads back (see TOOL_VERSION_FILENAME). Cheap — it rides along in a
     # script that has to run anyway.
     version_file = (work_dir / TOOL_VERSION_FILENAME).as_posix()
     lines.append("")
-    lines.append("// Run provenance (read back by the runner)")
+    lines.append("// Run provenance (read back by the backend)")
     lines.append(
         f'Modelica.Utilities.Streams.print(DymolaVersion(), "{version_file}");'
     )

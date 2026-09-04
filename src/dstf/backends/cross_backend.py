@@ -99,7 +99,7 @@ def produce_dymola_via_fmpy_baseline(
 
     # Step 3 — construct an FmpyBackend. We don't go through get_backend()
     # because that uses config.backend; we just want a temporary
-    # FMPy runner regardless of what the primary is.
+    # FMPy backend regardless of what the primary is.
     from .fmpy.backend import FmpyBackend
 
     fmpy_config = replace(

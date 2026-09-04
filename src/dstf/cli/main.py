@@ -207,7 +207,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--parallel",
         type=int,
-        help="Number of concurrent SIMULATION workers (simulator processes). "
+        help="Number of concurrent SIMULATION workers (one simulator process each, where the backend drives one). "
         "Note: on `compare` the same flag means report-rendering threads.",
     )
     p_run.add_argument(
@@ -219,7 +219,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--batch",
         action="store_true",
-        help="Use the legacy batched script runner (Dymola .mos / OpenModelica subprocess) instead of the default persistent-worker mode. Falls back to this automatically if the backend's Python interface (Dymola DymolaInterface or OMPython) can't be loaded.",
+        help="Use the legacy batched script backend (Dymola .mos / OpenModelica subprocess) instead of the default persistent-worker mode. A backend whose persistent preflight fails (Dymola DymolaInterface or OMPython missing) aborts with a message pointing here — there is no silent fallback.",
     )
     p_run.add_argument(
         "--timeout",

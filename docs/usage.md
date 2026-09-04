@@ -4,13 +4,13 @@
 
 ### Configuration file (`testing.json`)
 
-Create a `testing.json` in your reference results directory. This is the single entry point for the tool — it tells it where the library is, which simulator to use, and how to run tests.
+Create a `testing.json` in your reference results directory. This is the single entry point for the tool — it tells it where the library is, which backend to use, and how to run tests.
 
 ```json
 {
   "source_path": "../../MyLibrary/MyLib",
-  "simulator": "Dymola",
-  "simulators": {
+  "backend": "Dymola",
+  "backends": {
     "Dymola": [
       "C:\\Program Files\\Dymola 2026x\\bin64\\Dymola.exe",
       "C:\\Program Files\\Dymola 2025x Refresh 1\\bin64\\Dymola.exe"
@@ -32,15 +32,21 @@ Create a `testing.json` in your reference results directory. This is the single 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `source_path` | No | Path to library source location (Modelica package.mo directory, FMU directory, etc.). Relative to `testing.json` location. Can be provided via `--source-path` instead. |
-| `simulator` | No | Simulator name (default: `"Dymola"`). Use named entries like `"Dymola 2025"` to target specific versions. |
-| `simulators` | No | Map of simulator names to candidate executable paths (first existing path wins). Falls back to system PATH. |
+| `backend` | No | Backend name (default: `"Dymola"`). Use named entries like `"Dymola 2025"` to target specific versions. |
+| `backends` | No | Map of backend names to candidate executable paths (first existing path wins). Falls back to system PATH. |
 | `dependencies` | No | Paths to dependency library roots loaded before simulation. Relative to `testing.json` location. |
-| `simulator_setup` | No | Modelica commands run after library loading. For user-specific settings only — `OutputCPUtime` and translation log capture are handled automatically by the Dymola runner. |
+| `backend_setup` | No | Modelica commands run after library loading. For user-specific settings only — `OutputCPUtime` and translation log capture are handled automatically by the Dymola backend. |
 | `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. |
 | `diagnostic_variables` | No | Variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`). |
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
 
 All relative paths resolve from where `testing.json` is located.
+
+The former spellings `simulator`, `simulators` and `simulator_setup` are no
+longer read. A `testing.json` still containing one is rejected at load with a
+`ConfigError` naming the replacement, rather than parsing on while every
+setting under that key silently does nothing. There is no alias and no
+migration path: the old key never works again, it just says so.
 
 ### Test definitions
 
@@ -53,7 +59,7 @@ Tests are discovered from three sources (can be combined; merged by model_id, la
 ```json
 {
   "source_path": "../../",
-  "simulator": "Dymola",
+  "backend": "Dymola",
   "recognizers": [
     {
       "name": "mylib:icons-example-as-simulate-only",
@@ -118,7 +124,7 @@ Variable patterns support `*` and `?` wildcards. `["*"]` tracks all non-paramete
 | `method` | string | Solver method name (e.g. `"Dassl"`, `"Esdirk45a"`). |
 | `number_of_intervals` | int | Output sample count. |
 | `output_interval` | float | Output interval (alternative to `number_of_intervals`). |
-| `timeout` | int | Per-test timeout in seconds. Overrides the global `--timeout` flag. Honored by both backends — Dymola via the persistent-runner watchdog, FMPy via `concurrent.futures` (worker thread is left to finish in background since FMPy runs in-process). |
+| `timeout` | int | Per-test timeout in seconds. Overrides the global `--timeout` flag. Honored by every backend: Dymola / OpenModelica / Julia via the persistent-worker watchdog; OpenModelica and Julia also enforce it per test on their `--batch` paths, while batch Dymola sums the per-test values into a single subprocess budget, so there the limit is per batch, Python via the JSON-driver subprocess timeout, FMPy via `concurrent.futures` (its worker thread is left to finish in the background, since FMPy runs in-process). |
 
 **Non-Modelica backends**: add a `"source": "path/to/Model.fmu"` field (path relative to the spec file) to point at the simulation source — a prebuilt `.fmu` for FMPy, a `.jl` for Julia, a `.py` for Python.
 
@@ -273,8 +279,8 @@ uv run dstf --config testing.json run -i
 | `--accept` | Store all results as new reference baselines |
 | `-i`, `--interactive` | Review each test interactively |
 | `--parallel N` | Number of concurrent **simulation workers** (any backend, not just Dymola). Note: the same flag on `compare` means report-**rendering** threads — see below. |
-| `--simulator NAME` | Override simulator (e.g., `"Dymola 2025"`) |
-| `--simulator-path PATH` | Override simulator executable path |
+| `--backend NAME` | Override the backend (e.g., `"Dymola 2025"`) |
+| `--backend-path PATH` | Override the backend executable path |
 | `--show-ide` | Show Dymola GUI instead of headless |
 | `--tolerance FLOAT` | Override NRMSE comparison tolerance |
 | `--default-points` | Use PointsMode by default (empty list ⇒ final-value-only check) |
@@ -400,7 +406,7 @@ uv run dstf --config testing.json add MyLib.Examples.NewTest
 ```bash
 # 1. Create reference directory and testing.json
 mkdir -p /path/to/MyLib-Tests/ReferenceResults
-# Edit testing.json with source_path, simulator, etc.
+# Edit testing.json with source_path, backend, etc.
 
 # 2. Verify discovery
 uv run dstf --config /path/to/testing.json discover
@@ -445,7 +451,7 @@ ReferenceResults/
         └── ...
 ```
 
-References are partitioned by simulator backend and OS because different solvers and platforms produce numerically different results. No manifest file is needed — each ref file contains its own `model_id`, `test_id`, `status`, `date_added`, and `last_updated`. The index is rebuilt in memory by scanning ref files at startup.
+References are partitioned by backend and OS because different solvers and platforms produce numerically different results. No manifest file is needed — each ref file contains its own `model_id`, `test_id`, `status`, `date_added`, and `last_updated`. The index is rebuilt in memory by scanning ref files at startup.
 
 Each ref file also contains simulation params, statistics, diagnostic trajectories (`CPUtime`, `EventCounter` when `OutputCPUtime := true;`), and the time/variable data.
 

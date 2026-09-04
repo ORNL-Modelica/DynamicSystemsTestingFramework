@@ -3,7 +3,7 @@
 Lives in :mod:`dstf.storage` with the other on-disk record keepers — it is a
 JSON file in the work dir, written through the same atomic primitive as the
 reference files. The backends package re-exports it (``from dstf.backends
-import BatchManifest``) because every runner's ``run_tests`` returns one.
+import BatchManifest``) because every backend's ``run_tests`` returns one.
 
 ``TestRunResult`` is imported only for typing: keeping it out of the runtime
 import graph is what lets ``dstf.storage.batch_manifest`` be imported first,

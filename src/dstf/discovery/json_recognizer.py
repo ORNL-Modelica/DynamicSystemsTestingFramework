@@ -120,7 +120,7 @@ def _numeric_or_none(model_id: str, field_name: str, value: Any) -> Any:
 
     ``_coerce_scalar`` is best-effort and falls back to the raw string for
     anything it cannot parse (``StopTime=0.5*3600``). Setting that string on a
-    float-typed field pushes the failure into a runner far from its cause, so
+    float-typed field pushes the failure into a backend far from its cause, so
     leave the field unset instead — the annotation / test_spec layer can still
     supply a value.
     """
