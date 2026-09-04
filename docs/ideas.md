@@ -1159,6 +1159,19 @@ planning.
   while it was named `dstf` should `uv tool uninstall dstf` first, since an
   upgrade under the old name now resolves the squatter.
 
+- **Guard the whole class, not the two known call sites: a source scan for
+  metadata-name literals** (2026-09-04, raised by the review of D124 and not
+  taken): `tests/test_distribution_name.py` pins `dstf._DIST_NAME` to
+  `pyproject.toml` and proves both current `importlib.metadata.version()` call
+  sites resolve. It cannot see a THIRD one — a future
+  `version("dstf")` literal added anywhere in `src/dstf` is invisible to it, and
+  that call fails silently by design (the fallback string, not an exception).
+  Shape: an `ast` walk over `src/dstf/**/*.py` asserting every `version(...)` /
+  `metadata.version(...)` argument is the `_DIST_NAME` name node, never a string
+  literal. Small, and it converts a pinned instance into a pinned rule. Worth
+  weighing against the cost of a test that reads the source tree — those go
+  stale in their own way when the import style changes.
+
 - **Finish the role vocabulary inside `tests/`** (2026-09-04, scope decision
   deferred during the Backend rename): the rename covered `src/`, the docs and
   the test *files* it renamed, but roughly 277 `runner` occurrences remain
