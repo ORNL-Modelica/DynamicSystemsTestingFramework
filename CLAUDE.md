@@ -132,6 +132,12 @@ A green local `pytest` does not predict CI, which also runs `ruff check`, `ruff
 format --check`, `mypy`, and pytest under a 66% coverage floor with the
 hardware-dependent markers deselected.
 
+Run `mypy` bare, with no path. `[tool.mypy] files` in `pyproject.toml` scopes
+it to the typed-dataclass tier (D88); passing a path — `mypy src` — overrides
+that list and type-checks the out-of-scope modules too, reporting 124
+pre-existing errors that are not yours and that CI never sees. `quality.yml`
+and `.pre-commit-config.yaml` both invoke it bare.
+
 ## Configuration
 
 The tool looks for `testing.json` near the library root or reference root. Key fields:
