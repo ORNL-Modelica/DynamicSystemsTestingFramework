@@ -45,8 +45,9 @@ Library-agnostic: tests can be discovered from in-model annotations (`UnitTests`
 End users:
 
 ```bash
-uv tool install dstf       # then run plain: dstf ...
-# or: pipx install dstf
+# Not on PyPI yet — these work from the first published release.
+uv tool install dynamic-systems-testing-framework   # then run plain: dstf ...
+# or: pipx install dynamic-systems-testing-framework
 ```
 
 Developers:

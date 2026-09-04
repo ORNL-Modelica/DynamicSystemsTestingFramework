@@ -1807,7 +1807,10 @@ renders `modelica-om-multifrequency` overlay (502 time points,
 
 - **What**: Python package `modelica_testing` → `dstf`; CLI command
   `modelica-testing` → `dstf`; pypi project name `modelica-testing`
-  → `dstf`; brand in docs "ModelicaTesting" → "Dynamic Systems
+  → `dstf` (SUPERSEDED by D124 — the PyPI name is
+  `dynamic-systems-testing-framework`, because `dstf` is taken there by an
+  unrelated project; the import package and the CLI command are unchanged);
+  brand in docs "ModelicaTesting" → "Dynamic Systems
   Testing Framework (DSTF)".
 - **Why**: After D80, the tool supports five simulator backends (only
   one of which is Dymola-specific) plus arbitrary Python scripts and
@@ -3902,3 +3905,42 @@ model against the 60s default, not a wrong answer, and is unrelated to this
 work. **Unrun:** Windows, and the Julia and FMPy backends (no `julia`
 on this machine, `fmpy` not installed) — both are covered by the hardware-free
 suite but were not exercised live.
+
+
+## D124 — The PyPI distribution name is `dynamic-systems-testing-framework` (2026-09-04)
+
+D81 declared the PyPI project name `dstf`. That name is not available: it
+belongs to "A framework for Deterministic Scheduling Theory" (v0.0.12, last
+released 2020-08-06), which is unrelated to this project. So the install
+instruction the README has been advertising does not work — `uv tool install
+dstf` fetches the 2020 package and then fails with `No executables are provided
+by package dstf`.
+
+The distribution name and the import name are separate fields, and only the
+first one moves. You install `dynamic-systems-testing-framework`; you still
+`import dstf`, the console script is still `dstf`, `python -m dstf` still works,
+coverage still measures `dstf`, and the plug-in entry-point group is still
+`dstf.plugins`. Hatchling already pinned `packages = ["src/dstf"]`, so the wheel
+layout does not move either: the built artifact carries
+`Name: dynamic-systems-testing-framework`, a top-level `dstf/` package and the
+`dstf = dstf.cli:main_entry` entry point.
+
+The split introduces one hazard worth recording, because it is silent.
+`importlib.metadata.version()` is the only thing that reads the distribution
+name back, and both call sites (`dstf/__init__.py`, `backends/run_metadata.py`)
+catch `PackageNotFoundError` and substitute a fallback string. A future rename
+that misses a call site therefore does not fail — it writes `unknown` into the
+`dstf_version` provenance field of every result file, and the pre-existing test
+asserted only that the field was non-empty, so `unknown` satisfied it. The name
+now lives once, as `dstf._DIST_NAME`, and `tests/test_distribution_name.py`
+pins it to `pyproject.toml` and refuses to skip when an install of this source
+tree exists under a different name — the state in which the old test reported
+green.
+
+**Verified.** Built the wheel and installed it into a clean environment:
+`dstf --version` and `python -m dstf --version` both report 1.0.0,
+`version("dstf")` raises `PackageNotFoundError`, and both internal lookups
+resolve. Stored baselines are unaffected — `dstf_version` is display-only, never
+compared. **Unrun:** the published install path itself. Nothing is on PyPI yet,
+so `uv tool install dynamic-systems-testing-framework` is correct in form and
+untested in fact; publishing is tracked in `docs/ideas.md`.

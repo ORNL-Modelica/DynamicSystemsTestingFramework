@@ -1145,21 +1145,19 @@ planning.
   versions as CI" is not. A `.python-version` would close that; it also freezes
   the dev interpreter, which is why it was not taken silently.
 
-- **The PyPI name `dstf` belongs to someone else — a v1.0 publishing blocker**
-  (2026-09-04, found while reviewing the install instructions): `README.md`
-  tells end users `uv tool install dstf` / `pipx install dstf`, and that
-  currently installs "A framework for Deterministic Scheduling Theory" by
-  Anthony Dugois (v0.0.12, last released 2020-08-06, unrelated). Verified
-  against the PyPI JSON API, and reproduced in a sandboxed tool dir: uv fetches
-  `dstf==0.0.12` and then fails with `No executables are provided by package
-  dstf`. So the front-door instruction in a public README does not work, and no
-  amount of local polish changes that. Three ways out, and they are the owner's
-  call: publish under a different DISTRIBUTION name while keeping `import dstf`
-  and the `dstf` console script (`dynamic-systems-testing-framework`, say —
-  nothing in the code changes, only `[project] name`); pick a different short
-  name; or ask the current owner about the name. Until it is settled, runtime
-  hints for a missing extra deliberately say "reinstall with the [fmpy] extra"
-  rather than printing a command that resolves to the wrong package.
+- **Publish to PyPI as `dynamic-systems-testing-framework`** (2026-09-04; the
+  NAME is settled, the publishing is not): `dstf` is taken there by an unrelated
+  2020 project, so `README.md`'s `uv tool install dstf` fetched someone else's
+  package. The rename landed (D124) — no behaviour changed, only `[project]
+  name` plus the two `importlib.metadata` lookups that read it back and the
+  install lines in the docs. What is still open is the publish itself:
+  `https://pypi.org/pypi/dynamic-systems-testing-framework/json` returns 404
+  today, so the README's install instruction is correct in form and does not yet
+  work for a reader. Two things to do when publishing: the metadata is thin
+  (`[project]` has no `readme`, `authors`, `urls` or `classifiers`, so the PyPI
+  page would render an empty body), and anyone who tool-installed the package
+  while it was named `dstf` should `uv tool uninstall dstf` first, since an
+  upgrade under the old name now resolves the squatter.
 
 - **Finish the role vocabulary inside `tests/`** (2026-09-04, scope decision
   deferred during the Backend rename): the rename covered `src/`, the docs and

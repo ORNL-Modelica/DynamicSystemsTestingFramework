@@ -41,7 +41,7 @@ DynamicSystemsTestingFramework/
 
 ## Running the Tool
 
-The package ships a console script (`[project.scripts]` in `pyproject.toml`). The canonical dev invocation is `uv run dstf ...`. `python -m dstf ...` is supported as a fallback (both call `cli.main_entry`). End users install via `uv tool install dstf` (or `pipx install`) and run plain `dstf`.
+The package ships a console script (`[project.scripts]` in `pyproject.toml`). The canonical dev invocation is `uv run dstf ...`. `python -m dstf ...` is supported as a fallback (both call `cli.main_entry`). End users will install via `uv tool install dynamic-systems-testing-framework` (or `pipx install`) and run plain `dstf` — the distribution name differs from the import name because `dstf` on PyPI belongs to an unrelated project (D124). Nothing is published yet, so that command does not work today.
 
 ```bash
 # With testing.json containing source_path — single entry point

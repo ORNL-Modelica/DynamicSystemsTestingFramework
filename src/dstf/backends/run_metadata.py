@@ -37,8 +37,10 @@ def _dstf_version() -> str:
     try:
         from importlib.metadata import PackageNotFoundError, version
 
+        from .. import _DIST_NAME
+
         try:
-            return version("dstf")
+            return version(_DIST_NAME)
         except PackageNotFoundError:
             return "unknown"
     except Exception:  # pragma: no cover — defensive

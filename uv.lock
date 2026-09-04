@@ -457,7 +457,7 @@ wheels = [
 ]
 
 [[package]]
-name = "dstf"
+name = "dynamic-systems-testing-framework"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
