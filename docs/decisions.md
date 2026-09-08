@@ -3991,17 +3991,34 @@ filter, selection sweep and command copy on the dashboard; the metric tree,
 read-only, with the CLI's verdict and `summarize` text per leaf, server-rendered;
 statistics, diagnostics and artifact sections; diagnostic and no-baseline plots,
 which became figure dicts too; and a leaf's window shown as a band, open-ended
-when one end is `None`. The `comparison_data.json` sidecar keeps exactly its
-shape — it is the documented downstream artifact, and the page's decimation
-banner points at it.
+when one end is `None`. The `comparison_data.json` sidecar keeps what the
+documented downstream readers use: each `trajectories` entry's shape and full
+resolution (one entry per variable now — a variable whose leaves include a
+sentinel used to get a second, empty entry of the same name), and the `summary`
+block the dashboard reads. Its `tree_view` leaves changed with the page: the
+per-leaf numeric fields and form artifacts the browser scorer read are gone
+(`nrmse`, `rmse`, `signal_range`, `max_abs_error`, the finals, `tolerance_used`,
+the `tube_*` fields, `mode_values`, `mode_controls_html`, `window_controls_html`,
+`cli_authoritative`, `spectrum`), and each leaf carries `details` and
+`advisory` instead; the top level lost `mode_schemas` and gained `tree_summary`.
+The spectrum arrays now live only in the figure. The page's decimation banner
+points at the sidecar for the full-resolution input trajectories.
 
-Two things changed for a user who never opens the tool. `run -i`'s detail text
-is mode-aware, because `summarize` on the metric descriptor replaced the
-reporter's private score formatter (sub-project 1) and the console reads the
-same function. And a leaf that could not be scored now carries its variable's
-name in the console and JUnit output with the reason beside it, rather than
-carrying the reason where the name belongs — the sentinel's label was the
-diagnostic, which made a not-scored leaf unfindable by variable.
+What changed for a user who never opens the tool, all on the CLI's surfaces:
+`run -i`'s detail text is mode-aware, because `summarize` on the metric
+descriptor replaced the reporter's private score formatter (sub-project 1) and
+the console reads the same function, and it now prints each mode's own detail
+pairs. A leaf that could not be scored carries its variable's name in the
+console and JUnit output with the reason beside it, rather than carrying the
+reason where the name belongs — the sentinel's label was the diagnostic, which
+made a not-scored leaf unfindable by variable; the missing-variable sentinel,
+which used to print only the inf/nan numbers, now says what was missing. A
+scalar leaf whose reduction is not finite (a NaN in the samples) is a no-data
+failure with a reason; under bounds with only `min_value` declared it used to
+pass, because `max(0, nan)` is `0`. The dashboard's copied command is built
+from a prefix without a subcommand, so the command menu can offer `run`,
+`compare`, `compare --accept` and `run --rerun`. The dominant-frequency
+"no peaks declared" text no longer names a browser button.
 
 Payload, measured at the 50-variable budget fixture: **11.9 MB** after the cut,
 against 15.8 MB with the trajectory arrays still on the page. D66's ~5 MB budget

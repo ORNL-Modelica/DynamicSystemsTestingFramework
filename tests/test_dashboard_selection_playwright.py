@@ -196,3 +196,30 @@ def test_command_menu_switches_the_built_command(tmp_path, playwright_browser):
         assert "--report" not in built[kind][0]
     # Distinct commands, not one text with a cosmetic label.
     assert len({shown for shown, _ in built.values()}) == len(kinds)
+
+
+def test_column_filter_hides_non_matching_rows(tmp_path, playwright_browser):
+    """§4.4 keeps the test filter: typing in a column filter hides the rows
+    that do not match, a glob matches, and clearing shows every row again."""
+    html = _render(tmp_path, start_wall=1.0)
+    page = playwright_browser.new_page()
+    page.goto(html.as_uri())
+
+    def visible_models():
+        return page.evaluate(
+            "() => Array.from(document.querySelectorAll('tbody tr[data-model]'))"
+            ".filter(r => r.style.display !== 'none').map(r => r.dataset.model)"
+        )
+
+    assert visible_models() == _MODELS
+    box = page.locator('input.col-filter[data-col-filter="model"]')
+    box.fill("Lib.B")
+    box.dispatch_event("input")
+    assert visible_models() == ["Lib.B"]
+    box.fill("*.C")
+    box.dispatch_event("input")
+    assert visible_models() == ["Lib.C"]
+    box.fill("")
+    box.dispatch_event("input")
+    assert visible_models() == _MODELS
+    page.close()

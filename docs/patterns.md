@@ -48,13 +48,11 @@
 - NRMSE is still computed for reference even in tube mode
 - Constant variables (2-point signals) hide the tube mode selector — NRMSE tolerance is the right tool for these
 - HTML reports show "tube (95% in)" style labels; tolerance input disabled in tube mode (tube has its own pass/fail)
-- Interactive Plotly reports allow switching modes, editing tube points, and exporting tolerance configs
+- Per-test reports are read-only Plotly pages built from the geometry each metric emits (D125); criteria are authored in the spec file or, once it lands, the Python-side authoring tool
 - Tube visualization: `fill:'toself'` polygon for the shaded band + separate upper/lower line traces for hover readout
 - All plot traces share the reference time grid for unified hover alignment
-- Interactive tube editing: Shift+click to add, Shift+drag to move, Shift+right-click to delete — no mode toggle, coexists with normal Plotly zoom/pan/scroll
 - Tube rendering grid = ref grid ∪ control point times — ensures tube lines pass through CP markers when zoomed in.
-- Tube pass/fail is checked on the union of ref times, actual times and control-point times, because the band is a continuous envelope: an excursion inside one reference interval, or a control point off the reference grid, is invisible on the ref grid alone. Exact for `band`/`abs` widths with linear interpolation; `rel`, `tube_min_width` and `constant` interpolation put a kink between grid points and are not yet covered (see `_tube_eval_grid`). The browser's live tube scorer still uses the ref grid only, so it can disagree with the CLI until authoring moves server-side
-- Control point times are rounded to 6 significant figures on placement/drag to avoid floating point noise
+- Tube pass/fail is checked on the union of ref times, actual times and control-point times, because the band is a continuous envelope: an excursion inside one reference interval, or a control point off the reference grid, is invisible on the ref grid alone. Exact for `band`/`abs` widths with linear interpolation; `rel`, `tube_min_width` and `constant` interpolation put a kink between grid points and are not yet covered (see `_tube_eval_grid`). The page draws the band the scorer enforced, so the two cannot disagree (D125)
 
 ### Tolerance resolution order
 - Per-variable override from test spec (`comparison.variable_overrides`) takes highest priority
