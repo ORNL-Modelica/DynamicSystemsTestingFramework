@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from .geometry import Band, Marker, Primitive
 from .types import _EPS, VariableComparison
 
 
@@ -637,6 +638,47 @@ def _tube_eval_grid(
     return grid[(grid >= ref_time[0]) & (grid <= ref_time[-1])]
 
 
+def _tube_geometry(
+    grid: np.ndarray,
+    tube_lower: np.ndarray,
+    tube_upper: np.ndarray,
+    tube_points: list[dict] | None,
+) -> tuple[Primitive, ...]:
+    """The band as scored, plus one handle pair per authored control point.
+
+    Handles sit at the RESOLVED band edge at the control point's time — for
+    a ``rel`` tube that is ``ref ± rel·|ref|`` there, not the authored
+    fraction — so an editor drags what the user sees. Control-point times
+    are on the grid by construction (``_tube_eval_grid``), so the lookup is
+    exact. Ids follow the spec's array order: ``tube/upper/3`` addresses
+    ``tube_points/3`` in a patch.
+    """
+    out: list[Primitive] = [
+        Band(id="tube/band", time=grid, lower=tube_lower, upper=tube_upper)
+    ]
+    for i, pt in enumerate(tube_points or []):
+        t = float(pt["time"])
+        if t < grid[0] or t > grid[-1]:
+            continue  # off the reference span: nothing is scored there
+        out.append(
+            Marker(
+                id=f"tube/upper/{i}",
+                kind="handle",
+                x=t,
+                y=float(np.interp(t, grid, tube_upper)),
+            )
+        )
+        out.append(
+            Marker(
+                id=f"tube/lower/{i}",
+                kind="handle",
+                x=t,
+                y=float(np.interp(t, grid, tube_lower)),
+            )
+        )
+    return tuple(out)
+
+
 def _compare_tube(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -744,6 +786,7 @@ def _compare_tube(
         tube_points_inside=fraction_inside,
         tube_worst_violation=worst_violation,
         tube_worst_violation_time=worst_violation_time,
+        geometry=_tube_geometry(grid, tube_lower, tube_upper, tube_points),
     )
 
 

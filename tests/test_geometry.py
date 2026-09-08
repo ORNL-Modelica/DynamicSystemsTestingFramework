@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import random
+
 import numpy as np
 import pytest
 
+from dstf.comparison.algorithms import _compare_tube, _tube_bounds
 from dstf.comparison.geometry import Band, Box, Marker, Window
 from dstf.comparison.types import ScoreSummary, VariableComparison
 
@@ -60,3 +63,112 @@ class TestResultTypes:
         with pytest.raises(AttributeError):
             s.display = "x"  # type: ignore[misc]
         assert s.score is None and s.score_label == ""
+
+
+def _random_tube_case(rng: random.Random):
+    """A case drawn to REACH the regimes the exactness claim excludes:
+    rel widths, min-width floors, constant interpolation, control points
+    off the reference grid. A generator that only produces band+linear
+    would verify the claim in the one regime where it holds."""
+    n_ref = rng.randint(3, 12)
+    ref_time = np.array(sorted(rng.sample(range(0, 100), n_ref)), dtype=float) / 10.0
+    ref_values = np.array([rng.uniform(-2.0, 2.0) for _ in ref_time])
+    act_time = np.array(
+        sorted(
+            rng.uniform(ref_time[0], ref_time[-1]) for _ in range(rng.randint(3, 15))
+        )
+    )
+    act_values = np.array([rng.uniform(-3.0, 3.0) for _ in act_time])
+    mode = rng.choice(["band", "rel", "abs"])
+    cfg: dict = {
+        "tube_width_mode": mode,
+        "tube_min_width": rng.choice([0.0, 0.3]),
+        "tube_interpolation": rng.choice(["linear", "constant"]),
+    }
+    if mode == "abs" or rng.random() < 0.5:
+        pts = []
+        for _ in range(rng.randint(1, 4)):
+            t = rng.uniform(ref_time[0], ref_time[-1])
+            if mode == "abs":
+                lo = rng.uniform(-3.0, 0.0)
+                pts.append(
+                    {"time": t, "upper": lo + rng.uniform(0.5, 3.0), "lower": lo}
+                )
+            else:
+                pts.append(
+                    {
+                        "time": t,
+                        "upper": rng.uniform(0.0, 1.0),
+                        "lower": rng.uniform(0.0, 1.0),
+                    }
+                )
+        cfg["tube_points"] = pts
+    else:
+        cfg["tube_abs"] = rng.uniform(0.0, 1.0)
+        cfg["tube_rel"] = rng.uniform(0.0, 0.5)
+    return ref_time, ref_values, act_time, act_values, cfg
+
+
+class TestTubeGeometry:
+    def test_band_is_the_scored_envelope_and_the_verdict_follows_it(self):
+        rng = random.Random(20260908)
+        failing_cases = 0
+        for _ in range(400):
+            ref_t, ref_v, act_t, act_v, cfg = _random_tube_case(rng)
+            vc = _compare_tube(ref_t, ref_v, act_t, act_v, cfg)
+            band = next(p for p in vc.geometry if isinstance(p, Band))
+            assert band.id == "tube/band" and band.kind == "result"
+            # The band IS _tube_bounds on the band's own grid — nothing re-derived.
+            up, lo = _tube_bounds(band.time, np.interp(band.time, ref_t, ref_v), cfg)
+            np.testing.assert_allclose(band.upper, up)
+            np.testing.assert_allclose(band.lower, lo)
+            act_on_grid = np.interp(band.time, act_t, act_v)
+            inside = (act_on_grid >= band.lower - 1e-12) & (
+                act_on_grid <= band.upper + 1e-12
+            )
+            assert bool(inside.all()) == vc.passed
+            if not vc.passed:
+                i = int(np.argmin(np.abs(band.time - vc.tube_worst_violation_time)))
+                assert not inside[i], (
+                    "the reported worst violation lies inside the band"
+                )
+                failing_cases += 1
+        assert failing_cases > 50, "generator never reached the failing regime"
+
+    def test_handles_sit_on_the_resolved_band_edges_in_spec_order(self):
+        ref_t = np.array([0.0, 1.0, 2.0, 3.0])
+        ref_v = np.array([1.0, 2.0, 1.0, 2.0])
+        pts = [  # unsorted on purpose: ids follow SPEC order, not time order
+            {"time": 2.5, "upper": 0.2, "lower": 0.1},
+            {"time": 0.5, "upper": 0.4, "lower": 0.4},
+        ]
+        vc = _compare_tube(
+            ref_t, ref_v, ref_t, ref_v, {"tube_width_mode": "rel", "tube_points": pts}
+        )
+        handles = {p.id: p for p in vc.geometry if isinstance(p, Marker)}
+        assert set(handles) == {
+            "tube/upper/0",
+            "tube/lower/0",
+            "tube/upper/1",
+            "tube/lower/1",
+        }
+        assert all(h.kind == "handle" for h in handles.values())
+        band = next(p for p in vc.geometry if isinstance(p, Band))
+        assert handles["tube/upper/0"].x == 2.5
+        assert handles["tube/upper/0"].y == pytest.approx(
+            float(np.interp(2.5, band.time, band.upper))
+        )
+        assert handles["tube/lower/1"].x == 0.5
+        assert handles["tube/lower/1"].y == pytest.approx(
+            float(np.interp(0.5, band.time, band.lower))
+        )
+
+    def test_no_data_sentinel_has_no_geometry(self):
+        vc = _compare_tube(
+            np.array([]),
+            np.array([]),
+            np.array([0.0]),
+            np.array([1.0]),
+            {"tube_width_mode": "band"},
+        )
+        assert vc.geometry == () and not vc.passed
