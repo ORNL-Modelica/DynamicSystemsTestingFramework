@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dstf.reporting.decimate import decimate_pair, lttb
+from dstf.figures.decimate import decimate_pair, lttb
 
 
 class TestLttbContract:

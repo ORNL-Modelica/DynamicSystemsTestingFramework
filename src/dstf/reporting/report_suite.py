@@ -352,7 +352,7 @@ def _decimate_context_for_html(context: dict, max_samples: int) -> None:
     ``diag_trajectories``, and ``nobaseline_trajectories`` — everything
     else (scores, statistics, ref info) passes through unchanged.
     """
-    from .decimate import decimate_pair
+    from ..figures.decimate import decimate_pair
 
     if max_samples is None or max_samples <= 0:
         return

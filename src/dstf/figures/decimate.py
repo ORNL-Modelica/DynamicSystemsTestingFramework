@@ -1,9 +1,9 @@
-"""Largest-Triangle-Three-Buckets (LTTB) decimation for trajectory rendering.
+"""Largest-Triangle-Three-Buckets (LTTB) decimation for figure rendering.
 
-Used only on the ``interactive.html`` embed path — the full-resolution
-arrays are preserved on disk in ``comparison_data.json``. Decimation
-affects what the browser draws, not pass/fail scoring, stored baselines,
-or downstream tooling.
+Used on every figure embed — the report page and the authoring tool share
+the budget — while the full-resolution arrays stay on disk in
+``comparison_data.json``. Decimation affects what the browser draws, not
+pass/fail scoring, stored baselines, or downstream tooling.
 
 LTTB preserves visual peaks/valleys far better than uniform striding
 by selecting the point in each bucket that forms the largest triangle
@@ -91,3 +91,25 @@ def decimate_pair(
         np.asarray(time, dtype=np.float64), np.asarray(values, dtype=np.float64), n_out
     )
     return t_out.tolist(), v_out.tolist()
+
+
+def decimate_band(
+    time: NDArray[np.float64],
+    lower: NDArray[np.float64],
+    upper: NDArray[np.float64],
+    n_out: int,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Decimate an envelope on ONE shared time axis.
+
+    LTTB picks the kept samples from ``upper``; ``lower`` is then read at
+    exactly those times. The kept times are grid nodes, so ``np.interp`` at
+    them returns the node values — no approximation, and the two edges can
+    never drift onto different x arrays.
+    """
+    t2, u2 = lttb(
+        np.asarray(time, dtype=np.float64), np.asarray(upper, dtype=np.float64), n_out
+    )
+    l2 = np.interp(
+        t2, np.asarray(time, dtype=np.float64), np.asarray(lower, dtype=np.float64)
+    )
+    return t2, l2, u2

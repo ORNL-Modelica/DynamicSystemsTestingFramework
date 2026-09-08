@@ -1,0 +1,214 @@
+"""The figure layer: a view per variable, one Plotly dict, no mode names."""
+
+from __future__ import annotations
+
+import numpy as np
+
+from dstf.comparison.algorithms import (
+    _compare_dominant_frequency,
+    _compare_range,
+    _compare_tube,
+)
+from dstf.comparison.geometry import Band, Window
+from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
+from dstf.figures.decimate import decimate_band
+from dstf.figures.plotly import variable_figure
+from dstf.figures.view import build_view, decimate_view
+
+
+def _stamped(vc, path="/metrics/children/0"):
+    stamp_leaf_path(leaf_from_variable(vc), path)
+    return path, vc
+
+
+def _tube_view(n=11, **cfg):
+    t = np.linspace(0.0, 1.0, n)
+    ref = np.sin(t)
+    act = ref + 0.01
+    vc = _compare_tube(
+        t, ref, t, act, {"tube_width_mode": "band", "tube_abs": 0.05, **cfg}
+    )
+    vc.name = "x"
+    return build_view(
+        "x",
+        act_time=t,
+        act_values=act,
+        ref_time=t,
+        ref_values=ref,
+        leaves=[_stamped(vc)],
+    )
+
+
+class TestView:
+    def test_error_series_exist_only_when_both_curves_do(self):
+        t = np.linspace(0.0, 1.0, 5)
+        with_ref = build_view(
+            "x", act_time=t, act_values=t, ref_time=t, ref_values=t * 2
+        )
+        assert [s.id for s in with_ref.errors] == [
+            "error/signed",
+            "error/abs",
+            "error/nrmse",
+        ]
+        np.testing.assert_allclose(with_ref.errors[0].y, t - t * 2)
+        assert build_view("x", act_time=t, act_values=t).errors == ()
+        assert build_view("x").act_time is None and build_view("x").ref_time is None
+
+    def test_leaf_views_carry_geometry_and_summary(self):
+        view = _tube_view()
+        (leaf,) = view.leaves
+        assert leaf.path == "/metrics/children/0" and leaf.metric == "tube"
+        assert leaf.summary.display.endswith("% in tube")
+        assert any(isinstance(p, Band) for p in leaf.geometry)
+
+    def test_decimate_view_keeps_band_edges_on_one_axis_and_stamps_counts(self):
+        view = decimate_view(_tube_view(n=2001), 100)
+        assert len(view.act_time) <= 100 and view.full_samples == {
+            "act": 2001,
+            "ref": 2001,
+        }
+        band = next(
+            p for leaf in view.leaves for p in leaf.geometry if isinstance(p, Band)
+        )
+        assert len(band.time) <= 100 and len(band.lower) == len(band.upper) == len(
+            band.time
+        )
+        assert all(len(s.x) <= 100 for s in view.errors)
+
+    def test_decimate_band_reads_lower_at_the_kept_nodes(self):
+        t = np.linspace(0.0, 1.0, 1001)
+        t2, lo2, up2 = decimate_band(t, -t, t, 50)
+        np.testing.assert_allclose(lo2, -t2)
+        np.testing.assert_allclose(up2, t2)
+
+
+class TestFigure:
+    def test_figure_is_a_plain_dict_with_ids_on_every_trace_and_shape(self):
+        fig = variable_figure(_tube_view())
+        assert set(fig) == {"data", "layout", "config"}
+        names = [tr["name"] for tr in fig["data"]]
+        assert names[:2] == ["Actual", "Reference"]
+        band = next(
+            tr
+            for tr in fig["data"]
+            if tr["meta"].get("id") == "/metrics/children/0/tube/band"
+        )
+        assert band["fill"] == "toself" and len(band["x"]) == 2 * 11
+        assert all(
+            isinstance(tr["x"], list) for tr in fig["data"]
+        )  # JSON-ready, no arrays
+        assert "xaxis2" not in fig["layout"]
+
+    def test_handles_group_into_one_trace_per_family_with_ids_in_customdata(self):
+        fig = variable_figure(
+            _tube_view(
+                tube_points=[
+                    {"time": 0.2, "upper": 0.1, "lower": 0.1},
+                    {"time": 0.8, "upper": 0.1, "lower": 0.1},
+                ]
+            )
+        )
+        upper = next(
+            tr for tr in fig["data"] if tr["meta"].get("family") == "tube/upper"
+        )
+        assert upper["customdata"] == [
+            "/metrics/children/0/tube/upper/0",
+            "/metrics/children/0/tube/upper/1",
+        ]
+        assert upper["meta"]["kind"] == "handle" and upper["mode"] == "markers"
+
+    def test_window_and_range_bounds_become_shapes_clipped_to_the_window(self):
+        t = np.linspace(0.0, 1.0, 11)
+        vc = _compare_range(t, t, min_value=None, max_value=0.5)
+        vc.name = "x"
+        vc.geometry = vc.geometry + (Window(id="window", start=0.25, end=None),)
+        view = build_view("x", act_time=t, act_values=t, leaves=[_stamped(vc)])
+        fig = variable_figure(view)
+        shapes = {s["name"]: s for s in fig["layout"]["shapes"]}
+        assert (
+            shapes["/metrics/children/0/window"]["xref"] == "x"
+            and shapes["/metrics/children/0/window"]["x1"] == 1.0
+        )
+        strong = shapes["/metrics/children/0/range/max"]
+        assert (strong["x0"], strong["x1"], strong["y0"]) == (0.25, 1.0, 0.5)
+        assert (
+            shapes["/metrics/children/0/range/max/outside"]["line"]["color"]
+            != strong["line"]["color"]
+        )
+        # An invisible anchor keeps the bound inside the autorange.
+        assert any(
+            tr.get("meta", {}).get("anchor_for") == "/metrics/children/0/range/max"
+            for tr in fig["data"]
+        )
+
+    def test_spectrum_primitives_open_a_second_panel(self):
+        t = np.linspace(0.0, 10.0, 1001)
+        sig = np.sin(2 * np.pi * 2.0 * t)
+        vc = _compare_dominant_frequency(
+            t, sig, t, sig, peaks=[{"freq": 2.0, "tolerance": 0.05}]
+        )
+        vc.name = "x"
+        view = build_view(
+            "x",
+            act_time=t,
+            act_values=sig,
+            ref_time=t,
+            ref_values=sig,
+            leaves=[_stamped(vc)],
+        )
+        fig = variable_figure(view)
+        assert fig["layout"]["xaxis2"]["title"]["text"] == "Frequency [Hz]"
+        spectrum = next(
+            tr
+            for tr in fig["data"]
+            if tr["meta"].get("id") == "/metrics/children/0/spectrum/act"
+        )
+        assert spectrum["xaxis"] == "x2" and spectrum["yaxis"] == "y2"
+        window = next(
+            s
+            for s in fig["layout"]["shapes"]
+            if s["name"] == "/metrics/children/0/peaks/window/0"
+        )
+        assert window["xref"] == "x2" and window["yref"] == "paper"
+
+    def test_error_series_ride_on_a_right_axis_hidden_by_default(self):
+        fig = variable_figure(_tube_view())
+        err = [tr for tr in fig["data"] if tr["meta"].get("kind") == "error"]
+        assert [tr["meta"]["id"] for tr in err] == [
+            "error/signed",
+            "error/abs",
+            "error/nrmse",
+        ]
+        assert all(tr["visible"] == "legendonly" and tr["yaxis"] == "y3" for tr in err)
+        assert fig["layout"]["yaxis3"]["overlaying"] == "y"
+
+    def test_budget_decimates_inside_variable_figure(self):
+        fig = variable_figure(_tube_view(n=5001), max_samples=200)
+        actual = next(tr for tr in fig["data"] if tr["name"] == "Actual")
+        assert len(actual["x"]) <= 200 and actual["meta"]["full_samples"] == 5001
+
+    def test_a_view_with_no_trajectory_still_renders_its_lines(self):
+        from dstf.comparison.algorithms import _compare_scalar
+
+        one = np.array([0.0])
+        vc = _compare_scalar(
+            one,
+            np.array([3.0]),
+            one,
+            np.array([3.1]),
+            reduction="final",
+            tolerance=0.5,
+            tolerance_mode="abs",
+            min_value=None,
+            max_value=None,
+        )
+        vc.name = "CPUtime.final"
+        fig = variable_figure(build_view("CPUtime.final", leaves=[_stamped(vc)]))
+        names = {s["name"] for s in fig["layout"]["shapes"]}
+        assert {
+            "/metrics/children/0/scalar/actual",
+            "/metrics/children/0/scalar/reference",
+        } <= names
+        assert fig["data"] == [] or all(
+            "anchor_for" in tr.get("meta", {}) for tr in fig["data"]
+        )
