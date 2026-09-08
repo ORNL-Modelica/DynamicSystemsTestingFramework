@@ -390,6 +390,20 @@ class TestEventTimingGeometry:
             float(act_t[b[0]]) for b in _find_event_boundaries(act_t)
         ]
 
+    def test_an_unpaired_auto_window_is_unscored_not_failed(self):
+        # Two reference events, one actual. With count_must_match off the
+        # leaf passes; the second window contributed nothing to that verdict
+        # and must not be drawn as a failure.
+        ref_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 1.5, 2.0])
+        act_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
+        vc = _compare_event_timing(
+            ref_t, act_t, time_tolerance=1e-3, count_must_match=False
+        )
+        assert vc.passed
+        windows = {p.id: p for p in vc.geometry if isinstance(p, Box)}
+        assert windows["events/window/0"].passed is True
+        assert windows["events/window/1"].passed is None
+
     def test_declared_events_mark_the_unmatched_window_as_failed(self):
         ref_t = np.linspace(0.0, 2.0, 5)
         act_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
@@ -467,6 +481,24 @@ class TestDominantFrequencyGeometry:
         }
         assert {p.x for p in vc.geometry if p.kind == "matched"} == paired
         assert not vc.passed
+
+    def test_markers_sit_on_the_drawn_spectrum_above_the_embed_cap(self):
+        # 8001 samples: the diagnostics embed strides the FFT bins and skips
+        # the peak; the drawn Series must not, or the matched marker floats
+        # above a curve with no peak in it.
+        t = np.linspace(0.0, 10.0, 8001)
+        sig = np.sin(2 * np.pi * 1.3 * t)
+        vc = _compare_dominant_frequency(
+            t, sig, t, sig, peaks=[{"freq": 1.3, "tolerance": 0.05}]
+        )
+        prims = {p.id: p for p in vc.geometry}
+        act = prims["spectrum/act"]
+        matched = prims["peaks/matched/0"]
+        assert isinstance(act, Series) and isinstance(matched, Marker)
+        assert len(act.x) > len(vc.diagnostics["act_spectrum_freq"])
+        drawn_at_marker = float(np.interp(matched.x, act.x, act.y))
+        assert matched.y == pytest.approx(drawn_at_marker)
+        assert matched.y == pytest.approx(float(act.y.max()))
 
     def test_no_declared_peaks_still_draws_the_spectra(self):
         t, ref = self._signal(2.0)

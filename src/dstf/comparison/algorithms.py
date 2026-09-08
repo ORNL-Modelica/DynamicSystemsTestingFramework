@@ -14,6 +14,8 @@ here for live-edit recompute. Drift is caught by
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 from .geometry import Band, Box, HLine, Marker, Primitive, Series, VLine
@@ -1106,10 +1108,15 @@ def _event_geometry(
     ref_events: list[float],
     act_events: list[float],
     tolerances: list[float],
-    matched: list[bool],
+    matched: Sequence[bool | None],
 ) -> tuple[Primitive, ...]:
     """Reference (or declared) events with their tolerance windows, and the
-    actual events. Windows span the panel height (``y0``/``y1`` ``None``)."""
+    actual events. Windows span the panel height (``y0``/``y1`` ``None``).
+
+    ``matched[i]`` is ``None`` for a window that was never scored — an
+    auto-detected reference event beyond the paired count contributes
+    nothing to the verdict (only ``count_must_match`` can fail the leaf on
+    it), so drawing it failed would contradict a passing leaf."""
     out: list[Primitive] = []
     for i, (t, tol, ok) in enumerate(zip(ref_events, tolerances, matched)):
         out.append(VLine(id=f"events/ref/{i}", kind="ref", time=float(t)))
@@ -1121,7 +1128,7 @@ def _event_geometry(
                 t1=float(t + tol),
                 y0=None,
                 y1=None,
-                passed=bool(ok),
+                passed=None if ok is None else bool(ok),
             )
         )
     for j, t in enumerate(act_events):
@@ -1200,7 +1207,9 @@ def _compare_event_timing(
                 act_events,
                 [time_tolerance] * len(ref_events),
                 [
-                    i < n and abs(ref_events[i] - act_events[i]) <= time_tolerance
+                    (abs(ref_events[i] - act_events[i]) <= time_tolerance)
+                    if i < n
+                    else None
                     for i in range(len(ref_events))
                 ],
             ),
@@ -1401,10 +1410,8 @@ _PEAK_MIN_REL_AMPLITUDE = 0.01
 
 
 def _frequency_geometry(
-    ref_f: list[float],
-    ref_m: list[float],
-    act_f: list[float],
-    act_m: list[float],
+    ref_freqs: np.ndarray,
+    ref_spectrum: np.ndarray,
     act_freqs: np.ndarray,
     act_spectrum: np.ndarray,
     detected_ref_peaks: list[tuple[float, float]],
@@ -1413,17 +1420,22 @@ def _frequency_geometry(
 ) -> tuple[Primitive, ...]:
     """Both spectra, the reference's detected peaks, and per declared peak
     its handle, its acceptance window and (when found) its match. All on
-    the spectrum panel. The embedded (capped) spectra are what is drawn; the
-    full ``act_freqs``/``act_spectrum`` only place markers on the curve."""
+    the spectrum panel.
+
+    The spectra are the FULL-resolution arrays the peaks were found in, not
+    the index-strided ``_embed`` lists the diagnostics carry: a stride skips
+    the peak bin for any signal over a few hundred samples, and a marker
+    placed at full-resolution amplitude then floats above a curve with no
+    peak in it. The figure layer decimates with LTTB, which keeps peaks."""
     out: list[Primitive] = []
-    if len(ref_f):
+    if len(ref_freqs):
         out.append(
             Series(
                 id="spectrum/ref",
                 kind="ref",
                 panel="spectrum",
-                x=np.asarray(ref_f),
-                y=np.asarray(ref_m),
+                x=ref_freqs,
+                y=ref_spectrum,
             )
         )
     out.append(
@@ -1431,8 +1443,8 @@ def _frequency_geometry(
             id="spectrum/act",
             kind="act",
             panel="spectrum",
-            x=np.asarray(act_f),
-            y=np.asarray(act_m),
+            x=act_freqs,
+            y=act_spectrum,
         )
     )
     for k, (f, amp) in enumerate(detected_ref_peaks):
@@ -1625,10 +1637,8 @@ def _compare_dominant_frequency(
                 "act_spectrum_mag": act_m_embed,
             },
             geometry=_frequency_geometry(
-                ref_f_embed,
-                ref_m_embed,
-                act_f_embed,
-                act_m_embed,
+                ref_freqs,
+                ref_spectrum,
                 act_freqs,
                 act_spectrum,
                 detected_ref_peaks,
@@ -1730,10 +1740,8 @@ def _compare_dominant_frequency(
             "act_spectrum_mag": act_m_embed,
         },
         geometry=_frequency_geometry(
-            ref_f_embed,
-            ref_m_embed,
-            act_f_embed,
-            act_m_embed,
+            ref_freqs,
+            ref_spectrum,
             act_freqs,
             act_spectrum,
             detected_ref_peaks,
