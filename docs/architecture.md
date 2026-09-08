@@ -106,8 +106,19 @@ src/dstf/
     ├── report_suite.py       # Per-test interactive.html render + comparison_data.json sidecar
     ├── overlay_loader.py     # Companion CSV/JSON ingest + soft-check baseline projection
     ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf export-schema`)
-│   └── templates/            # interactive.html + five JS fragments (scorers/editors/plots/tree-ui/export), concatenated at copy time via report_suite.INTERACTIVE_JS_PARTS
-    └── ui/mode_controls.py   # Auto-derived per-mode UI from typed comparison configs
+    ├── templates/            # interactive.html (server-rendered tree, summary, banner) + report.js
+    │                         #   (copied out as interactive.js via report_suite.INTERACTIVE_JS_PARTS)
+    │                         #   + dashboard.html / dashboard.js + vendor/plotly.min.js
+    └── ui/mode_controls.py   # derive_schema — per-mode schema from typed comparison configs
+```
+
+The figure layer sits beside them, and both tiers draw from it:
+
+```
+src/dstf/figures/
+├── view.py                   # VariableView — the library-neutral picture of one variable
+├── plotly.py                 # VariableView → a plotly figure dict (traces + shapes)
+└── decimate.py               # LTTB decimation on the view, before any trace exists
 ```
 
 ## Data Flow
@@ -148,10 +159,17 @@ compare_all(tests, results, store, default_tolerance, default_points)
     → returns list[TestComparison]
 
 reporters render TestComparison → console / JUnit / HTML / plots
-    → HTML reporter builds a context dict and renders via Jinja2 templates
-    → generates interactive.html (Plotly.js) + the comparison_data.json sidecar
+    → context_builder turns results + comparisons into a context dict
+    → report_suite writes the full-resolution comparison_data.json sidecar FIRST
+    → figures/view builds one VariableView per variable from the trajectories and
+      the evaluated leaves; figures/decimate thins it (LTTB) before any trace exists;
+      figures/plotly turns it into a figure dict (traces + shapes for the criterion
+      geometry each metric emitted: band, bounds, boxes, event windows, spectrum)
+    → the trajectory arrays are dropped from the page context — interactive.html
+      carries figure dicts and server-rendered markup only (tree, summary, pills,
+      decimation banner); report.js paints the figures and toggles trace visibility
     → per-test report directories named ref_NNNN (has reference) or test_NNNN (no baseline)
-    → writes comparison_data.json sidecar (includes full trajectory data) for downstream tooling
+    → the sidecar keeps its shape (full trajectory data) for downstream tooling
 ```
 
 ## Key Types

@@ -36,7 +36,7 @@ Library-agnostic: tests can be discovered from in-model annotations (`UnitTests`
 
   Combinators: `and`, `or`, `k-of-n`, `warn` (relax to advisory), `weighted`. Leaves can scope to a time window and target named baselines (`primary`, soft-checks, companions).
 
-- **Reporter as IDE** — interactive Plotly HTML with live per-leaf re-scoring on edit, structural tree editing, shape-drag tube/range/peak/points-box editors, and RFC 6902 JSON-Patch export round-tripped via `dstf spec-update`. Plus live dashboard during runs and JUnit XML for CI.
+- **Read-only reports** — per-test Plotly HTML drawn from figures Python built: the trajectory with its criterion geometry (tube band, range bounds, point boxes, event windows, FFT spectrum), overlay picker, error overlays, and the metric tree with the CLI's verdict and score text per leaf. Plus a live dashboard during runs and JUnit XML for CI. Authoring criteria is a separate Python-side tool (in progress) — the report shows, the CLI decides.
 
 - **Three baseline roles** per test, partitioned on disk: **primary** (regression anchor, hard-fail), **soft_checks** (warn-wrapped cross-regression imports), **companions** (plot-only overlays, including cross-library).
 
@@ -158,7 +158,7 @@ uv run dstf --config testing.json run --rerun failed,sim-failed --merge --report
 # Compare without re-simulating (uses last results)
 uv run dstf --config testing.json compare
 
-# Apply an RFC 6902 JSON-Patch exported from the interactive report
+# Apply an RFC 6902 JSON-Patch against test_spec.json (from any source)
 uv run dstf --config testing.json spec-update spec_patch.json
 
 # Manage the other baseline roles
@@ -204,4 +204,4 @@ For HTML reports as build artifacts, also pass `--report ./reports` and upload t
 
 ## Status
 
-5 backends in production, 4 demo libraries, and a comprehensive pytest suite (a Playwright subset covers the interactive report). The reporter-as-IDE is feature-complete: per-leaf live scoring plus shift-click/drag editors for tube / point / range / peak criteria.
+5 backends in production, 4 demo libraries, and a comprehensive pytest suite (a Playwright subset covers the interactive report). The report is read-only and mutates nothing: every number it draws comes from a figure Python built or a string the server rendered. Criteria authoring is moving to a Python-side tool driven by the same figures.

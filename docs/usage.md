@@ -174,7 +174,7 @@ The `scalar` metric scores a single number instead of a trajectory. Its required
 {"metric": "scalar", "variable": "pump.W", "quantity": {"reduce": "mean"}, "max_value": 5000}
 ```
 
-A window on a stats-path leaf is ignored — a stored scalar is not a time series. A stats-path leaf needs a `metrics` tree: in a flat `comparison.variable_overrides` entry the leaf only has the variable's own trajectory, so a string `quantity` there is a hard failure rather than a silent reduction of the wrong signal (a `{"reduce": ...}` override is fine). Scalar leaves are always CLI-authoritative in the interactive report (no in-browser rescore).
+A window on a stats-path leaf is ignored — a stored scalar is not a time series. A stats-path leaf needs a `metrics` tree: in a flat `comparison.variable_overrides` entry the leaf only has the variable's own trajectory, so a string `quantity` there is a hard failure rather than a silent reduction of the wrong signal (a `{"reduce": ...}` override is fine).
 
 ### Multiple named baselines
 
@@ -310,6 +310,36 @@ The dashboard supports status filter buttons, per-column text filtering, and a 3
 
 The **Resolution** column shows where each test's simulation parameters came from: `annotation` (from the `experiment(...)` annotation in the .mo file), `test_spec` (overridden in test_spec.json), or `mixed` (some fields from each — hover to see the per-field breakdown). This is the resolution-explainer for the two-layer contract documented above.
 
+#### The per-test page
+
+`interactive.html` is a **read-only** view of one test. It mutates nothing and
+computes nothing: every number on it comes from a figure Python built or from
+markup the server rendered. It shows
+
+- one Plotly chart per variable — actual, reference and the criterion geometry
+  the metrics emitted (a tube's band, a range's bounds, a points leaf's
+  tolerance boxes, event windows, the FFT spectrum on its own axis pair, a
+  scoped leaf's window as a shaded band). Zoom, hover and legend toggles are
+  live, which is how you read values off a plot;
+- an **overlay picker** above any plot whose variable a soft_check or companion
+  carries data for — the overlay traces are already in the figure, and the
+  checkbox toggles their visibility;
+- an **error-overlay** dropdown per plot: signed error, absolute error, or
+  per-point NRMSE, drawn on the right-hand axis;
+- the **metric tree**, with the CLI's verdict per node, a one-line criterion
+  under each leaf, and the leaf's detail pairs (what was measured against what)
+  — plus a summary line counting leaves passed and flagging advisory failures
+  under a `warn` wrapper;
+- statistics, diagnostics and artifact sections, and plots for diagnostic and
+  no-baseline variables;
+- a **decimation banner** naming every trace the page thinned, with its full and
+  embedded sample counts, when any was thinned. `max_embedded_samples` in
+  `testing.json` sets the cap; the full-resolution data is in
+  `comparison_data.json` beside the page.
+
+Changing a criterion is not something the page does — edit `test_spec.json`, or
+apply a patch with `spec-update`.
+
 #### Report layout and offline use
 
 `--report` writes one directory per test plus a single shared copy of Plotly:
@@ -321,8 +351,8 @@ work_dir/
     ├── plotly.min.js                 # ONE copy per suite (~1.25 MB)
     ├── ref_0001/
     │   ├── interactive.html          # loads ../plotly.min.js
-    │   ├── interactive.js
-    │   └── comparison_data.json
+    │   ├── interactive.js            # built from the packaged report.js
+    │   └── comparison_data.json      # full-resolution trajectories
     └── ref_0002/…
 ```
 

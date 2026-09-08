@@ -3944,3 +3944,112 @@ resolve. Stored baselines are unaffected — `dstf_version` is display-only, nev
 compared. **Unrun:** the published install path itself. Nothing is on PyPI yet,
 so `uv tool install dynamic-systems-testing-framework` is correct in form and
 untested in fact; publishing is tracked in `docs/ideas.md`.
+
+
+## D125 — The two-tier split supersedes D66's boundary (2026-09-08)
+
+The line between the two surfaces is **mutation**. A surface either changes
+something or it does not, and that is the whole rule: zoom, hover, legend and
+overlay toggles, error overlays, reading values off a plot, filtering tests,
+sweeping a selection, copying a command, and reading the metric tree with its
+verdicts and score text are reporting; changing a tolerance, a mode, a window or
+an `against`, adding or removing or wrapping leaves, accepting results as
+baselines, and running tests are authoring. D66 drew the line in the same place
+in words — reporter authors, CLI executes — but put the authoring surface inside
+the report, so the report both mutated and computed. It no longer does either.
+
+The report page now computes nothing. Every number it draws comes from an
+embedded figure dict Python built or from a string the server rendered. Geometry
+is a result of comparison (sub-project 1): each metric emits the primitives that
+describe its criterion, the figure layer turns them into traces and shapes, and
+the page paints them. Authoring moves to a Python-side tool driven by the same
+figure layer and the same metric registry the CLI scores with (sub-projects 3–6,
+not yet built); `spec-update` is unchanged and stays the CLI's patch applier —
+it applies an RFC 6902 envelope from any source, and only the browser stopped
+producing one.
+
+What was deleted, and why. Three registries were re-deriving Python's geometry
+in JavaScript — `MODE_SCORERS` in `scorers.js`, the five per-mode editors in
+`editors.js`, and the tree builder and patch export in `tree-ui.js` /
+`export.js` — and with them the Python that existed only to feed them
+(`_JS_SCORED_METRICS`, `cli_authoritative` and its badge,
+`_mark_decimated_cli_authoritative`, `_extract_mode_values`, `_extract_spectrum`,
+the mode-schema and form emitters in `reporting/ui/`), plus
+`tests/test_scorer_parity.py`, which existed to prove the two implementations
+agreed. The reason is the failure mode that suite was built to catch and could
+not close: a second implementation of scoring means the page can show a passing
+tube the CLI failed. A parity test constrains drift where it has a fixture; it
+cannot make one implementation be the other. Deleting the second implementation
+does.
+
+What the report keeps, each asserted by Playwright on pages generated through
+the real render path before the deletion landed: the per-variable figure with
+the trace count its dict declares; zoom, hover and legend toggles; the overlay
+picker (overlay traces are already in the figure, `legendonly`, and the checkbox
+toggles visibility); the error-overlay toggle on the right axis; the test
+filter, selection sweep and command copy on the dashboard; the metric tree,
+read-only, with the CLI's verdict and `summarize` text per leaf, server-rendered;
+statistics, diagnostics and artifact sections; diagnostic and no-baseline plots,
+which became figure dicts too; and a leaf's window shown as a band, open-ended
+when one end is `None`. The `comparison_data.json` sidecar keeps exactly its
+shape — it is the documented downstream artifact, and the page's decimation
+banner points at it.
+
+Two things changed for a user who never opens the tool. `run -i`'s detail text
+is mode-aware, because `summarize` on the metric descriptor replaced the
+reporter's private score formatter (sub-project 1) and the console reads the
+same function. And a leaf that could not be scored now carries its variable's
+name in the console and JUnit output with the reason beside it, rather than
+carrying the reason where the name belongs — the sentinel's label was the
+diagnostic, which made a not-scored leaf unfindable by variable.
+
+Payload, measured at the 50-variable budget fixture: **11.9 MB** after the cut,
+against 15.8 MB with the trajectory arrays still on the page. D66's ~5 MB budget
+no longer applies; the owner dropped it on 2026-09-08 in favour of a 25 MB
+ceiling watched as a regression, because a page that carries figure geometry for
+50 variables is not the page that budget was written for.
+
+Sources: the design is
+`docs/superpowers/specs/2026-09-08-two-tier-architecture-design.md` (§4.1 the
+line, §4.4 the reporter after the split, §5 the build order); the two plans
+executed so far are
+`docs/superpowers/plans/2026-09-08-geometry-and-figures.md` and
+`docs/superpowers/plans/2026-09-08-the-cut.md`. This entry supersedes D66's
+"reporter is the authoring surface" commitment; D66's other commitments (the
+baseline-role split, recommender containment, economy of tools) stand.
+
+- `src/dstf/reporting/templates/report.js` — the page's one script, replacing
+  `plots.js` and the viewing half of `export.js`; still served as
+  `interactive.js`. `scorers.js`, `editors.js`, `tree-ui.js`, `plots.js` and
+  `export.js` are gone.
+- `src/dstf/reporting/templates/interactive.html` — server-rendered metric tree
+  (a recursive Jinja macro), summary line, variable pills and decimation banner;
+  `MT_REPORT` carries figure dicts only.
+- `src/dstf/reporting/report_suite.py` — `INTERACTIVE_JS_PARTS = ("report.js",)`;
+  the page context is stripped of trajectory arrays after the sidecar is
+  written; `decimated` is computed from the figures' sample stamps.
+- `src/dstf/reporting/context_builder.py` — the leaf view carries
+  `score_display`, `criterion`, `details`, `error`, `advisory`, `against` and
+  `window`; the raw numeric leaf fields and the JS-facing extractors are gone.
+- `src/dstf/reporting/ui/mode_controls.py` — `derive_schema` only, for
+  `export-schema` and the authoring tool's forms.
+- `src/dstf/comparison/tree_eval.py`, `reporting/console_report.py` — sentinel
+  comparisons keep the leaf's variable name and carry the reason in
+  `diagnostics["error"]`.
+- `src/dstf/reporting/templates/dashboard.js`, `dashboard.html`,
+  `reporting/dashboard_render.py` — the command menu offers the commands that
+  exist today (`run`, `compare`, `compare --accept`,
+  `run --rerun failed,sim-failed`); the `dstf author` entry waits for the
+  command.
+- `tests/test_interactive_report.py` and `tests/test_figure_goldens.py` (new);
+  `test_scorer_parity.py`, `test_interactive_html_snapshot.py` and its hash
+  goldens, `test_interactive_playwright.py`, `test_interactive_points.py`,
+  `test_interactive_event_timing.py`, `test_interactive_range_window.py`,
+  `test_interactive_against_baselines.py` deleted; `test_mode_controls.py`,
+  `test_export_schema.py`, `test_report_suite.py`, `test_report_size_budget.py`,
+  `test_comparator.py`, `test_metric_registry.py`, `test_scalar_metric.py`,
+  `test_tree_eval.py`, `test_reporters.py` and the two dashboard suites trimmed
+  or adapted.
+- `README.md`, `docs/vision.md`, `docs/architecture.md`,
+  `docs/extensibility.md`, `docs/usage.md`, `docs/qa/reporter_checklist.md`,
+  `CLAUDE.md` — updated to the read-only page and the two tiers.

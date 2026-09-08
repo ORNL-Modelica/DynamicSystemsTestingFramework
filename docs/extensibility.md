@@ -289,8 +289,9 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
 2. `compare` is *pure* — no I/O, no mutation of inputs, no global state. Deterministic given inputs.
 3. `diagnostics` must be JSON-serializable (travels to reports + reference files).
 4. Metric-specific configuration is typed (frozen dataclass); its field
-   metadata (`label`/`help`) drives the reporter's auto-derived controls and
-   the exported JSON-Schema.
+   metadata (`label`/`help`) drives the exported JSON-Schema, and from
+   sub-project 4 the authoring tool's auto-derived forms. Both read the same
+   `derive_schema` in `reporting/ui/mode_controls.py`.
 5. `score_direction` declares which way a better score runs (`"lower"` for
    error-like, `"higher"` for coverage-like). The validator uses it to reject
    `weighted` nodes mixing directions.
@@ -318,7 +319,7 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
 ### User metrics (implemented — `dstf.comparison.registry`)
 
 A user registers a metric by describing it once; every framework surface
-(spec parsing, evaluation, auto-derived report controls, `export-schema`)
+(spec parsing, evaluation, `export-schema`, and the authoring tool's forms)
 derives from the descriptor:
 
 ```python
@@ -423,6 +424,23 @@ Phase 3 wired MetricTree end-to-end:
 Leaf contract is validated across four metrics spanning two shapes: three reference-consuming (`nrmse`, `tube`, `points`) and one signal-only (`range` — bounds come from the spec, not a baseline).
 
 Deferred (Phase 4+): multi-baseline leaves (`"against": "experiment"`), cross-backend verification, additional leaf types (event-timing, spectral, Fréchet, KS), `weighted` combinator.
+
+---
+
+## Capability contract (authoring tier)
+
+The authoring tool is a plug-in surface too. A **capability** is one thing an
+author can do to a project — edit a criterion, edit the tree, accept results,
+rerun a selection, drag a tube's control points — and it registers through the
+same `dstf.plugins` entry-point group a metric does. A capability decides
+whether it is available, builds its own controls, and returns an *outcome*; it
+applies nothing itself, so the session stays the single place where a spec is
+mutated, a store is written, or a job is launched.
+
+The protocol, the outcome types and the registration call are specified in §4.6
+of [the two-tier architecture design](superpowers/specs/2026-09-08-two-tier-architecture-design.md).
+It lands in sub-project 4 — there is no `dstf.authoring` package to import
+against yet, so nothing here is callable today.
 
 ---
 

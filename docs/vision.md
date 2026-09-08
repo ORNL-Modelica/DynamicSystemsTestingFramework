@@ -94,19 +94,17 @@ Now implemented, and still marked EXPERIMENTAL: `backends/cross_backend.py` expo
 
 ---
 
-## Reporter as authoring IDE (D66)
+## The two tiers: reporting and authoring (D125)
 
-The interactive HTML report is the **primary authoring surface** for acceptance criteria — not just a review UI. Users compose tube widths, range bounds, combinator structures, and multi-criteria scoring interactively against a freshly-simulated signal, then download a patch and apply it via the CLI. Editing `test_spec.json` by hand stays supported; it is not the intended default.
+**The line is mutation.** A surface either changes something or it does not. Reporting is everything that reads: zoom, hover, legend and overlay toggles, error overlays, the test filter, sweeping a selection and copying a command, and reading the metric tree with its verdicts and score text. Authoring is everything that writes: a tolerance, a mode, a window, an `against`, the shape of the tree, accepting results as baselines, running or rerunning tests. The CLI remains the execution surface and keeps its own mutations (`--accept`, `spec-update`, `run -i`); the terminal review loop is not a report.
 
-**Workflow boundary (hard)**: the reporter is the authoring surface; the CLI is the execution surface. Reporter state lives in the browser until an explicit download. No local server; no live-apply; no auto-rerun. The download payload is an **RFC 6902 JSON-Patch** against the test spec. The `spec-update` CLI applies the patch via read-modify-write, preserving unknown keys and the `description` / `info` / `metadata` conventions for human notes.
+**The report computes nothing.** Every number it draws comes from an embedded figure dict or a string the server rendered. Geometry is a result of comparison, not a browser re-derivation: each metric emits the primitives that describe its criterion (band, bounds, boxes, event windows, spectrum), the figure layer turns them into traces and shapes, and the page paints them. The page's single script paints figures and toggles the visibility of traces that are already in them.
 
-**Per-leaf modularity**: `ComparisonMode` stays pure compute (no UI coupling). UI controls are **auto-derived from each mode's typed Config dataclass** (NrmseConfig, TubeConfig, …) with override slots where richer UI makes sense (tube conditional fields, range visual handles). Tightening Config types to use `Literal[...]` for enum-like fields buys JSON-Schema export as a first-class handoff artifact.
+**Authoring is a Python-side tool**, driven by the same figure layer and the same registry the CLI scores with — so what the author sees is what the CLI will decide, with no second implementation to keep in step. It emits an **RFC 6902 JSON-Patch** against the test spec; `spec-update` applies the patch via read-modify-write, preserving unknown keys and the `description` / `info` / `metadata` conventions for human notes. Editing `test_spec.json` by hand stays supported.
 
-**Live preview policy**: modes with tractable math ship an in-browser JS recompute function so users see pass/fail update as they drag. Today this covers `nrmse`, `tube`, `range`, `points`, and `dominant-frequency` (the FFT path was added in D75-D76 once both sides agreed on a power-of-2 resampling that gives bit-identical bin frequencies). Two modes stay CLI-authoritative: `event-timing` (its event-pairing algorithm has too many tie-breakers to mirror cleanly) and `scalar` (a stats-path quantity reads statistics / diagnostics the report never embeds).
+**Per-leaf modularity**: `ComparisonMode` stays pure compute (no UI coupling). Forms are **auto-derived from each mode's typed Config dataclass** (NrmseConfig, TubeConfig, …) via `derive_schema`, which also emits the JSON-Schema handoff artifact. Tightening Config types to use `Literal[...]` for enum-like fields is what makes that export first-class.
 
-**Testing asymmetry, with a parity floor**: the Python data contract (patch schema, spec-update round-trip, JSON-Schema export, validator rules) is exhaustively tested. The JS layer's structural shape is covered by golden-file HTML snapshots; behavioral correctness of the live-preview scorers is covered by `tests/test_scorer_parity.py`, which renders a synthetic fixture suite, runs the Python `_compare_*` functions for the authoritative verdict, and asserts every JS `MODE_SCORERS[mode](leaf)` agrees. Drift between the two implementations is the only failure mode this catches mechanically — interaction bugs (drag handlers, plot wiring) still rely on the human QA checklist (`docs/qa/reporter_checklist.md`).
-
-**Performance budget**: interactive.html for a 50-variable test stays under ~5 MB embedded payload. Trajectories decimated when needed; full-resolution data lives in a sidecar the reporter lazy-loads on demand.
+**Performance budget**: the page carries figures, not trajectories; full-resolution data lives in the `comparison_data.json` sidecar beside it, and a banner names every trace the page decimated.
 
 ---
 
@@ -179,7 +177,7 @@ The single question this tool answers: *"does this time-dependent signal match t
 - Unit testing of simulated behavior (single-run pass/fail with tolerances).
 - Experiment / calibration regression via composable instances (experiment data gets its own regression test suite; sim tests soft_check against those baselines).
 - Cross-backend verification as a composable feature on top of capabilities.
-- Acceptance-criteria authoring via the interactive reporter (Phase 6 — reporter-as-IDE).
+- Acceptance-criteria authoring via a Python-side tool sharing the framework's figure layer and metric registry (D125). The report is read-only.
 - Rule-based recommender for starter criteria on new signals (Phase 7).
 - Deterministic and stochastic (via `Distribution` dataset + KS-style metrics) — stochastic is a later phase, but the abstraction accommodates it.
 
@@ -217,5 +215,5 @@ The single question this tool answers: *"does this time-dependent signal match t
 5. **Modelica is the first consumer, not the reference model.** Design decisions must hold up when the source is an FMU or a CSV, not only when it's a `.mo` file.
 6. **Regression is the identity (D66).** The tool is a regression testing framework. Primary = stored regression anchor. Companions are visual-only. Soft_checks are warn-only. V&V against experiment is a composed use of the tool on experimental data, not a separate test shape.
 7. **Economy of tools (D66).** We do one thing well and emit well-shaped handoff artifacts. Calibration, RCA, parameter estimation, ML-backed ranking — those belong to downstream tools that consume our outputs. We do not grow into them.
-8. **Reporter is the authoring surface; CLI is the execution surface (D66).** No local servers, no live-apply. Download-patch + CLI-apply is the roundtrip.
-9. **Compute layers are UI-free (D66).** `ComparisonMode` and `Backend` know nothing about presentation. Reporting is a parallel layer that derives UI from typed Config dataclasses + explicit overrides.
+8. **The line between the tiers is mutation (D125, superseding D66).** The report reads and computes nothing; the authoring tool writes, and emits a patch the CLI applies. The CLI is the execution surface.
+9. **Compute layers are UI-free (D66).** `ComparisonMode` and `Backend` know nothing about presentation. Reporting and authoring are parallel layers that derive their figures from geometry the metrics emit and their forms from typed Config dataclasses.
