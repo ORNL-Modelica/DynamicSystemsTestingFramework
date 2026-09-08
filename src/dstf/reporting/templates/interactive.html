@@ -435,6 +435,10 @@ window.MT_REPORT = {
   OVERLAY_ROWS: {{ overlay_rows | tojson }},
   DIAG_TRAJECTORIES: {{ diag_trajectories | tojson }},
   NB_TRAJECTORIES: {{ nobaseline_trajectories | tojson }},
+  {# Figure dicts from dstf.figures — the first paint of every plot. #}
+  FIGURES: {{ (figures or {}) | tojson }},
+  DIAG_FIGURES: {{ (diag_figures or []) | tojson }},
+  NB_FIGURES: {{ (nb_figures or []) | tojson }},
 };
 </script>
 <script src="interactive.js"></script>

@@ -12,7 +12,6 @@ import json
 import re
 from pathlib import Path
 
-from dstf.comparison.tree_spec import synthesize_implicit_tree
 from dstf.comparison.types import VariableComparison
 from dstf.reporting.report_suite import (
     _decimate_context_for_html,
@@ -20,6 +19,21 @@ from dstf.reporting.report_suite import (
     _mark_decimated_cli_authoritative,
     generate_comparison_plots,
 )
+
+
+def _stamped_root_leaf(vc):
+    """A single-leaf metric tree addressed the way the evaluator addresses one.
+
+    ``evaluate_spec`` stamps a one-leaf spec's result with the root path
+    ``/metrics`` — the same path ``spec_to_view`` gives the root node — and
+    the report looks leaves up by that path.
+    """
+    from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
+
+    leaf = leaf_from_variable(vc)
+    stamp_leaf_path(leaf, "/metrics")
+    return leaf
+
 
 # =========================================================================
 # Folded in from tests/test_review_fixes_cli.py — regression tests for the
@@ -176,52 +190,6 @@ class TestRunMetadataBanner:
         )
         html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
         assert 'class="run-meta"' not in html
-
-
-class TestLeafCountMismatchIsReported:
-    """Spec/eval drift drops every per-leaf render artifact from the report.
-    Silently producing a stripped-down page hides the cause; warn naming the
-    model and both counts."""
-
-    def test_mismatch_warns_naming_model_and_counts(self, caplog):
-        import logging
-        from types import SimpleNamespace
-
-        from dstf.reporting.context_builder import _build_tree_view_and_variables
-
-        test_model = SimpleNamespace(
-            model_id="Lib.Drift",
-            metric_tree_spec=synthesize_implicit_tree(["x"]),
-            variable_overrides=None,
-        )
-        with caplog.at_level(logging.WARNING, logger="dstf.reporting.context_builder"):
-            _build_tree_view_and_variables(
-                [_nonfinite_comparison("x"), _nonfinite_comparison("y")],
-                test_model,
-                None,
-                [],
-            )
-        messages = [r.getMessage() for r in caplog.records]
-        assert any("Lib.Drift" in m and "(1)" in m and "(2)" in m for m in messages), (
-            messages
-        )
-
-    def test_matching_counts_stay_quiet(self, caplog):
-        import logging
-        from types import SimpleNamespace
-
-        from dstf.reporting.context_builder import _build_tree_view_and_variables
-
-        test_model = SimpleNamespace(
-            model_id="Lib.Ok",
-            metric_tree_spec=synthesize_implicit_tree(["x"]),
-            variable_overrides=None,
-        )
-        with caplog.at_level(logging.WARNING, logger="dstf.reporting.context_builder"):
-            _build_tree_view_and_variables(
-                [_nonfinite_comparison("x")], test_model, None, []
-            )
-        assert not [r for r in caplog.records if "leaf count" in r.getMessage()]
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +426,6 @@ class TestDecimatedDominantFrequencyIsCliAuthoritative:
 
         from dstf.backends import TestResult, VariableResult
         from dstf.comparison.algorithms import _compare_dominant_frequency
-        from dstf.comparison.metric_tree import leaf_from_variable
         from dstf.comparison.tree_spec import parse_metric_tree
         from dstf.discovery.test_registry import TestModel
         from dstf.reporting.context_builder import _build_template_context
@@ -495,7 +462,7 @@ class TestDecimatedDominantFrequencyIsCliAuthoritative:
             test_dir=None,
             test_model=model,
             result=result,
-            metric_tree=leaf_from_variable(vc),
+            metric_tree=_stamped_root_leaf(vc),
         )
         _decimate_context_for_html(ctx, 1000)
         _mark_decimated_cli_authoritative(ctx)
@@ -547,7 +514,6 @@ class TestAuthoredWindowSeedsTheInputs:
 
         from dstf.backends import TestResult, VariableResult
         from dstf.comparison.algorithms import _compare_trajectories
-        from dstf.comparison.metric_tree import leaf_from_variable
         from dstf.comparison.tree_spec import parse_metric_tree
         from dstf.discovery.test_registry import TestModel
         from dstf.reporting.context_builder import _build_template_context
@@ -585,7 +551,7 @@ class TestAuthoredWindowSeedsTheInputs:
                 success=True,
                 variables=[VariableResult(index=1, time=t, values=v)],
             ),
-            metric_tree=leaf_from_variable(vc),
+            metric_tree=_stamped_root_leaf(vc),
         )
         leaf = ctx["tree_view"]
         assert leaf["window"] == {"start": 2.5, "end": 10.0}
@@ -609,7 +575,6 @@ class TestAgainstLeafIsCliAuthoritative:
 
         from dstf.backends import TestResult, VariableResult
         from dstf.comparison.algorithms import _compare_trajectories
-        from dstf.comparison.metric_tree import leaf_from_variable
         from dstf.comparison.tree_spec import parse_metric_tree
         from dstf.discovery.test_registry import TestModel
         from dstf.reporting.context_builder import _build_template_context
@@ -643,7 +608,7 @@ class TestAgainstLeafIsCliAuthoritative:
                 success=True,
                 variables=[VariableResult(index=1, time=t, values=v)],
             ),
-            metric_tree=leaf_from_variable(vc),
+            metric_tree=_stamped_root_leaf(vc),
             overlays=overlays,
         )
         return ctx["tree_view"]
@@ -844,3 +809,67 @@ class TestWorstFiniteScore:
         stats = _build_key_stats([_nonfinite_comparison("bad")], {}, {})
         worst = next(s for s in stats if s["label"] == "Worst Score")
         assert worst["current"] == "n/a (1 unscored leaf)"
+
+
+class TestEmbeddedFigures:
+    def _render(self, tmp_path):
+        import json
+        from pathlib import Path
+
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_test
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        t = np.linspace(0.0, 1.0, 3001)
+        ref = {
+            "test_id": "ref_0001",
+            "time": t.tolist(),
+            "variables": [{"index": 1, "name": "x", "values": np.sin(t).tolist()}],
+        }
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[
+                VariableResult(index=1, name="x", time=t, values=np.sin(t) + 0.001)
+            ],
+        )
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=1,
+            variable_overrides={
+                "x": {"mode": "tube", "tube_width_mode": "band", "tube_abs": 0.01}
+            },
+        )
+        comp = compare_test(test, result, ref)
+        plot_dir = tmp_path / "plots"
+        html = generate_comparison_plots(
+            "M",
+            ref,
+            result,
+            comp.variables,
+            plot_dir,
+            test_model=test,
+            metric_tree=comp.metric_tree,
+            max_embedded_samples=500,
+        )
+        page = html.read_text(encoding="utf-8")
+        sidecar = json.loads(
+            (plot_dir / "comparison_data.json").read_text(encoding="utf-8")
+        )
+        return page, sidecar
+
+    def test_page_embeds_a_decimated_figure_per_variable_and_the_sidecar_does_not(
+        self, tmp_path
+    ):
+        page, sidecar = self._render(tmp_path)
+        assert "FIGURES:" in page and '"/metrics/children/0/tube/band"' in page
+        assert "figures" not in sidecar and "diag_figures" not in sidecar
+        assert len(sidecar["trajectories"][0]["act_time"]) == 3001
+        start = page.index("FIGURES:")
+        assert "full_samples" in page[start:] and "3001" in page[start:]

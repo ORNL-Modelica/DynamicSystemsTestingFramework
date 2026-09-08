@@ -828,9 +828,6 @@ def _build_tree_view_and_variables(
 
     from ..comparison.tree_eval import flatten_evaluation as _flatten_evaluation
     from ..comparison.tree_spec import (
-        collect_leaf_paths as _collect_leaf_paths,
-    )
-    from ..comparison.tree_spec import (
         collect_variables as _collect_variables,
     )
     from ..comparison.tree_spec import (
@@ -859,21 +856,14 @@ def _build_tree_view_and_variables(
 
     eval_by_path = _flatten_evaluation(metric_tree) if metric_tree is not None else {}
 
-    # Map path → VariableComparison so _augment_tree_view can enrich each
-    # leaf with render artifacts. Length mismatch = spec/eval drift; skip
-    # augmentation rather than misaddress per-leaf data.
-    leaf_paths_full = _collect_leaf_paths(spec)
-    if len(leaf_paths_full) == len(comparisons):
-        comparisons_by_path = dict(zip(leaf_paths_full, comparisons))
-    else:
-        comparisons_by_path = {}
-        logger.warning(
-            "%s: metric-tree leaf count (%d) does not match comparison count "
-            "(%d) — per-leaf render artifacts omitted from the report",
-            getattr(test_model, "model_id", "<unknown model>"),
-            len(leaf_paths_full),
-            len(comparisons),
-        )
+    # Leaves are addressed by the path a patch op would use — stamped by the
+    # evaluator on both evaluation routes — never by position in the flat
+    # comparison list.
+    from ..comparison.tree_eval import leaf_comparisons_by_path
+
+    comparisons_by_path = (
+        leaf_comparisons_by_path(metric_tree) if metric_tree is not None else {}
+    )
 
     # Collect per-variable simulation bounds so window inputs show the
     # full-trajectory range as placeholder hints.

@@ -146,6 +146,62 @@ def _sanitize_filename(name: str) -> str:
     return name
 
 
+def _build_figures(context: dict, metric_tree, max_samples: int | None) -> dict:
+    """Figure dicts for the page: one per tracked variable, plus diagnostic
+    and no-baseline plots. Built from the FULL-resolution context — the view
+    decimates under ``max_samples`` — and after the sidecar write, so
+    ``comparison_data.json`` keeps its trajectory shape and no figure."""
+    from ..comparison.tree_eval import leaf_comparisons_by_path
+    from ..figures.plotly import variable_figure
+    from ..figures.view import build_view
+
+    budget = max_samples if max_samples and max_samples > 0 else None
+    by_path = leaf_comparisons_by_path(metric_tree) if metric_tree is not None else {}
+    leaves_by_var: dict[str, list] = {}
+    for path, vc in by_path.items():
+        leaves_by_var.setdefault(vc.name or f"x[{vc.index}]", []).append((path, vc))
+
+    figures = {}
+    for name, var in (context.get("variables_by_name") or {}).items():
+        traj = var.get("trajectory") or {}
+        view = build_view(
+            name,
+            act_time=traj.get("act_time"),
+            act_values=traj.get("act_values"),
+            ref_time=traj.get("ref_time"),
+            ref_values=traj.get("ref_values"),
+            overlays=var.get("overlays") or [],
+            leaves=leaves_by_var.get(name, []),
+        )
+        figures[name] = variable_figure(view, budget)
+    diag = [
+        variable_figure(
+            build_view(
+                t["name"],
+                act_time=t.get("act_time"),
+                act_values=t.get("act_values"),
+                ref_time=t.get("ref_time"),
+                ref_values=t.get("ref_values"),
+            ),
+            budget,
+        )
+        for t in context.get("diag_trajectories") or []
+    ]
+    nb = [
+        variable_figure(
+            build_view(
+                t["name"],
+                act_time=t.get("time"),
+                act_values=t.get("values"),
+                overlays=t.get("overlays") or [],
+            ),
+            budget,
+        )
+        for t in context.get("nobaseline_trajectories") or []
+    ]
+    return {"figures": figures, "diag_figures": diag, "nb_figures": nb}
+
+
 def generate_comparison_plots(
     model_id: str,
     ref_data: dict | None,
@@ -176,10 +232,6 @@ def generate_comparison_plots(
         shutil.rmtree(plot_dir)
     plot_dir.mkdir(parents=True, exist_ok=True)
 
-    # Stage 5 — static matplotlib per-variable PNGs were retired along
-    # with ``comparison.html``. Plotly inside interactive.html provides
-    # every plot the PNGs showed plus interactivity; nothing linked to
-    # the PNGs anymore.
     cur_stats = result.statistics if result else None
     context = _build_template_context(
         model_id,
@@ -264,6 +316,11 @@ def generate_comparison_plots(
         json.dumps(_json_sanitize(context), indent=2, default=str, allow_nan=False),
         encoding="utf-8",
     )
+
+    # Figures come from the full-resolution context and decimate themselves;
+    # they are added AFTER the sidecar write so the sidecar's shape (the
+    # handoff artifact dashboard_render reads) does not change.
+    context.update(_build_figures(context, metric_tree, max_embedded_samples))
 
     # Decimate trajectory arrays embedded into interactive.html. This
     # caps the HTML payload for Plotly rendering; pass/fail scoring,
