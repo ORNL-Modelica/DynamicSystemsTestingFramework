@@ -322,6 +322,8 @@ def _print_detail(comp) -> None:
         mode = f"[{var.mode}] " if var.mode else ""
         print(f"    {status}  {name}  {mode}{summary.display}")
         print(f"           {summary.criterion}")
+        for key, value in summary.details:
+            print(f"           {key}: {value}")
 
     if comp.warnings:
         print("    Structural warnings:")

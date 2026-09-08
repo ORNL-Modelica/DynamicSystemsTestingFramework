@@ -71,3 +71,80 @@ def test_nrmse_is_the_default_shape():
     s = summarize(_compare_trajectories(t, t, t, t + 0.001, tolerance=0.1))
     assert s.display.startswith("NRMSE ") and s.score_label == "NRMSE"
     assert "→ PASS" in s.criterion
+
+
+class TestDetails:
+    """The mode's own key/value pairs behind the verdict — the owner's
+    2026-09-08 ruling: the review loop keeps the old numbers, but only under
+    labels that are true for the mode (a range leaf's ``nrmse`` field holds
+    its worst violation, so it must never print as "NRMSE")."""
+
+    def test_every_registered_metric_yields_string_pairs(self):
+        for desc in metrics():
+            s = desc.summarize(_vc(mode=desc.name))
+            assert isinstance(s.details, tuple)
+            assert all(
+                isinstance(k, str) and isinstance(v, str) for k, v in s.details
+            ), desc.name
+
+    def test_nrmse_details_are_the_old_review_block(self):
+        t = np.linspace(0.0, 1.0, 11)
+        s = summarize(_compare_trajectories(t, t, t, t + 0.001, tolerance=0.1))
+        keys = [k for k, _ in s.details]
+        assert keys == ["RMSE", "max |err|", "final"]
+        assert "at t=" in dict(s.details)["max |err|"]
+        assert dict(s.details)["final"].startswith("ref=")
+
+    def test_a_constant_reference_says_so(self):
+        t = np.linspace(0.0, 1.0, 11)
+        s = summarize(
+            _compare_trajectories(
+                t, np.full_like(t, 2.0), t, np.full_like(t, 2.1), tolerance=0.1
+            )
+        )
+        assert "(constant signal)" in dict(s.details)["RMSE"]
+
+    def test_range_never_labels_its_violation_as_nrmse(self):
+        t = np.linspace(0.0, 1.0, 11)
+        s = summarize(_compare_range(t, t * 2, min_value=None, max_value=1.0))
+        keys = [k for k, _ in s.details]
+        assert "NRMSE" not in keys and "RMSE" not in keys
+        assert dict(s.details)["bounds"] == "[-inf, 1]"
+        assert dict(s.details)["worst violation"].startswith("1.000000e+00 at t=")
+
+    def test_tube_names_its_worst_violation_and_its_real_companions(self):
+        t = np.linspace(0.0, 1.0, 11)
+        s = summarize(
+            _compare_tube(
+                t, t, t, t + 0.5, {"tube_width_mode": "band", "tube_abs": 0.1}
+            )
+        )
+        d = dict(s.details)
+        assert d["worst violation"].startswith("4.000000e-01 at t=")
+        assert "NRMSE" in d and "final" in d
+
+    def test_points_lists_each_failed_checkpoint(self):
+        from dstf.comparison.algorithms import _compare_points
+
+        t = np.linspace(0.0, 10.0, 101)
+        act = t + 0.05 * (t > 5.0)
+        s = summarize(
+            _compare_points(
+                t,
+                t,
+                t,
+                act,
+                points=[
+                    {"time": 2.0, "tolerance": 0.01},
+                    {"time": 8.0, "tolerance": 0.01},
+                ],
+            )
+        )
+        d = dict(s.details)
+        assert d["checkpoints"] == "1 of 2 failed"
+        assert "exceeds limit" in d["t=8"]
+        assert "t=2" not in d
+
+    def test_an_error_sentinel_has_no_details(self):
+        s = summarize(_vc(mode="tube", diagnostics={"error": "empty window"}))
+        assert s.details == ()

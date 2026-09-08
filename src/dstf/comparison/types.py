@@ -78,6 +78,13 @@ class ScoreSummary:
     criterion: str
     score: float | None = None
     score_label: str = ""
+    #: The mode's own key/value pairs behind the verdict — the largest error
+    #: and where, the finals, the worst violation, the failed checkpoints.
+    #: Each mode names only quantities that mean something for it: the
+    #: shared numeric fields are overloaded on some modes (a range leaf's
+    #: ``nrmse`` holds its worst violation), so no consumer prints them
+    #: under a generic label.
+    details: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass

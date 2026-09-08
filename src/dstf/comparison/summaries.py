@@ -19,6 +19,28 @@ def _verdict(vc: VariableComparison) -> str:
     return "PASS" if vc.passed else "FAIL"
 
 
+def _at(value: float, time: float) -> str:
+    return f"{value:.6e} at t={time:g}"
+
+
+def _finals(vc: VariableComparison) -> tuple[str, str]:
+    return ("final", f"ref={vc.reference_final:.6e}  act={vc.actual_final:.6e}")
+
+
+def _trajectory_details(vc: VariableComparison) -> tuple[tuple[str, str], ...]:
+    """The pairs behind an NRMSE score: what the review loop printed for
+    every variable before summaries became mode-aware."""
+    if vc.is_constant:
+        spread: tuple[str, str] = ("RMSE", f"{vc.rmse:.6e} (constant signal)")
+    else:
+        spread = ("RMSE", f"{vc.rmse:.6e} (range {vc.signal_range:.4e})")
+    return (
+        spread,
+        ("max |err|", _at(vc.max_abs_error, vc.max_abs_error_time)),
+        _finals(vc),
+    )
+
+
 def summarize_default(vc: VariableComparison) -> ScoreSummary:
     """NRMSE-shaped: the score is an error against a tolerance."""
     return ScoreSummary(
@@ -28,6 +50,7 @@ def summarize_default(vc: VariableComparison) -> ScoreSummary:
         ),
         score=float(vc.nrmse),
         score_label="NRMSE",
+        details=_trajectory_details(vc),
     )
 
 
@@ -38,17 +61,44 @@ def summarize_tube(vc: VariableComparison) -> ScoreSummary:
     if vc.tube_points_inside is None:
         return summarize_default(vc)
     pct = vc.tube_points_inside * 100
+    details: list[tuple[str, str]] = []
+    if vc.tube_worst_violation is not None and vc.tube_worst_violation > 0:
+        details.append(
+            (
+                "worst violation",
+                _at(vc.tube_worst_violation, vc.tube_worst_violation_time or 0.0),
+            )
+        )
+    # The tube comparator computes the NRMSE companions for real.
+    details.append(("NRMSE", f"{vc.nrmse:.6e}"))
+    details.append(("max |err|", _at(vc.max_abs_error, vc.max_abs_error_time)))
+    details.append(_finals(vc))
     return ScoreSummary(
         display=f"{pct:.1f}% in tube",
         criterion=f"{pct:.1f}% inside tube → {_verdict(vc)} (requires 100%)",
         score=float(vc.tube_points_inside),
         score_label="in tube",
+        details=tuple(details),
     )
 
 
 def summarize_range(vc: VariableComparison) -> ScoreSummary:
     if vc.tube_worst_violation is None:
         return summarize_default(vc)
+    diag = vc.diagnostics or {}
+    lo, hi = diag.get("min_value"), diag.get("max_value")
+    lo_s = "-inf" if lo is None else f"{lo:g}"
+    hi_s = "inf" if hi is None else f"{hi:g}"
+    details: list[tuple[str, str]] = [("bounds", f"[{lo_s}, {hi_s}]")]
+    if vc.tube_worst_violation > 0:
+        details.append(
+            (
+                "worst violation",
+                _at(vc.tube_worst_violation, vc.tube_worst_violation_time or 0.0),
+            )
+        )
+    if vc.tube_points_inside is not None:
+        details.append(("inside", f"{vc.tube_points_inside * 100:.1f}% of samples"))
     return ScoreSummary(
         display=f"max_viol {vc.tube_worst_violation:.3e}",
         criterion=(
@@ -56,10 +106,30 @@ def summarize_range(vc: VariableComparison) -> ScoreSummary:
         ),
         score=float(vc.tube_worst_violation),
         score_label="max violation",
+        details=tuple(details),
     )
 
 
 def summarize_points(vc: VariableComparison) -> ScoreSummary:
+    diag = vc.diagnostics or {}
+    details: list[tuple[str, str]] = []
+    if "scored_points" in diag:
+        details.append(
+            (
+                "checkpoints",
+                f"{diag.get('failed_points', 0)} of {diag['scored_points']} failed",
+            )
+        )
+        if diag.get("worst_delta", 0.0) > 0:
+            details.append(
+                ("worst delta", _at(diag["worst_delta"], diag.get("worst_time", 0.0)))
+            )
+        for failure in diag.get("point_failures") or []:
+            details.append(
+                (f"t={failure.get('time'):g}", str(failure.get("reason", "")))
+            )
+    else:
+        details.append(_finals(vc))
     return ScoreSummary(
         display=f"|err| {vc.max_abs_error:.3e}",
         criterion=(
@@ -68,6 +138,7 @@ def summarize_points(vc: VariableComparison) -> ScoreSummary:
         ),
         score=float(vc.max_abs_error),
         score_label="|err|",
+        details=tuple(details),
     )
 
 
@@ -90,6 +161,7 @@ def summarize_scalar(vc: VariableComparison) -> ScoreSummary:
             criterion=f"Scalar {vc.actual_final:.6g} within [{lo_s}, {hi_s}] → {verdict}",
             score=float(vc.actual_final),
             score_label="value",
+            details=(("reduction", str(diag.get("reduction"))),),
         )
     fallback = bool(diag.get("abs_fallback"))
     rel = diag.get("tolerance_mode") == "rel" and not fallback
@@ -104,6 +176,10 @@ def summarize_scalar(vc: VariableComparison) -> ScoreSummary:
         ),
         score=float(vc.nrmse),
         score_label="rel Δ" if rel else "|Δ|",
+        details=(
+            ("reduction", str(diag.get("reduction"))),
+            ("scalar", f"ref={vc.reference_final:.6g}  act={vc.actual_final:.6g}"),
+        ),
     )
 
 
@@ -112,6 +188,12 @@ def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
     ref_n = diag.get("ref_event_count", "?")
     act_n = diag.get("act_event_count", "?")
     tol = diag.get("time_tolerance", 0.0)
+    details: list[tuple[str, str]] = [
+        ("events", f"{act_n} actual / {ref_n} reference"),
+        ("max Δt", _at(vc.nrmse, vc.max_abs_error_time)),
+    ]
+    if "counts_match" in diag and not diag["counts_match"]:
+        details.append(("event count", "mismatch"))
     return ScoreSummary(
         display=f"Δt {vc.nrmse:.3e} ({act_n}/{ref_n} events)",
         criterion=(
@@ -120,6 +202,7 @@ def summarize_event_timing(vc: VariableComparison) -> ScoreSummary:
         ),
         score=float(vc.nrmse),
         score_label="Δt",
+        details=tuple(details),
     )
 
 
@@ -136,6 +219,17 @@ def summarize_dominant_frequency(vc: VariableComparison) -> ScoreSummary:
                 "to seed the table from the reference spectrum"
             ),
         )
+    details = tuple(
+        (
+            f"peak {p.get('declared_hz', '?')} Hz",
+            (
+                f"matched at {p['matched_hz']:.6g} Hz"
+                if p.get("matched_hz") is not None
+                else "not found"
+            ),
+        )
+        for p in paired
+    )
     return ScoreSummary(
         display=f"{n_matched}/{n_declared} peaks matched",
         criterion=(
@@ -144,4 +238,5 @@ def summarize_dominant_frequency(vc: VariableComparison) -> ScoreSummary:
         ),
         score=float(n_matched),
         score_label="peaks matched",
+        details=details,
     )
