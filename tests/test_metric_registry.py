@@ -369,7 +369,7 @@ class TestThirdPartyMetricInTheReporter:
         from pathlib import Path
 
         from dstf.backends import TestResult, VariableResult
-        from dstf.comparison.metric_tree import leaf_from_variable
+        from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
         from dstf.discovery.test_registry import TestModel
         from dstf.reporting.context_builder import _build_template_context
 
@@ -380,6 +380,10 @@ class TestThirdPartyMetricInTheReporter:
         vc = mode.compare(t, v, t, v)
         vc.name = "x"
         vc.index = 1
+        # The report looks leaves up by the path the evaluator stamps; a
+        # single-leaf explicit tree is stamped "/metrics".
+        root = leaf_from_variable(vc)
+        stamp_leaf_path(root, "/metrics")
 
         model = TestModel(
             model_id="Toy.FinalSlope",
@@ -403,7 +407,7 @@ class TestThirdPartyMetricInTheReporter:
                 success=True,
                 variables=[VariableResult(index=1, time=t, values=v)],
             ),
-            metric_tree=leaf_from_variable(vc),
+            metric_tree=root,
         )
         leaf = ctx["tree_view"]
         assert leaf["kind"] == "leaf"
