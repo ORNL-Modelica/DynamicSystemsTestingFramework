@@ -1280,3 +1280,27 @@ planning.
   a cancel token threaded through `run_tests` and honoured by the pool's
   dispatch loop. The authoring tool's job panel will want it eventually;
   deliberately not promised by its v1 (two-tier spec, §9).
+
+- **After the cut (2026-09-08), small follow-ups** — the two-tier split's
+  sub-projects 1 and 2 shipped (D125); these came out of their reviews and
+  none blocks sub-project 3:
+  - The dashboard's command menu should offer
+    `dstf author --config <cfg> --filter <selection>` (spec §4.4) once the
+    command exists — sub-project 4. The builder (`dashboard.js commandKind`)
+    takes a kind; it is one more option.
+  - A leaf's authored parameters (tube widths and interpolation, points
+    `time_tolerance`, event-timing `count_must_match`, scalar
+    `tolerance_mode`) were readable on the page as pre-filled inputs and are
+    not now; `summarize().details` covers some. If the read-only page should
+    show them, it is a per-mode `details` addition — decide when the
+    authoring tool renders the same tree macro.
+  - A per-variable tree mount prints the child count of what it shows
+    (`and [2]` under `x`, `[7]` in the full tree); the deleted JS printed the
+    unfiltered count. Cosmetic.
+  - This file's older entries still describe the browser editors and the
+    parity test in the present tense (the reporter-as-IDE vocabulary); they
+    are history now and the entry that proposed the cut is done. A
+    docs-only sweep, together with `docs/CODE_REVIEW_2026-07-06.md`'s two
+    mentions if that dated review is ever edited.
+  - `figures/` is outside mypy's scoped file list and type-checks clean;
+    one line in `pyproject.toml` adds it.
