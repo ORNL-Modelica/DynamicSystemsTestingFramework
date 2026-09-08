@@ -47,7 +47,6 @@ def _fixture_context() -> dict:
         "score_display": "tube 100% inside",
         "criterion": "every sample inside the tube → PASS",
         "details": [["Points inside", "100%"]],
-        "window_values": {},
         "error": None,
         "advisory": False,
     }
@@ -244,7 +243,7 @@ def test_overlay_picker_toggles_a_python_painted_overlay(tmp_path, playwright_br
     seen = {}
     for plot_id in ("plot-0", "nb-plot-0"):
         js = (
-            f"() => document.getElementById('{plot_id}').data"
+            f"() => document.getElementById('{plot_id}')._fullData"
             ".filter(t => (t.meta || {}).kind === 'overlay').map(t => t.visible)"
         )
         before = page.evaluate(js)

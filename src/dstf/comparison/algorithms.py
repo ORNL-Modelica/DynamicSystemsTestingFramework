@@ -1018,6 +1018,15 @@ def _compare_scalar(
             "scalar", "no actual samples to reduce (empty trajectory or window)"
         )
     act_scalar = _reduce_series(act_time, act_values, reduction)
+    # A non-finite reduction is nothing to score: a NaN among the samples, or
+    # a window that left the reduction undefined. Fail with the reason rather
+    # than carrying nan into the verdict — every surface reads
+    # ``diagnostics["error"]`` when the numbers are not there.
+    if not np.isfinite(act_scalar):
+        return _no_data_failure(
+            "scalar",
+            f"{reduction} of the actual samples is not finite",
+        )
 
     diagnostics: dict = {
         "reduction": reduction,
@@ -1061,6 +1070,11 @@ def _compare_scalar(
             "scalar", "no reference samples to reduce (empty baseline or window)"
         )
     ref_scalar = _reduce_series(ref_time, ref_values, reduction)
+    if not np.isfinite(ref_scalar):
+        return _no_data_failure(
+            "scalar",
+            f"{reduction} of the reference samples is not finite",
+        )
     err = abs(act_scalar - ref_scalar)
     # A zero-magnitude reference makes the relative criterion degenerate —
     # fall back to the absolute test and record that it fired, so the report

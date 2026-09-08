@@ -1026,6 +1026,46 @@ class TestSentinelLeavesKeepTheirName:
         assert "nonexistent" in error
         assert "baseline not found" in error
 
+    def test_missing_variable_sentinel(self):
+        """The variable a leaf names is not in the result at all — the
+        fifth sentinel, and the last one that carried no reason."""
+        spec = parse_metric_tree({"metric": "nrmse", "variable": "ghost"})
+        t, vals = _linear()
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={
+                "x": VariableResult(index=1, name="x", time=t, values=vals)
+            },
+            baselines=_primary({"x": {"time": t.tolist(), "values": vals.tolist()}}),
+            base_tolerance=1e-4,
+        )
+        assert not tree.passed
+        vc = tree.diagnostics["variable"]
+        assert vc.name == "ghost"
+        error = vc.diagnostics["error"]
+        assert "ghost" in error
+        assert "not found in the result" in error
+
+    def test_variable_missing_from_the_baseline_sentinel(self):
+        """Same sentinel, other call site: the result has the variable and
+        the baseline does not, so the reason must say so."""
+        spec = parse_metric_tree({"metric": "nrmse", "variable": "x"})
+        t, vals = _linear()
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={
+                "x": VariableResult(index=1, name="x", time=t, values=vals)
+            },
+            baselines=_primary({}),
+            base_tolerance=1e-4,
+        )
+        assert not tree.passed
+        vc = tree.diagnostics["variable"]
+        assert vc.name == "x"
+        error = vc.diagnostics["error"]
+        assert "x" in error
+        assert "not found in the baseline" in error
+
     def test_missing_quantity_sentinel(self):
         from dstf.comparison.tree_eval import ScalarSources
 

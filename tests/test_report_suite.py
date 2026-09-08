@@ -296,61 +296,6 @@ def test_template_emits_variable_order(tmp_path):
     assert json.loads(m.group(1)) == ["zeta", "123"]
 
 
-class TestAuthoredWindowSeedsTheInputs:
-    def test_window_values_mirror_the_authored_window(self):
-        """The window input boxes must pre-fill with the leaf's AUTHORED
-        window. The old extractor read vc.diagnostics['window'], which the
-        evaluator never sets (it stashes the window on the MetricResult),
-        so authored windows rendered as empty inputs — masked by browser
-        fixtures hand-setting window_values (found on the D103 demo)."""
-        import numpy as np
-
-        from dstf.backends import TestResult, VariableResult
-        from dstf.comparison.algorithms import _compare_trajectories
-        from dstf.comparison.tree_spec import parse_metric_tree
-        from dstf.discovery.test_registry import TestModel
-        from dstf.reporting.context_builder import _build_template_context
-
-        t = np.linspace(0.0, 10.0, 50)
-        v = 1.0 - np.exp(-t)
-        vc = _compare_trajectories(t, v, t, v, 1e-3)
-        vc.name = "x"
-        vc.index = 1
-
-        model = TestModel(
-            model_id="Fixture.WindowSeed",
-            source_file=Path("f.mo"),
-            source_package="Fixture",
-            short_name="WindowSeed",
-            n_vars=1,
-            metric_tree_spec=parse_metric_tree(
-                {
-                    "metric": "nrmse",
-                    "variable": "x",
-                    "tolerance": 1e-3,
-                    "window": {"start": 2.5, "end": 10.0},
-                }
-            ),
-        )
-        ctx = _build_template_context(
-            model_id=model.model_id,
-            comparisons=[vc],
-            ref_data=None,
-            cur_stats=None,
-            test_dir=None,
-            test_model=model,
-            result=TestResult(
-                model_id=model.model_id,
-                success=True,
-                variables=[VariableResult(index=1, time=t, values=v)],
-            ),
-            metric_tree=_stamped_root_leaf(vc),
-        )
-        leaf = ctx["tree_view"]
-        assert leaf["window"] == {"start": 2.5, "end": 10.0}
-        assert leaf["window_values"] == {"start": 2.5, "end": 10.0}
-
-
 class TestVendoredPlotly:
     """The report ships Plotly with it, not from a CDN — ONE copy per
     suite, at the reports root, reached as ``../plotly.min.js``.
@@ -667,13 +612,16 @@ class TestEmbeddedFigures:
         figures = json.loads(
             re.search(r"FIGURES:\s*(\{.*?\}),\n\s*DIAG_FIGURES", page, re.S).group(1)
         )
-        return page, figures
+        sidecar = json.loads(
+            (plot_dir / "comparison_data.json").read_text(encoding="utf-8")
+        )
+        return page, figures, sidecar
 
     @pytest.mark.parametrize("sentinel_first", [True, False])
     def test_a_sentinel_leaf_does_not_blank_its_variables_plot(
         self, tmp_path, sentinel_first
     ):
-        page, figures = self._render_two_leaves(tmp_path, sentinel_first)
+        page, figures, _sidecar = self._render_two_leaves(tmp_path, sentinel_first)
         traces = figures["x"]["data"]
         names = [tr.get("name") for tr in traces]
         assert "Actual" in names and "Reference" in names
@@ -692,10 +640,100 @@ class TestEmbeddedFigures:
         )
 
     @pytest.mark.parametrize("sentinel_first", [True, False])
+    def test_the_sidecar_carries_one_trajectory_entry_per_variable(
+        self, tmp_path, sentinel_first
+    ):
+        """Two leaves on ``x``, one of them a sentinel, are still ONE
+        variable. Paired by index, the sentinel's ``index=0`` produced a
+        second, empty entry named ``x`` — listed first when the sentinel
+        came first, so the sidecar's documented downstream reader met a
+        blank trajectory under a name that has samples."""
+        _page, _figures, sidecar = self._render_two_leaves(tmp_path, sentinel_first)
+        named = [t for t in sidecar["trajectories"] if t["name"] == "x"]
+        assert len(named) == 1
+        # 201 is the fixture's full sample count: the surviving entry is the
+        # one paired with the actual result, never the sentinel's empty one.
+        assert len(named[0]["act_time"]) == 201
+        assert len(named[0]["ref_values"]) == 201
+        assert named[0]["index"] == 1
+
+    def test_a_lone_sentinel_leaf_still_gets_its_variables_plot(self, tmp_path):
+        """When EVERY leaf on ``x`` is a sentinel there is no ``index > 0``
+        comparison to pair with, so pairing by index found nothing and the
+        variable — present in the result, with a baseline — rendered an
+        empty figure."""
+        import json
+        from pathlib import Path
+
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_test
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        t = np.linspace(0.0, 1.0, 201)
+        ref = {
+            "test_id": "ref_0001",
+            "time": t.tolist(),
+            "variables": [{"index": 1, "name": "x", "values": np.sin(t).tolist()}],
+        }
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[
+                VariableResult(index=1, name="x", time=t, values=np.sin(t) + 0.001)
+            ],
+        )
+        spec = parse_metric_tree(
+            {
+                "metric": "tube",
+                "variable": "x",
+                "tube_width_mode": "nonsense",
+                "tube_rel": 0.1,
+            }
+        )
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=1,
+            metric_tree_spec=spec,
+        )
+        comp = compare_test(test, result, ref)
+        plot_dir = tmp_path / "lone"
+        html = generate_comparison_plots(
+            "M",
+            ref,
+            result,
+            comp.variables,
+            plot_dir,
+            test_model=test,
+            metric_tree=comp.metric_tree,
+            max_embedded_samples=500,
+        )
+        page = html.read_text(encoding="utf-8")
+        figures = json.loads(
+            re.search(r"FIGURES:\s*(\{.*?\}),\n\s*DIAG_FIGURES", page, re.S).group(1)
+        )
+        traces = {tr.get("name"): tr for tr in figures["x"]["data"]}
+        assert "Actual" in traces and "Reference" in traces
+        assert len(traces["Actual"]["x"]) == 201
+        assert len(traces["Reference"]["x"]) == 201
+        sidecar = json.loads(
+            (plot_dir / "comparison_data.json").read_text(encoding="utf-8")
+        )
+        named = [t for t in sidecar["trajectories"] if t["name"] == "x"]
+        assert len(named) == 1
+        assert len(named[0]["act_time"]) == 201
+
+    @pytest.mark.parametrize("sentinel_first", [True, False])
     def test_the_sentinels_reason_reaches_the_rendered_tree(
         self, tmp_path, sentinel_first
     ):
-        page, _figures = self._render_two_leaves(tmp_path, sentinel_first)
+        page, _figures, _sidecar = self._render_two_leaves(tmp_path, sentinel_first)
         path = "/metrics/children/0" if sentinel_first else "/metrics/children/1"
         node = next(
             el

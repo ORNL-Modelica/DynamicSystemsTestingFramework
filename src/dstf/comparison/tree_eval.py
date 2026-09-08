@@ -688,4 +688,13 @@ def _missing_variable_comparison(
         max_abs_error_time=0.0,
         reference_final=float("nan"),
         actual_final=actual_final,
+        # The two call sites are told apart by what they had: no result for
+        # the variable at all, or a result the baseline does not carry.
+        diagnostics={
+            "error": (
+                f"variable {name!r} not found in the result"
+                if var_result is None
+                else f"variable {name!r} not found in the baseline"
+            )
+        },
     )

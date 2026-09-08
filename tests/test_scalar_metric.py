@@ -875,3 +875,33 @@ class TestScalarReporterSurfaces:
         score, criterion = summary.display, summary.criterion
         assert score == "not scored"
         assert "no actual samples" in criterion
+
+    def test_a_non_finite_reduction_is_a_no_data_failure_with_a_reason(self):
+        """A NaN among the samples makes the reduction nan, and a scalar
+        leaf that cannot state its number must say WHY. Before this the
+        summary fell back to the variable's name, which since the sentinel
+        rename is never a reason — the panel read "not scored — x"."""
+        from dstf.comparison.registry import summarize
+
+        vc = _mode(tolerance=1.0, quantity={"reduce": "max"}).compare(
+            *_series([1.0, 2.0]), *_series([1.0, float("nan")])
+        )
+        vc.name = "x"
+        assert vc.passed is False
+        error = (vc.diagnostics or {})["error"]
+        assert "max" in error and "not finite" in error
+        summary = summarize(vc)
+        assert summary.display == "not scored"
+        assert error in summary.criterion
+        assert summary.criterion.strip() != "Scalar leaf not scored — x"
+
+    def test_a_non_finite_reference_reduction_names_the_reference(self):
+        from dstf.comparison.registry import summarize
+
+        vc = _mode(tolerance=1.0, quantity={"reduce": "max"}).compare(
+            *_series([1.0, float("nan")]), *_series([1.0, 2.0])
+        )
+        assert vc.passed is False
+        error = (vc.diagnostics or {})["error"]
+        assert "reference" in error and "not finite" in error
+        assert error in summarize(vc).criterion

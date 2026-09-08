@@ -495,24 +495,39 @@ def test_zoom_hover_and_legend_are_live(compared, playwright_browser):
     }}""")
     assert [round(v, 6) for v in zoomed] == [2.0, 4.0]
 
-    hovered = page.evaluate(f"""async () => {{
-        const el = document.getElementById('plot-{idx}');
-        await Plotly.relayout(el, {{'xaxis.autorange': true}});
-        const trace = el.data.findIndex(t => t.name === 'Actual');
-        Plotly.Fx.hover(el, [{{curveNumber: trace, pointNumber: 100}}]);
-        await new Promise(r => setTimeout(r, 150));
-        return document.querySelectorAll('.hoverlayer .hovertext').length;
+    page.evaluate(f"""async () => {{
+        await Plotly.relayout(document.getElementById('plot-{idx}'),
+                              {{'xaxis.autorange': true}});
     }}""")
-    assert hovered > 0, "hovering the Actual trace produced no hover label"
+    # A real mouse over the drag layer, not ``Plotly.Fx.hover`` — the forced
+    # per-point call still produces a label on a ``staticPlot``, so it would
+    # pass on a page that had lost hover entirely. The layout is
+    # ``hovermode: "x unified"``, so the box is one ``.hoverlayer .legend``
+    # naming every trace at that x.
+    drag = page.locator(f"#plot-{idx} .nsewdrag")
+    drag.scroll_into_view_if_needed()
+    page.wait_for_timeout(100)
+    box = drag.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 3, box["y"] + box["height"] / 2)
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.wait_for_timeout(150)
+    hover_box = page.evaluate(
+        "() => Array.from(document.querySelectorAll('.hoverlayer .legend'))"
+        "        .map(el => el.textContent)"
+    )
+    assert len(hover_box) == 1, f"no unified hover box under the cursor: {hover_box}"
+    assert "Actual" in hover_box[0] and "Reference" in hover_box[0]
 
     toggled = page.evaluate(f"""async () => {{
         const el = document.getElementById('plot-{idx}');
         const i = el.data.findIndex(t => t.name === 'Reference');
-        const before = el.data[i].visible;
+        // _fullData is what Plotly actually renders; el.data is what was asked
+        // for, and an unset `visible` there says nothing about the curve.
+        const before = el._fullData[i].visible;
         await Plotly.restyle(el, {{visible: 'legendonly'}}, [i]);
-        const after = el.data[i].visible;
+        const after = el._fullData[i].visible;
         await Plotly.restyle(el, {{visible: true}}, [i]);
-        return [before === undefined ? true : before, after, el.data[i].visible];
+        return [before, after, el._fullData[i].visible];
     }}""")
     page.close()
     assert errors == []
@@ -532,7 +547,7 @@ def test_overlay_picker_toggles_soft_check_and_companion(compared, playwright_br
     idx = page.evaluate("() => VARIABLE_ORDER.indexOf('x')")
     probe = f"""() => {{
         const el = document.getElementById('plot-{idx}');
-        return Object.fromEntries(el.data
+        return Object.fromEntries(el._fullData
           .filter(t => (t.meta || {{}}).kind === 'overlay')
           .map(t => [t.meta.id, t.visible]));
     }}"""
@@ -570,8 +585,8 @@ def test_overlay_picker_on_the_no_baseline_page(no_baseline, playwright_browser)
         const el = document.getElementById('nb-plot-0');
         return {
           python: !!el._mt_python,
-          overlays: el.data.filter(t => (t.meta || {}).kind === 'overlay')
-                           .map(t => t.visible),
+          overlays: el._fullData.filter(t => (t.meta || {}).kind === 'overlay')
+                                .map(t => t.visible),
         };
     }"""
     before = page.evaluate(probe)

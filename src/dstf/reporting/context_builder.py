@@ -97,11 +97,6 @@ def _augment_tree_view(
         if vc is None:
             return
         mode = vc.mode or "nrmse"
-        # Seed from the AUTHORED window on the spec view (spec_to_view emits
-        # it from the LeafSpec). The old helper read vc.diagnostics['window'],
-        # which nothing ever set — the evaluator stashes the window on the
-        # MetricResult, not the VariableComparison.
-        window_values = dict(view.get("window") or {})
         var_label = vc.name or view.get("variable", "")
         summary = summarize(vc)
         view.update(
@@ -114,7 +109,6 @@ def _augment_tree_view(
                 # server-rendered ``<dl class="node-details">`` under the leaf.
                 # Tuples become lists so the view stays JSON-shaped.
                 "details": [list(pair) for pair in summary.details],
-                "window_values": window_values,
                 # Reason a sentinel leaf could not be scored. Rendered as the
                 # score pill's tooltip plus a muted line beneath it; None on
                 # every normally-scored leaf.
@@ -300,17 +294,34 @@ def _build_trajectories(
             ref_vars_by_idx[rv["index"]] = rv
 
     if result and result.variables:
+        # One entry per variable NAME, not per comparison: several leaves may
+        # score the same variable, and a sentinel among them carries
+        # ``index=0`` (the evaluator never resolved a variable to pair with).
+        # Pairing that by index finds nothing and emits an EMPTY entry under
+        # the real name — a second, blank copy beside the healthy one, or the
+        # variable's only entry when every leaf on it is a sentinel. So: pair
+        # by index when any leaf on the name resolved one, else by name.
+        by_name: dict[str, list] = {}
         for vc in comparisons:
-            act_var = None
-            for v in result.variables:
-                if v.index == vc.index:
-                    act_var = v
-                    break
-            ref_var = ref_vars_by_idx.get(vc.index)
+            by_name.setdefault(vc.name or f"x[{vc.index}]", []).append(vc)
+        ref_vars_by_name = {}
+        if ref_data:
+            for rv in ref_data.get("variables", []):
+                if rv.get("name"):
+                    ref_vars_by_name[rv["name"]] = rv
+        for name, name_comparisons in by_name.items():
+            index = next((vc.index for vc in name_comparisons if vc.index > 0), 0)
+            if index > 0:
+                act_var = next((v for v in result.variables if v.index == index), None)
+                ref_var = ref_vars_by_idx.get(index)
+            else:
+                act_var = next((v for v in result.variables if v.name == name), None)
+                ref_var = ref_vars_by_name.get(name)
+                index = act_var.index if act_var else 0
             trajectories.append(
                 {
-                    "index": vc.index,
-                    "name": vc.name or f"x[{vc.index}]",
+                    "index": index,
+                    "name": name,
                     "act_time": act_var.time.tolist() if act_var else [],
                     "act_values": act_var.values.tolist() if act_var else [],
                     "ref_time": ref_time_list,
@@ -718,21 +729,11 @@ def _build_tree_view_and_variables(
     _mark_advisory(tree_view)
     all_leaves = _view_leaves(tree_view)
 
-    # Dedupe trajectories by variable name into a per-variable dict.
-    # Overlays are attached to EVERY entry with the name, so any of them
-    # carries the same overlay list. Which one matters for the samples: a
-    # sentinel leaf (config that could not build, baseline not found)
-    # carries ``index=0``, so ``_build_trajectories`` found no actual
-    # variable for it and produced an empty entry under the real name.
-    # Listed before the healthy leaf it would blank the variable's plot,
-    # so the entry WITH samples wins; the empty one only stands in when
-    # there is nothing else.
+    # Look the trajectory up by variable name — ``_build_trajectories``
+    # emits exactly one entry per name, sentinel leaves included.
     variables_by_name: dict[str, dict] = {}
     for vn in _collect_variables(spec):
-        named = [t for t in trajectories if t["name"] == vn]
-        match_traj = next((t for t in named if t.get("act_time")), None) or next(
-            iter(named), None
-        )
+        match_traj = next((t for t in trajectories if t["name"] == vn), None)
         var_leaves = [leaf for leaf in all_leaves if leaf.get("variable") == vn]
         # Only the leaves that can actually gate this variable decide its
         # colour; advisory ones are reported beside it as a chip.

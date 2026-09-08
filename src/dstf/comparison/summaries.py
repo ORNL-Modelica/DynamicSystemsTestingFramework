@@ -146,10 +146,12 @@ def summarize_scalar(vc: VariableComparison) -> ScoreSummary:
     diag = vc.diagnostics or {}
     verdict = _verdict(vc)
     if not math.isfinite(vc.actual_final):
-        # Hard-fail sentinel (unresolvable quantity, no samples): there is no
-        # scalar to show, so surface the reason instead of "nan vs nan". The
-        # sentinel keeps the variable's name; the reason is its diagnostic.
-        reason = diag.get("error") or vc.name or "quantity could not be resolved"
+        # Hard-fail sentinel (unresolvable quantity, no samples, a reduction
+        # that came out non-finite): there is no scalar to show, so surface
+        # the reason instead of "nan vs nan". The sentinel keeps the
+        # variable's NAME, so the name is never the reason — every route that
+        # builds one stamps ``diagnostics["error"]``.
+        reason = diag.get("error") or "quantity could not be resolved"
         return ScoreSummary(
             display="not scored", criterion=f"Scalar leaf not scored — {reason}"
         )

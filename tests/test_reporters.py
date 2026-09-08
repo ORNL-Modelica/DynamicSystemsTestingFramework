@@ -218,6 +218,35 @@ class TestConsoleReport:
         assert "Not scored:" in out
         assert "min_value / max_value" in out
 
+    def test_a_non_finite_scalar_reduction_prints_its_reason(self, capsys):
+        """The console reads ``diagnostics["error"]`` first. A scalar leaf
+        whose reduction came out non-finite now carries one, so the line
+        states the cause instead of falling back to the summary — which
+        used to print the variable's own name as the reason."""
+        import numpy as np
+
+        from dstf.comparison.modes import ScalarConfig, ScalarMode
+
+        t = np.array([0.0, 1.0])
+        vc = ScalarMode(
+            ScalarConfig(quantity={"reduce": "max"}, tolerance=1.0)
+        ).compare(t, np.array([1.0, 2.0]), t, np.array([1.0, float("nan")]))
+        vc.name = "h"
+        assert (
+            print_report(
+                [
+                    TestComparison(
+                        model_id="Lib.Examples.G", passed=False, variables=[vc]
+                    )
+                ]
+            )
+            == 1
+        )
+        out = capsys.readouterr().out
+        assert "h:" in out
+        assert "Not scored:" in out
+        assert "not finite" in out
+
     def test_sim_failure_returns_one(self, capsys):
         assert print_report([_sim_failed()]) == 1
         out = capsys.readouterr().out
