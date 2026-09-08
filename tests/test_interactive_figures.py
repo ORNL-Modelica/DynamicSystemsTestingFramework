@@ -80,3 +80,36 @@ def test_error_overlay_toggles_the_embedded_error_trace(tmp_path, playwright_bro
         "error/abs": True,
         "error/nrmse": "legendonly",
     }
+
+
+def test_an_edit_after_the_python_paint_takes_the_js_path(tmp_path, playwright_browser):
+    """The existing editor tests render contexts with no figures, so they
+    never edit a Python-painted plot. This one does: the first paint is the
+    dict, a tolerance edit re-renders through the JavaScript contributions,
+    the live scorer still flips the pill, and nothing throws."""
+    ctx, _ = _context_with_figure()
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    errors: list[str] = []
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+    page.goto(html_path.as_uri())
+    assert page.evaluate("!!document.getElementById('plot-0')._mt_python")
+
+    sel = '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
+    inp = page.locator(sel).first
+    inp.fill("1e-12")
+    inp.dispatch_event("input")
+    state = page.evaluate(
+        "() => { const el = document.getElementById('plot-0');"
+        " return { python: !!el._mt_python, n: el.data.length }; }"
+    )
+    pill = page.locator(
+        '#nodes-full [data-path="/metrics/children/0"] > .node-header > .node-status'
+    ).first
+    pill_text = pill.text_content()
+    # The error overlay must still work on the re-rendered (JS) plot.
+    page.evaluate("setErrorOverlay(0, 'abs')")
+    page.close()
+    assert state["python"] is False and state["n"] > 0
+    assert pill_text == "FAIL"
+    assert errors == []
