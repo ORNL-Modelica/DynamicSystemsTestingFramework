@@ -7,8 +7,14 @@ import random
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import _compare_points, _compare_tube, _tube_bounds
-from dstf.comparison.geometry import Band, Box, Marker, Window
+from dstf.comparison.algorithms import (
+    _compare_points,
+    _compare_range,
+    _compare_scalar,
+    _compare_tube,
+    _tube_bounds,
+)
+from dstf.comparison.geometry import Band, Box, HLine, Marker, Window
 from dstf.comparison.types import ScoreSummary, VariableComparison
 
 
@@ -226,3 +232,62 @@ class TestPointsGeometry:
         assert (box.t0, box.t1) == (1.0, 1.0)
         assert box.y0 == pytest.approx(0.999) and box.y1 == pytest.approx(1.001)
         assert vc.passed and box.passed
+
+
+class TestRangeGeometry:
+    def test_each_declared_bound_is_a_handle_with_its_own_verdict(self):
+        t = np.linspace(0.0, 1.0, 11)
+        v = np.linspace(0.0, 2.0, 11)  # exceeds max=1.5, never below min=-1
+        vc = _compare_range(t, v, min_value=-1.0, max_value=1.5)
+        lines = {p.id: p for p in vc.geometry if isinstance(p, HLine)}
+        assert set(lines) == {"range/min", "range/max"}
+        assert lines["range/min"].value == -1.0 and lines["range/min"].passed is True
+        assert lines["range/max"].value == 1.5 and lines["range/max"].passed is False
+        assert all(line.kind == "handle" for line in lines.values())
+        assert not vc.passed
+
+    def test_an_absent_bound_emits_nothing(self):
+        t = np.linspace(0.0, 1.0, 11)
+        vc = _compare_range(t, t, min_value=None, max_value=5.0)
+        assert [p.id for p in vc.geometry] == ["range/max"]
+
+
+class TestScalarGeometry:
+    def test_bounds_form_draws_actual_and_both_bounds(self):
+        t = np.linspace(0.0, 1.0, 11)
+        vc = _compare_scalar(
+            t,
+            t,
+            t,
+            t * 3.0,
+            reduction="max",
+            tolerance=0.1,
+            tolerance_mode="abs",
+            min_value=0.0,
+            max_value=2.0,
+        )
+        lines = {p.id: p for p in vc.geometry if isinstance(p, HLine)}
+        assert set(lines) == {"scalar/actual", "scalar/min", "scalar/max"}
+        assert lines["scalar/actual"].value == pytest.approx(3.0)
+        assert lines["scalar/actual"].kind == "act"
+        assert lines["scalar/actual"].passed is False
+        assert lines["scalar/max"].kind == "handle" and lines["scalar/max"].value == 2.0
+
+    def test_baseline_form_draws_actual_and_reference(self):
+        t = np.linspace(0.0, 1.0, 11)
+        vc = _compare_scalar(
+            t,
+            t,
+            t,
+            t * 1.01,
+            reduction="final",
+            tolerance=0.05,
+            tolerance_mode="rel",
+            min_value=None,
+            max_value=None,
+        )
+        lines = {p.id: p for p in vc.geometry if isinstance(p, HLine)}
+        assert set(lines) == {"scalar/actual", "scalar/reference"}
+        assert lines["scalar/reference"].kind == "ref"
+        assert lines["scalar/reference"].value == pytest.approx(1.0)
+        assert lines["scalar/actual"].passed is True and vc.passed

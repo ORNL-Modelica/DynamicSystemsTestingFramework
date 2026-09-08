@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .geometry import Band, Box, Marker, Primitive
+from .geometry import Band, Box, HLine, Marker, Primitive
 from .types import _EPS, VariableComparison
 
 
@@ -899,6 +899,19 @@ def _compare_range(
         # Preserve the declared bounds so the reporter panel can pre-fill
         # them (6.1.5 — auto-derived mode UI reads mode_values from here).
         diagnostics={"min_value": min_value, "max_value": max_value},
+        geometry=tuple(
+            HLine(
+                id=f"range/{label}",
+                kind="handle",
+                value=float(bound),
+                passed=bool(np.all(viol <= 0)),
+            )
+            for label, bound, viol in (
+                ("min", min_value, below),
+                ("max", max_value, above),
+            )
+            if bound is not None
+        ),
     )
 
 
@@ -949,6 +962,31 @@ def _trapezoid(time: np.ndarray, values: np.ndarray) -> float:
     if len(values) < 2:
         return 0.0
     return float(np.sum(np.diff(time) * (values[:-1] + values[1:]) / 2.0))
+
+
+def _scalar_geometry(
+    act_scalar: float,
+    min_value: float | None,
+    max_value: float | None,
+    *,
+    ref_scalar: float | None,
+    passed: bool,
+) -> tuple[Primitive, ...]:
+    """The scalar and what it was judged against, as horizontal lines.
+
+    A scalar leaf on a statistics path has no trajectory at all; these
+    lines are then the whole figure.
+    """
+    out: list[Primitive] = [
+        HLine(id="scalar/actual", kind="act", value=float(act_scalar), passed=passed)
+    ]
+    if ref_scalar is not None:
+        out.append(HLine(id="scalar/reference", kind="ref", value=float(ref_scalar)))
+    if min_value is not None:
+        out.append(HLine(id="scalar/min", kind="handle", value=float(min_value)))
+    if max_value is not None:
+        out.append(HLine(id="scalar/max", kind="handle", value=float(max_value)))
+    return tuple(out)
 
 
 def _compare_scalar(
@@ -1012,6 +1050,13 @@ def _compare_scalar(
             mode="scalar",
             tube_worst_violation=violation,
             diagnostics=diagnostics,
+            geometry=_scalar_geometry(
+                act_scalar,
+                min_value,
+                max_value,
+                ref_scalar=None,
+                passed=violation <= 0.0,
+            ),
         )
 
     if len(ref_values) == 0:
@@ -1047,6 +1092,13 @@ def _compare_scalar(
         # leaf never compares signals, so the flag would be a false claim.
         mode="scalar",
         diagnostics=diagnostics,
+        geometry=_scalar_geometry(
+            act_scalar,
+            None,
+            None,
+            ref_scalar=ref_scalar,
+            passed=bool(score <= tolerance),
+        ),
     )
 
 
