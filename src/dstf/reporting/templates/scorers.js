@@ -17,6 +17,12 @@ const VARIABLES_BY_NAME = MT_REPORT.VARIABLES_BY_NAME || {};
 const MODE_SCHEMAS = MT_REPORT.MODE_SCHEMAS || {};
 const DIAG_TRAJECTORIES = MT_REPORT.DIAG_TRAJECTORIES || [];
 const NB_TRAJECTORIES = MT_REPORT.NB_TRAJECTORIES || [];
+// Figure dicts built by dstf.figures (Python). The first paint of every
+// plot comes from these; the JavaScript contributions below take over only
+// once the user edits a leaf, and go away entirely in the two-tier split.
+const FIGURES = MT_REPORT.FIGURES || {};
+const DIAG_FIGURES = MT_REPORT.DIAG_FIGURES || [];
+const NB_FIGURES = MT_REPORT.NB_FIGURES || [];
 // Test-level baseline roster (overlay_loader.overlay_summary). Only the
 // soft_check rows are offerable as an add-leaf "against" target.
 const OVERLAY_ROWS = MT_REPORT.OVERLAY_ROWS || [];

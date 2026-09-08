@@ -135,6 +135,19 @@ function renderVariablePlot(varname, idx) {
   const el = document.getElementById(`plot-${idx}`);
   if (!el) return;
 
+  // First paint: the Python figure layer's dict, verbatim. Every later
+  // call comes from an edit and re-renders through the JS contributions
+  // below (Plotly.react), which is unchanged behaviour until the two-tier
+  // split deletes that path.
+  const fig = FIGURES[varname];
+  if (fig && !el._mt_plotted) {
+    Plotly.newPlot(el, fig.data, fig.layout, PLOT_CFG);
+    el._mt_plotted = true;
+    el._mt_python = true;
+    return;
+  }
+  el._mt_python = false;
+
   const actTime = traj.act_time || [];
   const refTime = traj.ref_time || [];
   const actValues = traj.act_values || [];

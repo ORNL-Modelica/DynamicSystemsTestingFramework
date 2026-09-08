@@ -59,6 +59,19 @@ function wireErrorOverlays() {
 function setErrorOverlay(vidx, mode) {
   const el = document.getElementById(`plot-${vidx}`);
   if (!el || !el.data) return;
+  // Python-painted plot: the error series are already traces on the right
+  // axis, hidden. Toggle visibility instead of recomputing anything.
+  if (el._mt_python) {
+    const idx = [];
+    const vis = [];
+    el.data.forEach((tr, i) => {
+      if (!tr.meta || tr.meta.kind !== 'error') return;
+      idx.push(i);
+      vis.push(mode !== 'none' && tr.meta.id === `error/${mode}` ? true : 'legendonly');
+    });
+    if (idx.length) Plotly.restyle(el, { visible: vis }, idx);
+    return;
+  }
   // Remove any existing error-overlay trace + right-axis.
   for (let i = el.data.length - 1; i >= 0; i--) {
     if (el.data[i].name === ERROR_OVERLAY_TRACE_NAME) {
@@ -112,6 +125,8 @@ function renderDiagPlots() {
   DIAG_TRAJECTORIES.forEach((traj, idx) => {
     const el = document.getElementById(`diag-plot-${idx}`);
     if (!el) return;
+    const fig = DIAG_FIGURES[idx];
+    if (fig) { Plotly.newPlot(el, fig.data, fig.layout, PLOT_CFG); return; }
     const traces = [{
       x: traj.act_time, y: traj.act_values, name: 'Actual',
       type: 'scatter', mode: 'lines', line: { color: '#2196F3', width: 1 },
@@ -135,6 +150,8 @@ function renderNBPlots() {
   NB_TRAJECTORIES.forEach((traj, idx) => {
     const el = document.getElementById(`nb-plot-${idx}`);
     if (!el) return;
+    const fig = NB_FIGURES[idx];
+    if (fig) { Plotly.newPlot(el, fig.data, fig.layout, PLOT_CFG); return; }
     const traces = [{
       x: traj.time, y: traj.values, name: 'Actual',
       type: 'scatter', mode: 'lines', line: { color: '#2196F3', width: 1 },
