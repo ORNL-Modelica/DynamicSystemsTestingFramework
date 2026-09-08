@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from ..comparison.comparator import VariableComparison
+from ..comparison.registry import summarize
 
 logger = logging.getLogger(__name__)
 
@@ -186,105 +187,6 @@ def worst_finite_score(comparisons: list) -> tuple[float | None, int]:
     return (max(finite) if finite else None, n_unscored)
 
 
-def _leaf_score_display(vc: VariableComparison) -> tuple[str, str]:
-    """Return ``(score_display, criterion)`` for a leaf's UI labels.
-
-    Both strings are mode-aware; callers plug them into the variable-table
-    cell (legacy path) and the Stage-2 tree-node render (new path).
-    Extracted here so the two renderers agree on wording.
-    """
-    mode = vc.mode or "nrmse"
-    error = (vc.diagnostics or {}).get("error")
-    if error:
-        # Any sentinel carrying a reason — a leaf config that could not
-        # build, an empty-data failure — shows that reason instead of a
-        # numeric score there is none of. Mode-agnostic on purpose: the
-        # flat variable_overrides path emits the same shape. Uses vc.mode
-        # raw, not the nrmse-defaulted ``mode``: the unknown-mode sentinel
-        # has no mode, and "nrmse leaf" would name the wrong metric.
-        label = f"{vc.mode} leaf" if vc.mode else "leaf"
-        return ("not scored", f"{label} not scored — {error}")
-    if mode == "tube" and vc.tube_points_inside is not None:
-        return (
-            f"{vc.tube_points_inside * 100:.1f}% in tube",
-            f"{vc.tube_points_inside * 100:.1f}% inside tube "
-            f"→ {'PASS' if vc.passed else 'FAIL'} (requires 100%)",
-        )
-    if mode == "range" and vc.tube_worst_violation is not None:
-        return (
-            f"max_viol {vc.tube_worst_violation:.3e}",
-            f"max violation {vc.tube_worst_violation:.3e} "
-            f"→ {'PASS' if vc.passed else 'FAIL'} (requires 0)",
-        )
-    if mode == "points":
-        return (
-            f"|err| {vc.max_abs_error:.3e}",
-            f"Final value error {vc.max_abs_error:.3e} vs tolerance "
-            f"{vc.tolerance_used:.3e} → {'PASS' if vc.passed else 'FAIL'}",
-        )
-    if mode == "scalar":
-        diag = vc.diagnostics or {}
-        verdict = "PASS" if vc.passed else "FAIL"
-        if not math.isfinite(vc.actual_final):
-            # Hard-fail sentinel (unresolvable quantity, no samples): there
-            # is no scalar to show, so surface the reason instead of
-            # "Scalar nan vs baseline nan". A diagnostics["error"] would
-            # already have been caught by the generic branch above.
-            reason = vc.name or "quantity could not be resolved"
-            return ("not scored", f"Scalar leaf not scored — {reason}")
-        lo, hi = diag.get("min_value"), diag.get("max_value")
-        if lo is not None or hi is not None:
-            lo_s = "-inf" if lo is None else f"{lo:g}"
-            hi_s = "inf" if hi is None else f"{hi:g}"
-            return (
-                f"value {vc.actual_final:.6g}",
-                f"Scalar {vc.actual_final:.6g} within [{lo_s}, {hi_s}] → {verdict}",
-            )
-        fallback = bool(diag.get("abs_fallback"))
-        rel = diag.get("tolerance_mode") == "rel" and not fallback
-        criterion = "relative" if rel else "absolute"
-        note = " (|ref|=0 → absolute)" if fallback else ""
-        return (
-            (f"rel Δ {vc.nrmse:.3e}" if rel else f"|Δ| {vc.nrmse:.3e}"),
-            f"Scalar {vc.actual_final:.6g} vs baseline {vc.reference_final:.6g}: "
-            f"{criterion} deviation {vc.nrmse:.3e} vs "
-            f"tolerance {vc.tolerance_used:.3e}{note} → {verdict}",
-        )
-    if mode == "event-timing":
-        diag = vc.diagnostics or {}
-        ref_n = diag.get("ref_event_count", "?")
-        act_n = diag.get("act_event_count", "?")
-        tol = diag.get("time_tolerance", 0.0)
-        return (
-            f"Δt {vc.nrmse:.3e} ({act_n}/{ref_n} events)",
-            f"Max event Δt {vc.nrmse:.3e} vs {tol:.3e} "
-            f"({act_n} actual events / {ref_n} reference) "
-            f"→ {'PASS' if vc.passed else 'FAIL'}",
-        )
-    if mode == "dominant-frequency":
-        diag = vc.diagnostics or {}
-        paired = diag.get("paired_peaks") or []
-        n_matched = sum(1 for p in paired if p.get("matched_hz") is not None)
-        n_declared = len(paired)
-        if n_declared == 0:
-            return (
-                "no peaks declared",
-                "No peaks declared — use 'Detect peaks from reference' "
-                "to seed the table from the reference spectrum",
-            )
-        return (
-            f"{n_matched}/{n_declared} peaks matched",
-            f"{n_matched} / {n_declared} declared peaks found in actual "
-            f"spectrum within tolerance → "
-            f"{'PASS' if vc.passed else 'FAIL'}",
-        )
-    return (
-        f"NRMSE {vc.nrmse:.3e}",
-        f"NRMSE {vc.nrmse:.3e} vs tolerance {vc.tolerance_used:.3e} "
-        f"→ {'PASS' if vc.passed else 'FAIL'}",
-    )
-
-
 def _augment_tree_view(
     view: dict,
     comparisons_by_path: dict[str, VariableComparison],
@@ -329,7 +231,8 @@ def _augment_tree_view(
         # (found eyeballing the D103 demo report).
         window_values = dict(view.get("window") or {})
         var_label = vc.name or view.get("variable", "")
-        score_display, criterion = _leaf_score_display(vc)
+        summary = summarize(vc)
+        score_display, criterion = summary.display, summary.criterion
         bounds = (time_bounds_by_variable or {}).get(var_label)
         t_start, t_end = bounds if bounds else (None, None)
         # An against-leaf is live-scorable exactly when the named

@@ -800,22 +800,24 @@ class TestScalarReporterSurfaces:
         assert "scalar" in emit_mode_schemas()
 
     def test_score_display_baseline_form(self):
-        from dstf.reporting.context_builder import _leaf_score_display
+        from dstf.comparison.registry import summarize
 
         vc = _mode(tolerance=0.1).compare(*_series([0.0, 10.0]), *_series([0.0, 10.05]))
         vc.tolerance_used = 0.1
-        score, criterion = _leaf_score_display(vc)
+        summary = summarize(vc)
+        score, criterion = summary.display, summary.criterion
         assert score.startswith("|Δ|")
         assert "10.05" in criterion
         assert "PASS" in criterion
 
     def test_score_display_rel_and_bounds_forms(self):
-        from dstf.reporting.context_builder import _leaf_score_display
+        from dstf.comparison.registry import summarize
 
         rel = _mode(tolerance=0.001, tolerance_mode="rel").compare(
             *_series([0.0, 100.0]), *_series([0.0, 101.0])
         )
-        score, criterion = _leaf_score_display(rel)
+        summary = summarize(rel)
+        score, criterion = summary.display, summary.criterion
         assert score.startswith("rel Δ")
         assert "relative deviation" in criterion
         assert "FAIL" in criterion
@@ -824,41 +826,45 @@ class TestScalarReporterSurfaces:
         bounds = _mode(min_value=0.0, max_value=1.0).compare(
             empty, empty, *_series([0.0, 2.0])
         )
-        score, criterion = _leaf_score_display(bounds)
+        summary = summarize(bounds)
+        score, criterion = summary.display, summary.criterion
         assert score == "value 2"
         assert "within [0, 1]" in criterion
         assert "FAIL" in criterion
 
     def test_score_display_names_the_abs_fallback(self):
-        from dstf.reporting.context_builder import _leaf_score_display
+        from dstf.comparison.registry import summarize
 
         vc = _mode(tolerance=0.1, tolerance_mode="rel").compare(
             *_series([1.0, 0.0]), *_series([1.0, 0.05])
         )
         vc.tolerance_used = 0.1
-        score, criterion = _leaf_score_display(vc)
+        summary = summarize(vc)
+        score, criterion = summary.display, summary.criterion
         assert score.startswith("|Δ|")
         assert "|ref|=0 → absolute" in criterion
         assert "absolute deviation" in criterion
 
     def test_score_display_of_a_sentinel_shows_the_reason(self):
-        from dstf.reporting.context_builder import _leaf_score_display
+        from dstf.comparison.registry import summarize
 
         # Unresolvable quantity → sentinel with nan scalars; the panel must
         # not read "Scalar nan vs baseline nan".
         spec = parse_metric_tree({"metric": "scalar", "quantity": "timing.nope"})
         node = evaluate_spec(spec, {}, _baselines(), 1e-4, scalars=ScalarSources())
-        score, criterion = _leaf_score_display(node.diagnostics["variable"])
+        summary = summarize(node.diagnostics["variable"])
+        score, criterion = summary.display, summary.criterion
         assert score == "not scored"
         assert "nan" not in criterion
         assert "timing.nope" in criterion
 
     def test_score_display_of_an_empty_data_failure_shows_the_error(self):
-        from dstf.reporting.context_builder import _leaf_score_display
+        from dstf.comparison.registry import summarize
 
         empty = np.array([])
         vc = _mode(tolerance=1.0).compare(*_series([1.0, 2.0]), empty, empty)
-        score, criterion = _leaf_score_display(vc)
+        summary = summarize(vc)
+        score, criterion = summary.display, summary.criterion
         assert score == "not scored"
         assert "no actual samples" in criterion
 

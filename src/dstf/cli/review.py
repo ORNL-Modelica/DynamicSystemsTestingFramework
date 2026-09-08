@@ -307,24 +307,18 @@ def _find_test_key(model_id: str, config) -> str | None:
 
 
 def _print_detail(comp) -> None:
-    """Print detailed variable comparison for interactive review."""
+    """Print each leaf's mode-aware verdict for interactive review."""
+    from ..comparison.registry import summarize
+
     if comp.error_message:
         print(f"  Error: {comp.error_message}")
 
     for var in comp.variables:
         name = var.name or f"x[{var.index}]"
         status = "\033[92mPASS\033[0m" if var.passed else "\033[91mFAIL\033[0m"
-        print(f"    {status}  {name}")
-        if var.is_constant:
-            print(f"           RMSE: {var.rmse:.6e} (constant signal)")
-        else:
-            print(f"           NRMSE: {var.nrmse:.6e} (range: {var.signal_range:.4e})")
-        print(
-            f"           Max abs error: {var.max_abs_error:.6e} at t={var.max_abs_error_time:g}"
-        )
-        print(
-            f"           Final: ref={var.reference_final:.6e}  act={var.actual_final:.6e}"
-        )
+        summary = summarize(var)
+        print(f"    {status}  {name}  [{var.mode}] {summary.display}")
+        print(f"           {summary.criterion}")
 
     if comp.warnings:
         print("    Structural warnings:")

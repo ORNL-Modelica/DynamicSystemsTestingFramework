@@ -42,6 +42,15 @@ from .registry import (
     register_combinator,
     register_metric,
 )
+from .summaries import (
+    summarize_dominant_frequency,
+    summarize_event_timing,
+    summarize_nrmse,
+    summarize_points,
+    summarize_range,
+    summarize_scalar,
+    summarize_tube,
+)
 
 
 def _build_nrmse(override: dict, tolerance: float) -> NrmseMode:
@@ -124,6 +133,7 @@ def register_builtins() -> None:
             config_cls=NrmseConfig,
             build=_build_nrmse,
             score_direction="lower",
+            summarize=summarize_nrmse,
         )
     )
     register_metric(
@@ -133,6 +143,7 @@ def register_builtins() -> None:
             build=_build_tube,
             # Tube's score is the fraction of samples inside the envelope.
             score_direction="higher",
+            summarize=summarize_tube,
         )
     )
     register_metric(
@@ -141,6 +152,7 @@ def register_builtins() -> None:
             config_cls=PointsConfig,
             build=_build_points,
             score_direction="lower",
+            summarize=summarize_points,
         )
     )
     register_metric(
@@ -149,6 +161,7 @@ def register_builtins() -> None:
             config_cls=RangeConfig,
             build=_build_range,
             score_direction="lower",
+            summarize=summarize_range,
         )
     )
     register_metric(
@@ -157,6 +170,7 @@ def register_builtins() -> None:
             config_cls=EventTimingConfig,
             build=_build_event_timing,
             score_direction="lower",
+            summarize=summarize_event_timing,
         )
     )
     register_metric(
@@ -165,6 +179,7 @@ def register_builtins() -> None:
             config_cls=DominantFrequencyConfig,
             build=_build_dominant_frequency,
             score_direction="lower",
+            summarize=summarize_dominant_frequency,
         )
     )
     register_metric(
@@ -179,6 +194,7 @@ def register_builtins() -> None:
             score_direction="lower",
             # The only builtin whose ``quantity`` names its data source.
             accepts_quantity=True,
+            summarize=summarize_scalar,
         )
     )
 

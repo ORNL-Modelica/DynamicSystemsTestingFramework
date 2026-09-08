@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from ..backends.types import DatasetType
+from .summaries import summarize_default
+from .types import ScoreSummary, VariableComparison
 
 if TYPE_CHECKING:
     from .metric_tree import Combinator
@@ -59,6 +61,9 @@ class MetricDescriptor:
     Off by default: a metric that scores trajectories must keep scoring
     trajectories, so an unrecognized ``quantity`` stays an inert param
     rather than silently swapping that metric's data source.
+
+    ``summarize`` turns the mode's ``VariableComparison`` into the pill
+    text and criterion sentence; see :mod:`.summaries`.
     """
 
     name: str
@@ -67,6 +72,9 @@ class MetricDescriptor:
     accepted_datasets: frozenset[DatasetType] = TIME_SERIES_ONLY
     score_direction: Literal["lower", "higher"] = "lower"
     accepts_quantity: bool = False
+    #: One leaf's verdict in words. The default is NRMSE-shaped; every
+    #: builtin supplies its own in :mod:`.builtins`.
+    summarize: Callable[[VariableComparison], ScoreSummary] = summarize_default
 
 
 @dataclass(frozen=True)
@@ -131,6 +139,26 @@ def combinator_names() -> frozenset[str]:
 def metrics() -> tuple[MetricDescriptor, ...]:
     """All metric descriptors in registration order."""
     return tuple(_METRICS.values())
+
+
+def summarize(vc: VariableComparison) -> ScoreSummary:
+    """The pill text and criterion for one leaf, by its mode's descriptor.
+
+    Any sentinel carrying a reason — a leaf config that could not build, an
+    empty-data failure — shows that reason instead of a numeric score there
+    is none of. Mode-agnostic on purpose: the flat variable_overrides path
+    emits the same shape. Uses ``vc.mode`` raw: the unknown-mode sentinel
+    has no mode, and "nrmse leaf" would name the wrong metric.
+    """
+    error = (vc.diagnostics or {}).get("error")
+    if error:
+        label = f"{vc.mode} leaf" if vc.mode else "leaf"
+        return ScoreSummary(
+            display="not scored", criterion=f"{label} not scored — {error}"
+        )
+    desc = metric(vc.mode or "nrmse")
+    fn = desc.summarize if desc is not None else summarize_default
+    return fn(vc)
 
 
 def combinators() -> tuple[CombinatorDescriptor, ...]:

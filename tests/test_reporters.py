@@ -315,8 +315,8 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
 
     from dstf.backends.types import TestResult, VariableResult
     from dstf.comparison.comparator import compare_test
+    from dstf.comparison.registry import summarize
     from dstf.discovery.test_registry import TestModel
-    from dstf.reporting.context_builder import _leaf_score_display
 
     time = np.linspace(0.0, 1.0, 5)
     test = TestModel(
@@ -343,7 +343,8 @@ def test_unknown_mode_sentinel_is_not_captioned_nrmse():
     assert not vc.passed
     assert vc.diagnostics["config_error"] is True
 
-    _score, criterion = _leaf_score_display(vc)
+    summary = summarize(vc)
+    _score, criterion = summary.display, summary.criterion
     # The caption names no metric — only the error text does (and it lists
     # the valid mode names, so "nrmse" legitimately appears further in).
     assert criterion.startswith("leaf not scored")
