@@ -479,6 +479,11 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
             "side": "right",
             "showgrid": False,
             "tickfont": {"color": ERROR, "size": 10},
+            # Hidden until an error series is shown: a laid-out axis with
+            # only legend-only traces gets a placeholder range and draws
+            # its zero line as a stray black rule across the plot.
+            "zeroline": False,
+            "visible": False,
         }
     return layout
 

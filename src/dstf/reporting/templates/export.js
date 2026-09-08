@@ -70,6 +70,11 @@ function setErrorOverlay(vidx, mode) {
       vis.push(mode !== 'none' && tr.meta.id === `error/${mode}` ? true : 'legendonly');
     });
     if (idx.length) Plotly.restyle(el, { visible: vis }, idx);
+    // The axis is laid out hidden (see dstf.figures.plotly); show it only
+    // while an error series is visible.
+    if (el.layout && el.layout.yaxis3) {
+      Plotly.relayout(el, { 'yaxis3.visible': mode !== 'none' });
+    }
     return;
   }
   // Remove any existing error-overlay trace + right-axis.
@@ -126,7 +131,12 @@ function renderDiagPlots() {
     const el = document.getElementById(`diag-plot-${idx}`);
     if (!el) return;
     const fig = DIAG_FIGURES[idx];
-    if (fig) { Plotly.newPlot(el, fig.data, fig.layout, PLOT_CFG); return; }
+    if (fig) {
+      Plotly.newPlot(el, fig.data, fig.layout, PLOT_CFG);
+      el._mt_plotted = true;
+      el._mt_python = true;
+      return;
+    }
     const traces = [{
       x: traj.act_time, y: traj.act_values, name: 'Actual',
       type: 'scatter', mode: 'lines', line: { color: '#2196F3', width: 1 },
@@ -151,7 +161,12 @@ function renderNBPlots() {
     const el = document.getElementById(`nb-plot-${idx}`);
     if (!el) return;
     const fig = NB_FIGURES[idx];
-    if (fig) { Plotly.newPlot(el, fig.data, fig.layout, PLOT_CFG); return; }
+    if (fig) {
+      Plotly.newPlot(el, fig.data, fig.layout, PLOT_CFG);
+      el._mt_plotted = true;
+      el._mt_python = true;
+      return;
+    }
     const traces = [{
       x: traj.time, y: traj.values, name: 'Actual',
       type: 'scatter', mode: 'lines', line: { color: '#2196F3', width: 1 },
