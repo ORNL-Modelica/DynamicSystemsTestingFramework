@@ -317,7 +317,10 @@ def _print_detail(comp) -> None:
         name = var.name or f"x[{var.index}]"
         status = "\033[92mPASS\033[0m" if var.passed else "\033[91mFAIL\033[0m"
         summary = summarize(var)
-        print(f"    {status}  {name}  [{var.mode}] {summary.display}")
+        # The flat-route unknown-mode sentinel carries mode="" on purpose
+        # (it must not be captioned "nrmse"); print no bracket for it.
+        mode = f"[{var.mode}] " if var.mode else ""
+        print(f"    {status}  {name}  {mode}{summary.display}")
         print(f"           {summary.criterion}")
 
     if comp.warnings:
