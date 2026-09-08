@@ -749,9 +749,12 @@ Ideas ranked by implementation ease and user impact. Ease: L (days), M (week), H
   `reporting/templates/`, of which roughly 87% (`editors.js`, `tree-ui.js`,
   `export.js`, plus `scorers.js` which exists only to give authoring live
   feedback) serve authoring, against ~808 lines of actual reporting, guarded by
-  a 1,350-line parity suite. The duplication is wider than JS-vs-Python: there
-  are THREE renderers of the same data — matplotlib in `cli/review.py`,
-  matplotlib in `report_suite.py:149`, and Plotly/JS in the templates.
+  a 1,350-line parity suite. (Correction, 2026-09-08: an earlier version of
+  this entry claimed three renderers, with matplotlib in `cli/review.py` and
+  `report_suite.py`. No `import matplotlib` exists under `src/`; those two
+  are callers of the one Plotly/JS renderer, and the duplication is
+  Python-versus-JavaScript, three JS registries deep. `matplotlib` is a dead
+  dependency. Design: `docs/superpowers/specs/2026-09-08-two-tier-architecture-design.md`.)
   Target shape: one figure layer in Python that both tiers consume (the
   authoring tool's figures ARE the reporter's figures, one interactive and one
   not); the reporter plots bounds arrays Python already resolved, so no
