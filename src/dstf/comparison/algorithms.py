@@ -4,12 +4,6 @@ Lives separately from :mod:`.comparator` (orchestrates compare_test /
 compare_all) and :mod:`.types` (result dataclasses) to make per-mode
 edits easier to review and reason about without scrolling through the
 test-suite-level orchestration.
-
-These functions are also the Python source-of-truth for
-``interactive.js`` MODE_SCORERS — the JS counterparts mirror the math
-here for live-edit recompute. Drift is caught by
-``tests/test_scorer_parity.py``; cross-reference markers at each public
-``_compare_*`` function point at the JS line.
 """
 
 from __future__ import annotations
@@ -174,11 +168,6 @@ def _compare_trajectories(
     act_values: np.ndarray,
     tolerance: float,
 ) -> VariableComparison:
-    # parity-test: live-preview JS counterpart at
-    # src/dstf/reporting/templates/interactive.js MODE_SCORERS['nrmse']
-    # (around line 113). The two implementations MUST agree on pass/fail
-    # for any (ref, act, tolerance); drift is caught by
-    # tests/test_scorer_parity.py. Update both when changing the math.
     """Compare two time series using piecewise NRMSE.
 
     If the reference has duplicate time values (events), the comparison
@@ -334,9 +323,6 @@ def _compare_points(
     points: list[dict] | None = None,
     tolerance: float = 1e-4,
 ) -> VariableComparison:
-    # parity-test: live-preview JS counterpart at
-    # src/dstf/reporting/templates/interactive.js MODE_SCORERS['points']
-    # (around line 145). Drift is caught by tests/test_scorer_parity.py.
     """Compare actual vs reference at declared time points.
 
     When ``points`` is None or empty, falls back to the legacy final-
@@ -750,13 +736,6 @@ def _compare_tube(
     act_values: np.ndarray,
     tube_config: dict,
 ) -> VariableComparison:
-    # parity-test: live-preview JS counterpart at
-    # src/dstf/reporting/templates/interactive.js MODE_SCORERS['tube']
-    # (around line 210). The tube interpolation logic is the trickiest of
-    # the live-preview modes — both implementations need to handle the
-    # same width-mode dispatch (rel/band/absolute), the same tube_points
-    # interpolation, and the same min_width clamping. Drift is caught by
-    # tests/test_scorer_parity.py.
     """Compare using a tolerance tube around the reference trajectory.
 
     Tube width modes:
@@ -860,9 +839,6 @@ def _compare_range(
     min_value: float | None,
     max_value: float | None,
 ) -> VariableComparison:
-    # parity-test: live-preview JS counterpart at
-    # src/dstf/reporting/templates/interactive.js MODE_SCORERS['range']
-    # (around line 198). Drift is caught by tests/test_scorer_parity.py.
     """Check that every sample of the actual signal lies within [min, max].
 
     Reference data is not used — the bounds come from the spec itself.
@@ -918,8 +894,7 @@ def _compare_range(
         tube_points_inside=fraction_inside,
         tube_worst_violation=max_violation,
         tube_worst_violation_time=worst_time,
-        # Preserve the declared bounds so the reporter panel can pre-fill
-        # them (6.1.5 — auto-derived mode UI reads mode_values from here).
+        # Preserve the declared bounds so the reporter can report them.
         diagnostics={"min_value": min_value, "max_value": max_value},
         geometry=tuple(
             HLine(
@@ -1311,17 +1286,9 @@ def _compute_fft_spectrum(
     """Return (freqs, magnitude) for a time-series via uniform-grid FFT.
 
     Resamples to a uniform grid sized at the **next power of 2** above
-    ``max(len(t), 64)``, strips DC, takes the real-FFT. The pow-2 choice
-    matches the JS-side radix-2 implementation (D76): given the SAME input
-    samples both sides produce bit-identical bin frequencies, so the CLI's
-    `paired_peaks` agrees with the browser's live scorer.
-
-    That parity is exact only while the browser holds the full-resolution
-    trajectory. The reporter LTTB-decimates embedded arrays to
-    ``max_embedded_samples``, which changes ``len(t)`` and therefore the bin
-    grid — so a decimated dominant-frequency leaf is badge-gated as
-    CLI-authoritative and never live-re-scored (see
-    ``report_suite._mark_decimated_cli_authoritative``).
+    ``max(len(t), 64)``, strips DC, takes the real-FFT. Bin frequencies
+    therefore depend on the sample COUNT: the same signal at a different
+    resolution lands its peaks on a different grid.
     """
     import math
 
@@ -1418,8 +1385,8 @@ def _find_strongest_peak_in_window(
     return (float(freqs[best]), float(spectrum[best]))
 
 
-# Cap spectrum samples embedded into the HTML report's interactive.js —
-# fine enough to see peaks, small enough to not bloat the payload.
+# Cap spectrum samples embedded into the HTML report — fine enough to see
+# peaks, small enough to not bloat the payload.
 _SPECTRUM_EMBED_CAP = 512
 
 # A local maximum below this fraction of the spectrum's global max is
@@ -1535,12 +1502,6 @@ def _compare_dominant_frequency(
     act_values: np.ndarray,
     peaks: list[dict] | None = None,
 ) -> VariableComparison:
-    # parity-test: live-preview JS counterpart at
-    # src/dstf/reporting/templates/interactive.js MODE_SCORERS['dominant-frequency']
-    # (around line 276). Both sides resample to a power of 2 above
-    # max(N, 64) before the FFT so bin frequencies are bit-identical,
-    # which is what makes the parity feasible at all. Drift is caught
-    # by tests/test_scorer_parity.py.
     """Compare declared frequency peaks between reference and actual (4.C.2).
 
     Takes a list of user-declared peaks of the form::

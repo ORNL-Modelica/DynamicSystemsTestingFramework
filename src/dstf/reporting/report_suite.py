@@ -1,9 +1,9 @@
 """Render per-test interactive reports and orchestrate the report suite.
 
-The rendering half of the per-test report: Jinja env, LTTB decimation for
-the embedded payload, the ``comparison_data.json`` sidecar + size budget,
-and the threaded per-suite orchestration. The context it renders is built
-by :mod:`dstf.reporting.context_builder`.
+The rendering half of the per-test report: Jinja env, the figure dicts the
+page paints, the ``comparison_data.json`` sidecar + size budget, and the
+threaded per-suite orchestration. The context it renders is built by
+:mod:`dstf.reporting.context_builder`.
 """
 
 import json
@@ -34,20 +34,12 @@ _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _VENDOR_DIR = _TEMPLATE_DIR / "vendor"
 VENDOR_ASSETS: tuple[str, ...] = ("plotly.min.js",)
 
-# The report page loads ONE ``interactive.js``; the source is authored as
-# five fragments split along that script's own section banners and
-# concatenated here at report-copy time (no build step). This tuple IS the
-# order — the fragments are contiguous slices of a single script, so
-# top-level ``const`` TDZ, function hoisting and the load-time IIFEs only
-# keep their semantics while this sequence is preserved. Never reorder it,
-# and never move a declaration across a fragment boundary.
-INTERACTIVE_JS_PARTS: tuple[str, ...] = (
-    "scorers.js",  # embedded data, leafState, MODE_SCORERS, contributions, FFT
-    "editors.js",  # MODE_PLOT_EDITORS, shared scaffolds, leaf activation
-    "plots.js",  # DOMContentLoaded init, decimation banner, Plotly rendering
-    "tree-ui.js",  # SpecNodeView, structural editing, schema→HTML renderers
-    "export.js",  # summary, overlays, diag plots, patch build + save
-)
+# The report page loads ONE ``interactive.js``; the served name is
+# historical, the source is ``report.js``. It paints the embedded figure
+# dicts and wires the overlay picker and the error-overlay dropdown —
+# nothing else. The tuple survives so a second source part can be added
+# without touching the copy path.
+INTERACTIVE_JS_PARTS: tuple[str, ...] = ("report.js",)
 
 
 def interactive_js_source() -> str:
@@ -322,33 +314,25 @@ def generate_comparison_plots(
     # handoff artifact dashboard_render reads) does not change.
     context.update(_build_figures(context, metric_tree, max_embedded_samples))
 
-    # Decimate trajectory arrays embedded into interactive.html. This
-    # caps the HTML payload for Plotly rendering; pass/fail scoring,
-    # stored baselines, and comparison_data.json are unaffected.
-    #
-    # ORDER CONSTRAINT: the CLI-authoritative mark must run AFTER the
-    # sidecar write above. The sidecar carries full-resolution data, so a
-    # consumer re-scoring from it has exact parity and its tree keeps
-    # cli_authoritative=false; only the decimated HTML embed gets the
-    # flag. Hoisting the mark above write_text would stamp the sidecar
-    # and wrongly tell downstream tooling its full-resolution data can't
-    # be live-scored.
-    _decimate_context_for_html(context, max_embedded_samples)
-    _mark_decimated_cli_authoritative(context)
+    # ORDER CONSTRAINT: the page context is built LAST — after the sidecar
+    # write (which needs the full-resolution arrays) and after the figure
+    # build (which reads them, and whose ``full_samples`` stamps are what
+    # ``decimated`` is computed from). Stripping any earlier would empty
+    # the artifact or the figures instead of just the page.
+    page_context = _page_context(context)
+    page_context["decimated"] = _decimated_traces(context)
 
     # review 2026-07-06 finding 68: the embedded page context must be
     # strict JSON too — Jinja's |tojson would otherwise emit Infinity/NaN
-    # literals into window.MT_REPORT. Sanitize AFTER decimation so the
-    # recursive pass runs over the capped arrays, not the full-resolution
-    # ones.
-    context = _json_sanitize(context)
+    # literals into window.MT_REPORT.
+    page_context = _json_sanitize(page_context)
 
-    # Render interactive HTML (Plotly, inline data — now decimated).
+    # Render interactive HTML (Plotly, inline figure dicts).
     # Stage 5: the static ``comparison.html`` path was retired. The index
     # page linked only to interactive.html; the per-variable PNGs still
     # render next to it for direct reference.
     interactive_path = plot_dir / "interactive.html"
-    _render_template("interactive.html", context, interactive_path)
+    _render_template("interactive.html", page_context, interactive_path)
 
     # Write the standalone interactive.js beside the HTML and the vendored
     # Plotly one level up (shared by the suite) so the `<script src=...>`
@@ -361,140 +345,82 @@ def generate_comparison_plots(
     return interactive_path
 
 
-def _mark_decimated_cli_authoritative(context: dict) -> None:
-    """Flip dominant-frequency leaves on decimated variables to CLI-authoritative.
+def _overlay_row(ov: dict) -> dict:
+    """An overlay reduced to what the picker markup needs: its identity."""
+    return {"name": ov.get("name"), "role": ov.get("role"), "kind": ov.get("kind")}
 
-    The browser's live dominant-frequency scorer FFTs the *embedded*
-    ``act_time`` / ``act_values``; the CLI FFTs the full-resolution
-    trajectory. Both use the same power-of-2 resampling, so their bin grids
-    agree exactly — but only when the embedded arrays ARE the full arrays.
-    Once LTTB decimation kicks in (``max_embedded_samples``) the two sides
-    resample onto different grids and a peak can fail live while passing on
-    the CLI. Those leaves keep the CLI verdict (badge + no live re-score),
-    exactly like event-timing; undecimated ones keep exact live scoring.
 
-    Must run AFTER :func:`_decimate_context_for_html` — that is what stamps
-    ``full_samples`` and shrinks the arrays.
+def _page_context(context: dict) -> dict:
+    """The page's copy of the render context, with no trajectory arrays.
+
+    The page draws figure dicts, so the arrays would only be a second
+    full-resolution copy of data the figures already carry. Built as a
+    COPY, after the sidecar write — ``comparison_data.json`` is the
+    documented downstream artifact and keeps its trajectory shape.
+
+    What survives per variable is what the markup dereferences: the
+    server-rendered tree, the verdict, and each overlay's name / role for
+    the picker checkbox.
     """
-    variables = context.get("variables_by_name") or {}
-
-    def _decimated(varname: str) -> bool:
-        traj = (variables.get(varname) or {}).get("trajectory") or {}
-        full = (traj.get("full_samples") or {}).get("act")
-        if not full:
-            return False
-        # The live scorer only FFTs the ACTUAL signal, so only its count
-        # matters (the reference spectrum is CLI-supplied).
-        return len(traj.get("act_time") or []) < full
-
-    def _walk(node: dict) -> None:
-        if node.get("kind") == "leaf":
-            if node.get("mode_effective") == "dominant-frequency" and _decimated(
-                node.get("name") or node.get("variable") or ""
-            ):
-                node["cli_authoritative"] = True
-            return
-        for child in node.get("children", []) or []:
-            _walk(child)
-
-    tree_view = context.get("tree_view")
-    if isinstance(tree_view, dict):
-        _walk(tree_view)
+    page = dict(context)
+    page.pop("trajectories", None)
+    page["variables_by_name"] = {
+        name: {
+            **{k: v for k, v in var.items() if k != "trajectory"},
+            "overlays": [_overlay_row(ov) for ov in var.get("overlays") or []],
+        }
+        for name, var in (context.get("variables_by_name") or {}).items()
+    }
+    page["diag_trajectories"] = [
+        {"name": t.get("name")} for t in context.get("diag_trajectories") or []
+    ]
+    page["nobaseline_trajectories"] = [
+        {
+            "name": t.get("name"),
+            "overlays": [_overlay_row(ov) for ov in t.get("overlays") or []],
+        }
+        for t in context.get("nobaseline_trajectories") or []
+    ]
+    return page
 
 
-def _decimate_context_for_html(context: dict, max_samples: int) -> None:
-    """LTTB-decimate trajectory arrays embedded into interactive.html.
+def _decimated_traces(context: dict) -> list[dict]:
+    """Every figure trace the sample budget shortened, named.
 
-    Mutates ``context`` in place. Only touches ``trajectories``,
-    ``diag_trajectories``, and ``nobaseline_trajectories`` — everything
-    else (scores, statistics, ref info) passes through unchanged.
+    The figure layer stamps each trace's pre-decimation count in
+    ``meta.full_samples``; a trace whose stamp exceeds the length it
+    actually carries was decimated. The template renders this list as the
+    banner, so the reader sees WHICH curves were thinned rather than a
+    page-wide total.
     """
-    from ..figures.decimate import decimate_pair
+    out: list[dict] = []
 
-    if max_samples is None or max_samples <= 0:
-        return
-
-    def _stamp_full_samples(traj: dict) -> None:
-        # review 2026-07-06 finding 37: record pre-decimation sample counts
-        # so interactive.js can disclose "live scores computed on decimated
-        # data (N of M samples)". setdefault — trajectory dicts are shared
-        # between context['trajectories'] and variables_by_name, so the
-        # first stamp (pre-decimation) must win.
-        traj.setdefault(
-            "full_samples",
-            {
-                "act": len(traj.get("act_time") or []),
-                "ref": len(traj.get("ref_time") or []),
-            },
-        )
-
-    def _stamp_overlay_full_samples(ov: dict) -> None:
-        # An overlay is a scorable curve now, not just a picture: an
-        # against-leaf live-scores on it (D105 narrowing). Its pre-decimation
-        # count therefore has to be recorded exactly like the primary's, or
-        # the banner cannot disclose that a soft_check the user is scoring
-        # against was itself decimated — the trajectory-level stamp only ever
-        # counted act/ref. Same setdefault reason: overlay dicts are shared
-        # between context['trajectories'] and variables_by_name.
-        ov.setdefault("full_samples", len(ov.get("time") or []))
-
-    for traj in context.get("trajectories", []) or []:
-        _stamp_full_samples(traj)
-        traj["act_time"], traj["act_values"] = decimate_pair(
-            traj.get("act_time"), traj.get("act_values"), max_samples
-        )
-        traj["ref_time"], traj["ref_values"] = decimate_pair(
-            traj.get("ref_time"), traj.get("ref_values"), max_samples
-        )
-        # A2 — decimate overlay trajectories too. The embedded HTML already
-        # enforces a tight payload budget; overlays must share that cap
-        # rather than piggybacking a parallel full-resolution copy.
-        for ov in traj.get("overlays", []) or []:
-            _stamp_overlay_full_samples(ov)
-            ov["time"], ov["values"] = decimate_pair(
-                ov.get("time"), ov.get("values"), max_samples
+    def scan(varname, fig: dict) -> None:
+        for tr in fig.get("data") or []:
+            full = (tr.get("meta") or {}).get("full_samples")
+            embedded = len(tr.get("x") or [])
+            if full is None or full <= embedded:
+                continue
+            out.append(
+                {
+                    "variable": varname,
+                    "trace": tr.get("name"),
+                    "full": int(full),
+                    "embedded": embedded,
+                }
             )
 
-    # Stage-2 per-variable dict carries its own trajectory copy + overlays;
-    # decimate in place so the Stage-2 UI path shares the same budget.
-    for var_data in (context.get("variables_by_name") or {}).values():
-        traj = var_data.get("trajectory") or {}
-        if "act_time" in traj:
-            _stamp_full_samples(traj)
-            traj["act_time"], traj["act_values"] = decimate_pair(
-                traj.get("act_time"), traj.get("act_values"), max_samples
-            )
-            traj["ref_time"], traj["ref_values"] = decimate_pair(
-                traj.get("ref_time"), traj.get("ref_values"), max_samples
-            )
-        for ov in var_data.get("overlays", []) or []:
-            _stamp_overlay_full_samples(ov)
-            ov["time"], ov["values"] = decimate_pair(
-                ov.get("time"), ov.get("values"), max_samples
-            )
-
-    for traj in context.get("diag_trajectories", []) or []:
-        traj["act_time"], traj["act_values"] = decimate_pair(
-            traj.get("act_time"), traj.get("act_values"), max_samples
-        )
-        traj["ref_time"], traj["ref_values"] = decimate_pair(
-            traj.get("ref_time"), traj.get("ref_values"), max_samples
-        )
-
-    for traj in context.get("nobaseline_trajectories", []) or []:
-        traj["time"], traj["values"] = decimate_pair(
-            traj.get("time"), traj.get("values"), max_samples
-        )
-        # review 2026-07-06 finding 71: nobaseline trajectories carry the
-        # same sibling-backend / companion / soft_check overlays as
-        # baselined ones — decimate them under the same payload budget
-        # (undecimated overlays produced multi-MB HTML in exactly the
-        # sibling-backend cross-check case).
-        for ov in traj.get("overlays", []) or []:
-            _stamp_overlay_full_samples(ov)
-            ov["time"], ov["values"] = decimate_pair(
-                ov.get("time"), ov.get("values"), max_samples
-            )
+    for name, fig in (context.get("figures") or {}).items():
+        scan(name, fig)
+    for traj, fig in zip(
+        context.get("diag_trajectories") or [], context.get("diag_figures") or []
+    ):
+        scan(traj.get("name"), fig)
+    for traj, fig in zip(
+        context.get("nobaseline_trajectories") or [], context.get("nb_figures") or []
+    ):
+        scan(traj.get("name"), fig)
+    return out
 
 
 def _render_template(template_name: str, context: dict, output_path: Path) -> None:

@@ -18,8 +18,8 @@ h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
 
 .summary { font-size: 1.1em; margin-bottom: 0.5em; }
 .pass { color: #4CAF50; } .fail { color: #f44336; } .new { color: #FF9800; } .info { color: #607D8B; }
-/* Neutral headline for a root with no verdict to show (a browser-created
-   `weighted` root defers to the CLI) — matches its pill, which reads "—". */
+/* Neutral headline for a root with no verdict to show — matches its pill,
+   which reads "—". */
 .summary .pending { color: #607d8b; }
 
 /* Key stats */
@@ -29,20 +29,6 @@ h2 { color: #555; border-bottom: 1px solid #ddd; padding-bottom: 0.3em; }
 .key-stat .label { font-size: 0.75em; color: #888; text-transform: uppercase; }
 .key-stat .value { font-size: 1.1em; font-weight: 600; }
 .key-stat .ref { font-size: 0.75em; color: #999; }
-
-/* Tolerance controls + export */
-.tolerance-panel { margin-bottom: 1.5em; padding: 1em; background: white; border: 1px solid #ddd; border-radius: 4px; }
-.export-row { margin-top: 0.8em; border-top: 1px solid #eee; padding-top: 0.8em; }
-.export-row summary { cursor: pointer; font-weight: 500; color: #555; font-size: 0.9em; }
-.export-row textarea { width: 100%; min-height: 80px; font-family: monospace; font-size: 0.82em; padding: 0.5em; border: 1px solid #ccc; border-radius: 3px; resize: vertical; margin-top: 0.5em; }
-.export-buttons { display: flex; gap: 0.5em; margin-top: 0.5em; }
-.btn { padding: 0.4em 1em; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; font-size: 0.85em; background: white; }
-.btn:hover { background: #f0f0f0; }
-.tube-status .pass { font-weight: 600; }
-.tube-status .fail { font-weight: 600; }
-.btn-primary { background: #1976D2; color: white; border-color: #1976D2; }
-.btn-primary:hover { background: #1565C0; }
-.save-status { font-size: 0.85em; color: #4CAF50; margin-left: 0.5em; display: none; }
 
 /* Tables */
 table { border-collapse: collapse; width: 100%; background: white; margin-bottom: 1.5em; }
@@ -72,30 +58,10 @@ details summary:hover { color: #333; }
 .warnings-prominent table { margin: 0; }
 .meta-table { width: auto; min-width: 400px; }
 .meta-table td:first-child { font-weight: 500; white-space: nowrap; }
-/* 6.1.5 — auto-derived per-mode control panels */
-.mode-controls { display: flex; flex-wrap: wrap; gap: 0.4em 0.8em; align-items: center; font-size: 0.85em; }
-.mode-controls .mc-field { display: inline-flex; align-items: center; gap: 0.3em; }
-.mode-controls .mc-field > span { color: #555; }
-.mode-controls input[type=number] { width: 6.5em; padding: 0.1em 0.25em; }
-.mode-controls input[type=text] { width: 7em; padding: 0.1em 0.25em; }
-.mode-controls select { padding: 0.1em 0.25em; }
-/* Passthrough (raw-JSON) fields — e.g. scalar's Quantity. One line high,
-   wide enough for the values these actually hold ({"reduce": "final"});
-   the 12em × 2-row box wrapped that mid-token. Resizable both ways for
-   the rare long one. */
-.mode-controls textarea { width: 26em; max-width: 100%; min-height: 1.9em; height: 1.9em; font-family: monospace; font-size: 0.85em; padding: 0.15em 0.35em; white-space: pre; overflow-x: auto; resize: both; vertical-align: middle; }
-.mode-controls .mc-passthrough { align-items: center; }
-.cli-authoritative { display: inline-block; margin-left: 0.5em; padding: 0.1em 0.45em; border-radius: 3px; background: #eef3ff; border: 1px solid #b5c5e8; color: #3a5ba0; font-size: 0.75em; }
 /* Advisory (warn-wrapped) failure marker — C-v item (c). A leaf under a
    warn wrapper cannot fail the root, so it must not paint the summary or
    the variable pill red; it gets this amber chip instead. */
 .advisory-chip { display: inline-block; margin-left: 0.5em; padding: 0.05em 0.45em; border-radius: 3px; background: #fff3cd; border: 1px solid #ffc107; color: #8a6d00; font-size: 0.75em; font-weight: 600; vertical-align: middle; }
-/* 6.1.1 — idea #46 UI surfacing: universal window inputs for tree leaves */
-.window-controls { display: flex; flex-wrap: wrap; gap: 0.3em 0.6em; align-items: center; margin-top: 0.3em; padding-top: 0.3em; border-top: 1px dashed #e0e0e0; font-size: 0.8em; }
-.window-controls .wc-label { color: #888; font-weight: 500; }
-.window-controls .wc-field { display: inline-flex; align-items: center; gap: 0.25em; }
-.window-controls .wc-field > span { color: #777; font-size: 0.85em; }
-.window-controls input[type=number] { width: 5.5em; padding: 0.1em 0.25em; }
 /* A2 / idea #50 — per-plot overlay picker (companions + soft_checks) */
 .overlay-picker { display: flex; flex-wrap: wrap; gap: 0.5em 1em; align-items: center; font-size: 0.8em; margin: 0.2em 0 0.5em 0; padding: 0.3em 0.6em; background: #f9f9f9; border: 1px dashed #e0e0e0; border-radius: 4px; }
 .overlay-picker .ov-label { color: #666; font-weight: 500; }
@@ -121,87 +87,25 @@ details summary:hover { color: #333; }
 .node-status.pass { background: #e8f5e9; color: #2e7d32; }
 .node-status.fail { background: #ffebee; color: #c62828; }
 .node-status.pending { background: #eceff1; color: #607d8b; }
-.node-visible { margin-right: 0.2em; }
-.node-controls { margin-top: 0.4em; padding-left: 1.4em; }
-.node-btn { margin-left: 0.3em; padding: 0 0.45em; border: 1px solid #ccc; border-radius: 3px; background: white; cursor: pointer; font-size: 0.85em; line-height: 1.3; }
-.node-btn:hover { background: #f0f0f0; }
-.node-btn:disabled, .node-btn-disabled { color: #bbb; border-color: #e0e0e0; background: #f7f7f7; cursor: not-allowed; }
-.node-btn:disabled:hover { background: #f7f7f7; }
-.node-btn-add { color: #2e7d32; border-color: #a5d6a7; }
-.node-btn-add:hover { background: #e8f5e9; }
-.node-btn-remove { color: #c62828; border-color: #ef9a9a; }
-.node-btn-remove:hover { background: #ffebee; }
-.node-btn-reset { color: #546e7a; border-color: #b0bec5; }
-.node-btn-reset:hover { background: #eceff1; }
-.node-btn-wrap { color: #6a1b9a; border-color: #ce93d8; }
-.node-btn-wrap:hover { background: #f3e5f5; }
-.node-btn-unwrap { color: #6a1b9a; border-color: #ce93d8; }
-.node-btn-unwrap:hover { background: #f3e5f5; }
-.node-kind-select { font-size: 0.82em; padding: 0.05em 0.3em; font-weight: 500; color: #333; background: white; border: 1px solid #c5b0d0; border-radius: 3px; cursor: pointer; }
 .node-child-count { font-size: 0.8em; color: #888; font-family: monospace; }
 .node-criterion { font-size: 0.82em; color: #666; margin-top: 0.15em; padding-left: 0.2em; }
 .node-details { display: grid; grid-template-columns: auto 1fr; gap: 0.05em 0.6em; margin: 0.3em 0 0 0.2em; font-size: 0.8em; }
 .node-details dt { color: #888; }
 .node-details dd { margin: 0; color: #333; font-family: monospace; }
 .node-combinator-params { display: inline-flex; gap: 0.4em; align-items: center; margin-left: 0.3em; padding-left: 0.4em; border-left: 1px dashed #cbb5d6; font-size: 0.82em; }
-.node-combinator-params label.mc-field { flex-direction: row; gap: 0.2em; margin: 0; }
-.node-combinator-params input.node-k-input, .node-combinator-params input.node-threshold-input { width: 4em; padding: 1px 4px; font-size: 0.82em; }
-.node-combinator-params .node-weight-input { width: 3.3em; padding: 1px 4px; font-size: 0.82em; margin-left: 0.15em; }
-.node-combinator-params .node-weights .mc-field-label { color: #555; margin-right: 0.2em; }
-.wrap-popup { display: inline-flex; align-items: center; gap: 0.3em; margin-left: 0.5em; padding: 0.2em 0.5em; background: #f3e5f5; border: 1px solid #ce93d8; border-radius: 4px; font-size: 0.8em; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
-.wrap-popup-label { color: #4a148c; }
-.wrap-popup-kind { font-size: 0.8em; padding: 0.05em 0.3em; }
-.node-btn.wrap-popup-yes { color: #333; font-weight: 600; }
-.node-btn.wrap-popup-yes:hover { background: #f0f0f0; }
-.node-btn.wrap-popup-no { color: #546e7a; }
-.node-btn.wrap-popup-no:hover { background: #eceff1; }
 .metric-tree-section { margin-bottom: 1.5em; padding: 1em; background: white; border: 1px solid #ddd; border-radius: 4px; }
 .metric-tree-section summary { font-weight: 600; cursor: pointer; }
 .node-tree-hint { font-weight: 400; color: #888; font-size: 0.85em; }
-/* Active-leaf highlight (MODE_PLOT_EDITORS activation target) */
-.node.node-active { background: #e3f2fd; border-left-color: #1976D2; box-shadow: inset 2px 0 0 #1976D2; }
-.node-active .node-header { cursor: pointer; }
-.node-editor { margin-top: 0.5em; padding: 0.5em 0.8em; background: #f5faff; border: 1px dashed #bbd6f2; border-radius: 3px; font-size: 0.85em; }
-.node-editor:empty { display: none; }
-.editor-title { font-weight: 600; color: #1976D2; margin-bottom: 0.3em; }
-.editor-hint { font-size: 0.8em; color: #666; margin-bottom: 0.5em; }
-.window-brush-wrap { display: flex; gap: 0.3em; margin-top: 0.5em; padding-top: 0.4em; border-top: 1px dashed #cfd8dc; align-items: center; }
-.node-btn.brush-armed { background: #fff3e0; border-color: #ffb74d; color: #e65100; }
-/* Inline modal for the + add-leaf dialog (replaces window.prompt) */
-.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.modal-dialog { background: white; padding: 1.2em 1.4em; border-radius: 6px; min-width: 340px; max-width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.25); }
-.modal-dialog h3 { margin: 0 0 0.8em 0; }
-.modal-dialog label.mc-field { display: flex; flex-direction: column; align-items: stretch; gap: 0.2em; margin-bottom: 0.6em; font-size: 0.9em; }
-.modal-dialog label.mc-field > span { color: #555; font-size: 0.8em; }
-.modal-dialog select, .modal-dialog input { padding: 0.3em 0.5em; font-family: inherit; font-size: 0.95em; border: 1px solid #ccc; border-radius: 3px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 0.5em; margin-top: 0.8em; }
-.modal-dialog .var-warning { color: #c62828; font-size: 0.8em; margin-top: 0.2em; min-height: 1em; }
-/* Tube editor layout */
-.tube-editor-controls { display: flex; flex-wrap: wrap; gap: 0.6em 1em; align-items: center; margin-bottom: 0.6em; font-size: 0.85em; }
-.tube-editor-controls label { display: inline-flex; flex-direction: column; gap: 0.15em; color: #555; font-size: 0.75em; }
-.tube-editor-controls select, .tube-editor-controls input[type=number] { padding: 0.2em 0.3em; font-family: inherit; font-size: 0.9em; border: 1px solid #ccc; border-radius: 3px; }
-.tube-editor-controls .tube-status { margin-left: auto; font-size: 0.88em; }
-.tube-editor-controls .tube-status .pass { color: #2e7d32; font-weight: 600; }
-.tube-editor-controls .tube-status .fail { color: #c62828; font-weight: 600; }
-.tube-table { width: auto; min-width: 300px; border-collapse: collapse; font-size: 0.85em; margin-bottom: 0.5em; }
-.tube-table th { background: #eceff1; padding: 0.3em 0.6em; text-align: left; font-weight: 600; font-size: 0.8em; }
-.tube-table td { padding: 0.2em 0.4em; }
-.tube-table input { width: 6em; padding: 1px 4px; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.85em; }
-.tube-table select { font-size: 0.82em; padding: 0 0.2em; }
-.tube-summary { margin-top: 0.4em; padding-left: 1.4em; color: #607d8b; font-size: 0.8em; font-style: italic; }
 /* Reason a sentinel leaf could not be scored (misconfigured metric, empty window) */
 .node-error { margin-top: 0.3em; padding-left: 1.4em; color: #b71c1c; font-size: 0.8em; }
 /* Per-plot controls row */
 .plot-controls { display: flex; gap: 1em; align-items: center; margin-bottom: 0.5em; font-size: 0.85em; color: #555; }
 .plot-controls label { display: inline-flex; align-items: center; gap: 0.4em; }
 .error-overlay-select { padding: 0.15em 0.3em; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.85em; }
-/* Inline remove-confirm popup (replaces window.confirm) */
-.remove-confirm { display: inline-flex; align-items: center; gap: 0.3em; margin-left: 0.5em; padding: 0.2em 0.5em; background: #fff3e0; border: 1px solid #ffb74d; border-radius: 4px; font-size: 0.8em; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
-.remove-confirm-label { color: #bf360c; margin-right: 0.2em; }
-.node-btn.remove-confirm-yes { color: #333; font-weight: 600; }
-.node-btn.remove-confirm-yes:hover { background: #f0f0f0; }
-.node-btn.remove-confirm-no { color: #546e7a; }
-.node-btn.remove-confirm-no:hover { background: #eceff1; }
+/* Decimation disclosure — which traces the page draws at reduced
+   resolution, and where the full-resolution data lives. */
+#decimation-banner { background: #fff3cd; border: 1px solid #ffe08a; border-radius: 4px; color: #664d03; padding: 8px 12px; margin: 0 0 12px 0; font-size: 0.85em; }
+#decimation-banner .dec-trace { font-family: monospace; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -234,6 +138,17 @@ details summary:hover { color: #333; }
 </div>
 {%- endif -%}
 {% endmacro %}
+
+{# === DECIMATION DISCLOSURE ===
+   Server-rendered from the figures' ``full_samples`` stamps: a trace whose
+   stamp exceeds the samples it carries was thinned to fit the page. The
+   sidecar is the full-resolution copy. #}
+{% if decimated %}
+<div id="decimation-banner">
+  <strong>{{ decimated | length }}</strong> trace{{ '' if decimated | length == 1 else 's' }} decimated to fit this page — full resolution in <code>comparison_data.json</code>:
+  {% for d in decimated %}<span class="dec-trace">{{ d.variable }} {{ d.trace }} {{ d.full }}&rarr;{{ d.embedded }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
+</div>
+{% endif %}
 
 <h1>{{ model_id }}</h1>
 {% if run_metadata %}<div class="run-meta" style="font-size:0.85em; color:#888; margin-bottom:0.25em;"><strong>{{ run_metadata.label }}</strong>{% if run_metadata.tool_version and run_metadata.tool_version != run_metadata.label %} <span title="version reported by the backend">({{ run_metadata.tool_version }})</span>{% endif %}{% if run_metadata.msl %} · MSL {{ run_metadata.msl }}{% endif %}{% if run_metadata.os %} · {{ run_metadata.os }}{% endif %}{% if run_metadata.dstf_version %} · DSTF {{ run_metadata.dstf_version }}{% endif %}{% if run_metadata.generated_str %} · {{ run_metadata.generated_str }}{% endif %}</div>{% endif %}
@@ -371,36 +286,13 @@ details summary:hover { color: #333; }
 {# === METRIC TREE (Stage 3 — full unfiltered SpecNodeView mount) === #}
 {% if tree_view %}
 <details class="metric-tree-section" open>
-  <summary>Metric Tree <span class="node-tree-hint">— every leaf + combinator; edits here round-trip with the per-variable panels below</span></summary>
+  <summary>Metric Tree <span class="node-tree-hint">— every leaf + combinator, as the CLI scored it</span></summary>
   <div class="node-tree" id="nodes-full">{{ node(tree_view) }}</div>
 </details>
 {% endif %}
 
-{# === EXPORT PANEL (Stage 2 — global tolerance slider retired; per-leaf tolerance lives in the tree node) === #}
-{% if variables_by_name %}
-<div class="tolerance-panel">
-  <div class="export-row">
-    <details open>
-      <summary>Export Spec Patch</summary>
-      <textarea id="export-json" readonly></textarea>
-      <div class="export-buttons">
-        <button class="btn btn-primary" onclick="copyExport()">Copy to Clipboard</button>
-        <button class="btn" onclick="downloadExport()">Download JSON</button>
-        <span class="save-status" id="save-status"></span>
-      </div>
-      <p style="font-size:0.8em; color:#888; margin-top:0.5em;">
-        RFC 6902 JSON-Patch. To apply: <code>uv run dstf spec-update spec_patch.json</code>.
-        Preserves existing <code>description</code> / <code>metadata</code> / unknown keys in <code>test_spec.json</code>.
-      </p>
-    </details>
-  </div>
-</div>
-{% endif %}
-
 {# === VARIABLE SECTIONS — Stage 2 per-variable layout === #}
-{# One plot per unique variable; recursive SpecNodeView mounts below it. #}
-{# Leaf controls, window inputs, tube editing, visibility toggles all #}
-{# live inside the tree component (JS-driven) rather than a flat table. #}
+{# One plot per unique variable, with the leaves scoring it below. #}
 {% if variables_by_name %}
 {% for varname, vardata in variables_by_name.items() %}
 <div class="variable-section" data-variable="{{ varname }}" data-vidx="{{ loop.index0 }}" id="variable-section-{{ loop.index0 }}">
@@ -453,22 +345,14 @@ details summary:hover { color: #333; }
 {% endif %}
 
 <script>
-// Data marshalling only — all behavior lives in interactive.js.
+// Data marshalling only — the figure dicts and the order the plot elements
+// were numbered in. Everything else on this page is server-rendered markup.
 window.MT_REPORT = {
-  MODEL_ID: {{ model_id | tojson }},
-  TREE_VIEW: {{ tree_view | tojson }},
-  VARIABLES_BY_NAME: {{ variables_by_name | tojson }},
   {# review 2026-07-06 finding 76h: emit the key order explicitly — JS
      Object.keys() reorders integer-like keys numerically, desyncing plot
      element IDs from this template's loop.index0 numbering. #}
   VARIABLE_ORDER: {{ variables_by_name | list | tojson }},
-  MODE_SCHEMAS: {{ mode_schemas | tojson }},
-  {# The add-leaf modal reads the soft_check rows to populate its "against"
-     selector — companions are never scorable (validator.py). #}
-  OVERLAY_ROWS: {{ overlay_rows | tojson }},
-  DIAG_TRAJECTORIES: {{ diag_trajectories | tojson }},
-  NB_TRAJECTORIES: {{ nobaseline_trajectories | tojson }},
-  {# Figure dicts from dstf.figures — the first paint of every plot. #}
+  {# Figure dicts from dstf.figures — every plot on the page, verbatim. #}
   FIGURES: {{ (figures or {}) | tojson }},
   DIAG_FIGURES: {{ (diag_figures or []) | tojson }},
   NB_FIGURES: {{ (nb_figures or []) | tojson }},

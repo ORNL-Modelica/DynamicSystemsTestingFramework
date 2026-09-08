@@ -106,8 +106,8 @@ def collect_leaf_paths(spec: SpecNode, *, root: str = "/metrics") -> list[str]:
 
     Order matches :func:`tree_eval.collect_leaf_variables` (pre-order walk)
     and the paths the evaluator stamps on results. Paths are entry-relative
-    — the reporter's ``buildPatchData`` uses them directly in RFC 6902
-    patch ops (the whitelist in :mod:`patch_apply` covers ``/metrics``).
+    — an RFC 6902 patch op uses them directly (the whitelist in
+    :mod:`patch_apply` covers ``/metrics``).
 
     Example: a two-leaf AND under the root yields
     ``["/metrics/children/0", "/metrics/children/1"]``; a single-leaf root

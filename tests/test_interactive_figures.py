@@ -1,7 +1,13 @@
-"""The page's first paint comes from the embedded figure dict; an edit
-falls back to the JavaScript path until sub-project 2 removes it."""
+"""The page paints figure dicts and nothing else.
+
+Hand-built contexts here, so a figure can be constructed on its own and
+asserted trace for trace. The end-to-end path — a page out of
+``generate_comparison_plots`` — is ``tests/test_interactive_report.py``.
+"""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -9,8 +15,112 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
 
-from test_interactive_playwright import _fixture_context  # noqa: E402
-from test_interactive_points import _render_with_context  # noqa: E402
+_TEMPLATE_DIR = (
+    Path(__file__).resolve().parents[1] / "src" / "dstf" / "reporting" / "templates"
+)
+
+
+def _fixture_context() -> dict:
+    """A minimal render context: one variable, one tube leaf, no figures yet.
+
+    Every key the template dereferences is here — the template renders the
+    tree, the summary line and the variable pill server-side, so a missing
+    key is a silently blank page rather than an error.
+    """
+    t = np.linspace(0, 3, 50).tolist()
+    ref = [1 + np.sin(x) for x in t]
+    act = [v + 0.01 for v in ref]
+    leaf = {
+        "kind": "leaf",
+        "path": "/metrics/children/0",
+        "metric": "tube",
+        "variable": "h",
+        "params": {"tube_width_mode": "band", "tube_abs": 0.05},
+        "against": "primary",
+        "window": {},
+        "children": [],
+        "passed": True,
+        "score": 0.2,
+        "label": "h",
+        "name": "h",
+        "mode_effective": "tube",
+        "score_display": "tube 100% inside",
+        "criterion": "every sample inside the tube → PASS",
+        "details": [["Points inside", "100%"]],
+        "window_values": {},
+        "error": None,
+        "advisory": False,
+    }
+    tree = {
+        "kind": "combinator",
+        "combinator": "and",
+        "path": "/metrics",
+        "passed": True,
+        "label": "and[1]",
+        "children": [leaf],
+    }
+    return {
+        "model_id": "Fixture.Figures",
+        "n_passed": 1,
+        "sim_failed": False,
+        "is_simulate_only": False,
+        "last_run_at": 0,
+        "last_run_str": "",
+        "warnings": [],
+        "key_stats": [],
+        "ref_info": [],
+        "sim_params": [],
+        "statistics_sections": [],
+        "diagnostic_summaries": [],
+        "artifacts": [],
+        "diag_trajectories": [],
+        "nobaseline_trajectories": [],
+        "overlay_rows": [],
+        "tree_view": tree,
+        "tree_summary": {
+            "n_pass": 1,
+            "n_total": 1,
+            "root_passed": True,
+            "n_advisory_failed": 0,
+        },
+        "variables_by_name": {
+            "h": {
+                "name": "h",
+                "trajectory": {
+                    "index": 1,
+                    "name": "h",
+                    "act_time": t,
+                    "act_values": act,
+                    "ref_time": t,
+                    "ref_values": ref,
+                },
+                "overlays": [],
+                "leaf_paths": ["/metrics/children/0"],
+                "tree": tree,
+                "passed": True,
+                "n_advisory_failed": 0,
+            }
+        },
+        "decimated": [],
+        "figures": {},
+        "diag_figures": [],
+        "nb_figures": [],
+        "run_metadata": None,
+    }
+
+
+def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
+    """Render a context to ``tmp_path/interactive.html`` with its assets."""
+    from jinja2 import Environment, FileSystemLoader
+
+    from dstf.reporting.report_suite import write_report_assets
+
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
+    html = env.get_template("interactive.html").render(**ctx)
+    html_path = tmp_path / "interactive.html"
+    html_path.write_text(html, encoding="utf-8")
+    write_report_assets(tmp_path)
+    return html_path
 
 
 def _context_with_figure():
@@ -42,8 +152,6 @@ def _context_with_figure():
         )
     )
     ctx["figures"] = {var: fig}
-    ctx["diag_figures"] = []
-    ctx["nb_figures"] = []
     return ctx, fig
 
 
@@ -82,48 +190,10 @@ def test_error_overlay_toggles_the_embedded_error_trace(tmp_path, playwright_bro
     }
 
 
-def test_an_edit_after_the_python_paint_takes_the_js_path(tmp_path, playwright_browser):
-    """The existing editor tests render contexts with no figures, so they
-    never edit a Python-painted plot. This one does: the first paint is the
-    dict, a tolerance edit re-renders through the JavaScript contributions,
-    the live scorer still flips the pill, and nothing throws."""
-    ctx, _ = _context_with_figure()
-    html_path = _render_with_context(tmp_path, ctx)
-    page = playwright_browser.new_page()
-    errors: list[str] = []
-    page.on("pageerror", lambda exc: errors.append(str(exc)))
-    page.goto(html_path.as_uri())
-    assert page.evaluate("!!document.getElementById('plot-0')._mt_python")
-
-    sel = '#nodes-full [data-path="/metrics/children/0"] input[data-field="tolerance"]'
-    inp = page.locator(sel).first
-    inp.fill("1e-12")
-    inp.dispatch_event("input")
-    state = page.evaluate(
-        "() => { const el = document.getElementById('plot-0');"
-        " return { python: !!el._mt_python, n: el.data.length }; }"
-    )
-    pill = page.locator(
-        '#nodes-full [data-path="/metrics/children/0"] > .node-header > .node-status'
-    ).first
-    pill_text = pill.text_content()
-    # The error overlay must still work on the re-rendered (JS) plot: the
-    # old branch adds its own 'Error overlay' trace.
-    drawn = page.evaluate(
-        "() => { setErrorOverlay(0, 'abs'); const el = document.getElementById('plot-0');"
-        " return el.data.some(t => t.name === 'Error overlay'); }"
-    )
-    page.close()
-    assert state["python"] is False and state["n"] > 0
-    assert pill_text == "FAIL"
-    assert drawn is True
-    assert errors == []
-
-
 def test_overlay_picker_toggles_a_python_painted_overlay(tmp_path, playwright_browser):
     """The picker finds an overlay trace by name; the Python figure must
-    name it the way scorers.js overlayTraceName does, or ticking a soft
-    check on the first paint toggles nothing."""
+    name it the way ``overlayTraceName`` does, or ticking a soft check
+    toggles nothing."""
     from dstf.figures.plotly import variable_figure
     from dstf.figures.view import build_view
 
@@ -148,7 +218,6 @@ def test_overlay_picker_toggles_a_python_painted_overlay(tmp_path, playwright_br
             overlays=[overlay],
         )
     )
-    # A no-baseline plot never re-renders, so its picker has only this path.
     ctx["nobaseline_trajectories"] = [
         {
             "name": "fresh",

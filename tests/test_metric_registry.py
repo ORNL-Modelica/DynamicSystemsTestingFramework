@@ -267,22 +267,18 @@ class TestToyMetricEndToEnd:
 
 class TestDerivedControls:
     def test_registered_metric_gets_a_schema(self):
-        from dstf.reporting.ui.mode_controls import (
-            emit_mode_schemas,
-            get_mode_ui,
-            registered_modes,
-        )
+        from dstf.comparison.registry import metric
+        from dstf.reporting.ui.mode_controls import derive_schema
 
         register_metric(_final_slope_descriptor())
 
-        ui = get_mode_ui("final-slope")
-        assert ui is not None
-        assert ui.config_cls is FinalSlopeConfig
-        assert [f.name for f in ui.schema.fields] == ["max_slope"]
-        assert ui.schema.fields[0].type == "float"
-        assert ui.schema.fields[0].label == "Max final slope"
-        assert "final-slope" in registered_modes()
-        assert "final-slope" in emit_mode_schemas()
+        desc = metric("final-slope")
+        assert desc is not None
+        assert desc.config_cls is FinalSlopeConfig
+        schema = derive_schema(desc.config_cls, mode="final-slope")
+        assert [f.name for f in schema.fields] == ["max_slope"]
+        assert schema.fields[0].type == "float"
+        assert schema.fields[0].label == "Max final slope"
 
     def test_registered_metric_reaches_the_exported_json_schema(self):
         from dstf.reporting.schema_export import build_schema
@@ -291,12 +287,6 @@ class TestDerivedControls:
         schema = build_schema()
         assert "final-slope" in schema["$defs"]["leaf"]["properties"]["metric"]["enum"]
         assert "max_slope" in schema["$defs"]["mode_final_slope"]["properties"]
-
-    def test_builtin_plot_editor_flags_survive_derivation(self):
-        pass
-
-        # has_plot_editor was deleted with _UI_EXTRAS (B1 review finding 1:
-        # unconsumed, and wrong for two of five modes). JS owns that fact.
 
 
 # ---------------------------------------------------------------------------
@@ -363,66 +353,6 @@ class TestAcceptedDatasets:
         assert vc.mode == "final-slope"
 
 
-class TestThirdPartyMetricInTheReporter:
-    def test_registered_metric_is_badged_cli_authoritative(self):
-        """The template JS can only live-rescore the metrics in its own
-        MODE_SCORERS table; a Python-registered metric keeps the CLI
-        verdict, and the report must SAY so via the badge instead of
-        silently not rescoring (B1 review follow-up: the badge rule is
-        'not JS-scored', no longer 'event-timing only')."""
-        from pathlib import Path
-
-        from dstf.backends import TestResult, VariableResult
-        from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
-        from dstf.discovery.test_registry import TestModel
-        from dstf.reporting.context_builder import _build_template_context
-
-        register_metric(_final_slope_descriptor())
-        t = np.linspace(0.0, 1.0, 20)
-        v = 0.5 * t
-        mode = _final_slope_descriptor().build({}, 1e-4)
-        vc = mode.compare(t, v, t, v)
-        vc.name = "x"
-        vc.index = 1
-        # The report looks leaves up by the path the evaluator stamps; a
-        # single-leaf explicit tree is stamped "/metrics".
-        root = leaf_from_variable(vc)
-        stamp_leaf_path(root, "/metrics")
-
-        model = TestModel(
-            model_id="Toy.FinalSlope",
-            source_file=Path("toy.mo"),
-            source_package="Toy",
-            short_name="FinalSlope",
-            n_vars=1,
-            metric_tree_spec=parse_metric_tree(
-                {"metric": "final-slope", "variable": "x"}
-            ),
-        )
-        ctx = _build_template_context(
-            model_id=model.model_id,
-            comparisons=[vc],
-            ref_data=None,
-            cur_stats=None,
-            test_dir=None,
-            test_model=model,
-            result=TestResult(
-                model_id=model.model_id,
-                success=True,
-                variables=[VariableResult(index=1, time=t, values=v)],
-            ),
-            metric_tree=root,
-        )
-        leaf = ctx["tree_view"]
-        assert leaf["kind"] == "leaf"
-        assert leaf["cli_authoritative"] is True
-        # The five JS-scored builtins stay live (spot check).
-        from dstf.reporting.context_builder import _JS_SCORED_METRICS
-
-        assert "nrmse" in _JS_SCORED_METRICS
-        assert "event-timing" not in _JS_SCORED_METRICS
-
-
 # ---------------------------------------------------------------------------
 # (f) Reset helper
 # ---------------------------------------------------------------------------
@@ -444,11 +374,3 @@ class TestResetForTests:
         registry._reset_for_tests()
         registry._reset_for_tests()
         assert [d.name for d in registry.metrics()][0] == "nrmse"
-
-    def test_derived_ui_cache_follows_the_reset(self):
-        from dstf.reporting.ui.mode_controls import get_mode_ui
-
-        register_metric(_final_slope_descriptor())
-        assert get_mode_ui("final-slope") is not None
-        registry._reset_for_tests()
-        assert get_mode_ui("final-slope") is None

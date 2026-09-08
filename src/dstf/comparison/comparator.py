@@ -10,8 +10,7 @@ The comparison surface is split across three modules:
     ``_compare_tube`` / ``_compare_points`` / ``_compare_range`` /
     ``_compare_scalar`` / ``_compare_event_timing`` /
     ``_compare_dominant_frequency`` plus
-    their FFT/event-detection helpers). Pure compute; mirrors the JS
-    ``MODE_SCORERS`` for the live-preview live-recompute path.
+    their FFT/event-detection helpers). Pure compute.
   * THIS MODULE — :func:`compare_test` and :func:`compare_all`
     orchestration: pulls the right baseline, dispatches to the right
     algorithm via the :class:`MetricTree` evaluator, threads structural

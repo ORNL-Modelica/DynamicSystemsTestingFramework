@@ -1,19 +1,11 @@
-"""Reporter UI helpers — auto-derived per-mode control panels (Phase 6.1.1).
+"""Reporter UI helpers — the per-mode schema derived from typed Configs.
 
-The reporter-as-IDE surface (D66) auto-generates interactive form controls
-from each :class:`ComparisonMode`'s typed Config dataclass. This package
-owns the introspection-to-schema and schema-to-HTML pipeline that bridges
-mode names to their UI shape.
+Each :class:`ComparisonMode`'s Config dataclass is the single source of
+truth for its fields; :func:`derive_schema` introspects one into a schema
+the JSON-Schema export publishes and the authoring tool builds forms from.
+The report page itself has no forms.
 """
 
-from .mode_controls import (
-    derive_schema,
-    get_mode_ui,
-    render_schema_html,
-)
+from .mode_controls import derive_schema
 
-__all__ = [
-    "derive_schema",
-    "get_mode_ui",
-    "render_schema_html",
-]
+__all__ = ["derive_schema"]

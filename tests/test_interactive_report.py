@@ -6,9 +6,9 @@ this file is the safety net the deletion commit (sub-project 2, "the cut") is
 checked against, so it has to describe behaviour a user can see, not the shape
 of a fixture.
 
-Three assertions can only hold AFTER the cut and are ``xfail(strict=True)``
-until it lands: the metric tree is read-only, the decimation banner names the
-traces it decimated, and no JavaScript computes a verdict.
+Three of these could only hold after the cut: the metric tree is read-only,
+the decimation banner names the traces it decimated, and no JavaScript
+computes a verdict. They were ``xfail(strict=True)`` while it was pending.
 """
 
 from __future__ import annotations
@@ -396,17 +396,6 @@ def _embedded_figures(html_path: Path) -> dict:
     return json.loads(re.search(r"FIGURES:\s*(\{.*?\}),\s*$", block, re.S).group(1))
 
 
-def _reaches_the_page(text: str, source: str) -> bool:
-    """Did ``text`` reach the served page, in the DOM or in an embedded blob?
-
-    A string rendered into the DOM appears verbatim; one still travelling
-    inside an embedded JSON literal appears with its non-ASCII characters
-    ``\\uXXXX``-escaped. Accepting both is what lets an assertion hold
-    across the change that moves it from the blob into the markup.
-    """
-    return text in source or json.dumps(text)[1:-1] in source
-
-
 def _leaf_verdicts(comp) -> dict[str, bool]:
     """``{leaf_path: passed}`` straight off the CLI-evaluated tree."""
     out: dict[str, bool] = {}
@@ -652,10 +641,9 @@ def test_metric_tree_shows_verdict_and_summary_text_per_leaf(
 ):
     """Every leaf shows the CLI's verdict and the CLI's ``summarize`` text.
 
-    Note the criterion is asserted against the served page rather than the
-    rendered DOM: today it travels in the embedded leaf view and no JS puts
-    it on screen. The assertion holds either way, so it survives the cut
-    that makes the tree server-rendered.
+    Asserted against the rendered DOM — since the cut the tree is markup
+    the server wrote, so every one of these strings is on screen rather
+    than travelling inside an embedded blob.
     """
     from dstf.comparison.registry import summarize
     from dstf.comparison.tree_eval import leaf_comparisons_by_path
@@ -670,15 +658,16 @@ def test_metric_tree_shows_verdict_and_summary_text_per_leaf(
         document.querySelectorAll('#nodes-full .node-leaf[data-path]').forEach(n => {
           const pill = n.querySelector(':scope > .node-header > .node-status');
           const score = n.querySelector(':scope > .node-header > .node-score');
+          const crit = n.querySelector(':scope > .node-criterion');
           out[n.dataset.path] = {
             pill: pill ? pill.textContent : null,
             score: score ? score.textContent : null,
+            criterion: crit ? crit.textContent : null,
           };
         });
         return out;
     }""")
     body = page.inner_text("body")
-    source = page.content()
     chip = page.locator(".advisory-chip").first.text_content()
     page.close()
 
@@ -690,7 +679,7 @@ def test_metric_tree_shows_verdict_and_summary_text_per_leaf(
         assert rendered[path]["pill"] == ("PASS" if passed else "FAIL"), path
         assert rendered[path]["score"] == summary.display, path
         assert summary.display in body, path
-        assert _reaches_the_page(summary.criterion, source), path
+        assert rendered[path]["criterion"] == summary.criterion, path
 
     # The warn subtree's failing leaf is advisory, not a test failure — the
     # page has to say so somewhere the reader will see it.
@@ -698,7 +687,6 @@ def test_metric_tree_shows_verdict_and_summary_text_per_leaf(
     assert "advisory" in chip
 
 
-@pytest.mark.xfail(strict=True, reason="until the cut")
 def test_metric_tree_is_read_only(compared, playwright_browser):
     """After the cut the tree is a server-rendered read-only view: no form
     control of any kind inside a tree mount."""
@@ -810,7 +798,6 @@ def test_window_band_is_open_ended_when_one_end_is_none(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="until the cut")
 def test_decimation_banner_names_every_decimated_trace(compared, playwright_browser):
     """After the cut the banner is server-rendered from the figures'
     ``full_samples`` stamps, so it can name which traces were decimated.
@@ -831,7 +818,6 @@ def test_decimation_banner_names_every_decimated_trace(compared, playwright_brow
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="until the cut")
 def test_no_javascript_computes_a_verdict(compared, playwright_browser):
     html, _ = compared
     page, _errors = _open(playwright_browser, html)

@@ -789,11 +789,13 @@ class TestScalarReporterSurfaces:
         assert "scalar" in schema["$defs"]["leaf"]["properties"]["metric"]["enum"]
 
     def test_mode_controls_derive_scalar_fields(self):
-        from dstf.reporting.ui.mode_controls import emit_mode_schemas, get_mode_ui
+        from dstf.comparison.registry import metric
+        from dstf.reporting.ui.mode_controls import derive_schema
 
-        ui = get_mode_ui("scalar")
-        assert ui is not None
-        names = [f.name for f in ui.schema.fields]
+        desc = metric("scalar")
+        assert desc is not None
+        schema = derive_schema(desc.config_cls, mode="scalar")
+        names = [f.name for f in schema.fields]
         assert names == [
             "quantity",
             "tolerance",
@@ -801,13 +803,9 @@ class TestScalarReporterSurfaces:
             "min_value",
             "max_value",
         ]
-        # A quantity is a JSON object or a path string — the passthrough
-        # textarea is the control the other complex fields use too.
-        assert ui.schema.fields[0].type == "passthrough"
-        html = ui.render(variable="x", values={"quantity": {"reduce": "max"}})
-        assert 'data-field="quantity"' in html
-        assert 'data-field="tolerance_mode"' in html
-        assert "scalar" in emit_mode_schemas()
+        # A quantity is a JSON object or a path string — neither a scalar
+        # nor an enum, so it derives as a passthrough.
+        assert schema.fields[0].type == "passthrough"
 
     def test_score_display_baseline_form(self):
         from dstf.comparison.registry import summarize
@@ -877,64 +875,3 @@ class TestScalarReporterSurfaces:
         score, criterion = summary.display, summary.criterion
         assert score == "not scored"
         assert "no actual samples" in criterion
-
-    def test_scalar_leaf_is_stamped_cli_authoritative(self):
-        from dstf.comparison.comparator import compare_test
-        from dstf.reporting.context_builder import _build_template_context
-
-        time = np.linspace(0.0, 1.0, 11)
-        test = TestModel(
-            model_id="Test.Model",
-            source_file=Path(""),
-            source_package="Test",
-            short_name="Model",
-            n_vars=1,
-            metric_tree_spec=parse_metric_tree(
-                {
-                    "combinator": "and",
-                    "children": [
-                        {
-                            "metric": "scalar",
-                            "variable": "x",
-                            "quantity": {"reduce": "final"},
-                            "tolerance": 0.1,
-                        },
-                        {"metric": "nrmse", "variable": "x", "tolerance": 0.1},
-                    ],
-                }
-            ),
-        )
-        result = TestResult(
-            model_id="Test.Model",
-            success=True,
-            variables=[VariableResult(index=1, name="x", time=time, values=time)],
-        )
-        reference = {
-            "test_id": "0001",
-            "variables": [
-                {
-                    "index": 1,
-                    "name": "x",
-                    "time": time.tolist(),
-                    "values": time.tolist(),
-                }
-            ],
-        }
-        comp = compare_test(test, result, reference)
-        context = _build_template_context(
-            model_id=test.model_id,
-            comparisons=comp.variables,
-            ref_data=reference,
-            cur_stats=None,
-            test_dir=None,
-            test_model=test,
-            result=result,
-            metric_tree=comp.metric_tree,
-        )
-        children = context["tree_view"]["children"]
-        scalar_leaf, nrmse_leaf = children[0], children[1]
-        assert scalar_leaf["metric"] == "scalar"
-        assert scalar_leaf["cli_authoritative"] is True
-        assert nrmse_leaf["cli_authoritative"] is False
-        assert scalar_leaf["mode_values"]["quantity"] == {"reduce": "final"}
-        assert "|Δ|" in scalar_leaf["score_display"]

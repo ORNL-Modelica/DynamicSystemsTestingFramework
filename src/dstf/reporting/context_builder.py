@@ -62,114 +62,6 @@ def _build_stats_section(
     return {"title": title, "rows": rows}
 
 
-def _extract_mode_values(
-    vc: VariableComparison,
-    mode: str,
-    spec_params: dict | None = None,
-) -> dict:
-    """Produce the per-mode config-value dict for the UI panel + JS scorer.
-
-    Mirrors the fields each :class:`ComparisonMode` Config dataclass exposes.
-    Source preference, in order:
-
-    1. **Spec params** (``spec_params``) — the authored config from the
-       LeafSpec, round-tripped through :func:`spec_to_view`. What the user
-       wrote. Always preferred for config-side fields (tube_rel, tube_abs,
-       count_must_match, ...) so the reporter's mode-values reflect the
-       spec, not mode-defaults.
-    2. **Diagnostics** (``vc.diagnostics``) — values stashed by the
-       comparator. Source of truth for derived fields that aren't in the
-       spec (range bounds re-emit + detected-reference-peaks for
-       dominant-frequency).
-    3. **Hard defaults** — only for fields the caller can't leave blank.
-
-    Fixes D75 regression where tube leaves' ``tube_rel``/``tube_abs``/
-    ``tube_min_width`` came back as mode-dataclass-default ``0.0`` from
-    diag (which never carries them), overwriting spec values in
-    ``leafState.params`` on the JS side and producing noisy ``add`` ops
-    in export patches.
-    """
-    diag = vc.diagnostics or {}
-    sp = spec_params or {}
-
-    def pick(*keys, default=None):
-        """First non-None value from (spec_params, diag)."""
-        for k in keys:
-            if k in sp and sp[k] is not None:
-                return sp[k]
-        for k in keys:
-            if k in diag and diag[k] is not None:
-                return diag[k]
-        return default
-
-    if mode == "nrmse":
-        return {"tolerance": float(vc.tolerance_used)}
-    if mode == "points":
-        return {"tolerance": float(vc.tolerance_used)}
-    if mode == "tube":
-        return {
-            "tube_width_mode": pick("tube_width_mode"),
-            "tube_abs": float(pick("tube_abs", default=0.0) or 0.0),
-            "tube_rel": float(pick("tube_rel", default=0.0) or 0.0),
-            "tube_min_width": float(pick("tube_min_width", default=0.0) or 0.0),
-            "tube_interpolation": pick("tube_interpolation", default="linear"),
-        }
-    if mode == "range":
-        # Range bounds live in diagnostics because _compare_range re-stashes
-        # them for consistent reporting; spec overrides if the user edited.
-        return {
-            "min_value": pick("min_value"),
-            "max_value": pick("max_value"),
-        }
-    if mode == "event-timing":
-        return {
-            "time_tolerance": float(pick("time_tolerance", default=1e-3) or 1e-3),
-            "count_must_match": bool(pick("count_must_match", default=True)),
-        }
-    if mode == "dominant-frequency":
-        return {
-            "peaks": list(
-                pick("peaks", default=None) or diag.get("peaks_declared") or []
-            ),
-        }
-    if mode == "scalar":
-        return {
-            "quantity": pick("quantity"),
-            "tolerance": float(vc.tolerance_used),
-            "tolerance_mode": pick("tolerance_mode", default="abs"),
-            "min_value": pick("min_value"),
-            "max_value": pick("max_value"),
-        }
-    return {}
-
-
-def _render_mode_controls(variable: str, mode: str, values: dict) -> str:
-    """Render the 6.1.1 auto-derived UI panel for this mode + values.
-
-    Returns an empty string when no UI is registered for the mode (caller
-    falls back to the hint span). Unknown / implicit mode defaults to
-    ``"nrmse"``.
-    """
-    from .ui.mode_controls import get_mode_ui
-
-    lookup = mode or "nrmse"
-    ui = get_mode_ui(lookup)
-    if ui is None:
-        return ""
-    return ui.render(variable=variable, values=values)
-
-
-# Metrics the template JS can live-rescore (interactive.js MODE_SCORERS —
-# keep in sync with that table). Anything else is badged CLI-authoritative:
-# event-timing (its optimal matcher stays Python-side), scalar (its stats-path
-# quantities read data the report never embeds), and every metric a third
-# party registers Python-side only. The JS scorer lookup would keep the CLI
-# verdict for those anyway; the badge tells the user why.
-_JS_SCORED_METRICS = frozenset(
-    {"nrmse", "tube", "points", "range", "dominant-frequency"}
-)
-
-
 def worst_finite_score(comparisons: list) -> tuple[float | None, int]:
     """Return ``(worst finite score, count of unscored leaves)``.
 
@@ -190,26 +82,14 @@ def worst_finite_score(comparisons: list) -> tuple[float | None, int]:
 def _augment_tree_view(
     view: dict,
     comparisons_by_path: dict[str, VariableComparison],
-    *,
-    time_bounds_by_variable: dict[str, tuple[float, float]] | None = None,
-    embedded_baselines_by_variable: dict[str, set[str]] | None = None,
 ) -> None:
-    """Walk ``view`` in place, enriching leaf nodes with render artifacts.
+    """Walk ``view`` in place, enriching leaf nodes with what the page shows.
 
-    Stage-2 JS consumes the tree as the single source of truth for the
-    per-variable node UI. Each leaf needs: ``mode_controls_html``,
-    ``window_controls_html``, ``score_display``, ``criterion``,
-    ``details``, ``mode_values``, ``cli_authoritative``, ``tolerance_used``,
-    and the raw numeric summary (``nrmse``, ``max_abs_error``, ...) used by
-    the JS scorer registry.
-
-    ``time_bounds_by_variable`` feeds ``(t_start, t_end)`` into each
-    window control's ``placeholder`` so users see the simulation range
-    as a hint without auto-committing it.
-
-    ``embedded_baselines_by_variable`` names, per variable, the soft_check
-    baselines whose trajectory is embedded in the page. It decides whether
-    an ``against``-leaf can be live-scored (see ``cli_authoritative``).
+    The template renders the tree server-side and read-only, so a leaf
+    carries the CLI's verdict and the CLI's words for it: the effective
+    mode, the variable's name, ``summarize``'s display / criterion /
+    detail pairs, and the reason a sentinel could not be scored. Nothing
+    here is an input to a computation — the page performs none.
     """
     if view.get("kind") == "leaf":
         path = view.get("path", "")
@@ -217,172 +97,33 @@ def _augment_tree_view(
         if vc is None:
             return
         mode = vc.mode or "nrmse"
-        # Spec params (from the authored LeafSpec, round-tripped via
-        # spec_to_view) are the source of truth for config-side fields;
-        # extract_mode_values prefers them over diagnostic fallbacks.
-        spec_params = view.get("params") or {}
-        mode_values = _extract_mode_values(vc, mode, spec_params=spec_params)
-        # Seed the window inputs from the AUTHORED window on the spec view
-        # (spec_to_view emits it from the LeafSpec). The old helper read
-        # vc.diagnostics['window'], which nothing ever set — the evaluator
-        # stashes the window on the MetricResult, not the
-        # VariableComparison — so authored windows never pre-filled the
-        # inputs, masked by browser fixtures hand-setting window_values
-        # (found eyeballing the D103 demo report).
+        # Seed from the AUTHORED window on the spec view (spec_to_view emits
+        # it from the LeafSpec). The old helper read vc.diagnostics['window'],
+        # which nothing ever set — the evaluator stashes the window on the
+        # MetricResult, not the VariableComparison.
         window_values = dict(view.get("window") or {})
         var_label = vc.name or view.get("variable", "")
         summary = summarize(vc)
-        score_display, criterion = summary.display, summary.criterion
-        bounds = (time_bounds_by_variable or {}).get(var_label)
-        t_start, t_end = bounds if bounds else (None, None)
-        # An against-leaf is live-scorable exactly when the named
-        # baseline's curve for THIS variable rode into the page as an
-        # overlay — that is the array the JS scorer swaps in for the
-        # primary reference. Absent (overlay missing / didn't carry this
-        # variable), there is nothing to score against and the CLI verdict
-        # stands.
-        against = view.get("against") or "primary"
-        against_unavailable = against != "primary" and against not in (
-            (embedded_baselines_by_variable or {}).get(var_label, frozenset())
-        )
         view.update(
             {
                 "mode_effective": mode,  # runtime mode (e.g., "points"); not the spec metric
                 "name": var_label,
-                "nrmse": float(vc.nrmse),
-                "rmse": float(vc.rmse),
-                "signal_range": float(vc.signal_range),
-                "max_abs_error": float(vc.max_abs_error),
-                "max_abs_error_time": float(vc.max_abs_error_time),
-                "reference_final": float(vc.reference_final),
-                "actual_final": float(vc.actual_final),
-                "is_constant": bool(vc.is_constant),
-                "tolerance_used": float(vc.tolerance_used),
-                "score_display": score_display,
-                "criterion": criterion,
+                "score_display": summary.display,
+                "criterion": summary.criterion,
                 # The mode's own key/value pairs behind the verdict, as the
                 # server-rendered ``<dl class="node-details">`` under the leaf.
                 # Tuples become lists so the view stays JSON-shaped.
                 "details": [list(pair) for pair in summary.details],
-                "tube_points_inside": (
-                    float(vc.tube_points_inside)
-                    if vc.tube_points_inside is not None
-                    else None
-                ),
-                "tube_worst_violation": (
-                    float(vc.tube_worst_violation)
-                    if vc.tube_worst_violation is not None
-                    else None
-                ),
-                "tube_worst_violation_time": (
-                    float(vc.tube_worst_violation_time)
-                    if vc.tube_worst_violation_time is not None
-                    else None
-                ),
-                "mode_values": mode_values,
-                "mode_controls_html": _render_mode_controls(
-                    var_label, mode, mode_values
-                ),
-                "window_controls_html": _render_window_controls(
-                    var_label,
-                    window_values,
-                    time_start=t_start,
-                    time_end=t_end,
-                ),
                 "window_values": window_values,
-                # event-timing is always CLI-authoritative (event pairing
-                # stays Python-side). Dominant-frequency has a live JS scorer
-                # (D75) whose FFT is bit-identical with Python's ONLY on the
-                # full-resolution trajectory; leaves whose embedded arrays got
-                # LTTB-decimated are flipped to CLI-authoritative afterwards by
-                # report_suite._mark_decimated_cli_authoritative (decimation
-                # happens later, so it can't be decided here). A leaf scored
-                # against a NAMED baseline used to be pinned unconditionally
-                # for the same reason; the page embeds each soft_check's
-                # trajectory as an overlay, and the JS scorers now resolve an
-                # against-leaf to that curve, so the pin narrows to the case
-                # where the named overlay is genuinely absent for this
-                # variable (D105's remaining half).
-                # So is a leaf whose mode never built (``config_error``):
-                # there is no live-scoring state for the JS to re-derive, and
-                # a `range` sentinel would have flipped to PASS on the next
-                # refresh back when absent bounds read as unbounded. Gated on
-                # ``config_error``, NOT on ``error`` alone — a data-shaped
-                # sentinel (empty window, empty trajectory) must stay live so
-                # dragging the window back over the samples re-scores it.
-                "cli_authoritative": (
-                    mode not in _JS_SCORED_METRICS
-                    or against_unavailable
-                    or bool((vc.diagnostics or {}).get("config_error"))
-                ),
                 # Reason a sentinel leaf could not be scored. Rendered as the
                 # score pill's tooltip plus a muted line beneath it; None on
                 # every normally-scored leaf.
                 "error": (vc.diagnostics or {}).get("error"),
-                # Dominant-frequency leaves carry their spectrum arrays so the
-                # reporter's editor-slot subplot can render without recomputing.
-                # Empty dict for other modes; the JS editor short-circuits.
-                "spectrum": _extract_spectrum(vc)
-                if mode == "dominant-frequency"
-                else None,
             }
         )
         return
     for child in view.get("children", []):
-        _augment_tree_view(
-            child,
-            comparisons_by_path,
-            time_bounds_by_variable=time_bounds_by_variable,
-            embedded_baselines_by_variable=embedded_baselines_by_variable,
-        )
-
-
-def _extract_spectrum(vc: VariableComparison) -> dict:
-    """Pull the FFT spectrum + declared/matched peaks from a dominant-
-    frequency leaf's diagnostics. Consumed by the reporter's editor-slot
-    subplot.
-
-    ``detected_reference_peaks_hz`` is the reference spectrum's top peaks,
-    always present — the reporter's "Detect peaks from reference" button
-    reads from it to bootstrap a declared-peaks table on a fresh test.
-
-    The comparator caps spectrum length at ``_SPECTRUM_EMBED_CAP`` (512
-    bins) precisely so this dict doesn't balloon the HTML payload.
-    """
-    diag = vc.diagnostics or {}
-    return {
-        "ref_freq": list(diag.get("ref_spectrum_freq") or []),
-        "ref_mag": list(diag.get("ref_spectrum_mag") or []),
-        "act_freq": list(diag.get("act_spectrum_freq") or []),
-        "act_mag": list(diag.get("act_spectrum_mag") or []),
-        "peaks_declared": list(diag.get("peaks_declared") or []),
-        "paired_peaks": list(diag.get("paired_peaks") or []),
-        "detected_reference_peaks_hz": list(
-            diag.get("detected_reference_peaks_hz") or []
-        ),
-    }
-
-
-def _render_window_controls(
-    variable: str,
-    values: dict,
-    *,
-    time_start: float | None = None,
-    time_end: float | None = None,
-) -> str:
-    """Render the universal window inputs for a tree-backed leaf.
-
-    ``time_start`` / ``time_end`` populate the inputs' ``placeholder``
-    attribute with the variable's simulation range as a hint.
-    """
-    from .ui.mode_controls import render_window_controls_html
-
-    return render_window_controls_html(
-        variable=variable,
-        values=values,
-        time_start=time_start,
-        time_end=time_end,
-    )
+        _augment_tree_view(child, comparisons_by_path)
 
 
 # ---------------------------------------------------------------------------
@@ -954,34 +695,11 @@ def _build_tree_view_and_variables(
         leaf_comparisons_by_path(metric_tree) if metric_tree is not None else {}
     )
 
-    # Collect per-variable simulation bounds so window inputs show the
-    # full-trajectory range as placeholder hints.
-    time_bounds: dict[str, tuple[float, float]] = {}
-    for traj in trajectories:
-        ref_time = traj.get("ref_time") or traj.get("act_time") or []
-        if ref_time:
-            time_bounds[traj["name"]] = (
-                float(ref_time[0]),
-                float(ref_time[-1]),
-            )
-
-    # Which named baselines actually rode into the page for each variable.
-    # Companions are excluded on purpose: the validator forbids scoring
-    # against them, so a companion sharing a soft_check's name must never
-    # make an against-leaf look live-scorable.
-    embedded_baselines: dict[str, set[str]] = {}
-    for traj in trajectories:
-        embedded_baselines[traj["name"]] = {
-            ov["name"]
-            for ov in (traj.get("overlays") or [])
-            if ov.get("role") == "soft_check" and ov.get("name")
-        }
-
     tree_view = _spec_to_view(spec, evaluation_by_path=eval_by_path)
     # The view walks the spec; the lookup holds what the evaluator stamped.
     # Both routes stamp every leaf the view will show, so a miss is drift
     # between the two walks — a leaf that would render with no pill and no
-    # controls, and nothing else would say so.
+    # criterion, and nothing else would say so.
     missing = [
         path for path in _view_leaf_paths(tree_view) if path not in comparisons_by_path
     ]
@@ -993,12 +711,7 @@ def _build_tree_view_and_variables(
             len(missing),
             ", ".join(missing),
         )
-    _augment_tree_view(
-        tree_view,
-        comparisons_by_path,
-        time_bounds_by_variable=time_bounds,
-        embedded_baselines_by_variable=embedded_baselines,
-    )
+    _augment_tree_view(tree_view, comparisons_by_path)
     # Must run before the per-variable subtrees are cut: they shallow-copy
     # the leaf dicts, so a flag stamped afterwards would reach the full-tree
     # mount only.
@@ -1117,8 +830,6 @@ def _build_template_context(
         trajectories,
     )
 
-    from .ui.mode_controls import emit_mode_schemas as _emit_mode_schemas
-
     return {
         "model_id": model_id,
         "n_passed": n_passed,
@@ -1144,7 +855,6 @@ def _build_template_context(
         # Pieces of the server-rendered summary line — the template builds
         # the markup, so nothing here has to be trusted as HTML.
         "tree_summary": _tree_summary(tree_view),
-        "mode_schemas": _emit_mode_schemas(),
         # Run provenance banner (backend/simulator/version/os). Same shape as
         # the dashboard's, formatted by dashboard_render.format_run_metadata.
         "run_metadata": run_metadata,
