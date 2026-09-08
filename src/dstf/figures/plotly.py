@@ -305,7 +305,10 @@ def _marker_traces(markers: list[Marker], leaf: LeafView) -> list[dict]:
         by_family.setdefault(family(m, leaf), []).append(m)
     traces = []
     for fam, group in by_family.items():
-        failed = any(m.passed is False for m in group)
+        # One colour PER marker: a leaf with one passed and one failed
+        # checkpoint must not paint both red (the boxes beside them carry
+        # their own verdicts, and the two would contradict).
+        ok_colour = "#2e7d32" if group[0].kind == "handle" else ACTUAL
         traces.append(
             {
                 "type": "scatter",
@@ -317,9 +320,9 @@ def _marker_traces(markers: list[Marker], leaf: LeafView) -> list[dict]:
                 "marker": {
                     "symbol": _MARKER_SYMBOLS.get(fam, "circle"),
                     "size": 10,
-                    "color": FAIL_LINE
-                    if failed
-                    else ("#2e7d32" if group[0].kind == "handle" else ACTUAL),
+                    "color": [
+                        FAIL_LINE if m.passed is False else ok_colour for m in group
+                    ],
                     "line": {"color": "white", "width": 1},
                 },
                 "hoverinfo": "x+y",
@@ -386,25 +389,27 @@ def _base_traces(view: VariableView) -> list[dict]:
                     "id": f"overlay/{ov.role}/{ov.name}",
                     "kind": "overlay",
                     "role": ov.role,
-                    "full_samples": ov.full_samples,
+                    "full_samples": (
+                        len(ov.time) if ov.full_samples is None else ov.full_samples
+                    ),
                 },
             }
         )
     return traces
 
 
-def _error_trace(s: Series, leaf_path_free_id: str) -> dict:
+def _error_trace(s: Series) -> dict:
     return {
         "type": "scatter",
         "mode": "lines",
         "x": s.x.tolist(),
         "y": s.y.tolist(),
-        "name": _label(leaf_path_free_id),
+        "name": _label(s.id),
         "line": {"color": ERROR, "width": 1},
         "opacity": 0.6,
         "yaxis": "y3",
         "visible": "legendonly",
-        "hovertemplate": f"{_label(leaf_path_free_id)}: %{{y:.4g}}<extra></extra>",
+        "hovertemplate": f"{_label(s.id)}: %{{y:.4g}}<extra></extra>",
         "meta": {"id": s.id, "kind": "error"},
     }
 
@@ -473,12 +478,18 @@ def variable_figure(view: VariableView, max_samples: int | None = None) -> dict:
             if isinstance(prim, Marker):
                 markers.append(prim)
                 continue
-            traces, new_shapes = TRACE_BUILDERS[type(prim)](prim, leaf, window, ctx)
+            builder = TRACE_BUILDERS.get(type(prim))
+            if builder is None:
+                raise TypeError(
+                    f"no figure builder for {type(prim).__name__} "
+                    f"(id {prim.id!r}); add one to TRACE_BUILDERS"
+                )
+            traces, new_shapes = builder(prim, leaf, window, ctx)
             data.extend(traces)
             shapes.extend(new_shapes)
         data.extend(_marker_traces(markers, leaf))
     for s in view.errors:
-        data.append(_error_trace(s, s.id))
+        data.append(_error_trace(s))
     return {
         "data": data,
         "layout": _layout(view, shapes, bool(view.errors)),

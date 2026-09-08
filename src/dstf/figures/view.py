@@ -14,9 +14,10 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
+from ..comparison.algorithms import actual_on_reference_grid
 from ..comparison.geometry import Band, Primitive, Series
 from ..comparison.registry import summarize
-from ..comparison.types import ScoreSummary, VariableComparison
+from ..comparison.types import _EPS, ScoreSummary, VariableComparison
 from .decimate import decimate_band, lttb
 
 
@@ -64,25 +65,41 @@ def _array(values) -> np.ndarray | None:
     return arr if arr.size else None
 
 
+def _overlay_array(values) -> np.ndarray:
+    # Lists or arrays; `or []` would ask an array for its truth value.
+    return np.asarray([] if values is None else values, dtype=float)
+
+
 def error_series(
     ref_time: np.ndarray | None,
     ref_values: np.ndarray | None,
     act_time: np.ndarray | None,
     act_values: np.ndarray | None,
 ) -> tuple[Series, ...]:
-    """Signed, absolute and range-normalised error of the actual on the
-    reference grid — the same linear interpolation the comparator uses."""
+    """Signed, absolute and normalised error of the actual on the reference
+    grid, through the comparator's own event-aware interpolation
+    (:func:`~dstf.comparison.algorithms.actual_on_reference_grid`) and its
+    normalisation: the reference range, or its magnitude for a constant
+    reference. The error drawn is the error scored."""
     if ref_time is None or ref_values is None or act_time is None or act_values is None:
         return ()
-    act_on_ref = np.interp(ref_time, act_time, act_values)
-    signed = act_on_ref - ref_values
+    times, ref_on, act_on = actual_on_reference_grid(
+        ref_time, ref_values, act_time, act_values
+    )
+    if len(times) == 0:
+        return ()
+    signed = act_on - ref_on
     absolute = np.abs(signed)
     span = float(np.max(ref_values) - np.min(ref_values))
-    per_point = absolute / span if span > 1e-15 else absolute
+    if span < _EPS:
+        magnitude = float(np.max(np.abs(ref_values)))
+        scale = magnitude if magnitude > _EPS else 1.0
+    else:
+        scale = span
     return (
-        Series(id="error/signed", kind="error", x=ref_time, y=signed),
-        Series(id="error/abs", kind="error", x=ref_time, y=absolute),
-        Series(id="error/nrmse", kind="error", x=ref_time, y=per_point),
+        Series(id="error/signed", kind="error", x=times, y=signed),
+        Series(id="error/abs", kind="error", x=times, y=absolute),
+        Series(id="error/nrmse", kind="error", x=times, y=absolute / scale),
     )
 
 
@@ -116,15 +133,15 @@ def build_view(
                 name=str(ov.get("name") or ""),
                 role=str(ov.get("role") or "companion"),
                 kind=ov.get("kind"),
-                time=np.asarray(ov.get("time") or [], dtype=float),
-                values=np.asarray(ov.get("values") or [], dtype=float),
+                time=_overlay_array(ov.get("time")),
+                values=_overlay_array(ov.get("values")),
             )
             for ov in overlays
         ),
         leaves=tuple(
             LeafView(
                 path=path,
-                metric=vc.mode or "nrmse",
+                metric=vc.mode,
                 passed=bool(vc.passed),
                 geometry=tuple(vc.geometry),
                 summary=summarize(vc),
@@ -139,6 +156,18 @@ def _pair(time, values, n):
     if time is None or values is None:
         return time, values
     return lttb(time, values, n)
+
+
+def _decimate_overlay(ov: OverlayView, max_samples: int) -> OverlayView:
+    t2, v2 = lttb(ov.time, ov.values, max_samples)
+    return OverlayView(
+        name=ov.name,
+        role=ov.role,
+        kind=ov.kind,
+        time=t2,
+        values=v2,
+        full_samples=len(ov.time),
+    )
 
 
 def decimate_view(view: VariableView, max_samples: int) -> VariableView:
@@ -164,17 +193,7 @@ def decimate_view(view: VariableView, max_samples: int) -> VariableView:
         act_values=av,
         ref_time=rt,
         ref_values=rv,
-        overlays=tuple(
-            OverlayView(
-                name=ov.name,
-                role=ov.role,
-                kind=ov.kind,
-                time=lttb(ov.time, ov.values, max_samples)[0],
-                values=lttb(ov.time, ov.values, max_samples)[1],
-                full_samples=len(ov.time),
-            )
-            for ov in view.overlays
-        ),
+        overlays=tuple(_decimate_overlay(ov, max_samples) for ov in view.overlays),
         leaves=tuple(
             replace(leaf, geometry=tuple(_prim(p) for p in leaf.geometry))
             for leaf in view.leaves

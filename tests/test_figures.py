@@ -82,6 +82,46 @@ class TestView:
         np.testing.assert_allclose(up2, t2)
 
 
+class TestErrorSeriesFollowTheComparator:
+    def test_an_event_is_not_an_error_spike(self):
+        # Modelica writes an event as two samples at one instant. The
+        # comparator pairs pre-event actual with pre-event reference; a raw
+        # np.interp pairs the post-event actual with the pre-event reference
+        # and draws an error the verdict does not contain.
+        t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
+        v = np.array([0.0, 0.5, 1.0, 5.0, 5.5, 6.0])
+        view = build_view("x", act_time=t, act_values=v, ref_time=t, ref_values=v)
+        for s in view.errors:
+            np.testing.assert_array_equal(s.y, 0.0)
+
+    def test_constant_reference_normalises_by_magnitude(self):
+        from dstf.comparison.algorithms import _compare_trajectories
+
+        t = np.linspace(0.0, 1.0, 11)
+        ref = np.full_like(t, 37e9)
+        act = ref + 100.0
+        view = build_view("x", act_time=t, act_values=act, ref_time=t, ref_values=ref)
+        per_point = next(s for s in view.errors if s.id == "error/nrmse")
+        vc = _compare_trajectories(t, ref, t, act, tolerance=1.0)
+        # Every per-point value equals the scored NRMSE for a constant offset.
+        np.testing.assert_allclose(per_point.y, vc.nrmse)
+
+
+class TestViewInputs:
+    def test_overlays_accept_arrays_as_well_as_lists(self):
+        t = np.linspace(0.0, 1.0, 5)
+        view = build_view(
+            "x",
+            act_time=t,
+            act_values=t,
+            overlays=[
+                {"name": "a", "role": "companion", "time": t, "values": t * 2},
+                {"name": "b", "role": "soft_check", "time": t.tolist(), "values": []},
+            ],
+        )
+        assert len(view.overlays[0].time) == 5 and len(view.overlays[1].values) == 0
+
+
 class TestFigure:
     def test_figure_is_a_plain_dict_with_ids_on_every_trace_and_shape(self):
         fig = variable_figure(_tube_view())
@@ -116,6 +156,43 @@ class TestFigure:
             "/metrics/children/0/tube/upper/1",
         ]
         assert upper["meta"]["kind"] == "handle" and upper["mode"] == "markers"
+
+    def test_each_marker_carries_its_own_verdict_colour(self):
+        from dstf.comparison.algorithms import _compare_points
+
+        t = np.linspace(0.0, 10.0, 101)
+        act = t + 0.05 * (t > 5.0)
+        vc = _compare_points(
+            t,
+            t,
+            t,
+            act,
+            points=[{"time": 2.0, "tolerance": 0.01}, {"time": 8.0, "tolerance": 0.01}],
+        )
+        vc.name = "x"
+        fig = variable_figure(
+            build_view(
+                "x",
+                act_time=t,
+                act_values=act,
+                ref_time=t,
+                ref_values=t,
+                leaves=[_stamped(vc)],
+            )
+        )
+        targets = next(
+            tr for tr in fig["data"] if tr["meta"].get("family") == "points/target"
+        )
+        colours = targets["marker"]["color"]
+        assert isinstance(colours, list) and len(colours) == 2
+        assert colours[0] != colours[1]
+        # The failed marker and its box agree on red; the passed pair is not red.
+        from dstf.figures.plotly import FAIL_LINE
+
+        boxes = {s["name"]: s for s in fig["layout"]["shapes"]}
+        assert colours[1] == FAIL_LINE and colours[0] != FAIL_LINE
+        assert boxes["/metrics/children/0/points/box/1"]["line"]["color"] == FAIL_LINE
+        assert boxes["/metrics/children/0/points/box/0"]["line"]["color"] != FAIL_LINE
 
     def test_window_and_range_bounds_become_shapes_clipped_to_the_window(self):
         t = np.linspace(0.0, 1.0, 11)

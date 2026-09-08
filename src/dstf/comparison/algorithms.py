@@ -110,6 +110,63 @@ def _no_data_failure(mode: str, reason: str) -> VariableComparison:
     )
 
 
+def actual_on_reference_grid(
+    ref_time: np.ndarray,
+    ref_values: np.ndarray,
+    act_time: np.ndarray,
+    act_values: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The actual trajectory read on the reference grid, event-aware.
+
+    Returns ``(times, ref_on_times, act_on_times)``. Modelica writes an
+    event as two samples at one instant; the reference is split there and
+    the actual is deduplicated per segment — first value at a duplicate
+    time for a segment ending at an event, last value for one starting at
+    an event — so the pre-event actual is never paired with the post-event
+    reference. This is THE interpolation the nrmse score uses; the figure
+    layer's error series reads the same function, so the error drawn is
+    the error scored (an event never shows as a spike the verdict lacks).
+    """
+    boundaries = _find_event_boundaries(ref_time)
+    segments = _split_segments(ref_time, ref_values, boundaries)
+
+    act_time_pre, act_values_pre = _dedup_time_series(
+        act_time, act_values, keep="first"
+    )
+    act_time_post, act_values_post = _dedup_time_series(
+        act_time, act_values, keep="last"
+    )
+
+    all_times = []
+    all_ref = []
+    all_act = []
+    n_segments = len(segments)
+    for seg_idx, (seg_time, seg_values) in enumerate(segments):
+        if len(seg_time) == 0:
+            continue
+        is_last_segment = seg_idx == n_segments - 1
+        if is_last_segment or n_segments == 1:
+            # Last (or only) segment: no event at end, use post-event for start
+            seg_actual = np.interp(seg_time, act_time_post, act_values_post)
+        elif seg_idx == 0:
+            # First segment ending at an event: use pre-event values
+            seg_actual = np.interp(seg_time, act_time_pre, act_values_pre)
+        else:
+            # Interior segment: starts post-event, ends pre-event.
+            # Use pre-event for bulk (correct at end boundary), then fix
+            # the first point with the post-event value (correct at start).
+            seg_actual = np.interp(seg_time, act_time_pre, act_values_pre)
+            seg_actual[0] = np.interp(seg_time[0], act_time_post, act_values_post)
+        all_times.append(seg_time)
+        all_ref.append(seg_values)
+        all_act.append(seg_actual)
+
+    if not all_times:
+        empty = np.array([], dtype=float)
+        return empty, empty, empty
+    return np.concatenate(all_times), np.concatenate(all_ref), np.concatenate(all_act)
+
+
 def _compare_trajectories(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -146,59 +203,17 @@ def _compare_trajectories(
             "nrmse", "no actual samples to compare (empty trajectory or window)"
         )
 
-    # Detect event boundaries in reference time
-    boundaries = _find_event_boundaries(ref_time)
-    segments = _split_segments(ref_time, ref_values, boundaries)
-
-    # Deduplicate actual time series for clean interpolation.
-    # For pre-event segments (ending at an event), use first value at duplicate times.
-    # For post-event segments (starting at an event), use last value.
-    act_time_pre, act_values_pre = _dedup_time_series(
-        act_time, act_values, keep="first"
+    error_times, ref_on_grid, act_on_grid = actual_on_reference_grid(
+        ref_time, ref_values, act_time, act_values
     )
-    act_time_post, act_values_post = _dedup_time_series(
-        act_time, act_values, keep="last"
-    )
-
-    # Compare piecewise: interpolate actual onto each reference segment
-    all_abs_errors = []
-    all_ref_times = []
-    n_segments = len(segments)
-
-    for seg_idx, (seg_time, seg_values) in enumerate(segments):
-        if len(seg_time) == 0:
-            continue
-
-        is_last_segment = seg_idx == n_segments - 1
-
-        if is_last_segment or n_segments == 1:
-            # Last (or only) segment: no event at end, use post-event for start
-            seg_actual = np.interp(seg_time, act_time_post, act_values_post)
-        elif seg_idx == 0:
-            # First segment ending at an event: use pre-event values
-            seg_actual = np.interp(seg_time, act_time_pre, act_values_pre)
-        else:
-            # Interior segment: starts post-event, ends pre-event.
-            # Use pre-event for bulk (correct at end boundary), then fix
-            # the first point with the post-event value (correct at start).
-            seg_actual = np.interp(seg_time, act_time_pre, act_values_pre)
-            seg_actual[0] = np.interp(seg_time[0], act_time_post, act_values_post)
-
-        seg_error = np.abs(seg_actual - seg_values)
-        all_abs_errors.append(seg_error)
-        all_ref_times.append(seg_time)
-
-    if not all_abs_errors:
+    if len(error_times) == 0:
         # All segments empty — can happen with pathological duplicate-only
         # time vectors. Same rule as the guards above: nothing compared
         # means FAIL, not a vacuous pass (review 2026-07-06, finding 1).
         return _no_data_failure(
             "nrmse", "no comparable samples after event segmentation"
         )
-
-    # Concatenate all segment errors for aggregate metrics
-    abs_error = np.concatenate(all_abs_errors)
-    error_times = np.concatenate(all_ref_times)
+    abs_error = np.abs(act_on_grid - ref_on_grid)
 
     rmse = float(np.sqrt(np.mean(abs_error**2)))
 
