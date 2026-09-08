@@ -533,10 +533,11 @@ Six sub-projects, each its own plan, each shippable and reviewable alone.
 
 1. **Geometry and figures.** `geometry.py`; every mode emits its geometry
    including handles; the evaluator stamps ids and the positional pairing is
-   deleted; `Window` from the evaluator; `summarize` on the descriptor and
-   the three Python mode branches deleted; `figures/` with `view`, `plotly`,
-   `decimate`; the report's *initial* render comes from embedded figure
-   dicts. The JS editors keep redrawing their own overlays while a leaf is
+   deleted; `Window` from the evaluator; `summarize` on the descriptor
+   replacing `_leaf_score_display` (`_extract_mode_values` and the spectrum
+   gate survive to step 2, because the forms and the editor subplot they
+   feed do); `figures/` with `view`, `plotly`, `decimate`; the report's
+   *initial* render comes from embedded figure dicts. The JS editors keep redrawing their own overlays while a leaf is
    being edited, exactly as today, until step 2 removes them; this step
    changes what the page shows on load, not what an edit does. Also here: the
    matplotlib string, tombstone and dependency go.
