@@ -289,7 +289,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         print(f"  Plots saved to {plot_dir}")
         open_in_browser(html_path)
     else:
-        print("  Plot generation failed (matplotlib not installed?)")
+        print("  Plot generation failed")
 
 
 def _find_test_key(model_id: str, config) -> str | None:
