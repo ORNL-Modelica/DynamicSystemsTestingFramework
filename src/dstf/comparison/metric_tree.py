@@ -295,12 +295,33 @@ def leaf_from_variable(vc: VariableComparison) -> MetricResult:
     )
 
 
+def stamp_leaf_path(leaf: MetricResult, path: str) -> None:
+    """Address a leaf result by its RFC 6902 path — the same path a patch op uses.
+
+    Prefixes the stashed ``VariableComparison``'s geometry ids with the path
+    so a figure handle and a spec edit share one name. Idempotent: a mode
+    emits local ids, and a stamped id starts with ``/``.
+    """
+    leaf.diagnostics["leaf_path"] = path
+    vc = leaf.diagnostics.get("variable")
+    if vc is not None:
+        vc.geometry = tuple(
+            p if p.id.startswith("/") else p.prefixed(path) for p in vc.geometry
+        )
+
+
 def implicit_and_tree(variables: list[VariableComparison]) -> MetricResult:
     """Build the implicit flat-AND tree from a list of per-variable comparisons.
 
     This is the degenerate MetricTree that matches the current pass/fail
-    semantics exactly: a test passes iff every variable passes. Phase 3+
-    replaces this with user-authored trees from ``test_spec.json``.
+    semantics exactly: a test passes iff every variable passes. Leaves are
+    stamped ``/metrics/children/<i>`` — the paths
+    :func:`~.tree_spec.synthesize_implicit_tree` produces for the same list,
+    so the report can look leaves up by path on both evaluation routes.
     """
-    leaves = [leaf_from_variable(vc) for vc in variables]
+    leaves = []
+    for i, vc in enumerate(variables):
+        leaf = leaf_from_variable(vc)
+        stamp_leaf_path(leaf, f"/metrics/children/{i}")
+        leaves.append(leaf)
     return AndCombinator().combine(leaves)

@@ -20,7 +20,13 @@ import numpy as np
 from ..backends import VariableResult
 from ..backends.types import DatasetType
 from .comparator import VariableComparison
-from .metric_tree import Combinator, MetricResult, leaf_from_variable
+from .geometry import Window
+from .metric_tree import (
+    Combinator,
+    MetricResult,
+    leaf_from_variable,
+    stamp_leaf_path,
+)
 from .modes import resolve_mode
 from .registry import DEFAULT_METRIC, MetricDescriptor
 from .registry import combinator as registry_combinator
@@ -73,6 +79,7 @@ def evaluate_spec(
     base_tolerance: float,
     dataset_kind: DatasetType = DatasetType.TIME_SERIES,
     scalars: ScalarSources | None = None,
+    path: str = "/metrics",
 ) -> MetricResult:
     """Walk a spec tree and produce an evaluated :class:`MetricResult` root.
 
@@ -91,18 +98,30 @@ def evaluate_spec(
     ``scalars`` carries the run's statistics + diagnostics for ``scalar``
     leaves whose quantity is a stats path; leaves that reduce a tracked
     series never touch it.
+
+    ``path`` is this node's RFC 6902 path; leaves are stamped with it
+    (``stamp_leaf_path``) so results address the spec, not a position in a
+    flat list.
     """
     sources = scalars if scalars is not None else ScalarSources()
     if isinstance(spec, LeafSpec):
-        return _evaluate_leaf(
+        result = _evaluate_leaf(
             spec, var_results_by_name, baselines, base_tolerance, dataset_kind, sources
         )
+        stamp_leaf_path(result, path)
+        return result
 
     children = [
         evaluate_spec(
-            c, var_results_by_name, baselines, base_tolerance, dataset_kind, sources
+            c,
+            var_results_by_name,
+            baselines,
+            base_tolerance,
+            dataset_kind,
+            sources,
+            path=f"{path}/children/{i}",
         )
-        for c in spec.children
+        for i, c in enumerate(spec.children)
     ]
     return _build_combinator(spec).combine(children)
 
@@ -117,6 +136,28 @@ def collect_leaf_variables(tree: MetricResult) -> list[VariableComparison]:
     """
     out: list[VariableComparison] = []
     _walk_leaves(tree, out)
+    return out
+
+
+def leaf_comparisons_by_path(tree: MetricResult) -> dict[str, VariableComparison]:
+    """``{leaf_path: VariableComparison}`` for every stamped leaf, in tree order.
+
+    The report and the figure layer look leaves up here, by the path a patch
+    op would use — never by position in a flat list.
+    """
+    out: dict[str, VariableComparison] = {}
+
+    def _walk(node: MetricResult) -> None:
+        if not node.children:
+            vc = node.diagnostics.get("variable")
+            path = node.diagnostics.get("leaf_path")
+            if vc is not None and path is not None:
+                out[path] = vc
+            return
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree)
     return out
 
 
@@ -342,6 +383,11 @@ def _evaluate_leaf(
     vc.index = index
     vc.name = leaf.variable
     vc.tolerance_used = tolerance
+    if windowed:
+        # The window is a leaf property, not a mode's: the evaluator owns it.
+        vc.geometry = vc.geometry + (
+            Window(id="window", start=leaf.window_start, end=leaf.window_end),
+        )
     leaf_result = leaf_from_variable(vc)
     # Record which baseline this leaf scored against, so the reporter can
     # show "against=experiment" on non-primary leaves.

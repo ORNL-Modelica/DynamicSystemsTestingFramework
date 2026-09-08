@@ -8,13 +8,20 @@ import numpy as np
 
 from dstf.backends.types import TestResult, VariableResult
 from dstf.comparison.comparator import compare_test
+from dstf.comparison.geometry import Band, Window
+from dstf.comparison.metric_tree import implicit_and_tree
 from dstf.comparison.tree_eval import (
     PRIMARY_BASELINE,
     BaselineView,
     collect_leaf_variables,
     evaluate_spec,
+    leaf_comparisons_by_path,
 )
-from dstf.comparison.tree_spec import parse_metric_tree
+from dstf.comparison.tree_spec import (
+    collect_leaf_paths,
+    parse_metric_tree,
+    synthesize_implicit_tree,
+)
 from dstf.discovery.test_registry import TestModel
 
 # ---------------------------------------------------------------------------
@@ -831,3 +838,106 @@ class TestCompareTestIntegration:
         comp = compare_test(test, result, reference)
         assert comp.passed
         assert [v.name for v in comp.variables] == ["a", "c"]
+
+
+class TestLeafPathStamping:
+    def _eval(self, spec_raw: dict):
+        t, ref_vals = _linear()
+        _, act_vals = _linear(offset=0.001)
+        spec = parse_metric_tree(spec_raw)
+        return evaluate_spec(
+            spec,
+            var_results_by_name={
+                "x": VariableResult(index=1, name="x", time=t, values=act_vals)
+            },
+            baselines=_primary(
+                {
+                    "x": {
+                        "index": 1,
+                        "name": "x",
+                        "time": t.tolist(),
+                        "values": ref_vals.tolist(),
+                    }
+                }
+            ),
+            base_tolerance=1e-4,
+        )
+
+    def test_leaves_carry_their_path_and_prefixed_geometry(self):
+        tree = self._eval(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x", "tolerance": 0.1},
+                    {
+                        "metric": "tube",
+                        "variable": "x",
+                        "tube_width_mode": "band",
+                        "tube_abs": 0.01,
+                    },
+                ],
+            }
+        )
+        by_path = leaf_comparisons_by_path(tree)
+        assert set(by_path) == {"/metrics/children/0", "/metrics/children/1"}
+        assert tree.children[1].diagnostics["leaf_path"] == "/metrics/children/1"
+        band = next(
+            p for p in by_path["/metrics/children/1"].geometry if isinstance(p, Band)
+        )
+        assert band.id == "/metrics/children/1/tube/band"
+
+    def test_a_windowed_leaf_gets_a_window_primitive_with_open_ends_allowed(self):
+        tree = self._eval(
+            {
+                "metric": "nrmse",
+                "variable": "x",
+                "tolerance": 0.1,
+                "window": {"start": 0.2},
+            }
+        )
+        vc = leaf_comparisons_by_path(tree)["/metrics"]
+        window = next(p for p in vc.geometry if isinstance(p, Window))
+        assert window.id == "/metrics/window"
+        assert window.start == 0.2 and window.end is None
+
+    def test_an_unwindowed_leaf_has_no_window_primitive(self):
+        tree = self._eval({"metric": "nrmse", "variable": "x", "tolerance": 0.1})
+        vc = leaf_comparisons_by_path(tree)["/metrics"]
+        assert not any(isinstance(p, Window) for p in vc.geometry)
+
+    def test_a_config_error_leaf_still_carries_its_path(self):
+        tree = self._eval(
+            {"metric": "tube", "variable": "x", "tube_width_mode": "nonsense"}
+        )
+        assert tree.diagnostics["leaf_path"] == "/metrics"
+        assert "/metrics" in leaf_comparisons_by_path(tree)
+
+    def test_implicit_tree_paths_agree_with_the_synthesized_spec(self):
+        from dstf.comparison.algorithms import _compare_tube
+
+        t, ref_vals = _linear()
+        vcs = []
+        for i, name in enumerate(["a", "b"]):
+            vc = _compare_tube(
+                t, ref_vals, t, ref_vals, {"tube_width_mode": "band", "tube_abs": 0.1}
+            )
+            vc.index, vc.name = i + 1, name
+            vcs.append(vc)
+        tree = implicit_and_tree(vcs)
+        stamped = list(leaf_comparisons_by_path(tree))
+        synthesized = collect_leaf_paths(synthesize_implicit_tree(["a", "b"]))
+        assert stamped == synthesized == ["/metrics/children/0", "/metrics/children/1"]
+        assert vcs[1].geometry[0].id == "/metrics/children/1/tube/band"
+
+    def test_stamping_is_idempotent(self):
+        from dstf.comparison.algorithms import _compare_tube
+        from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
+
+        t, ref_vals = _linear()
+        vc = _compare_tube(
+            t, ref_vals, t, ref_vals, {"tube_width_mode": "band", "tube_abs": 0.1}
+        )
+        leaf = leaf_from_variable(vc)
+        stamp_leaf_path(leaf, "/metrics")
+        stamp_leaf_path(leaf, "/metrics")
+        assert vc.geometry[0].id == "/metrics/tube/band"
