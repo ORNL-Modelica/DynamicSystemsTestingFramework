@@ -1,0 +1,54 @@
+{
+  "traces": [
+    {
+      "type": "scatter",
+      "mode": "lines",
+      "name": "Actual",
+      "id": "actual",
+      "n": 200,
+      "xaxis": null,
+      "yaxis": null
+    },
+    {
+      "type": "scatter",
+      "mode": "markers",
+      "name": null,
+      "id": "anchor:/metrics/children/0/range/min",
+      "n": 1,
+      "xaxis": null,
+      "yaxis": null
+    },
+    {
+      "type": "scatter",
+      "mode": "markers",
+      "name": null,
+      "id": "anchor:/metrics/children/0/range/max",
+      "n": 1,
+      "xaxis": null,
+      "yaxis": null
+    }
+  ],
+  "shapes": [
+    {
+      "type": "line",
+      "name": "/metrics/children/0/range/min",
+      "xref": "x",
+      "yref": "y"
+    },
+    {
+      "type": "line",
+      "name": "/metrics/children/0/range/max",
+      "xref": "x",
+      "yref": "y"
+    }
+  ],
+  "layout_keys": [
+    "hovermode",
+    "legend",
+    "margin",
+    "shapes",
+    "uirevision",
+    "xaxis",
+    "yaxis"
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "traces": [
+    {
+      "type": "scatter",
+      "mode": "lines",
+      "name": "Actual",
+      "id": "actual",
+      "n": 200,
+      "xaxis": null,
+      "yaxis": null
+    },
+    {
+      "type": "scatter",
+      "mode": "lines",
+      "name": "Reference",
+      "id": "reference",
+      "n": 200,
+      "xaxis": null,
+      "yaxis": null
+    },
+    {
+      "type": "scatter",
+      "mode": "lines",
+      "name": "Signed error",
+      "id": "error/signed",
+      "n": 200,
+      "xaxis": null,
+      "yaxis": "y3"
+    },
+    {
+      "type": "scatter",
+      "mode": "lines",
+      "name": "Abs error",
+      "id": "error/abs",
+      "n": 200,
+      "xaxis": null,
+      "yaxis": "y3"
+    },
+    {
+      "type": "scatter",
+      "mode": "lines",
+      "name": "NRMSE (per-point)",
+      "id": "error/nrmse",
+      "n": 200,
+      "xaxis": null,
+      "yaxis": "y3"
+    }
+  ],
+  "shapes": [
+    {
+      "type": "line",
+      "name": "/metrics/children/0/events/ref/0",
+      "xref": "x",
+      "yref": "paper"
+    },
+    {
+      "type": "rect",
+      "name": "/metrics/children/0/events/window/0",
+      "xref": "x",
+      "yref": "paper"
+    },
+    {
+      "type": "line",
+      "name": "/metrics/children/0/events/act/0",
+      "xref": "x",
+      "yref": "paper"
+    }
+  ],
+  "layout_keys": [
+    "hovermode",
+    "legend",
+    "margin",
+    "shapes",
+    "uirevision",
+    "xaxis",
+    "yaxis",
+    "yaxis3"
+  ]
+}
