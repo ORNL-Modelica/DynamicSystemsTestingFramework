@@ -5,7 +5,14 @@ from collections import defaultdict
 from pathlib import Path
 
 from ..comparison.comparator import TestComparison
-from .status import FAIL, NO_REF, SIM_FAIL, classify, count_by_status
+from .status import (
+    FAIL,
+    NO_REF,
+    SIM_FAIL,
+    classify,
+    count_by_status,
+    not_scored_reason,
+)
 
 
 def generate_junit_report(
@@ -84,11 +91,12 @@ def generate_junit_report(
                 for var in comp.variables:
                     if not var.passed:
                         name = var.name or f"x[{var.index}]"
-                        error = (var.diagnostics or {}).get("error")
-                        if error:
+                        reason = not_scored_reason(var)
+                        if reason:
                             # Sentinel leaf: the numbers are all inf/nan, so
-                            # CI sees the reason instead of a wall of them.
-                            msgs.append(f"{name}: not scored — {error}")
+                            # CI sees the variable's name and the reason
+                            # instead of a wall of them.
+                            msgs.append(f"{name}: not scored — {reason}")
                             continue
                         msgs.append(
                             f"{name}: "

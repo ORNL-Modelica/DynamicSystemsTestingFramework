@@ -30,7 +30,7 @@ copy — are gone. Every surface classifies here.
 
 from collections import Counter
 
-from ..comparison.types import TestComparison
+from ..comparison.types import TestComparison, VariableComparison
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -76,3 +76,26 @@ def count_by_status(comparisons: list[TestComparison]) -> Counter[str]:
     without guarding.
     """
     return Counter(classify(c) for c in comparisons)
+
+
+def not_scored_reason(var: VariableComparison) -> str | None:
+    """Why a leaf produced no score, or ``None`` when it scored one.
+
+    Sentinels (a metric config that could not build, a baseline that is
+    not there, a quantity path absent from one side, no data to compare)
+    carry every number as inf/nan; the reason is the whole finding, and
+    every surface must print it in place of that wall. It rides in
+    ``diagnostics["error"]`` — the one exception is a scalar sentinel
+    whose summary states the reason without a diagnostic, so the mode's
+    own summary is the fallback. Imported late: ``registry`` reaches back
+    into ``comparison`` and this module is imported from the CLI.
+    """
+    error = (var.diagnostics or {}).get("error")
+    if error:
+        return str(error)
+    from ..comparison.registry import summarize
+
+    summary = summarize(var)
+    if summary.display == "not scored":
+        return summary.criterion
+    return None

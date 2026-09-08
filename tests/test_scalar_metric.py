@@ -492,16 +492,22 @@ class TestScalarLeafEvaluation:
             scalars=ScalarSources(),
         )
         assert not node.passed
-        assert "current run" in node.label
-        # The label came from the path — state it once, not twice.
-        assert node.label == "(quantity 'timing.nope' not found in current run)"
+        # The label is the leaf's variable — the path, since none was
+        # authored — and the reason is a diagnostic beside it.
+        assert node.label == "timing.nope"
+        error = node.diagnostics["variable"].diagnostics["error"]
+        assert error == "quantity 'timing.nope' not found in current run"
 
-    def test_authored_variable_still_prefixes_the_missing_path_label(self):
+    def test_authored_variable_labels_the_leaf_and_the_path_is_the_reason(self):
         spec = parse_metric_tree(
             {"metric": "scalar", "variable": "solver cost", "quantity": "timing.nope"}
         )
         node = evaluate_spec(spec, {}, _baselines(), 1e-4, scalars=ScalarSources())
-        assert node.label.startswith("solver cost (quantity 'timing.nope'")
+        assert node.label == "solver cost"
+        assert (
+            "quantity 'timing.nope'"
+            in node.diagnostics["variable"].diagnostics["error"]
+        )
 
     def test_missing_path_on_the_baseline_side_hard_fails(self):
         spec = parse_metric_tree({"metric": "scalar", "quantity": "timing.total"})
@@ -513,8 +519,10 @@ class TestScalarLeafEvaluation:
             scalars=ScalarSources(statistics={"timing": {"total": 2.0}}),
         )
         assert not node.passed
-        assert "timing.total" in node.label
-        assert "baseline 'primary'" in node.label
+        assert node.label == "timing.total"
+        error = node.diagnostics["variable"].diagnostics["error"]
+        assert "timing.total" in error
+        assert "baseline 'primary'" in error
 
     def test_stat_leaf_against_a_soft_check(self):
         spec = parse_metric_tree(
@@ -546,7 +554,9 @@ class TestScalarLeafEvaluation:
         )
         missing = evaluate_spec(against_primary, {}, baselines, 1e-4, scalars=run)
         assert not missing.passed
-        assert "baseline 'primary'" in missing.label
+        assert (
+            "baseline 'primary'" in missing.diagnostics["variable"].diagnostics["error"]
+        )
 
     def test_bounds_form_with_no_baseline_at_all(self):
         spec = parse_metric_tree(

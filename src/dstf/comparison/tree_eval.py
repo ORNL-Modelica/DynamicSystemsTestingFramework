@@ -555,14 +555,15 @@ def _incompatible_dataset_comparison(
     Takes the already-resolved descriptor — the caller just checked its
     ``accepted_datasets``, and a re-lookup here would need a dead None
     branch (mypy union-attr).
+
+    The name stays the variable — the figure layer pairs leaves with plots
+    by it — and the reason rides in ``diagnostics["error"]``, where
+    ``registry.summarize``, the console and JUnit already read it.
     """
     accepted = ", ".join(sorted(d.value for d in desc.accepted_datasets))
     return VariableComparison(
         index=0,
-        name=(
-            f"{leaf.variable} (metric {leaf.metric!r} accepts {accepted}; "
-            f"got {dataset_kind.value})"
-        ),
+        name=leaf.variable,
         passed=False,
         nrmse=float("inf"),
         rmse=float("inf"),
@@ -572,6 +573,11 @@ def _incompatible_dataset_comparison(
         reference_final=float("nan"),
         actual_final=float("nan"),
         mode=leaf.metric,
+        diagnostics={
+            "error": (
+                f"metric {leaf.metric!r} accepts {accepted}; got {dataset_kind.value}"
+            )
+        },
     )
 
 
@@ -581,9 +587,10 @@ def _leaf_config_error_comparison(
 ) -> VariableComparison:
     """Hard-fail sentinel for a leaf whose metric config is invalid.
 
-    Names the variable and the metric so the report says which leaf to fix;
-    the raised message (which names the correct key) rides in
-    ``diagnostics["error"]``, matching the flat-override path's shape.
+    The name is the variable — the figure layer pairs leaves with plots by
+    it — and the reason (the metric that could not build, plus the raised
+    message, which names the correct key) rides in ``diagnostics["error"]``,
+    matching the flat-override path's shape.
 
     ``config_error`` distinguishes this from a data-shaped sentinel like
     ``_no_data_failure``: a config that never built has no live-scoring
@@ -593,7 +600,7 @@ def _leaf_config_error_comparison(
     """
     return VariableComparison(
         index=0,
-        name=f"{leaf.variable} (metric {leaf.metric!r} misconfigured)",
+        name=leaf.variable,
         passed=False,
         nrmse=float("inf"),
         rmse=float("inf"),
@@ -603,15 +610,22 @@ def _leaf_config_error_comparison(
         reference_final=float("nan"),
         actual_final=float("nan"),
         mode=leaf.metric,
-        diagnostics={"error": str(exc), "config_error": True},
+        diagnostics={
+            "error": f"metric {leaf.metric!r} misconfigured: {exc}",
+            "config_error": True,
+        },
     )
 
 
 def _missing_baseline_comparison(leaf: LeafSpec) -> VariableComparison:
-    """Build a hard-fail sentinel for a leaf referencing an unknown baseline."""
+    """Build a hard-fail sentinel for a leaf referencing an unknown baseline.
+
+    The name stays the variable so the leaf still finds its plot; the
+    missing baseline name rides in ``diagnostics["error"]``.
+    """
     return VariableComparison(
         index=0,
-        name=f"{leaf.variable} (against={leaf.against!r}: baseline not found)",
+        name=leaf.variable,
         passed=False,
         nrmse=float("inf"),
         rmse=float("inf"),
@@ -621,6 +635,7 @@ def _missing_baseline_comparison(leaf: LeafSpec) -> VariableComparison:
         reference_final=float("nan"),
         actual_final=float("nan"),
         mode=leaf.metric,
+        diagnostics={"error": f"against={leaf.against!r}: baseline not found"},
     )
 
 
@@ -631,15 +646,15 @@ def _missing_scalar_path_comparison(
 ) -> VariableComparison:
     """Hard-fail sentinel for a quantity path absent from one side.
 
-    Names the path and the side (``"current run"`` / ``"baseline 'x'"``) —
+    The name stays the leaf's variable (the path itself when none was
+    authored) so the leaf keeps its place in the report; the diagnostic
+    names the path and the side (``"current run"`` / ``"baseline 'x'"``) —
     a stats path that silently scored as 0 would be a green regression
-    test measuring nothing. When the leaf took its label from the path
-    (no authored ``variable``), the path is stated once, not twice.
+    test measuring nothing.
     """
-    label = "" if leaf.variable == path else f"{leaf.variable} "
     return VariableComparison(
         index=0,
-        name=f"{label}(quantity {path!r} not found in {side})",
+        name=leaf.variable,
         passed=False,
         nrmse=float("inf"),
         rmse=float("inf"),
@@ -649,6 +664,7 @@ def _missing_scalar_path_comparison(
         reference_final=float("nan"),
         actual_final=float("nan"),
         mode=leaf.metric,
+        diagnostics={"error": f"quantity {path!r} not found in {side}"},
     )
 
 

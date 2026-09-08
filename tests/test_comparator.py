@@ -1582,8 +1582,12 @@ class TestTreeConfigErrorIsALeafFailure:
         bad_leaf = comp.metric_tree.children[0]
         assert not bad_leaf.passed
         vc = bad_leaf.diagnostics["variable"]
-        assert "misconfigured" in vc.name
-        return str(vc.diagnostics.get("error", ""))
+        # The name is the variable's — the reason is a diagnostic, not a
+        # label — and it says the metric could not be built.
+        assert vc.name == "x"
+        error = str(vc.diagnostics.get("error", ""))
+        assert "misconfigured" in error
+        return error
 
     def test_range_leaf_with_min_max_shorthand(self):
         """Deleted `min`/`max` shorthand → leaf failure naming the real keys."""

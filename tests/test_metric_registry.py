@@ -318,10 +318,13 @@ class TestAcceptedDatasets:
             DatasetType.TIME_SERIES,
         )
         assert not result.passed
-        # The diagnostic names both kinds — what the metric takes and what
-        # it was handed.
-        assert "spectrum" in result.label
-        assert "time-series" in result.label
+        # The label is the variable — the plot pairs by it — and the
+        # diagnostic names both kinds: what the metric takes and what it
+        # was handed.
+        assert result.label == "x"
+        error = result.diagnostics["variable"].diagnostics["error"]
+        assert "spectrum" in error
+        assert "time-series" in error
 
     def test_matching_dataset_kind_scores_normally(self):
         register_metric(
@@ -354,8 +357,9 @@ class TestAcceptedDatasets:
             DatasetType.TIME_SERIES,
         )
         assert not result.passed
-        assert "spectrum" in result.label  # the dataset gate fired, not missing-var
         vc = result.diagnostics["variable"]
+        # the dataset gate fired, not missing-var
+        assert "spectrum" in vc.diagnostics["error"]
         assert vc.mode == "final-slope"
 
 

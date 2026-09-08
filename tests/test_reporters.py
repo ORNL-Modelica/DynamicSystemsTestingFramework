@@ -67,16 +67,22 @@ def _no_ref(model_id="Lib.Examples.D"):
 
 
 def _sentinel_var(
-    name="h", error="RangeConfig requires at least one of min_value / max_value"
+    name="h",
+    error=(
+        "metric 'range' misconfigured: RangeConfig requires at least one of "
+        "min_value / max_value"
+    ),
 ):
     """A leaf whose metric config could not build (D107).
 
-    Every number is inf/nan — the reason in ``diagnostics["error"]`` is the
-    only informative field, so each surface must print it.
+    The name is the variable's — the figure layer pairs leaves with plots
+    by it. Every number is inf/nan, so the reason in
+    ``diagnostics["error"]`` is the only informative field and each
+    surface must print it beside that name.
     """
     return VariableComparison(
         index=0,
-        name=f"{name} (metric 'range' misconfigured)",
+        name=name,
         passed=False,
         nrmse=float("inf"),
         rmse=float("inf"),
@@ -152,8 +158,8 @@ class TestJUnitReport:
         generate_junit_report([_config_error()], out)
         failure = ET.parse(out).getroot().find(".//failure")
         assert failure is not None
+        assert "h: not scored — " in failure.text
         assert "min_value / max_value" in failure.text
-        assert "not scored" in failure.text
         # The meaningless numeric block is suppressed for this leaf.
         assert "NRMSE=" not in failure.text
 
@@ -207,6 +213,8 @@ class TestConsoleReport:
     def test_config_error_prints_the_reason(self, capsys):
         assert print_report([_config_error()]) == 1
         out = capsys.readouterr().out
+        # The leaf is named for its variable; the reason sits beside it.
+        assert "h:" in out
         assert "Not scored:" in out
         assert "min_value / max_value" in out
 

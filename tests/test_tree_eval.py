@@ -247,8 +247,10 @@ class TestLeafEval:
             base_tolerance=1e-4,
         )
         assert not tree.passed
-        # Label surfaces the broken baseline name for the report
-        assert "nonexistent" in tree.label
+        # The label is the variable (the plot pairs by it); the diagnostic
+        # surfaces the broken baseline name for the report.
+        assert tree.label == "x"
+        assert "nonexistent" in tree.diagnostics["variable"].diagnostics["error"]
 
     def test_missing_variable_fails_leaf(self):
         spec = parse_metric_tree({"metric": "nrmse", "variable": "missing"})
@@ -410,8 +412,9 @@ class TestLeafEval:
             base_tolerance=1e-4,
         )
         assert not tree.passed
-        assert "misconfigured" in tree.label
+        assert tree.label == "x"
         vc = tree.diagnostics["variable"]
+        assert "misconfigured" in vc.diagnostics["error"]
         assert "min_value / max_value" in vc.diagnostics["error"]
 
     def test_default_points_leaf(self):
@@ -739,7 +742,9 @@ class TestCompareTestIntegration:
         comp = compare_test(test, result, reference)
         assert not comp.passed
         assert comp.metric_tree is not None
-        assert "experiment" in comp.metric_tree.label
+        assert comp.metric_tree.label == "x"
+        error = comp.metric_tree.diagnostics["variable"].diagnostics["error"]
+        assert "experiment" in error and "baseline not found" in error
 
     def test_tree_leaf_scores_against_a_store_soft_check(self):
         """A store's soft_checks feed the tree's ``against:`` lookup (D66).
@@ -941,3 +946,102 @@ class TestLeafPathStamping:
         stamp_leaf_path(leaf, "/metrics")
         stamp_leaf_path(leaf, "/metrics")
         assert vc.geometry[0].id == "/metrics/tube/band"
+
+
+# ---------------------------------------------------------------------------
+# Sentinel leaves: the name stays the variable, the reason is a diagnostic
+# ---------------------------------------------------------------------------
+
+
+class TestSentinelLeavesKeepTheirName:
+    """Every hard-fail sentinel names the variable it belongs to.
+
+    The figure layer pairs leaves with plots by variable name, so a
+    sentinel whose name carried the reason never joined its own plot.
+    The reason rides in ``diagnostics["error"]`` instead — where
+    ``registry.summarize``, the console and JUnit already read it.
+    """
+
+    def test_incompatible_dataset_sentinel(self):
+        from dstf.backends.types import DatasetType
+
+        spec = parse_metric_tree({"metric": "nrmse", "variable": "x"})
+        t, vals = _linear()
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={
+                "x": VariableResult(index=1, name="x", time=t, values=vals)
+            },
+            baselines=_primary({"x": {"time": t.tolist(), "values": vals.tolist()}}),
+            base_tolerance=1e-4,
+            dataset_kind=DatasetType.SPECTRUM,
+        )
+        assert not tree.passed
+        vc = tree.diagnostics["variable"]
+        assert vc.name == "x"
+        error = vc.diagnostics["error"]
+        assert "time-series" in error
+        assert "spectrum" in error
+        assert "nrmse" in error
+
+    def test_config_error_sentinel(self):
+        spec = parse_metric_tree(
+            {"metric": "range", "variable": "x", "min": 0.0, "max": 2.0}
+        )
+        t, vals = _linear()
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={
+                "x": VariableResult(index=1, name="x", time=t, values=vals)
+            },
+            baselines=_primary({}, None),
+            base_tolerance=1e-4,
+        )
+        assert not tree.passed
+        vc = tree.diagnostics["variable"]
+        assert vc.name == "x"
+        error = vc.diagnostics["error"]
+        assert "misconfigured" in error
+        assert "min_value / max_value" in error
+        # The key the reporter reads to pin the leaf survives.
+        assert vc.diagnostics["config_error"] is True
+
+    def test_missing_baseline_sentinel(self):
+        spec = parse_metric_tree(
+            {"metric": "nrmse", "variable": "x", "against": "nonexistent"}
+        )
+        t, vals = _linear()
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={
+                "x": VariableResult(index=1, name="x", time=t, values=vals)
+            },
+            baselines={"primary": BaselineView(name="primary", ref_vars_by_name={})},
+            base_tolerance=1e-4,
+        )
+        assert not tree.passed
+        vc = tree.diagnostics["variable"]
+        assert vc.name == "x"
+        error = vc.diagnostics["error"]
+        assert "nonexistent" in error
+        assert "baseline not found" in error
+
+    def test_missing_quantity_sentinel(self):
+        from dstf.comparison.tree_eval import ScalarSources
+
+        spec = parse_metric_tree(
+            {"metric": "scalar", "variable": "solver cost", "quantity": "timing.nope"}
+        )
+        tree = evaluate_spec(
+            spec,
+            var_results_by_name={},
+            baselines=_primary({}, None),
+            base_tolerance=1e-4,
+            scalars=ScalarSources(),
+        )
+        assert not tree.passed
+        vc = tree.diagnostics["variable"]
+        assert vc.name == "solver cost"
+        error = vc.diagnostics["error"]
+        assert "timing.nope" in error
+        assert "current run" in error

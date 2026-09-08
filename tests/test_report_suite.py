@@ -12,6 +12,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from dstf.comparison.types import VariableComparison
 from dstf.reporting.report_suite import (
     _decimate_context_for_html,
@@ -991,3 +993,110 @@ class TestEmbeddedFigures:
         assert len(sidecar["trajectories"][0]["act_time"]) == 3001
         start = page.index("FIGURES:")
         assert '"full_samples": 3001' in page[start:]
+
+    def _render_two_leaves(self, tmp_path, sentinel_first: bool):
+        """One misconfigured tube leaf + one healthy nrmse leaf, both on x.
+
+        The sentinel carries ``index=0`` and no samples; whichever order
+        the spec lists the leaves in, the variable's figure must be built
+        from the trajectory that HAS data.
+        """
+        import json
+        from pathlib import Path
+
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_test
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        t = np.linspace(0.0, 1.0, 201)
+        ref = {
+            "test_id": "ref_0001",
+            "time": t.tolist(),
+            "variables": [{"index": 1, "name": "x", "values": np.sin(t).tolist()}],
+        }
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[
+                VariableResult(index=1, name="x", time=t, values=np.sin(t) + 0.001)
+            ],
+        )
+        bad = {
+            "metric": "tube",
+            "variable": "x",
+            "tube_width_mode": "nonsense",
+            "tube_rel": 0.1,
+        }
+        good = {"metric": "nrmse", "variable": "x", "tolerance": 0.5}
+        children = [bad, good] if sentinel_first else [good, bad]
+        spec = parse_metric_tree({"combinator": "and", "children": children})
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=1,
+            metric_tree_spec=spec,
+        )
+        comp = compare_test(test, result, ref)
+        plot_dir = tmp_path / ("first" if sentinel_first else "second")
+        html = generate_comparison_plots(
+            "M",
+            ref,
+            result,
+            comp.variables,
+            plot_dir,
+            test_model=test,
+            metric_tree=comp.metric_tree,
+            max_embedded_samples=500,
+        )
+        page = html.read_text(encoding="utf-8")
+        figures = json.loads(
+            re.search(r"FIGURES:\s*(\{.*?\}),\n\s*DIAG_FIGURES", page, re.S).group(1)
+        )
+        return page, figures
+
+    @pytest.mark.parametrize("sentinel_first", [True, False])
+    def test_a_sentinel_leaf_does_not_blank_its_variables_plot(
+        self, tmp_path, sentinel_first
+    ):
+        page, figures = self._render_two_leaves(tmp_path, sentinel_first)
+        traces = figures["x"]["data"]
+        names = [tr.get("name") for tr in traces]
+        assert "Actual" in names and "Reference" in names
+        # Actual/Reference carry the real samples, not the sentinel's empty
+        # trajectory.
+        actual = next(tr for tr in traces if tr.get("name") == "Actual")
+        assert len(actual["x"]) == 201
+        # The error traces the healthy leaf's geometry rides on are there;
+        # the tube leaf errored, so there is no band.
+        ids = [(tr.get("meta") or {}).get("id", "") for tr in traces]
+        assert {"error/signed", "error/abs", "error/nrmse"} <= set(ids)
+        assert not any("tube/band" in i for i in ids)
+        assert not any(
+            "tube/band" in (sh.get("name") or "")
+            for sh in figures["x"]["layout"].get("shapes", [])
+        )
+
+    @pytest.mark.parametrize("sentinel_first", [True, False])
+    def test_the_sentinels_reason_reaches_the_tree_view(self, tmp_path, sentinel_first):
+        page, _figures = self._render_two_leaves(tmp_path, sentinel_first)
+        tree_view = json.loads(
+            re.search(
+                r"TREE_VIEW:\s*(\{.*?\}),\n\s*VARIABLES_BY_NAME", page, re.S
+            ).group(1)
+        )
+        leaves = {n["path"]: n for n in tree_view["children"]}
+        sentinel = leaves[
+            "/metrics/children/0" if sentinel_first else "/metrics/children/1"
+        ]
+        # The leaf is named for its variable; the reason is in the criterion.
+        assert sentinel["variable"] == "x"
+        assert sentinel["name"] == "x"
+        assert sentinel["score_display"] == "not scored"
+        assert "tube leaf not scored" in sentinel["criterion"]
+        assert "misconfigured" in sentinel["criterion"]

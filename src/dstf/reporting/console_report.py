@@ -3,7 +3,7 @@
 import sys
 
 from ..comparison.comparator import TestComparison, VariableComparison
-from .status import FAIL, NO_REF, SIM_FAIL, classify
+from .status import FAIL, NO_REF, SIM_FAIL, classify, not_scored_reason
 
 # ANSI color codes
 _GREEN = "\033[92m"
@@ -111,11 +111,12 @@ def _print_var_failure(var: VariableComparison):
     """Print details for a failed variable comparison."""
     name = var.name or f"x[{var.index}]"
     print(f"    {name}:")
-    error = (var.diagnostics or {}).get("error")
-    if error:
+    reason = not_scored_reason(var)
+    if reason:
         # A sentinel (config that could not build, no data to compare) has
-        # no meaningful numbers — the reason is the whole finding.
-        print(f"      Not scored:         {error}")
+        # no meaningful numbers — the reason is the whole finding. The name
+        # above it is the variable's, so the line says which leaf to fix.
+        print(f"      Not scored:         {reason}")
     if var.is_constant:
         print(f"      RMSE:               {var.rmse:.6e} (constant signal)")
     else:

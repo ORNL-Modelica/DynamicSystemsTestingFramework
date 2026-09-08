@@ -922,10 +922,20 @@ def _build_tree_view_and_variables(
     )
 
     # Dedupe trajectories by variable name into a per-variable dict.
-    # Overlays already attached per-trajectory-entry; first match wins.
+    # Overlays are attached to EVERY entry with the name, so any of them
+    # carries the same overlay list. Which one matters for the samples: a
+    # sentinel leaf (config that could not build, baseline not found)
+    # carries ``index=0``, so ``_build_trajectories`` found no actual
+    # variable for it and produced an empty entry under the real name.
+    # Listed before the healthy leaf it would blank the variable's plot,
+    # so the entry WITH samples wins; the empty one only stands in when
+    # there is nothing else.
     variables_by_name: dict[str, dict] = {}
     for vn in _collect_variables(spec):
-        match_traj = next((t for t in trajectories if t["name"] == vn), None)
+        named = [t for t in trajectories if t["name"] == vn]
+        match_traj = next((t for t in named if t.get("act_time")), None) or next(
+            iter(named), None
+        )
         variables_by_name[vn] = {
             "name": vn,
             "trajectory": match_traj or {},
