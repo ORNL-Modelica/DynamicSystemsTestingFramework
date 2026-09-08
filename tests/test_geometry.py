@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from dstf.comparison.algorithms import (
+    _compare_dominant_frequency,
     _compare_event_timing,
     _compare_points,
     _compare_range,
@@ -16,7 +17,7 @@ from dstf.comparison.algorithms import (
     _find_event_boundaries,
     _tube_bounds,
 )
-from dstf.comparison.geometry import Band, Box, HLine, Marker, VLine, Window
+from dstf.comparison.geometry import Band, Box, HLine, Marker, Series, VLine, Window
 from dstf.comparison.types import ScoreSummary, VariableComparison
 
 
@@ -343,3 +344,64 @@ class TestEventTimingGeometry:
             "events/ref/1",
         ]
         assert not vc.passed
+
+
+class TestDominantFrequencyGeometry:
+    def _signal(self, hz: float):
+        t = np.linspace(0.0, 10.0, 1001)
+        return t, np.sin(2 * np.pi * hz * t)
+
+    def test_spectra_and_peaks_land_on_the_spectrum_panel(self):
+        t, ref = self._signal(2.0)
+        _, act = self._signal(2.0)
+        vc = _compare_dominant_frequency(
+            t,
+            ref,
+            t,
+            act,
+            peaks=[{"freq": 2.0, "tolerance": 0.05}, {"freq": 5.0, "tolerance": 0.02}],
+        )
+        prims = {p.id: p for p in vc.geometry}
+        assert all(p.panel == "spectrum" for p in vc.geometry)
+        assert (
+            isinstance(prims["spectrum/ref"], Series)
+            and prims["spectrum/ref"].kind == "ref"
+        )
+        assert (
+            isinstance(prims["spectrum/act"], Series)
+            and prims["spectrum/act"].kind == "act"
+        )
+        assert (
+            prims["peaks/declared/0"].kind == "handle"
+            and prims["peaks/declared/0"].x == 2.0
+        )
+        assert prims["peaks/declared/0"].passed is True
+        assert prims["peaks/matched/0"].kind == "matched"
+        assert prims["peaks/matched/0"].x == pytest.approx(2.0, abs=0.05)
+        assert (
+            prims["peaks/declared/1"].passed is False and "peaks/matched/1" not in prims
+        )
+        w = prims["peaks/window/1"]
+        assert isinstance(w, Box) and (w.t0, w.t1) == (
+            pytest.approx(4.9),
+            pytest.approx(5.1),
+        )
+        assert any(
+            p.id.startswith("peaks/detected/") and p.kind == "detected"
+            for p in vc.geometry
+        )
+        # Every matched marker is one of the paired peaks.
+        paired = {
+            p["matched_hz"]
+            for p in vc.diagnostics["paired_peaks"]
+            if p["matched_hz"] is not None
+        }
+        assert {p.x for p in vc.geometry if p.kind == "matched"} == paired
+        assert not vc.passed
+
+    def test_no_declared_peaks_still_draws_the_spectra(self):
+        t, ref = self._signal(2.0)
+        vc = _compare_dominant_frequency(t, ref, t, ref, peaks=None)
+        ids = [p.id for p in vc.geometry]
+        assert "spectrum/ref" in ids and "spectrum/act" in ids
+        assert not any(i.startswith("peaks/declared/") for i in ids)

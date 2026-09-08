@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .geometry import Band, Box, HLine, Marker, Primitive, VLine
+from .geometry import Band, Box, HLine, Marker, Primitive, Series, VLine
 from .types import _EPS, VariableComparison
 
 
@@ -1400,6 +1400,102 @@ _SPECTRUM_EMBED_CAP = 512
 _PEAK_MIN_REL_AMPLITUDE = 0.01
 
 
+def _frequency_geometry(
+    ref_f: list[float],
+    ref_m: list[float],
+    act_f: list[float],
+    act_m: list[float],
+    act_freqs: np.ndarray,
+    act_spectrum: np.ndarray,
+    detected_ref_peaks: list[tuple[float, float]],
+    peaks: list[dict],
+    paired: list[dict],
+) -> tuple[Primitive, ...]:
+    """Both spectra, the reference's detected peaks, and per declared peak
+    its handle, its acceptance window and (when found) its match. All on
+    the spectrum panel. The embedded (capped) spectra are what is drawn; the
+    full ``act_freqs``/``act_spectrum`` only place markers on the curve."""
+    out: list[Primitive] = []
+    if len(ref_f):
+        out.append(
+            Series(
+                id="spectrum/ref",
+                kind="ref",
+                panel="spectrum",
+                x=np.asarray(ref_f),
+                y=np.asarray(ref_m),
+            )
+        )
+    out.append(
+        Series(
+            id="spectrum/act",
+            kind="act",
+            panel="spectrum",
+            x=np.asarray(act_f),
+            y=np.asarray(act_m),
+        )
+    )
+    for k, (f, amp) in enumerate(detected_ref_peaks):
+        out.append(
+            Marker(
+                id=f"peaks/detected/{k}",
+                kind="detected",
+                panel="spectrum",
+                x=float(f),
+                y=float(amp),
+            )
+        )
+
+    def _amp_at(freq: float) -> float:
+        return (
+            float(np.interp(freq, act_freqs, act_spectrum)) if len(act_freqs) else 0.0
+        )
+
+    for i, (declared, pair) in enumerate(zip(peaks, paired)):
+        f_decl = float(declared.get("freq", 0.0))
+        tol = float(declared.get("tolerance", 0.01))
+        if declared.get("tolerance_mode", "rel") == "rel":
+            lo, hi = f_decl * (1.0 - tol), f_decl * (1.0 + tol)
+        else:
+            lo, hi = f_decl - tol, f_decl + tol
+        ok = bool(pair["passed"])
+        out.append(
+            Marker(
+                id=f"peaks/declared/{i}",
+                kind="handle",
+                panel="spectrum",
+                x=f_decl,
+                y=_amp_at(f_decl),
+                passed=ok,
+            )
+        )
+        out.append(
+            Box(
+                id=f"peaks/window/{i}",
+                kind="handle",
+                panel="spectrum",
+                t0=lo,
+                t1=hi,
+                y0=None,
+                y1=None,
+                passed=ok,
+            )
+        )
+        if pair.get("matched_hz") is not None:
+            mh = float(pair["matched_hz"])
+            out.append(
+                Marker(
+                    id=f"peaks/matched/{i}",
+                    kind="matched",
+                    panel="spectrum",
+                    x=mh,
+                    y=_amp_at(mh),
+                    passed=True,
+                )
+            )
+    return tuple(out)
+
+
 def _compare_dominant_frequency(
     ref_time: np.ndarray,
     ref_values: np.ndarray,
@@ -1528,6 +1624,17 @@ def _compare_dominant_frequency(
                 "act_spectrum_freq": act_f_embed,
                 "act_spectrum_mag": act_m_embed,
             },
+            geometry=_frequency_geometry(
+                ref_f_embed,
+                ref_m_embed,
+                act_f_embed,
+                act_m_embed,
+                act_freqs,
+                act_spectrum,
+                detected_ref_peaks,
+                [],
+                [],
+            ),
         )
 
     paired: list[dict] = []
@@ -1622,4 +1729,15 @@ def _compare_dominant_frequency(
             "act_spectrum_freq": act_f_embed,
             "act_spectrum_mag": act_m_embed,
         },
+        geometry=_frequency_geometry(
+            ref_f_embed,
+            ref_m_embed,
+            act_f_embed,
+            act_m_embed,
+            act_freqs,
+            act_spectrum,
+            detected_ref_peaks,
+            peaks,
+            paired,
+        ),
     )
