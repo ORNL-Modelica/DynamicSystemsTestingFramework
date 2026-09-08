@@ -139,6 +139,10 @@ details summary:hover { color: #333; }
 .node-btn-unwrap:hover { background: #f3e5f5; }
 .node-kind-select { font-size: 0.82em; padding: 0.05em 0.3em; font-weight: 500; color: #333; background: white; border: 1px solid #c5b0d0; border-radius: 3px; cursor: pointer; }
 .node-child-count { font-size: 0.8em; color: #888; font-family: monospace; }
+.node-criterion { font-size: 0.82em; color: #666; margin-top: 0.15em; padding-left: 0.2em; }
+.node-details { display: grid; grid-template-columns: auto 1fr; gap: 0.05em 0.6em; margin: 0.3em 0 0 0.2em; font-size: 0.8em; }
+.node-details dt { color: #888; }
+.node-details dd { margin: 0; color: #333; font-family: monospace; }
 .node-combinator-params { display: inline-flex; gap: 0.4em; align-items: center; margin-left: 0.3em; padding-left: 0.4em; border-left: 1px dashed #cbb5d6; font-size: 0.82em; }
 .node-combinator-params label.mc-field { flex-direction: row; gap: 0.2em; margin: 0; }
 .node-combinator-params input.node-k-input, .node-combinator-params input.node-threshold-input { width: 4em; padding: 1px 4px; font-size: 0.82em; }
@@ -202,6 +206,35 @@ details summary:hover { color: #333; }
 </head>
 <body>
 
+{# === SERVER-RENDERED METRIC TREE ==========================================
+   The tree is a read-only view of what the CLI already decided: every pill,
+   score, criterion and detail pair below comes from the evaluated tree view.
+   No form controls — editing a spec is the authoring tool's job, not the
+   report's. #}
+{% macro status_pill(passed) %}{% if passed is sameas true %}<span class="node-status pass">PASS</span>{% elif passed is sameas false %}<span class="node-status fail">FAIL</span>{% else %}<span class="node-status pending">—</span>{% endif %}{% endmacro %}
+{% macro advisory_chip(count, vidx=None) %}<span class="advisory-chip"{% if vidx is not none %} data-vidx="{{ vidx }}"{% endif %} title="{% if count == 1 %}One failing leaf sits under a warn wrapper — advisory only; it does not fail the test.{% else %}{{ count }} failing leaves sit under a warn wrapper — advisory only; they do not fail the test.{% endif %}">{% if count == 1 %}1 advisory{% else %}{{ count }} advisory{% endif %}</span>{% endmacro %}
+{% macro node(n) %}
+{%- set combinator_help = {
+      'and': 'All children must pass.',
+      'or': 'At least one child must pass.',
+      'warn': 'Single-child wrapper; never fails its parent (advisory-only scoring).',
+      'k-of-n': 'At least k of N children must pass.',
+      'weighted': 'Weighted sum of child scores passes a threshold.'} -%}
+{%- if n.kind == 'leaf' -%}
+<div class="node node-leaf" data-path="{{ n.path }}">
+<div class="node-header">{{ status_pill(n.passed) }}<span class="node-label">{{ n.metric }} · {{ n.variable }}{% if n.against and n.against != 'primary' %} [against={{ n.against }}]{% endif %}{% if n.window and (n.window.get('start') is not none or n.window.get('end') is not none) %} [window{% if n.window.get('start') is not none %} start={{ n.window.get('start') }}{% endif %}{% if n.window.get('end') is not none %} end={{ n.window.get('end') }}{% endif %}]{% endif %}</span>{% if n.score_display %}<span class="node-score"{% if n.error %} title="{{ n.error }}"{% endif %}>{{ n.score_display }}</span>{% endif %}</div>
+{%- if n.criterion %}<div class="node-criterion">{{ n.criterion }}</div>{% endif %}
+{%- if n.error %}<div class="node-error">{{ n.error }}</div>{% endif %}
+{%- if n.details %}<dl class="node-details">{% for pair in n.details %}<dt>{{ pair[0] }}</dt><dd>{{ pair[1] }}</dd>{% endfor %}</dl>{% endif %}
+</div>
+{%- else -%}
+<div class="node node-combinator" data-path="{{ n.path }}">
+<div class="node-header">{{ status_pill(n.passed) }}<span class="node-label" title="{{ combinator_help.get(n.combinator, '') }}">{{ n.combinator }}</span><span class="node-child-count">[{{ (n.children or []) | length }}]</span>{% if n.get('k') is not none or n.get('threshold') is not none or n.get('weights') %}<span class="node-combinator-params">{% if n.get('k') is not none %}k={{ n.get('k') }}{% endif %}{% if n.get('weights') %} weights={{ n.get('weights') | join(', ') }}{% endif %}{% if n.get('threshold') is not none %} threshold={{ n.get('threshold') }}{% endif %}</span>{% endif %}</div>
+<div class="node-children">{% for child in n.children or [] %}{{ node(child) }}{% endfor %}</div>
+</div>
+{%- endif -%}
+{% endmacro %}
+
 <h1>{{ model_id }}</h1>
 {% if run_metadata %}<div class="run-meta" style="font-size:0.85em; color:#888; margin-bottom:0.25em;"><strong>{{ run_metadata.label }}</strong>{% if run_metadata.tool_version and run_metadata.tool_version != run_metadata.label %} <span title="version reported by the backend">({{ run_metadata.tool_version }})</span>{% endif %}{% if run_metadata.msl %} · MSL {{ run_metadata.msl }}{% endif %}{% if run_metadata.os %} · {{ run_metadata.os }}{% endif %}{% if run_metadata.dstf_version %} · DSTF {{ run_metadata.dstf_version }}{% endif %}{% if run_metadata.generated_str %} · {{ run_metadata.generated_str }}{% endif %}</div>{% endif %}
 {% if last_run_str %}<div style="font-size:0.85em; color:#888; margin-bottom:0.5em;">Last run: {{ last_run_str }}</div>{% endif %}
@@ -215,7 +248,7 @@ details summary:hover { color: #333; }
 {% elif sim_failed %}
   <span class="fail"><strong>Simulation failed</strong></span>
 {% else %}
-  <span id="summary-text"></span>
+  {% if tree_summary %}<span id="summary-text" class="{{ 'pending' if tree_summary.root_passed is not sameas true and tree_summary.root_passed is not sameas false else ('pass' if tree_summary.root_passed else 'fail') }}"><strong>{{ tree_summary.n_pass }}</strong> / <strong>{{ tree_summary.n_total }}</strong> leaves passed{% if tree_summary.root_passed is not sameas true and tree_summary.root_passed is not sameas false %} · root verdict pending — run dstf run to evaluate{% endif %}{% if tree_summary.n_advisory_failed %}{{ advisory_chip(tree_summary.n_advisory_failed) }}{% endif %}</span>{% else %}<span id="summary-text"></span>{% endif %}
 {% endif %}
 </div>
 
@@ -339,7 +372,7 @@ details summary:hover { color: #333; }
 {% if tree_view %}
 <details class="metric-tree-section" open>
   <summary>Metric Tree <span class="node-tree-hint">— every leaf + combinator; edits here round-trip with the per-variable panels below</span></summary>
-  <div class="node-tree" id="nodes-full"></div>
+  <div class="node-tree" id="nodes-full">{{ node(tree_view) }}</div>
 </details>
 {% endif %}
 
@@ -372,7 +405,7 @@ details summary:hover { color: #333; }
 {% for varname, vardata in variables_by_name.items() %}
 <div class="variable-section" data-variable="{{ varname }}" data-vidx="{{ loop.index0 }}" id="variable-section-{{ loop.index0 }}">
   <h2>
-    <span class="var-status" data-vidx="{{ loop.index0 }}"></span>
+    <span class="var-status {{ 'pass' if vardata.passed else 'fail' }}" data-vidx="{{ loop.index0 }}">{{ 'PASS' if vardata.passed else 'FAIL' }}</span>{% if vardata.n_advisory_failed %}{{ advisory_chip(vardata.n_advisory_failed, loop.index0) }}{% endif %}
     {{ varname }}
   </h2>
   <div class="plot-controls">
@@ -395,7 +428,7 @@ details summary:hover { color: #333; }
   </div>
   {% endif %}
   <div class="plotly-chart plot-main" id="plot-{{ loop.index0 }}" style="height:300px"></div>
-  <div class="node-tree" id="nodes-{{ loop.index0 }}" data-variable="{{ varname }}"></div>
+  <div class="node-tree" id="nodes-{{ loop.index0 }}" data-variable="{{ varname }}">{% if vardata.tree %}{{ node(vardata.tree) }}{% endif %}</div>
 </div>
 {% endfor %}
 {% endif %}

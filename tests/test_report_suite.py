@@ -1100,3 +1100,278 @@ class TestEmbeddedFigures:
         assert sentinel["score_display"] == "not scored"
         assert "tube leaf not scored" in sentinel["criterion"]
         assert "misconfigured" in sentinel["criterion"]
+
+
+# ---------------------------------------------------------------------------
+# The metric tree, server-rendered
+# ---------------------------------------------------------------------------
+
+
+class _Element:
+    """One element of the parsed page. Children are elements or text."""
+
+    def __init__(self, tag: str, attrs: dict):
+        self.tag = tag
+        self.attrs = attrs
+        self.children: list = []
+
+    @property
+    def classes(self) -> set[str]:
+        return set((self.attrs.get("class") or "").split())
+
+    def text(self) -> str:
+        out = []
+        for child in self.children:
+            out.append(child if isinstance(child, str) else child.text())
+        return "".join(out)
+
+    def walk(self):
+        for child in self.children:
+            if isinstance(child, _Element):
+                yield child
+                yield from child.walk()
+
+    def by_class(self, name: str) -> list:
+        return [el for el in self.walk() if name in el.classes]
+
+    def by_id(self, el_id: str):
+        return next((el for el in self.walk() if el.attrs.get("id") == el_id), None)
+
+
+def _parse(html: str) -> _Element:
+    """Parse the served page into a tiny element tree.
+
+    Enough of a DOM to ask what the SERVER rendered — the browser tests in
+    ``tests/test_interactive_report.py`` ask the same questions of the page
+    after the JavaScript has run.
+    """
+    from html.parser import HTMLParser
+
+    void = {"br", "img", "input", "meta", "link", "hr", "source", "col"}
+
+    class _P(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.root = _Element("#document", {})
+            self.stack = [self.root]
+
+        def handle_starttag(self, tag, attrs):
+            el = _Element(tag, dict(attrs))
+            self.stack[-1].children.append(el)
+            if tag not in void:
+                self.stack.append(el)
+
+        def handle_startendtag(self, tag, attrs):
+            self.stack[-1].children.append(_Element(tag, dict(attrs)))
+
+        def handle_endtag(self, tag):
+            for i in range(len(self.stack) - 1, 0, -1):
+                if self.stack[i].tag == tag:
+                    del self.stack[i:]
+                    return
+
+        def handle_data(self, data):
+            self.stack[-1].children.append(data)
+
+    parser = _P()
+    parser.feed(html)
+    return parser.root
+
+
+class TestServerRenderedTree:
+    """The tree, the summary line and the variable pills come off the server.
+
+    Non-browser on purpose: until the cut deletes ``tree-ui.js`` the JS
+    clears every mount on load and rebuilds it, so the served markup is the
+    only place these assertions can hold today.
+    """
+
+    #: ``x`` carries a passing tube leaf and a failing nrmse leaf wrapped in
+    #: ``warn`` (advisory); ``y`` carries a range leaf that breaches its max.
+    SPEC = {
+        "combinator": "and",
+        "children": [
+            {
+                "metric": "tube",
+                "variable": "x",
+                "tube_width_mode": "band",
+                "tube_abs": 0.1,
+                "window": {"start": 0.2, "end": 0.8},
+            },
+            {
+                "combinator": "warn",
+                "children": [{"metric": "nrmse", "variable": "x", "tolerance": 1e-12}],
+            },
+            {"metric": "range", "variable": "y", "max_value": 0.5},
+        ],
+    }
+    TUBE = "/metrics/children/0"
+    ADVISORY = "/metrics/children/1/children/0"
+    RANGE = "/metrics/children/2"
+
+    def _render(self, tmp_path):
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_test
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.discovery.test_registry import TestModel
+
+        t = np.linspace(0.0, 1.0, 201)
+        ref = {
+            "test_id": "ref_0001",
+            "time": t.tolist(),
+            "variables": [
+                {"index": 1, "name": "x", "values": np.sin(t).tolist()},
+                {"index": 2, "name": "y", "values": (0.1 * t).tolist()},
+            ],
+        }
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[
+                VariableResult(index=1, name="x", time=t, values=np.sin(t) + 0.01),
+                VariableResult(index=2, name="y", time=t, values=1.5 * t),
+            ],
+        )
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=2,
+            metric_tree_spec=parse_metric_tree(self.SPEC),
+        )
+        comp = compare_test(test, result, ref)
+        html = generate_comparison_plots(
+            "M",
+            ref,
+            result,
+            comp.variables,
+            tmp_path / "plots",
+            test_model=test,
+            metric_tree=comp.metric_tree,
+            max_embedded_samples=500,
+        )
+        return html.read_text(encoding="utf-8"), comp
+
+    @staticmethod
+    def _leaves(mount) -> dict:
+        return {
+            el.attrs["data-path"]: el
+            for el in mount.walk()
+            if "node-leaf" in el.classes and el.attrs.get("data-path")
+        }
+
+    def test_every_leaf_shows_the_cli_verdict_score_and_criterion(self, tmp_path):
+        from dstf.comparison.registry import summarize
+        from dstf.comparison.tree_eval import leaf_comparisons_by_path
+
+        page, comp = self._render(tmp_path)
+        full = _parse(page).by_id("nodes-full")
+        leaves = self._leaves(full)
+        by_path = leaf_comparisons_by_path(comp.metric_tree)
+        assert set(leaves) == {self.TUBE, self.ADVISORY, self.RANGE}
+
+        verdicts = {}
+
+        def walk(node):
+            path = node.diagnostics.get("leaf_path")
+            if path is not None and not node.children:
+                verdicts[path] = bool(node.passed)
+            for child in node.children:
+                walk(child)
+
+        walk(comp.metric_tree)
+
+        for path, leaf in leaves.items():
+            pills = [el for el in leaf.walk() if "node-status" in el.classes]
+            assert len(pills) == 1, path
+            assert pills[0].text() == ("PASS" if verdicts[path] else "FAIL"), path
+            summary = summarize(by_path[path])
+            scores = [el for el in leaf.walk() if "node-score" in el.classes]
+            assert [el.text() for el in scores] == [summary.display], path
+            # The criterion is TEXT on the page, not a string inside the
+            # embedded JSON blob.
+            assert summary.criterion in leaf.text(), path
+
+        # The fixture is built so the advisory leaf is the failing one.
+        assert verdicts[self.ADVISORY] is False
+        assert verdicts[self.TUBE] is True
+
+    def test_each_leaf_carries_its_detail_pairs(self, tmp_path):
+        from dstf.comparison.registry import summarize
+        from dstf.comparison.tree_eval import leaf_comparisons_by_path
+
+        page, comp = self._render(tmp_path)
+        leaves = self._leaves(_parse(page).by_id("nodes-full"))
+        by_path = leaf_comparisons_by_path(comp.metric_tree)
+        for path, leaf in leaves.items():
+            details = [el for el in leaf.walk() if "node-details" in el.classes]
+            expected = summarize(by_path[path]).details
+            assert len(details) == 1, path
+            assert details[0].tag == "dl", path
+            pairs = [
+                (child.tag, child.text())
+                for child in details[0].children
+                if isinstance(child, _Element)
+            ]
+            assert pairs == [
+                item for key, value in expected for item in (("dt", key), ("dd", value))
+            ], path
+
+    def test_the_advisory_chip_rides_beside_the_summary_and_the_variable(
+        self, tmp_path
+    ):
+        page, _comp = self._render(tmp_path)
+        doc = _parse(page)
+        summary = doc.by_id("summary-text")
+        # The headline colour is the ROOT verdict (the range leaf on y fails
+        # it), never the leaf tally; the advisory failure rides beside it as
+        # a chip rather than colouring anything.
+        assert "fail" in summary.classes
+        assert "1 / 3 leaves passed" in " ".join(summary.text().split())
+        assert [el.text() for el in summary.by_class("advisory-chip")] == ["1 advisory"]
+
+        pills = doc.by_class("var-status")
+        assert [(el.attrs["data-vidx"], el.text()) for el in pills] == [
+            ("0", "PASS"),  # x: the gating tube leaf passes
+            ("1", "FAIL"),  # y: the range leaf breaches its max
+        ]
+        chips = [
+            el for el in doc.by_class("advisory-chip") if el.attrs.get("data-vidx")
+        ]
+        assert [(el.attrs["data-vidx"], el.text()) for el in chips] == [
+            ("0", "1 advisory")
+        ]
+
+    def test_a_variable_mount_carries_only_its_own_leaves_and_their_ancestors(
+        self, tmp_path
+    ):
+        page, _comp = self._render(tmp_path)
+        doc = _parse(page)
+        assert set(self._leaves(doc.by_id("nodes-0"))) == {self.TUBE, self.ADVISORY}
+        assert set(self._leaves(doc.by_id("nodes-1"))) == {self.RANGE}
+        # x's mount keeps the warn wrapper its advisory leaf hangs from; y's
+        # drops it, because no leaf under it scores y.
+        kinds = lambda mount: [  # noqa: E731
+            el.by_class("node-label")[0].text()
+            for el in mount.walk()
+            if "node-combinator" in el.classes
+        ]
+        assert kinds(doc.by_id("nodes-0")) == ["and", "warn"]
+        assert kinds(doc.by_id("nodes-1")) == ["and"]
+
+    def test_no_tree_mount_carries_a_form_control(self, tmp_path):
+        page, _comp = self._render(tmp_path)
+        doc = _parse(page)
+        mounts = [
+            el for el in doc.walk() if (el.attrs.get("id") or "").startswith("nodes-")
+        ]
+        assert {el.attrs["id"] for el in mounts} == {"nodes-full", "nodes-0", "nodes-1"}
+        for mount in mounts:
+            assert [
+                el.tag
+                for el in mount.walk()
+                if el.tag in ("input", "select", "button", "textarea")
+            ] == [], mount.attrs["id"]

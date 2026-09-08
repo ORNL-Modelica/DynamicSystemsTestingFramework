@@ -199,9 +199,9 @@ def _augment_tree_view(
     Stage-2 JS consumes the tree as the single source of truth for the
     per-variable node UI. Each leaf needs: ``mode_controls_html``,
     ``window_controls_html``, ``score_display``, ``criterion``,
-    ``mode_values``, ``cli_authoritative``, ``tolerance_used``, and the
-    raw numeric summary (``nrmse``, ``max_abs_error``, ...) used by the
-    JS scorer registry.
+    ``details``, ``mode_values``, ``cli_authoritative``, ``tolerance_used``,
+    and the raw numeric summary (``nrmse``, ``max_abs_error``, ...) used by
+    the JS scorer registry.
 
     ``time_bounds_by_variable`` feeds ``(t_start, t_end)`` into each
     window control's ``placeholder`` so users see the simulation range
@@ -260,6 +260,10 @@ def _augment_tree_view(
                 "tolerance_used": float(vc.tolerance_used),
                 "score_display": score_display,
                 "criterion": criterion,
+                # The mode's own key/value pairs behind the verdict, as the
+                # server-rendered ``<dl class="node-details">`` under the leaf.
+                # Tuples become lists so the view stays JSON-shaped.
+                "details": [list(pair) for pair in summary.details],
                 "tube_points_inside": (
                     float(vc.tube_points_inside)
                     if vc.tube_points_inside is not None
@@ -814,6 +818,81 @@ def _view_leaf_paths(node: dict) -> list[str]:
     return out
 
 
+def _view_leaves(node: dict) -> list[dict]:
+    """Every leaf view under ``node``, in tree order."""
+    if node.get("kind") == "leaf":
+        return [node]
+    out: list[dict] = []
+    for child in node.get("children") or []:
+        out.extend(_view_leaves(child))
+    return out
+
+
+def _mark_advisory(node: dict, *, under_warn: bool = False) -> None:
+    """Stamp ``advisory: True`` on every leaf sitting under a ``warn``.
+
+    ``warn`` never fails its parent (``comparison/metric_tree.py``), so such
+    a leaf's failure cannot change the test's verdict — it informs, it does
+    not gate. The summary line and the per-variable pills read this flag to
+    keep an advisory failure out of the red verdict and report it as a chip
+    beside it instead.
+    """
+    if node.get("kind") == "leaf":
+        node["advisory"] = under_warn
+        return
+    warn = under_warn or node.get("combinator") == "warn"
+    for child in node.get("children") or []:
+        _mark_advisory(child, under_warn=warn)
+
+
+def tree_for_variable(view: dict | None, name: str) -> dict | None:
+    """``view`` filtered to the leaves scoring ``name``, ancestors kept.
+
+    Returns ``None`` when no leaf under ``view`` targets the variable, which
+    is what drops a combinator whose whole subtree belongs to some other
+    variable. Leaves and combinators are shallow-copied: the per-variable
+    mount renders the same leaf dicts the full tree does.
+    """
+    if not view:
+        return None
+    if view.get("kind") == "leaf":
+        return dict(view) if view.get("variable") == name else None
+    kept = [
+        sub
+        for sub in (
+            tree_for_variable(child, name) for child in view.get("children") or []
+        )
+        if sub is not None
+    ]
+    if not kept:
+        return None
+    out = dict(view)
+    out["children"] = kept
+    return out
+
+
+def _tree_summary(view: dict | None) -> dict | None:
+    """The pieces the summary line is built from: the leaf tally, the ROOT
+    verdict, and how many advisory leaves failed.
+
+    The headline colour follows the ROOT verdict, not the leaf tally — a
+    warn-wrapped failure painting the summary red reads as "this test
+    failed" for a finding that is advisory by construction. ``root_passed``
+    is tri-state: ``None`` means there is no verdict to show.
+    """
+    if not view:
+        return None
+    leaves = _view_leaves(view)
+    return {
+        "n_pass": sum(1 for leaf in leaves if leaf.get("passed")),
+        "n_total": len(leaves),
+        "root_passed": view.get("passed"),
+        "n_advisory_failed": sum(
+            1 for leaf in leaves if leaf.get("advisory") and not leaf.get("passed")
+        ),
+    }
+
+
 def _build_tree_view_and_variables(
     comparisons: list,
     test_model,
@@ -920,6 +999,11 @@ def _build_tree_view_and_variables(
         time_bounds_by_variable=time_bounds,
         embedded_baselines_by_variable=embedded_baselines,
     )
+    # Must run before the per-variable subtrees are cut: they shallow-copy
+    # the leaf dicts, so a flag stamped afterwards would reach the full-tree
+    # mount only.
+    _mark_advisory(tree_view)
+    all_leaves = _view_leaves(tree_view)
 
     # Dedupe trajectories by variable name into a per-variable dict.
     # Overlays are attached to EVERY entry with the name, so any of them
@@ -936,11 +1020,24 @@ def _build_tree_view_and_variables(
         match_traj = next((t for t in named if t.get("act_time")), None) or next(
             iter(named), None
         )
+        var_leaves = [leaf for leaf in all_leaves if leaf.get("variable") == vn]
+        # Only the leaves that can actually gate this variable decide its
+        # colour; advisory ones are reported beside it as a chip.
+        gating = [leaf for leaf in var_leaves if not leaf.get("advisory")]
         variables_by_name[vn] = {
             "name": vn,
             "trajectory": match_traj or {},
             "overlays": (match_traj or {}).get("overlays", []),
             "leaf_paths": [p for _, p in _leaves_for_variable(spec, vn)],
+            # The tree as this variable's mount renders it.
+            "tree": tree_for_variable(tree_view, vn),
+            "passed": bool(var_leaves)
+            and all(bool(leaf.get("passed")) for leaf in gating),
+            "n_advisory_failed": sum(
+                1
+                for leaf in var_leaves
+                if leaf.get("advisory") and not leaf.get("passed")
+            ),
         }
     return tree_view, variables_by_name
 
@@ -1044,6 +1141,9 @@ def _build_template_context(
         # Stage 2 — recursive tree view + per-variable plot grouping.
         "tree_view": tree_view,
         "variables_by_name": variables_by_name,
+        # Pieces of the server-rendered summary line — the template builds
+        # the markup, so nothing here has to be trusted as HTML.
+        "tree_summary": _tree_summary(tree_view),
         "mode_schemas": _emit_mode_schemas(),
         # Run provenance banner (backend/simulator/version/os). Same shape as
         # the dashboard's, formatted by dashboard_render.format_run_metadata.
