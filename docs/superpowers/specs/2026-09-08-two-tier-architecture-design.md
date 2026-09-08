@@ -1,6 +1,6 @@
 # Two-tier architecture — Design
 
-**Status**: Design — pending owner review
+**Status**: Design — revised after fresh-context review; pending owner approval
 **Date**: 2026-09-08
 **Supersedes**: the "Workflow boundary (hard)" of D66 (reporter as authoring
 IDE; no local server). D66's per-leaf modularity and auto-derived controls
@@ -47,23 +47,28 @@ requirement on the design (§4.6, §7), not an aspiration.
 
 Measured on the tree at a91275f:
 
-- `src/dstf/reporting/templates/` holds ~6,600 lines. `scorers.js` (1,225),
-  `editors.js` (2,420) and `tree-ui.js` (1,441) exist to author; `plots.js`
-  (227), `dashboard.js` (581), the viewing half of `export.js` (276) and
-  `interactive.html` (443) report. Roughly four fifths of the lines serve
+- The JavaScript and HTML under `src/dstf/reporting/templates/`, vendor
+  excluded, is about 6,900 lines. `scorers.js` (1,225), `editors.js` (2,420)
+  and `tree-ui.js` (1,441) exist to author; `plots.js` (227), `dashboard.js`
+  (581), `dashboard.html` (290), `interactive.html` (443) and about half of
+  `export.js` (276) report. Roughly three quarters of the lines serve
   authoring.
 - Three JavaScript registries are keyed on the same mode string
-  (`MODE_SCORERS`, `MODE_PLOT_CONTRIBUTIONS`, `MODE_PLOT_EDITORS`), and each
-  duplicates Python. Tube bounds exist once in Python
-  (`algorithms._tube_bounds`) and three times in JS (scorer inline, editor
-  `resolveAllBoundsOnGrid`, plot contribution). Points resolution, FFT and
-  peak finding, event detection and windowed NRMSE each exist twice.
-- Python ships raw `act` / `ref` arrays only. Every bound, box, marker and
-  spectrum the page draws is recomputed client-side; Python computes the same
-  values during scoring and discards them.
-- Adding a mode touches the three JS registries plus two `if/elif` chains in
-  `context_builder.py` (`_extract_mode_values`, `_leaf_score_display`).
-  `scalar` never got any of the five and therefore has no drawing.
+  (`MODE_SCORERS`, `MODE_PLOT_CONTRIBUTIONS`, `MODE_PLOT_EDITORS`). The first
+  two duplicate Python wholesale; the third is drag plumbing whose tube
+  resolver (`editors.js` `resolveAllBoundsOnGrid`) mirrors
+  `algorithms._tube_bounds`. Tube bounds therefore exist once in Python and
+  three times in JS. Points resolution, FFT and peak finding, event detection
+  and windowed NRMSE each exist twice.
+- Python ships raw `act` / `ref` arrays, plus the dominant-frequency spectrum
+  and peaks, which the browser uses only as a fallback below four samples.
+  Every bound, box and marker the page draws is recomputed client-side;
+  Python computes the same values during scoring and discards them.
+- Adding a mode touches the three JS registries plus three mode branches in
+  Python: `_extract_mode_values` and `_leaf_score_display` in
+  `context_builder.py`, the spectrum gate at `context_builder.py:418`, and
+  the decimation gate at `report_suite.py:335`. `scalar` is in the Python
+  chains but in none of the JS registries, so it has no drawing.
 - The browser scores tubes on `ref_time`; the CLI scores on the union grid.
   The page can show a passing tube the CLI failed.
 - The record's earlier framing of "three renderers" (matplotlib in the review
@@ -73,16 +78,17 @@ Measured on the tree at a91275f:
 
 The owner's rulings that shape the design: all authoring moves out, and
 minimal function is argued *back* to the report later, never the reverse;
-the line is mutation, not interactivity; the authoring tier must accommodate
-capabilities it was not built around; `tube_points` stays readable, never
-writable.
+the line is mutation, not interactivity, so filtering, zoom, sweeping a
+selection into a rerun command and copying values off a plot are viewing and
+stay; the authoring tier must accommodate capabilities it was not built
+around; `tube_points` stays readable, never writable.
 
 ## 3. Scope
 
 ### In scope
 
 - Geometry primitives returned by every comparison mode; a summarize hook on
-  the metric descriptor replacing the two mode chains.
+  the metric descriptor replacing the mode branches.
 - A figure layer producing Plotly figure dicts, consumed by both tiers.
 - The reporter reduced to viewing; the authoring JavaScript, embedded forms,
   patch download, CLI-authoritative badge and parity suite deleted.
@@ -90,6 +96,10 @@ writable.
   the NiceGUI shell, and four v1 capabilities: edit criteria, edit tree,
   accept, rerun.
 - `dstf author` CLI command.
+- Four seams the authoring tier needs that do not exist today, each its own
+  commit: spec parsing from an in-memory document (§4.5); a multi-model patch
+  envelope (§4.7); the accept guard shared between CLI and Session (§4.7); a
+  run callable that neither exits, prints, nor opens a browser (§4.7).
 - On-plot editing (tube control points, range handles, point and peak
   markers) as a capability attached after v1, exercising the figure event
   hook the shell exposes from v1.
@@ -98,18 +108,21 @@ writable.
 
 - Report review inside the tool. v1 links to the dashboard; a second
   rendering of the report is not built.
-- A recent-projects / known-libraries notion. The `OpenProject` outcome and
-  PROJECT scope exist from v1 so it can attach.
+- A recent-projects / known-libraries notion, and a new-library wizard. The
+  Session's project is nullable, the shell has a project-less state, and the
+  `OpenProject` and `Artifact` outcomes exist from v1 so both can attach.
 - Uncertainty quantification and test sweeps. See §9: the design is expected
   to *inform* where DSTF ends, not to decide it.
 - A JSON API over the Session. It is itself a capability and attaches when
   something outside the tool needs it.
+- Cancelling a running job. No cancel path exists in the backends today; it
+  is named backend work (§9), not promised by the tool.
 
 ### Out of scope, full stop
 
 - Any back-compatibility path for the deleted browser editors. Patches
   exported by the old page still apply through `spec-update`, because the
-  patch format does not change.
+  per-model envelope stays readable (§4.7).
 - Windows-specific work. Nothing here touches simulation.
 
 ## 4. Design
@@ -120,7 +133,7 @@ A surface either mutates or it does not.
 
 | Operation | Tier |
 |---|---|
-| zoom, hover, legend and overlay toggles, error overlay | reporting |
+| zoom, hover, legend and overlay toggles, error overlays, values off a plot | reporting |
 | filter tests, sweep a selection, copy a CLI command | reporting |
 | read the metric tree with verdicts and score text | reporting |
 | change a tolerance, a mode, a window, an `against` | authoring |
@@ -142,40 +155,54 @@ geometry: tuple[Primitive, ...] = ()
 and each mode's `compare` returns the primitives it scored against, from the
 arrays it already has. Primitives live in `src/dstf/comparison/geometry.py`,
 next to the modes that emit them, and are frozen dataclasses with a fixed
-vocabulary:
+vocabulary. Every primitive carries `id`, `kind` (a free label the builder
+may style on: `"result"`, `"handle"`, `"ref"`, `"act"`, `"peak"`, ...) and
+`panel: "time" | "spectrum"` (default `"time"`).
 
-| Primitive | Fields | Emitted by |
+| Primitive | Fields beyond id / kind / panel | Emitted by |
 |---|---|---|
-| `Band` | `id, time, lower, upper` | tube (on the union grid it scored) |
-| `Box` | `id, t0, t1, y0, y1, passed` | points (checkpoint tolerance box), event-timing (per reference event) |
-| `Marker` | `id, x, y, passed` | points (target), dominant-frequency (peaks, on the spectrum panel) |
-| `HLine` | `id, value, passed` | range (min / max), scalar (bounds, or the baseline value) |
-| `VLine` | `id, time, kind` | event-timing (`ref` / `act` events) |
-| `Series` | `id, x, y` | dominant-frequency (reference and actual spectra, on the spectrum panel) |
-| `Window` | `id, start, end` | the evaluator, not a mode (the window lives on the leaf) |
+| `Band` | `time, lower, upper` | tube (on the union grid it scored) |
+| `Box` | `t0, t1, y0, y1, passed` — `y0`/`y1` `None` means full panel height | points (checkpoint box), event-timing (band around each reference event), dominant-frequency (acceptance band per declared peak) |
+| `Marker` | `x, y, passed` | points (targets), dominant-frequency (declared, detected and matched peaks), and every mode's **handles** (below) |
+| `HLine` | `value, passed` | range (min / max), scalar (bounds, or the baseline value) |
+| `VLine` | `time` | event-timing (`ref` / `act` events) |
+| `Series` | `x, y` | dominant-frequency (reference and actual spectra); the view's error series |
+| `Window` | `start, end` — either may be `None` | the evaluator, not a mode (the window lives on the leaf) |
 
-`nrmse` emits nothing. Every primitive carries `panel: "time" | "spectrum"`
-(default `"time"`). A new primitive kind is an explicit addition to this file
-plus one trace builder in §4.3; the vocabulary is deliberately small so that
-adding to it is cheaper than smuggling shapes into `Series`.
+`nrmse` emits nothing of its own. A new primitive kind is an explicit
+addition to this file plus one trace builder in §4.3; the vocabulary is
+deliberately small so that adding to it is cheaper than smuggling shapes into
+`Series`.
 
-**Ids are addresses.** `id` is `<leaf_path>/<kind>[/<index>]`, where
-`leaf_path` is the RFC 6902 path of the leaf in the spec, the same path a
-patch op uses. A figure handle and a spec edit therefore share one address;
-this is the seam on-plot editing attaches to (§4.6).
+**Handles are geometry too.** The resolved positions of a mode's authored
+parameters — tube control points (upper and lower separately), range bounds,
+declared points, declared peaks — are emitted as `Marker`s or `HLine`s of
+`kind="handle"`. The report draws them as passive markers; on-plot editing
+(step 6) attaches to exactly these ids. Without them the figure hook would
+have nothing to hook.
 
-**Leaf results are addressed by path, not position.** Today the evaluator
-converts each leaf's `VariableComparison` into a `MetricResult` and the
-report pairs the flat comparison list back to leaf paths by `zip` order,
-dropping all per-leaf data with a warning when the counts differ. The
-evaluator instead stamps every leaf result with its `leaf_path` and carries
-the `VariableComparison` on it; the figure view and the tree view look leaves
-up by path, and the positional pairing and its mismatch branch are deleted.
+**Ids are addresses, stamped by the evaluator.** A mode does not know its
+leaf's path (`compare` receives arrays only), so it emits local ids —
+`tube/band`, `tube/upper/3`, `points/target/0` — and the evaluator prefixes
+each with the leaf's RFC 6902 path when it builds the leaf result. The full
+id `<leaf_path>/<local>` is the same address a patch op uses, so a figure
+handle and a spec edit share one name. This is the seam on-plot editing
+attaches to (§4.6).
 
-**Geometry is tested against the verdict** (§6): a violation reported at `t`
-lies outside the `Band` at `t`; a failed point lies outside its `Box`; every
-`VLine` coincides with a detected boundary. The mode cannot draw one thing and
-score another because both come from the same arrays in the same function.
+**Leaf results are addressed by path, not position.** The evaluator already
+carries each leaf's `VariableComparison` on its `MetricResult`
+(`diagnostics["variable"]`), and `flatten_evaluation` already derives leaf
+paths structurally from the tree. The report nevertheless pairs the flat
+comparison list back to leaf paths by `zip` order and drops all per-leaf data
+with a warning when the counts differ (`context_builder.py:962-973`). That
+positional pairing and its mismatch branch are deleted; the figure view and
+the tree view look leaves up by path through `flatten_evaluation`.
+
+**Leaves without a trajectory.** A scalar leaf on a statistics path has no
+tracked variable (`variable` is the quantity path). Its view has no
+trajectory and its figure is an `HLine` for the value and the bounds. A
+`VariableView` may therefore have no trajectory, and the builder renders what
+it has.
 
 **The summarize hook.** `MetricDescriptor` gains
 
@@ -184,31 +211,43 @@ summarize: Callable[[VariableComparison], ScoreSummary]
 ```
 
 returning the score value, its label, the criterion text and the mode-specific
-key/value pairs the report shows today. `context_builder._extract_mode_values`
-and `_leaf_score_display` are deleted; the report's tree view and the terminal
-detail printer (`cli/review._print_detail`, which today prints NRMSE fields for
-every mode) both read `summarize`. A registered third-party metric supplies
-its own; the default summarizes `passed`, `score` and `tolerance_used`.
+key/value pairs the report shows today. `_extract_mode_values`,
+`_leaf_score_display` and the spectrum gate in `context_builder.py` are
+deleted (the spectrum is dominant-frequency geometry now); the report's tree
+view and the terminal detail printer (`cli/review._print_detail`, which today
+prints NRMSE fields for every mode) both read `summarize`. A registered
+third-party metric supplies its own; the default summarizes `passed`, `score`
+and `tolerance_used`.
 
 ### 4.3 The figure layer
 
 `src/dstf/figures/`:
 
-- `view.py` — `VariableView`: name, actual and reference trajectories,
-  overlays with role and kind, the leaves that target this variable (each with
-  its geometry, window primitive, verdict and summary), and the per-variable
-  error series (signed and absolute, on the reference grid, computed once here
-  with the comparator's own interpolation). Built from a `TestComparison` plus
-  the raw trajectories and overlays; both tiers build it the same way.
+- `view.py` — `VariableView`: name, actual and reference trajectories (either
+  may be absent), overlays with role and kind, the leaves that target this
+  variable (each with its geometry, window primitive, verdict and summary),
+  and the per-variable error series — signed, absolute and per-point NRMSE, on
+  the reference grid, computed once here with the comparator's own
+  interpolation, all `kind="error"`. Built from a `TestComparison` plus the
+  raw trajectories and overlays; both tiers build it the same way. Diagnostic
+  and no-baseline trajectories are views with no leaves.
 - `plotly.py` — `variable_figure(view, budget) -> dict`. One builder per
   primitive kind in a `TRACE_BUILDERS` registry keyed on the primitive type;
   assembly adds actual and reference traces, overlays styled by role, the
   window band, pass/fail colouring, legend defaults, and a spectrum subplot
-  only when a `panel="spectrum"` primitive is present. Every trace and shape
-  carries the primitive `id` in `meta`. The module contains no mode name.
+  only when a `panel="spectrum"` primitive is present. Builder details the
+  current JS gets right and this keeps: an `HLine` inside a `Window` is drawn
+  clipped to the window with the outside segments muted; full-height `Box`es
+  use paper coordinates; invisible autorange anchors keep bounds in view.
+  Every trace and shape carries the primitive `id` in `meta`. The module
+  contains no mode name.
 - `decimate.py` — LTTB over the arrays of a built figure dict under
   `config.max_embedded_samples`, marking `full_samples` per trace as the
-  report does today. The tool uses the same function and budget.
+  report does today. A `Band`'s upper and lower are decimated on one shared
+  x through the existing `reporting/decimate.decimate_pair`, which moves
+  here. The tool uses the same function and budget. The report's payload
+  budget test (`tests/test_report_size_budget.py`) stays and now covers bands
+  and error series.
 
 The output is a plain dict with `data`, `layout` and `config`. No `plotly.py`
 dependency. The report embeds it and renders with the vendored `plotly.min.js`;
@@ -217,35 +256,59 @@ One figure, two plotly.js builds; the smoke tests in §6 exercise both, and the
 versions are aligned when they drift.
 
 The full-resolution `comparison_data.json` sidecar keeps its current shape
-(trajectories, not figures) as a handoff artifact. Nothing in the page fetches
-it today and nothing will after the split.
+(trajectories, not figures). Nothing in the page fetches it, but
+`dashboard_render.py` reads it, so its shape is load-bearing and unchanged.
 
 ### 4.4 The reporter after the split
 
 **Kept**, each asserted by Playwright before the deletion commit lands:
 
 - per-variable figure rendered from the embedded dict, with the trace count
-  the dict declares;
-- zoom and hover; legend toggles; the overlay picker (overlays are
-  `legendonly` traces; the picker toggles visibility);
-- the error-overlay toggle (signed / absolute traces on the right axis);
+  the dict declares, and the decimation banner when a trace was decimated;
+- zoom and hover, which is how values are read off a plot; legend toggles;
+  the overlay picker (overlays are `legendonly` traces; the picker toggles
+  visibility);
+- the error-overlay toggle (signed, absolute, per-point NRMSE, on the right
+  axis);
 - the test filter; sweep a selection and copy a command, extended to the
   logged action menu: `run`, `compare`, `compare --accept`, `--rerun`, and
-  `dstf author --config <cfg> --filter <selection>`;
+  `dstf author --config <cfg> --filter <selection>`. The command builder
+  lives in `dashboard.js`, so the dashboard's script changes by that one
+  command; the rest of the dashboard is untouched;
 - the metric tree, read-only, with the CLI verdict and `summarize` text per
   leaf, server-rendered;
 - statistics, diagnostics and artifact sections; diagnostic and no-baseline
   plots, which become figure dicts too;
-- the window shown as a band from the `Window` primitive;
-- the dashboard, unchanged.
+- the window shown as a band from the `Window` primitive, open-ended when one
+  end is `None`.
 
 **Deleted**: `scorers.js`, `editors.js`, `tree-ui.js`, the patch-export half
 of `export.js`, `mode_controls_html` and `window_controls_html` in the report
-context and the HTML emitter behind them in `reporting/ui/`, the JSON-Patch
-download, live per-leaf scoring, `_JS_SCORED_METRICS`, `cli_authoritative`
-and its badge, `_mark_decimated_cli_authoritative`, `tests/test_scorer_parity.py`,
-the authoring sections of `docs/qa/reporter_checklist.md`, the vision
-document's "Live preview policy" and "Testing asymmetry" paragraphs.
+context, `emit_mode_schemas` and the `MODE_SCHEMAS` map (the report has no
+forms; `derive_schema` stays for `export-schema` and the tool's forms), the
+JSON-Patch download, live per-leaf scoring, `_JS_SCORED_METRICS`,
+`cli_authoritative` and its badge, `_mark_decimated_cli_authoritative`,
+`_extract_spectrum` (migrated into dominant-frequency geometry),
+`tests/test_scorer_parity.py`, the parity comments in `algorithms.py`
+(`:647-653`, `:1113`), the authoring sections of `docs/qa/reporter_checklist.md`.
+
+**Tests that go with them or change shape** (listed so the plan budgets them,
+not as a count to hit): `test_interactive_html_snapshot.py` and its
+`tests/golden/interactive_*.hash` goldens, `test_interactive_playwright.py`,
+`test_interactive_points.py`, `test_interactive_event_timing.py`,
+`test_interactive_range_window.py`, `test_interactive_against_baselines.py`,
+`test_mode_controls.py`, the `emit_mode_schemas` cases in
+`test_export_schema.py`, and the JS-facing cases in `test_comparator.py`,
+`test_metric_registry.py`, `test_scalar_metric.py`, `test_report_suite.py`.
+The code they covered is deleted with them; the coverage floor is checked at
+the end of step 2 and the geometry and figure tests are expected to carry it.
+
+**Documents that change in step 2**: `README.md` (the reporter-as-IDE story),
+`docs/vision.md` (the "Reporter as authoring IDE" section is retitled to the
+two tiers and its live-preview and parity paragraphs go), `docs/architecture.md`
+(the `figures/` and `authoring/` packages; the report render flow),
+`docs/extensibility.md` (the capability contract joins the plug-in
+contracts), `docs/usage.md`, and `CLAUDE.md`'s overview and tree.
 
 The end state is a predicate, not a count: **no JavaScript under `templates/`
 computes a verdict, a bound, a box, a spectrum or an event; every number the
@@ -257,28 +320,47 @@ page draws comes from an embedded figure dict or a server-rendered string.**
 
 ```python
 class Session:
-    project: Project          # Config, discovered TestModels, ReferenceStore, last results
+    project: Project | None   # Config, discovered TestModels, ReferenceStore, last results
     spec: SpecDocument        # loaded test_spec.json, content hash, pending: list[PatchOp]
     selection: Selection      # tests: set[str], variable: str | None, leaf_path: str | None
-    job: Job | None           # one running action: progress, log tail, cancel
-
+    running: RunningJob | None    # the job in flight: label, progress, locked tests
     def open(self, config_path) -> None
-    def rescore(self, test_id) -> TestComparison     # comparator against spec + pending
-    def figure(self, test_id, variable) -> dict      # VariableView -> variable_figure
-    def stage(self, ops: list[PatchOp]) -> None       # then rescore affected tests
+    def rescore(self, model_id) -> TestComparison    # comparator against spec + pending
+    def figure(self, model_id, variable) -> dict     # VariableView -> variable_figure
+    def stage(self, ops: list[PatchOp]) -> None      # then rescore the ops' models
     def save(self) -> None       # spec-update path; refuses if the on-disk hash changed
     def discard(self) -> None
-    def export(self) -> dict     # the JSON-Patch envelope spec-update accepts
-    def apply(self, outcome: Outcome) -> None
-
+    def export(self) -> dict     # the multi-model envelope (§4.7)
+    def apply(self, outcome: Outcome | Sequence[Outcome]) -> None
     def on(self, event: Literal["spec", "results", "job", "selection"], cb) -> None
 ```
 
-`rescore` reuses the comparator `dstf compare` runs from last results. `save`
-applies exactly the pending ops through the same read-modify-write path as
-`spec-update`, then clears them. Loading, discovery, the store and the run
-pipeline are the existing ones; if the run pipeline is reachable only through
-the CLI command function, extracting a callable is its own commit in step 5.
+A `PatchOp` carries its `model_id`; pending ops are grouped by model.
+
+**`rescore`** calls the per-test comparator `dstf compare` already uses
+(`comparator.compare_test`), with the backend's `read_last_results` and the
+recorded-backend rule that `cmd_compare` applies today, extracted into a
+function both call. Its test models must come from the spec *with pending ops
+applied*, and today spec parsing and discovery read only from disk. New seam,
+own commit in step 3: `parse_test_spec` accepts a parsed document, and
+discovery accepts a pre-parsed spec; the `.mo` scan merge is unaffected. For a
+test whose spec has no explicit tree, `rescore` stages the same implicit-tree
+materialization op that `spec-update` prepends today, through the same
+function, so the in-memory document and the saved one never differ in shape.
+A test with no last results, a failed simulation, or no baseline rescores to
+the same `NO_REF` / `SIM_FAIL` states the CLI reports, and its figure is the
+empty-state figure (trajectories present or not, no leaves scored).
+
+**`save`** applies exactly the pending ops through the same read-modify-write
+path as `spec-update`, then clears them. It refuses if the spec's on-disk
+content hash differs from the one taken at load and offers reload.
+
+**Concurrency.** A `Job` runs on a worker thread; the Session is touched only
+from the UI loop, and the job posts its completion back to it. While a job is
+running, the models in its selection are *locked*: `stage`, `rescore` and
+`StoreWrite` on them are refused with the reason, because the run pipeline
+clears their simulation directories at start and rewrites the batch manifest.
+Every other model stays editable.
 
 `SessionView` is the read-only facade capabilities receive: the same
 attributes, `rescore`, `figure`, and nothing that writes.
@@ -295,10 +377,12 @@ class Patch:        ops: list[PatchOp]
 @dataclass(frozen=True)
 class StoreWrite:   run: Callable[[ReferenceStore], None]
 @dataclass(frozen=True)
-class Job:          run: Callable[[ProgressReporter], None]; label: str
+class Job:          run: Callable[[JobContext], None]; label: str; reloads_results: bool = True
+@dataclass(frozen=True)
+class Artifact:     paths: list[Path]; label: str          # something written outside spec and store
 @dataclass(frozen=True)
 class OpenProject:  config_path: Path
-Outcome = Patch | StoreWrite | Job | OpenProject | None
+Outcome = Patch | StoreWrite | Job | Artifact | OpenProject | None
 
 class Capability(Protocol):
     name: str
@@ -306,7 +390,7 @@ class Capability(Protocol):
     scope: Scope
     def available(self, s: SessionView) -> bool | str    # False, or the reason it is greyed out
     def panel(self, s: SessionView, ui: Panel) -> None   # builds its controls in the shell's slot
-    def act(self, s: SessionView, **inputs) -> Outcome
+    def act(self, s: SessionView, **inputs) -> Outcome | Sequence[Outcome]
 
 def register_capability(cap: Capability) -> Capability   # loud on duplicate name
 def registered_capabilities() -> tuple[Capability, ...]  # registration order
@@ -318,11 +402,23 @@ on import exactly as it calls `register_metric`. Built-in capabilities register
 from `authoring/builtin/`.
 
 **The Session applies outcomes; a capability applies nothing.** `Patch` is
-staged and the affected tests rescored. `StoreWrite` is run against the store
-and results are reloaded. `Job` occupies the job slot; the shell streams its
-progress; completion reloads results and rescores. `OpenProject` swaps the
-project. A capability holds a `SessionView` only, so the enforcement is
-structural, not a convention.
+staged and the ops' models rescored. `StoreWrite` runs against the store and
+results reload. `Job` occupies the running slot, locks its models, and on
+completion reloads results and rescores unless `reloads_results` is false.
+`Artifact` is recorded and shown as a link; nothing reloads. `OpenProject`
+swaps the project. A capability holds a `SessionView` only, so the
+enforcement is structural, not a convention. Adding an outcome kind is a
+Session change and is meant to be rare; the five cover edit, write, run,
+export and switch.
+
+**`Panel`** is a container the capability owns entirely — any NiceGUI
+elements, including figures of its own built with `variable_figure` from the
+view (a side-by-side comparison against another backend's baseline is a
+capability that builds a second store and draws in its own panel). It also
+exposes the shell's centre figure through `panel.figure.on(kind, handler)`:
+the handler receives the primitive `id` and the Plotly event payload (click,
+relayout, selected). The hook exists from v1 and no v1 capability uses it;
+on-plot editing is its first client.
 
 **The shell** (`authoring/app.py`, NiceGUI) is fixed and knows no capability
 by name. Header: project, backend, pending count, Save, Discard, Export, Quit,
@@ -330,13 +426,10 @@ a link to the dashboard. Left: test list with status, filter, multi-select.
 Centre: variable picker, the figure, the read-only metric tree; clicking a leaf
 selects it. Right: one tab per capability whose `scope` matches the selection
 and whose `available` is true; greyed with the reason otherwise. Bottom: the
-job panel. The shell subscribes to the four Session events and re-renders the
-affected region.
-
-**The figure hook.** `Panel` exposes `figure.on(kind, handler)` where `kind`
-is a primitive kind and the handler receives the primitive `id` and the
-Plotly event payload (click, relayout, selected). It exists from v1 and no v1
-capability uses it; on-plot editing is its first client.
+job panel. With no project open, the shell shows only the PROJECT-scope
+capabilities and the CLI hint; in v1 that state is reached only by closing a
+project and is where recent-projects and new-library attach later. The shell
+subscribes to the four Session events and re-renders the affected region.
 
 **The acceptance test, applied.**
 
@@ -346,10 +439,14 @@ capability uses it; on-plot editing is its first client.
 | Edit tree | TESTS, exactly one selected | add / remove / wrap / combinator kind, k, weights | Patch | v1 |
 | Accept | TESTS | confirm list | StoreWrite | v1 |
 | Rerun | TESTS | confirm list, backend shown | Job | v1 |
-| On-plot editing | LEAF | handlers via the figure hook | Patch | after v1 |
+| On-plot editing | LEAF | handlers on `kind="handle"` primitives via the figure hook | Patch | after v1 |
+| Annotate a leaf (`info` note) | LEAF | text field | Patch | attaches; nothing else changes |
+| Export figures as PNG | TESTS | format picker | Artifact | attaches; nothing else changes |
+| Side-by-side against another backend | VARIABLE | own figure in its panel | None | attaches; nothing else changes |
 | Recent projects | PROJECT | list of known configs | OpenProject | later |
+| New library | PROJECT | wizard writing a testing.json | Artifact, then OpenProject | later |
 | Report review | PROJECT | link | None | later |
-| Sweep / UQ study | TESTS | — | Job, but its result is not a set of `TestComparison`s | strains; see §9 |
+| Sweep / UQ study | TESTS | — | Job, but its result is not a set of `TestComparison`s, and the run pipeline overwrites last results | strains; see §9 |
 
 The last row is the point: a capability that needs a new *results model* does
 not fit the Session, and that is the signal the record asked this design to
@@ -371,35 +468,60 @@ disconnected banner.
 dataclass by the existing `reporting/ui/mode_controls.derive_schema`, which
 gains a NiceGUI emitter (`authoring/forms.py`) and loses its HTML one
 (`derive_schema` also feeds `export-schema`, so it stays shared; its home
-after the split is a plan decision); window
-inputs; the `against` selector over the test's baselines. Each change stages
-one patch op and rescores the test, so figure and verdicts update live.
-`tube_points` is displayed read-only; edits write the split upper / lower
-form. A leaf config error shows inline on its form.
+after the split is a plan decision); window inputs; the `against` selector
+over the test's baselines. Each change stages one patch op and rescores the
+test, so figure and verdicts update live. `tube_points` is displayed
+read-only; edits write the split upper / lower form. A leaf config error shows
+inline on its form.
 
 **Edit tree.** The operations the browser tree editor performs today, as
 patch ops against the same paths.
 
-**Accept.** The selected tests' current results become baselines through the
-existing accept path; comparison settings travel with the baseline as now.
+**Accept.** The selected tests' current results become baselines through
+`ReferenceStore.accept_results`, comparison settings travelling with the
+baseline as now. The aborted-run guard (`unfinished_run_models`) that today
+lives only in `cmd_compare` moves into a shared accept function that both the
+CLI and this capability call, so the tool cannot accept a result the CLI
+would refuse. Own commit in step 3.
 
-**Rerun.** The selection runs through the configured backend on a background
-thread using the run pipeline and its `ProgressReporter`; the job panel shows
-progress and the log tail and can cancel. Completion reloads results and
-rescores. Re-comparing without simulation is `rescore` and needs no job.
+**Rerun.** The selection runs through the configured backend on a worker
+thread. The run pipeline is today reachable only through `cmd_run`, which
+resolves the backend with `sys.exit` on failure, prints, clears simulation
+directories, opens a browser and renders the live dashboard. Step 5 extracts
+a library callable — configuration and tests in, results out, exceptions
+instead of exits, no printing, no browser — and `cmd_run` becomes its CLI
+wrapper. That extraction is its own commit, before the capability.
 
-**The pending-patch drawer** lists staged ops in readable form. Save applies
-and clears; Discard clears and rescores; Export writes the envelope.
+Progress comes from the `status.json` the pipeline's `ProgressReporter`
+already writes on every state change; the job panel polls it, which is
+exactly what the live dashboard does. No log tail: backends print to stdout
+and there is no capture seam; the panel shows per-test state and the
+backend's failure message from the results. No cancel: none exists in the
+backends (§9). Completion reloads results and rescores. Re-comparing without
+simulation is `rescore` and needs no job.
+
+**The pending-patch drawer** lists staged ops in readable form, grouped by
+model. Save applies and clears; Discard clears and rescores; Export writes an
+envelope.
+
+**The envelope becomes multi-model.** `spec-update` today reads
+`{"model": ..., "patch": [...]}`, one model per file, which suits a per-test
+report page and not a tool that spans tests. The envelope gains the form
+`{"patches": [{"model": ..., "patch": [...]}, ...]}`; the tool writes only
+that form; `spec-update` reads both, applying each model's ops through the
+same path. Old data, not old code: the single-model form is read because
+files in that shape exist, and nothing writes it any more.
 
 **Failure handling.** Job failure lands in the job panel with the backend's
-message. Save refuses if the spec's on-disk content hash differs from the one
-taken at load, and offers reload. A capability raising inside `act` is shown
-in its tab and leaves the Session unchanged.
+message. Save refuses on a changed hash and offers reload. A capability
+raising inside `act` is shown in its tab and leaves the Session unchanged.
 
 ### 4.8 Dependencies
 
-- `nicegui` as an optional extra `[author]`, so the core install and CI
-  matrix stay light. `dstf author` without it exits with the install hint.
+- `nicegui` as an optional extra `[author]`, so the core install stays light.
+  `uv.lock` is updated. One CI job installs the extra so the NiceGUI
+  user-fixture tests run; everywhere else they `importorskip`. `dstf author`
+  without it exits with the install hint.
 - `matplotlib` removed from `[project.dependencies]`.
 - No `plotly.py`. The figure layer emits dicts. Whether NiceGUI's dict path
   works without `plotly.py` installed is verified as the first task of step 4;
@@ -409,23 +531,32 @@ in its tab and leaves the Session unchanged.
 
 Six sub-projects, each its own plan, each shippable and reviewable alone.
 
-1. **Geometry and figures.** `geometry.py`; every mode emits its geometry;
-   `Window` from the evaluator; `summarize` on the descriptor and the two mode
-   chains deleted; `figures/` with `view`, `plotly`, `decimate`; the report
-   embeds figure dicts and `plots.js` renders them. Additive: the JS scorers
-   still run, so the page is visibly unchanged while its drawings now come
-   from Python. Also here: the matplotlib string, tombstone and dependency go.
-2. **The cut.** §4.4's deletions, after Playwright asserts §4.4's kept list.
-   Decision entry D125 lands here: the split supersedes D66's boundary.
+1. **Geometry and figures.** `geometry.py`; every mode emits its geometry
+   including handles; the evaluator stamps ids and the positional pairing is
+   deleted; `Window` from the evaluator; `summarize` on the descriptor and
+   the three Python mode branches deleted; `figures/` with `view`, `plotly`,
+   `decimate`; the report's *initial* render comes from embedded figure
+   dicts. The JS editors keep redrawing their own overlays while a leaf is
+   being edited, exactly as today, until step 2 removes them; this step
+   changes what the page shows on load, not what an edit does. Also here: the
+   matplotlib string, tombstone and dependency go.
+2. **The cut.** §4.4's deletions, after Playwright asserts §4.4's kept list;
+   the tests and documents §4.4 names; the coverage floor checked. Decision
+   entry D125 lands here: the split supersedes D66's boundary.
 3. **The Session.** `authoring/session.py`, `SessionView`, outcomes, the
    capability protocol and registry, `rescore`, `stage`, `save` with the hash
-   check, `discard`, `export`. Fully unit-tested, no framework dependency.
+   check, `discard`, `export`, the lock set. Three seams as their own commits
+   first: in-memory spec parsing and discovery; the multi-model envelope with
+   `spec-update` reading both; the shared accept function with the
+   aborted-run guard. Fully unit-tested, no framework dependency.
 4. **The shell, edit criteria, edit tree.** The `[author]` extra, `dstf
-   author`, the layout, the form emitter, the two capabilities, the dummy
-   capability conformance test. First task: verify the NiceGUI dict path.
-5. **Accept and rerun.** `StoreWrite` and `Job` wired; the job panel; rerun
-   through the run pipeline (extracting a callable from the CLI if needed, as
-   its own commit). End-to-end against `examples/python/PythonTestingLib`.
+   author`, the layout including the project-less state, the form emitter,
+   the two capabilities, the dummy capability conformance test, a tool
+   section in the QA checklist. First task: verify the NiceGUI dict path.
+5. **Accept and rerun.** The run callable extracted from `cmd_run` as its own
+   commit; `StoreWrite`, `Job` and `Artifact` wired; the job panel on
+   `status.json`; the lock set exercised. End-to-end against
+   `examples/python/PythonTestingLib`.
 6. **On-plot editing.** The figure hook's first client: tube control points,
    range handles, point and peak markers as one capability or several,
    emitting patch ops. The first real test of §4.6 on something the shell was
@@ -451,31 +582,38 @@ Done-checks in the plans are predicates over the end state, never counts.
 down). Per mode, property tests over generators written to reach the regimes
 that would break each claim: relative widths, `tube_min_width`, constant
 interpolation, duplicate reference timestamps, windows that cut a band, points
-at times the baseline does not sample. Assertions: a tube violation at `t`
-lies outside the `Band` at `t`; a failed point lies outside its `Box`; every
-`VLine` matches a detected boundary; every `Marker` peak is in the paired
-peaks; `HLine`s equal the configured bounds.
+at times the baseline does not sample, open-ended windows. Assertions: a tube
+violation at `t` lies outside the `Band` at `t`; a failed point lies outside
+its `Box`; every `VLine` matches a detected boundary; every `Marker` peak is
+in the paired peaks; `HLine`s equal the configured bounds; every handle's id
+resolves to the spec path it edits.
 
 **Figures.** One golden figure dict per mode from a fixed fixture suite,
 compared structurally: trace count, types, ids, array lengths, layout keys.
 Values are the geometry tests' job, so a golden does not need re-blessing when
-a number changes legitimately.
+a number changes legitimately. The payload budget test stays.
 
 **The report.** Playwright asserts §4.4's kept list on the slimmed page.
 Gated by `importorskip` as today.
 
-**The Session.** Pure Python: `rescore` reflects a staged op; `save` applies
-exactly the pending ops and clears them; `save` refuses on a changed hash;
-`discard` restores the loaded verdicts; each `Outcome` kind reaches its effect
-and no other; `SessionView` exposes no writer.
+**The Session.** Pure Python: `rescore` reflects a staged op; `rescore` on a
+flat-override test stages the same materialization op `spec-update` would;
+`save` applies exactly the pending ops and clears them; `save` refuses on a
+changed hash; `discard` restores the loaded verdicts; each `Outcome` kind
+reaches its effect and no other; a locked model refuses `stage`, `rescore`
+and `StoreWrite` with the reason; `SessionView` exposes no writer;
+`spec-update` reads both envelope forms; the shared accept function refuses
+an aborted run from both callers.
 
 **The tool.** NiceGUI's pytest `User` fixture drives the UI in-process without
-a browser: capability panels, the form emitter, the conformance test. One
-Playwright smoke test opens the real page and edits one tolerance.
+a browser: capability panels, the form emitter, the conformance test, the
+project-less state. One Playwright smoke test opens the real page and edits
+one tolerance.
 
 **End to end.** Against the Python example library: open, rerun one test,
 accept it, assert the reference file exists with LF endings and the results
-refreshed.
+refreshed; stage an edit on a locked model during the run and assert the
+refusal.
 
 **Named as unrun in every handoff:** a rerun through Dymola or OpenModelica
 from the tool, and Windows. Owner-run, once, at the end of step 5.
@@ -488,12 +626,14 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
 2. **A capability that does not exist yet attaches without restructuring.**
    The conformance test passes; on-plot editing (step 6) ships as a
    capability with no change to the shell beyond the hook that existed since
-   step 4.
+   step 4; the three "attaches; nothing else changes" rows of §4.6 hold by
+   inspection of the contract.
 3. **The report lost nothing it should keep.** Every entry in §4.4's kept
    list has a Playwright assertion that passes on the slimmed page.
 4. **No existing CLI behaviour changes for a user who never opens the
-   tool**, except that `run -i`'s detail text is now mode-aware. `dstf
-   author` is an addition.
+   tool**, except that `run -i`'s detail text is now mode-aware and
+   `spec-update` also reads the multi-model envelope. `dstf author` is an
+   addition. `export-schema` and the JSON-Schema handoff are unchanged.
 5. **TRANSFORM** `compare --report` renders every test, and its 331 stored
    verdicts are unchanged by steps 1–4.
 
@@ -517,6 +657,10 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
 - **Write-through saves.** Every edit rewrites a version-controlled file; a
   slip while typing lands in git. Explicit save with a visible pending patch
   keeps the file yours.
+- **A progress observer on `ProgressReporter` for the job panel.** It would
+  work, but `status.json` already exists, is already polled by the live
+  dashboard, and costs nothing. Build the seam when a second consumer needs
+  it.
 
 ## 9. Open questions and follow-ups
 
@@ -524,8 +668,12 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
   instrument: a capability that needs a new results model belongs to a
   sibling tool. If a session finds itself scoping a sweep into the Session,
   that is the moment to stop and ask, not proceed.
-- **Recent projects.** Attaches at PROJECT scope with `OpenProject`. Where the
-  list is stored (a user-level config file) is not designed here.
+- **Cancel.** No cancel path exists in `ProgressReporter`, `run_tests` or the
+  persistent worker pool. It is backend work: a cancel token threaded through
+  `run_tests` and honoured by the pool's dispatch loop. Not promised by v1.
+- **Recent projects and the new-library wizard.** Attach at PROJECT scope.
+  Where the recent list is stored (a user-level config file) is not designed
+  here.
 - **Report review in the tool.** A link in v1. If it ever lands, the HTML
   report's audience narrows to CI, archiving and people without the tool,
   which decides how much polish that page deserves.
