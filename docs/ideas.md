@@ -1274,3 +1274,9 @@ planning.
   renaming the JS-harness comments to "harness" severed a pointer to the
   `*_runner.js` filenames it was describing. A vocabulary rename is mechanical
   in code and emphatically not in prose.
+
+- **Cancel a running job** (2026-09-08): no cancel path exists in
+  `ProgressReporter`, `run_tests` or the persistent worker pool. Backend work:
+  a cancel token threaded through `run_tests` and honoured by the pool's
+  dispatch loop. The authoring tool's job panel will want it eventually;
+  deliberately not promised by its v1 (two-tier spec, §9).
