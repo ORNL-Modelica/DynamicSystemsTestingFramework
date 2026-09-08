@@ -272,6 +272,32 @@ class TestFigure:
         errors = [tr for tr in fig["data"] if tr["meta"].get("kind") == "error"]
         assert errors and all(tr["meta"]["full_samples"] == 5001 for tr in errors)
 
+    def test_every_decimatable_trace_stamps_its_sample_count(self):
+        """``meta.samples`` is samples; ``x`` is points on the wire.
+
+        A band is a closed polygon — 2N points for N samples — so a reader
+        that measures decimation off ``len(x)`` misreads it. Each trace the
+        figure layer can decimate carries its own count instead.
+        """
+        view = decimate_view(_tube_view(n=5001), 200)
+        fig = variable_figure(view)
+        band = next(
+            tr for tr in fig["data"] if tr["meta"].get("id", "").endswith("tube/band")
+        )
+        band_prim = next(p for p in view.leaves[0].geometry if isinstance(p, Band))
+        assert band["meta"]["samples"] == len(band_prim.time)
+        assert len(band["x"]) == 2 * band["meta"]["samples"]
+
+        for tr in fig["data"]:
+            if "full_samples" not in tr.get("meta", {}):
+                continue
+            assert "samples" in tr["meta"], tr["name"]
+        by_name = {tr["name"]: tr for tr in fig["data"]}
+        for name in ("Actual", "Reference"):
+            assert by_name[name]["meta"]["samples"] == len(by_name[name]["x"])
+        errors = [tr for tr in fig["data"] if tr["meta"].get("kind") == "error"]
+        assert errors and all(tr["meta"]["samples"] == len(tr["x"]) for tr in errors)
+
     def test_a_view_with_no_trajectory_still_renders_its_lines(self):
         from dstf.comparison.algorithms import _compare_scalar
 

@@ -2,8 +2,8 @@
 
 Covers the mode itself (config validation, the closed set of reductions, abs/rel
 and bounds forms), the evaluator's stats-path data-source rule, and the
-reporter surfaces (schema export, auto-derived controls, score display,
-CLI-authoritative badge).
+reporter surfaces (schema export, derived field metadata, and the score
+display the page renders, sentinels included).
 """
 
 from __future__ import annotations

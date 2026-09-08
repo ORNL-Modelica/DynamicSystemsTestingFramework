@@ -532,20 +532,42 @@ class TestEmbeddedFigures:
         # 3001 samples, capped at 500: every curve on x was thinned.
         assert 'id="decimation-banner"' in page
         assert "Actual 3001&rarr;500" in page or "Actual 3001→500" in page
+        # The tube band is a CLOSED POLYGON — 500 samples ride as 1000
+        # points — so the banner must count its samples, not its points.
+        assert "Tube 3001&rarr;500" in page or "Tube 3001→500" in page
+        assert "Tube 3001&rarr;1000" not in page and "Tube 3001→1000" not in page
 
-        # The list the banner renders, straight from the figures.
+        # The list the banner renders, straight from the figures: the
+        # embedded side is ``meta.samples`` where the figure layer stamped
+        # one, and the x length only where it did not.
         ctx = {
             "figures": {
                 "x": {
                     "data": [
-                        {"name": "Actual", "x": [0, 1], "meta": {"full_samples": 9}},
-                        {"name": "Reference", "x": [0, 1], "meta": {"full_samples": 2}},
+                        {
+                            "name": "Actual",
+                            "x": [0, 1],
+                            "meta": {"samples": 2, "full_samples": 9},
+                        },
+                        {
+                            "name": "Tube",
+                            "x": [0, 1, 1, 0],
+                            "meta": {"samples": 2, "full_samples": 9},
+                        },
+                        {
+                            "name": "Reference",
+                            "x": [0, 1],
+                            "meta": {"samples": 2, "full_samples": 2},
+                        },
+                        {"name": "Unstamped", "x": [0, 1], "meta": {"full_samples": 9}},
                     ]
                 }
             }
         }
         assert _decimated_traces(ctx) == [
-            {"variable": "x", "trace": "Actual", "full": 9, "embedded": 2}
+            {"variable": "x", "trace": "Actual", "full": 9, "embedded": 2},
+            {"variable": "x", "trace": "Tube", "full": 9, "embedded": 2},
+            {"variable": "x", "trace": "Unstamped", "full": 9, "embedded": 2},
         ]
 
     def _render_two_leaves(self, tmp_path, sentinel_first: bool):
@@ -828,9 +850,9 @@ def _parse(html: str) -> _Element:
 class TestServerRenderedTree:
     """The tree, the summary line and the variable pills come off the server.
 
-    Non-browser on purpose: until the cut deletes ``tree-ui.js`` the JS
-    clears every mount on load and rebuilds it, so the served markup is the
-    only place these assertions can hold today.
+    Non-browser on purpose: nothing under ``templates/`` rebuilds these
+    mounts any more, so the served markup IS what the reader sees, and
+    parsing it asks the question directly.
     """
 
     #: ``x`` carries a passing tube leaf and a failing nrmse leaf wrapped in
@@ -1022,3 +1044,176 @@ class TestServerRenderedTree:
                 for el in mount.walk()
                 if el.tag in ("input", "select", "button", "textarea")
             ] == [], mount.attrs["id"]
+
+
+class TestRestoredViewingChecks:
+    """Three checks the deleted browser suites carried, asked of the server.
+
+    The page no longer builds anything, so what the JavaScript used to be
+    asked about — the summary's colour, a third-party metric's pill, the
+    decimation banner's list — is now in the markup ``generate_comparison_plots``
+    writes, and these render through the real path and parse it.
+    """
+
+    @staticmethod
+    def _series(n=3001):
+        import numpy as np
+
+        t = np.linspace(0.0, 1.0, n)
+        return t, np.sin(t)
+
+    @staticmethod
+    def _inputs():
+        """One variable ``x``, 3001 samples — over the 500-sample budget."""
+        from dstf.backends.types import TestResult, VariableResult
+
+        t, ref_v = TestRestoredViewingChecks._series()
+        ref = {
+            "test_id": "ref_0001",
+            "time": t.tolist(),
+            "variables": [{"index": 1, "name": "x", "values": ref_v.tolist()}],
+        }
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[VariableResult(index=1, name="x", time=t, values=ref_v + 0.01)],
+        )
+        return t, ref_v, ref, result
+
+    @staticmethod
+    def _model(**kw):
+        from dstf.discovery.test_registry import TestModel
+
+        return TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=1,
+            **kw,
+        )
+
+    def _render(self, tmp_path, *, test_model, metric_tree, comparisons, overlays=None):
+        _t, _ref_v, ref, result = self._inputs()
+        html = generate_comparison_plots(
+            "M",
+            ref,
+            result,
+            comparisons,
+            tmp_path / "plots",
+            test_model=test_model,
+            metric_tree=metric_tree,
+            max_embedded_samples=500,
+            overlays=overlays,
+        )
+        assert html is not None
+        return html.read_text(encoding="utf-8")
+
+    def _compared(self, **kw):
+        """The default implicit-nrmse comparison, or one for a given spec."""
+        from dstf.comparison.comparator import compare_test
+
+        _t, _ref_v, ref, result = self._inputs()
+        test = self._model(**kw)
+        return test, compare_test(test, result, ref)
+
+    def test_a_root_with_no_verdict_renders_pending_not_fail(self, tmp_path):
+        """No evaluated tree ⇒ no root verdict ⇒ the summary is ``pending``.
+
+        ``_tree_summary``'s ``root_passed`` is tri-state and ``None`` is
+        not ``False``: a page rendered without a metric tree must not paint
+        the headline red, because nothing said the test failed.
+        """
+        test, comp = self._compared()
+        page = self._render(
+            tmp_path,
+            test_model=test,
+            metric_tree=None,
+            comparisons=comp.variables,
+        )
+        summary = _parse(page).by_id("summary-text")
+        assert "pending" in summary.classes
+        assert "fail" not in summary.classes and "pass" not in summary.classes
+        assert "root verdict pending" in " ".join(summary.text().split())
+        # Every leaf pill is the same tri-state em dash, not a FAIL.
+        pills = [
+            el
+            for el in _parse(page).by_id("nodes-full").walk()
+            if "node-status" in el.classes
+        ]
+        assert pills and all(el.text() == "—" for el in pills)
+
+    def test_a_third_party_metric_renders_in_the_server_tree(self, tmp_path):
+        """A metric the framework never heard of reaches the page whole.
+
+        Registered through ``register_metric`` only — no edit to any
+        reporting module — it must arrive in the rendered tree with its
+        verdict pill, the display ``summarize()`` gives it and its
+        criterion as page text.
+        """
+        from dstf.comparison import registry
+        from dstf.comparison.registry import register_metric, summarize
+        from dstf.comparison.tree_eval import leaf_comparisons_by_path
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from test_metric_registry import _final_slope_descriptor
+
+        try:
+            register_metric(_final_slope_descriptor())
+            spec = parse_metric_tree(
+                {"metric": "final-slope", "variable": "x", "max_slope": 1e-3}
+            )
+            test, comp = self._compared(metric_tree_spec=spec)
+            page = self._render(
+                tmp_path,
+                test_model=test,
+                metric_tree=comp.metric_tree,
+                comparisons=comp.variables,
+            )
+        finally:
+            registry._reset_for_tests()
+
+        leaves = {
+            el.attrs["data-path"]: el
+            for el in _parse(page).by_id("nodes-full").walk()
+            if "node-leaf" in el.classes and el.attrs.get("data-path")
+        }
+        assert list(leaves) == ["/metrics"]
+        leaf = leaves["/metrics"]
+        vc = leaf_comparisons_by_path(comp.metric_tree)["/metrics"]
+        summary = summarize(vc)
+        pills = [el for el in leaf.walk() if "node-status" in el.classes]
+        assert [el.text() for el in pills] == ["PASS" if vc.passed else "FAIL"]
+        scores = [el for el in leaf.walk() if "node-score" in el.classes]
+        assert [el.text() for el in scores] == [summary.display]
+        assert summary.criterion in leaf.text()
+        assert "final-slope" in leaf.text()
+
+    def test_a_decimated_soft_check_overlay_is_named_in_the_banner(self, tmp_path):
+        """An overlay is a curve on the plot, so the budget thins it too —
+        and the banner names it by the trace name the legend shows."""
+        from dstf.reporting.overlay_loader import Overlay, OverlayVariable
+
+        test, comp = self._compared()
+        t, ref_v = self._series()
+        overlays = [
+            Overlay(
+                name="prev",
+                role="soft_check",
+                variables={
+                    "x": OverlayVariable(
+                        time=t.tolist(), values=(ref_v + 0.02).tolist()
+                    )
+                },
+            )
+        ]
+        page = self._render(
+            tmp_path,
+            test_model=test,
+            metric_tree=comp.metric_tree,
+            comparisons=comp.variables,
+            overlays=overlays,
+        )
+        assert 'id="decimation-banner"' in page
+        banner = _parse(page).by_id("decimation-banner")
+        traces = [el.text() for el in banner.by_class("dec-trace")]
+        assert "x Overlay: soft_check/prev 3001→500" in traces

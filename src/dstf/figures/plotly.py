@@ -147,6 +147,9 @@ def _band(prim: Band, leaf: LeafView, window: Window | None, ctx: _Ctx):
             "meta": {
                 "id": prim.id,
                 "kind": prim.kind,
+                # A band is a closed polygon (2N points for N samples), so the
+                # banner cannot read its sample count off the trace's x length.
+                "samples": len(prim.time),
                 "full_samples": _full(ctx, prim.id, len(prim.time)),
             },
             **_axes(prim),
@@ -271,6 +274,7 @@ def _series(prim: Series, leaf: LeafView, window: Window | None, ctx: _Ctx):
             "meta": {
                 "id": prim.id,
                 "kind": prim.kind,
+                "samples": len(prim.x),
                 "full_samples": _full(ctx, prim.id, len(prim.x)),
             },
             **_axes(prim),
@@ -362,6 +366,7 @@ def _base_traces(view: VariableView) -> list[dict]:
                 "meta": {
                     "id": "actual",
                     "kind": "act",
+                    "samples": len(view.act_time),
                     "full_samples": view.full_samples.get("act", len(view.act_time)),
                 },
             }
@@ -378,6 +383,7 @@ def _base_traces(view: VariableView) -> list[dict]:
                 "meta": {
                     "id": "reference",
                     "kind": "ref",
+                    "samples": len(view.ref_time),
                     "full_samples": view.full_samples.get("ref", len(view.ref_time)),
                 },
             }
@@ -394,7 +400,7 @@ def _base_traces(view: VariableView) -> list[dict]:
                 "type": "scatter",
                 "mode": "lines",
                 # The page's overlay picker finds a trace by this exact
-                # name (scorers.js overlayTraceName); keep the two in step.
+                # name (report.js overlayTraceName); keep the two in step.
                 "name": f"Overlay: {ov.role}/{ov.name}",
                 "x": ov.time.tolist(),
                 "y": ov.values.tolist(),
@@ -405,6 +411,7 @@ def _base_traces(view: VariableView) -> list[dict]:
                     "id": f"overlay/{ov.role}/{ov.name}",
                     "kind": "overlay",
                     "role": ov.role,
+                    "samples": len(ov.time),
                     "full_samples": (
                         len(ov.time) if ov.full_samples is None else ov.full_samples
                     ),
@@ -429,6 +436,7 @@ def _error_trace(s: Series, ctx: _Ctx) -> dict:
         "meta": {
             "id": s.id,
             "kind": "error",
+            "samples": len(s.x),
             "full_samples": _full(ctx, s.id, len(s.x)),
         },
     }

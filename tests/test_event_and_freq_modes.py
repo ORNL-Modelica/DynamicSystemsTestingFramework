@@ -199,11 +199,11 @@ class TestDominantFrequencyMode:
         r_tight = mode_tight.compare(ref_t, ref_v, act_t, act_v)
         assert not r_tight.passed
 
-    def test_detected_reference_peaks_seeded_for_reporter_button(self):
-        """Reporter's 'Detect peaks from reference' button reads from
-        ``detected_reference_peaks_hz`` regardless of whether the user
-        declared peaks — it always reflects the reference spectrum's top
-        peaks so users can bootstrap from it."""
+    def test_detected_reference_peaks_always_reported(self):
+        """``detected_reference_peaks_hz`` is reported regardless of
+        whether the user declared peaks — it always reflects the
+        reference spectrum's top peaks, so a spec author can declare the
+        ``peaks`` list from it."""
         ref_t, ref_v = self._multi_sine([2.0, 4.0, 6.0])
         mode = DominantFrequencyMode(
             DominantFrequencyConfig(

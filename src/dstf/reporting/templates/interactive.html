@@ -142,10 +142,12 @@ details summary:hover { color: #333; }
 {# === DECIMATION DISCLOSURE ===
    Server-rendered from the figures' ``full_samples`` stamps: a trace whose
    stamp exceeds the samples it carries was thinned to fit the page. The
-   sidecar is the full-resolution copy. #}
+   sidecar holds the full-resolution INPUT trajectories (actual, reference,
+   overlays) — derived traces such as bands, error series and spectra are
+   not in it, so the banner promises only the inputs. #}
 {% if decimated %}
 <div id="decimation-banner">
-  <strong>{{ decimated | length }}</strong> trace{{ '' if decimated | length == 1 else 's' }} decimated to fit this page — full resolution in <code>comparison_data.json</code>:
+  <strong>{{ decimated | length }}</strong> trace{{ '' if decimated | length == 1 else 's' }} decimated to fit this page — the full-resolution input trajectories are in <code>comparison_data.json</code>:
   {% for d in decimated %}<span class="dec-trace">{{ d.variable }} {{ d.trace }} {{ d.full }}&rarr;{{ d.embedded }}</span>{% if not loop.last %}, {% endif %}{% endfor %}
 </div>
 {% endif %}

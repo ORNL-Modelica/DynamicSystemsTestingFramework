@@ -218,8 +218,9 @@ def summarize_dominant_frequency(vc: VariableComparison) -> ScoreSummary:
         return ScoreSummary(
             display="no peaks declared",
             criterion=(
-                "No peaks declared — use 'Detect peaks from reference' "
-                "to seed the table from the reference spectrum"
+                "No peaks declared — declare them in the leaf's `peaks` "
+                "list; the reference's detected peaks are in the "
+                "diagnostics as `detected_reference_peaks_hz`"
             ),
         )
     details = tuple(

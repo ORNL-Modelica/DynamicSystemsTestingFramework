@@ -1337,9 +1337,10 @@ def _find_top_n_peaks(
     runs second so pairing between reference and actual is predictable for
     tests with known frequencies (e.g., PRBS).
 
-    Used by the reporter's "Detect peaks from reference" button to
-    bootstrap a declared-peaks table; not consulted during pass/fail
-    evaluation (that path now uses declared peaks).
+    Reported as the ``detected_reference_peaks_hz`` diagnostic so a spec
+    author can read the reference's own peaks off a failing run and
+    declare them; not consulted during pass/fail evaluation (that path
+    uses declared peaks).
     """
     if len(freqs) < 3 or n_peaks < 1:
         return []
@@ -1530,20 +1531,20 @@ def _compare_dominant_frequency(
     Unmatched declared peaks fail with ``matched_hz=None`` and a reason
     of "no peak in tolerance window".
 
-    When ``peaks`` is empty (or omitted), the leaf fails with a hint
-    pointing users to the reporter's "Detect peaks from reference"
-    button — the declared-peaks contract is explicit by design.
+    When ``peaks`` is empty (or omitted), the leaf fails with a reason
+    pointing the author at the leaf's ``peaks`` list and at the
+    ``detected_reference_peaks_hz`` diagnostic — the declared-peaks
+    contract is explicit by design.
 
     The top-N-by-amplitude algorithm of the pre-D75 implementation is
-    retained as ``_find_top_n_peaks`` — the reporter uses it to
-    populate a declared-peaks table from the reference spectrum when
-    users don't yet know their peak frequencies. Pass/fail logic no
-    longer calls it.
+    retained as ``_find_top_n_peaks`` — it fills that diagnostic, so an
+    author who doesn't yet know their peak frequencies can take them
+    from the reference spectrum. Pass/fail logic no longer calls it.
     """
     # The actual-side FFT is always required — without it we can't match
     # any peaks. The reference-side FFT is only required when no peaks
-    # are declared (so the reporter can seed a table from the ref
-    # spectrum's top-N). With declared peaks, an empty reference is OK
+    # are declared (the failure then reports the ref spectrum's top-N as
+    # a diagnostic). With declared peaks, an empty reference is OK
     # (baseline-free path, idea #59 / D83).
     if len(act_values) < 4:
         return VariableComparison(
@@ -1619,9 +1620,9 @@ def _compare_dominant_frequency(
             mode="dominant-frequency",
             diagnostics={
                 "reason": (
-                    "no peaks declared — use the reporter's "
-                    "'Detect peaks from reference' button to seed a table "
-                    "from the reference spectrum, then commit the spec."
+                    "no peaks declared — declare them in the leaf's "
+                    "`peaks` list; the reference's detected peaks are in "
+                    "the diagnostics as `detected_reference_peaks_hz`."
                 ),
                 "peaks_declared": [],
                 "paired_peaks": [],

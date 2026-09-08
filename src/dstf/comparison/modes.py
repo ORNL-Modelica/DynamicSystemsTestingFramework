@@ -306,9 +306,10 @@ class DominantFrequencyConfig:
 
     The algorithm finds the strongest local maximum in the *actual*
     spectrum within each declared peak's tolerance window; the leaf
-    passes iff every declared peak has such a match. The reporter
-    surfaces a table editor + a "Detect peaks from reference" button
-    that bootstraps the list from the reference spectrum's top-N peaks.
+    passes iff every declared peak has such a match. A leaf with no
+    declared peaks fails and reports the reference spectrum's top-N
+    peaks as the ``detected_reference_peaks_hz`` diagnostic, which is
+    what an author declares the list from.
     """
 
     peaks: list[dict] | None = field(

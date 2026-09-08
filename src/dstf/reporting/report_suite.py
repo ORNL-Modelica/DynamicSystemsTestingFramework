@@ -244,9 +244,10 @@ def generate_comparison_plots(
 
     # Write comparison_data.json alongside the HTML. This is the
     # full-resolution data artifact for downstream tooling (notebooks,
-    # future JS lazy-fetch on zoom). Decimation below only touches the
-    # in-memory context that flows into interactive.html — the sidecar
-    # stays untouched.
+    # future JS lazy-fetch on zoom). Everything below that thins the data
+    # — the self-decimating figure build and the page context that drops
+    # the arrays — runs AFTER this write, so the sidecar keeps every
+    # sample.
     data_path = plot_dir / "comparison_data.json"
     # Summary block for the unified dashboard. The full context dict is
     # the per-variable rendering input; the dashboard only needs row-level
@@ -388,17 +389,22 @@ def _decimated_traces(context: dict) -> list[dict]:
     """Every figure trace the sample budget shortened, named.
 
     The figure layer stamps each trace's pre-decimation count in
-    ``meta.full_samples``; a trace whose stamp exceeds the length it
-    actually carries was decimated. The template renders this list as the
-    banner, so the reader sees WHICH curves were thinned rather than a
-    page-wide total.
+    ``meta.full_samples`` and the count it actually carries in
+    ``meta.samples``; a trace whose stamp exceeds what it carries was
+    decimated. Both counts are samples, not points on the wire — a band
+    trace is a closed polygon holding twice its sample count — so the
+    embedded side reads ``meta.samples`` and falls back to the x length
+    only for a trace the figure layer does not decimate. The template
+    renders this list as the banner, so the reader sees WHICH curves were
+    thinned rather than a page-wide total.
     """
     out: list[dict] = []
 
     def scan(varname, fig: dict) -> None:
         for tr in fig.get("data") or []:
-            full = (tr.get("meta") or {}).get("full_samples")
-            embedded = len(tr.get("x") or [])
+            meta = tr.get("meta") or {}
+            full = meta.get("full_samples")
+            embedded = int(meta.get("samples", len(tr.get("x") or [])))
             if full is None or full <= embedded:
                 continue
             out.append(

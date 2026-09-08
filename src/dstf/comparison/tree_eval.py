@@ -592,11 +592,10 @@ def _leaf_config_error_comparison(
     message, which names the correct key) rides in ``diagnostics["error"]``,
     matching the flat-override path's shape.
 
-    ``config_error`` distinguishes this from a data-shaped sentinel like
-    ``_no_data_failure``: a config that never built has no live-scoring
-    state, so the reporter pins the leaf CLI-authoritative. An empty window
-    is data, not config — that leaf stays live so dragging the window back
-    over the samples re-scores it.
+    ``config_error`` marks the sentinel as config-shaped, distinguishing
+    it from a data-shaped one like ``_no_data_failure``: an empty window
+    is data — the same spec scores once the samples are there — while a
+    metric config that never built is a defect in the spec itself.
     """
     return VariableComparison(
         index=0,
