@@ -14,10 +14,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from .geometry import Primitive
+
 if TYPE_CHECKING:
     # Annotation-only — runtime import is inside compare_test() in
     # comparator.py to break the comparator <-> metric_tree cycle.
-    from .geometry import Primitive
     from .metric_tree import MetricResult
 
 

@@ -56,8 +56,10 @@ class TestPrimitives:
         np.testing.assert_array_equal(b.upper, [1.0, 2.0])
 
     def test_kind_and_panel_are_keyword_only(self):
-        with pytest.raises(TypeError):
-            Marker("points/target/0", 1.0, 2.0)  # type: ignore[misc]
+        # Exact arity, so the only reason to raise is that positionals are
+        # refused — a missing-argument TypeError would not prove kw_only.
+        with pytest.raises(TypeError, match="positional argument"):
+            Marker("points/target/0", "handle", "time", 1.0, 2.0, None)  # type: ignore[misc]
 
 
 class TestResultTypes:
