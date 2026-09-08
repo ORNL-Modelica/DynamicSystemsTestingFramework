@@ -7,7 +7,7 @@ import random
 import numpy as np
 import pytest
 
-from dstf.comparison.algorithms import _compare_tube, _tube_bounds
+from dstf.comparison.algorithms import _compare_points, _compare_tube, _tube_bounds
 from dstf.comparison.geometry import Band, Box, Marker, Window
 from dstf.comparison.types import ScoreSummary, VariableComparison
 
@@ -172,3 +172,57 @@ class TestTubeGeometry:
             {"tube_width_mode": "band"},
         )
         assert vc.geometry == () and not vc.passed
+
+
+class TestPointsGeometry:
+    def test_boxes_contain_passed_points_and_exclude_failed_ones(self):
+        ref_t = np.linspace(0.0, 10.0, 101)
+        ref_v = np.sin(ref_t)
+        act_v = ref_v + 0.05 * (ref_t > 5.0)  # off by 0.05 after t=5
+        pts = [
+            {"time": 2.0, "tolerance": 0.01},
+            {"time": 8.0, "tolerance": 0.01},
+            {"time": 9.0, "tolerance": 0.1, "time_tolerance": 0.2},
+        ]
+        vc = _compare_points(ref_t, ref_v, ref_t, act_v, points=pts)
+        boxes = {p.id: p for p in vc.geometry if isinstance(p, Box)}
+        targets = {p.id: p for p in vc.geometry if isinstance(p, Marker)}
+        assert set(boxes) == {"points/box/0", "points/box/1", "points/box/2"}
+        assert set(targets) == {"points/target/0", "points/target/1", "points/target/2"}
+        assert all(m.kind == "handle" for m in targets.values())
+        assert targets["points/target/0"].passed is True
+        assert (
+            targets["points/target/1"].passed is False
+            and boxes["points/box/1"].passed is False
+        )
+        assert targets["points/target/2"].passed is True
+        # Geometry agrees with the verdict: the actual at a failed point is outside its box.
+        b = boxes["points/box/1"]
+        a = float(np.interp(8.0, ref_t, act_v))
+        assert not (b.y0 <= a <= b.y1)
+        assert (boxes["points/box/2"].t0, boxes["points/box/2"].t1) == (
+            pytest.approx(8.8),
+            pytest.approx(9.2),
+        )
+        assert vc.passed is False
+
+    def test_an_unresolvable_point_has_no_geometry(self):
+        ref_t = np.array([0.0, 1.0])
+        vc = _compare_points(ref_t, ref_t, ref_t, ref_t, points=[{"time": 5.0}])
+        assert vc.geometry == () and not vc.passed
+
+    def test_final_only_emits_one_checkpoint_at_the_trace_end(self):
+        ref_t = np.array([0.0, 1.0])
+        ref_v = np.array([0.0, 1.0])
+        vc = _compare_points(
+            ref_t, ref_v, ref_t, np.array([0.0, 1.0005]), points=None, tolerance=1e-3
+        )
+        assert [p.id for p in vc.geometry] == [
+            "points/target/final",
+            "points/box/final",
+        ]
+        box = vc.geometry[1]
+        assert isinstance(box, Box)
+        assert (box.t0, box.t1) == (1.0, 1.0)
+        assert box.y0 == pytest.approx(0.999) and box.y1 == pytest.approx(1.001)
+        assert vc.passed and box.passed

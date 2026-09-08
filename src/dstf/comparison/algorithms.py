@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .geometry import Band, Marker, Primitive
+from .geometry import Band, Box, Marker, Primitive
 from .types import _EPS, VariableComparison
 
 
@@ -351,6 +351,7 @@ def _compare_points(
         act_final = float(act_values[-1])
         delta = abs(act_final - ref_final)
         passed = delta < tolerance
+        t_final = float(ref_time[-1]) if len(ref_time) else 0.0
         return VariableComparison(
             index=0,
             name="",
@@ -359,11 +360,29 @@ def _compare_points(
             rmse=delta,
             signal_range=0.0,
             max_abs_error=delta,
-            max_abs_error_time=float(ref_time[-1]) if len(ref_time) else 0.0,
+            max_abs_error_time=t_final,
             reference_final=ref_final,
             actual_final=act_final,
             mode="points",
             diagnostics={"tolerance": tolerance, "delta": delta},
+            geometry=(
+                Marker(
+                    id="points/target/final",
+                    kind="handle",
+                    x=t_final,
+                    y=ref_final,
+                    passed=passed,
+                ),
+                Box(
+                    id="points/box/final",
+                    kind="handle",
+                    t0=t_final,
+                    t1=t_final,
+                    y0=ref_final - tolerance,
+                    y1=ref_final + tolerance,
+                    passed=passed,
+                ),
+            ),
         )
 
     # Declared-points path.
@@ -383,8 +402,9 @@ def _compare_points(
     # baseline — FAILS instead of being skipped. Skipping let truncated
     # simulations pass their tail checkpoints. Reasons are collected for
     # the report.
+    geometry: list[Primitive] = []
     point_failures: list[dict] = []
-    for point in points:
+    for i, point in enumerate(points):
         t = point.get("time")
         t = trace_end if t is None else float(t)
         # Resolve target.
@@ -445,7 +465,28 @@ def _compare_points(
         if delta > worst_delta:
             worst_delta = delta
             worst_t = t_at_min
-        if delta > y_limit:
+        point_passed = delta <= y_limit
+        geometry.append(
+            Marker(
+                id=f"points/target/{i}",
+                kind="handle",
+                x=t,
+                y=target,
+                passed=point_passed,
+            )
+        )
+        geometry.append(
+            Box(
+                id=f"points/box/{i}",
+                kind="handle",
+                t0=t - x_tol,
+                t1=t + x_tol,
+                y0=target - y_limit,
+                y1=target + y_limit,
+                passed=point_passed,
+            )
+        )
+        if not point_passed:
             failed += 1
             point_failures.append(
                 {"time": t, "reason": f"delta {delta:.6g} exceeds limit {y_limit:.6g}"}
@@ -471,6 +512,7 @@ def _compare_points(
             "worst_time": worst_t,
             "point_failures": point_failures,
         },
+        geometry=tuple(geometry),
     )
 
 
