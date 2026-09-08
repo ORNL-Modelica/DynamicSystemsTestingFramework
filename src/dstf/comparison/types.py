@@ -17,6 +17,7 @@ import numpy as np
 if TYPE_CHECKING:
     # Annotation-only — runtime import is inside compare_test() in
     # comparator.py to break the comparator <-> metric_tree cycle.
+    from .geometry import Primitive
     from .metric_tree import MetricResult
 
 
@@ -58,6 +59,24 @@ class VariableComparison:
     # Open-ended structured extras — future metrics attach here instead of
     # growing this dataclass (event-timing, spectral, domain-specific scores).
     diagnostics: dict = field(default_factory=dict)
+    # What the mode scored against, as drawable data (see geometry.py).
+    # Ids are local until the evaluator prefixes them with the leaf path.
+    geometry: tuple[Primitive, ...] = ()
+
+
+@dataclass(frozen=True)
+class ScoreSummary:
+    """One leaf's verdict in words: the pill text and the criterion sentence.
+
+    Produced per mode by :mod:`.summaries` and dispatched through the
+    metric descriptor, so the report's tree view and the terminal review
+    loop read the same mode-aware text.
+    """
+
+    display: str
+    criterion: str
+    score: float | None = None
+    score_label: str = ""
 
 
 @dataclass
