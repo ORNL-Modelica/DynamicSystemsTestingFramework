@@ -286,6 +286,27 @@ class TestPointsGeometry:
         assert box.y0 == pytest.approx(0.999) and box.y1 == pytest.approx(1.001)
         assert vc.passed and box.passed
 
+    def test_a_nan_reference_at_a_checkpoint_cannot_pass(self):
+        # A NaN target makes the relative limit NaN. The old guard
+        # `delta > y_limit` was False for NaN and passed the point silently;
+        # `delta <= y_limit` is what the verdict, the box and the target now
+        # share, and it is False for NaN. Reachable: json.loads accepts NaN
+        # and accepted baselines are written with allow_nan.
+        ref_t = np.linspace(0.0, 10.0, 11)
+        ref_v = ref_t.copy()
+        ref_v[5] = np.nan
+        vc = _compare_points(
+            ref_t,
+            ref_v,
+            ref_t,
+            ref_t,
+            points=[{"time": 5.0, "tolerance": 0.1, "tolerance_mode": "rel"}],
+        )
+        assert vc.passed is False
+        target = next(p for p in vc.geometry if p.id == "points/target/0")
+        box = next(p for p in vc.geometry if p.id == "points/box/0")
+        assert target.passed is False and box.passed is False
+
 
 class TestRangeGeometry:
     def test_each_declared_bound_is_a_handle_with_its_own_verdict(self):
