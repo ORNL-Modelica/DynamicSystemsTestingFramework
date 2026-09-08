@@ -105,7 +105,7 @@ def collect_leaf_paths(spec: SpecNode, *, root: str = "/metrics") -> list[str]:
     """Return RFC 6901 JSON-Pointer paths for each leaf in tree order.
 
     Order matches :func:`tree_eval.collect_leaf_variables` (pre-order walk)
-    so callers can zip the two lists element-wise. Paths are entry-relative
+    and the paths the evaluator stamps on results. Paths are entry-relative
     — the reporter's ``buildPatchData`` uses them directly in RFC 6902
     patch ops (the whitelist in :mod:`patch_apply` covers ``/metrics``).
 

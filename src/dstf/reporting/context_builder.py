@@ -804,6 +804,16 @@ def _build_warning_rows(warnings: list | None) -> list:
     ]
 
 
+def _view_leaf_paths(node: dict) -> list[str]:
+    """Leaf paths of a spec view, in tree order."""
+    if node.get("kind") == "leaf":
+        return [node["path"]]
+    out: list[str] = []
+    for child in node.get("children") or []:
+        out.extend(_view_leaf_paths(child))
+    return out
+
+
 def _build_tree_view_and_variables(
     comparisons: list,
     test_model,
@@ -889,6 +899,21 @@ def _build_tree_view_and_variables(
         }
 
     tree_view = _spec_to_view(spec, evaluation_by_path=eval_by_path)
+    # The view walks the spec; the lookup holds what the evaluator stamped.
+    # Both routes stamp every leaf the view will show, so a miss is drift
+    # between the two walks — a leaf that would render with no pill and no
+    # controls, and nothing else would say so.
+    missing = [
+        path for path in _view_leaf_paths(tree_view) if path not in comparisons_by_path
+    ]
+    if missing:
+        logger.warning(
+            "%s: %d spec leaf path(s) have no evaluated comparison and render "
+            "without scores: %s",
+            getattr(test_model, "model_id", "?"),
+            len(missing),
+            ", ".join(missing),
+        )
     _augment_tree_view(
         tree_view,
         comparisons_by_path,

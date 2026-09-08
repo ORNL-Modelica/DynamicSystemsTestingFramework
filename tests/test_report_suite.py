@@ -192,6 +192,124 @@ class TestRunMetadataBanner:
         assert 'class="run-meta"' not in html
 
 
+class TestViewAndLookupDrift:
+    """The tree view walks the spec; the lookup holds what the evaluator
+    stamped. A leaf in one and not the other renders with no pill and no
+    controls, so the report says so instead of producing a stripped page."""
+
+    def _model(self, spec):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            model_id="Lib.Drift", metric_tree_spec=spec, variable_overrides=None
+        )
+
+    def test_a_leaf_the_evaluator_did_not_stamp_is_named(self, caplog):
+        import logging
+
+        from dstf.comparison.metric_tree import implicit_and_tree
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.reporting.context_builder import _build_tree_view_and_variables
+
+        # Two spec leaves; the tree carries a stamped result for one of them.
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": "x"},
+                    {"metric": "nrmse", "variable": "y"},
+                ],
+            }
+        )
+        tree = implicit_and_tree([_nonfinite_comparison("x")])
+        with caplog.at_level(logging.WARNING, logger="dstf.reporting.context_builder"):
+            _build_tree_view_and_variables(
+                [_nonfinite_comparison("x")], self._model(spec), tree, []
+            )
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("Lib.Drift" in m and "/metrics/children/1" in m for m in messages), (
+            messages
+        )
+
+    def test_both_evaluation_routes_stay_quiet(self, caplog):
+        import logging
+
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_test
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting.context_builder import _build_tree_view_and_variables
+
+        t = np.linspace(0.0, 1.0, 11)
+        ref = {
+            "test_id": "ref_0001",
+            "time": t.tolist(),
+            "variables": [
+                {"index": 1, "name": "x", "values": t.tolist()},
+                {"index": 2, "name": "y", "values": (t * 2).tolist()},
+            ],
+        }
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[
+                VariableResult(index=1, name="x", time=t, values=t),
+                VariableResult(index=2, name="y", time=t, values=t * 2),
+            ],
+        )
+        base = dict(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=2,
+        )
+        flat = TestModel(
+            **base,
+            variable_overrides={"x": {"mode": "tube", "tube_width_mode": "band"}},
+        )
+        from dstf.comparison.tree_spec import parse_metric_tree
+
+        explicit = TestModel(
+            **base,
+            metric_tree_spec=parse_metric_tree(
+                {
+                    "combinator": "and",
+                    "children": [
+                        {"metric": "nrmse", "variable": "x"},
+                        {
+                            "combinator": "warn",
+                            "children": [
+                                {"metric": "range", "variable": "y", "max_value": 3.0}
+                            ],
+                        },
+                    ],
+                }
+            ),
+        )
+        for model in (flat, explicit):
+            comp = compare_test(model, result, ref)
+            with caplog.at_level(
+                logging.WARNING, logger="dstf.reporting.context_builder"
+            ):
+                tree_view, _ = _build_tree_view_and_variables(
+                    comp.variables, model, comp.metric_tree, []
+                )
+            assert not [
+                r for r in caplog.records if "no evaluated comparison" in r.getMessage()
+            ], model
+
+            # And every view leaf really was enriched.
+            def leaves(node):
+                if node.get("kind") == "leaf":
+                    yield node
+                for c in node.get("children") or []:
+                    yield from leaves(c)
+
+            assert all("score_display" in leaf for leaf in leaves(tree_view)), model
+
+
 # ---------------------------------------------------------------------------
 # Finding 37 (support) — full_samples counts for the decimation banner
 # ---------------------------------------------------------------------------
@@ -872,4 +990,4 @@ class TestEmbeddedFigures:
         assert "figures" not in sidecar and "diag_figures" not in sidecar
         assert len(sidecar["trajectories"][0]["act_time"]) == 3001
         start = page.index("FIGURES:")
-        assert "full_samples" in page[start:] and "3001" in page[start:]
+        assert '"full_samples": 3001' in page[start:]
