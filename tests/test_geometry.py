@@ -286,6 +286,37 @@ class TestPointsGeometry:
         assert box.y0 == pytest.approx(0.999) and box.y1 == pytest.approx(1.001)
         assert vc.passed and box.passed
 
+    def test_a_nan_sample_beside_a_miss_is_not_a_crossing(self):
+        # Actual is 3 units off everywhere, with one NaN sample at the
+        # checkpoint. The window search compared (NaN > 0) != (4 > 0) and
+        # called that a sign change — delta 0, a false PASS.
+        t = np.linspace(0.0, 10.0, 11)
+        act = t + 3.0
+        act[5] = np.nan
+        vc = _compare_points(
+            t,
+            t,
+            t,
+            act,
+            points=[{"time": 5.0, "tolerance": 0.1, "time_tolerance": 1.5}],
+        )
+        assert vc.passed is False
+        box = next(p for p in vc.geometry if p.id == "points/box/0")
+        assert box.passed is False
+
+    def test_a_window_of_only_nan_samples_fails(self):
+        t = np.linspace(0.0, 10.0, 11)
+        act = t.copy()
+        act[4:7] = np.nan
+        vc = _compare_points(
+            t,
+            t,
+            t,
+            act,
+            points=[{"time": 5.0, "tolerance": 0.1, "time_tolerance": 0.5}],
+        )
+        assert vc.passed is False
+
     def test_a_nan_reference_at_a_checkpoint_cannot_pass(self):
         # A NaN target makes the relative limit NaN. The old guard
         # `delta > y_limit` was False for NaN and passed the point silently;

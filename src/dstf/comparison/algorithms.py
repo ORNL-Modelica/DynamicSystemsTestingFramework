@@ -291,6 +291,11 @@ def _min_delta_in_box(
             candidates.append((float(t), float(act_values[i])))
     if act_time[0] <= t_hi <= act_time[-1]:
         candidates.append((t_hi, float(np.interp(t_hi, act_time, act_values))))
+    # A NaN sample is no evidence of anything: it cannot be the closest
+    # approach, and treating it as one side of a sign change made a curve
+    # 3 units off everywhere "cross" the target and pass. Drop it; a window
+    # holding nothing but NaN then reports no comparable sample (inf).
+    candidates = [(t, v) for t, v in candidates if not np.isnan(v)]
     if not candidates:
         return float("inf"), t_lo
     # Sort by time so adjacent-pair zero-crossing detection is well-defined.
