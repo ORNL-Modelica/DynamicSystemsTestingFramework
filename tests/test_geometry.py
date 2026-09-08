@@ -84,12 +84,24 @@ def _random_tube_case(rng: random.Random):
     n_ref = rng.randint(3, 12)
     ref_time = np.array(sorted(rng.sample(range(0, 100), n_ref)), dtype=float) / 10.0
     ref_values = np.array([rng.uniform(-2.0, 2.0) for _ in ref_time])
-    act_time = np.array(
-        sorted(
-            rng.uniform(ref_time[0], ref_time[-1]) for _ in range(rng.randint(3, 15))
+    if rng.random() < 0.5:
+        # Sampled where the reference is, so a faithful reproduction can pass;
+        # a sparse random grid cuts the reference's corners and never does.
+        act_time = ref_time.copy()
+    else:
+        act_time = np.array(
+            sorted(
+                rng.uniform(ref_time[0], ref_time[-1])
+                for _ in range(rng.randint(3, 15))
+            )
         )
+    # Noise from well inside any band to well outside every band: the test
+    # must reach BOTH verdicts, or "the verdict follows the band" is only
+    # checked on the failing side.
+    scale = rng.choice([0.0, 0.02, 0.1, 0.5, 3.0])
+    act_values = np.interp(act_time, ref_time, ref_values) + np.array(
+        [rng.uniform(-scale, scale) for _ in act_time]
     )
-    act_values = np.array([rng.uniform(-3.0, 3.0) for _ in act_time])
     mode = rng.choice(["band", "rel", "abs"])
     cfg: dict = {
         "tube_width_mode": mode,
@@ -101,9 +113,19 @@ def _random_tube_case(rng: random.Random):
         for _ in range(rng.randint(1, 4)):
             t = rng.uniform(ref_time[0], ref_time[-1])
             if mode == "abs":
-                lo = rng.uniform(-3.0, 0.0)
+                # Literal bounds, half the time bracketing the reference so
+                # an absolute tube can pass at all.
+                centre = (
+                    float(np.interp(t, ref_time, ref_values))
+                    if rng.random() < 0.5
+                    else rng.uniform(-3.0, 0.0)
+                )
                 pts.append(
-                    {"time": t, "upper": lo + rng.uniform(0.5, 3.0), "lower": lo}
+                    {
+                        "time": t,
+                        "upper": centre + rng.uniform(0.2, 2.0),
+                        "lower": centre - rng.uniform(0.2, 2.0),
+                    }
                 )
             else:
                 pts.append(
@@ -123,7 +145,7 @@ def _random_tube_case(rng: random.Random):
 class TestTubeGeometry:
     def test_band_is_the_scored_envelope_and_the_verdict_follows_it(self):
         rng = random.Random(20260908)
-        failing_cases = 0
+        passing_cases = failing_cases = 0
         for _ in range(400):
             ref_t, ref_v, act_t, act_v, cfg = _random_tube_case(rng)
             vc = _compare_tube(ref_t, ref_v, act_t, act_v, cfg)
@@ -138,13 +160,39 @@ class TestTubeGeometry:
                 act_on_grid <= band.upper + 1e-12
             )
             assert bool(inside.all()) == vc.passed
-            if not vc.passed:
+            if vc.passed:
+                passing_cases += 1
+            else:
                 i = int(np.argmin(np.abs(band.time - vc.tube_worst_violation_time)))
                 assert not inside[i], (
                     "the reported worst violation lies inside the band"
                 )
                 failing_cases += 1
         assert failing_cases > 50, "generator never reached the failing regime"
+        assert passing_cases > 50, "generator never reached the passing regime"
+
+    def test_a_control_point_off_the_reference_span_leaves_a_gap_in_the_ids(self):
+        # Ids address tube_points/<i> in a patch, so a point the band cannot
+        # anchor a handle on is skipped, not renumbered — and the verdict is
+        # what it would be without that point.
+        ref_t = np.array([0.0, 1.0, 2.0, 3.0])
+        ref_v = np.array([1.0, 2.0, 1.0, 2.0])
+        on_span = [
+            {"time": 0.5, "upper": 0.2, "lower": 0.2},
+            {"time": 2.5, "upper": 0.2, "lower": 0.2},
+        ]
+        with_far = [on_span[0], {"time": 7.0, "upper": 0.2, "lower": 0.2}, on_span[1]]
+        cfg = {"tube_width_mode": "rel"}
+        vc = _compare_tube(
+            ref_t, ref_v, ref_t, ref_v + 0.05, {**cfg, "tube_points": with_far}
+        )
+        ids = sorted(p.id for p in vc.geometry if isinstance(p, Marker))
+        assert ids == ["tube/lower/0", "tube/lower/2", "tube/upper/0", "tube/upper/2"]
+        without = _compare_tube(
+            ref_t, ref_v, ref_t, ref_v + 0.05, {**cfg, "tube_points": on_span}
+        )
+        assert vc.passed == without.passed
+        assert vc.tube_worst_violation == pytest.approx(without.tube_worst_violation)
 
     def test_handles_sit_on_the_resolved_band_edges_in_spec_order(self):
         ref_t = np.array([0.0, 1.0, 2.0, 3.0])

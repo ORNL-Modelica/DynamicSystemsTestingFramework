@@ -701,7 +701,7 @@ def _tube_geometry(
     for i, pt in enumerate(tube_points or []):
         t = float(pt["time"])
         if t < grid[0] or t > grid[-1]:
-            continue  # off the reference span: nothing is scored there
+            continue  # off the span: no band edge exists there to anchor a handle on
         out.append(
             Marker(
                 id=f"tube/upper/{i}",
