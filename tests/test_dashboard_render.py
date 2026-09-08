@@ -278,13 +278,34 @@ def test_rerun_prefix_flows_to_template(tmp_path):
         "counts": {},
         "tests": [],
         "updated_at": 0.0,
-        "rerun_prefix": 'dstf --config "/some/path/testing.json" run',
+        "rerun_prefix": 'dstf --config "/some/path/testing.json"',
     }
     _write_status_json(tmp_path, snapshot)
     render_live(tmp_path)
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "RERUN_PREFIX" in out
     assert "/some/path/testing.json" in out
+
+
+def test_rerun_prefix_carries_no_subcommand():
+    """The prefix is global flags only — the dashboard's command menu owns
+    the subcommand. A prefix that still ended in ``run`` would build
+    ``dstf ... run compare --filter ...``.
+    """
+    from types import SimpleNamespace
+
+    from dstf.reporting.dashboard_render import build_rerun_prefix
+
+    with_config = build_rerun_prefix(
+        SimpleNamespace(config_file="/some/path/testing.json")
+    )
+    with_paths = build_rerun_prefix(
+        SimpleNamespace(config_file=None, source_path="/lib", reference_root="/refs")
+    )
+    for prefix in (with_config, with_paths):
+        assert prefix.startswith("dstf ")
+        assert prefix.split()[-1] not in {"run", "compare", "discover"}
+        assert " run" not in prefix
 
 
 def test_rerun_prefix_kwarg_overrides_snapshot(tmp_path):
@@ -296,10 +317,10 @@ def test_rerun_prefix_kwarg_overrides_snapshot(tmp_path):
         "counts": {},
         "tests": [],
         "updated_at": 0.0,
-        "rerun_prefix": "dstf STALE run",
+        "rerun_prefix": "dstf STALE",
     }
     _write_status_json(tmp_path, snapshot)
-    render_live(tmp_path, rerun_prefix="dstf FRESH run")
+    render_live(tmp_path, rerun_prefix="dstf FRESH")
     out = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
     assert "FRESH" in out
     assert "STALE" not in out

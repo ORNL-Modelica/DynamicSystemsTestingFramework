@@ -137,6 +137,8 @@ a:hover { text-decoration: underline; }
 .sel-footer button.btn-primary { background: #1976D2; color: white; border-color: #1976D2; }
 .sel-footer button.btn-primary:hover { background: #1565C0; }
 .sel-footer .cmd-out { flex: 1; min-width: 16em; font-family: monospace; font-size: 0.8em; padding: 0.3em 0.5em; border: 1px solid #ccc; border-radius: 3px; background: #fafafa; }
+.sel-footer .cmd-kind-label { font-size: 0.85em; color: #555; display: inline-flex; align-items: center; gap: 0.35em; }
+.sel-footer .cmd-kind-label select { font-family: monospace; font-size: 0.85em; padding: 0.25em 0.3em; border: 1px solid #ccc; border-radius: 3px; background: white; }
 .sel-footer .save-status { color: #4CAF50; font-size: 0.82em; display: none; }
 .sel-footer .save-status.shown { display: inline; }
 .sel-footer .help-link { color: #888; font-size: 0.78em; margin-left: auto; }
@@ -260,10 +262,18 @@ body.has-selection { padding-bottom: 5em; }
   </span>
   <button id="btn-clear-sel" onclick="clearSelection()">Clear</button>
   <button id="btn-download-txt" onclick="downloadFilter()">Download .txt</button>
+  <label class="cmd-kind-label">Command
+    <select id="cmd-kind" onchange="syncCommand()" title="Which dstf command to build for the selection">
+      <option value="run">run</option>
+      <option value="compare">compare</option>
+      <option value="compare --accept">compare --accept</option>
+      <option value="run --rerun failed,sim-failed">run --rerun failed,sim-failed</option>
+    </select>
+  </label>
   <button class="btn-primary" id="btn-copy-cmd" onclick="copyCommand()">Copy rerun command</button>
   <span class="save-status" id="save-status">Copied!</span>
   <input class="cmd-out" id="cmd-out" readonly placeholder="Selection produces a rerun command here…">
-  <a class="help-link" href="#" onclick="event.preventDefault();alert('--merge keeps prior results on disk; --report regenerates a full HTML report covering all tests (not just the filtered subset). Drop --merge to focus the report on only the rerun tests.')" title="What do --merge and --report do?">?</a>
+  <a class="help-link" href="#" onclick="event.preventDefault();alert('Pick the command with the Command menu. Plain run also gets --merge (keep prior results on disk) and --report (regenerate a full HTML report covering all tests, not just the filtered subset); drop --merge to focus the report on only the rerun tests. compare re-scores the last run without simulating, and compare --accept stores those results as the new baselines.')" title="What does each command do?">?</a>
 </div>
 
 <script>

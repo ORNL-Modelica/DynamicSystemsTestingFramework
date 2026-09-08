@@ -35,7 +35,7 @@ def _snapshot(start_wall: float) -> dict:
         "eta_seconds": None,
         "start_wall": start_wall,
         "updated_at": start_wall + 5.0,
-        "rerun_prefix": "dstf --config testing.json run",
+        "rerun_prefix": "dstf --config testing.json",
         "counts": {"passed": len(_MODELS)},
         "tests": [
             {
@@ -142,3 +142,57 @@ def test_report_key_changes_between_runs(tmp_path):
     assert first == again, "same run must keep the same key across renders"
     assert first != second, "a new run must get a new key"
     assert str(tmp_path.resolve().as_posix()) in first
+
+
+def test_command_menu_switches_the_built_command(tmp_path, playwright_browser):
+    """The menu offers every command the CLI has for a selection, and the
+    prefix carries no subcommand of its own — a prefix ending in ``run``
+    would produce ``dstf ... run compare --filter ...``.
+
+    ``--merge --report`` belongs to a plain ``run``: ``compare`` never
+    re-simulates and ``--rerun`` picks its own scope.
+    """
+    ctx = playwright_browser.new_context()
+    page = ctx.new_page()
+    # navigator.clipboard is unavailable on file:// — stub it so the test can
+    # read what "Copy rerun command" actually put on the clipboard.
+    page.add_init_script(
+        "window.__copied = [];"
+        "Object.defineProperty(navigator, 'clipboard', {configurable: true,"
+        " value: {writeText: t => { window.__copied.push(t);"
+        " return Promise.resolve(); }}});"
+    )
+    html = _render(tmp_path, start_wall=1000.0)
+    page.goto(html.as_uri())
+    _select(page, "Lib.A")
+
+    kinds = page.eval_on_selector_all(
+        "#cmd-kind option", "els => els.map(e => e.value)"
+    )
+    built = {}
+    for kind in kinds:
+        page.select_option("#cmd-kind", kind)
+        page.click("#btn-copy-cmd")
+        built[kind] = (
+            page.input_value("#cmd-out"),
+            page.evaluate("() => window.__copied[window.__copied.length - 1]"),
+        )
+    ctx.close()
+
+    assert kinds == [
+        "run",
+        "compare",
+        "compare --accept",
+        "run --rerun failed,sim-failed",
+    ]
+    for kind, (shown, copied) in built.items():
+        assert shown == copied, kind
+        assert shown.startswith("dstf --config testing.json " + kind + " "), kind
+        assert "Lib.A" in shown, kind
+        assert "run compare" not in shown and "run run" not in shown, kind
+    assert built["run"][0].endswith(" --merge --report")
+    for kind in ("compare", "compare --accept", "run --rerun failed,sim-failed"):
+        assert "--merge" not in built[kind][0]
+        assert "--report" not in built[kind][0]
+    # Distinct commands, not one text with a cosmetic label.
+    assert len({shown for shown, _ in built.values()}) == len(kinds)

@@ -154,8 +154,10 @@ _LIVE_STATUS_MAP = {
 def build_rerun_prefix(config) -> str:
     """Build the CLI prefix the dashboard uses in its rerun-command builder.
 
-    Produces e.g. `dstf --config "/abs/path/testing.json" run` so the
-    dashboard JS can append ` --filter ... --merge --report` and the
+    Produces e.g. `dstf --config "/abs/path/testing.json"` — the global
+    flags only, NO subcommand: the dashboard's command menu picks the
+    subcommand (`run`, `compare`, `compare --accept`,
+    `run --rerun failed,sim-failed`) and appends ` --filter ...`, so the
     user can paste the result into any terminal regardless of CWD.
     Prefers --config when available; otherwise falls back to
     --source-path (+ optional --reference-root).
@@ -166,14 +168,13 @@ def build_rerun_prefix(config) -> str:
         return f'"{s}"' if " " in s else s
 
     if getattr(config, "config_file", None):
-        return f"dstf --config {q(config.config_file)} run"
+        return f"dstf --config {q(config.config_file)}"
 
     parts = ["dstf"]
     if getattr(config, "source_path", None):
         parts += ["--source-path", q(config.source_path)]
     if getattr(config, "reference_root", None):
         parts += ["--reference-root", q(config.reference_root)]
-    parts.append("run")
     return " ".join(parts)
 
 
@@ -290,11 +291,11 @@ def build_dashboard_context(
                 _enrich_row_from_comparison(row, comp, snapshot_start_wall)
         rows.append(row)
 
-    # rerun_prefix precedence: explicit kwarg > snapshot's prefix > "dstf run"
+    # rerun_prefix precedence: explicit kwarg > snapshot's prefix > "dstf"
     # fallback. The kwarg path lets the CLI override the snapshot prefix even
     # when status.json was written by a prior run with a different config
     # (e.g. dstf compare reading work_dir from a different invocation).
-    prefix = rerun_prefix or snapshot.get("rerun_prefix") or "dstf run"
+    prefix = rerun_prefix or snapshot.get("rerun_prefix") or "dstf"
 
     return {
         "mode": mode,
