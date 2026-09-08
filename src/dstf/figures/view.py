@@ -178,15 +178,29 @@ def decimate_view(view: VariableView, max_samples: int) -> VariableView:
     at, av = _pair(view.act_time, view.act_values, max_samples)
     rt, rv = _pair(view.ref_time, view.ref_values, max_samples)
 
+    # Pre-decimation counts, keyed by primitive id, so the figure can mark
+    # every decimated trace — bands, spectra and error series included.
+    full: dict[str, int] = {
+        "act": 0 if view.act_time is None else len(view.act_time),
+        "ref": 0 if view.ref_time is None else len(view.ref_time),
+    }
+
     def _prim(p: Primitive) -> Primitive:
         if isinstance(p, Band):
+            full[p.id] = len(p.time)
             t2, l2, u2 = decimate_band(p.time, p.lower, p.upper, max_samples)
             return replace(p, time=t2, lower=l2, upper=u2)
         if isinstance(p, Series):
+            full[p.id] = len(p.x)
             x2, y2 = lttb(p.x, p.y, max_samples)
             return replace(p, x=x2, y=y2)
         return p
 
+    leaves = tuple(
+        replace(leaf, geometry=tuple(_prim(p) for p in leaf.geometry))
+        for leaf in view.leaves
+    )
+    errors = tuple(_prim(s) for s in view.errors)
     return replace(
         view,
         act_time=at,
@@ -194,13 +208,7 @@ def decimate_view(view: VariableView, max_samples: int) -> VariableView:
         ref_time=rt,
         ref_values=rv,
         overlays=tuple(_decimate_overlay(ov, max_samples) for ov in view.overlays),
-        leaves=tuple(
-            replace(leaf, geometry=tuple(_prim(p) for p in leaf.geometry))
-            for leaf in view.leaves
-        ),
-        errors=tuple(_prim(s) for s in view.errors),  # type: ignore[misc]
-        full_samples={
-            "act": 0 if view.act_time is None else len(view.act_time),
-            "ref": 0 if view.ref_time is None else len(view.ref_time),
-        },
+        leaves=leaves,
+        errors=errors,  # type: ignore[arg-type]
+        full_samples=full,
     )

@@ -63,13 +63,14 @@ class TestView:
 
     def test_decimate_view_keeps_band_edges_on_one_axis_and_stamps_counts(self):
         view = decimate_view(_tube_view(n=2001), 100)
-        assert len(view.act_time) <= 100 and view.full_samples == {
-            "act": 2001,
-            "ref": 2001,
-        }
+        assert len(view.act_time) <= 100
+        assert view.full_samples["act"] == view.full_samples["ref"] == 2001
         band = next(
             p for leaf in view.leaves for p in leaf.geometry if isinstance(p, Band)
         )
+        # Every decimated primitive records what it was, by id.
+        assert view.full_samples[band.id] == 2001
+        assert all(view.full_samples[s.id] == 2001 for s in view.errors)
         assert len(band.time) <= 100 and len(band.lower) == len(band.upper) == len(
             band.time
         )
@@ -263,6 +264,13 @@ class TestFigure:
         fig = variable_figure(_tube_view(n=5001), max_samples=200)
         actual = next(tr for tr in fig["data"] if tr["name"] == "Actual")
         assert len(actual["x"]) <= 200 and actual["meta"]["full_samples"] == 5001
+        # Band and error traces are decimated too, and say so.
+        band = next(
+            tr for tr in fig["data"] if tr["meta"].get("id", "").endswith("tube/band")
+        )
+        assert len(band["x"]) <= 400 and band["meta"]["full_samples"] == 5001
+        errors = [tr for tr in fig["data"] if tr["meta"].get("kind") == "error"]
+        assert errors and all(tr["meta"]["full_samples"] == 5001 for tr in errors)
 
     def test_a_view_with_no_trajectory_still_renders_its_lines(self):
         from dstf.comparison.algorithms import _compare_scalar

@@ -113,3 +113,50 @@ def test_an_edit_after_the_python_paint_takes_the_js_path(tmp_path, playwright_b
     assert state["python"] is False and state["n"] > 0
     assert pill_text == "FAIL"
     assert errors == []
+
+
+def test_overlay_picker_toggles_a_python_painted_overlay(tmp_path, playwright_browser):
+    """The picker finds an overlay trace by name; the Python figure must
+    name it the way scorers.js overlayTraceName does, or ticking a soft
+    check on the first paint toggles nothing."""
+    from dstf.figures.plotly import variable_figure
+    from dstf.figures.view import build_view
+
+    ctx, _ = _context_with_figure()
+    var = next(iter(ctx["variables_by_name"]))
+    traj = ctx["variables_by_name"][var]["trajectory"]
+    overlay = {
+        "name": "alt",
+        "role": "soft_check",
+        "kind": None,
+        "time": list(traj["ref_time"]),
+        "values": [v * 1.01 for v in traj["ref_values"]],
+    }
+    ctx["variables_by_name"][var]["overlays"] = [overlay]
+    ctx["figures"][var] = variable_figure(
+        build_view(
+            var,
+            act_time=traj["act_time"],
+            act_values=traj["act_values"],
+            ref_time=traj["ref_time"],
+            ref_values=traj["ref_values"],
+            overlays=[overlay],
+        )
+    )
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page()
+    page.goto(html_path.as_uri())
+    assert page.evaluate("!!document.getElementById('plot-0')._mt_python")
+    before = page.evaluate(
+        "() => document.getElementById('plot-0').data"
+        ".filter(t => (t.meta || {}).kind === 'overlay').map(t => t.visible)"
+    )
+    page.locator('[data-plot-id="plot-0"] input.overlay-toggle').first.check()
+    page.wait_for_timeout(100)
+    after = page.evaluate(
+        "() => document.getElementById('plot-0').data"
+        ".filter(t => (t.meta || {}).kind === 'overlay').map(t => t.visible)"
+    )
+    page.close()
+    assert before == ["legendonly"]
+    assert after == [True]

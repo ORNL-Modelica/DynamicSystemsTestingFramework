@@ -86,6 +86,12 @@ class _Ctx:
     x_min: float
     x_max: float
     has_spectrum: bool
+    #: Pre-decimation sample counts by primitive id (see ``decimate_view``).
+    full_samples: dict[str, int]
+
+
+def _full(ctx: _Ctx, prim_id: str, n_now: int) -> int:
+    return ctx.full_samples.get(prim_id, n_now)
 
 
 def family(prim: Primitive, leaf: LeafView) -> str:
@@ -138,7 +144,11 @@ def _band(prim: Band, leaf: LeafView, window: Window | None, ctx: _Ctx):
             "name": _label(family(prim, leaf)),
             "hoverinfo": "skip",
             "showlegend": True,
-            "meta": {"id": prim.id, "kind": prim.kind},
+            "meta": {
+                "id": prim.id,
+                "kind": prim.kind,
+                "full_samples": _full(ctx, prim.id, len(prim.time)),
+            },
             **_axes(prim),
         }
     ], []
@@ -258,7 +268,11 @@ def _series(prim: Series, leaf: LeafView, window: Window | None, ctx: _Ctx):
                 "width": 1.2,
                 "dash": "dash" if prim.kind == "ref" else "solid",
             },
-            "meta": {"id": prim.id, "kind": prim.kind},
+            "meta": {
+                "id": prim.id,
+                "kind": prim.kind,
+                "full_samples": _full(ctx, prim.id, len(prim.x)),
+            },
             **_axes(prim),
         }
     ], []
@@ -379,7 +393,9 @@ def _base_traces(view: VariableView) -> list[dict]:
             {
                 "type": "scatter",
                 "mode": "lines",
-                "name": f"{ov.role}: {ov.name}" if ov.name else ov.role,
+                # The page's overlay picker finds a trace by this exact
+                # name (scorers.js overlayTraceName); keep the two in step.
+                "name": f"Overlay: {ov.role}/{ov.name}",
                 "x": ov.time.tolist(),
                 "y": ov.values.tolist(),
                 "line": {"color": color, "width": 1.2, "dash": dash},
@@ -398,7 +414,7 @@ def _base_traces(view: VariableView) -> list[dict]:
     return traces
 
 
-def _error_trace(s: Series) -> dict:
+def _error_trace(s: Series, ctx: _Ctx) -> dict:
     return {
         "type": "scatter",
         "mode": "lines",
@@ -410,7 +426,11 @@ def _error_trace(s: Series) -> dict:
         "yaxis": "y3",
         "visible": "legendonly",
         "hovertemplate": f"{_label(s.id)}: %{{y:.4g}}<extra></extra>",
-        "meta": {"id": s.id, "kind": "error"},
+        "meta": {
+            "id": s.id,
+            "kind": "error",
+            "full_samples": _full(ctx, s.id, len(s.x)),
+        },
     }
 
 
@@ -468,7 +488,12 @@ def variable_figure(view: VariableView, max_samples: int | None = None) -> dict:
     if max_samples:
         view = decimate_view(view, max_samples)
     x_min, x_max = _time_span(view)
-    ctx = _Ctx(x_min=x_min, x_max=x_max, has_spectrum=view.has_spectrum)
+    ctx = _Ctx(
+        x_min=x_min,
+        x_max=x_max,
+        has_spectrum=view.has_spectrum,
+        full_samples=view.full_samples,
+    )
     data: list[dict] = _base_traces(view)
     shapes: list[dict] = []
     for leaf in view.leaves:
@@ -489,7 +514,7 @@ def variable_figure(view: VariableView, max_samples: int | None = None) -> dict:
             shapes.extend(new_shapes)
         data.extend(_marker_traces(markers, leaf))
     for s in view.errors:
-        data.append(_error_trace(s))
+        data.append(_error_trace(s, ctx))
     return {
         "data": data,
         "layout": _layout(view, shapes, bool(view.errors)),
