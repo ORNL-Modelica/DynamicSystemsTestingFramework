@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .geometry import Band, Box, HLine, Marker, Primitive
+from .geometry import Band, Box, HLine, Marker, Primitive, VLine
 from .types import _EPS, VariableComparison
 
 
@@ -1102,6 +1102,33 @@ def _compare_scalar(
     )
 
 
+def _event_geometry(
+    ref_events: list[float],
+    act_events: list[float],
+    tolerances: list[float],
+    matched: list[bool],
+) -> tuple[Primitive, ...]:
+    """Reference (or declared) events with their tolerance windows, and the
+    actual events. Windows span the panel height (``y0``/``y1`` ``None``)."""
+    out: list[Primitive] = []
+    for i, (t, tol, ok) in enumerate(zip(ref_events, tolerances, matched)):
+        out.append(VLine(id=f"events/ref/{i}", kind="ref", time=float(t)))
+        out.append(
+            Box(
+                id=f"events/window/{i}",
+                kind="handle",
+                t0=float(t - tol),
+                t1=float(t + tol),
+                y0=None,
+                y1=None,
+                passed=bool(ok),
+            )
+        )
+    for j, t in enumerate(act_events):
+        out.append(VLine(id=f"events/act/{j}", kind="act", time=float(t)))
+    return tuple(out)
+
+
 def _compare_event_timing(
     ref_time: np.ndarray,
     act_time: np.ndarray,
@@ -1168,6 +1195,15 @@ def _compare_event_timing(
                 "time_tolerance": time_tolerance,
                 "counts_match": counts_match,
             },
+            geometry=_event_geometry(
+                ref_events,
+                act_events,
+                [time_tolerance] * len(ref_events),
+                [
+                    i < n and abs(ref_events[i] - act_events[i]) <= time_tolerance
+                    for i in range(len(ref_events))
+                ],
+            ),
         )
 
     # Declared-events path.
@@ -1183,15 +1219,20 @@ def _compare_event_timing(
     # graphs — a feasible assignment is never missed because an earlier
     # declared event claimed the wrong actual event.
     claimed = [False] * actual_count
+    matched_flags = [False] * declared_count
     all_matched = True
     windows = []
-    for e in declared_events:
+    declared_times: list[float] = []
+    declared_tols: list[float] = []
+    for k, e in enumerate(declared_events):
         target = float(e["time"])
         _tol = e.get("tolerance")
         tol = float(_tol if _tol is not None else time_tolerance)
-        windows.append((target - tol, target + tol, target))
+        declared_times.append(target)
+        declared_tols.append(tol)
+        windows.append((target - tol, target + tol, target, k))
     windows.sort(key=lambda w: w[1])
-    for lo, hi, target in windows:
+    for lo, hi, target, k in windows:
         best_idx = -1
         for j, at in enumerate(act_events):
             if not claimed[j] and lo <= at <= hi:
@@ -1201,6 +1242,7 @@ def _compare_event_timing(
             all_matched = False
             continue
         claimed[best_idx] = True
+        matched_flags[k] = True
         d = abs(act_events[best_idx] - target)
         if d > max_delta:
             max_delta = d
@@ -1227,6 +1269,9 @@ def _compare_event_timing(
             "time_tolerance": time_tolerance,
             "counts_match": counts_match,
         },
+        geometry=_event_geometry(
+            declared_times, act_events, declared_tols, matched_flags
+        ),
     )
 
 

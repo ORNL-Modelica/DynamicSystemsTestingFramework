@@ -8,13 +8,15 @@ import numpy as np
 import pytest
 
 from dstf.comparison.algorithms import (
+    _compare_event_timing,
     _compare_points,
     _compare_range,
     _compare_scalar,
     _compare_tube,
+    _find_event_boundaries,
     _tube_bounds,
 )
-from dstf.comparison.geometry import Band, Box, HLine, Marker, Window
+from dstf.comparison.geometry import Band, Box, HLine, Marker, VLine, Window
 from dstf.comparison.types import ScoreSummary, VariableComparison
 
 
@@ -293,3 +295,51 @@ class TestScalarGeometry:
         assert lines["scalar/reference"].kind == "ref"
         assert lines["scalar/reference"].value == pytest.approx(1.0)
         assert lines["scalar/actual"].passed is True and vc.passed
+
+
+class TestEventTimingGeometry:
+    def test_auto_detected_events_become_lines_and_matched_windows(self):
+        ref_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])  # one event at t=1.0
+        act_t = np.array([0.0, 0.5, 1.0005, 1.0005, 1.5, 2.0])  # reproduced 0.5 ms late
+        vc = _compare_event_timing(ref_t, act_t, time_tolerance=1e-3)
+        ids = {p.id: p for p in vc.geometry}
+        assert set(ids) == {"events/ref/0", "events/window/0", "events/act/0"}
+        assert ids["events/ref/0"].kind == "ref" and ids["events/ref/0"].time == 1.0
+        assert ids["events/act/0"].kind == "act" and ids[
+            "events/act/0"
+        ].time == pytest.approx(1.0005)
+        w = ids["events/window/0"]
+        assert isinstance(w, Box) and (w.y0, w.y1) == (None, None)
+        assert (w.t0, w.t1) == (
+            pytest.approx(0.999),
+            pytest.approx(1.001),
+        ) and w.passed is True
+        assert vc.passed
+        # Every VLine coincides with a detected boundary.
+        assert [ids["events/act/0"].time] == [
+            float(act_t[b[0]]) for b in _find_event_boundaries(act_t)
+        ]
+
+    def test_declared_events_mark_the_unmatched_window_as_failed(self):
+        ref_t = np.linspace(0.0, 2.0, 5)
+        act_t = np.array([0.0, 0.5, 1.0, 1.0, 1.5, 2.0])
+        vc = _compare_event_timing(
+            ref_t,
+            act_t,
+            time_tolerance=1e-3,
+            declared_events=[{"time": 1.0}, {"time": 1.8, "tolerance": 0.05}],
+        )
+        windows = {p.id: p for p in vc.geometry if isinstance(p, Box)}
+        assert windows["events/window/0"].passed is True
+        assert windows["events/window/1"].passed is False
+        assert (windows["events/window/1"].t0, windows["events/window/1"].t1) == (
+            pytest.approx(1.75),
+            pytest.approx(1.85),
+        )
+        assert [
+            p.id for p in vc.geometry if isinstance(p, VLine) and p.kind == "ref"
+        ] == [
+            "events/ref/0",
+            "events/ref/1",
+        ]
+        assert not vc.passed
