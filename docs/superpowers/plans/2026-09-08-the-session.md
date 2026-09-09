@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.10+, dataclasses, `typing.Protocol`, `threading`, pytest. No NiceGUI, no plotly.py.
 
+**Revision:** this is the second text. A fresh-context review of the first ran every fixture against the tree and found: the per-leaf op path used `params/` where the raw tree is flat (every Session test would have failed); Task 1 committed red under mypy and under a `ConfigError` the test fixture raised; `rescore`'s auto-materialization flipped a glob-pattern test PASS→FAIL; two job tests raced; `SessionView` handed out the mutable project. All folded in below (calls 7–10 in Conventions).
+
 ---
 
 ## Conventions for every task
@@ -25,6 +27,10 @@
   4. **`spec-update` becomes one read and one write for every model in the envelope** (`apply_validated_patches`), replacing three reads per model. That single read-modify-write is the path the Session's `save` calls.
   5. **The Session does not filter.** `--filter` is plan 4's CLI flag.
   6. **The review loop's `[a]` keeps calling `store_reference` directly.** It accepts a result the same process produced seconds earlier; routing it through the shared accept function is a plan-5 decision when the tool's Accept lands.
+  7. **Materialization refuses glob patterns, and `rescore` stages it only when it cannot change the verdict.** The flat path scores the variables the *result* resolved; a synthesized tree has one leaf per *pattern*, so for `"variables": ["*"]` (the documented form) the tree's `*` leaf is a sentinel and a passing test fails. `spec-update` does this silently today; after this plan `implicit_tree_op` raises `PatchError` for a non-literal pattern (a `*` leaf is never right), and `rescore` stages the op only when every tracked variable is a literal name present in the test's result — otherwise it scores without staging, and that test's leaves are not editable in the tool until the owner decides how a glob spec materializes (resolve the patterns against the result's variables at materialization time, or keep them uneditable). OPEN OWNER QUESTION — recorded in the handoff, not decided here.
+  8. **Discovery reads `config.spec_path`, the same file the Session and `dstf add` use.** Today `discover_tests` reads only `config.test_spec_file` and ignores the `<reference_root>/test_spec.json` that `dstf add` writes when `test_spec` is not configured; the Session would have scored tests `compare` never discovered. One rule now; the CLI change (a stray fallback file is discovered) is listed in the spec's acceptance criterion 4 by Task 11.
+  9. **`SessionView.project` is a frozen `ProjectView`**, not the `Project`: config, the tests as a tuple, the results as a read-only mapping, the dataset kind, and two store readers (`reference`, `baseline_names`). The store's writers are reachable only through `StoreWrite.run` and `JobContext`, which the Session hands out, never the view. `SessionView.rescore` does stage the materialization op (the spec lists `rescore` on the view; it is the one write, and it is the Session's own).
+  10. **A model-less envelope is a config error** (exit 2) like every other malformed shape, where it used to print and exit 1. Listed in the spec's criterion 4 by Task 11.
 
 ## File structure
 
@@ -124,6 +130,7 @@ And to `tests/test_config.py`:
 def test_spec_path_is_the_configured_file_else_the_reference_root_fallback(tmp_path):
     from dstf.config import Config
 
+    (tmp_path / "package.mo").write_text("package X\nend X;\n", encoding="utf-8")
     explicit = Config(source_path=tmp_path, reference_root=tmp_path / "refs",
                       test_spec_file=tmp_path / "s.json")
     assert explicit.spec_path == (tmp_path / "s.json").resolve()
@@ -189,6 +196,7 @@ Then in the loop body that follows (unchanged otherwise): every `spec_path` in a
         carry; the authoring Session reads the same property."""
         if self.test_spec_file is not None:
             return self.test_spec_file
+        assert self.reference_root is not None  # resolved in __post_init__, as reference_dir relies on
         return self.reference_root / "test_spec.json"
 ```
 
@@ -200,7 +208,7 @@ In `cli/spec_cmds.py` replace both
         spec_path = config.reference_root / "test_spec.json"
 ```
 
-with `spec_path = config.spec_path`. In `cli/review.py` delete `_get_spec_path` and change line 58 to `spec_path = config.spec_path if config else None`. `grep -rn 'reference_root / "test_spec.json"' src/` then hits only `config.py`.
+with `spec_path = config.spec_path`. In `cli/review.py` delete `_get_spec_path` and change line 58 to `spec_path = config.spec_path if config else None`; `from pathlib import Path` at its line 3 is then unused — delete it (ruff F401). `grep -rn 'reference_root / "test_spec.json"' src/` then hits only `config.py`.
 
 - [ ] **Step 5: Run** — `uv run pytest tests/test_discovery.py tests/test_config.py tests/test_spec_update_cli.py tests/test_cli.py -q`. Expected: PASS. Then the gates.
 
@@ -247,7 +255,22 @@ class TestDiscoveryFromDocument:
         # A second merge against a different spec sees the untouched scan.
         again = merge_tests(scanned, {})
         assert next(t for t in again if t.model_id == model_id).variable_patterns != ["q"]
+
+    def test_the_fallback_spec_file_is_discovered(self, tmp_path):
+        """`dstf add` writes <reference_root>/test_spec.json when no test_spec
+        is configured; discovery reads that same file (Conventions #8)."""
+        from dstf.discovery.test_registry import discover_tests
+
+        config = _write_lib(tmp_path)  # no "test_spec" key in testing.json
+        assert config.test_spec_file is None
+        config.spec_path.parent.mkdir(parents=True, exist_ok=True)
+        config.spec_path.write_text(
+            json.dumps({"tests": [{"model": "Foo.Fallback", "variables": ["x"]}]}), encoding="utf-8"
+        )
+        assert "Foo.Fallback" in {t.model_id for t in discover_tests(config)}
 ```
+
+(If `_write_lib` always writes a `test_spec` key, add a keyword to skip it — read the helper.)
 
 (`_mk_model` is the module's helper at ~line 491; it builds a `TestModel` with keyword overrides.)
 
@@ -321,14 +344,16 @@ def discover_tests(
             base_dir=config.spec_path.parent,
             label=f"{config.spec_path} (in memory)",
         )
-    elif config.test_spec_file and config.test_spec_file.exists():
+    elif config.spec_path.exists():
         from .spec_parser import parse_test_spec
 
-        models = parse_test_spec(config.test_spec_file)
+        models = parse_test_spec(config.spec_path)
     else:
         models = []
     return merge_tests(scanned, spec_tests_by_model(models))
 ```
+
+(`config.spec_path` is `test_spec_file` when configured, else the `<reference_root>/test_spec.json` fallback `dstf add` writes — Conventions #8. The docstring's Sources paragraph says "External test_spec.json (the configured file, else `<reference_root>/test_spec.json` when it exists)".)
 
 - [ ] **Step 4: Run** — `uv run pytest tests/test_discovery.py tests/test_pta_demo.py tests/test_recognizer_wiring.py tests/test_cli.py -q`. Expected: PASS. Gates.
 
@@ -366,7 +391,8 @@ from dstf.discovery.spec_update import (
 
 FLAT = {"model": "M", "variables": ["x", "y"],
         "comparison": {"variable_overrides": {"x": {"tolerance": 0.1}}}}
-LEAF_OP = {"op": "replace", "path": "/metrics/children/0/params/tolerance", "value": 0.5}
+# The raw tree is flat: a leaf is {"metric": ..., "variable": ..., <param>: ...}, no "params" key.
+LEAF_OP = {"op": "replace", "path": "/metrics/children/0/tolerance", "value": 0.5}
 
 
 def _config(tmp_path) -> Config:
@@ -391,7 +417,14 @@ class TestMaterialization:
         assert ops[1:] == [LEAF_OP]
         leaves = ops[0]["value"]["children"]
         assert [leaf["variable"] for leaf in leaves] == ["x", "y"]
-        assert leaves[0]["params"] == {"tolerance": 0.1}
+        assert leaves[0]["tolerance"] == 0.1 and "tolerance" not in leaves[1]
+
+    def test_a_glob_pattern_is_refused(self):
+        """A `*` leaf is a sentinel that fails; the flat path scored the
+        variables the result resolved. Never write that tree (Conventions #7)."""
+        for patterns in (["*"], ["pipe.T*"], ["x", "tank.?"]):
+            with pytest.raises(PatchError, match="pattern"):
+                implicit_tree_op({"model": "M", "variables": patterns})
 
     def test_a_patch_that_supplies_the_tree_is_not_materialized_again(self):
         tree_op = implicit_tree_op(dict(FLAT))
@@ -423,7 +456,7 @@ class TestApplyValidatedPatches:
         )
         data = json.loads(spec.read_text(encoding="utf-8"))
         m, n = spec_entry(data, "M"), spec_entry(data, "N")
-        assert m["metrics"]["children"][0]["params"]["tolerance"] == 0.5
+        assert m["metrics"]["children"][0]["tolerance"] == 0.5
         assert n["comparison"] == {"tolerance": 0.2}
         assert [model for model, _ in applied] == ["M", "N"]
         assert applied[0][1][0]["path"] == "/metrics"  # materialization is reported
@@ -534,6 +567,11 @@ def spec_entry(data: dict, model_id: str) -> dict | None:
     return None
 
 
+def is_literal_variable(pattern: str) -> bool:
+    """A tracked-variable entry that names one variable — no glob metacharacters."""
+    return not any(ch in pattern for ch in "*?[")
+
+
 def implicit_tree_op(entry: dict) -> dict:
     """The ``add /metrics`` op that materializes the implicit tree a
     flat-override entry scores with: one leaf per tracked variable, params
@@ -548,6 +586,14 @@ def implicit_tree_op(entry: dict) -> dict:
             f"cannot materialize an implicit metrics tree for "
             f"{entry.get('model')!r}: the entry declares no tracked variables "
             "to build leaves from"
+        )
+    globs = [v for v in variables if not is_literal_variable(v)]
+    if globs:
+        raise PatchError(
+            f"cannot materialize an implicit metrics tree for "
+            f"{entry.get('model')!r}: {globs!r} are patterns, and a leaf per "
+            "pattern would score a sentinel where the flat path scored the "
+            "variables the result resolved"
         )
     overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
     tree = synthesize_implicit_tree(variables, variable_overrides=overrides)
@@ -764,7 +810,7 @@ class TestMultiModelEnvelope:
         assert spec.read_bytes() == before
 ```
 
-The existing tests `test_flat_tolerance_dict_is_rejected` (`match=r'"patch"'`) and `test_non_list_patch_is_rejected` (`match="not a JSON-Patch envelope"`) must still pass against the new message; a missing `model` is now a `ConfigError` too rather than `rc == 1` — check no existing test asserts the old exit code for that case (`grep -n "must contain" tests/`).
+The existing tests `test_flat_tolerance_dict_is_rejected` (`match=r'"patch"'`) and `test_non_list_patch_is_rejected` (`match="not a JSON-Patch envelope"`) must still pass against the new message; a missing `model` is now a `ConfigError` (exit 2) rather than `rc == 1` — Conventions #10; `grep -n "must contain" tests/` confirms no test asserts the old code.
 
 - [ ] **Step 2: Run** — `uv run pytest tests/test_patch_envelope.py tests/test_spec_update_cli.py -q`. Expected: FAIL (`ModuleNotFoundError`, then the two new CLI tests).
 
@@ -932,7 +978,7 @@ def test_store_skips_still_come_through(tmp_path):
     assert stored == 0 and skipped == [("FakeLib.A", "no simulation result")]
 ```
 
-In `tests/test_compare_accept.py`: change the four `from dstf.backends.base import unfinished_run_models` imports to `from dstf.storage.batch_manifest import unfinished_run_models`, and replace the body of `TestAcceptRefusesPending._accept` (lines ~478-489, the verbatim copy of the CLI branch) with a call to `accept_run_results(store, tests, results, config.work_dir)` — its assertions stay. In `tests/test_cli.py`, add beside the `run --accept` tests (~line 480-545; they use the `run_env` fixture, which monkeypatches `discover_tests` and `_get_backend` — read it and `_FakeBackend` first):
+In `tests/test_compare_accept.py`: change the four `from dstf.backends.base import unfinished_run_models` imports to `from dstf.storage.batch_manifest import unfinished_run_models`, and replace the body of `TestAcceptRefusesPending._accept` (lines ~478-489, the verbatim copy of the CLI branch) with `return accept_run_results(store, tests, results, config.work_dir)`. `_accept` returned a 3-tuple `(stored, skipped, unfinished)` and `test_pending_plus_running_is_refused` asserted `skipped == []` because the caller added the reason; the shared function returns the pair with the refusal INSIDE `skipped`. Update every `_accept` caller to unpack two values, and that test to assert `[m for m, _ in skipped] == ["FakeLib.InFlight"]` and `"re-run before accepting" in skipped[0][1]`; drop the `unfinished` assertions. In `tests/test_cli.py`, add beside the `run --accept` tests (~line 480-545; they use the `run_env` fixture, which monkeypatches `discover_tests` and `_get_backend` — read it and `_FakeBackend` first):
 
 ```python
     def test_run_accept_refuses_a_test_the_manifest_records_as_pending(self, run_env, capsys):
@@ -958,7 +1004,7 @@ In `tests/test_compare_accept.py`: change the four `from dstf.backends.base impo
 
 - [ ] **Step 2: Run** — `uv run pytest tests/test_accept.py tests/test_compare_accept.py -q`. Expected: FAIL (`ModuleNotFoundError: dstf.storage.accept`, `ImportError` on the moved name).
 
-- [ ] **Step 3: Move `unfinished_run_models`** from `backends/base.py` into `storage/batch_manifest.py` (append it after the `BatchManifest` class; it uses `BatchManifest.load` and `PENDING_RUN_STATUS`, both already there; keep the docstring). Delete it from `base.py`. `grep -rn unfinished_run_models src` then hits `storage/batch_manifest.py` and, after Step 4, `storage/accept.py` only.
+- [ ] **Step 3: Move `unfinished_run_models`** from `backends/base.py` into `storage/batch_manifest.py` (append it after the `BatchManifest` class; it uses `BatchManifest.load` and `PENDING_RUN_STATUS`, both already there; keep the docstring). Delete it from `base.py`, and drop `PENDING_RUN_STATUS` from `base.py`'s `storage.batch_manifest` import if nothing else there uses it (ruff F401). `grep -rn unfinished_run_models src` then hits `storage/batch_manifest.py` and, after Step 4, `storage/accept.py` only.
 
 - [ ] **Step 4: Create `src/dstf/storage/accept.py`:**
 
@@ -1117,7 +1163,7 @@ class TestCompareOne:
         assert [key(c)[1:3] for c in compare_all(tests, results, store)] == [
             (False, True), (True, True), (False, False)
         ]
-``` In `tests/test_cli.py` change the eight `_recorded_backend(...)` calls: `from dstf.backends.progress import recorded_backend` and `recorded_backend(work)[0]` where a label was asserted; the two tests that check the stderr warning through `capsys` after calling the function directly now assert on the returned warning string instead (`label, warning = recorded_backend(work); assert label is None and "predates the Backend rename" in warning`); the CLI-driven ones (`test_stale_work_dir_without_backend_name_warns` if it drives `main`) keep their `capsys` assertion, since `cmd_compare` still prints it. In `tests/test_capability_gating.py` change the two `_dataset_kind_for` imports to `from dstf.backends import dataset_kind_for`. In `tests/test_interactive_report.py` change `_build_trajectories` to `build_trajectories`. Add to `tests/test_figures.py`:
+``` In `tests/test_cli.py` change the eight `_recorded_backend(...)` calls: `from dstf.backends.progress import recorded_backend` and `recorded_backend(work)[0]` where a label was asserted; the two tests that check the stderr warning through `capsys` after calling the function directly now assert on the returned warning string instead (`label, warning = recorded_backend(work); assert label is None and "predates the Backend rename" in warning`); the CLI-driven ones (`test_stale_work_dir_without_backend_name_warns` if it drives `main`) keep their `capsys` assertion, since `cmd_compare` still prints it. In `tests/test_capability_gating.py` the two uses (lines ~122, 128) call `cli_mod._dataset_kind_for(...)` through the module attribute — change them to `dataset_kind_for(...)` imported from `dstf.backends`. In `tests/test_interactive_report.py` change `_build_trajectories` to `build_trajectories`. Add to `tests/test_figures.py`:
 
 ```python
 def test_view_from_trajectory_reads_the_report_shape():
@@ -1237,9 +1283,9 @@ In `cmd_compare` (lines ~438-462) replace `recorded = _recorded_backend(config.w
             print(warning, file=sys.stderr)
 ```
 
-and keep the rest of that block as is. Move `_dataset_kind_for` from `run_cmds.py` to `backends/__init__.py` as `dataset_kind_for(backend)` (same body and docstring; it needs `DatasetType` from `.types`), and update the three call sites in `run_cmds.py` (`grep -n _dataset_kind_for src/dstf/cli/run_cmds.py`). `grep -rn "_recorded_backend\|_dataset_kind_for" src tests` is then empty.
+and keep the rest of that block as is. Move `_dataset_kind_for` from `run_cmds.py` to `backends/__init__.py` as `dataset_kind_for(backend)` (same body and docstring; it needs `DatasetType` from `.types`), and update the three call sites in `run_cmds.py` (`grep -n _dataset_kind_for src/dstf/cli/run_cmds.py`) plus the docstring mention in `src/dstf/comparison/comparator.py:521`. `grep -rn "_recorded_backend\|_dataset_kind_for" src tests` is then empty.
 
-- [ ] **Step 5: `build_trajectories` and `figures/assemble.py`.** Rename `_build_trajectories` to `build_trajectories` in `context_builder.py` (definition + its one caller in `_build_template_context`). Create `src/dstf/figures/assemble.py`:
+- [ ] **Step 5: `build_trajectories` and `figures/assemble.py`.** Rename `_build_trajectories` to `build_trajectories` in `context_builder.py` (definition + its one caller in `_build_template_context`) and in the docstring at `src/dstf/comparison/tree_eval.py:458`. Create `src/dstf/figures/assemble.py`:
 
 ```python
 """From a comparison and a trajectory to a VariableView — the assembly the
@@ -1511,8 +1557,6 @@ exactly as it registers a metric."""
 
 import dataclasses
 import importlib.metadata
-import sys
-import types
 
 import pytest
 
@@ -1526,6 +1570,10 @@ from dstf.authoring.capabilities import (
 
 @pytest.fixture(autouse=True)
 def _clean():
+    # Before AND after: cli/main.py calls load_plugins() in earlier test
+    # modules, and its idempotence guard would otherwise skip our entry point.
+    caps._reset_for_tests()
+    plugins._reset_for_tests()
     yield
     caps._reset_for_tests()
     plugins._reset_for_tests()
@@ -1559,16 +1607,21 @@ def test_the_protocol_is_checkable():
     assert not isinstance(object(), Capability)
 
 
-def test_a_plugin_module_registers_through_the_entry_point_group(monkeypatch):
-    mod = types.ModuleType("fake_cap_plugin")
-    mod.CAP = _Dummy("from-plugin", Scope.LEAF)
-    register_capability(mod.CAP)  # what the module's import would do
-    sys.modules["fake_cap_plugin"] = mod
+def test_a_plugin_registers_through_the_entry_point_group(monkeypatch):
+    """The entry point's load() returns a callable that registers — the
+    registration happens INSIDE load_plugins(), so a load_plugins that never
+    reaches the entry point fails this test."""
+
+    def register_mine():
+        register_capability(_Dummy("from-plugin", Scope.LEAF))
 
     class _EP:
         name = "fake"
+
         def load(self):
-            return sys.modules["fake_cap_plugin"]
+            return register_mine
+
+    assert not any(c.name == "from-plugin" for c in registered_capabilities())
 
     def fake_entry_points(*, group=None):
         return [_EP()] if group == plugins.PLUGIN_GROUP else []
@@ -1751,15 +1804,13 @@ Python against a Python-backend project whose run is on disk."""
 from __future__ import annotations
 
 import json
-import threading
 from pathlib import Path
 
 import numpy as np
 import pytest
 from conftest import make_test_model
 
-from dstf.authoring.capabilities import Artifact, Job, OpenProject, Patch, StoreWrite
-from dstf.authoring.session import LockedError, Session, SessionView, StaleSpecError
+from dstf.authoring.session import Session, StaleSpecError
 from dstf.authoring.spec_document import PatchOp
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
@@ -1767,15 +1818,18 @@ from dstf.discovery.spec_update import implicit_tree_op, materialize_implicit_me
 from dstf.reporting.status import FAIL, NO_REF, PASS, SIM_FAIL, classify
 from dstf.storage.reference_store import ReferenceStore
 
-A, B, C = "FakeLib.A", "FakeLib.B", "FakeLib.C"
+A, B, C, D, G = "FakeLib.A", "FakeLib.B", "FakeLib.C", "FakeLib.D", "FakeLib.G"
 
 
 def _project(tmp_path: Path) -> tuple[Path, Path]:
-    """testing.json + work dir. A: baseline x=t, result x=t*1.25 (FAIL at
-    tolerance 0.01). B: no baseline (NO_REF). C: no result (SIM_FAIL)."""
+    """testing.json + work dir. A: baseline x=t, result x=1.25t — nrmse 0.153,
+    FAIL at the config tolerance 0.01. B: no baseline (NO_REF). C: no result
+    (SIM_FAIL). D: baseline x=t, result x=1.001t — nrmse 6e-4, PASS at 0.01
+    and FAIL at the 1e-4 default, so a scorer that drops config.tolerance is
+    caught. G: like A but tracked as ["*"] — a glob spec (Conventions #7)."""
     lib = tmp_path / "FakeLib"
     (lib / "Examples").mkdir(parents=True)
-    for short in ("A", "B", "C"):
+    for short in ("A", "B", "C", "D", "G"):
         (lib / "Examples" / f"{short}.py").write_text(
             "def simulate(stop_time, tolerance):\n    return {}\n", encoding="utf-8"
         )
@@ -1788,9 +1842,10 @@ def _project(tmp_path: Path) -> tuple[Path, Path]:
         "tolerance": 0.01,
     }), encoding="utf-8")
     entries = [
-        {"model": m, "source": f"../Examples/{m.rsplit('.', 1)[-1]}.py", "variables": ["x"],
+        {"model": m, "source": f"../Examples/{m.rsplit('.', 1)[-1]}.py",
+         "variables": ["*"] if m == G else ["x"],
          "simulation": {"stop_time": 1.0, "tolerance": 1e-6}}
-        for m in (A, B, C)
+        for m in (A, B, C, D, G)
     ]
     (refs / "test_spec.json").write_text(json.dumps({"tests": entries}, indent=2) + "\n", encoding="utf-8")
 
@@ -1801,9 +1856,16 @@ def _project(tmp_path: Path) -> tuple[Path, Path]:
         "test_0001": {"model_id": A, "ref_id": None, "last_run_status": "passed"},
         "test_0002": {"model_id": B, "ref_id": None, "last_run_status": "passed"},
         "test_0003": {"model_id": C, "ref_id": None, "last_run_status": "pending"},
+        "test_0004": {"model_id": D, "ref_id": None, "last_run_status": "passed"},
+        "test_0005": {"model_id": G, "ref_id": None, "last_run_status": "passed"},
     }
     (work / "batch_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    for key, values in (("test_0001", [v * 1.25 for v in t]), ("test_0002", t)):
+    for key, values in (
+        ("test_0001", [v * 1.25 for v in t]),
+        ("test_0002", t),
+        ("test_0004", [v * 1.001 for v in t]),
+        ("test_0005", [v * 1.25 for v in t]),
+    ):
         (work / key).mkdir()
         (work / key / "result.json").write_text(
             json.dumps({"success": True, "time": t, "variables": {"x": values}}), encoding="utf-8"
@@ -1812,11 +1874,18 @@ def _project(tmp_path: Path) -> tuple[Path, Path]:
 
     config = Config(config_file=refs / "testing.json", work_dir=work)
     tt = np.asarray(t)
-    ReferenceStore(config).store_reference(
-        make_test_model(A, variable_patterns=["x"]),
-        TestResult(model_id=A, success=True, variables=[VariableResult(index=1, time=tt, values=tt, name="x")]),
-    )
+    store = ReferenceStore(config)
+    for m in (A, D, G):
+        store.store_reference(
+            make_test_model(m, variable_patterns=["x"]),
+            TestResult(model_id=m, success=True,
+                       variables=[VariableResult(index=1, time=tt, values=tt, name="x")]),
+        )
     return refs / "testing.json", work
+
+
+def _snapshot(work: Path) -> list[tuple[str, bytes]]:
+    return sorted((str(p.relative_to(work)), p.read_bytes()) for p in work.rglob("*") if p.is_file())
 
 
 @pytest.fixture
@@ -1827,7 +1896,9 @@ def session(tmp_path) -> Session:
     return s
 
 
-LOOSEN = PatchOp(A, "replace", "/metrics/children/0/params/tolerance", 0.5)
+# The materialized leaf for A is {"metric": "nrmse", "variable": "x"} — no
+# tolerance key (the entry has no variable_overrides), so the op is an add.
+LOOSEN = PatchOp(A, "add", "/metrics/children/0/tolerance", 0.5)
 ```
 
 - [ ] **Step 2: Write the failing tests for this task** — append:
@@ -1838,15 +1909,17 @@ class TestOpen:
         assert classify(session.comparisons[A]) == FAIL
         assert classify(session.comparisons[B]) == NO_REF
         assert classify(session.comparisons[C]) == SIM_FAIL
+        assert classify(session.comparisons[D]) == PASS  # config tolerance 0.01, not the 1e-4 default
+        assert classify(session.comparisons[G]) == PASS
         assert session.project.config.backend_name == "Python"
-        assert [t.model_id for t in session.project.tests] == [A, B, C]
+        assert [t.model_id for t in session.project.tests] == [A, B, C, D, G]
         assert session.spec.pending == []
 
     def test_open_writes_nothing_in_the_work_dir(self, tmp_path):
         cfg, work = _project(tmp_path)
-        before = sorted(p.relative_to(work) for p in work.rglob("*"))
+        before = _snapshot(work)
         Session().open(cfg, work_dir=work)
-        assert sorted(p.relative_to(work) for p in work.rglob("*")) == before
+        assert _snapshot(work) == before
 
     def test_the_recorded_backend_wins_over_the_config(self, tmp_path):
         cfg, work = _project(tmp_path)
@@ -1869,6 +1942,23 @@ class TestRescoreAndStage:
 
     def test_rescore_verdict_equals_the_loaded_one_when_nothing_changed(self, session):
         assert classify(session.rescore(A)) == FAIL
+        assert classify(session.rescore(D)) == PASS  # the tree path keeps config.tolerance too
+
+    def test_a_glob_spec_rescores_without_staging(self, session):
+        """Conventions #7: a leaf per pattern would score a `*` sentinel and
+        flip G to FAIL; rescore scores it as loaded and stages nothing."""
+        assert classify(session.rescore(G)) == PASS
+        assert session.spec.pending == []
+        assert "metrics" not in session.spec.entry(G)
+
+    def test_a_missing_literal_rescores_without_staging(self, session):
+        """A tracked name the result never resolved would become a sentinel
+        leaf; the Session stages materialization only when the tree scores
+        exactly what the flat path scored."""
+        entry = dict(session.spec.entry(D))
+        entry["variables"] = ["x", "ghost"]
+        assert session._materializable(D, entry) is False
+        assert session._materializable(D, session.spec.entry(D)) is True
 
     def test_rescore_reflects_a_staged_op(self, session):
         session.stage([LOOSEN])
@@ -1920,7 +2010,7 @@ class TestSaveDiscardExport:
         on_disk = json.loads(session.spec.path.read_text(encoding="utf-8"))
         assert on_disk == expected
         assert session.spec.pending == [] and not session.spec.on_disk_changed()
-        assert on_disk["tests"][0]["metrics"]["children"][0]["params"]["tolerance"] == 0.5
+        assert on_disk["tests"][0]["metrics"]["children"][0]["tolerance"] == 0.5
         assert classify(session.comparisons[A]) == PASS
         assert b"\r\n" not in session.spec.path.read_bytes()
 
@@ -1981,13 +2071,14 @@ from ..backends import dataset_kind_for, get_backend
 from ..backends.base import Backend
 from ..backends.progress import recorded_backend
 from ..backends.types import DatasetType, TestResult
-from ..comparison.comparator import compare_one
+from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
 from ..discovery.spec_parser import test_models_from_document
 from ..discovery.spec_update import (
     apply_validated_patches,
     implicit_tree_op,
+    is_literal_variable,
     materialize_implicit_metrics,
     validate_entry_metric_tree,
 )
@@ -2000,8 +2091,12 @@ from ..discovery.test_registry import (
 from ..figures.assemble import leaves_by_variable, view_from_trajectory
 from ..figures.view import VariableView
 from ..storage.reference_store import ReferenceStore
-from .capabilities import Artifact, Job, JobContext, OpenProject, Outcome, Patch, StoreWrite
+from .capabilities import Artifact
 from .spec_document import PatchOp, SpecDocument
+
+# Task 10 adds: Job, JobContext, OpenProject, Outcome, Patch, StoreWrite to the
+# capabilities import, and Mapping / MappingProxyType for SessionView. Not
+# before — ruff F401 would make this commit red.
 
 Event = Literal["spec", "results", "job", "selection"]
 Listener = Callable[[dict[str, Any]], None]
@@ -2074,9 +2169,12 @@ class Session:
     def open(self, config_path: Path, *, backend: str | None = None, work_dir: Path | None = None) -> None:
         """Open the project ``config_path`` describes. Without an explicit
         ``backend`` the one the last run recorded wins, as ``compare`` does."""
+        if self.running is not None:
+            raise JobRunningError(f"{self.running.label} is still running")
         config_path = Path(config_path)
         config = Config(config_file=config_path, backend_name=backend, work_dir=work_dir)
         if backend is None:
+            assert config.work_dir is not None  # resolved in __post_init__
             recorded, warning = recorded_backend(config.work_dir)
             if warning:
                 self.warnings.append(warning)
@@ -2101,6 +2199,8 @@ class Session:
         self._emit("spec", models=set(self.comparisons))
 
     def close(self) -> None:
+        if self.running is not None:
+            raise JobRunningError(f"{self.running.label} is still running")
         self.project = None
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
@@ -2131,10 +2231,12 @@ class Session:
         """Score ``model_id`` against the spec with pending ops applied. A
         flat-override test first gets the same ``add /metrics`` op
         ``spec-update`` prepends, so the document the tool edits and the one
-        it saves never differ in shape."""
+        it saves never differ in shape — but only when that tree scores
+        exactly what the flat path scored (Conventions #7); otherwise the
+        test is scored as loaded and nothing is staged."""
         self._refuse_if_locked([model_id])
         entry = self.spec.entry(model_id)
-        if entry is not None and "metrics" not in entry and entry.get("variables"):
+        if entry is not None and "metrics" not in entry and self._materializable(model_id, entry):
             op = implicit_tree_op(entry)
             self.stage([PatchOp(model_id, op["op"], op["path"], op["value"])])
             return self.comparisons[model_id]
@@ -2250,9 +2352,11 @@ class Session:
         test = project.test(model_id)
         if test is None:
             raise KeyError(model_id)
+        tolerance = project.config.tolerance
         comp = compare_one(
             test, project.results.get(model_id), project.store,
-            project.config.tolerance, project.config.default_points,
+            float(tolerance) if tolerance is not None else DEFAULT_TOLERANCE,
+            project.config.default_points,
             dataset_kind=project.dataset_kind,
         )
         self.comparisons[model_id] = comp
@@ -2270,6 +2374,18 @@ class Session:
         project = self._require_project()
         project.results = project.backend.read_last_results(project.tests)
         self._score_all(t.model_id for t in project.tests)
+
+    def _materializable(self, model_id: str, entry: dict) -> bool:
+        """Every tracked variable is a literal name the test's result
+        resolved, so a leaf per variable scores the same set the flat path
+        scored. A glob, a missing name, or no successful result: False."""
+        project = self._require_project()
+        variables = entry.get("variables") or []
+        result = project.results.get(model_id)
+        if not variables or result is None or not result.success:
+            return False
+        resolved = {v.name for v in result.variables}
+        return all(is_literal_variable(v) and v in resolved for v in variables)
 
     def _refuse_if_locked(self, models: Iterable[str]) -> None:
         if self.running is None:
@@ -2290,7 +2406,7 @@ def _in_order(ids: Iterable[str]) -> list[str]:
     return list(seen)
 ```
 
-Notes for the implementer: `_score_all` iterates `project.tests` so verdict dictionaries keep discovery order; `discard` rebuilds from the loaded document so a materialized tree vanishes with the ops that needed it; `stage` refuses the whole batch when one model is locked, so a capability cannot half-apply. `select` re-emits even for an identical selection; the shell decides what to redraw.
+Notes for the implementer: `_score_all` iterates `project.tests` so verdict dictionaries keep discovery order; `discard` rebuilds from the loaded document so a materialized tree vanishes with the ops that needed it; `stage` refuses the whole batch when one model is locked, so a capability cannot half-apply; `open` and `close` refuse while a job runs (the job's completion would reload a project it never ran against). `select(tests=...)` replaces `variable` and `leaf_path` with what is passed (a new test selection has no leaf); the shell decides what to redraw. `DEFAULT_TOLERANCE` is whatever `comparator.py` already imports for its own default — import it from there or from its source. The test `test_a_missing_literal_rescores_without_staging` reaches `_materializable` directly because no whitelisted op can put an unresolved name into `variables`.
 
 - [ ] **Step 5: Run** — `uv run pytest tests/test_session.py -q`. Expected: PASS. If `test_the_recorded_backend_wins_over_the_config` fails because `Config` rejects an unknown backend before `get_backend` does, keep whichever exception carries the name and adjust the `match` — the claim is that the recorded label is what gets validated. `uv run mypy src/dstf/authoring`; gates.
 
@@ -2304,9 +2420,17 @@ Notes for the implementer: `_score_all` iterates `project.tests` so verdict dict
 - Modify: `src/dstf/authoring/session.py`
 - Test: `tests/test_session.py`
 
-- [ ] **Step 1: Write the failing tests** — append to `tests/test_session.py`:
+- [ ] **Step 1: Write the failing tests** — append to `tests/test_session.py`, and extend its imports with `from dstf.authoring.capabilities import Artifact, Job, OpenProject, Patch, StoreWrite`, `from dstf.authoring.session import JobRunningError, LockedError, SessionView`, and `import threading`:
 
 ```python
+def _started(session):
+    """Capture the RunningJob from the started event — reading
+    `session.running` after apply() races a job that completes at once."""
+    jobs = []
+    session.on("job", lambda e: jobs.append(e["job"]) if e["state"] == "started" else None)
+    return jobs
+
+
 class _Gate:
     """A job that blocks until released, so the lock set can be observed."""
 
@@ -2342,7 +2466,17 @@ class TestOutcomes:
         gate = _Gate()
         events = []
         session.on("job", lambda e: events.append(e["state"]))
-        session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        work = session.project.config.work_dir
+
+        def fix_a_then_wait(ctx):
+            # What a rerun does: A's result on disk changes. Reloading must see it.
+            t = [i / 4 for i in range(5)]
+            (work / "test_0001" / "result.json").write_text(
+                json.dumps({"success": True, "time": t, "variables": {"x": t}}), encoding="utf-8"
+            )
+            gate(ctx)
+
+        session.apply(Job(run=fix_a_then_wait, label="rerun", models=frozenset({A})))
         assert session.running is not None and session.running.models == {A}
         assert events == ["started"]
         with pytest.raises(LockedError, match="rerun is running"):
@@ -2360,23 +2494,39 @@ class TestOutcomes:
         assert session.running is None and job.error is None
         assert gate.seen.models == {A} and gate.seen.project is session.project
         assert events == ["started", "finished"]
-        assert classify(session.comparisons[A]) == FAIL  # results reloaded, spec unchanged for A
+        assert classify(session.comparisons[A]) == PASS  # the reload read the rewritten result
 
     def test_job_failure_is_recorded_and_unlocks(self, session):
+        jobs = _started(session)
+
         def boom(ctx):
             raise RuntimeError("driver died")
+
         session.apply(Job(run=boom, label="rerun", models=frozenset({A})))
-        job = session.running
+        (job,) = jobs
         assert job.done.wait(5)
         assert session.running is None and "driver died" in str(job.error)
         session.stage([LOOSEN])  # unlocked again
 
     def test_job_without_reload_leaves_results_alone(self, session):
+        jobs = _started(session)
         seen = []
         session.on("results", lambda e: seen.append(e["models"]))
         session.apply(Job(run=lambda ctx: None, label="export", models=frozenset(), reloads_results=False))
-        assert session.running is None or session.running.done.wait(5)
-        assert seen == []
+        (job,) = jobs
+        assert job.done.wait(5)
+        assert seen == [] and session.running is None
+
+    def test_open_and_close_refuse_while_a_job_runs(self, session, tmp_path):
+        gate = _Gate()
+        jobs = _started(session)
+        session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        with pytest.raises(JobRunningError):
+            session.close()
+        with pytest.raises(JobRunningError):
+            session.apply(OpenProject(config_path=session.project.config.config_file))
+        gate.release.set()
+        assert jobs[0].done.wait(5)
 
     def test_completion_goes_through_post(self, tmp_path):
         cfg, work = _project(tmp_path)
@@ -2420,6 +2570,22 @@ class TestSessionView:
                           "comparisons", "artifacts", "rescore", "view", "figure", "is_locked"}
         assert not public & {"stage", "save", "discard", "apply", "open", "close", "reload", "select"}
 
+    def test_the_project_view_reaches_no_store_writer(self, session):
+        """§4.6: enforcement is structural. The view's project is a frozen
+        projection; the store's writers exist only behind StoreWrite.run and
+        JobContext, which the Session hands out."""
+        import dataclasses
+        pv = SessionView(session).project
+        assert not hasattr(pv, "store") and not hasattr(pv, "backend")
+        assert isinstance(pv.tests, tuple) and pv.tests[0].model_id == A
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            pv.tests = ()
+        with pytest.raises(TypeError):
+            pv.results[A] = None
+        assert pv.reference(A) is not None and pv.reference(B) is None
+        assert pv.baseline_names(A) == ("primary",)
+        assert pv.config.backend_name == "Python" and pv.dataset_kind is session.project.dataset_kind
+
     def test_readers_reflect_the_session(self, session):
         view = SessionView(session)
         session.stage([LOOSEN])
@@ -2432,7 +2598,7 @@ class TestSessionView:
 
 - [ ] **Step 2: Run** — `uv run pytest tests/test_session.py -q`. Expected: the new tests FAIL (`AttributeError: 'Session' object has no attribute 'apply'`, no `SessionView`).
 
-- [ ] **Step 3: Add to `session.py`** (inside `Session`, after `export`):
+- [ ] **Step 3: Add to `session.py`.** Extend the imports: `from .capabilities import Artifact, Job, JobContext, OpenProject, Outcome, Patch, StoreWrite`, `from collections.abc import Mapping`, `from types import MappingProxyType`, `from ..storage.baseline import PRIMARY_BASELINE`. Then inside `Session`, after `export`:
 
 ```python
     # -- outcomes ----------------------------------------------------------
@@ -2458,7 +2624,7 @@ class TestSessionView:
             self.artifacts.append(outcome)
             self._emit("job", state="artifact", artifact=outcome)
         elif isinstance(outcome, OpenProject):
-            self.open(outcome.config_path, work_dir=work_dir)
+            self.open(outcome.config_path, work_dir=work_dir)  # refuses while a job runs
         else:
             raise TypeError(f"not an Outcome: {outcome!r}")
 
@@ -2492,6 +2658,30 @@ class TestSessionView:
 And at module level, after `Session`:
 
 ```python
+@dataclass(frozen=True)
+class ProjectView:
+    """The project as a capability sees it: no store, no backend."""
+
+    config: Config
+    tests: tuple[TestModel, ...]
+    results: Mapping[str, TestResult]
+    dataset_kind: DatasetType
+    _store: ReferenceStore = field(repr=False, compare=False)
+
+    def reference(self, model_id: str) -> dict | None:
+        """The primary baseline's JSON, or None."""
+        return self._store.get_reference(model_id)
+
+    def baseline_names(self, model_id: str) -> tuple[str, ...]:
+        """What a leaf's ``against`` may name: ``primary`` when a baseline
+        is stored, then every soft_check, in store order."""
+        names: list[str] = []
+        if self._store.get_reference(model_id) is not None:
+            names.append(PRIMARY_BASELINE)
+        names.extend(self._store.get_soft_checks(model_id))
+        return tuple(names)
+
+
 class SessionView:
     """What a capability receives: the Session's state and its readers,
     nothing that writes. The enforcement is structural — a capability never
@@ -2503,8 +2693,14 @@ class SessionView:
         self._session = session
 
     @property
-    def project(self) -> Project | None:
-        return self._session.project
+    def project(self) -> ProjectView | None:
+        p = self._session.project
+        if p is None:
+            return None
+        return ProjectView(
+            config=p.config, tests=tuple(p.tests), results=MappingProxyType(p.results),
+            dataset_kind=p.dataset_kind, _store=p.store,
+        )
 
     @property
     def spec_path(self) -> Path:
@@ -2544,7 +2740,7 @@ class SessionView:
         return self._session.figure(model_id, variable)
 ```
 
-(`from collections.abc import Mapping` and `from types import MappingProxyType` join the imports.) A `StoreWrite` whose `run` raises propagates to the caller and the Session's state is what it was — `_reload_results` is not reached; add a one-line test if the implementer sees a gap.
+`PRIMARY_BASELINE` is the constant `storage/baseline.py` exports (its value is `"primary"`; check). `get_soft_checks(model_id)` returns a name-keyed mapping (comparator.py:233 does `all_baselines.update(store.get_soft_checks(...))`); if it returns something else, adapt `baseline_names` to yield names. A `StoreWrite` whose `run` raises propagates to the caller and the Session's state is what it was — `_reload_results` is not reached.
 
 - [ ] **Step 4: Run** — `uv run pytest tests/test_session.py tests/test_capabilities.py -q`. Expected: PASS. `uv run mypy src/dstf/authoring`; gates.
 
@@ -2557,14 +2753,15 @@ class SessionView:
 **Files:**
 - Modify: `pyproject.toml` (`[tool.mypy] files`), `docs/architecture.md`, `docs/extensibility.md`, `docs/usage.md`, `CLAUDE.md`, `docs/superpowers/specs/2026-09-08-two-tier-architecture-design.md` (§4.6)
 
-- [ ] **Step 1: mypy.** Add `"src/dstf/authoring"` and `"src/dstf/figures"` to `[tool.mypy] files`. Run `uv run mypy` bare; fix what it reports in those two packages only (the carry-forward from plan 2 said `figures/` is clean; verify).
+- [ ] **Step 1: mypy.** Add `"src/dstf/authoring"` and `"src/dstf/figures"` to `[tool.mypy] files`. Run `uv run mypy` bare; fix what it reports in those two packages only (the carry-forward from plan 2 said `figures/` is clean; verify). Resolve `Optional` fields in the Session (the review found `config.tolerance: float | None` and `config.work_dir: Path | None`; Tasks 9's code already narrows both) — never loosen a callee's signature to make the Session type-check.
 
 - [ ] **Step 2: Documents.**
   - `docs/architecture.md`: in the layer ↔ code map, add the authoring tier: `authoring/session.py` (the Session: open / rescore / view / stage / save / discard / export / apply), `authoring/capabilities.py` (the contract), `authoring/spec_document.py`; note that `discovery/spec_update.py` and `storage/accept.py` are the shared paths the CLI and the tool both call, and that the shell is sub-project 4.
   - `docs/extensibility.md`: the "Capability contract" subsection the cut plan added now points at `authoring/capabilities.py`: the `Capability` protocol, `Scope`, the five outcomes with `models` on `Job` and `StoreWrite`, `register_capability` through the `dstf.plugins` group, and the rule that a capability applies nothing. The shell that lists them is sub-project 4.
   - `docs/usage.md`: where `spec-update` is described, show both envelope forms and say the tool writes the multi-model one; the single-model form is read because such files exist.
   - `CLAUDE.md`: the project tree gains `authoring/` (one line: "Session, capability contract, spec document — the tool's core; the shell lands with `dstf author`"); the `spec-update` example line mentions "single- or multi-model envelope".
-  - The spec, §4.6: under the outcome dataclasses add a short "Amended in sub-project 3" note: `Job` and `StoreWrite` carry `models`; completion is posted through `Session(post=...)`; `rescore` alone stages materialization.
+  - The spec, §4.6: under the outcome dataclasses add a short "Amended in sub-project 3" note: `Job` and `StoreWrite` carry `models`; completion is posted through `Session(post=...)`; `rescore` stages materialization only when the tree scores what the flat path scored, and a glob spec is not editable until the owner decides how it materializes (open question, §9); `SessionView.project` is a frozen `ProjectView`. And §7 criterion 4 gains: discovery reads `<reference_root>/test_spec.json` when no `test_spec` is configured (the file `dstf add` writes); `spec-update` refuses to materialize a tree for a glob-pattern spec instead of writing a `*` leaf; a model-less envelope exits 2 like every other malformed envelope.
+  - `docs/usage.md`, where `test_spec` is described: the fallback file is discovered.
 
 - [ ] **Step 3: Run** the gates. `uv run pytest -q -m "not playwright"`.
 
@@ -2591,4 +2788,4 @@ class SessionView:
 
 - [ ] **Step 4: Plan-versus-spec check** — a fresh-context agent reads spec §4.5, §4.6, §4.7 (the envelope and accept paragraphs), §5 step 3, §6 "The Session" against `git diff 75e91f7..HEAD`: what the spec asked that is missing; what got built that it did not ask (the six calls in Conventions are expected); spec sentences the code now contradicts. Tell it which directories are shared state it must not run the CLI against.
 
-- [ ] **Step 5: Handoff** — what ran and what did not (TRANSFORM compare-only and the Session script ran; no live backend; no Windows), the coverage number, the §6 mapping from Step 2.6, the plan-versus-spec findings, and the carry-forwards: `read_results` prints its progress to stdout (the Session inherits it; a `quiet` flag or a logger is plan 5's call with the run callable); the review loop's `[a]` still bypasses the shared accept; `_filter_tests` stays in the CLI until `dstf author --filter`. Nothing is pushed.
+- [ ] **Step 5: Handoff** — the OPEN OWNER QUESTION from Conventions #7 (how a glob-pattern spec materializes: resolve the patterns against the result's variables when the tree is written, or leave such tests uneditable in the tool — the first also changes what `spec-update` writes); what ran and what did not (TRANSFORM compare-only and the Session script ran; no live backend; no Windows), the coverage number, the §6 mapping from Step 2.6, the plan-versus-spec findings, and the carry-forwards: `read_results` prints its progress to stdout (the Session inherits it; a `quiet` flag or a logger is plan 5's call with the run callable); the review loop's `[a]` still bypasses the shared accept; `_filter_tests` stays in the CLI until `dstf author --filter`. Nothing is pushed.
