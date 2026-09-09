@@ -111,6 +111,15 @@ class TestApplyValidatedPatches:
         assert applied[0][1][0]["path"] == "/metrics"  # materialization is reported
         assert spec.read_bytes().endswith(b"}\n") and b"\r\n" not in spec.read_bytes()
 
+    def test_no_groups_writes_nothing(self, tmp_path):
+        """An empty envelope (the tool's export with nothing pending) must
+        not rewrite — and reformat — the user's file."""
+        spec = tmp_path / "test_spec.json"
+        spec.write_text('{"tests":[{"model":"M","variables":["x"]}]}', encoding="utf-8")
+        before = spec.read_bytes()
+        assert apply_validated_patches(spec, [], _config(tmp_path)) == []
+        assert spec.read_bytes() == before
+
     def test_a_bad_group_writes_nothing(self, tmp_path):
         spec = _spec(tmp_path, dict(FLAT), {"model": "N", "variables": ["z"]})
         before = spec.read_bytes()

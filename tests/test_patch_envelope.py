@@ -31,7 +31,8 @@ def test_build_writes_only_the_multi_model_form():
     [
         {"model": "M", "comparison": {"tolerance": 1e-3}},  # no patch
         {"model": "M", "patch": {"op": "replace"}},  # patch not a list
-        {"patches": {"model": "M"}},  # patches not a list
+        {"patches": {"model": "M", "patch": [OP]}},  # patches not a list
+        {"model": "M", "patch": [OP], "patches": []},  # both keys: ambiguous
         {"patches": [{"patch": [OP]}]},  # a group with no model
         {"patch": [OP]},  # no model at all
         [],  # not an object

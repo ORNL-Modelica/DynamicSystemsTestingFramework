@@ -74,6 +74,9 @@ def cmd_spec_update(args: argparse.Namespace) -> int:
 
     groups = parse_envelope(update_data, label=str(json_file))
     requested = [(g.model_id, g.ops) for g in groups]
+    if not requested:
+        print(f"Nothing to apply: {json_file} carries no patches")
+        return 0
     try:
         applied = apply_validated_patches(spec_path, requested, config)
     except PatchError as e:

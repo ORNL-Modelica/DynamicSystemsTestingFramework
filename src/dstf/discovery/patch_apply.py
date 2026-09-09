@@ -1,22 +1,20 @@
 """RFC 6902 JSON-Patch applier with whitelist + unknown-key preservation.
 
-Used by :func:`cli.cmd_spec_update` (and 6.4 spec-update round-trip) to
-apply small, scoped edits to ``test_spec.json`` without clobbering
-hand-authored fields. The reporter emits patches of the form::
+Used by ``dstf spec-update`` (through :mod:`spec_update`) and the authoring
+Session to apply small, scoped edits to ``test_spec.json`` without
+clobbering hand-authored fields. The ops arrive in the envelope
+:mod:`patch_envelope` reads; one model's ops look like::
 
-    {
-      "model": "BouncingBall",
-      "patch": [
-        {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
-        {"op": "add",     "path": "/comparison/variable_overrides/v/tube_rel",
-         "value": 0.02}
-      ]
-    }
+    [
+      {"op": "replace", "path": "/comparison/tolerance", "value": 1e-3},
+      {"op": "add",     "path": "/comparison/variable_overrides/v/tube_rel",
+       "value": 0.02}
+    ]
 
 Paths are RFC 6901 JSON-Pointers **relative to the matched test entry**
 (so `/comparison/...` and `/metrics/...`, not `/tests/3/...`). A path
-whitelist constrains which subtrees the applier will touch — the
-reporter is explicitly not allowed to mutate arbitrary structure.
+whitelist constrains which subtrees the applier will touch — an editor
+is not allowed to mutate arbitrary structure.
 
 This module is self-contained: no external JSON-Patch / JSON-Pointer
 libraries. The surface is small (replace/add/remove on a single path

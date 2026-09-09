@@ -31,6 +31,8 @@ class ModelPatch:
 def parse_envelope(data: object, *, label: str) -> list[ModelPatch]:
     """Read either envelope form into ``ModelPatch`` groups, in file order.
     Anything else raises :class:`ConfigError` naming both forms."""
+    if isinstance(data, dict) and "patches" in data and "model" in data:
+        raise _bad(label, "both a 'model' and a 'patches' key — say which")
     if isinstance(data, dict) and "patches" in data:
         groups = data["patches"]
         if not isinstance(groups, list):

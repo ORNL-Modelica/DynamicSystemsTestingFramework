@@ -125,6 +125,8 @@ def apply_validated_patches(
     atomically and LF (D122), only after every group passed. Returns the ops
     actually applied per group — materialization included — so a caller can
     say what it did."""
+    if not groups:
+        return []  # nothing to apply; the file is not rewritten
     data = load_spec_document(spec_path)
     applied: list[tuple[str, list[dict]]] = []
     for model_id, ops in groups:
