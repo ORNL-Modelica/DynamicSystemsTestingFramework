@@ -9,9 +9,10 @@ it applies (the store, a job's work dir). Nothing here imports a UI.
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Literal
 
 from ..backends import dataset_kind_for, get_backend
@@ -37,13 +38,18 @@ from ..discovery.test_registry import (
 )
 from ..figures.assemble import leaves_by_variable, view_from_trajectory
 from ..figures.view import VariableView
+from ..storage.baseline import PRIMARY_BASELINE
 from ..storage.reference_store import ReferenceStore
-from .capabilities import Artifact
+from .capabilities import (
+    Artifact,
+    Job,
+    JobContext,
+    OpenProject,
+    Outcome,
+    Patch,
+    StoreWrite,
+)
 from .spec_document import PatchOp, SpecDocument
-
-# Task 10 adds: Job, JobContext, OpenProject, Outcome, Patch, StoreWrite to the
-# capabilities import, and Mapping / MappingProxyType for SessionView. Not
-# before — ruff F401 would make this commit red.
 
 Event = Literal["spec", "results", "job", "selection"]
 Listener = Callable[[dict[str, Any]], None]
@@ -327,6 +333,69 @@ class Session:
 
         return build_envelope([ModelPatch(m, ops) for m, ops in self.spec.grouped()])
 
+    # -- outcomes ----------------------------------------------------------
+
+    def apply(
+        self, outcome: Outcome | Sequence[Outcome], *, work_dir: Path | None = None
+    ) -> None:
+        """Apply what a capability returned. ``None`` is nothing; a sequence
+        is applied in order. ``work_dir`` reaches only ``OpenProject``."""
+        if outcome is None:
+            return
+        if isinstance(outcome, (list, tuple)):
+            for one in outcome:
+                self.apply(one, work_dir=work_dir)
+            return
+        if isinstance(outcome, Patch):
+            self.stage(outcome.ops)
+        elif isinstance(outcome, StoreWrite):
+            self._refuse_if_locked(outcome.models)
+            outcome.run(self._require_project().store)
+            self._reload_results()
+        elif isinstance(outcome, Job):
+            self._start_job(outcome)
+        elif isinstance(outcome, Artifact):
+            self.artifacts.append(outcome)
+            self._emit("job", state="artifact", artifact=outcome)
+        elif isinstance(outcome, OpenProject):
+            self.open(
+                outcome.config_path, work_dir=work_dir
+            )  # refuses while a job runs
+        else:
+            raise TypeError(f"not an Outcome: {outcome!r}")
+
+    def _start_job(self, outcome: Job) -> None:
+        project = self._require_project()
+        if self.running is not None:
+            raise JobRunningError(f"{self.running.label} is still running")
+        job = RunningJob(label=outcome.label, models=outcome.models)
+        self.running = job
+        self._emit("job", state="started", job=job)
+        ctx = JobContext(project=project, models=outcome.models)
+
+        def work() -> None:
+            try:
+                outcome.run(ctx)
+            except (
+                BaseException
+            ) as e:  # a job's failure is reported, not raised on its thread
+                job.error = e
+            finally:
+                self._post(lambda: self._finish_job(job, outcome.reloads_results))
+
+        threading.Thread(
+            target=work, name=f"dstf-job-{outcome.label}", daemon=True
+        ).start()
+
+    def _finish_job(self, job: RunningJob, reloads_results: bool) -> None:
+        self.running = None
+        if reloads_results and job.error is None and self.project is not None:
+            self._reload_results()
+        self._emit(
+            "job", state="failed" if job.error is not None else "finished", job=job
+        )
+        job.done.set()
+
     # -- internals ---------------------------------------------------------
 
     def _require_project(self) -> Project:
@@ -404,6 +473,91 @@ class Session:
     def _emit(self, event: Event, **payload: Any) -> None:
         for cb in list(self._listeners.get(event, [])):
             cb({"event": event, **payload})
+
+
+@dataclass(frozen=True)
+class ProjectView:
+    """The project as a capability sees it: no store, no backend."""
+
+    config: Config
+    tests: tuple[TestModel, ...]
+    results: Mapping[str, TestResult]
+    dataset_kind: DatasetType
+    _store: ReferenceStore = field(repr=False, compare=False)
+
+    def reference(self, model_id: str) -> dict | None:
+        """The primary baseline's JSON, or None."""
+        return self._store.get_reference(model_id)
+
+    def baseline_names(self, model_id: str) -> tuple[str, ...]:
+        """What a leaf's ``against`` may name: ``primary`` when a baseline
+        is stored, then every soft_check, in store order."""
+        names: list[str] = []
+        if self._store.get_reference(model_id) is not None:
+            names.append(PRIMARY_BASELINE)
+        names.extend(self._store.get_soft_checks(model_id))
+        return tuple(names)
+
+
+class SessionView:
+    """What a capability receives: the Session's state and its readers,
+    nothing that writes. The enforcement is structural — a capability never
+    holds the Session."""
+
+    __slots__ = ("_session",)
+
+    def __init__(self, session: Session):
+        self._session = session
+
+    @property
+    def project(self) -> ProjectView | None:
+        p = self._session.project
+        if p is None:
+            return None
+        return ProjectView(
+            config=p.config,
+            tests=tuple(p.tests),
+            results=MappingProxyType(p.results),
+            dataset_kind=p.dataset_kind,
+            _store=p.store,
+        )
+
+    @property
+    def spec_path(self) -> Path:
+        return self._session.spec.path
+
+    @property
+    def pending(self) -> tuple[PatchOp, ...]:
+        return tuple(self._session.spec.pending)
+
+    @property
+    def selection(self) -> Selection:
+        return self._session.selection
+
+    @property
+    def running(self) -> RunningJob | None:
+        return self._session.running
+
+    @property
+    def comparisons(self) -> Mapping[str, TestComparison]:
+        return MappingProxyType(self._session.comparisons)
+
+    @property
+    def artifacts(self) -> tuple[Artifact, ...]:
+        return tuple(self._session.artifacts)
+
+    def is_locked(self, model_id: str) -> bool:
+        running = self._session.running
+        return running is not None and model_id in running.models
+
+    def rescore(self, model_id: str) -> TestComparison:
+        return self._session.rescore(model_id)
+
+    def view(self, model_id: str, variable: str) -> VariableView:
+        return self._session.view(model_id, variable)
+
+    def figure(self, model_id: str, variable: str) -> dict:
+        return self._session.figure(model_id, variable)
 
 
 def _in_order(ids: Iterable[str]) -> list[str]:
