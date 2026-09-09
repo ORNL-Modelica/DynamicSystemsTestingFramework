@@ -405,7 +405,7 @@ implicit-tree materialization from the variables the flat path scored — the
 leaves the report shows, in its order, whether or not the spec entry lists them
 (a test tracked by its `.mo` annotation has none there, and may have no entry at
 all: the op creates it) — and only when that tree scores what the flat path
-scored: it stages nothing for a glob-tracked spec, a scored variable whose name
+scored: it stages nothing for a scored variable whose name
 is not one the result carries (the flat path's `x[N]` display label), an
 override naming an unregistered mode, a string `quantity` in an override (the
 flat path refuses it), or a reference-JSON override the spec does not shadow —
@@ -414,8 +414,11 @@ per-leaf op on a test it cannot build a tree for. `spec-update`, with no result
 in hand, still materializes from the entry's own list. `SessionView.rescore` is
 the one call on the view that writes — it stages that op — so a capability's
 `available` must not call it. `open`, `close` and `OpenProject` refuse while
-edits are pending or a job runs; `OpenProject` carries the work dir. A glob spec is not editable in the tool until the owner decides how
-such a spec materializes (§9). A completed job reloads results only when it
+edits are pending or a job runs; `OpenProject` carries the work dir. A
+pattern-tracked spec (`"variables": ["tank.*"]`) materializes from the names the
+pattern resolved on the day of the edit; the pattern stays and keeps tracking,
+and a later match with no leaf is named by the "tracked variables without a
+criterion" warning both tiers show (owner ruling 2026-09-09, D126). A completed job reloads results only when it
 succeeded; a failed one leaves the verdicts as they were and reports its error.
 While a job runs, a reload triggered elsewhere (a store write on a free model)
 keeps the locked models' results and verdicts as they were. `SessionView.project`
@@ -705,11 +708,11 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
   instrument: a capability that needs a new results model belongs to a
   sibling tool. If a session finds itself scoping a sweep into the Session,
   that is the moment to stop and ask, not proceed.
-- **How a glob-pattern spec materializes.** `"variables": ["*"]` has no
-  one-leaf-per-variable tree: either the patterns resolve against the result's
-  variables when the tree is written (which also changes what `spec-update`
-  writes), or such tests stay uneditable in the tool. Undecided; until then
-  `rescore` scores them without staging.
+- **How a glob-pattern spec materializes** — DECIDED 2026-09-09 (D126): the
+  patterns resolve against the result when the tool writes the tree, and every
+  tracked variable a tree leaves unscored is a structural warning on both
+  tiers. `spec-update`, with no result in hand, still refuses to write a tree
+  for a pattern.
 - **Cancel.** No cancel path exists in `ProgressReporter`, `run_tests` or the
   persistent worker pool. It is backend work: a cancel token threaded through
   `run_tests` and honoured by the pool's dispatch loop. Not promised by v1.

@@ -522,8 +522,7 @@ class Session:
         in no spec entry (and the entry may not exist yet: the op creates
         it). ``None`` — and ``rescore`` stages nothing — when the entry
         already has a tree, when nothing was scored (NO_REF, SIM_FAIL,
-        simulate-only), when the spec tracks a glob pattern (the owner's open
-        question), or when a tree would not score what the flat path
+        simulate-only), or when a tree would not score what the flat path
         scored: a scored variable whose name is not one the result carries
         (the flat path's ``x[N]`` display label), a string ``quantity`` in
         an override (the flat path refuses it, a tree would score it), an
@@ -537,11 +536,10 @@ class Session:
         comp = self.comparisons.get(model_id)
         if "metrics" in entry or comp is None or not comp.variables:
             return None
-        if any(not is_literal_variable(v) for v in entry.get("variables") or []):
-            # A glob-tracked spec: how it materializes is the owner's open
-            # question (§9 of the design) — an explicit leaf per resolved
-            # name would freeze today's match list into the spec.
-            return None
+        # A pattern-tracked spec materializes from the names the pattern
+        # resolved today (owner ruling, D126): the pattern keeps tracking,
+        # the tree scores what it names, and a variable that later matches
+        # without a leaf raises the "tracked but not scored" warning.
         names = [vc.name for vc in comp.variables]
         result = project.results.get(model_id)
         resolved = {v.name for v in result.variables} if result is not None else set()

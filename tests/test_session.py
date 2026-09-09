@@ -189,12 +189,53 @@ class TestRescoreAndStage:
             classify(session.rescore(D)) == PASS
         )  # the tree path keeps config.tolerance too
 
-    def test_a_glob_spec_rescores_without_staging(self, session):
-        """Conventions #7: a leaf per pattern would score a `*` sentinel and
-        flip G to FAIL; rescore scores it as loaded and stages nothing."""
+    def test_a_pattern_tracked_spec_materializes_its_resolved_names(self, session):
+        """Owner ruling (D126): the leaves are what the pattern resolved
+        today; the pattern stays in `variables` and keeps tracking. The
+        verdict is what it was."""
         assert classify(session.rescore(G)) == PASS
-        assert session.spec.pending == []
-        assert "metrics" not in session.spec.entry(G)
+        entry = session.spec.entry(G)
+        assert entry["variables"] == ["*"]
+        assert [c["variable"] for c in entry["metrics"]["children"]] == ["x"]
+        assert session.comparisons[G].warnings == []
+
+    def test_a_variable_that_matches_later_is_tracked_but_not_scored_and_says_so(
+        self, session
+    ):
+        """The consequence of D126 made visible: after materialization a
+        new match has no leaf. It is stored and plotted, not judged — and
+        the comparison carries the warning naming it, on both tiers."""
+        session.rescore(G)
+        work = session.project.config.work_dir
+        t = [i / 4 for i in range(5)]
+        (work / "test_0005" / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {"x": [v * 1.001 for v in t], "y": t},
+                }
+            ),
+            encoding="utf-8",
+        )
+        session._reload_results()
+        comp = session.comparisons[G]
+        assert classify(comp) == PASS  # y is not judged
+        (warning,) = comp.warnings
+        assert warning.field == "Tracked variables without a criterion"
+        assert warning.current_value == "y" and "1 scored" in warning.reference_value
+        # Cover it and the warning goes.
+        session.stage(
+            [
+                PatchOp(
+                    G,
+                    "add",
+                    "/metrics/children/-",
+                    {"metric": "nrmse", "variable": "y"},
+                )
+            ]
+        )
+        assert session.comparisons[G].warnings == []
 
     def test_materialization_builds_leaves_from_what_the_flat_path_scored(
         self, session

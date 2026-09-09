@@ -125,6 +125,27 @@ def _check_structural_changes(
     return warnings
 
 
+def _tracked_but_not_scored(
+    test: TestModel, result: TestResult
+) -> StructuralWarning | None:
+    """A tree scores only what its leaves name; a tracked variable no leaf
+    covers is stored and plotted but never judged, and CI stays green while
+    it drifts. Say so on every surface that shows warnings (D126). The flat
+    path has no such gap — it scores every tracked variable."""
+    from .tree_spec import collect_variables
+
+    assert test.metric_tree_spec is not None
+    covered = set(collect_variables(test.metric_tree_spec))
+    unscored = [v.name for v in result.variables if v.name and v.name not in covered]
+    if not unscored:
+        return None
+    return StructuralWarning(
+        field="Tracked variables without a criterion",
+        reference_value=f"{len(covered)} scored by the tree",
+        current_value=", ".join(unscored),
+    )
+
+
 def compare_test(
     test: TestModel,
     result: TestResult,
@@ -261,12 +282,13 @@ def compare_test(
                 diagnostics=result.diagnostics,
             ),
         )
+        unscored = _tracked_but_not_scored(test, result)
         return TestComparison(
             model_id=test.model_id,
             passed=tree.passed,
             test_id=ref_test_id,
             variables=collect_leaf_variables(tree),
-            warnings=structural_warnings,
+            warnings=structural_warnings + ([unscored] if unscored else []),
             metric_tree=tree,
         )
 

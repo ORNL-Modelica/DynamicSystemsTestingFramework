@@ -4070,3 +4070,35 @@ baseline-role split, recommender containment, economy of tools) stand.
 - `README.md`, `docs/vision.md`, `docs/architecture.md`,
   `docs/extensibility.md`, `docs/usage.md`, `docs/qa/reporter_checklist.md`,
   `CLAUDE.md` — updated to the read-only page and the two tiers.
+
+## D126 — A tree scores what it names; the rest of what a test tracks is warned about (2026-09-09)
+
+A test's `variables` list, patterns included, decides what is tracked: read
+from the result, stored in the baseline, plotted. Scoring is the other layer.
+With no `metrics` tree the flat path scores every tracked variable by name;
+with a tree, only the leaves score. A tracked variable no leaf names is stored
+and plotted and never judged, and CI stays green while it drifts. That gap
+existed for every hand-authored tree; the authoring tool made it reachable in
+one click, because editing a criterion on a test with no tree writes one.
+
+Two questions were open. The tool's tree for a pattern-tracked spec, `"variables":
+["tank.*"]`: freeze today's matches into leaves, or leave such tests uneditable?
+The owner chose the leaves — the pattern keeps tracking, the tree scores what it
+names — on the condition that the gap is never silent. So every comparison run
+through a tree carries a structural warning, "Tracked variables without a
+criterion", naming each tracked variable no leaf covers, on the console and the
+report page like every other structural warning. The flat path never emits it.
+`spec-update`, which has no simulation result to resolve a pattern against,
+still refuses to write a tree for one.
+
+The tool builds the tree from the variables the flat path actually scored, in
+the report's order, so leaf *i* is `/metrics/children/i` on both tiers; a test
+tracked by its `.mo` annotation (TRANSFORM's shape, where the spec entry lists
+no variables or does not exist) gets its entry created by the same op. It
+stages that tree only when the tree would score exactly what the flat path
+scored; the ways the two paths differ are enumerated in the Session, each with
+its negative test.
+
+- `src/dstf/comparison/comparator.py` — the warning, tree path only.
+- `src/dstf/authoring/session.py` — materialization from the scored names.
+- `docs/usage.md`, the design spec's §4.6 amendment and §9.
