@@ -568,8 +568,10 @@ def spec_entry(data: dict, model_id: str) -> dict | None:
 
 
 def is_literal_variable(pattern: str) -> bool:
-    """A tracked-variable entry that names one variable — no glob metacharacters."""
-    return not any(ch in pattern for ch in "*?[")
+    """A tracked-variable entry that names one variable. The resolver's rule
+    (``backends.types.is_glob_pattern``): ``*`` and ``?`` are wildcards, a
+    Modelica array index ``[1]`` is not."""
+    return not is_glob_pattern(pattern)
 
 
 def implicit_tree_op(entry: dict) -> dict:

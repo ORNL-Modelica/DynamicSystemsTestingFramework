@@ -57,6 +57,15 @@ class TestMaterialization:
             with pytest.raises(PatchError, match="pattern"):
                 implicit_tree_op({"model": "M", "variables": patterns})
 
+    def test_an_array_element_is_a_literal_name(self):
+        """`[]` is a Modelica array index, not a glob (the resolver's rule);
+        the documented `pipe.T[1]` must materialize to a leaf of that name."""
+        op = implicit_tree_op({"model": "M", "variables": ["pipe.T[1]", "pipe.m_flow"]})
+        assert [leaf["variable"] for leaf in op["value"]["children"]] == [
+            "pipe.T[1]",
+            "pipe.m_flow",
+        ]
+
     def test_a_patch_that_supplies_the_tree_is_not_materialized_again(self):
         tree_op = implicit_tree_op(dict(FLAT))
         assert materialize_implicit_metrics(dict(FLAT), [tree_op, LEAF_OP]) == [
@@ -121,6 +130,25 @@ class TestApplyValidatedPatches:
                         ],
                     ),
                 ],
+                _config(tmp_path),
+            )
+        assert spec.read_bytes() == before
+
+    def test_the_validator_rejects_a_tree_with_no_hard_leaf_and_writes_nothing(
+        self, tmp_path
+    ):
+        """D66: every tree needs one primary leaf outside `warn`; the file
+        is untouched when the validator says no."""
+        spec = _spec(tmp_path, dict(FLAT))
+        before = spec.read_bytes()
+        all_warn = {
+            "combinator": "warn",
+            "children": [{"metric": "nrmse", "variable": "x"}],
+        }
+        with pytest.raises(PatchError, match="validator rejected"):
+            apply_validated_patches(
+                spec,
+                [("M", [{"op": "add", "path": "/metrics", "value": all_warn}])],
                 _config(tmp_path),
             )
         assert spec.read_bytes() == before

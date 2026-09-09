@@ -13,6 +13,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
+from ..backends.types import is_glob_pattern
 from ..config import Config
 from ..storage.ref_index import _atomic_write_text
 from .patch_apply import PatchError, apply_patch_to_document, load_spec_document
@@ -28,8 +29,9 @@ def spec_entry(data: dict, model_id: str) -> dict | None:
 
 
 def is_literal_variable(pattern: str) -> bool:
-    """A tracked-variable entry that names one variable — no glob metacharacters."""
-    return not any(ch in pattern for ch in "*?[")
+    """A tracked-variable entry that names one variable. The resolver's rule:
+    ``*`` and ``?`` are wildcards, a Modelica array index ``[1]`` is not."""
+    return not is_glob_pattern(pattern)
 
 
 def implicit_tree_op(entry: dict) -> dict:

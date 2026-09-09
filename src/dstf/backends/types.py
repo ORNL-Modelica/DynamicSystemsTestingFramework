@@ -143,6 +143,14 @@ def _pattern_to_regex(pattern: str):
     return _re.compile("".join(parts))
 
 
+def is_glob_pattern(pattern: str) -> bool:
+    """Only ``*`` and ``?`` are wildcards; everything else — including the
+    ``[]`` of a Modelica array element such as ``pipe.T[1]`` — is literal.
+    The one rule :func:`resolve_variable_patterns` and the spec-update
+    materialization share."""
+    return "*" in pattern or "?" in pattern
+
+
 def resolve_variable_patterns(
     patterns: list[str],
     available_vars: list[str],
@@ -170,9 +178,7 @@ def resolve_variable_patterns(
                 if any(var.startswith(p) for p in _EXCLUDE_PREFIXES):
                     continue
                 resolved.add(var)
-        elif "*" in pattern or "?" in pattern:
-            # Glob pattern — only * and ? are wildcards, everything else
-            # (including [] from Modelica array indices) is literal
+        elif is_glob_pattern(pattern):
             regex = _pattern_to_regex(pattern)
             matched = [v for v in available_vars if regex.fullmatch(v)]
             if not matched:
