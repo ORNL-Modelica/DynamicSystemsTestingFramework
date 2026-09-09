@@ -33,4 +33,6 @@ async def test_a_figure_dict_renders_without_plotly_py():
         await user.open("/")
         await user.should_see("plot below")
         (plot,) = user.find(ui.plotly).elements
-        assert plot.figure["data"][0]["name"] == "actual"
+        # `_props["options"]` is what NiceGUI's dict path produced for the
+        # browser — not the dict we passed in, which `.figure` merely holds.
+        assert plot._props["options"]["data"][0]["name"] == "actual"
