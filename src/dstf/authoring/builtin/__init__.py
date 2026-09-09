@@ -3,8 +3,13 @@ call a plug-in makes; the shell learns of them the same way."""
 
 from __future__ import annotations
 
+from ..capabilities import register_capability, registered_capabilities
+
 
 def register_builtins() -> None:
-    """Idempotent, like ``comparison.builtins.register_builtins``. Nothing
-    registers yet: the v1 capabilities land beside this file, and the shell
-    already lists whatever is registered when a page is built."""
+    """Idempotent, like ``comparison.builtins.register_builtins``."""
+    names = {c.name for c in registered_capabilities()}
+    from .edit_criteria import EditCriteria
+
+    if EditCriteria.name not in names:
+        register_capability(EditCriteria())

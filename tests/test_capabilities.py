@@ -123,3 +123,18 @@ def test_outcomes_are_frozen_and_carry_their_models():
         OpenProject(config_path=__import__("pathlib").Path("x")).config_path.name == "x"
     )
     assert JobContext.__dataclass_fields__.keys() >= {"project", "models"}
+
+
+def test_the_session_imports_without_the_ui_extra():
+    """A capability module reaches NiceGUI only inside `panel`: importing
+    the package registers the builtins, and that must work where the
+    [author] extra is not installed. The `None` entry makes any `import
+    nicegui` raise."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; sys.modules['nicegui'] = None; "
+        "import dstf.authoring.session, dstf.authoring.builtin"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
