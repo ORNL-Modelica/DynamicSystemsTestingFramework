@@ -12,11 +12,15 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..backends.types import is_glob_pattern
 from ..config import Config
 from ..storage.ref_index import _atomic_write_text
 from .patch_apply import PatchError, apply_patch_to_document, load_spec_document
+
+if TYPE_CHECKING:
+    from ..storage.reference_store import ReferenceStore
 
 
 def spec_entry(data: dict, model_id: str) -> dict | None:
@@ -32,6 +36,21 @@ def is_literal_variable(pattern: str) -> bool:
     """A tracked-variable entry that names one variable. The resolver's rule:
     ``*`` and ``?`` are wildcards, a Modelica array index ``[1]`` is not."""
     return not is_glob_pattern(pattern)
+
+
+def unknown_override_modes(entry: dict) -> dict[str, str]:
+    """``{variable: mode}`` for every flat override naming a ``mode`` no
+    metric is registered under. The flat path fails such a variable loudly
+    (a typo must not change the algorithm); ``synthesize_implicit_tree``
+    would fall back to nrmse, so a tree must not be written for it."""
+    from ..comparison.registry import metric
+
+    overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
+    return {
+        var: str(ov["mode"])
+        for var, ov in overrides.items()
+        if isinstance(ov, dict) and ov.get("mode") and metric(str(ov["mode"])) is None
+    }
 
 
 def implicit_tree_op(entry: dict) -> dict:
@@ -56,6 +75,13 @@ def implicit_tree_op(entry: dict) -> dict:
             f"{entry.get('model')!r}: {globs!r} are patterns, and a leaf per "
             "pattern would score a sentinel where the flat path scored the "
             "variables the result resolved"
+        )
+    bad_modes = unknown_override_modes(entry)
+    if bad_modes:
+        raise PatchError(
+            f"cannot materialize an implicit metrics tree for "
+            f"{entry.get('model')!r}: {bad_modes!r} name a mode no metric is "
+            "registered under; the flat path fails them, a tree would score nrmse"
         )
     overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
     tree = synthesize_implicit_tree(variables, variable_overrides=overrides)
@@ -89,10 +115,13 @@ def materialize_implicit_metrics(
     return [implicit_tree_op(entry), *ops]
 
 
-def validate_entry_metric_tree(data: dict, model_id: str, config: Config) -> None:
+def validate_entry_metric_tree(
+    data: dict, model_id: str, config: Config, store: ReferenceStore | None = None
+) -> None:
     """When the patched entry has a ``metrics`` tree, run the D66 validator
     against the reference store's baseline roles. Skipped when the entry has
-    no tree (implicit AND)."""
+    no tree (implicit AND). ``store`` saves the caller that already holds one
+    (the Session) a rescan of the whole partition per call."""
     entry = spec_entry(data, model_id)
     if entry is None or "metrics" not in entry:
         return
@@ -106,7 +135,8 @@ def validate_entry_metric_tree(data: dict, model_id: str, config: Config) -> Non
     except Exception as e:
         raise PatchError(f"patched metric tree is invalid: {e}") from e
 
-    store = ReferenceStore(config)
+    if store is None:
+        store = ReferenceStore(config)
     lookup = role_lookup_from_store(store, model_id)
     errors = validate_tree(tree, lookup)
     if errors:

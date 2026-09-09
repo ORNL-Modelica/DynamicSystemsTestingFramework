@@ -402,11 +402,17 @@ outcome touches, so a job can lock them and a locked model can refuse a store
 write. A job's completion is posted through `Session(post=...)`, the UI loop the
 shell supplies; with no `post` it runs on the worker thread. `rescore` stages the
 implicit-tree materialization only when the synthesized tree scores what the flat
-path scored — a spec whose variables are glob patterns scores without staging and
-is not editable in the tool until the owner decides how such a spec materializes
-(§9). `SessionView.project` is a frozen `ProjectView` — config, tests, results and
-two store readers — not the `Project`; the store's writers are reachable only
-through `StoreWrite.run` and `JobContext`.
+path scored: it stages nothing for a glob pattern, a tracked name the result did
+not resolve, an override naming an unregistered mode, or a reference-JSON override
+the spec does not shadow — the four ways the two paths differ, each with its
+negative test. A glob spec is not editable in the tool until the owner decides how
+such a spec materializes (§9). A completed job reloads results only when it
+succeeded; a failed one leaves the verdicts as they were and reports its error.
+While a job runs, a reload triggered elsewhere (a store write on a free model)
+keeps the locked models' results and verdicts as they were. `SessionView.project`
+is a frozen `ProjectView` — config, tests, results and two store readers — not the
+`Project`; the store's writers are reachable only through `StoreWrite.run` and
+`JobContext`.
 
 Registration goes through the existing single entry-point group
 (`dstf.plugins`, `plugins.py`); a plug-in module calls `register_capability`

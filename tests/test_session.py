@@ -205,6 +205,89 @@ class TestRescoreAndStage:
         assert session._materializable(D, entry) is False
         assert session._materializable(D, session.spec.entry(D)) is True
 
+    def test_a_reference_json_override_rescores_without_staging(self, tmp_path):
+        """The flat path merges the baseline's own comparison.variable_overrides
+        (the tier below the spec's); a synthesized tree ignores them. A's
+        baseline carrying tolerance 0.5 makes A PASS as loaded — a look must
+        not stage the tree that would fail it."""
+        cfg, work = _project(tmp_path)
+        config = Config(config_file=cfg, work_dir=work)
+        t = np.asarray([i / 4 for i in range(5)])
+        ReferenceStore(config).store_reference(
+            make_test_model(
+                A, variable_patterns=["x"], variable_overrides={"x": {"tolerance": 0.5}}
+            ),
+            TestResult(
+                model_id=A,
+                success=True,
+                variables=[VariableResult(index=1, time=t, values=t, name="x")],
+            ),
+        )
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert classify(s.comparisons[A]) == PASS
+        assert classify(s.rescore(A)) == PASS
+        assert s.spec.pending == []
+        # A spec override for x shadows the baseline's: the tree scores the
+        # same thing again, so materialization is back on the table.
+        s.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/comparison",
+                    {"variable_overrides": {"x": {"tolerance": 0.5}}},
+                )
+            ]
+        )
+        assert s._materializable(A, s.spec.entry(A)) is True
+
+    def test_an_unknown_mode_rescores_without_staging(self, tmp_path):
+        """The flat path fails a variable whose override names an unknown
+        mode; the synthesizer would fall back to nrmse and PASS it."""
+        cfg, work = _project(tmp_path)
+        doc = json.loads((cfg.parent / "test_spec.json").read_text(encoding="utf-8"))
+        entry = next(e for e in doc["tests"] if e["model"] == D)
+        entry["comparison"] = {
+            "variable_overrides": {"x": {"mode": "nrmsee", "tolerance": 0.01}}
+        }
+        (cfg.parent / "test_spec.json").write_text(
+            json.dumps(doc, indent=2) + "\n", encoding="utf-8"
+        )
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert classify(s.comparisons[D]) == FAIL
+        assert classify(s.rescore(D)) == FAIL
+        assert s.spec.pending == []
+        # And the CLI's materialization refuses the same entry outright.
+        from dstf.discovery.patch_apply import PatchError
+        from dstf.discovery.spec_update import implicit_tree_op
+
+        with pytest.raises(PatchError, match="nrmsee"):
+            implicit_tree_op(s.spec.entry(D))
+
+    def test_open_emits_spec_before_results(self, tmp_path):
+        cfg, work = _project(tmp_path)
+        s = Session()
+        seen = []
+        s.on("spec", lambda e: seen.append("spec"))
+        s.on("results", lambda e: seen.append("results"))
+        s.open(cfg, work_dir=work)
+        assert seen == ["spec", "results"]
+
+    def test_reload_drops_a_model_the_spec_no_longer_names(self, session):
+        p = session.spec.path
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        doc["tests"] = [e for e in doc["tests"] if e["model"] != D]
+        p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        session.reload()
+        assert D not in session.comparisons
+        assert [t.model_id for t in session.project.tests] == [A, B, C, G]
+
+    def test_view_of_an_unknown_model_is_an_error_like_rescore(self, session):
+        with pytest.raises(KeyError):
+            session.view("FakeLib.Nope", "x")
+
     def test_rescore_reflects_a_staged_op(self, session):
         session.stage([LOOSEN])
         assert classify(session.comparisons[A]) == PASS
@@ -454,6 +537,103 @@ class TestOutcomes:
         assert LOOSEN in session.spec.pending
 
 
+class TestLockAndCompletion:
+    """The lock has no side door; completion cannot wedge the Session."""
+
+    def test_rescore_of_a_locked_model_is_refused_before_any_staging(self, session):
+        """G is not materializable, so rescore's OWN guard is what refuses
+        (the earlier test hit stage's guard through materialization)."""
+        gate = _Gate()
+        jobs = _started(session)
+        session.apply(Job(run=gate, label="rerun", models=frozenset({G})))
+        with pytest.raises(LockedError, match="rerun is running"):
+            session.rescore(G)
+        assert SessionView(session).is_locked(G) is True
+        gate.release.set()
+        assert jobs[0].done.wait(5)
+
+    def test_a_reload_during_a_job_keeps_the_locked_model_as_it_was(self, session):
+        """What the run pipeline does at start: clear the model's directory.
+        A StoreWrite on a free model reloads results; the locked model must
+        keep its in-memory result and verdict until the job's own reload."""
+        gate = _Gate()
+        jobs = _started(session)
+        work = session.project.config.work_dir
+        before = session.comparisons[A]
+        session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        (work / "test_0001" / "result.json").unlink()
+        session.apply(StoreWrite(run=lambda store: None, models=frozenset({B})))
+        assert (
+            session.comparisons[A] is before
+            and classify(session.comparisons[A]) == FAIL
+        )
+        assert session.project.results[A].success
+        gate.release.set()
+        assert jobs[0].done.wait(5)
+        assert (
+            classify(session.comparisons[A]) == SIM_FAIL
+        )  # now the job's reload sees the disk
+
+    def test_a_post_that_raises_still_finishes_the_job(self, tmp_path):
+        cfg, work = _project(tmp_path)
+
+        def dead_loop(fn):
+            raise RuntimeError("loop closed")
+
+        s = Session(post=dead_loop)
+        s.open(cfg, work_dir=work)
+        jobs = _started(s)
+        s.apply(Job(run=lambda ctx: None, label="rerun", models=frozenset({A})))
+        assert jobs[0].done.wait(5)
+        assert s.running is None and "loop closed" in str(jobs[0].error)
+
+    def test_a_listener_that_raises_still_marks_the_job_done(self, session):
+        events = []
+        session.on("job", lambda e: events.append(e["state"]))
+
+        def boom(e):
+            if e["state"] != "started":
+                raise RuntimeError("element deleted")
+
+        session.on("job", boom)
+        jobs = _started(session)
+        session.apply(Job(run=lambda ctx: None, label="rerun", models=frozenset({A})))
+        assert jobs[0].done.wait(5)
+        assert session.running is None and events[-1] == "finished"
+
+    def test_a_failed_job_emits_failed_and_skips_the_reload(self, session):
+        events = []
+        seen = []
+        session.on("job", lambda e: events.append(e["state"]))
+        session.on("results", lambda e: seen.append(e["models"]))
+        jobs = _started(session)
+
+        def boom(ctx):
+            raise RuntimeError("driver died")
+
+        session.apply(Job(run=boom, label="rerun", models=frozenset({A})))
+        assert jobs[0].done.wait(5)
+        assert events == ["started", "failed"] and seen == []
+
+    def test_a_store_write_that_raises_leaves_the_session_unchanged(self, session):
+        before = dict(session.comparisons)
+
+        def boom(store):
+            raise OSError("disk full")
+
+        with pytest.raises(OSError):
+            session.apply(StoreWrite(run=boom, models=frozenset({B})))
+        assert session.comparisons == before and session.running is None
+        assert session.spec.pending == []
+
+    def test_a_patch_rescores_only_its_models(self, session):
+        seen = []
+        session.on("results", lambda e: seen.append(e["models"]))
+        untouched = session.comparisons[B]
+        session.apply(Patch(ops=[LOOSEN]))
+        assert seen == [{A}] and session.comparisons[B] is untouched
+
+
 class TestSessionView:
     def test_exposes_readers_and_no_writer(self, session):
         view = SessionView(session)
@@ -497,6 +677,12 @@ class TestSessionView:
             pv.results[A] = None
         assert pv.reference(A) is not None and pv.reference(B) is None
         assert pv.baseline_names(A) == ("primary",)
+        assert pv.baseline_names(B) == ()
+        t = [i / 4 for i in range(5)]
+        session.project.store.add_soft_check(
+            A, "om_cross", t, [{"index": 1, "name": "x", "values": t}]
+        )
+        assert pv.baseline_names(A) == ("primary", "om_cross")
         assert (
             pv.config.backend_name == "Python"
             and pv.dataset_kind is session.project.dataset_kind

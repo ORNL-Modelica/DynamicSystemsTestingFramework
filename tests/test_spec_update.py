@@ -81,6 +81,17 @@ class TestMaterialization:
         op = {"op": "replace", "path": "/comparison/tolerance", "value": 1.0}
         assert materialize_implicit_metrics(dict(FLAT), [op]) == [op]
 
+    def test_an_unknown_mode_is_refused(self):
+        """The flat path fails a typo'd mode loudly; synthesize_implicit_tree
+        would quietly score nrmse instead. Never write that tree."""
+        entry = {
+            "model": "M",
+            "variables": ["x"],
+            "comparison": {"variable_overrides": {"x": {"mode": "nrmsee"}}},
+        }
+        with pytest.raises(PatchError, match="nrmsee"):
+            implicit_tree_op(entry)
+
     def test_no_variables_is_a_patch_error(self):
         with pytest.raises(PatchError, match="no tracked variables"):
             implicit_tree_op({"model": "M", "variables": []})

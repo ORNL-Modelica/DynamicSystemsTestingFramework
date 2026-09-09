@@ -8,6 +8,7 @@ it applies (the store, a job's work dir). Nothing here imports a UI.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from ..discovery.spec_update import (
     implicit_tree_op,
     is_literal_variable,
     materialize_implicit_metrics,
+    unknown_override_modes,
     validate_entry_metric_tree,
 )
 from ..discovery.test_registry import (
@@ -53,6 +55,8 @@ from .spec_document import PatchOp, SpecDocument
 
 Event = Literal["spec", "results", "job", "selection"]
 Listener = Callable[[dict[str, Any]], None]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -167,8 +171,8 @@ class Session:
         self.spec = spec
         self.selection = Selection()
         self.comparisons = {}
+        self._emit("spec", models={t.model_id for t in tests})
         self._reload_results()
-        self._emit("spec", models=set(self.comparisons))
 
     def close(self) -> None:
         if self.running is not None:
@@ -237,6 +241,8 @@ class Session:
         )
 
         project = self._require_project()
+        if project.test(model_id) is None:
+            raise KeyError(model_id)
         comp = self.comparisons.get(model_id)
         result = project.results.get(model_id)
         ref = project.store.get_reference(model_id)
@@ -296,7 +302,7 @@ class Session:
         effective = candidate.effective()  # PatchError on a bad path
         for model_id in models:
             validate_entry_metric_tree(
-                effective, model_id, project.config
+                effective, model_id, project.config, project.store
             )  # PatchError
         tests = self._merge(
             project.config, project.scanned, effective
@@ -381,20 +387,37 @@ class Session:
             ) as e:  # a job's failure is reported, not raised on its thread
                 job.error = e
             finally:
-                self._post(lambda: self._finish_job(job, outcome.reloads_results))
+                finish = lambda: self._finish_job(job, outcome.reloads_results)  # noqa: E731
+                try:
+                    self._post(finish)
+                except BaseException as e:  # the loop is gone: finish here, never wedge
+                    job.error = job.error or e
+                    finish()
 
         threading.Thread(
             target=work, name=f"dstf-job-{outcome.label}", daemon=True
         ).start()
 
     def _finish_job(self, job: RunningJob, reloads_results: bool) -> None:
+        """Release the lock, reload if the job asked and succeeded, tell the
+        listeners, mark done — the last two whatever the reload or a
+        listener does, so a waiting shell never sees a job that neither
+        finished nor failed."""
         self.running = None
-        if reloads_results and job.error is None and self.project is not None:
-            self._reload_results()
-        self._emit(
-            "job", state="failed" if job.error is not None else "finished", job=job
-        )
-        job.done.set()
+        try:
+            if reloads_results and job.error is None and self.project is not None:
+                self._reload_results()
+        except BaseException as e:
+            job.error = e
+        finally:
+            try:
+                self._emit(
+                    "job",
+                    state="failed" if job.error is not None else "finished",
+                    job=job,
+                )
+            finally:
+                job.done.set()
 
     # -- internals ---------------------------------------------------------
 
@@ -414,12 +437,20 @@ class Session:
         return merge_tests(scanned, spec_tests_by_model(models))
 
     def _rebuild_tests(self, models: set[str]) -> None:
+        """Re-merge the scan against the effective spec; models the spec no
+        longer names drop out of ``comparisons``, models it newly names are
+        scored (with whatever result the last reload holds for them)."""
         project = self._require_project()
         project.tests = self._merge(
             project.config, project.scanned, self.spec.effective()
         )
-        self._emit("spec", models=models)
-        self._score_all(models)
+        current = {t.model_id for t in project.tests}
+        gone = set(self.comparisons) - current
+        new = current - set(self.comparisons)
+        for model_id in gone:
+            del self.comparisons[model_id]
+        self._emit("spec", models=models | gone | new)
+        self._score_all((models | new) & current)
 
     def _score(self, model_id: str) -> TestComparison:
         project = self._require_project()
@@ -447,21 +478,47 @@ class Session:
         self._emit("results", models=wanted)
 
     def _reload_results(self) -> None:
+        """Re-read the last run and rescore — every model except the ones a
+        running job has locked: their directories are being rewritten, so
+        their in-memory result and verdict stand until that job's own
+        completion reload (which runs after the lock is released)."""
         project = self._require_project()
-        project.results = project.backend.read_last_results(project.tests)
-        self._score_all(t.model_id for t in project.tests)
+        locked = self.running.models if self.running is not None else frozenset()
+        fresh = project.backend.read_last_results(project.tests)
+        for model_id in locked:
+            if model_id in project.results:
+                fresh[model_id] = project.results[model_id]
+            else:
+                fresh.pop(model_id, None)
+        project.results = fresh
+        self._score_all(t.model_id for t in project.tests if t.model_id not in locked)
 
     def _materializable(self, model_id: str, entry: dict) -> bool:
-        """Every tracked variable is a literal name the test's result
-        resolved, so a leaf per variable scores the same set the flat path
-        scored. A glob, a missing name, or no successful result: False."""
+        """Would a leaf per tracked variable score exactly what the flat
+        path scored? False — and ``rescore`` stages nothing — when any of
+        the four ways the two paths differ applies: a glob pattern (a
+        sentinel leaf), a name the result did not resolve (same), an
+        override whose ``mode`` no metric is registered under (the flat
+        path fails it; a tree would score nrmse), or a reference-JSON
+        override for a variable the spec does not override (the flat path
+        merges it; a tree ignores it). Also False with no successful result.
+        Each case has its negative test in tests/test_session.py."""
         project = self._require_project()
         variables = entry.get("variables") or []
         result = project.results.get(model_id)
         if not variables or result is None or not result.success:
             return False
         resolved = {v.name for v in result.variables}
-        return all(is_literal_variable(v) and v in resolved for v in variables)
+        if not all(is_literal_variable(v) and v in resolved for v in variables):
+            return False
+        if unknown_override_modes(entry):
+            return False
+        spec_overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
+        ref = project.store.get_reference(model_id) or {}
+        ref_overrides = (ref.get("comparison") or {}).get("variable_overrides") or {}
+        return not any(
+            v in ref_overrides and v not in spec_overrides for v in variables
+        )
 
     def _refuse_if_locked(self, models: Iterable[str]) -> None:
         if self.running is None:
@@ -471,8 +528,14 @@ class Session:
             raise LockedError(locked, self.running.label)
 
     def _emit(self, event: Event, **payload: Any) -> None:
+        """Every listener hears every event: one that raises (a deleted UI
+        element, say) is logged and skipped, never allowed to stop the
+        others or to unwind a job's completion."""
         for cb in list(self._listeners.get(event, [])):
-            cb({"event": event, **payload})
+            try:
+                cb({"event": event, **payload})
+            except Exception:
+                logger.exception("listener for %r failed", event)
 
 
 @dataclass(frozen=True)
