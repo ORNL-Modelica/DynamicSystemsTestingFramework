@@ -13,7 +13,7 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.app import Shell  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from test_session import A, _Gate, _project  # noqa: E402
+from test_session import A, D, _Gate, _project  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -129,3 +129,72 @@ async def test_a_leaf_config_error_shows_inline_on_the_form(shell):
         await user.open("/")
         await _select_leaf(user, A)
         await user.should_see("requires at least one of")
+
+
+async def test_edit_tree_needs_exactly_one_test(shell):
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={A, D})
+        await user.should_see("select exactly one test")  # should_see retries; no sleep
+
+
+async def test_edit_tree_wrap_add_remove_and_combinator_edits(shell):
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        user.find(marker=A).click()
+        await user.should_see("Edit tree")
+        user.find("Edit tree").click()
+        # The button TEXT is `wrap /metrics`; the click goes through the
+        # marker, because content matching is a substring test and
+        # "wrap /metrics" also matches "wrap /metrics/children/0", which
+        # `find` would click too (markers match exactly).
+        await user.should_see("wrap /metrics")
+        before = shell.session.tree(A)
+        # Wrapping the whole tree in warn leaves no hard leaf: the D66
+        # validator refuses, the tab says why, the tree is what it was.
+        user.find(marker="wrap:/metrics").click()
+        await user.should_see("apply wrap")
+        kind = next(
+            c
+            for c in user.find(ui.select).elements
+            if c.props.get("label") == "combinator"
+        )
+        kind.set_value("warn")
+        user.find("apply wrap").click()
+        await user.should_see("validator rejected")
+        assert shell.session.tree(A) == before
+        # A legal sequence: add a second leaf, make the root k-of-n with
+        # k=1, remove the second leaf.
+        await user.should_see("add leaf under /metrics")
+        user.find(marker="add:/metrics").click()
+        await user.should_see("apply add")
+        var = next(
+            c
+            for c in user.find(ui.select).elements
+            if c.props.get("label") == "leaf variable"
+        )
+        var.set_value("x")
+        user.find("apply add").click()
+        await user.should_see("/metrics/children/1")
+        assert len(shell.session.tree(A)["children"]) == 2
+        await user.should_see("edit /metrics")
+        user.find(marker="edit:/metrics").click()
+        await user.should_see("apply edit")
+        kind = next(
+            c
+            for c in user.find(ui.select).elements
+            if c.props.get("label") == "combinator"
+        )
+        kind.set_value("k-of-n")
+        k = next(
+            c for c in user.find(ui.number).elements if c.props.get("label") == "k"
+        )
+        k.set_value(1)
+        user.find("apply edit").click()
+        await user.should_see("k=1")
+        tree = shell.session.tree(A)
+        assert tree["combinator"] == "k-of-n" and tree["k"] == 1
+        await user.should_see("remove /metrics/children/1")
+        user.find(marker="remove:/metrics/children/1").click()
+        await user.should_see("k-of-n k=1 [1]")  # the centre's root row
+        assert len(shell.session.tree(A)["children"]) == 1
