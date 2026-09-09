@@ -1304,3 +1304,33 @@ planning.
     mentions if that dated review is ever edited.
   - `figures/` is outside mypy's scoped file list and type-checks clean;
     one line in `pyproject.toml` adds it.
+
+- **After the Session (2026-09-09), follow-ups** — sub-project 3 of the
+  two-tier split shipped (the Session, the capability contract, the three
+  seams; D126 for the tree-scores-what-it-names rule). None blocks the shell:
+  - 70 TRANSFORM tests cannot have their criteria edited in the tool: their
+    recorded result variable names carry a newline (a line-wrapped `x=`
+    expression the `.mo` parser never normalised, e.g.
+    `heatTransfer.alphas[\n        1, 1]`); the flat path labels them `x[N]`
+    for display and no tree leaf can name them. The fix is whitespace
+    normalisation in the parser's `x_expressions` and the result naming,
+    which also changes the names stored in baselines — a coordinated change.
+  - `read_results` prints its progress to stdout; the Session inherits it on
+    open and on every reload, inside a UI process. A `quiet` flag or a logger
+    belongs with the run callable (sub-project 5).
+  - `Session.open` is all-or-nothing on a comparator exception: one malformed
+    flat override (`tube_width_mode: "bogus"`, `tolerance: "abc"`) raises out
+    of `compare_one` and no project opens. Pre-existing in `compare_all`; the
+    tool needs per-test isolation.
+  - `JobContext.project` hands a job the mutable project (store, backend,
+    results); the read-only view's `_store` and `_session` are reachable by
+    name. Enforcement is Python-convention strength; the design chose that
+    line.
+  - `spec-update` cannot materialize a tree for a pattern-tracked or
+    annotation-tracked test (it has no result to resolve against); the tool
+    can. Either accept that the CLI is the narrower editor or give it a
+    `--from-results` that reads the last run.
+  - The review loop's `[a]` still calls `store_reference` directly; route it
+    through `accept_run_results` when the tool's Accept lands.
+  - `docs/patterns.md` still describes the pre-D125 browser editors in the
+    present tense; a docs sweep with this file's older entries.
