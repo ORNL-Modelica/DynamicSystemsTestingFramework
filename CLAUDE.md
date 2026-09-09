@@ -23,13 +23,13 @@ DynamicSystemsTestingFramework/
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
 │   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
-│   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers
+│   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers,
+│   │                             #      mode_schema (derive_schema — JSON-Schema export + the tool's forms)
 │   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path)
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
-│   │                             #      the shell lands with `dstf author`
+│   │                             #      app.py (the NiceGUI shell), forms.py, builtin/ (edit criteria + edit tree)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly) + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py classifier + console/junit + context_builder + report_suite + dashboard_render
-│       ├── ui/                   # mode_controls: derive_schema only (JSON-Schema export + the authoring tool's forms)
 │       └── templates/            # interactive.html + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + vendor/plotly.min.js (offline-capable reports)
 ├── examples/
 │   ├── modelica/ModelicaTestingLib/   # Demo Modelica library (UnitTests component + 10+ showcase tests)
@@ -90,6 +90,9 @@ uv run dstf --config testing.json compare --report-format html --output report.h
 # multi-model form, from any source
 uv run dstf --config testing.json spec-update spec_patch.json
 
+# The authoring tool: a browser shell over the last run (needs the [author] extra)
+uv run dstf --config testing.json author [--port N] [--no-browser]
+
 # Baseline-role CLIs
 uv run dstf --config testing.json companion add <model> <name> <path>
 uv run dstf --config testing.json soft-check list <model>
@@ -128,7 +131,9 @@ stay green: `uv run` re-locks silently where `uv sync --locked` refuses. In a
 
 `uv sync` prunes anything you did not ask for **on that command line**, lock
 member or not, so name every extra at once (`uv sync --extra dev --extra fmpy
---extra om --locked`). A package inside `.venv` but outside the lock — `pytest-playwright`
+--extra om --extra author --locked`). CI installs `author` (NiceGUI), so the
+authoring-shell tests run there; a local `uv sync --extra dev --locked` alone
+leaves them skipped by their `importorskip`. A package inside `.venv` but outside the lock — `pytest-playwright`
 for the browser tests — needs `--inexact` or the next sync removes it.
 (`pre-commit` sidesteps this: install it with `uv tool install`, outside
 `.venv`, as `.pre-commit-config.yaml` documents.)
@@ -211,7 +216,7 @@ Per-variable override (spec) > per-variable override (reference JSON) > per-test
 - **`Backend`** (`backends/base.py`) — abstract interface; backends self-register via `@register` and declare `Capability` flags (`BATCH_FALLBACK`, `FMU_EXPORT`, ...). Concrete backends: `DymolaBackend` / `PersistentDymolaBackend`, `FmpyBackend`, `OpenModelicaBackend` / `PersistentOpenModelicaBackend`, `JuliaBackend` / `PersistentJuliaBackend`, `PythonBackend`.
 - **`Worker`** + **`PersistentBackendBase`** (`backends/persistent.py`) — `Worker` ABC declares the long-lived-process contract every persistent backend must satisfy. It is itself a template-method class: `run_test_with_timeout` / `close` / `_kill_tracked_pids` (watchdog thread, timeout kill, process-tree kill incl. orphan snapshot, disk rescue, restart-accounting flags) are implemented once in the base. A backend supplies abstract `start` / `is_alive`, the `run_test` hook, and optionally `_evaluate_from_disk` / `_detach_interface` + `_shutdown_interface` / `_quiet` / the `kill_name_hint`, `timeout_kill_grace`, `exec_thread_prefix` class attrs. `PersistentBackendBase` is a template-method class owning the worker-pool orchestration (parallel startup, shared queue + sentinel dispatch, per-worker restart on death). New persistent backends supply a `Worker` subclass + a small set of hooks (`worker_cls`, `backend_label`, `make_worker`, `setup_before_workers`, `preflight`) — see [docs/extensibility.md](docs/extensibility.md) §3 "Persistent-worker contract".
 - **`ReferenceStore`** (`storage/reference_store.py`; role CRUD in `storage/roles.py`) — primary refs + soft_checks + companions; `RefIndex` (`storage/ref_index.py`) built in-memory from scanning.
-- **`ComparisonMode`** (`comparison/modes.py`) — strategy pattern for per-variable comparison with typed config dataclasses; field metadata (`label` / `help` / `ui_min` / `ui_max`) flows into auto-derived UI via `reporting/ui/mode_controls.py`.
+- **`ComparisonMode`** (`comparison/modes.py`) — strategy pattern for per-variable comparison with typed config dataclasses; field metadata (`label` / `help` / `ui_min` / `ui_max`) flows into auto-derived UI via `comparison/mode_schema.py`.
 - **`MetricTree`** (`comparison/tree_spec.py` + `tree_eval.py`) — `LeafSpec` / `CombinatorSpec` + evaluator; `implicit_and_tree()` for specs without an explicit tree; `validator.py` enforces baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped; companions not targetable).
 - **`comparator`** (`comparison/comparator.py`) — orchestrates per-test comparison; threads primary + named baselines into the evaluator; derives `TestComparison.passed` from the tree root.
 

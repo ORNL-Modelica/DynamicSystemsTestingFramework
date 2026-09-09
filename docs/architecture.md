@@ -92,6 +92,7 @@ src/dstf/
 │   ├── comparator.py         # compare_test / compare_all orchestration; per-mode scoring functions
 │   ├── modes.py              # ComparisonMode ABC + 7 modes (nrmse, tube, points, range, event-timing,
 │   │                         #   dominant-frequency, scalar); typed configs; resolve_mode()
+│   ├── mode_schema.py        # derive_schema — per-mode schema from typed comparison configs
 │   ├── tree_spec.py          # MetricTree LeafSpec / CombinatorSpec + implicit_and_tree() builder
 │   ├── tree_eval.py          # Tree evaluator threading primary + named baselines
 │   └── validator.py          # Baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped)
@@ -104,7 +105,10 @@ src/dstf/
 ├── authoring/
 │   ├── session.py            # Session: open / rescore / view / stage / save / discard / export / apply
 │   ├── capabilities.py       # The capability contract: Capability, Scope, the five outcomes
-│   └── spec_document.py      # SpecDocument — the spec as loaded, its pending ops and its on-disk hash
+│   ├── spec_document.py      # SpecDocument — the spec as loaded, its pending ops and its on-disk hash
+│   ├── app.py                # The NiceGUI shell: fixed layout, event→refresh bridge, capability routing
+│   ├── forms.py              # NiceGUI controls from a mode's derived schema
+│   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_tree.py
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
     ├── junit_report.py       # JUnit XML for CI
@@ -114,10 +118,9 @@ src/dstf/
     ├── report_suite.py       # Per-test interactive.html render + comparison_data.json sidecar
     ├── overlay_loader.py     # Companion CSV/JSON ingest + soft-check baseline projection
     ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf export-schema`)
-    ├── templates/            # interactive.html (server-rendered tree, summary, banner) + report.js
-    │                         #   (copied out as interactive.js via report_suite.INTERACTIVE_JS_PARTS)
-    │                         #   + dashboard.html / dashboard.js + vendor/plotly.min.js
-    └── ui/mode_controls.py   # derive_schema — per-mode schema from typed comparison configs
+    └── templates/            # interactive.html (server-rendered tree, summary, banner) + report.js
+                              #   (copied out as interactive.js via report_suite.INTERACTIVE_JS_PARTS)
+                              #   + dashboard.html / dashboard.js + vendor/plotly.min.js
 ```
 
 The figure layer sits beside them, and both tiers draw from it:
@@ -130,8 +133,10 @@ src/dstf/figures/
 └── decimate.py               # LTTB decimation on the view, before any trace exists
 ```
 
-`authoring/` is the authoring tier's core — the tool's state machine, with no UI
-framework in it; the shell that drives it lands in sub-project 4. It shares the
+`authoring/` is the authoring tier — the tool's state machine and the shell
+`dstf author` serves. Only `app.py`, `forms.py` and the built-in panels import a
+UI framework; the Session, the capability contract and the spec document stay
+pure, so the rest of `dstf` runs without the `[author]` extra. It shares the
 CLI's paths rather than duplicating them: `discovery/spec_update.py` is the
 read-modify-write both `dstf spec-update` and `Session.save` call, and
 `storage/accept.py` is the one accept path `run --accept` and `compare --accept`

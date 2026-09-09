@@ -158,6 +158,9 @@ uv run dstf --config testing.json run --rerun failed,sim-failed --merge --report
 # Compare without re-simulating (uses last results)
 uv run dstf --config testing.json compare
 
+# Open the authoring tool in a browser (needs the [author] extra)
+uv run dstf --config testing.json author
+
 # Apply an RFC 6902 JSON-Patch envelope against test_spec.json — single- or
 # multi-model form, from any source
 uv run dstf --config testing.json spec-update spec_patch.json

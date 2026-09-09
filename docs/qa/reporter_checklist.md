@@ -105,6 +105,46 @@ Requires a registered companion (see Prep). On BouncingBall's `h` plot:
 - [ ] Overlays only appear on plots whose variable they carry data for —
       a companion with only `h` data doesn't show a picker on the `v` plot.
 
+## Authoring tool
+
+`dstf author` is covered in Python (the shell's regions and both built-in
+capabilities through NiceGUI's in-process `user_simulation`) and by one
+Chromium smoke test that edits a tolerance and saves nothing. What stays
+manual is the feel of a live edit and the states a single page cannot reach.
+
+### Prep
+
+```bash
+uv sync --extra dev --extra author --locked
+uv run dstf --config examples/fmu/testing.json run --report
+uv run dstf --config examples/fmu/testing.json author
+```
+
+The second command leaves results and a dashboard for the tool to read; the
+third opens the tab. Discard anything staged before quitting, or the spec is
+left as you edited it.
+
+- [ ] The tab opens on the project: the header names the library and the
+      backend, and the test list carries one row per discovered test with its
+      status badge.
+- [ ] Click a test: the centre shows the variable picker, a painted figure and
+      the metric tree, and the tree's verdicts agree with what the CLI printed.
+- [ ] Click a leaf, open Edit criteria, and change the tolerance so the leaf
+      fails: the verdict flips, the figure follows, and the header's pending
+      count reads 1 — not one per keystroke.
+- [ ] Discard: the verdict comes back, the drawer is empty, the count is 0.
+- [ ] Stage the edit again and Save: `test_spec.json` carries exactly that
+      change and the count is 0. Edit the file in another editor, stage
+      something and Save again: the tool refuses and offers to reload.
+- [ ] Export writes `<work_dir>/spec_patch.json`, and
+      `dstf --config ... spec-update <that file>` applies it.
+- [ ] Select two tests: Edit tree is greyed with "select exactly one test",
+      and Edit criteria is not listed at all — its scope is a leaf. Uncheck
+      them all and the tab area says nothing applies to the selection; no v1
+      capability is PROJECT-scope.
+- [ ] The dashboard link opens the suite page in a new tab.
+- [ ] Quit shuts the server down; the tab shows NiceGUI's disconnected banner.
+
 ## Schema export (one-off sanity)
 
 - [ ] `uv run dstf export-schema` emits valid JSON-Schema

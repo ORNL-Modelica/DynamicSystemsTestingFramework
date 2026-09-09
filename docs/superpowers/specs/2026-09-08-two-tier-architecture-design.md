@@ -487,6 +487,29 @@ the plug-in hook with each `Scope` and each `Outcome` kind, and asserts the
 shell lists it, greys it with its reason, and routes its outcome, with no file
 outside the test changed.
 
+**Amended in sub-project 4.** `Panel` gains `submit(**inputs)`: a capability
+builds its controls, and when one fires it calls `panel.submit(...)`; the shell
+calls `act(view, **inputs)` and hands the outcome to `Session.apply`, showing an
+exception in the tab with the Session unchanged — the spec defined `panel` and
+`act` but not who calls `act`. The view gains two tree readers: `tree_view`
+(the report's own view dict, built by the report's function — what the shell
+draws read-only) and `tree` (a copy of the raw tree a `Patch` edits, the entry's
+`metrics` or the tree `rescore` would materialize). `derive_schema` moves to
+`comparison/mode_schema.py` and `reporting/ui/` is deleted; its two consumers
+are `export-schema` and the shell's form emitter. The shell serves the dashboard
+itself at `/dashboard/dashboard.html`, a static mount of the work dir, because a
+browser refuses a `file://` link from an `http://` page; it binds `127.0.0.1`
+rather than NiceGUI's every-interface default, since the process can write the
+spec and the store; and `dstf author` gains `--no-browser` for a headless launch
+(the default opens the tab, as §4.7 says). Edit criteria stages on every control
+change as one `replace` of the whole leaf, and `Session.stage` collapses
+consecutive replaces of one path into one pending op, so the drawer and the
+exported envelope read "leaf → new leaf" rather than a keystroke log; Edit tree
+stages one op per structural action. Export writes `<work_dir>/spec_patch.json`
+and shows the path, where §4.7 said only "writes an envelope". `tube_points`
+editing stays sub-project 6's: this tier shows it read-only, and the split
+upper / lower form waits for the plot handles it belongs with.
+
 ### 4.7 The tool's v1 surface
 
 **Launch.** `dstf author --config testing.json [--filter ...] [--port N]`

@@ -459,6 +459,68 @@ uv run dstf --config testing.json add MyLib.Examples.NewTest
 
 ---
 
+## The authoring tool
+
+`dstf author` opens a local browser tool over the same project every other
+command reads: the test list, the figures the report page draws, the scored
+metric tree, and the capabilities that edit `test_spec.json`. It needs the
+`[author]` extra (NiceGUI); without it the command exits with the install hint.
+
+```bash
+uv sync --extra dev --extra author --locked
+uv run dstf --config testing.json author
+```
+
+`--config` is required. The tool edits and saves the spec that file names, so
+`--source-path`, `--reference-root`, `--test-spec` and `--dymola-interface` are
+refused rather than pointing it at a different spec than it shows. `--filter`
+and `--package` narrow the test list; `--work-dir` and `--backend` choose the
+run outputs and the reference partition to read; `--port` moves the server off
+8080; `--no-browser` serves without opening a tab. The server binds `127.0.0.1`
+only, one project per process, and runs until Ctrl-C or Quit.
+
+**The layout.** The header carries the library, the backend, the pending-op
+count (click it for the drawer of staged ops, grouped by model), Save, Discard,
+Export, a link to the dashboard, Close project and Quit. Left is the test list:
+a filter box, a checkbox per test for multi-select, the name as a button that
+selects that test alone, and its status badge. The centre, with one test
+selected, shows the variable picker, that variable's figure, and the scored
+metric tree read-only — verdict, criterion and score per leaf; clicking a leaf
+selects it. Right is one tab per capability whose scope matches the selection,
+greyed with its reason when it is not available (nothing selected, or a job
+running on the test). The footer shows the running job's label and links to the
+artifacts capabilities wrote.
+
+**Edit criteria** applies to a selected leaf: the metric, the form derived from
+that metric's config dataclass, the window, and the baseline the leaf scores
+`against` — `primary`, plus the soft_checks when the leaf sits under a `warn`,
+since a soft_check anywhere else is what the validator refuses. A dataclass
+default is shown as a placeholder and never written, so an unset tolerance keeps
+falling back to the test's. Structured fields — tube control points, declared
+peaks, checkpoints — are shown read-only. Every control change stages one
+`replace` of the whole leaf and rescores the test, so the figure and the
+verdicts follow the edit; consecutive replaces of one leaf collapse into one
+pending op, so the drawer reads "leaf → new leaf" rather than a keystroke log.
+
+**Edit tree** applies to exactly one selected test and stages one op per
+structural change: wrap a node in a combinator, change a combinator's kind and
+its `k` / weights / threshold, add a leaf under a combinator, remove a node (the
+root has nothing to be removed from). A test the flat path scored gets its
+implicit tree materialized by the same op.
+
+**Save, Discard, Export.** Save applies exactly the pending ops through the same
+read-modify-write `dstf spec-update` uses, and refuses when the file changed on
+disk since it was loaded — offering to reload it or to keep your edits. Discard
+drops the pending ops and restores the loaded verdicts. Export writes the
+multi-model envelope to `<work_dir>/spec_patch.json`, which `dstf spec-update`
+applies unchanged.
+
+The dashboard link opens `<work_dir>/dashboard.html` served by the tool itself
+(a browser refuses a `file://` link from an `http://` page), so it shows the
+last run of the project that is open.
+
+---
+
 ## Typical workflows
 
 ### First-time setup for a new library

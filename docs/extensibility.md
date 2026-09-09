@@ -289,9 +289,9 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
 2. `compare` is *pure* — no I/O, no mutation of inputs, no global state. Deterministic given inputs.
 3. `diagnostics` must be JSON-serializable (travels to reports + reference files).
 4. Metric-specific configuration is typed (frozen dataclass); its field
-   metadata (`label`/`help`) drives the exported JSON-Schema, and from
-   sub-project 4 the authoring tool's auto-derived forms. Both read the same
-   `derive_schema` in `reporting/ui/mode_controls.py`.
+   metadata (`label`/`help`) drives the exported JSON-Schema and the authoring
+   tool's auto-derived forms. Both read the same `derive_schema` in
+   `comparison/mode_schema.py`.
 5. `score_direction` declares which way a better score runs (`"lower"` for
    error-like, `"higher"` for coverage-like). The validator uses it to reject
    `weighted` nodes mixing directions.
@@ -453,10 +453,39 @@ name is an error rather than an import-order race.
 
 A capability receives a `SessionView` — readers only — and applies nothing
 itself: the Session is the single place a spec is mutated, a store is written or
-a job is launched. The shell that lists capabilities by scope and gives `panel`
-its container is sub-project 4; §4.6 of [the two-tier architecture
-design](superpowers/specs/2026-09-08-two-tier-architecture-design.md) has the
-full specification.
+a job is launched. The view carries what a panel draws from: `comparisons`,
+`figure(model_id, variable)`, `tree_view(model_id)` — the read-only tree the
+report page and the shell both show, built by the report's own function — and
+`tree(model_id)`, a copy of the raw tree a `Patch` edits (the entry's `metrics`
+block, else the tree a rescore would materialize for a test the flat path
+scored). `rescore` is the one reader that writes — it stages that
+materialization — so `available` must not call it.
+
+**Building a panel.** `Panel` is a container the capability owns entirely: it
+builds its controls into the shell's current slot, and may subscribe to the
+shell's centre figure through `panel.figure.on(kind, handler)`, whose handler
+receives the primitive's id and the Plotly event payload. When a control fires,
+the capability calls `panel.submit(**inputs)`: the shell calls
+`act(view, **inputs)` and hands what comes back to `Session.apply`. A capability
+never calls `act` or `apply` itself, and an exception from either is shown in
+the capability's tab with the Session unchanged. Import the UI framework inside
+`panel`, not at module level, so the module stays importable without the
+`[author]` extra — the built-ins do.
+
+**Forms.** A panel over a typed config need not hand-build its controls.
+`derive_schema(config_cls, mode=...)` (`comparison/mode_schema.py`) describes
+the dataclass, and `render_form(schema, values, on_change)`
+(`authoring/forms.py`) turns each field into one NiceGUI control, calling
+`on_change` with the full values dict after every edit. A dataclass default is
+shown as the control's placeholder and never written; `ui_min` / `ui_max`
+validate rather than clamp; `passthrough` fields are shown read-only. The same
+`derive_schema` feeds `dstf export-schema`'s JSON-Schema emitter.
+
+The two shipped capabilities live in `authoring/builtin/` and register through
+this same call. §4.6 and §4.7 of [the two-tier architecture
+design](superpowers/specs/2026-09-08-two-tier-architecture-design.md) have the
+full specification; [usage.md](usage.md#the-authoring-tool) describes the tool
+they build.
 
 ---
 
