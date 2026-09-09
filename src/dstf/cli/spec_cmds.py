@@ -5,7 +5,6 @@ import argparse
 import sys
 from pathlib import Path
 
-from ..config import ConfigError
 from .common import _build_config
 
 
@@ -50,8 +49,8 @@ def cmd_add(args: argparse.Namespace) -> int:
 def cmd_spec_update(args: argparse.Namespace) -> int:
     """Update test_spec.json from an RFC 6902 patch envelope (6.4.3).
 
-    The envelope is the only accepted input shape — it is what the reporter's
-    export panel emits.
+    The envelope is the only accepted input shape: the multi-model form the
+    authoring tool exports, or the single-model form older files carry.
     """
     import json as json_mod
 
@@ -70,26 +69,17 @@ def cmd_spec_update(args: argparse.Namespace) -> int:
         return 1
 
     from ..discovery.patch_apply import PatchError
+    from ..discovery.patch_envelope import parse_envelope
     from ..discovery.spec_update import apply_validated_patches
 
-    model_id = update_data.get("model")
-    if not model_id:
-        print("JSON must contain a 'model' field")
-        return 1
-    patch = update_data.get("patch")
-    if not isinstance(patch, list):
-        raise ConfigError(
-            f"{json_file}: not a JSON-Patch envelope — expected "
-            '{"model": "<model id>", "patch": [<RFC 6902 op>, ...]}, '
-            f"got a 'patch' of type {type(patch).__name__}"
-        )
-
+    groups = parse_envelope(update_data, label=str(json_file))
+    requested = [(g.model_id, g.ops) for g in groups]
     try:
-        applied = apply_validated_patches(spec_path, [(model_id, patch)], config)
+        applied = apply_validated_patches(spec_path, requested, config)
     except PatchError as e:
         print(f"Patch failed: {e}")
         return 1
-    _print_applied(applied, [(model_id, patch)], spec_path)
+    _print_applied(applied, requested, spec_path)
     return 0
 
 

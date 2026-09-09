@@ -298,3 +298,94 @@ class TestSpecUpdateMaterialization:
         rc = _run_spec_update(spec, patch)
         assert rc == 1
         assert spec.read_text(encoding="utf-8") == original  # untouched
+
+
+class TestMultiModelEnvelope:
+    def test_two_models_in_one_file(self, tmp_path):
+        spec = tmp_path / "test_spec.json"
+        spec.write_text(
+            json.dumps(
+                {
+                    "tests": [
+                        {"model": "A", "variables": ["x"]},
+                        {"model": "B", "variables": ["y"]},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        patch = tmp_path / "p.json"
+        patch.write_text(
+            json.dumps(
+                {
+                    "patches": [
+                        {
+                            "model": "A",
+                            "patch": [
+                                {
+                                    "op": "add",
+                                    "path": "/comparison",
+                                    "value": {"tolerance": 0.1},
+                                }
+                            ],
+                        },
+                        {
+                            "model": "B",
+                            "patch": [
+                                {
+                                    "op": "add",
+                                    "path": "/comparison",
+                                    "value": {"tolerance": 0.2},
+                                }
+                            ],
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert _run_spec_update(spec, patch) == 0
+        data = json.loads(spec.read_text(encoding="utf-8"))
+        assert data["tests"][0]["comparison"] == {"tolerance": 0.1}
+        assert data["tests"][1]["comparison"] == {"tolerance": 0.2}
+
+    def test_a_bad_second_model_leaves_the_first_unwritten(self, tmp_path):
+        spec = tmp_path / "test_spec.json"
+        spec.write_text(
+            json.dumps({"tests": [{"model": "A", "variables": ["x"]}]}),
+            encoding="utf-8",
+        )
+        before = spec.read_bytes()
+        patch = tmp_path / "p.json"
+        patch.write_text(
+            json.dumps(
+                {
+                    "patches": [
+                        {
+                            "model": "A",
+                            "patch": [
+                                {
+                                    "op": "add",
+                                    "path": "/comparison",
+                                    "value": {"tolerance": 0.1},
+                                }
+                            ],
+                        },
+                        {
+                            "model": "A",
+                            "patch": [
+                                {
+                                    "op": "replace",
+                                    "path": "/simulation/stop_time",
+                                    "value": 3,
+                                }
+                            ],
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert _run_spec_update(spec, patch) == 1
+        assert spec.read_bytes() == before
