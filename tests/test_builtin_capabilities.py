@@ -129,6 +129,141 @@ async def test_a_leaf_config_error_shows_inline_on_the_form(shell):
         await user.open("/")
         await _select_leaf(user, A)
         await user.should_see("requires at least one of")
+        # ON THE FORM: the label sits inside the tab panel, not only in the
+        # centre's tree row — and it follows a rescore. Set a bound and it goes.
+        (label,) = user.find(marker="leaf-error").elements
+        assert any(_inside(label, panel) for panel in user.find(ui.tab_panel).elements)
+        upper = next(
+            c
+            for c in user.find(ui.number).elements
+            if "Upper" in str(c.props.get("label"))
+        )
+        upper.set_value(2.0)
+        await user.should_not_see("requires at least one of")
+
+
+def _inside(element, container) -> bool:
+    node = element
+    while node is not None:
+        if node is container:
+            return True
+        node = node.parent_slot.parent if node.parent_slot is not None else None
+    return False
+
+
+async def test_a_mode_switch_starts_from_the_new_modes_defaults(shell):
+    """Set a tolerance, switch to range, set a bound: the leaf carries no
+    stale nrmse tolerance."""
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        await _select_leaf(user, A)
+        await user.should_see("Tolerance")
+        tol = next(
+            c
+            for c in user.find(ui.number).elements
+            if str(c.props.get("label")) == "Tolerance"
+        )
+        tol.set_value(0.5)
+        await user.should_see("2 pending")
+        mode = next(
+            c for c in user.find(ui.select).elements if c.props.get("label") == "mode"
+        )
+        mode.set_value("range")
+        await user.should_see("Upper bound")
+        upper = next(
+            c
+            for c in user.find(ui.number).elements
+            if "Upper" in str(c.props.get("label"))
+        )
+        upper.set_value(2.0)
+        leaf = shell.session.spec.pending[-1].value
+        assert leaf == {"metric": "range", "variable": "x", "max_value": 2.0}
+
+
+def _shell_with_soft_check(tmp_path, *ops):
+    """A fresh shell per simulation (a page cannot outlive its client):
+    A has a soft_check `om_cross`, plus whatever ops are staged."""
+    from dstf.authoring.spec_document import PatchOp  # noqa: F401
+
+    cfg, work = _project(tmp_path)
+    s = Shell()
+    s.open(cfg, work_dir=work)
+    t = [i / 4 for i in range(5)]
+    s.session.project.store.add_soft_check(
+        A, "om_cross", t, [{"index": 1, "name": "x", "values": t}]
+    )
+    s.session._reload_results()
+    if ops:
+        s.session.stage(list(ops))
+    return s
+
+
+WARN_LEAF = {
+    "combinator": "warn",
+    "children": [{"metric": "nrmse", "variable": "x", "against": "om_cross"}],
+}
+
+
+async def _against_select(user):
+    await user.should_see("against")
+    return next(
+        c for c in user.find(ui.select).elements if c.props.get("label") == "against"
+    )
+
+
+async def test_against_offers_no_soft_check_outside_warn(tmp_path):
+    """D66: a soft_check is a valid target only beneath a `warn`."""
+    s = _shell_with_soft_check(tmp_path)
+    async with user_simulation(root=s.root) as user:
+        await user.open("/")
+        await _select_leaf(user, A)
+        assert (await _against_select(user)).options == ["primary"]
+
+
+async def test_against_offers_the_soft_check_under_warn(tmp_path):
+    from dstf.authoring.spec_document import PatchOp
+
+    s = _shell_with_soft_check(
+        tmp_path, PatchOp(A, "add", "/metrics/children/-", WARN_LEAF)
+    )
+    async with user_simulation(root=s.root) as user:
+        await user.open("/")
+        await _select_leaf(user, A, path="/metrics/children/1/children/0")
+        against = await _against_select(user)
+        assert (
+            against.options == ["primary", "om_cross"] and against.value == "om_cross"
+        )
+
+
+async def test_against_keeps_a_value_the_store_no_longer_knows(tmp_path):
+    """The leaf one opens this panel to repair — its baseline was removed
+    after the spec was written; the validator refuses to STAGE such a leaf,
+    so it can only arrive from disk — must not crash the panel."""
+    import json
+
+    cfg, work = _project(tmp_path)
+    doc = json.loads((cfg.parent / "test_spec.json").read_text(encoding="utf-8"))
+    entry = next(e for e in doc["tests"] if e["model"] == A)
+    entry["metrics"] = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {
+                "combinator": "warn",
+                "children": [{"metric": "nrmse", "variable": "x", "against": "ghost"}],
+            },
+        ],
+    }
+    (cfg.parent / "test_spec.json").write_text(
+        json.dumps(doc, indent=2) + "\n", encoding="utf-8"
+    )
+    s = Shell()
+    s.open(cfg, work_dir=work)
+    async with user_simulation(root=s.root) as user:
+        await user.open("/")
+        await _select_leaf(user, A, path="/metrics/children/1/children/0")
+        against = await _against_select(user)
+        assert "ghost" in against.options and against.value == "ghost"
 
 
 async def test_edit_tree_needs_exactly_one_test(shell):

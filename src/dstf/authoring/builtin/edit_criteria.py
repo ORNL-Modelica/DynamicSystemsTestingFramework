@@ -7,13 +7,15 @@ consecutive replaces).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...comparison.mode_schema import derive_schema
 from ...comparison.registry import metric, metrics
 from ...comparison.tree_spec import LeafSpec, spec_to_raw
 from ..capabilities import Panel, Patch, Scope
-from ..session import SessionView
+
+if TYPE_CHECKING:
+    from ..session import SessionView
 from ..spec_document import PatchOp
 
 # NO module-level `nicegui` or `..forms` import: `import dstf.authoring` runs
@@ -71,8 +73,8 @@ class EditCriteria:
             "window": dict(leaf.get("window") or {}),
         }
         ui.label(f"{leaf['variable']} · {path}").classes("text-sm")
-        if leaf.get("error"):
-            ui.label(leaf["error"]).classes("text-negative")  # §4.7: inline on its form
+        # The leaf's config error is drawn by the shell directly above this
+        # panel and refreshed on every rescore (§4.7 "inline on its form").
 
         def emit() -> None:
             ui_panel.submit(model_id=model_id, path=path, **state)
@@ -133,6 +135,14 @@ class EditCriteria:
             ).props("dense")
         project = s.project
         names = list(project.baseline_names(model_id)) if project is not None else []
+        if not leaf.get("advisory"):
+            # D66: a soft_check may be targeted only under a `warn`; offering
+            # it here would stage an op the validator refuses every time.
+            names = [n for n in names if n == "primary"]
+        if state["against"] not in names:
+            # A leaf naming a baseline the store no longer has is exactly the
+            # leaf one opens this panel to repair: keep its value selectable.
+            names.append(state["against"])
         ui.select(
             names or ["primary"],
             label="against",

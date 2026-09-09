@@ -195,6 +195,21 @@ def test_argparse_subcommands_match_dispatch_table():
     )
 
 
+def test_author_refuses_the_global_flags_it_would_drop(tmp_path, capsys):
+    """The tool edits and saves the spec testing.json names; an override
+    here would show one file and save another. And no Config is built before
+    the refusal — a full resolution can write a default testing.json."""
+    (tmp_path / "package.mo").write_text("package X\nend X;\n", encoding="utf-8")
+    rc = main(["author", "--source-path", str(tmp_path), "--test-spec", "/x/spec.json"])
+    err = capsys.readouterr().err
+    assert rc == 2 and "needs --config" in err
+    assert not (tmp_path / "testing.json").exists()  # nothing was written
+    rc = main(
+        ["--config", str(tmp_path / "t.json"), "author", "--test-spec", "/x/spec.json"]
+    )
+    assert rc == 2 and "--test-spec" in capsys.readouterr().err
+
+
 def test_author_without_the_extra_says_how_to_install_it(monkeypatch, capsys, tmp_path):
     """NiceGUI is an optional extra: `dstf author` without it must name the
     install, not raise ImportError at the user."""

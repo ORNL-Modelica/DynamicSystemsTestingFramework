@@ -8,11 +8,13 @@ tree already shows. The D66 validator's refusal reaches the tab through
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...comparison.registry import DEFAULT_METRIC, combinators, metrics
 from ..capabilities import Panel, Patch, Scope
-from ..session import SessionView
+
+if TYPE_CHECKING:
+    from ..session import SessionView
 from ..spec_document import PatchOp
 
 # NO module-level `nicegui` import: `import dstf.authoring` runs

@@ -31,6 +31,19 @@ from .session import (
     StaleSpecError,
 )
 
+
+def _find_node(view: dict | None, path: str) -> dict | None:
+    if view is None:
+        return None
+    if view.get("path") == path:
+        return view
+    for child in view.get("children") or []:
+        found = _find_node(child, path)
+        if found is not None:
+            return found
+    return None
+
+
 # The classifier's CSS class names, as the NiceGUI palette.
 _BADGE_COLOR = {
     "pass": "positive",
@@ -63,8 +76,10 @@ class FigureHook:
         # The figure layer stamps every trace's primitive id in `meta.id`
         # (figures/plotly.py); marker groups carry per-point ids in
         # `customdata`. The trace index is the last resort.
-        trace = first.get("data") if isinstance(first.get("data"), dict) else {}
-        meta = trace.get("meta") if isinstance(trace.get("meta"), dict) else {}
+        trace = first.get("data")
+        meta = trace.get("meta") if isinstance(trace, dict) else None
+        if not isinstance(meta, dict):
+            meta = {}
         primitive = first.get("customdata")
         if primitive is None:
             primitive = meta.get("id")
@@ -111,8 +126,10 @@ class Shell:
         self.session.on(
             "spec", lambda e: self._refresh("header", "tests", "centre", "drawer")
         )
-        self.session.on("results", lambda e: self._refresh("tests", "centre"))
-        self.session.on("job", lambda e: self._refresh("jobs", "tests", "tabs"))
+        self.session.on(
+            "results", lambda e: self._refresh("tests", "centre", "leaf_error")
+        )
+        self.session.on("job", self._on_job)
         self.session.on("selection", lambda e: self._refresh("tests", "centre", "tabs"))
 
     # -- lifecycle ---------------------------------------------------------
@@ -132,6 +149,11 @@ class Shell:
             return []
         tests = _filter_tests(project.tests, self.filter, self.package)
         return [t.model_id for t in tests]
+
+    def _on_job(self, event: dict) -> None:
+        # A lock refusal shown in a tab is about a job that is now over.
+        self.errors.clear()
+        self._refresh("jobs", "tests", "tabs")
 
     def _refresh(self, *regions: str) -> None:
         """Refresh regions that exist. NiceGUI defers each refresh to a
@@ -362,7 +384,9 @@ class Shell:
         (model_id,) = tuple(sel.tests)
         comp = self.session.comparisons.get(model_id)
         names = (
-            [vc.name for vc in comp.variables if vc.name] if comp is not None else []
+            list(dict.fromkeys(vc.name for vc in comp.variables if vc.name))
+            if comp is not None
+            else []
         )
         if not names:
             result = project.results.get(model_id)
@@ -453,7 +477,23 @@ class Shell:
                         continue
                     if cap.name in self.errors:
                         ui.label(self.errors[cap.name]).classes("text-negative")
+                    if cap.scope is Scope.LEAF:
+                        self._leaf_error()
                     cap.panel(self.view, ShellPanel(self, cap, self.figure_hook))
+
+    @ui.refreshable_method
+    def _leaf_error(self) -> None:
+        """The selected leaf's config error, above every LEAF-scope panel
+        (§4.7 "inline on its form"), refreshed on every rescore — the panel
+        itself is not rebuilt on results, so the capability cannot keep
+        this current and the shell does."""
+        sel = self.session.selection
+        if len(sel.tests) != 1 or sel.leaf_path is None:
+            return
+        (model_id,) = tuple(sel.tests)
+        node = _find_node(self.session.tree_view(model_id), sel.leaf_path)
+        if node is not None and node.get("error"):
+            ui.label(node["error"]).classes("text-negative").mark("leaf-error")
 
     @ui.refreshable_method
     def _jobs(self) -> None:

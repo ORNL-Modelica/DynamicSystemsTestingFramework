@@ -82,6 +82,14 @@ def _set(form: Form, name: str, value: Any, on_change: OnChange) -> None:
     on_change(form.values())
 
 
+def _at_least(lo: float) -> Callable[[Any], bool]:
+    return lambda v: v is None or v >= lo
+
+
+def _at_most(hi: float) -> Callable[[Any], bool]:
+    return lambda v: v is None or v <= hi
+
+
 def _control(spec: FieldSpec, current: Any, set_value: Callable) -> ui.element:
     label = spec.label or spec.name
     if spec.type in ("float", "int"):
@@ -91,11 +99,9 @@ def _control(spec: FieldSpec, current: Any, set_value: Callable) -> ui.element:
         # would stage a rewrite the user never typed. Validate instead.
         validation: dict[str, Callable[[Any], bool]] = {}
         if spec.ui_min is not None:
-            lo = spec.ui_min
-            validation[f"below {lo}"] = lambda v, lo=lo: v is None or v >= lo
+            validation[f"below {spec.ui_min}"] = _at_least(spec.ui_min)
         if spec.ui_max is not None:
-            hi = spec.ui_max
-            validation[f"above {hi}"] = lambda v, hi=hi: v is None or v <= hi
+            validation[f"above {spec.ui_max}"] = _at_most(spec.ui_max)
         kwargs: dict[str, Any] = {"validation": validation}
         if spec.type == "int":
             kwargs["step"] = 1
