@@ -1048,7 +1048,7 @@ class TestFinding55MultiClassFiles:
 
 
 class TestSpecFromDocument:
-    """`test_models_from_document` is `parse_test_spec` without the disk."""
+    """`spec_models_from_document` is `parse_test_spec` without the disk."""
 
     def _spec(self):
         return {
@@ -1066,7 +1066,7 @@ class TestSpecFromDocument:
     def test_document_and_file_produce_the_same_models(self, tmp_path):
         from dstf.discovery.spec_parser import (
             parse_test_spec,
-            test_models_from_document,
+            spec_models_from_document,
         )
 
         (tmp_path / "Examples").mkdir()
@@ -1075,7 +1075,7 @@ class TestSpecFromDocument:
         spec_path.write_text(json.dumps(self._spec()), encoding="utf-8")
 
         from_file = parse_test_spec(spec_path)
-        from_doc = test_models_from_document(
+        from_doc = spec_models_from_document(
             self._spec(), base_dir=tmp_path, label="in memory"
         )
         assert [t.model_id for t in from_file] == [t.model_id for t in from_doc]
@@ -1089,21 +1089,21 @@ class TestSpecFromDocument:
         assert from_doc[1].source_file == (tmp_path / "Examples" / "B.py").resolve()
 
     def test_non_object_root_yields_nothing(self):
-        from dstf.discovery.spec_parser import test_models_from_document
+        from dstf.discovery.spec_parser import spec_models_from_document
 
-        assert test_models_from_document([], base_dir=Path("."), label="x") == []
+        assert spec_models_from_document([], base_dir=Path("."), label="x") == []
         assert (
-            test_models_from_document({"tests": "no"}, base_dir=Path("."), label="x")
+            spec_models_from_document({"tests": "no"}, base_dir=Path("."), label="x")
             == []
         )
 
     def test_bad_metric_tree_names_the_label(self):
         from dstf.config import ConfigError
-        from dstf.discovery.spec_parser import test_models_from_document
+        from dstf.discovery.spec_parser import spec_models_from_document
 
         doc = {"tests": [{"model": "Lib.A", "variables": ["x"], "metrics": 42}]}
         with pytest.raises(ConfigError, match="in memory"):
-            test_models_from_document(doc, base_dir=Path("."), label="in memory")
+            spec_models_from_document(doc, base_dir=Path("."), label="in memory")
 
 
 # ---------------------------------------------------------------------------

@@ -136,7 +136,7 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
     - Wildcard ["*"] — track all variables
 
     Reads the file, then hands the document to
-    :func:`test_models_from_document`; the authoring Session calls that
+    :func:`spec_models_from_document`; the authoring Session calls that
     directly with its in-memory document.
     """
     try:
@@ -144,12 +144,12 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
     except (json.JSONDecodeError, OSError) as e:
         logger.error("Failed to read test spec %s: %s", spec_path, e)
         return []
-    return test_models_from_document(
+    return spec_models_from_document(
         data, base_dir=spec_path.parent, label=str(spec_path)
     )
 
 
-def test_models_from_document(
+def spec_models_from_document(
     data: object, *, base_dir: Path, label: str
 ) -> list[TestModel]:
     """TestModels from an already-parsed spec document.
@@ -157,8 +157,9 @@ def test_models_from_document(
     ``base_dir`` anchors each entry's relative ``source``; ``label`` names the
     document in log messages and in the ``ConfigError`` a bad ``metrics``
     tree raises (a path on disk, or "in memory" for the Session's copy).
-    A non-object root or a non-list ``tests`` yields ``[]`` with an error
-    logged, as a malformed file always has.
+    A non-list ``tests`` yields ``[]`` with an error logged, as it always
+    has; a non-object root does the same (it used to raise). Not named
+    ``test_...``: pytest collects such a name when a test module imports it.
     """
     if not isinstance(data, dict):
         logger.error("Spec root must be an object in %s", label)

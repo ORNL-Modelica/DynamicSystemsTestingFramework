@@ -37,7 +37,7 @@
 | Path | Responsibility after this plan |
 |---|---|
 | `src/dstf/config.py` | `Config.spec_path` — the one place the `<reference_root>/test_spec.json` fallback is spelled. |
-| `src/dstf/discovery/spec_parser.py` | `test_models_from_document(data, *, base_dir, label)` — TestModels from a parsed document; `parse_test_spec(path)` is its disk wrapper. |
+| `src/dstf/discovery/spec_parser.py` | `spec_models_from_document(data, *, base_dir, label)` — TestModels from a parsed document; `parse_test_spec(path)` is its disk wrapper. |
 | `src/dstf/discovery/test_registry.py` | `scan_source_tests(config)`, `merge_tests(scanned, spec_tests)` (copies its inputs), `discover_tests(config, *, spec_document=None)`. |
 | `src/dstf/discovery/patch_apply.py` | `apply_patch_to_document(data, model_id, ops, *, whitelist)` — the in-memory half; `apply_patch(path, ...)` wraps it. |
 | `src/dstf/discovery/spec_update.py` (new) | `spec_entry`, `implicit_tree_op`, `materialize_implicit_metrics`, `validate_entry_metric_tree`, `apply_validated_patches` — the read-modify-write both `spec-update` and `Session.save` use. |
@@ -75,7 +75,7 @@
 
 ```python
 class TestSpecFromDocument:
-    """`test_models_from_document` is `parse_test_spec` without the disk."""
+    """`spec_models_from_document` is `parse_test_spec` without the disk."""
 
     def _spec(self):
         return {
@@ -91,7 +91,7 @@ class TestSpecFromDocument:
         }
 
     def test_document_and_file_produce_the_same_models(self, tmp_path):
-        from dstf.discovery.spec_parser import parse_test_spec, test_models_from_document
+        from dstf.discovery.spec_parser import parse_test_spec, spec_models_from_document
 
         (tmp_path / "Examples").mkdir()
         (tmp_path / "Examples" / "B.py").write_text("")
@@ -99,7 +99,7 @@ class TestSpecFromDocument:
         spec_path.write_text(json.dumps(self._spec()), encoding="utf-8")
 
         from_file = parse_test_spec(spec_path)
-        from_doc = test_models_from_document(
+        from_doc = spec_models_from_document(
             self._spec(), base_dir=tmp_path, label="in memory"
         )
         assert [t.model_id for t in from_file] == [t.model_id for t in from_doc]
@@ -110,18 +110,18 @@ class TestSpecFromDocument:
         assert from_doc[1].source_file == (tmp_path / "Examples" / "B.py").resolve()
 
     def test_non_object_root_yields_nothing(self):
-        from dstf.discovery.spec_parser import test_models_from_document
+        from dstf.discovery.spec_parser import spec_models_from_document
 
-        assert test_models_from_document([], base_dir=Path("."), label="x") == []
-        assert test_models_from_document({"tests": "no"}, base_dir=Path("."), label="x") == []
+        assert spec_models_from_document([], base_dir=Path("."), label="x") == []
+        assert spec_models_from_document({"tests": "no"}, base_dir=Path("."), label="x") == []
 
     def test_bad_metric_tree_names_the_label(self):
         from dstf.config import ConfigError
-        from dstf.discovery.spec_parser import test_models_from_document
+        from dstf.discovery.spec_parser import spec_models_from_document
 
         doc = {"tests": [{"model": "Lib.A", "variables": ["x"], "metrics": 42}]}
         with pytest.raises(ConfigError, match="in memory"):
-            test_models_from_document(doc, base_dir=Path("."), label="in memory")
+            spec_models_from_document(doc, base_dir=Path("."), label="in memory")
 ```
 
 And to `tests/test_config.py`:
@@ -138,7 +138,7 @@ def test_spec_path_is_the_configured_file_else_the_reference_root_fallback(tmp_p
     assert fallback.spec_path == fallback.reference_root / "test_spec.json"
 ```
 
-- [ ] **Step 2: Run them** — `uv run pytest tests/test_discovery.py::TestSpecFromDocument tests/test_config.py -q -k "spec_path or TestSpecFromDocument"`. Expected: FAIL, `ImportError: cannot import name 'test_models_from_document'` and `AttributeError: 'Config' object has no attribute 'spec_path'`.
+- [ ] **Step 2: Run them** — `uv run pytest tests/test_discovery.py::TestSpecFromDocument tests/test_config.py -q -k "spec_path or TestSpecFromDocument"`. Expected: FAIL, `ImportError: cannot import name 'spec_models_from_document'` and `AttributeError: 'Config' object has no attribute 'spec_path'`.
 
 - [ ] **Step 3: Split the parser.** In `spec_parser.py`, replace the head of `parse_test_spec` (from `def parse_test_spec` through the `tests_data` check) with:
 
@@ -150,7 +150,7 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
     sections here, verbatim)
 
     Reads the file, then hands the document to
-    :func:`test_models_from_document`; the authoring Session calls that
+    :func:`spec_models_from_document`; the authoring Session calls that
     directly with its in-memory document.
     """
     try:
@@ -158,12 +158,12 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
     except (json.JSONDecodeError, OSError) as e:
         logger.error("Failed to read test spec %s: %s", spec_path, e)
         return []
-    return test_models_from_document(
+    return spec_models_from_document(
         data, base_dir=spec_path.parent, label=str(spec_path)
     )
 
 
-def test_models_from_document(
+def spec_models_from_document(
     data: object, *, base_dir: Path, label: str
 ) -> list[TestModel]:
     """TestModels from an already-parsed spec document.
@@ -337,9 +337,9 @@ def discover_tests(
     """
     scanned = scan_source_tests(config)
     if spec_document is not None:
-        from .spec_parser import test_models_from_document
+        from .spec_parser import spec_models_from_document
 
-        models = test_models_from_document(
+        models = spec_models_from_document(
             spec_document,
             base_dir=config.spec_path.parent,
             label=f"{config.spec_path} (in memory)",
@@ -2074,7 +2074,7 @@ from ..backends.types import DatasetType, TestResult
 from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
-from ..discovery.spec_parser import test_models_from_document
+from ..discovery.spec_parser import spec_models_from_document
 from ..discovery.spec_update import (
     apply_validated_patches,
     implicit_tree_op,
@@ -2336,7 +2336,7 @@ class Session:
         return self.project
 
     def _merge(self, config: Config, scanned: dict[str, TestModel], document: dict) -> list[TestModel]:
-        models = test_models_from_document(
+        models = spec_models_from_document(
             document, base_dir=config.spec_path.parent, label=f"{config.spec_path} (in memory)"
         )
         return merge_tests(scanned, spec_tests_by_model(models))

@@ -699,7 +699,5 @@ class Config:
         carry; the authoring Session reads the same property."""
         if self.test_spec_file is not None:
             return self.test_spec_file
-        assert (
-            self.reference_root is not None
-        )  # resolved in __post_init__, as reference_dir relies on
+        assert self.reference_root is not None  # resolved in __post_init__
         return self.reference_root / "test_spec.json"

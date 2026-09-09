@@ -315,9 +315,9 @@ def discover_tests(
     """
     scanned = scan_source_tests(config)
     if spec_document is not None:
-        from .spec_parser import test_models_from_document
+        from .spec_parser import spec_models_from_document
 
-        models = test_models_from_document(
+        models = spec_models_from_document(
             spec_document,
             base_dir=config.spec_path.parent,
             label=f"{config.spec_path} (in memory)",
