@@ -184,6 +184,7 @@ def test_command_menu_switches_the_built_command(tmp_path, playwright_browser):
         "compare",
         "compare --accept",
         "run --rerun failed,sim-failed",
+        "author",
     ]
     for kind, (shown, copied) in built.items():
         assert shown == copied, kind
@@ -191,7 +192,12 @@ def test_command_menu_switches_the_built_command(tmp_path, playwright_browser):
         assert "Lib.A" in shown, kind
         assert "run compare" not in shown and "run run" not in shown, kind
     assert built["run"][0].endswith(" --merge --report")
-    for kind in ("compare", "compare --accept", "run --rerun failed,sim-failed"):
+    for kind in (
+        "compare",
+        "compare --accept",
+        "run --rerun failed,sim-failed",
+        "author",
+    ):
         assert "--merge" not in built[kind][0]
         assert "--report" not in built[kind][0]
     # Distinct commands, not one text with a cosmetic label.

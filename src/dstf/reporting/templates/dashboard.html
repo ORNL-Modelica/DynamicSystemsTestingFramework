@@ -268,12 +268,13 @@ body.has-selection { padding-bottom: 5em; }
       <option value="compare">compare</option>
       <option value="compare --accept">compare --accept</option>
       <option value="run --rerun failed,sim-failed">run --rerun failed,sim-failed</option>
+      <option value="author">author</option>
     </select>
   </label>
   <button class="btn-primary" id="btn-copy-cmd" onclick="copyCommand()">Copy rerun command</button>
   <span class="save-status" id="save-status">Copied!</span>
   <input class="cmd-out" id="cmd-out" readonly placeholder="Selection produces a rerun command here…">
-  <a class="help-link" href="#" onclick="event.preventDefault();alert('Pick the command with the Command menu. Plain run also gets --merge (keep prior results on disk) and --report (regenerate a full HTML report covering all tests, not just the filtered subset); drop --merge to focus the report on only the rerun tests. compare re-scores the last run without simulating, and compare --accept stores those results as the new baselines.')" title="What does each command do?">?</a>
+  <a class="help-link" href="#" onclick="event.preventDefault();alert('Pick the command with the Command menu. Plain run also gets --merge (keep prior results on disk) and --report (regenerate a full HTML report covering all tests, not just the filtered subset); drop --merge to focus the report on only the rerun tests. compare re-scores the last run without simulating, and compare --accept stores those results as the new baselines. author opens the authoring tool on the selection.')" title="What does each command do?">?</a>
 </div>
 
 <script>
