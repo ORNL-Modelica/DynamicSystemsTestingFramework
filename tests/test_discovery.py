@@ -1143,18 +1143,39 @@ class TestDiscoveryFromDocument:
         model_id = next(iter(scanned))
         before = scanned[model_id].stop_time
         spec_test = _mk_model(
-            model_id=model_id, stop_time=99.0, variable_patterns=["q"]
+            model_id=model_id,
+            stop_time=99.0,
+            variable_patterns=["q"],
+            variable_overrides={"q": {"tolerance": 0.5}},
         )
+        # The merge writes INTO these two containers on the merged copy; a
+        # shallow copy of the scan would leak the writes back here.
+        sources_before = dict(scanned[model_id].field_sources)
+        overrides_before = dict(scanned[model_id].variable_overrides)
 
         merged = merge_tests(scanned, {model_id: spec_test})
         assert next(t for t in merged if t.model_id == model_id).stop_time == 99.0
         assert scanned[model_id].stop_time == before
         assert scanned[model_id].variable_patterns != ["q"]
+        assert scanned[model_id].field_sources == sources_before
+        assert scanned[model_id].variable_overrides == overrides_before
         # A second merge against a different spec sees the untouched scan.
         again = merge_tests(scanned, {})
         assert next(t for t in again if t.model_id == model_id).variable_patterns != [
             "q"
         ]
+
+    def test_merge_does_not_mutate_a_spec_only_model(self):
+        """The `else` branch stores the spec model; finalize_defaults then
+        fills its None sentinels — on the copy, never on the caller's."""
+        from dstf.discovery.test_registry import merge_tests
+
+        spec_only = _mk_model(model_id="Lib.SpecOnly", stop_time=None, tolerance=None)
+        spec_only.field_sources = {}
+        (merged,) = merge_tests({}, {"Lib.SpecOnly": spec_only})
+        assert merged.stop_time is not None and merged.tolerance is not None
+        assert spec_only.stop_time is None and spec_only.tolerance is None
+        assert spec_only.field_sources == {}
 
     def test_the_fallback_spec_file_is_discovered(self, tmp_path):
         """`dstf add` writes <reference_root>/test_spec.json when no test_spec
