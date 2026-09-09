@@ -401,11 +401,15 @@ def registered_capabilities() -> tuple[Capability, ...]  # registration order
 outcome touches, so a job can lock them and a locked model can refuse a store
 write. A job's completion is posted through `Session(post=...)`, the UI loop the
 shell supplies; with no `post` it runs on the worker thread. `rescore` stages the
-implicit-tree materialization only when the synthesized tree scores what the flat
-path scored: it stages nothing for a glob pattern, a tracked name the result did
-not resolve, an override naming an unregistered mode, or a reference-JSON override
-the spec does not shadow — the four ways the two paths differ, each with its
-negative test. A glob spec is not editable in the tool until the owner decides how
+implicit-tree materialization from the variables the flat path scored — the
+leaves the report shows, in its order, whether or not the spec entry lists them
+(a test tracked by its `.mo` annotation has none there, and may have no entry at
+all: the op creates it) — and only when that tree scores what the flat path
+scored: it stages nothing for a glob-tracked spec, a scored variable whose name
+is not one the result carries (the flat path's `x[N]` display label), an
+override naming an unregistered mode, or a reference-JSON override the spec does
+not shadow — each with its negative test. `spec-update`, with no result in hand,
+still materializes from the entry's own list. A glob spec is not editable in the tool until the owner decides how
 such a spec materializes (§9). A completed job reloads results only when it
 succeeded; a failed one leaves the verdicts as they were and reports its error.
 While a job runs, a reload triggered elsewhere (a store write on a free model)

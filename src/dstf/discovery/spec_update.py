@@ -53,15 +53,21 @@ def unknown_override_modes(entry: dict) -> dict[str, str]:
     }
 
 
-def implicit_tree_op(entry: dict) -> dict:
+def implicit_tree_op(entry: dict, *, variables: Sequence[str] | None = None) -> dict:
     """The ``add /metrics`` op that materializes the implicit tree a
     flat-override entry scores with: one leaf per tracked variable, params
     from ``comparison.variable_overrides``, wrapped in ``and`` (see
-    ``synthesize_implicit_tree``). Raises :class:`PatchError` when the entry
-    declares no variables to build leaves from."""
+    ``synthesize_implicit_tree``). ``variables`` replaces the entry's own
+    list: the authoring Session passes the names the flat path actually
+    scored, which for a test tracked by its ``.mo`` annotation are not in
+    the spec at all (``spec-update``, with no result in hand, can only use
+    the entry's). Raises :class:`PatchError` when there are no variables to
+    build leaves from."""
     from ..comparison.tree_spec import spec_to_raw, synthesize_implicit_tree
 
-    variables = entry.get("variables") or []
+    variables = (
+        list(variables) if variables is not None else entry.get("variables") or []
+    )
     if not variables:
         raise PatchError(
             f"cannot materialize an implicit metrics tree for "

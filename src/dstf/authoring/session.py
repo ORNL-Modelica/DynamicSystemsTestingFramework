@@ -217,13 +217,8 @@ class Session:
         exactly what the flat path scored (Conventions #7); otherwise the
         test is scored as loaded and nothing is staged."""
         self._refuse_if_locked([model_id])
-        entry = self.spec.entry(model_id)
-        if (
-            entry is not None
-            and "metrics" not in entry
-            and self._materializable(model_id, entry)
-        ):
-            op = implicit_tree_op(entry)
+        op = self._materialization(model_id)
+        if op is not None:
             self.stage([PatchOp(model_id, op["op"], op["path"], op["value"])])
             return self.comparisons[model_id]
         comp = self._score(model_id)
@@ -493,32 +488,49 @@ class Session:
         project.results = fresh
         self._score_all(t.model_id for t in project.tests if t.model_id not in locked)
 
-    def _materializable(self, model_id: str, entry: dict) -> bool:
-        """Would a leaf per tracked variable score exactly what the flat
-        path scored? False — and ``rescore`` stages nothing — when any of
-        the four ways the two paths differ applies: a glob pattern (a
-        sentinel leaf), a name the result did not resolve (same), an
-        override whose ``mode`` no metric is registered under (the flat
-        path fails it; a tree would score nrmse), or a reference-JSON
-        override for a variable the spec does not override (the flat path
-        merges it; a tree ignores it). Also False with no successful result.
-        Each case has its negative test in tests/test_session.py."""
+    def _materialization(self, model_id: str) -> dict | None:
+        """The ``add /metrics`` op for a test the flat path scored, built
+        from the variables it scored — the leaves the report shows, in the
+        report's order, so leaf ``i`` is ``/metrics/children/i`` on both
+        tiers. For a test tracked by its ``.mo`` annotation those names are
+        in no spec entry (and the entry may not exist yet: the op creates
+        it). ``None`` — and ``rescore`` stages nothing — when the entry
+        already has a tree, when nothing was scored (NO_REF, SIM_FAIL,
+        simulate-only), when the spec tracks a glob pattern (the owner's open
+        question), or when a tree would not score what the flat path
+        scored: a scored variable whose name is not one the result carries
+        (the flat path's ``x[N]`` display label), an override naming an
+        unregistered mode (the flat path fails it; a tree would score
+        nrmse), or a reference-JSON override the spec does not shadow (the
+        flat path merges it; a tree ignores it). Each case has its
+        negative test in tests/test_session.py."""
         project = self._require_project()
-        variables = entry.get("variables") or []
+        entry = self.spec.entry(model_id) or {"model": model_id}
+        comp = self.comparisons.get(model_id)
+        if "metrics" in entry or comp is None or not comp.variables:
+            return None
+        if any(not is_literal_variable(v) for v in entry.get("variables") or []):
+            # A glob-tracked spec: how it materializes is the owner's open
+            # question (§9 of the design) — an explicit leaf per resolved
+            # name would freeze today's match list into the spec.
+            return None
+        names = [vc.name for vc in comp.variables]
         result = project.results.get(model_id)
-        if not variables or result is None or not result.success:
-            return False
-        resolved = {v.name for v in result.variables}
-        if not all(is_literal_variable(v) and v in resolved for v in variables):
-            return False
+        resolved = {v.name for v in result.variables} if result is not None else set()
+        if not all(n and n in resolved and is_literal_variable(n) for n in names):
+            # The flat path labels an unnamed comparison ``x[N]`` for display
+            # (a result variable whose recorded name carries a newline or a
+            # ``cat(`` expression — TRANSFORM has 70 such tests); a leaf by
+            # that label resolves to nothing in the tree path.
+            return None
         if unknown_override_modes(entry):
-            return False
+            return None
         spec_overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
         ref = project.store.get_reference(model_id) or {}
         ref_overrides = (ref.get("comparison") or {}).get("variable_overrides") or {}
-        return not any(
-            v in ref_overrides and v not in spec_overrides for v in variables
-        )
+        if any(n in ref_overrides and n not in spec_overrides for n in names):
+            return None
+        return implicit_tree_op(entry, variables=names)
 
     def _refuse_if_locked(self, models: Iterable[str]) -> None:
         if self.running is None:

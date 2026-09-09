@@ -196,14 +196,45 @@ class TestRescoreAndStage:
         assert session.spec.pending == []
         assert "metrics" not in session.spec.entry(G)
 
-    def test_a_missing_literal_rescores_without_staging(self, session):
-        """A tracked name the result never resolved would become a sentinel
-        leaf; the Session stages materialization only when the tree scores
-        exactly what the flat path scored."""
-        entry = dict(session.spec.entry(D))
-        entry["variables"] = ["x", "ghost"]
-        assert session._materializable(D, entry) is False
-        assert session._materializable(D, session.spec.entry(D)) is True
+    def test_materialization_builds_leaves_from_what_the_flat_path_scored(
+        self, session
+    ):
+        """The report's tree: one leaf per scored comparison, in that order,
+        whatever the spec's own variable list says (for a test tracked by its
+        .mo annotation the spec lists none). An unnamed comparison cannot
+        become a leaf, so nothing is staged for it."""
+        op = session._materialization(D)
+        assert op is not None
+        assert [leaf["variable"] for leaf in op["value"]["children"]] == [
+            vc.name for vc in session.comparisons[D].variables
+        ]
+        # The flat path's display label for an unnamed result variable —
+        # TRANSFORM has 70 tests whose recorded names carry a newline — is
+        # not a name the tree path can resolve.
+        session.comparisons[D].variables[0].name = "x[1]"
+        assert session._materialization(D) is None
+        session.comparisons[D].variables[0].name = ""
+        assert session._materialization(D) is None
+
+    def test_a_model_with_no_spec_entry_gets_one_from_the_materialization(
+        self, session
+    ):
+        """TRANSFORM's shape: 313 of 331 tests have no spec entry at all. The
+        op targets the model; staging creates the entry with the tree and
+        the verdict is what it was."""
+        from dstf.authoring.spec_document import SpecDocument
+
+        doc = session.spec.effective()
+        doc["tests"] = [e for e in doc["tests"] if e["model"] != D]
+        session.spec = SpecDocument(session.spec.path, doc, session.spec.content_hash)
+        assert session.spec.entry(D) is None
+        session.rescore(D)
+        entry = session.spec.entry(D)
+        assert entry is not None and [
+            c["variable"] for c in entry["metrics"]["children"]
+        ] == ["x"]
+        assert classify(session.comparisons[D]) == PASS
+        assert session.export()["patches"][0]["model"] == D
 
     def test_a_reference_json_override_rescores_without_staging(self, tmp_path):
         """The flat path merges the baseline's own comparison.variable_overrides
@@ -240,7 +271,7 @@ class TestRescoreAndStage:
                 )
             ]
         )
-        assert s._materializable(A, s.spec.entry(A)) is True
+        assert s._materialization(A) is not None
 
     def test_an_unknown_mode_rescores_without_staging(self, tmp_path):
         """The flat path fails a variable whose override names an unknown
