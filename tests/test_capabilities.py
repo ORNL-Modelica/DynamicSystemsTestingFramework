@@ -62,6 +62,31 @@ def test_the_protocol_is_checkable():
     assert not isinstance(object(), Capability)
 
 
+def test_registering_a_non_capability_is_loud_at_registration():
+    """plugins.py's rule: fail at startup naming what is wrong, not when
+    the user clicks the tab."""
+
+    class _Half:
+        name, label, scope = "half", "Half", Scope.TESTS
+
+        def available(self, s):
+            return True
+
+        def panel(self, s, ui):
+            pass
+
+    with pytest.raises(TypeError, match="missing act"):
+        register_capability(_Half())  # type: ignore[arg-type]
+    assert registered_capabilities() == ()
+
+
+def test_outcomes_take_keywords_only():
+    """`models` was inserted between the spec's positional fields; a caller
+    following the spec's order would silently swap it with reloads_results."""
+    with pytest.raises(TypeError):
+        Job(lambda ctx: None, "rerun", frozenset())  # type: ignore[misc]
+
+
 def test_a_plugin_registers_through_the_entry_point_group(monkeypatch):
     """The entry point's load() returns a callable that registers — the
     registration happens INSIDE load_plugins(), so a load_plugins that never
@@ -88,6 +113,7 @@ def test_a_plugin_registers_through_the_entry_point_group(monkeypatch):
 
 def test_outcomes_are_frozen_and_carry_their_models():
     sw = StoreWrite(run=lambda store: None, models=frozenset({"M"}))
+    assert sw.models == frozenset({"M"})
     job = Job(run=lambda ctx: None, label="rerun", models=frozenset({"M"}))
     assert job.reloads_results is True
     with pytest.raises(dataclasses.FrozenInstanceError):

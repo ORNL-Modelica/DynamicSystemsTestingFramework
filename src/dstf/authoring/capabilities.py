@@ -40,14 +40,14 @@ class JobContext:
     models: frozenset[str]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Patch:
     """Ops to stage; the Session rescores their models."""
 
     ops: list[PatchOp]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class StoreWrite:
     """A write against the reference store; results reload afterwards.
     ``models`` names what it touches, so a locked model can refuse it."""
@@ -56,7 +56,7 @@ class StoreWrite:
     models: frozenset[str]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Job:
     """Work on a worker thread. The Session locks ``models`` while it runs
     and, unless ``reloads_results`` is false, reloads results and rescores
@@ -68,7 +68,7 @@ class Job:
     reloads_results: bool = True
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Artifact:
     """Something written outside the spec and the store; shown as a link."""
 
@@ -76,7 +76,7 @@ class Artifact:
     label: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class OpenProject:
     config_path: Path
 
@@ -119,6 +119,15 @@ def register_capability(cap: Capability) -> Capability:
     """Register ``cap`` under its name; returns it. Loud on a duplicate —
     two capabilities sharing a name would make the shell's tab list depend
     on import order."""
+    if not isinstance(cap, Capability):
+        missing = [
+            a
+            for a in ("name", "label", "scope", "available", "panel", "act")
+            if not hasattr(cap, a)
+        ]
+        raise TypeError(
+            f"{cap!r} is not a Capability: missing {', '.join(missing) or 'a method'}"
+        )
     if cap.name in _CAPABILITIES:
         raise ValueError(f"capability {cap.name!r} is already registered")
     _CAPABILITIES[cap.name] = cap

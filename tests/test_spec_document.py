@@ -42,6 +42,26 @@ def test_malformed_json_is_a_config_error(tmp_path):
         SpecDocument.load(p)
 
 
+@pytest.mark.parametrize("body", ['{"tests": {"M": 1}}', '{"tests": "abc"}', "[]"])
+def test_a_malformed_shape_is_a_config_error_at_load(tmp_path, body):
+    """The same shape rule spec-update's loader applies: a non-list `tests`
+    used to load fine and explode as AttributeError on the first replay."""
+    p = tmp_path / "test_spec.json"
+    p.write_text(body, encoding="utf-8")
+    with pytest.raises(ConfigError, match="test_spec.json"):
+        SpecDocument.load(p)
+
+
+def test_the_replay_is_cached_while_pending_only_grows(tmp_path):
+    doc = SpecDocument.load(_spec(tmp_path, ENTRY))
+    first = doc.entry("M")
+    assert doc.entry("M") is first  # same replay
+    doc.pending.append(PatchOp("M", "replace", "/comparison/tolerance", 0.5))
+    again = doc.entry("M")
+    assert again is not first and again["comparison"]["tolerance"] == 0.5
+    assert doc.effective() is not doc.effective()  # callers get copies
+
+
 def test_effective_applies_pending_without_touching_loaded(tmp_path):
     doc = SpecDocument.load(_spec(tmp_path, ENTRY))
     doc.pending.append(PatchOp("M", "replace", "/comparison/tolerance", 0.5))

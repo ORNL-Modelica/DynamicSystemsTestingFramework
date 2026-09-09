@@ -101,6 +101,13 @@ def load_spec_document(spec_path: Path) -> dict:
         data = json.loads(spec_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         raise PatchError(f"cannot read {spec_path}: {e}") from e
+    return spec_document_shape(data)
+
+
+def spec_document_shape(data: object) -> dict:
+    """The one check of a parsed spec's shape — an object whose ``tests`` is
+    a list (added empty when absent) — shared by this loader and the
+    authoring Session's, so the two cannot drift. Raises :class:`PatchError`."""
     if not isinstance(data, dict):
         raise PatchError("spec root must be an object")
     data.setdefault("tests", [])
