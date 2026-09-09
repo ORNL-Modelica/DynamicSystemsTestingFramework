@@ -435,6 +435,20 @@ class TestRescoreAndStage:
             ]
         )
         assert len(session.spec.pending) == n + 3  # a batch is never collapsed
+        # The four discriminators, each one op: a different path, a different
+        # model, a non-replace op, and then a replace again (collapses).
+        m = len(session.spec.pending)
+        session.stage(
+            [PatchOp(A, "replace", "/comparison/tolerance", 0.6)]
+        )  # last is the add
+        session.stage([PatchOp(A, "replace", "/metrics/children/0/tolerance", 0.1)])
+        assert len(session.spec.pending) == m + 2  # a different path never collapses
+        session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.3})])
+        session.stage([PatchOp(D, "replace", "/comparison/tolerance", 0.2)])
+        session.stage([PatchOp(A, "replace", "/comparison/tolerance", 0.7)])
+        assert len(session.spec.pending) == m + 5  # a different model never collapses
+        session.stage([PatchOp(A, "remove", "/comparison/tolerance")])
+        assert len(session.spec.pending) == m + 6  # a non-replace never collapses
 
 
 class TestView:
@@ -469,6 +483,11 @@ class TestView:
         session.stage([LOOSEN])
         assert session.tree(A)["children"][0]["tolerance"] == 0.5  # the entry's now
         assert session.tree(B) is None
+        # A copy: editing it in place must not reach the document.
+        session.tree(A)["children"][0]["tolerance"] = 99.0
+        assert session.tree(A)["children"][0]["tolerance"] == 0.5
+        with pytest.raises(KeyError):
+            session.tree("FakeLib.Nope")
 
 
 class TestSaveDiscardExport:

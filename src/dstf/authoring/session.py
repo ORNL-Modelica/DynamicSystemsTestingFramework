@@ -299,7 +299,11 @@ class Session:
 
     def tree(self, model_id: str) -> dict | None:
         """The raw tree a Patch edits: the entry's ``metrics`` block, else the
-        tree ``rescore`` would materialize (the report's leaves), else None."""
+        tree ``rescore`` would materialize (the report's leaves), else None.
+        A copy: a capability may build its next op from it without touching
+        the document. An unknown model is a KeyError, as for ``tree_view``."""
+        if self._require_project().test(model_id) is None:
+            raise KeyError(model_id)
         entry = self.spec.entry(model_id) or {}
         if "metrics" in entry:
             return copy.deepcopy(entry["metrics"])
