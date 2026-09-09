@@ -1,0 +1,113 @@
+"""NiceGUI controls from a mode's Config dataclass (§4.7 "Edit criteria").
+
+``derive_schema`` describes the dataclass — field name, type, default,
+choices, label, help, bounds; this module turns each ``FieldSpec`` into one
+control and hands the caller the live values. The NiceGUI emitter is the
+sibling of ``reporting/schema_export``'s JSON-Schema emitter: same input,
+different surface.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from nicegui import ui
+
+from ..comparison.mode_schema import FieldSpec, Schema
+
+OnChange = Callable[[dict], None]
+
+
+@dataclass
+class Form:
+    """The rendered controls, by field name, and their current values."""
+
+    controls: dict[str, ui.element] = field(default_factory=dict)
+    _values: dict = field(default_factory=dict)
+    _passthrough: dict = field(default_factory=dict)
+
+    def values(self) -> dict:
+        """Every field the caller gave a value or the user edited — ``None``
+        is "unset" and is omitted; a dataclass default is shown as the
+        control's placeholder and never written (the evaluator falls back
+        to the test's base tolerance for a leaf without one, and a written
+        1e-4 would change that verdict). Passthrough fields keep the value
+        they were given."""
+        out = {k: v for k, v in self._values.items() if v is not None}
+        out.update({k: v for k, v in self._passthrough.items() if v is not None})
+        return out
+
+
+def render_form(schema: Schema, values: dict, on_change: OnChange) -> Form:
+    """Build one control per field into the current NiceGUI container.
+
+    ``values`` pre-fills (missing keys fall back to the field's default);
+    ``on_change`` receives the full values dict after every edit.
+    """
+    form = Form()
+    for spec in schema.fields:
+        current = values.get(spec.name)  # the default is a placeholder, not a value
+        if spec.type == "passthrough":
+            # Structured data (tube control points, declared peaks,
+            # checkpoints): shown as JSON, read-only — on-plot editing (§5
+            # step 6) is where these get their controls.
+            form._passthrough[spec.name] = current
+            form.controls[spec.name] = (
+                ui.textarea(
+                    label=spec.label or spec.name,
+                    value=json.dumps(current) if current is not None else "",
+                )
+                .props("readonly outlined dense")
+                .tooltip(spec.help or "edited on the plot, not here")
+            )
+            continue
+        if spec.name in values:
+            form._values[spec.name] = current
+        control = _control(
+            spec, current, lambda v, name=spec.name: _set(form, name, v, on_change)
+        )
+        if current is None and spec.default is not None:
+            control.props(f'placeholder="{spec.default}"')
+        if spec.help:
+            control.tooltip(spec.help)
+        form.controls[spec.name] = control
+    return form
+
+
+def _set(form: Form, name: str, value: Any, on_change: OnChange) -> None:
+    form._values[name] = value
+    on_change(form.values())
+
+
+def _control(spec: FieldSpec, current: Any, set_value: Callable) -> ui.element:
+    label = spec.label or spec.name
+    if spec.type in ("float", "int"):
+        kwargs: dict[str, Any] = {}
+        if spec.ui_min is not None:
+            kwargs["min"] = spec.ui_min
+        if spec.ui_max is not None:
+            kwargs["max"] = spec.ui_max
+        if spec.type == "int":
+            kwargs["step"] = 1
+        return ui.number(
+            label=label, value=current, on_change=lambda e: set_value(e.value), **kwargs
+        ).props("dense")
+    if spec.type == "bool":
+        return ui.checkbox(
+            label, value=bool(current), on_change=lambda e: set_value(e.value)
+        )
+    if spec.type == "enum":
+        return ui.select(
+            list(spec.choices or []),
+            label=label,
+            value=current,
+            on_change=lambda e: set_value(e.value),
+        ).props("dense")
+    return ui.input(
+        label=label,
+        value="" if current is None else str(current),
+        on_change=lambda e: set_value(e.value),
+    ).props("dense")
