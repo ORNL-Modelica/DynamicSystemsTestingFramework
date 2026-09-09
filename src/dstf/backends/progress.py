@@ -241,3 +241,34 @@ class ProgressReporter:
             snapshot = self._snapshot()
             self._write_json(snapshot)
             self._render_dashboard(mode="final")
+
+
+def recorded_backend(work_dir: Path) -> tuple[str | None, str | None]:
+    """``(label, warning)``: the backend the last run in *work_dir* used, per
+    ``status.json``'s metadata, and a warning for the caller to show when the
+    snapshot predates run provenance.
+
+    ``label`` is ``None`` when the work dir has no snapshot, an unreadable
+    one, or one written before provenance was stamped (``metadata: null``).
+    ``warning`` is set only when metadata exists but names no backend —
+    written before the Backend rename (D123), when the key was "simulator".
+    The guard this function exists for (D120) cannot fire then, so
+    ``compare`` would fall back to environment auto-detect and could score,
+    say, an OpenModelica work dir against the Dymola partition. Reading the
+    old key would be a compatibility path; saying so is not.
+    """
+    try:
+        snap = json.loads((work_dir / "status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, None
+    meta = snap.get("metadata") or {}
+    label = meta.get("backend_name")
+    if isinstance(label, str) and label:
+        return label, None
+    if meta:
+        return None, (
+            f"Warning: {work_dir / 'status.json'} predates the Backend rename "
+            "and does not record which backend produced it. Pass --backend "
+            "explicitly, or re-run instead of comparing."
+        )
+    return None, None

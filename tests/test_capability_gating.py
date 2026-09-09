@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from dstf.backends import dataset_kind_for
 from dstf.backends.base import Backend
 from dstf.backends.types import Capability, DatasetType
 from dstf.cli import run_cmds as cli_mod
@@ -119,13 +120,13 @@ class TestDatasetKindThreading:
         class _Spectral(_ProbeBackend):
             produced_datasets = frozenset({DatasetType.SPECTRUM})
 
-        assert cli_mod._dataset_kind_for(_Spectral(None)) is DatasetType.SPECTRUM
+        assert dataset_kind_for(_Spectral(None)) is DatasetType.SPECTRUM
 
     def test_multi_kind_backend_falls_back_to_time_series(self):
         class _Both(_ProbeBackend):
             produced_datasets = frozenset({DatasetType.TIME_SERIES, DatasetType.EVENTS})
 
-        assert cli_mod._dataset_kind_for(_Both(None)) is DatasetType.TIME_SERIES
+        assert dataset_kind_for(_Both(None)) is DatasetType.TIME_SERIES
 
     def test_every_builtin_declares_time_series_only(self):
         """All five declare {TIME_SERIES}, so threading is behaviour-neutral."""

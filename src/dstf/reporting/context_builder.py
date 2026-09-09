@@ -273,7 +273,7 @@ def _build_statistics_sections(ref_stats: dict, cur_stats: dict) -> list:
     return statistics_sections
 
 
-def _build_trajectories(
+def build_trajectories(
     comparisons: list,
     result,
     ref_data: dict | None,
@@ -729,7 +729,7 @@ def _build_tree_view_and_variables(
     _mark_advisory(tree_view)
     all_leaves = _view_leaves(tree_view)
 
-    # Look the trajectory up by variable name — ``_build_trajectories``
+    # Look the trajectory up by variable name — ``build_trajectories``
     # emits exactly one entry per name, sentinel leaves included.
     variables_by_name: dict[str, dict] = {}
     for vn in _collect_variables(spec):
@@ -790,7 +790,7 @@ def _build_template_context(
     ref_info = _build_ref_info(comparisons, ref_data, test_dir, ref_file)
     sim_params = _build_sim_params(test_model, ref_sim)
     statistics_sections = _build_statistics_sections(ref_stats, cur_stats)
-    trajectories, diag_trajectories, nobaseline_trajectories = _build_trajectories(
+    trajectories, diag_trajectories, nobaseline_trajectories = build_trajectories(
         comparisons,
         result,
         ref_data,

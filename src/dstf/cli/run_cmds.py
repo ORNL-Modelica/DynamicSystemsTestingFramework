@@ -5,6 +5,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from ..backends import dataset_kind_for
+from ..backends.progress import recorded_backend
 from ..config import ConfigError
 from ..discovery.test_registry import discover_tests
 from .common import (
@@ -137,28 +139,6 @@ def _get_backend(config, persistent: bool = False):
     return pcls(config)
 
 
-def _dataset_kind_for(backend):
-    """The single :class:`DatasetType` *backend* declares, else the default.
-
-    ``produced_datasets`` is the backend's declaration of what shape its
-    results carry; the MetricTree evaluator refuses a leaf whose metric
-    can't score that shape. When a backend declares exactly one kind we can
-    say authoritatively which it is, so we thread it. A backend declaring
-    several can't be resolved from the class alone — the kind would have to
-    come off each result — so we fall back to ``TIME_SERIES``, which is what
-    the evaluator assumes anyway. All five builtins declare exactly
-    ``{TIME_SERIES}``, so this is behaviour-neutral today; it exists so the
-    first backend to declare something else is scored against the right
-    metric set without a second wiring pass.
-    """
-    from ..backends.types import DatasetType
-
-    kinds = type(backend).produced_datasets
-    if len(kinds) == 1:
-        return next(iter(kinds))
-    return DatasetType.TIME_SERIES
-
-
 def _report_accept(config, stored: int, skipped: list[tuple[str, str]]) -> int:
     """Print the accept outcome; nonzero when anything was skipped (review
     2026-07-06 finding 30: a partial accept is a failure CI must see)."""
@@ -204,7 +184,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             store,
             config.tolerance,
             config.default_points,
-            dataset_kind=_dataset_kind_for(backend),
+            dataset_kind=dataset_kind_for(backend),
         )
         rerun_models = {
             c.model_id for c in prior_comps if _should_review(c, rerun_categories)
@@ -321,7 +301,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             store,
             config.tolerance,
             config.default_points,
-            dataset_kind=_dataset_kind_for(backend),
+            dataset_kind=dataset_kind_for(backend),
         )
         return _interactive_review(
             scope_tests,
@@ -340,7 +320,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             store,
             config.tolerance,
             config.default_points,
-            dataset_kind=_dataset_kind_for(backend),
+            dataset_kind=dataset_kind_for(backend),
         )
 
         # Always refresh the unified dashboard before any --report work.
@@ -397,39 +377,6 @@ def _run_cross_backend_chains(tests, backend, config, store) -> None:
     print(f"Cross-backend chains: {n_ok}/{len(chain_tests)} succeeded")
 
 
-def _recorded_backend(work_dir: Path) -> str | None:
-    """The backend label the last run in *work_dir* used, per ``status.json``.
-
-    ``None`` when the work dir has no snapshot, an unreadable one, or one
-    written before run provenance was stamped (``metadata: null``).
-    """
-    import json
-
-    try:
-        snap = json.loads((work_dir / "status.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    meta = snap.get("metadata") or {}
-    label = meta.get("backend_name")
-    if isinstance(label, str) and label:
-        return label
-    if meta:
-        # Metadata exists but names no backend: written before the Backend
-        # rename (D123), when the key was "simulator". The guard this
-        # function exists for (D120) cannot fire, so `compare` would fall
-        # back to environment auto-detect and could score, say, an
-        # OpenModelica work dir against the Dymola partition — SIM_FAIL for
-        # every test, with nothing said. Reading the old key would be a
-        # compatibility path; saying so is not.
-        print(
-            f"Warning: {work_dir / 'status.json'} predates the Backend rename "
-            "and does not record which backend produced it. Pass --backend "
-            "explicitly, or re-run instead of comparing.",
-            file=sys.stderr,
-        )
-    return None
-
-
 def cmd_compare(args: argparse.Namespace) -> int:
     """Compare last run results against stored references."""
     config = _build_config(args)
@@ -442,7 +389,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
     # wins, and a work dir with no metadata keeps the auto-detect behaviour.
     if not getattr(args, "backend", None):
         work_dir = config.work_dir
-        recorded = _recorded_backend(work_dir)
+        recorded, warning = recorded_backend(work_dir)
+        if warning:
+            print(warning, file=sys.stderr)
         if recorded and recorded != config.backend_name:
             args.backend = recorded
             config = _build_config(args)
@@ -516,7 +465,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         store,
         config.tolerance,
         config.default_points,
-        dataset_kind=_dataset_kind_for(backend),
+        dataset_kind=dataset_kind_for(backend),
     )
 
     # Always refresh the unified dashboard, even without --report. Without

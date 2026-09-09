@@ -154,3 +154,25 @@ def _import_builtin_backend(name: str) -> None:
         import importlib
 
         importlib.import_module(module, package=__name__)
+
+
+def dataset_kind_for(backend):
+    """The single :class:`DatasetType` *backend* declares, else the default.
+
+    ``produced_datasets`` is the backend's declaration of what shape its
+    results carry; the MetricTree evaluator refuses a leaf whose metric
+    can't score that shape. When a backend declares exactly one kind we can
+    say authoritatively which it is, so we thread it. A backend declaring
+    several can't be resolved from the class alone — the kind would have to
+    come off each result — so we fall back to ``TIME_SERIES``, which is what
+    the evaluator assumes anyway. All five builtins declare exactly
+    ``{TIME_SERIES}``, so this is behaviour-neutral today; it exists so the
+    first backend to declare something else is scored against the right
+    metric set without a second wiring pass.
+    """
+    from .types import DatasetType
+
+    kinds = type(backend).produced_datasets
+    if len(kinds) == 1:
+        return next(iter(kinds))
+    return DatasetType.TIME_SERIES

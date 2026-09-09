@@ -507,6 +507,85 @@ def _test_is_baseline_free(
     return True
 
 
+def compare_one(
+    test: TestModel,
+    result: TestResult | None,
+    store: ReferenceStore,
+    default_tolerance: float = DEFAULT_TOLERANCE,
+    default_points: bool = False,
+    dataset_kind: DatasetType = DatasetType.TIME_SERIES,
+) -> TestComparison:
+    """One test's comparison, short-circuits included: no result and a
+    failed simulation are SIM_FAIL; no baseline is NO_REF unless the test is
+    simulate-only or every leaf scores without a reference. ``compare_all``
+    is this per test; the authoring Session's rescore is this for one."""
+    if result is None:
+        return TestComparison(
+            model_id=test.model_id,
+            passed=False,
+            sim_success=False,
+            error_message="No simulation results found",
+        )
+
+    # A simulation that FAILED is SIM_FAIL regardless of whether a baseline
+    # exists — this check MUST precede the no-baseline short-circuit below.
+    # Backends differ in how they signal failure: Dymola omits the test
+    # (caught by `result is None` above), but OpenModelica's read_result
+    # returns a success=False TestResult (missing .mat) that is NOT None,
+    # so without this it fell through to the no-baseline branch and was
+    # mislabeled NO_REF with passed=True. Surfaced 2026-07-07 across 91
+    # OM/TRANSFORM compile/solver failures on models that never got OM
+    # baselines (mirrors compare_test's own `not result.success` guard).
+    if not result.success:
+        return TestComparison(
+            model_id=test.model_id,
+            passed=False,
+            sim_success=False,
+            error_message=result.error_message or "Simulation failed",
+        )
+
+    reference = store.get_reference(test.model_id)
+    # simulate_only tests don't need a baseline — their pass criterion
+    # is "did it simulate successfully?". Dispatch to compare_test with
+    # an empty dict reference so its simulate_only short-circuit runs
+    # (returning passed=True + metric_tree with label="simulate-only")
+    # instead of collapsing to the generic NO_REF state.
+    #
+    # Baseline-free tests (every leaf is range / declared-events /
+    # declared-peaks) follow the same pattern: skip the NO_REF guard
+    # so the scorers can produce real pass/fail from config alone.
+    # Mixed trees still short-circuit — partial runs aren't supported
+    # by this fix (idea #59 / D83).
+    if (
+        reference is None
+        and not test.simulate_only
+        and not _test_is_baseline_free(test, default_tolerance)
+    ):
+        return TestComparison(
+            model_id=test.model_id,
+            passed=True,
+            has_reference=False,
+            error_message="No reference baseline stored",
+        )
+
+    comp = compare_test(
+        test,
+        result,
+        reference if reference is not None else {},
+        default_tolerance=default_tolerance,
+        default_points=default_points,
+        store=store,
+        dataset_kind=dataset_kind,
+    )
+    if reference is None:
+        # Record that no baseline was stored even though the
+        # simulate_only / baseline-free path produced a result.
+        # Downstream renderers use this together with the metric
+        # tree's pass/fail to decide how to render the badge.
+        comp.has_reference = False
+    return comp
+
+
 def compare_all(
     tests: list[TestModel],
     results: dict[str, TestResult],
@@ -518,89 +597,20 @@ def compare_all(
     """Compare all test results against stored references.
 
     ``dataset_kind`` is what the backend that produced *results* declares it
-    emits (see :func:`dstf.cli.run_cmds._dataset_kind_for`); it is forwarded to every
+    emits (see :func:`dstf.backends.dataset_kind_for`); it is forwarded to every
     :func:`compare_test`.
     """
     import sys as _sys
 
     print(f"Comparing {len(tests)} tests against references...", file=_sys.stderr)
-    comparisons = []
-
-    for test in tests:
-        result = results.get(test.model_id)
-        if result is None:
-            comparisons.append(
-                TestComparison(
-                    model_id=test.model_id,
-                    passed=False,
-                    sim_success=False,
-                    error_message="No simulation results found",
-                )
-            )
-            continue
-
-        # A simulation that FAILED is SIM_FAIL regardless of whether a baseline
-        # exists — this check MUST precede the no-baseline short-circuit below.
-        # Backends differ in how they signal failure: Dymola omits the test
-        # (caught by `result is None` above), but OpenModelica's read_result
-        # returns a success=False TestResult (missing .mat) that is NOT None,
-        # so without this it fell through to the no-baseline branch and was
-        # mislabeled NO_REF with passed=True. Surfaced 2026-07-07 across 91
-        # OM/TRANSFORM compile/solver failures on models that never got OM
-        # baselines (mirrors compare_test's own `not result.success` guard).
-        if not result.success:
-            comparisons.append(
-                TestComparison(
-                    model_id=test.model_id,
-                    passed=False,
-                    sim_success=False,
-                    error_message=result.error_message or "Simulation failed",
-                )
-            )
-            continue
-
-        reference = store.get_reference(test.model_id)
-        # simulate_only tests don't need a baseline — their pass criterion
-        # is "did it simulate successfully?". Dispatch to compare_test with
-        # an empty dict reference so its simulate_only short-circuit runs
-        # (returning passed=True + metric_tree with label="simulate-only")
-        # instead of collapsing to the generic NO_REF state.
-        #
-        # Baseline-free tests (every leaf is range / declared-events /
-        # declared-peaks) follow the same pattern: skip the NO_REF guard
-        # so the scorers can produce real pass/fail from config alone.
-        # Mixed trees still short-circuit — partial runs aren't supported
-        # by this fix (idea #59 / D83).
-        if (
-            reference is None
-            and not test.simulate_only
-            and not _test_is_baseline_free(test, default_tolerance)
-        ):
-            comparisons.append(
-                TestComparison(
-                    model_id=test.model_id,
-                    passed=True,
-                    has_reference=False,
-                    error_message="No reference baseline stored",
-                )
-            )
-            continue
-
-        comp = compare_test(
+    return [
+        compare_one(
             test,
-            result,
-            reference if reference is not None else {},
+            results.get(test.model_id),
+            store,
             default_tolerance=default_tolerance,
             default_points=default_points,
-            store=store,
             dataset_kind=dataset_kind,
         )
-        if reference is None:
-            # Record that no baseline was stored even though the
-            # simulate_only / baseline-free path produced a result.
-            # Downstream renderers use this together with the metric
-            # tree's pass/fail to decide how to render the badge.
-            comp.has_reference = False
-        comparisons.append(comp)
-
-    return comparisons
+        for test in tests
+    ]

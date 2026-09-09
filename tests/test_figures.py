@@ -7,6 +7,7 @@ import numpy as np
 from dstf.comparison.algorithms import (
     _compare_dominant_frequency,
     _compare_range,
+    _compare_trajectories,
     _compare_tube,
 )
 from dstf.comparison.geometry import Band, Window
@@ -323,3 +324,49 @@ class TestFigure:
         assert fig["data"] == [] or all(
             "anchor_for" in tr.get("meta", {}) for tr in fig["data"]
         )
+
+
+def test_view_from_trajectory_reads_the_report_shape():
+    from dstf.figures.assemble import view_from_trajectory
+
+    traj = {
+        "act_time": [0, 1],
+        "act_values": [1, 2],
+        "ref_time": [0, 1],
+        "ref_values": [1, 2],
+        "overlays": [
+            {
+                "name": "s",
+                "role": "soft_check",
+                "kind": "json",
+                "time": [0, 1],
+                "values": [1, 1],
+            }
+        ],
+    }
+    view = view_from_trajectory("x", traj, [])
+    assert (
+        view.name == "x" and list(view.act_values) == [1, 2] and len(view.overlays) == 1
+    )
+    assert view_from_trajectory("x", {}, []).act_time is None
+
+
+def test_leaves_by_variable_groups_stamped_leaves():
+    from dstf.comparison.metric_tree import implicit_and_tree
+    from dstf.figures.assemble import leaves_by_variable
+
+    t = np.linspace(0.0, 1.0, 11)
+    vcs = [
+        _compare_trajectories(t, np.sin(t), t, np.sin(t) + 0.01, 0.1) for _ in range(3)
+    ]
+    vcs[0].name, vcs[1].name, vcs[2].name = "x", "y", "x"
+    tree = implicit_and_tree(vcs)  # stamps /metrics/children/{i}
+
+    grouped = leaves_by_variable(tree)
+    assert set(grouped) == {"x", "y"}
+    assert [path for path, _ in grouped["x"]] == [
+        "/metrics/children/0",
+        "/metrics/children/2",
+    ]
+    assert all(vc.name == name for name, pairs in grouped.items() for _, vc in pairs)
+    assert leaves_by_variable(None) == {}

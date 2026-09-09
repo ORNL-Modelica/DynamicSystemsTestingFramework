@@ -2003,3 +2003,68 @@ class TestSimFailWithoutBaselineIsSimFail:
         (c,) = compare_all([test], {}, _NoRefStore())
         assert c.sim_success is False
         assert c.passed is False
+
+
+# ---------------------------------------------------------------------------
+# compare_all's per-test body is callable for one test
+# ---------------------------------------------------------------------------
+
+
+class TestCompareOne:
+    """compare_all's per-test body, callable for one test. `_mk_test`,
+    `_mk_result`, `_make_test`, `_make_result_and_ref` and `_NoRefStore` are
+    this module's helpers (model ids "MyLib.Test" and "Test.Model")."""
+
+    def test_no_result_is_sim_fail(self):
+        from dstf.comparison.comparator import compare_one
+
+        comp = compare_one(_mk_test(), None, _NoRefStore())
+        assert comp.sim_success is False
+        assert comp.error_message == "No simulation results found"
+
+    def test_failed_result_is_sim_fail_before_the_baseline_check(self):
+        from dstf.comparison.comparator import compare_one
+
+        result = TestResult(model_id="MyLib.Test", success=False, error_message="boom")
+        comp = compare_one(_mk_test(), result, _NoRefStore())
+        assert comp.sim_success is False and comp.error_message == "boom"
+
+    def test_no_baseline_is_no_ref(self):
+        from dstf.comparison.comparator import compare_one
+
+        comp = compare_one(_mk_test(), _mk_result(), _NoRefStore())
+        assert comp.has_reference is False and comp.passed is True
+        assert not comp.evaluated
+
+    def test_compare_all_is_compare_one_per_test(self):
+        from dstf.comparison.comparator import compare_all, compare_one
+
+        scored_result, ref = _make_result_and_ref(offset=0.5)  # a real FAIL
+
+        class _Store:
+            def get_reference(self, model_id):
+                return ref if model_id == "Test.Model" else None
+
+            def get_soft_checks(self, model_id):
+                return {}
+
+        tests = [
+            _make_test(),
+            _mk_test(model_id="MyLib.Test"),
+            _mk_test(model_id="MyLib.Gone"),
+        ]
+        results = {"Test.Model": scored_result, "MyLib.Test": _mk_result()}
+        store = _Store()
+        fields = ("model_id", "passed", "sim_success", "has_reference", "error_message")
+
+        def key(c):
+            return tuple(getattr(c, f) for f in fields)
+
+        assert [key(c) for c in compare_all(tests, results, store)] == [
+            key(compare_one(t, results.get(t.model_id), store)) for t in tests
+        ]
+        assert [key(c)[1:3] for c in compare_all(tests, results, store)] == [
+            (False, True),
+            (True, True),
+            (False, False),
+        ]

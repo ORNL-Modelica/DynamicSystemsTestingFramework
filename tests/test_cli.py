@@ -1159,9 +1159,9 @@ def test_compare_uses_the_backend_recorded_by_the_run(tmp_path):
     """`compare` auto-detected a backend from the environment, so comparing
     an OpenModelica work dir on a machine with Dymola read the Dymola
     reference partition and reported SIM_FAIL for everything."""
-    from dstf.cli.run_cmds import _recorded_backend
+    from dstf.backends.progress import recorded_backend
 
-    assert _recorded_backend(_work_dir_with_metadata(tmp_path, "OpenModelica")) == (
+    assert recorded_backend(_work_dir_with_metadata(tmp_path, "OpenModelica"))[0] == (
         "OpenModelica"
     )
 
@@ -1169,17 +1169,17 @@ def test_compare_uses_the_backend_recorded_by_the_run(tmp_path):
 def test_compare_backend_metadata_absent_falls_back(tmp_path):
     """No snapshot, or one written before provenance was stamped → today's
     auto-detect, unchanged."""
-    from dstf.cli.run_cmds import _recorded_backend
+    from dstf.backends.progress import recorded_backend
 
     work = tmp_path / "work"
     work.mkdir()
-    assert _recorded_backend(work) is None
+    assert recorded_backend(work)[0] is None
     (work / "status.json").write_text(
         json.dumps({"tests": [], "metadata": None}), encoding="utf-8"
     )
-    assert _recorded_backend(work) is None
+    assert recorded_backend(work)[0] is None
     (work / "status.json").write_text("{not json", encoding="utf-8")
-    assert _recorded_backend(work) is None
+    assert recorded_backend(work)[0] is None
 
 
 def test_unregistered_recorded_backend_is_a_config_error(tmp_path, capsys):
@@ -1199,17 +1199,17 @@ def test_unregistered_recorded_backend_is_a_config_error(tmp_path, capsys):
     assert "Traceback" not in err
 
 
-def test_stale_work_dir_without_backend_name_warns(tmp_path, capsys):
+def test_stale_work_dir_without_backend_name_warns(tmp_path):
     """A work dir written before the Backend rename must say so.
 
     Its status.json records the backend under the old key, so
-    _recorded_backend cannot read it and the D120 guard silently stops
+    recorded_backend cannot read it and the D120 guard silently stops
     firing — `compare` falls back to auto-detect and could score an
     OpenModelica work dir against the Dymola partition, SIM_FAIL for every
     test, with nothing said. Reading the old key would be a compatibility
     path; warning is not.
     """
-    from dstf.cli.run_cmds import _recorded_backend
+    from dstf.backends.progress import recorded_backend
 
     work = tmp_path / "work"
     work.mkdir()
@@ -1218,22 +1218,21 @@ def test_stale_work_dir_without_backend_name_warns(tmp_path, capsys):
         encoding="utf-8",
     )
 
-    assert _recorded_backend(work) is None
-    err = capsys.readouterr().err
-    assert "predates the Backend rename" in err
-    assert "--backend" in err
+    label, warning = recorded_backend(work)
+    assert label is None
+    assert "predates the Backend rename" in warning
+    assert "--backend" in warning
 
 
-def test_work_dir_with_no_metadata_at_all_is_silent(tmp_path, capsys):
+def test_work_dir_with_no_metadata_at_all_is_silent(tmp_path):
     """Only a STALE stamp warrants the warning; an unstamped run is normal."""
-    from dstf.cli.run_cmds import _recorded_backend
+    from dstf.backends.progress import recorded_backend
 
     work = tmp_path / "work"
     work.mkdir()
     (work / "status.json").write_text(json.dumps({"tests": []}), encoding="utf-8")
 
-    assert _recorded_backend(work) is None
-    assert capsys.readouterr().err == ""
+    assert recorded_backend(work) == (None, None)
 
 
 def test_an_explicit_backend_bypasses_the_recorded_backend_check(tmp_path, capsys):

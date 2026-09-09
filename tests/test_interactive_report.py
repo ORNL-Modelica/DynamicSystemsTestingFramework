@@ -244,7 +244,7 @@ def _generate_compared(out_dir: Path):
 
 def _generate_no_baseline(out_dir: Path) -> Path:
     """A page with no comparisons at all — ``nobaseline_trajectories`` only
-    fills when ``not comparisons`` (``context_builder._build_trajectories``),
+    fills when ``not comparisons`` (``context_builder.build_trajectories``),
     so the plot and its overlay picker take a different path from the
     compared page's."""
     from dstf.backends.types import TestResult, VariableResult

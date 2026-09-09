@@ -455,7 +455,7 @@ def _resolve_scalar_path(
     Diagnostics come in three shapes: the baseline's stored summaries
     (``{"name", "final", "min", "max"}``), pre-summary baselines carrying
     the full ``{"name", "values"}`` array (old data — the reporter's
-    ``_build_trajectories`` still back-reads it), and the current run's
+    ``build_trajectories`` still back-reads it), and the current run's
     ``VariableResult`` trajectories. The last two are summarized here; the
     run's trajectories are deliberately not stored (reference_store:
     CPUtime is nondeterministic).

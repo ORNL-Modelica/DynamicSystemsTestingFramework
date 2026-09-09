@@ -143,27 +143,17 @@ def _build_figures(context: dict, metric_tree, max_samples: int | None) -> dict:
     and no-baseline plots. Built from the FULL-resolution context — the view
     decimates under ``max_samples`` — and after the sidecar write, so
     ``comparison_data.json`` keeps its trajectory shape and no figure."""
-    from ..comparison.tree_eval import leaf_comparisons_by_path
+    from ..figures.assemble import leaves_by_variable, view_from_trajectory
     from ..figures.plotly import variable_figure
     from ..figures.view import build_view
 
     budget = max_samples if max_samples and max_samples > 0 else None
-    by_path = leaf_comparisons_by_path(metric_tree) if metric_tree is not None else {}
-    leaves_by_var: dict[str, list] = {}
-    for path, vc in by_path.items():
-        leaves_by_var.setdefault(vc.name or f"x[{vc.index}]", []).append((path, vc))
+    leaves_by_var = leaves_by_variable(metric_tree)
 
     figures = {}
     for name, var in (context.get("variables_by_name") or {}).items():
-        traj = var.get("trajectory") or {}
-        view = build_view(
-            name,
-            act_time=traj.get("act_time"),
-            act_values=traj.get("act_values"),
-            ref_time=traj.get("ref_time"),
-            ref_values=traj.get("ref_values"),
-            overlays=var.get("overlays") or [],
-            leaves=leaves_by_var.get(name, []),
+        view = view_from_trajectory(
+            name, var.get("trajectory") or {}, leaves_by_var.get(name, [])
         )
         figures[name] = variable_figure(view, budget)
     diag = [
