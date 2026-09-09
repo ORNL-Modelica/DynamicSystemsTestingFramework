@@ -5,6 +5,7 @@ import argparse
 import sys
 
 from ..config import ConfigError
+from .author_cmd import cmd_author
 from .baseline_cmds import cmd_companion, cmd_import_baseline, cmd_soft_check
 from .common import _parse_review_filter
 from .diag_cmds import (
@@ -282,6 +283,33 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "re-simulating. Skips tests the run recorded as failed/timed_out.",
     )
 
+    # author — the authoring tool (NiceGUI shell over the Session)
+    p_author = subparsers.add_parser(
+        "author",
+        parents=[global_parent, filter_parent],
+        help="Open the authoring tool on this project",
+    )
+    p_author.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to serve the shell on (default: 8080). It binds 127.0.0.1 only.",
+    )
+    p_author.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Serve without opening a browser tab (headless launch).",
+    )
+    p_author.add_argument(
+        "--work-dir", type=str, help="Working directory containing prior run outputs"
+    )
+    p_author.add_argument(
+        "--backend",
+        type=str,
+        help="Backend name (e.g., 'Dymola 2025'). Affects which "
+        "<reference_root>/<Backend>/<os>/ partition is read.",
+    )
+
     # export
     p_export = subparsers.add_parser(
         "export",
@@ -471,6 +499,7 @@ _COMMANDS = {
     "discover": cmd_discover,
     "run": cmd_run,
     "compare": cmd_compare,
+    "author": cmd_author,
     "export": cmd_export,
     "manifest": cmd_manifest,
     "add": cmd_add,

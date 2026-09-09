@@ -3,6 +3,7 @@
 import argparse
 import json
 import logging
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -192,6 +193,27 @@ def test_argparse_subcommands_match_dispatch_table():
         f"  in argparse but not _COMMANDS: {parser_commands - dispatch_commands}\n"
         f"  in _COMMANDS but not argparse: {dispatch_commands - parser_commands}"
     )
+
+
+def test_author_without_the_extra_says_how_to_install_it(monkeypatch, capsys, tmp_path):
+    """NiceGUI is an optional extra: `dstf author` without it must name the
+    install, not raise ImportError at the user."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_nicegui(name, *a, **k):
+        if name == "nicegui" or name.startswith("nicegui."):
+            raise ImportError("No module named 'nicegui'")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_nicegui)
+    for cached in ("dstf.authoring.app", "dstf.authoring.forms"):
+        # earlier test files may have imported them
+        monkeypatch.delitem(sys.modules, cached, raising=False)
+    rc = main(["--config", str(tmp_path / "testing.json"), "author"])
+    assert rc == 2
+    assert "--extra author" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
