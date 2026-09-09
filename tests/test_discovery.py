@@ -1104,3 +1104,68 @@ class TestSpecFromDocument:
         doc = {"tests": [{"model": "Lib.A", "variables": ["x"], "metrics": 42}]}
         with pytest.raises(ConfigError, match="in memory"):
             test_models_from_document(doc, base_dir=Path("."), label="in memory")
+
+
+# ---------------------------------------------------------------------------
+# Discovery from a pre-parsed document; the scan and the merge are separable
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoveryFromDocument:
+    def test_document_replaces_the_file(self, tmp_path):
+        from dstf.discovery.test_registry import discover_tests
+
+        config = _write_lib(
+            tmp_path, spec={"tests": [{"model": "Foo.OnDisk", "variables": ["x"]}]}
+        )
+        doc = {
+            "tests": [
+                {
+                    "model": "Foo.InMemory",
+                    "variables": ["y"],
+                    "simulation": {"stop_time": 7.0},
+                }
+            ]
+        }
+
+        ids = {t.model_id for t in discover_tests(config, spec_document=doc)}
+        assert "Foo.InMemory" in ids and "Foo.OnDisk" not in ids
+        by_id = {t.model_id: t for t in discover_tests(config, spec_document=doc)}
+        assert by_id["Foo.InMemory"].stop_time == 7.0
+        # The .mo scan still contributes: the annotated model _write_lib wrote is there.
+        assert any(t.source != "spec" for t in by_id.values())
+
+    def test_merge_does_not_mutate_the_scan(self, tmp_path):
+        from dstf.discovery.test_registry import merge_tests, scan_source_tests
+
+        config = _write_lib(tmp_path)
+        scanned = scan_source_tests(config)
+        model_id = next(iter(scanned))
+        before = scanned[model_id].stop_time
+        spec_test = _mk_model(
+            model_id=model_id, stop_time=99.0, variable_patterns=["q"]
+        )
+
+        merged = merge_tests(scanned, {model_id: spec_test})
+        assert next(t for t in merged if t.model_id == model_id).stop_time == 99.0
+        assert scanned[model_id].stop_time == before
+        assert scanned[model_id].variable_patterns != ["q"]
+        # A second merge against a different spec sees the untouched scan.
+        again = merge_tests(scanned, {})
+        assert next(t for t in again if t.model_id == model_id).variable_patterns != [
+            "q"
+        ]
+
+    def test_the_fallback_spec_file_is_discovered(self, tmp_path):
+        """`dstf add` writes <reference_root>/test_spec.json when no test_spec
+        is configured; discovery reads that same file (Conventions #8)."""
+        from dstf.discovery.test_registry import discover_tests
+
+        config = _write_lib(tmp_path)  # no "test_spec" key in testing.json
+        assert config.test_spec_file is None
+        config.spec_path.parent.mkdir(parents=True, exist_ok=True)
+        config.spec_path.write_text(
+            json.dumps({"tests": [{"model": "Foo.Fallback", "variables": ["x"]}]}),
+            encoding="utf-8",
+        )
+        assert "Foo.Fallback" in {t.model_id for t in discover_tests(config)}

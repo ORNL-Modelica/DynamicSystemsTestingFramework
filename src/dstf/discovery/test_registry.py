@@ -1,5 +1,6 @@
 """Orchestrate test discovery: find test models and merge parameters."""
 
+import copy
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -170,25 +171,12 @@ def _build_test_model_from_recognizer_results(
     return model
 
 
-def discover_tests(config: Config) -> list[TestModel]:
-    """Discover all test models from registered recognizers and/or external spec.
-
-    Sources (merged by model_id):
-    1. Source-file recognizers (PTA.1+) — for ``source_type == "modelica"``,
-       walks ``*.mo`` and runs every registered Modelica recognizer. Bundled
-       default is the ``UnitTests`` + ``experiment(...)`` recognizer; user-
-       provided recognizers (PTA.3) layer on top.
-    2. External test_spec.json (if configured, overrides recognizer values).
-
-    When a model appears in both recognizers and spec, variable patterns
-    from the spec are added alongside the recognizer-derived variables, and
-    the source is marked as "both". Spec simulation parameters override
-    recognizer values when explicitly set.
-    """
+def scan_source_tests(config: Config) -> dict[str, TestModel]:
+    """Step 1 of discovery: recognizer results over the source tree, keyed
+    by model_id. Empty unless ``source_type == "modelica"``."""
     # Trigger bundled-recognizer registration on first call.
     from . import mo_parser  # noqa: F401
 
-    # Step 1: Run recognizers over source files.
     # Bundled recognizers come from the module-level registry (filtered by
     # config.disabled_bundled); user-provided recognizers from config.recognizers
     # append, so user values win on per-field merge in
@@ -218,32 +206,38 @@ def discover_tests(config: Config) -> list[TestModel]:
                 model_id,
                 results,
             )
+    return ut_tests
 
-    # Step 2: Load external test spec (if configured)
+
+def spec_tests_by_model(models: list[TestModel]) -> dict[str, TestModel]:
+    """Step 2: the spec's models keyed by model_id, first entry wins on a
+    duplicate (matching patch_apply / the spec edit helpers), with a warning."""
     spec_tests: dict[str, TestModel] = {}
-    if config.test_spec_file and config.test_spec_file.exists():
-        from .spec_parser import parse_test_spec
+    for test in models:
+        # review 2026-07-06 finding 51: duplicate model entries — FIRST
+        # wins (matching patch_apply / the spec edit helpers), with a
+        # warning. Last-wins here made applied patches silently
+        # ineffective (they edit the first entry).
+        if test.model_id in spec_tests:
+            logger.warning(
+                "test_spec has duplicate entries for model '%s'; "
+                "using the first — remove the duplicates",
+                test.model_id,
+            )
+            continue
+        spec_tests[test.model_id] = test
+    return spec_tests
 
-        for test in parse_test_spec(config.test_spec_file):
-            # review 2026-07-06 finding 51: duplicate model entries — FIRST
-            # wins (matching patch_apply / the spec edit helpers), with a
-            # warning. Last-wins here made applied patches silently
-            # ineffective (they edit the first entry).
-            if test.model_id in spec_tests:
-                logger.warning(
-                    "test_spec has duplicate entries for model '%s'; "
-                    "using the first — remove the duplicates",
-                    test.model_id,
-                )
-                continue
-            spec_tests[test.model_id] = test
 
-    # Step 3: Merge — union by model_id
-    merged: dict[str, TestModel] = {}
-
-    # Start with UnitTests
-    for model_id, test in ut_tests.items():
-        merged[model_id] = test
+def merge_tests(
+    scanned: dict[str, TestModel], spec_tests: dict[str, TestModel]
+) -> list[TestModel]:
+    """Step 3: union by model_id; the spec wins per field. Copies both
+    inputs, so a caller (the authoring Session) can keep one scan and
+    re-merge it against every edit of the spec."""
+    merged: dict[str, TestModel] = {
+        model_id: copy.deepcopy(test) for model_id, test in scanned.items()
+    }
 
     # Merge spec tests. Two-layer contract (docs/usage.md): the model's
     # experiment(...) annotation provides defaults; any field set in
@@ -253,6 +247,7 @@ def discover_tests(config: Config) -> list[TestModel]:
     # value like stop_time=1.0 against experiment(StopTime=100). Framework
     # defaults are applied only afterwards, by finalize_defaults() below.
     for model_id, spec_test in spec_tests.items():
+        spec_test = copy.deepcopy(spec_test)
         if model_id in merged:
             existing = merged[model_id]
             existing.variable_patterns = spec_test.variable_patterns
@@ -293,3 +288,44 @@ def discover_tests(config: Config) -> list[TestModel]:
     for test in tests:
         test.finalize_defaults()
     return tests
+
+
+def discover_tests(
+    config: Config, *, spec_document: dict | None = None
+) -> list[TestModel]:
+    """Discover all test models from registered recognizers and/or external spec.
+
+    Sources (merged by model_id):
+    1. Source-file recognizers (PTA.1+) — for ``source_type == "modelica"``,
+       walks ``*.mo`` and runs every registered Modelica recognizer. Bundled
+       default is the ``UnitTests`` + ``experiment(...)`` recognizer; user-
+       provided recognizers (PTA.3) layer on top.
+    2. External test_spec.json (the configured file, else
+       ``<reference_root>/test_spec.json`` when it exists; overrides
+       recognizer values).
+
+    When a model appears in both recognizers and spec, variable patterns
+    from the spec are added alongside the recognizer-derived variables, and
+    the source is marked as "both". Spec simulation parameters override
+    recognizer values when explicitly set.
+
+    ``spec_document`` replaces the on-disk spec when given — the authoring
+    Session passes its in-memory document with pending edits applied; the
+    ``.mo`` scan and the merge are the same either way.
+    """
+    scanned = scan_source_tests(config)
+    if spec_document is not None:
+        from .spec_parser import test_models_from_document
+
+        models = test_models_from_document(
+            spec_document,
+            base_dir=config.spec_path.parent,
+            label=f"{config.spec_path} (in memory)",
+        )
+    elif config.spec_path.exists():
+        from .spec_parser import parse_test_spec
+
+        models = parse_test_spec(config.spec_path)
+    else:
+        models = []
+    return merge_tests(scanned, spec_tests_by_model(models))
