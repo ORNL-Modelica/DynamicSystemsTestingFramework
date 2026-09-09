@@ -273,6 +273,41 @@ async def test_edit_tree_needs_exactly_one_test(shell):
         await user.should_see("select exactly one test")  # should_see retries; no sleep
 
 
+def test_edit_tree_reaches_nested_nodes(shell):
+    """The pointer walker consumed `children` and then indexed the LIST with
+    the word — every non-root wrap/edit raised TypeError. `act` is pure, so
+    this pins it without a page."""
+    from dstf.authoring.builtin.edit_tree import EditTree
+    from dstf.authoring.session import SessionView
+    from dstf.authoring.spec_document import PatchOp
+
+    shell.session.stage(
+        [PatchOp(A, "add", "/metrics/children/-", {"metric": "nrmse", "variable": "x"})]
+    )
+    view = SessionView(shell.session)
+    shell.session.select(tests={A})
+    cap = EditTree()
+    # wrap a child, not the root: a `replace` at that path
+    outcome = cap.act(
+        view, action="wrap", model_id=A, path="/metrics/children/1", kind="warn"
+    )
+    (op,) = outcome.ops
+    assert op.op == "replace" and op.path == "/metrics/children/1"
+    assert (
+        op.value["combinator"] == "warn" and op.value["children"][0]["variable"] == "x"
+    )
+    shell.session.apply(outcome)
+    tree = shell.session.tree(A)
+    assert tree["children"][1]["combinator"] == "warn"
+    # edit the nested combinator: k-of-n on the warn's child list is refused
+    # by the parser (warn needs one child), so change the ROOT via its path
+    # and a nested leaf's removal through a nested pointer.
+    outcome = cap.act(
+        view, action="remove", model_id=A, path="/metrics/children/1/children/0"
+    )
+    assert outcome.ops[0].path == "/metrics/children/1/children/0"
+
+
 async def test_edit_tree_wrap_add_remove_and_combinator_edits(shell):
     async with user_simulation(root=shell.root) as user:
         await user.open("/")

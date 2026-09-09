@@ -151,8 +151,9 @@ class Shell:
         return [t.model_id for t in tests]
 
     def _on_job(self, event: dict) -> None:
-        # A lock refusal shown in a tab is about a job that is now over.
-        self.errors.clear()
+        if event.get("state") in ("finished", "failed"):
+            # A lock refusal shown in a tab is about a job that is now over.
+            self.errors.clear()
         self._refresh("jobs", "tests", "tabs")
 
     def _refresh(self, *regions: str) -> None:

@@ -189,7 +189,11 @@ async def test_the_dashboard_route_serves_the_open_projects_work_dir(shell):
         (work / "dashboard.html").write_text("<p>dash</p>", encoding="utf-8")
         ok = await user.http_client.get("/dashboard/dashboard.html")
         assert ok.status_code == 200 and b"dash" in ok.content
-        outside = await user.http_client.get("/dashboard/%2e%2e/refs/testing.json")
+        # A file that EXISTS one level up: only the containment guard says no.
+        assert (work.parent / "FakeLib" / "refs" / "testing.json").is_file()
+        outside = await user.http_client.get(
+            "/dashboard/%2e%2e/FakeLib/refs/testing.json"
+        )
         assert outside.status_code == 404
         missing = await user.http_client.get("/dashboard/nope.html")
         assert missing.status_code == 404
@@ -251,6 +255,98 @@ async def test_the_filter_survives_a_click(shell):
         with pytest.raises(AssertionError):
             user.find(marker=B)  # still filtered
         assert next(iter(user.find(ui.input).elements)).value == "FakeLib.A"
+
+
+async def test_a_failing_advisory_leaf_reads_warn_not_fail(shell):
+    """A warn-wrapped leaf that fails does not fail the test; the row says so."""
+    from dstf.authoring.spec_document import PatchOp
+
+    shell.session.stage(
+        [
+            PatchOp(
+                A, "add", "/metrics/children/0/tolerance", 0.5
+            ),  # the hard leaf passes
+            PatchOp(
+                A,
+                "add",
+                "/metrics/children/-",
+                {
+                    "combinator": "warn",
+                    "children": [{"metric": "nrmse", "variable": "x"}],
+                },
+            ),
+        ]
+    )
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        user.find(marker=A).click()
+        await user.should_see("/metrics/children/1/children/0")
+        rows = [
+            b
+            for b in user.find(ui.button).elements
+            if str(b.text).startswith("/metrics/children/1/children/0")
+        ]
+        assert rows and all("WARN" in r.text and "FAIL" not in r.text for r in rows)
+
+
+async def test_a_lock_refusal_clears_when_the_job_ends_not_when_it_starts(shell):
+    from dstf.authoring.capabilities import Job
+
+    class _Cap:
+        name, label, scope = "boom", "Boom", caps.Scope.PROJECT
+
+        def available(self, s):
+            return True
+
+        def panel(self, s, ui_panel):
+            pass
+
+        def act(self, s, **inputs):
+            raise RuntimeError("kept until the job ends")
+
+    caps.register_capability(_Cap())
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.act(_Cap())
+        assert "boom" in shell.errors
+        gate = _Gate()
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await user.should_see("running: rerun")
+        assert "boom" in shell.errors  # a job STARTING clears nothing
+        gate.release.set()
+        await user.should_see("no job running")
+        assert "boom" not in shell.errors
+
+
+def test_the_figure_hook_names_the_primitive_from_meta_id():
+    from dstf.authoring.app import FigureHook
+
+    hook = FigureHook()
+    seen = []
+    hook.on("plotly_click", lambda primitive, payload: seen.append(primitive))
+    hook._dispatch(
+        "plotly_click",
+        {
+            "points": [
+                {
+                    "curveNumber": 0,
+                    "data": {"meta": {"id": "/metrics/children/0/tube/band"}},
+                }
+            ]
+        },
+    )
+    hook._dispatch(
+        "plotly_click",
+        {"points": [{"curveNumber": 0, "customdata": "/metrics/children/1/points/2"}]},
+    )
+    hook._dispatch("plotly_click", {"points": [{"curveNumber": 0}]})
+    hook._dispatch("plotly_click", None)
+    assert seen == [
+        "/metrics/children/0/tube/band",
+        "/metrics/children/1/points/2",
+        "0",
+        "",
+    ]
 
 
 async def test_a_results_only_event_refreshes_the_verdict(shell):

@@ -58,13 +58,13 @@ def _repo_before() -> str:
     return _git_status()
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(scope="module", autouse=True)
 def _repo_untouched(_repo_before: str):
     """Every test here is read-only outside its ``tmp_path``. The status is
-    read once for the module and re-read after each test, so each check is
-    also the next test's "before". The message names the lines that moved,
-    because an editor open on the tree looks exactly like a test writing to
-    it until you read them."""
+    read once before the module and once after (a `git status` on this
+    tree costs a second and a half; per test it doubled the module). The
+    message names the lines that moved, because an editor open on the tree
+    looks exactly like a test writing to it until you read them."""
     yield
     after = _git_status()
     moved = sorted(set(after.splitlines()) ^ set(_repo_before.splitlines()))

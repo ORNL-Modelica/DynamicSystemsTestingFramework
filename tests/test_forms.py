@@ -58,6 +58,25 @@ async def test_every_field_type_gets_a_control_and_values_round_trip():
         assert "points" not in seen[-1] or seen[-1]["points"] == [[0, 1]]
 
 
+async def test_a_checkbox_and_a_select_show_the_effective_default_unwritten():
+    """A checkbox has no placeholder: an unset bool shows its default (what
+    the leaf scores with), and the value is not written until changed.
+    Same for an enum."""
+    forms = {}
+
+    def root():
+        forms["f"] = render_form(derive_schema(_Cfg), {}, on_change=lambda v: None)
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        form = forms["f"]
+        assert form.controls["count_must_match"].value is True
+        assert form.controls["mode_kind"].value == "band"
+        assert form.values() == {}
+        form.controls["count_must_match"].set_value(False)
+        assert form.values() == {"count_must_match": False}
+
+
 async def test_none_values_are_omitted_from_the_values_dict():
     forms = {}
 

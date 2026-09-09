@@ -35,22 +35,27 @@ _COMBINATOR_KEYS = ("k", "weights", "threshold", "direction")
 def _node_at(tree: dict, path: str) -> dict:
     """The raw node at ``path``, a pointer whose first token names the tree
     itself (``/metrics``, ``/metrics/children/0``, ...)."""
-    node = tree
+    node: Any = tree
     for token in [t for t in path.split("/") if t][1:]:
-        node = node["children"][int(token)] if token.isdigit() else node[token]
+        # A pointer alternates `children` (a key) and an index (into that
+        # list): consume each token as what it is.
+        node = node[int(token)] if token.isdigit() else node[token]
     return node
 
 
 def _kind_fields(kind: str, inputs: dict[str, Any]) -> dict[str, Any]:
     """The raw fields ``kind`` takes, from the panel's controls."""
     if kind == "k-of-n":
-        return {"k": int(inputs["k"] or 0)}
+        return {"k": int(round(float(inputs["k"] or 0)))}
     if kind == "weighted":
         text = str(inputs["weights"] or "")
-        return {
-            "weights": [float(w) for w in text.replace(",", " ").split()],
-            "threshold": float(inputs["threshold"] or 0.0),
-        }
+        try:
+            weights = [float(w) for w in text.replace(",", " ").split()]
+        except ValueError:
+            raise ValueError(
+                f"weights: {text!r} is not a comma-separated list of numbers"
+            ) from None
+        return {"weights": weights, "threshold": float(inputs["threshold"] or 0.0)}
     return {}
 
 
@@ -238,7 +243,11 @@ def _row_text(node: dict, path: str) -> str:
 def _variable_names(s: SessionView, model_id: str) -> list[str]:
     """What a new leaf may score: the scored names, else the result's."""
     comp = s.comparisons.get(model_id)
-    names = [vc.name for vc in comp.variables if vc.name] if comp is not None else []
+    names = (
+        list(dict.fromkeys(vc.name for vc in comp.variables if vc.name))
+        if comp is not None
+        else []
+    )
     if names:
         return names
     project = s.project

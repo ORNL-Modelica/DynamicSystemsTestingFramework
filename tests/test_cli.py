@@ -199,11 +199,18 @@ def test_author_refuses_the_global_flags_it_would_drop(tmp_path, capsys):
     """The tool edits and saves the spec testing.json names; an override
     here would show one file and save another. And no Config is built before
     the refusal — a full resolution can write a default testing.json."""
-    (tmp_path / "package.mo").write_text("package X\nend X;\n", encoding="utf-8")
-    rc = main(["author", "--source-path", str(tmp_path), "--test-spec", "/x/spec.json"])
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    (lib / "package.mo").write_text("package X\nend X;\n", encoding="utf-8")
+    rc = main(["author", "--source-path", str(lib), "--test-spec", "/x/spec.json"])
     err = capsys.readouterr().err
     assert rc == 2 and "needs --config" in err
-    assert not (tmp_path / "testing.json").exists()  # nothing was written
+    # A Config build with --source-path writes its default testing.json in
+    # the library's PARENT; the refusal must come before any build.
+    assert not list(tmp_path.rglob("testing.json"))
+    for flag in ("--source-path", "--reference-root", "--dymola-interface"):
+        rc = main(["--config", str(tmp_path / "t.json"), "author", flag, str(tmp_path)])
+        assert rc == 2 and flag in capsys.readouterr().err
     rc = main(
         ["--config", str(tmp_path / "t.json"), "author", "--test-spec", "/x/spec.json"]
     )
