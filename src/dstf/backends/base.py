@@ -189,7 +189,7 @@ def _apply_run_verdicts(
 
     * no field at all — a manifest written before this record existed (old
       data, not old code: the writer always writes it now);
-    * :data:`PENDING_RUN_STATUS` — a run started this test and never reached a
+    * :data:`~dstf.storage.batch_manifest.PENDING_RUN_STATUS` — a run started this test and never reached a
       verdict for it, i.e. it was aborted. Trusting a pending entry would mean
       trusting nothing at all; trusting a *carried-forward* verdict, which is
       what pending replaced, would mean reporting a previous run's green over

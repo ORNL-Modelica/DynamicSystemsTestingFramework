@@ -65,6 +65,31 @@ def test_a_pending_test_is_refused_with_the_reason_and_the_rest_are_stored(tmp_p
     assert store.get_reference("FakeLib.InFlight") is None
 
 
+def test_a_pending_test_outside_the_scope_is_not_refused(tmp_path):
+    """`compare --accept --filter A` must not fail on B's aborted run: the
+    refusal is scoped to the tests being accepted."""
+    config, store = _env(
+        tmp_path,
+        {
+            "test_0001": {
+                "model_id": "FakeLib.Done",
+                "ref_id": None,
+                "last_run_status": "passed",
+            },
+            "test_0002": {
+                "model_id": "FakeLib.InFlight",
+                "ref_id": None,
+                "last_run_status": "pending",
+            },
+        },
+    )
+    tests = [make_test_model("FakeLib.Done", variable_patterns=["x"])]
+    stored, skipped = accept_run_results(
+        store, tests, {"FakeLib.Done": _result("FakeLib.Done")}, config.work_dir
+    )
+    assert (stored, skipped) == (1, [])
+
+
 def test_no_manifest_means_no_refusal(tmp_path):
     config, store = _env(tmp_path, {})
     (config.work_dir / "batch_manifest.json").unlink()
