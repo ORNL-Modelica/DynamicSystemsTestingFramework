@@ -7,6 +7,7 @@ from typing import Literal
 
 import pytest
 
+from dstf.comparison.mode_schema import derive_schema
 from dstf.comparison.modes import (
     DominantFrequencyConfig,
     EventTimingConfig,
@@ -15,7 +16,6 @@ from dstf.comparison.modes import (
     RangeConfig,
     TubeConfig,
 )
-from dstf.reporting.ui.mode_controls import derive_schema
 
 
 class TestDeriveSchemaPerMode:

@@ -788,9 +788,9 @@ class TestScalarReporterSurfaces:
         assert props["tolerance_mode"]["enum"] == ["abs", "rel"]
         assert "scalar" in schema["$defs"]["leaf"]["properties"]["metric"]["enum"]
 
-    def test_mode_controls_derive_scalar_fields(self):
+    def test_mode_schema_derive_scalar_fields(self):
+        from dstf.comparison.mode_schema import derive_schema
         from dstf.comparison.registry import metric
-        from dstf.reporting.ui.mode_controls import derive_schema
 
         desc = metric("scalar")
         assert desc is not None

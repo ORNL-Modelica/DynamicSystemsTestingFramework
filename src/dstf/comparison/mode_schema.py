@@ -1,4 +1,5 @@
-"""Auto-derive a per-mode schema from each metric's typed Config dataclass.
+"""UI schema derived from a mode's Config dataclass — what ``export-schema``
+writes as JSON-Schema and the authoring tool's form emitter renders.
 
 Each :class:`ComparisonMode`'s Config is a frozen dataclass with strictly
 typed fields. :func:`derive_schema` reads those types via
@@ -17,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import types
 import typing
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Union
 
@@ -85,7 +87,7 @@ def derive_schema(config_cls: type, *, mode: str | None = None) -> Schema:
         hint = hints.get(f.name, f.type)
         kind, optional, choices = _classify_type(hint)
         default = _field_default(f)
-        meta = f.metadata or {}
+        meta: Mapping[str, Any] = f.metadata or {}
         fields_out.append(
             FieldSpec(
                 name=f.name,
@@ -139,9 +141,9 @@ def _classify_type(hint: Any) -> tuple[str, bool, list[str] | None]:
 def _field_default(f: dataclasses.Field) -> Any:
     if f.default is not dataclasses.MISSING:
         return f.default
-    if f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
+    if f.default_factory is not dataclasses.MISSING:
         try:
-            return f.default_factory()  # type: ignore[misc]
+            return f.default_factory()
         except Exception:
             return None
     return None

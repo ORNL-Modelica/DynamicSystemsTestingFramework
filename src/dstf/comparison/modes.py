@@ -103,8 +103,8 @@ class TubeConfig:
 
     Mirrors the fields previously scattered as arbitrary keys in the
     variable_overrides dict, but with types enforced. The tightened
-    `Literal[...]` choices feed the reporter's auto-derived UI
-    (reporting/ui/mode_controls.py).
+    `Literal[...]` choices feed the auto-derived UI schema
+    (comparison/mode_schema.py).
     """
 
     tube_width_mode: Literal["band", "rel", "abs"] | None = field(

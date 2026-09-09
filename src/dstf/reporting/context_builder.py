@@ -645,56 +645,44 @@ def _tree_summary(view: dict | None) -> dict | None:
     }
 
 
-def _build_tree_view_and_variables(
-    comparisons: list,
-    test_model,
-    metric_tree,
-    trajectories: list,
-) -> tuple[dict | None, dict]:
-    """Stage-2 single-source-of-truth: returns ``(tree_view,
-    variables_by_name)``.
-
-    The reporter's recursive-component UI walks ``tree_view`` directly
-    (a serialized SpecNode tree with per-node paths + evaluation results,
-    leaves augmented with render artifacts). ``variables_by_name`` carries
-    one entry per unique variable — its trajectory + overlays + the leaf
-    paths targeting it — so per-variable plot sections mount a filtered
-    view of the same tree.
-
-    When there are no comparisons the function returns ``(None, {})`` —
-    sim-failed and no-baseline tests render without a tree view at all.
-    """
-    if not comparisons:
-        return None, {}
-
-    from ..comparison.tree_eval import flatten_evaluation as _flatten_evaluation
-    from ..comparison.tree_spec import (
-        collect_variables as _collect_variables,
-    )
-    from ..comparison.tree_spec import (
-        leaves_for_variable as _leaves_for_variable,
-    )
-    from ..comparison.tree_spec import (
-        spec_to_view as _spec_to_view,
-    )
+def _spec_for(comparisons: list, test_model):
+    """The tree the view walks: the authored one, else the implicit tree
+    synthesized from what was scored. Both the tree view and the
+    per-variable mounts read it, so they agree by construction."""
     from ..comparison.tree_spec import (
         synthesize_implicit_tree as _synthesize_implicit_tree,
     )
 
-    comparison_var_names = [vc.name or f"x[{vc.index}]" for vc in comparisons]
     if (
         test_model is not None
         and getattr(test_model, "metric_tree_spec", None) is not None
     ):
-        spec = test_model.metric_tree_spec
-    else:
-        spec = _synthesize_implicit_tree(
-            comparison_var_names,
-            variable_overrides=(
-                getattr(test_model, "variable_overrides", None) if test_model else None
-            ),
-        )
+        return test_model.metric_tree_spec
+    comparison_var_names = [vc.name or f"x[{vc.index}]" for vc in comparisons]
+    return _synthesize_implicit_tree(
+        comparison_var_names,
+        variable_overrides=(
+            getattr(test_model, "variable_overrides", None) if test_model else None
+        ),
+    )
 
+
+def build_tree_view(comparisons: list, test_model, metric_tree) -> dict | None:
+    """The read-only metric tree as the report renders it — the spec's shape
+    (the authored tree, else the implicit one synthesized from what was
+    scored) with each leaf carrying the CLI's verdict, ``summarize``'s
+    display / criterion / details, the sentinel reason and the advisory
+    flag. ``None`` when nothing was compared. The authoring shell shows the
+    same dict, built by this function."""
+    if not comparisons:
+        return None
+
+    from ..comparison.tree_eval import flatten_evaluation as _flatten_evaluation
+    from ..comparison.tree_spec import (
+        spec_to_view as _spec_to_view,
+    )
+
+    spec = _spec_for(comparisons, test_model)
     eval_by_path = _flatten_evaluation(metric_tree) if metric_tree is not None else {}
 
     # Leaves are addressed by the path a patch op would use — stamped by the
@@ -727,6 +715,42 @@ def _build_tree_view_and_variables(
     # the leaf dicts, so a flag stamped afterwards would reach the full-tree
     # mount only.
     _mark_advisory(tree_view)
+    return tree_view
+
+
+def _build_tree_view_and_variables(
+    comparisons: list,
+    test_model,
+    metric_tree,
+    trajectories: list,
+) -> tuple[dict | None, dict]:
+    """Stage-2 single-source-of-truth: returns ``(tree_view,
+    variables_by_name)``.
+
+    The reporter's recursive-component UI walks ``tree_view`` directly
+    (a serialized SpecNode tree with per-node paths + evaluation results,
+    leaves augmented with render artifacts). ``variables_by_name`` carries
+    one entry per unique variable — its trajectory + overlays + the leaf
+    paths targeting it — so per-variable plot sections mount a filtered
+    view of the same tree.
+
+    When there are no comparisons the function returns ``(None, {})`` —
+    sim-failed and no-baseline tests render without a tree view at all.
+    """
+    if not comparisons:
+        return None, {}
+
+    from ..comparison.tree_spec import (
+        collect_variables as _collect_variables,
+    )
+    from ..comparison.tree_spec import (
+        leaves_for_variable as _leaves_for_variable,
+    )
+
+    tree_view = build_tree_view(comparisons, test_model, metric_tree)
+    if tree_view is None:
+        return None, {}
+    spec = _spec_for(comparisons, test_model)
     all_leaves = _view_leaves(tree_view)
 
     # Look the trajectory up by variable name — ``build_trajectories``

@@ -8,6 +8,7 @@ it applies (the store, a job's work dir). Nothing here imports a UI.
 
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -282,6 +283,29 @@ class Session:
             self.view(model_id, variable), project.config.max_embedded_samples
         )
 
+    def tree_view(self, model_id: str) -> dict | None:
+        """The read-only tree the report shows for this test, built by the
+        report's own function; ``None`` when nothing was compared."""
+        from ..reporting.context_builder import build_tree_view
+
+        project = self._require_project()
+        test = project.test(model_id)
+        if test is None:
+            raise KeyError(model_id)
+        comp = self.comparisons.get(model_id)
+        if comp is None or not comp.evaluated:
+            return None
+        return build_tree_view(list(comp.variables), test, comp.metric_tree)
+
+    def tree(self, model_id: str) -> dict | None:
+        """The raw tree a Patch edits: the entry's ``metrics`` block, else the
+        tree ``rescore`` would materialize (the report's leaves), else None."""
+        entry = self.spec.entry(model_id) or {}
+        if "metrics" in entry:
+            return copy.deepcopy(entry["metrics"])
+        op = self._materialization(model_id)
+        return op["value"] if op is not None else None
+
     # -- the spec ----------------------------------------------------------
 
     def stage(self, ops: Sequence[PatchOp]) -> None:
@@ -314,11 +338,26 @@ class Session:
             staged += [
                 PatchOp(model_id, r["op"], r["path"], r.get("value")) for r in full
             ]
+        # Convention 8: Edit criteria stages on every control change, so a
+        # ``replace`` landing on the path the last pending op already
+        # replaces supersedes it — the drawer and the exported envelope
+        # read "leaf -> new leaf", never a keystroke log. A batch is never
+        # collapsed: its ops belong together.
+        pending = list(self.spec.pending)
+        if (
+            len(staged) == 1
+            and staged[0].op == "replace"
+            and pending
+            and pending[-1].op == "replace"
+            and pending[-1].model_id == staged[0].model_id
+            and pending[-1].path == staged[0].path
+        ):
+            pending = pending[:-1]
         candidate = SpecDocument(
             self.spec.path,
             self.spec.loaded,
             self.spec.content_hash,
-            [*self.spec.pending, *staged],
+            [*pending, *staged],
         )
         effective = candidate.effective()  # PatchError on a bad path
         for model_id in models:
@@ -673,6 +712,12 @@ class SessionView:
 
     def figure(self, model_id: str, variable: str) -> dict:
         return self._session.figure(model_id, variable)
+
+    def tree_view(self, model_id: str) -> dict | None:
+        return self._session.tree_view(model_id)
+
+    def tree(self, model_id: str) -> dict | None:
+        return self._session.tree(model_id)
 
 
 def _in_order(ids: Iterable[str]) -> list[str]:

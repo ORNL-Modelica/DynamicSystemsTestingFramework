@@ -419,6 +419,23 @@ class TestRescoreAndStage:
         assert classify(session.rescore(B)) == NO_REF
         assert classify(session.rescore(C)) == SIM_FAIL
 
+    def test_consecutive_replaces_of_one_path_collapse(self, session):
+        """Edit criteria stages on every control change; the drawer and the
+        export must read "leaf -> new leaf", not a keystroke log."""
+        session.stage([LOOSEN])
+        n = len(session.spec.pending)
+        for tol in (0.4, 0.3, 0.2):
+            session.stage([PatchOp(A, "replace", "/metrics/children/0/tolerance", tol)])
+        assert len(session.spec.pending) == n + 1
+        assert session.spec.pending[-1].value == 0.2
+        session.stage(
+            [
+                PatchOp(A, "replace", "/metrics/children/0/tolerance", 0.9),
+                PatchOp(A, "add", "/comparison", {"tolerance": 0.5}),
+            ]
+        )
+        assert len(session.spec.pending) == n + 3  # a batch is never collapsed
+
 
 class TestView:
     def test_a_scored_variable_carries_its_leaves(self, session):
@@ -436,6 +453,22 @@ class TestView:
         view = session.view(C, "x")
         assert view.act_time is None and view.leaves == ()
         assert "layout" in session.figure(C, "x")
+
+    def test_tree_view_is_the_reports_tree(self, session):
+        view = session.tree_view(A)
+        assert view["kind"] == "combinator" and view["path"] == "/metrics"
+        (leaf,) = view["children"]
+        assert leaf["path"] == "/metrics/children/0" and leaf["variable"] == "x"
+        assert leaf["passed"] is False and leaf["score_display"]
+        assert session.tree_view(B) is None  # NO_REF: nothing compared
+
+    def test_tree_is_the_entry_or_the_materialization(self, session):
+        assert [c["variable"] for c in session.tree(A)["children"]] == [
+            "x"
+        ]  # would materialize
+        session.stage([LOOSEN])
+        assert session.tree(A)["children"][0]["tolerance"] == 0.5  # the entry's now
+        assert session.tree(B) is None
 
 
 class TestSaveDiscardExport:
@@ -769,6 +802,8 @@ class TestSessionView:
             "rescore",
             "view",
             "figure",
+            "tree_view",
+            "tree",
             "is_locked",
         }
         assert not public & {

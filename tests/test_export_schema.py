@@ -150,8 +150,8 @@ def test_event_timing_schema_includes_events_as_passthrough():
     """The declared-events field is a ``list[dict]``, which introspection
     cannot reduce to a scalar or an enum — it must export as a passthrough
     so a consumer renders it as raw JSON rather than dropping it."""
+    from dstf.comparison.mode_schema import derive_schema
     from dstf.comparison.modes import EventTimingConfig
-    from dstf.reporting.ui.mode_controls import derive_schema
 
     schema = derive_schema(EventTimingConfig, mode="event-timing").to_dict()
     fields = {f["name"]: f for f in schema.get("fields", [])}

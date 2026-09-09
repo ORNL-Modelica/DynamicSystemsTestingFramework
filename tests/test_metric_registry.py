@@ -267,8 +267,8 @@ class TestToyMetricEndToEnd:
 
 class TestDerivedControls:
     def test_registered_metric_gets_a_schema(self):
+        from dstf.comparison.mode_schema import derive_schema
         from dstf.comparison.registry import metric
-        from dstf.reporting.ui.mode_controls import derive_schema
 
         register_metric(_final_slope_descriptor())
 

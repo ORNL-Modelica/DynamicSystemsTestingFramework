@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..comparison.mode_schema import derive_schema
 from ..comparison.registry import combinator_names, metric_names, metrics
-from .ui.mode_controls import derive_schema
 
 _JSON_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema"
 

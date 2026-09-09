@@ -97,6 +97,11 @@ class Panel(Protocol):
 
     figure: FigureHook
 
+    def submit(self, **inputs: Any) -> None:
+        """Hand the capability's inputs to the shell, which calls ``act`` and
+        applies the outcome; an exception shows in the tab."""
+        ...
+
 
 @runtime_checkable
 class Capability(Protocol):
