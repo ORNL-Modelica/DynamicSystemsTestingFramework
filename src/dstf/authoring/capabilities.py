@@ -79,6 +79,7 @@ class Artifact:
 @dataclass(frozen=True, kw_only=True)
 class OpenProject:
     config_path: Path
+    work_dir: Path | None = None  # the run's work dir, when not the default
 
 
 Outcome = Patch | StoreWrite | Job | Artifact | OpenProject | None

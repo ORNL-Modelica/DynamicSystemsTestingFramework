@@ -349,14 +349,18 @@ multi-model form carries any number of models:
     {"op": "replace", "path": "/comparison/tolerance", "value": 0.01}
   ]},
   {"model": "MyLib.Examples.Other", "patch": [
-    {"op": "add", "path": "/variables/-", "value": "tank.level"}
+    {"op": "add", "path": "/comparison/variable_overrides/tank.level",
+     "value": {"mode": "range", "min_value": 0.0, "max_value": 2.0}}
   ]}
 ]}
 ```
 
 The single-model form — `{"model": ..., "patch": [...]}` — is read too, because
 files in that shape exist. The authoring tool writes only the multi-model form.
-Paths in each `patch` are relative to that model's entry in `test_spec.json`.
+Paths in each `patch` are relative to that model's entry in `test_spec.json`
+and may only touch `/comparison` and `/metrics`; anything else — `/variables`,
+`/simulation` — is refused, so a patch cannot change what a test tracks or how
+it runs.
 
 #### Report layout and offline use
 

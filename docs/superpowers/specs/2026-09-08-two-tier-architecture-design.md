@@ -407,9 +407,14 @@ leaves the report shows, in its order, whether or not the spec entry lists them
 all: the op creates it) — and only when that tree scores what the flat path
 scored: it stages nothing for a glob-tracked spec, a scored variable whose name
 is not one the result carries (the flat path's `x[N]` display label), an
-override naming an unregistered mode, or a reference-JSON override the spec does
-not shadow — each with its negative test. `spec-update`, with no result in hand,
-still materializes from the entry's own list. A glob spec is not editable in the tool until the owner decides how
+override naming an unregistered mode, a string `quantity` in an override (the
+flat path refuses it), or a reference-JSON override the spec does not shadow —
+each with its negative test. `stage` materializes by the same rule and refuses a
+per-leaf op on a test it cannot build a tree for. `spec-update`, with no result
+in hand, still materializes from the entry's own list. `SessionView.rescore` is
+the one call on the view that writes — it stages that op — so a capability's
+`available` must not call it. `open`, `close` and `OpenProject` refuse while
+edits are pending or a job runs; `OpenProject` carries the work dir. A glob spec is not editable in the tool until the owner decides how
 such a spec materializes (§9). A completed job reloads results only when it
 succeeded; a failed one leaves the verdicts as they were and reports its error.
 While a job runs, a reload triggered elsewhere (a store write on a free model)
@@ -657,13 +662,15 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
    tool**, except that `run -i`'s detail text is now mode-aware and
    `spec-update` also reads the multi-model envelope. `dstf author` is an
    addition. `export-schema` and the JSON-Schema handoff are unchanged.
-   Three further changes are visible and intended: every command that
+   Four further changes are visible and intended: every command that
    discovers tests now reads `<reference_root>/test_spec.json` when no
    `test_spec` is configured — the file `add` writes — so a stray one is
    discovered; `spec-update` refuses to materialize a tree for a spec whose
-   variables are glob patterns, instead of silently writing a `*` leaf; and a
-   model-less envelope exits 2 as a config error, where it printed and exited
-   1.
+   variables are glob patterns or whose override names an unregistered mode,
+   instead of silently writing a `*` or an nrmse leaf; a model-less envelope
+   exits 2 as a config error, where it printed and exited 1; and `run
+   --accept` applies the same aborted-run refusal `compare --accept` did, which
+   a completed run never triggers.
 5. **TRANSFORM** `compare --report` renders every test, and its 331 stored
    verdicts are unchanged by steps 1–4.
 

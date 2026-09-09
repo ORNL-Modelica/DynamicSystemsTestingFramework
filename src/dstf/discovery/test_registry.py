@@ -290,9 +290,7 @@ def merge_tests(
     return tests
 
 
-def discover_tests(
-    config: Config, *, spec_document: dict | None = None
-) -> list[TestModel]:
+def discover_tests(config: Config) -> list[TestModel]:
     """Discover all test models from registered recognizers and/or external spec.
 
     Sources (merged by model_id):
@@ -309,20 +307,12 @@ def discover_tests(
     the source is marked as "both". Spec simulation parameters override
     recognizer values when explicitly set.
 
-    ``spec_document`` replaces the on-disk spec when given — the authoring
-    Session passes its in-memory document with pending edits applied; the
-    ``.mo`` scan and the merge are the same either way.
+    The three steps are separable: the authoring Session keeps one
+    :func:`scan_source_tests` result and re-runs :func:`merge_tests` against
+    its in-memory spec document on every edit.
     """
     scanned = scan_source_tests(config)
-    if spec_document is not None:
-        from .spec_parser import spec_models_from_document
-
-        models = spec_models_from_document(
-            spec_document,
-            base_dir=config.spec_path.parent,
-            label=f"{config.spec_path} (in memory)",
-        )
-    elif config.spec_path.exists():
+    if config.spec_path.exists():
         from .spec_parser import parse_test_spec
 
         models = parse_test_spec(config.spec_path)

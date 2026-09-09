@@ -23,12 +23,13 @@ from ..backends.types import DatasetType, TestResult
 from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
+from ..discovery.patch_apply import PatchError
 from ..discovery.spec_parser import spec_models_from_document
 from ..discovery.spec_update import (
     apply_validated_patches,
     implicit_tree_op,
     is_literal_variable,
-    materialize_implicit_metrics,
+    needs_materialization,
     unknown_override_modes,
     validate_entry_metric_tree,
 )
@@ -109,6 +110,14 @@ class JobRunningError(RuntimeError):
     pass
 
 
+class PendingEditsError(RuntimeError):
+    def __init__(self, count: int):
+        self.count = count
+        super().__init__(
+            f"{count} staged edit(s) would be lost; save or discard them first"
+        )
+
+
 class Session:
     def __init__(self, post: Callable[[Callable[[], None]], None] | None = None):
         """``post`` hands a job's completion to the UI loop; without one the
@@ -135,9 +144,10 @@ class Session:
         work_dir: Path | None = None,
     ) -> None:
         """Open the project ``config_path`` describes. Without an explicit
-        ``backend`` the one the last run recorded wins, as ``compare`` does."""
-        if self.running is not None:
-            raise JobRunningError(f"{self.running.label} is still running")
+        ``backend`` the one the last run recorded wins, as ``compare`` does.
+        Refused while a job runs or while edits are pending — save or
+        discard first; a swap must never drop them silently."""
+        self._refuse_if_busy()
         config_path = Path(config_path)
         config = Config(
             config_file=config_path, backend_name=backend, work_dir=work_dir
@@ -175,9 +185,10 @@ class Session:
         self._reload_results()
 
     def close(self) -> None:
-        if self.running is not None:
-            raise JobRunningError(f"{self.running.label} is still running")
+        self._refuse_if_busy()
         self.project = None
+        self.artifacts = []
+        self.warnings = []
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
         self.selection = Selection()
@@ -284,7 +295,22 @@ class Session:
         staged: list[PatchOp] = []
         for model_id in _in_order(op.model_id for op in ops):
             raw = [op.raw() for op in ops if op.model_id == model_id]
-            full = materialize_implicit_metrics(self.spec.entry(model_id), raw)
+            entry = self.spec.entry(model_id) or {"model": model_id}
+            if needs_materialization(entry, raw):
+                # The same tree rescore stages — from what the flat path
+                # scored — never one from the entry's list: on both tiers
+                # leaf i is /metrics/children/i of the report's tree.
+                tree_op = self._materialization(model_id)
+                if tree_op is None:
+                    raise PatchError(
+                        f"{model_id}: a per-leaf op needs the implicit tree "
+                        "materialized, and this test has no scored variables "
+                        "a tree could be built from (or one of the flat/tree "
+                        "differences applies) — author the tree explicitly"
+                    )
+                full = [tree_op, *raw]
+            else:
+                full = raw
             staged += [
                 PatchOp(model_id, r["op"], r["path"], r.get("value")) for r in full
             ]
@@ -324,7 +350,9 @@ class Session:
             raise StaleSpecError(self.spec.path)
         groups = self.spec.grouped()
         if groups:
-            apply_validated_patches(self.spec.path, groups, project.config)
+            apply_validated_patches(
+                self.spec.path, groups, project.config, project.store
+            )
         models = {model_id for model_id, _ in groups}
         self.spec = SpecDocument.load(self.spec.path)
         self._rebuild_tests(models)
@@ -336,16 +364,14 @@ class Session:
 
     # -- outcomes ----------------------------------------------------------
 
-    def apply(
-        self, outcome: Outcome | Sequence[Outcome], *, work_dir: Path | None = None
-    ) -> None:
+    def apply(self, outcome: Outcome | Sequence[Outcome]) -> None:
         """Apply what a capability returned. ``None`` is nothing; a sequence
-        is applied in order. ``work_dir`` reaches only ``OpenProject``."""
+        is applied in order."""
         if outcome is None:
             return
         if isinstance(outcome, (list, tuple)):
             for one in outcome:
-                self.apply(one, work_dir=work_dir)
+                self.apply(one)
             return
         if isinstance(outcome, Patch):
             self.stage(outcome.ops)
@@ -359,9 +385,7 @@ class Session:
             self.artifacts.append(outcome)
             self._emit("job", state="artifact", artifact=outcome)
         elif isinstance(outcome, OpenProject):
-            self.open(
-                outcome.config_path, work_dir=work_dir
-            )  # refuses while a job runs
+            self.open(outcome.config_path, work_dir=outcome.work_dir)
         else:
             raise TypeError(f"not an Outcome: {outcome!r}")
 
@@ -479,7 +503,9 @@ class Session:
         completion reload (which runs after the lock is released)."""
         project = self._require_project()
         locked = self.running.models if self.running is not None else frozenset()
-        fresh = project.backend.read_last_results(project.tests)
+        fresh = project.backend.read_last_results(
+            [t for t in project.tests if t.model_id not in locked]
+        )
         for model_id in locked:
             if model_id in project.results:
                 fresh[model_id] = project.results[model_id]
@@ -499,7 +525,9 @@ class Session:
         simulate-only), when the spec tracks a glob pattern (the owner's open
         question), or when a tree would not score what the flat path
         scored: a scored variable whose name is not one the result carries
-        (the flat path's ``x[N]`` display label), an override naming an
+        (the flat path's ``x[N]`` display label), a string ``quantity`` in
+        an override (the flat path refuses it, a tree would score it), an
+        override naming an
         unregistered mode (the flat path fails it; a tree would score
         nrmse), or a reference-JSON override the spec does not shadow (the
         flat path merges it; a tree ignores it). Each case has its
@@ -526,11 +554,25 @@ class Session:
         if unknown_override_modes(entry):
             return None
         spec_overrides = (entry.get("comparison") or {}).get("variable_overrides") or {}
+        if any(
+            isinstance(ov, dict) and isinstance(ov.get("quantity"), str)
+            for ov in spec_overrides.values()
+        ):
+            # The flat path refuses a stats-path quantity ("needs a metrics
+            # tree"); the tree path would score it — a FAIL that becomes a
+            # PASS on a look. Authoring the tree is the user's act, not ours.
+            return None
         ref = project.store.get_reference(model_id) or {}
         ref_overrides = (ref.get("comparison") or {}).get("variable_overrides") or {}
         if any(n in ref_overrides and n not in spec_overrides for n in names):
             return None
         return implicit_tree_op(entry, variables=names)
+
+    def _refuse_if_busy(self) -> None:
+        if self.running is not None:
+            raise JobRunningError(f"{self.running.label} is still running")
+        if self.spec.pending:
+            raise PendingEditsError(len(self.spec.pending))
 
     def _refuse_if_locked(self, models: Iterable[str]) -> None:
         if self.running is None:

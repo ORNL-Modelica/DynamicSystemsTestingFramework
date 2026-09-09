@@ -297,6 +297,41 @@ class TestRescoreAndStage:
         with pytest.raises(PatchError, match="nrmsee"):
             implicit_tree_op(s.spec.entry(D))
 
+    def test_a_string_quantity_rescores_without_staging(self, tmp_path):
+        """The flat path refuses a stats-path quantity in an override ("needs
+        a metrics tree"); a tree would score it — FAIL to PASS on a look."""
+        cfg, work = _project(tmp_path)
+        doc = json.loads((cfg.parent / "test_spec.json").read_text(encoding="utf-8"))
+        entry = next(e for e in doc["tests"] if e["model"] == D)
+        entry["comparison"] = {
+            "variable_overrides": {
+                "x": {"mode": "scalar", "quantity": "CPUtime.final", "max_value": 100}
+            }
+        }
+        (cfg.parent / "test_spec.json").write_text(
+            json.dumps(doc, indent=2) + "\n", encoding="utf-8"
+        )
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert classify(s.comparisons[D]) == FAIL
+        assert classify(s.rescore(D)) == FAIL
+        assert s.spec.pending == []
+
+    def test_stage_materializes_like_rescore_and_refuses_an_unscored_test(
+        self, session
+    ):
+        """One rule on both paths: a per-leaf op on B (NO_REF, nothing scored)
+        cannot get a tree from the entry's list behind rescore's back."""
+        from dstf.discovery.patch_apply import PatchError
+
+        with pytest.raises(PatchError, match="no scored variables"):
+            session.stage([PatchOp(B, "add", "/metrics/children/0/tolerance", 0.5)])
+        assert session.spec.pending == []
+        session.stage([LOOSEN])
+        assert [c["variable"] for c in session.spec.pending[0].value["children"]] == [
+            vc.name for vc in session.comparisons[A].variables
+        ]
+
     def test_open_emits_spec_before_results(self, tmp_path):
         cfg, work = _project(tmp_path)
         s = Session()
@@ -556,11 +591,24 @@ class TestOutcomes:
     def test_open_project_swaps_the_project(self, session, tmp_path):
         other_cfg, other_work = _project(tmp_path / "other")
         old = session.project
-        session.apply(OpenProject(config_path=other_cfg), work_dir=other_work)
+        session.apply(OpenProject(config_path=other_cfg, work_dir=other_work))
         assert (
             session.project is not old
             and session.project.config.spec_path == other_cfg.parent / "test_spec.json"
         )
+
+    def test_open_and_close_refuse_while_edits_are_pending(self, session, tmp_path):
+        from dstf.authoring.session import PendingEditsError
+
+        session.stage([LOOSEN])
+        with pytest.raises(PendingEditsError, match="2 staged"):
+            session.close()
+        other_cfg, other_work = _project(tmp_path / "other")
+        with pytest.raises(PendingEditsError):
+            session.apply(OpenProject(config_path=other_cfg, work_dir=other_work))
+        session.discard()
+        session.close()
+        assert session.project is None and session.artifacts == []
 
     def test_none_and_sequences(self, session):
         session.apply(None)

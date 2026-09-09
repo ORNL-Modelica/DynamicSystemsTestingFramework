@@ -1112,29 +1112,6 @@ class TestSpecFromDocument:
 
 
 class TestDiscoveryFromDocument:
-    def test_document_replaces_the_file(self, tmp_path):
-        from dstf.discovery.test_registry import discover_tests
-
-        config = _write_lib(
-            tmp_path, spec={"tests": [{"model": "Foo.OnDisk", "variables": ["x"]}]}
-        )
-        doc = {
-            "tests": [
-                {
-                    "model": "Foo.InMemory",
-                    "variables": ["y"],
-                    "simulation": {"stop_time": 7.0},
-                }
-            ]
-        }
-
-        ids = {t.model_id for t in discover_tests(config, spec_document=doc)}
-        assert "Foo.InMemory" in ids and "Foo.OnDisk" not in ids
-        by_id = {t.model_id: t for t in discover_tests(config, spec_document=doc)}
-        assert by_id["Foo.InMemory"].stop_time == 7.0
-        # The .mo scan still contributes: the annotated model _write_lib wrote is there.
-        assert any(t.source != "spec" for t in by_id.values())
-
     def test_merge_does_not_mutate_the_scan(self, tmp_path):
         from dstf.discovery.test_registry import merge_tests, scan_source_tests
 

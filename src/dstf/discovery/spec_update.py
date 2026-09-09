@@ -107,18 +107,25 @@ def materialize_implicit_metrics(
     missing entry is left to ``apply_patch`` (which creates it and then
     reports the real failure)."""
     ops = list(patch)
-    if entry is None or "metrics" in entry:
+    if not needs_materialization(entry, ops):
         return ops
+    assert entry is not None
+    return [implicit_tree_op(entry), *ops]
+
+
+def needs_materialization(entry: dict | None, patch: Sequence[dict]) -> bool:
+    """Some op edits under ``/metrics/`` and neither the entry nor the patch
+    itself supplies the tree (a missing entry is left to ``apply_patch``)."""
+    if entry is None or "metrics" in entry:
+        return False
     edits_under = any(
         isinstance(op, dict) and str(op.get("path", "")).startswith("/metrics/")
-        for op in ops
+        for op in patch
     )
     supplies_tree = any(
-        isinstance(op, dict) and op.get("path") == "/metrics" for op in ops
+        isinstance(op, dict) and op.get("path") == "/metrics" for op in patch
     )
-    if not edits_under or supplies_tree:
-        return ops
-    return [implicit_tree_op(entry), *ops]
+    return edits_under and not supplies_tree
 
 
 def validate_entry_metric_tree(
@@ -154,6 +161,7 @@ def apply_validated_patches(
     spec_path: Path,
     groups: Sequence[tuple[str, Sequence[dict]]],
     config: Config,
+    store: ReferenceStore | None = None,
 ) -> list[tuple[str, list[dict]]]:
     """Apply every group's ops to its model's entry in one read-modify-write.
 
@@ -168,7 +176,7 @@ def apply_validated_patches(
     for model_id, ops in groups:
         full = materialize_implicit_metrics(spec_entry(data, model_id), ops)
         apply_patch_to_document(data, model_id, full)
-        validate_entry_metric_tree(data, model_id, config)
+        validate_entry_metric_tree(data, model_id, config, store)
         applied.append((model_id, full))
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(spec_path, json.dumps(data, indent=2) + "\n")
