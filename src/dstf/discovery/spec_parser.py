@@ -134,16 +134,38 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
     - Glob: "medium.T*" — matched against .mat variable names after simulation
     - Empty list [] — simulate only, no variable comparison
     - Wildcard ["*"] — track all variables
+
+    Reads the file, then hands the document to
+    :func:`test_models_from_document`; the authoring Session calls that
+    directly with its in-memory document.
     """
     try:
         data = json.loads(spec_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         logger.error("Failed to read test spec %s: %s", spec_path, e)
         return []
+    return test_models_from_document(
+        data, base_dir=spec_path.parent, label=str(spec_path)
+    )
 
+
+def test_models_from_document(
+    data: object, *, base_dir: Path, label: str
+) -> list[TestModel]:
+    """TestModels from an already-parsed spec document.
+
+    ``base_dir`` anchors each entry's relative ``source``; ``label`` names the
+    document in log messages and in the ``ConfigError`` a bad ``metrics``
+    tree raises (a path on disk, or "in memory" for the Session's copy).
+    A non-object root or a non-list ``tests`` yields ``[]`` with an error
+    logged, as a malformed file always has.
+    """
+    if not isinstance(data, dict):
+        logger.error("Spec root must be an object in %s", label)
+        return []
     tests_data = data.get("tests", [])
     if not isinstance(tests_data, list):
-        logger.error("'tests' must be a list in %s", spec_path)
+        logger.error("'tests' must be a list in %s", label)
         return []
 
     tests = []
@@ -152,7 +174,7 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
         # a warning, not crash discovery with AttributeError.
         if not isinstance(entry, dict):
             logger.warning(
-                "Skipping non-dict entry tests[%d] in %s: %r", i, spec_path, entry
+                "Skipping non-dict entry tests[%d] in %s: %r", i, label, entry
             )
             continue
         model_id = entry.get("model")
@@ -182,7 +204,7 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
             )
         source_rel = entry.get("source")
         if source_rel:
-            source_path_resolved = (spec_path.parent / source_rel).resolve()
+            source_path_resolved = (base_dir / source_rel).resolve()
             if not source_path_resolved.exists():
                 logger.warning(
                     "Test '%s' references missing source file: %s",
@@ -267,7 +289,7 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
                 # Still loud at discovery (never silently ignored), but as a
                 # user error: one "Config error: ..." line and exit 2 rather
                 # than a traceback out of the parser.
-                raise ConfigError(f"{spec_path}: {e}") from e
+                raise ConfigError(f"{label}: {e}") from e
 
         tests.append(test)
 

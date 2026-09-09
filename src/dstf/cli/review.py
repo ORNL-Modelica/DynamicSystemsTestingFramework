@@ -1,16 +1,7 @@
 """The interactive review loop (`run -i`): accept / skip / detail / plot."""
 
-from pathlib import Path
-
 from ..discovery.test_registry import TestModel
 from .common import _parse_review_filter, _should_review
-
-
-def _get_spec_path(config) -> Path:
-    """Get the test_spec.json path, using config or default location."""
-    if config.test_spec_file is not None:
-        return config.test_spec_file
-    return config.reference_root / "test_spec.json"
 
 
 def _interactive_review(
@@ -55,7 +46,7 @@ def _interactive_review(
 
     n_total = len(comparisons)
 
-    spec_path = _get_spec_path(config) if config else None
+    spec_path = config.spec_path if config else None
 
     # ANSI colors
     GREEN = "\033[92m"

@@ -18,9 +18,7 @@ def cmd_add(args: argparse.Namespace) -> int:
     from ..discovery.spec_parser import add_to_test_spec
 
     # Determine spec file location
-    spec_path = config.test_spec_file
-    if spec_path is None:
-        spec_path = config.reference_root / "test_spec.json"
+    spec_path = config.spec_path
 
     added = add_to_test_spec(spec_path, model_id, variables)
     if added:
@@ -60,9 +58,7 @@ def cmd_spec_update(args: argparse.Namespace) -> int:
     from ..discovery.patch_apply import PatchError
 
     config = _build_config(args)
-    spec_path = config.test_spec_file
-    if spec_path is None:
-        spec_path = config.reference_root / "test_spec.json"
+    spec_path = config.spec_path
 
     json_file = Path(args.json_file)
     if not json_file.exists():

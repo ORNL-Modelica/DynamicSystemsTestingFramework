@@ -811,3 +811,17 @@ class TestFinding17BareDependencyNames:
             str((tmp_path / "sub").resolve()),
             str((tmp_path / "sub" / "package.mo").resolve()),
         ]
+
+
+def test_spec_path_is_the_configured_file_else_the_reference_root_fallback(tmp_path):
+    from dstf.config import Config
+
+    (tmp_path / "package.mo").write_text("package X\nend X;\n", encoding="utf-8")
+    explicit = Config(
+        source_path=tmp_path,
+        reference_root=tmp_path / "refs",
+        test_spec_file=tmp_path / "s.json",
+    )
+    assert explicit.spec_path == (tmp_path / "s.json").resolve()
+    fallback = Config(source_path=tmp_path, reference_root=tmp_path / "refs")
+    assert fallback.spec_path == fallback.reference_root / "test_spec.json"

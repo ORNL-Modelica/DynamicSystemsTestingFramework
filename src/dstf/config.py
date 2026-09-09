@@ -690,3 +690,16 @@ class Config:
         assert self.reference_root is not None  # resolved in __post_init__
         assert self.os_name is not None  # resolved in __post_init__
         return self.reference_root / self.backend / self.os_name
+
+    @property
+    def spec_path(self) -> Path:
+        """Where ``test_spec.json`` lives: the configured file, else
+        ``<reference_root>/test_spec.json``. The one spelling of a fallback
+        that ``add``, ``spec-update`` and the review loop each used to
+        carry; the authoring Session reads the same property."""
+        if self.test_spec_file is not None:
+            return self.test_spec_file
+        assert (
+            self.reference_root is not None
+        )  # resolved in __post_init__, as reference_dir relies on
+        return self.reference_root / "test_spec.json"
