@@ -1,0 +1,135 @@
+"""The spec-update read-modify-write as a library: materialization, validation,
+one read and one write for every model in a patch set."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from dstf.config import Config
+from dstf.discovery.patch_apply import PatchError, apply_patch_to_document
+from dstf.discovery.spec_update import (
+    apply_validated_patches,
+    implicit_tree_op,
+    materialize_implicit_metrics,
+    spec_entry,
+)
+
+FLAT = {
+    "model": "M",
+    "variables": ["x", "y"],
+    "comparison": {"variable_overrides": {"x": {"tolerance": 0.1}}},
+}
+# The raw tree is flat: a leaf is {"metric": ..., "variable": ..., <param>: ...}, no "params" key.
+LEAF_OP = {"op": "replace", "path": "/metrics/children/0/tolerance", "value": 0.5}
+
+
+def _config(tmp_path) -> Config:
+    (tmp_path / "testing.json").write_text(
+        json.dumps({"source_type": "fmu", "backend": "FMPy", "reference_root": "."}),
+        encoding="utf-8",
+    )
+    return Config(config_file=tmp_path / "testing.json")
+
+
+def _spec(tmp_path, *entries) -> Path:
+    p = tmp_path / "test_spec.json"
+    p.write_text(
+        json.dumps({"tests": list(entries)}, indent=2) + "\n", encoding="utf-8"
+    )
+    return p
+
+
+class TestMaterialization:
+    def test_flat_entry_gets_the_implicit_tree_prepended(self):
+        ops = materialize_implicit_metrics(dict(FLAT), [LEAF_OP])
+        assert ops[0]["op"] == "add" and ops[0]["path"] == "/metrics"
+        assert ops[0] == implicit_tree_op(dict(FLAT))
+        assert ops[1:] == [LEAF_OP]
+        leaves = ops[0]["value"]["children"]
+        assert [leaf["variable"] for leaf in leaves] == ["x", "y"]
+        assert leaves[0]["tolerance"] == 0.1 and "tolerance" not in leaves[1]
+
+    def test_a_glob_pattern_is_refused(self):
+        """A `*` leaf is a sentinel that fails; the flat path scored the
+        variables the result resolved. Never write that tree (Conventions #7)."""
+        for patterns in (["*"], ["pipe.T*"], ["x", "tank.?"]):
+            with pytest.raises(PatchError, match="pattern"):
+                implicit_tree_op({"model": "M", "variables": patterns})
+
+    def test_a_patch_that_supplies_the_tree_is_not_materialized_again(self):
+        tree_op = implicit_tree_op(dict(FLAT))
+        assert materialize_implicit_metrics(dict(FLAT), [tree_op, LEAF_OP]) == [
+            tree_op,
+            LEAF_OP,
+        ]
+
+    def test_an_entry_with_a_tree_is_left_alone(self):
+        entry = {**FLAT, "metrics": {"metric": "nrmse", "variable": "x"}}
+        assert materialize_implicit_metrics(entry, [LEAF_OP]) == [LEAF_OP]
+
+    def test_ops_outside_metrics_need_nothing(self):
+        op = {"op": "replace", "path": "/comparison/tolerance", "value": 1.0}
+        assert materialize_implicit_metrics(dict(FLAT), [op]) == [op]
+
+    def test_no_variables_is_a_patch_error(self):
+        with pytest.raises(PatchError, match="no tracked variables"):
+            implicit_tree_op({"model": "M", "variables": []})
+
+    def test_missing_entry_is_left_to_apply_patch(self):
+        assert materialize_implicit_metrics(None, [LEAF_OP]) == [LEAF_OP]
+
+
+class TestApplyValidatedPatches:
+    def test_two_models_one_write(self, tmp_path):
+        spec = _spec(tmp_path, dict(FLAT), {"model": "N", "variables": ["z"]})
+        applied = apply_validated_patches(
+            spec,
+            [
+                ("M", [LEAF_OP]),
+                (
+                    "N",
+                    [{"op": "add", "path": "/comparison", "value": {"tolerance": 0.2}}],
+                ),
+            ],
+            _config(tmp_path),
+        )
+        data = json.loads(spec.read_text(encoding="utf-8"))
+        m, n = spec_entry(data, "M"), spec_entry(data, "N")
+        assert m["metrics"]["children"][0]["tolerance"] == 0.5
+        assert n["comparison"] == {"tolerance": 0.2}
+        assert [model for model, _ in applied] == ["M", "N"]
+        assert applied[0][1][0]["path"] == "/metrics"  # materialization is reported
+        assert spec.read_bytes().endswith(b"}\n") and b"\r\n" not in spec.read_bytes()
+
+    def test_a_bad_group_writes_nothing(self, tmp_path):
+        spec = _spec(tmp_path, dict(FLAT), {"model": "N", "variables": ["z"]})
+        before = spec.read_bytes()
+        with pytest.raises(PatchError):
+            apply_validated_patches(
+                spec,
+                [
+                    ("M", [LEAF_OP]),
+                    (
+                        "N",
+                        [
+                            {
+                                "op": "replace",
+                                "path": "/simulation/stop_time",
+                                "value": 1,
+                            }
+                        ],
+                    ),
+                ],
+                _config(tmp_path),
+            )
+        assert spec.read_bytes() == before
+
+    def test_the_result_equals_applying_to_the_document_in_memory(self, tmp_path):
+        spec = _spec(tmp_path, dict(FLAT))
+        expected = json.loads(spec.read_text(encoding="utf-8"))
+        apply_patch_to_document(
+            expected, "M", materialize_implicit_metrics(dict(FLAT), [LEAF_OP])
+        )
+        apply_validated_patches(spec, [("M", [LEAF_OP])], _config(tmp_path))
+        assert json.loads(spec.read_text(encoding="utf-8")) == expected

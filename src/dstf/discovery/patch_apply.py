@@ -46,6 +46,30 @@ class PatchError(Exception):
 _SUPPORTED_OPS = {"replace", "add", "remove"}
 
 
+def apply_patch_to_document(
+    data: dict,
+    model_id: str,
+    patch_ops: list[dict],
+    *,
+    whitelist: tuple[str, ...] = ("/comparison", "/metrics"),
+) -> dict:
+    """Apply ``patch_ops`` to the entry in the parsed document ``data`` that
+    matches ``model_id`` (created if absent), in place. Returns ``data``.
+    Raises :class:`PatchError` naming the failing op. The authoring
+    Session's in-memory document goes through here; the disk path is
+    :func:`apply_patch`."""
+    entry = _find_or_create_entry(data, model_id)
+    for i, op in enumerate(patch_ops):
+        try:
+            _apply_one_op(entry, op, whitelist)
+        except PatchError as e:
+            raise PatchError(
+                f"patch_ops[{i}] ({op!r}): {e}",
+                path=e.path,
+            ) from None
+    return data
+
+
 def apply_patch(
     spec_path: Path,
     model_id: str,
@@ -61,18 +85,9 @@ def apply_patch(
     on any issue; the caller (CLI) surfaces the message and aborts without
     writing if the dry-run path signals invalidity.
     """
-    data = _load_spec(spec_path)
-    entry = _find_or_create_entry(data, model_id)
-
-    for i, op in enumerate(patch_ops):
-        try:
-            _apply_one_op(entry, op, whitelist)
-        except PatchError as e:
-            raise PatchError(
-                f"patch_ops[{i}] ({op!r}): {e}",
-                path=e.path,
-            ) from None
-
+    data = apply_patch_to_document(
+        load_spec_document(spec_path), model_id, patch_ops, whitelist=whitelist
+    )
     if write:
         spec_path.parent.mkdir(parents=True, exist_ok=True)
         # review 2026-07-06 (finding 31): atomic — an interrupted patch must
@@ -81,12 +96,7 @@ def apply_patch(
     return data
 
 
-# ---------------------------------------------------------------------------
-# Internals
-# ---------------------------------------------------------------------------
-
-
-def _load_spec(spec_path: Path) -> dict:
+def load_spec_document(spec_path: Path) -> dict:
     if not spec_path.exists():
         return {"tests": []}
     try:
@@ -99,6 +109,11 @@ def _load_spec(spec_path: Path) -> dict:
     if not isinstance(data["tests"], list):
         raise PatchError("spec 'tests' must be a list")
     return data
+
+
+# ---------------------------------------------------------------------------
+# Internals
+# ---------------------------------------------------------------------------
 
 
 def _find_or_create_entry(data: dict, model_id: str) -> dict:
