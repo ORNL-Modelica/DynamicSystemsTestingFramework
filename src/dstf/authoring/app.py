@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from nicegui import app, ui
 
 from ..cli.common import _filter_tests
@@ -30,6 +30,15 @@ from .session import (
     SessionView,
     StaleSpecError,
 )
+
+# The classifier's CSS class names, as the NiceGUI palette.
+_BADGE_COLOR = {
+    "pass": "positive",
+    "fail": "negative",
+    "warn": "warning",
+    "sim-fail": "negative",
+    "no-ref": "grey",
+}
 
 
 class FigureHook:
@@ -51,7 +60,14 @@ class FigureHook:
         data = payload if isinstance(payload, dict) else {}
         points = data.get("points") or [{}]
         first = points[0] if isinstance(points[0], dict) else {}
+        # The figure layer stamps every trace's primitive id in `meta.id`
+        # (figures/plotly.py); marker groups carry per-point ids in
+        # `customdata`. The trace index is the last resort.
+        trace = first.get("data") if isinstance(first.get("data"), dict) else {}
+        meta = trace.get("meta") if isinstance(trace.get("meta"), dict) else {}
         primitive = first.get("customdata")
+        if primitive is None:
+            primitive = meta.get("id")
         if primitive is None:
             primitive = first.get("curveNumber")
         for handler in self._handlers.get(kind, []):
@@ -86,6 +102,7 @@ class Shell:
         self.errors: dict[str, str] = {}  # capability name -> last error in its tab
         self.figure_hook = FigureHook()
         self._built = False
+        self.needle = ""  # the test list's filter text; survives refreshes
         self._routes_added = False
         # Session events -> regions. `tabs` is NOT on spec/results: Edit
         # criteria stages on every control change, and rebuilding the tab
@@ -195,12 +212,12 @@ class Shell:
         def _dashboard(path: str):
             project = self.session.project
             if project is None:
-                return {"error": "no project open"}
+                return JSONResponse({"error": "no project open"}, status_code=409)
             work_dir = project.config.work_dir
             assert work_dir is not None  # resolved in Config.__post_init__
             target = (work_dir / path).resolve()
             if work_dir.resolve() not in target.parents or not target.is_file():
-                return {"error": "not found"}
+                return JSONResponse({"error": "not found"}, status_code=404)
             return FileResponse(target)
 
     def _tick(self) -> None:
@@ -287,7 +304,9 @@ class Shell:
         project = self.session.project
         if project is None:
             return
-        needle = {"text": ""}
+        # The needle lives on the shell: every Session event rebuilds this
+        # region, and a filter typed over 300 tests must survive a click.
+        ui.input("filter", value=self.needle, on_change=self._on_filter).props("dense")
         rows = ui.column().classes("w-full")
 
         def draw() -> None:
@@ -295,10 +314,7 @@ class Shell:
             selected = self.session.selection.tests
             with rows:
                 for model_id in self.visible_tests():
-                    if (
-                        needle["text"]
-                        and needle["text"].lower() not in model_id.lower()
-                    ):
+                    if self.needle and self.needle.lower() not in model_id.lower():
                         continue
                     comp = self.session.comparisons.get(model_id)
                     status, css = (
@@ -313,14 +329,14 @@ class Shell:
                             model_id.rsplit(".", 1)[-1],
                             on_click=lambda m=model_id: self._select_one(m),
                         ).props("flat dense no-caps").mark(model_id)
-                        ui.badge(status).classes(css)
+                        ui.badge(status, color=_BADGE_COLOR.get(css, "grey"))
 
-        def on_filter(e) -> None:
-            needle["text"] = e.value or ""
-            draw()
-
-        ui.input("filter", on_change=on_filter).props("dense")
+        self._draw_rows = draw
         draw()
+
+    def _on_filter(self, e) -> None:
+        self.needle = e.value or ""
+        self._refresh("tests")
 
     def _select_one(self, model_id: str) -> None:
         self.session.select(tests={model_id}, variable=None, leaf_path=None)
@@ -380,7 +396,14 @@ class Shell:
     def _tree_rows(self, model_id: str, node: dict, depth: int) -> None:
         indent = f"ml-{min(depth * 4, 16)}"
         if node.get("kind") == "leaf":
-            verdict = "PASS" if node.get("passed") else "FAIL"
+            # The report's own reading: an advisory (warn-wrapped) leaf that
+            # fails does not fail the test; an unevaluated leaf has no verdict.
+            if node.get("passed") is None:
+                verdict = "—"
+            elif node.get("passed"):
+                verdict = "PASS"
+            else:
+                verdict = "WARN" if node.get("advisory") else "FAIL"
             text = (
                 f"{node['path']}  {node.get('name') or node.get('variable')} · "
                 f"{node.get('mode_effective') or node.get('metric')}  {verdict}  "

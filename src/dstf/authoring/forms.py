@@ -85,25 +85,40 @@ def _set(form: Form, name: str, value: Any, on_change: OnChange) -> None:
 def _control(spec: FieldSpec, current: Any, set_value: Callable) -> ui.element:
     label = spec.label or spec.name
     if spec.type in ("float", "int"):
-        kwargs: dict[str, Any] = {}
+        # ui_min / ui_max are the schema's SOFT bounds (a hint for a control,
+        # never a clamp — mode_schema.py); NiceGUI's own `min`/`max` props
+        # clamp on blur and fire on_change with the clamped value, which
+        # would stage a rewrite the user never typed. Validate instead.
+        validation: dict[str, Callable[[Any], bool]] = {}
         if spec.ui_min is not None:
-            kwargs["min"] = spec.ui_min
+            lo = spec.ui_min
+            validation[f"below {lo}"] = lambda v, lo=lo: v is None or v >= lo
         if spec.ui_max is not None:
-            kwargs["max"] = spec.ui_max
+            hi = spec.ui_max
+            validation[f"above {hi}"] = lambda v, hi=hi: v is None or v <= hi
+        kwargs: dict[str, Any] = {"validation": validation}
         if spec.type == "int":
             kwargs["step"] = 1
+            kwargs["precision"] = 0
+        cast = int if spec.type == "int" else float
+
+        def on_number(e, cast=cast):
+            set_value(None if e.value is None else cast(e.value))
+
         return ui.number(
-            label=label, value=current, on_change=lambda e: set_value(e.value), **kwargs
+            label=label, value=current, on_change=on_number, **kwargs
         ).props("dense")
     if spec.type == "bool":
-        return ui.checkbox(
-            label, value=bool(current), on_change=lambda e: set_value(e.value)
-        )
+        # A checkbox has no placeholder: show the EFFECTIVE state (the
+        # default when unset) and write only when the user changes it.
+        shown = bool(spec.default) if current is None else bool(current)
+        return ui.checkbox(label, value=shown, on_change=lambda e: set_value(e.value))
     if spec.type == "enum":
+        # Same for a select: the default is what the leaf scores with.
         return ui.select(
             list(spec.choices or []),
             label=label,
-            value=current,
+            value=spec.default if current is None else current,
             on_change=lambda e: set_value(e.value),
         ).props("dense")
     return ui.input(

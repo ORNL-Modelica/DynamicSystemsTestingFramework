@@ -43,7 +43,12 @@ async def test_every_field_type_gets_a_control_and_values_round_trip():
         # written for the user (a leaf without `tolerance` scores at the
         # test's base tolerance, and the form must not silently pin 1e-4).
         assert form.values() == {"tolerance": 0.5, "points": [[0, 1]]}
-        assert form.controls["tolerance"].props.get("min") == 0.0
+        # ui_min is a SOFT bound: a validation rule, never a clamping prop
+        # (NiceGUI's `min` clamps on blur and fires on_change).
+        rules = form.controls["tolerance"].validation
+        assert rules and all(r(0.5) for r in rules.values())
+        assert not all(r(-1.0) for r in rules.values())
+        assert form.controls["tolerance"].props.get("min") is None
         form.controls["max_value"].set_value(2.0)
         assert seen[-1]["max_value"] == 2.0 and "count_must_match" not in seen[-1]
         form.controls["mode_kind"].set_value("rel")

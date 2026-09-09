@@ -107,27 +107,39 @@ async def test_save_discard_and_export(shell):
     async with user_simulation(root=shell.root) as user:
         await user.open("/")
         shell.session.stage([LOOSEN])
+        await user.should_see("2 pending")  # the staged state must have landed first
         user.find("Discard").click()
         await user.should_see("0 pending")
+        assert shell.session.spec.pending == []
         shell.session.stage([LOOSEN])
+        await user.should_see("2 pending")
         user.find("Export").click()
         await user.should_see("spec_patch.json")
         assert (shell.session.project.config.work_dir / "spec_patch.json").exists()
         user.find("Save").click()
         await user.should_see("0 pending")
         assert shell.session.spec.pending == []
+        assert (
+            "metrics" in shell.session.spec.loaded["tests"][0]
+        )  # saved, not discarded
 
 
 async def test_save_refused_on_a_changed_file_offers_reload(shell):
     async with user_simulation(root=shell.root) as user:
         await user.open("/")
         shell.session.stage([LOOSEN])
+        await user.should_see("2 pending")
         p = shell.session.spec.path
         p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
         user.find("Save").click()
         await user.should_see("changed on disk")
+        assert len(shell.session.spec.pending) == 2  # refused, kept
         user.find("Reload").click()
         await user.should_see("0 pending")
+        assert (
+            shell.session.spec.pending == []
+            and not shell.session.spec.on_disk_changed()
+        )
 
 
 async def test_a_thread_posted_completion_reaches_the_page(shell):
@@ -151,9 +163,117 @@ async def test_the_pending_drawer_lists_staged_ops_by_model(shell):
         # The `spec` event's refresh is deferred; the button carries its new
         # label only after it lands.
         await user.should_see("2 pending")
+        assert shell._drawer_el.value is False
         user.find("2 pending").click()
+        assert shell._drawer_el.value is True  # the button opens the drawer
         await user.should_see("/metrics/children/0/tolerance")
-        await user.should_see(A)
+        # The model name as a LABEL inside the drawer: the test-list row is
+        # a button marked with the id, so this proves the grouping.
+        labels = list(user.find(kind=ui.label, content=A).elements)
+        assert labels and all(_inside(e, shell._drawer_el) for e in labels)
+
+
+def _inside(element, container) -> bool:
+    node = element
+    while node is not None:
+        if node is container:
+            return True
+        node = node.parent_slot.parent if node.parent_slot is not None else None
+    return False
+
+
+async def test_the_dashboard_route_serves_the_open_projects_work_dir(shell):
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        work = shell.session.project.config.work_dir
+        (work / "dashboard.html").write_text("<p>dash</p>", encoding="utf-8")
+        ok = await user.http_client.get("/dashboard/dashboard.html")
+        assert ok.status_code == 200 and b"dash" in ok.content
+        outside = await user.http_client.get("/dashboard/%2e%2e/refs/testing.json")
+        assert outside.status_code == 404
+        missing = await user.http_client.get("/dashboard/nope.html")
+        assert missing.status_code == 404
+        shell.session.close()
+        gone = await user.http_client.get("/dashboard/dashboard.html")
+        assert gone.status_code == 409
+
+
+async def test_close_project_refuses_while_edits_are_pending(shell):
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.stage([LOOSEN])
+        await user.should_see("2 pending")
+        user.find("Close project").click()
+        await user.should_see("would be lost")
+        assert (
+            shell.session.project is not None and len(shell.session.spec.pending) == 2
+        )
+
+
+async def test_checkboxes_and_the_single_click_stay_in_step(shell):
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={A, B})
+        await user.should_see("2 tests selected")
+        user.find(marker=D).click()
+        await user.should_see(D)  # the centre's title
+        assert shell.session.selection.tests == {D}
+        await _settled(
+            lambda: sum(c.value for c in user.find(ui.checkbox).elements) == 1
+        )
+
+
+async def _settled(predicate, tries: int = 40) -> None:
+    """Refreshes are deferred; wait for a region's rebuild to land."""
+    import asyncio
+
+    for _ in range(tries):
+        if predicate():
+            return
+        await asyncio.sleep(0.05)
+    assert predicate()
+
+
+async def test_the_filter_survives_a_click(shell):
+    """Typed over 300 tests, the filter must not vanish on the next event."""
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        box = next(iter(user.find(ui.input).elements))
+        box.set_value("FakeLib.A")
+        await user.should_not_see(B)  # the filter's refresh landed
+        rebuilt_from = id(next(iter(user.find(ui.input).elements)))
+        user.find(marker=A).click()
+        await user.should_see("/metrics/children/0")
+        # The selection event rebuilds the list region; wait for that rebuild.
+        await _settled(
+            lambda: id(next(iter(user.find(ui.input).elements))) != rebuilt_from
+        )
+        with pytest.raises(AssertionError):
+            user.find(marker=B)  # still filtered
+        assert next(iter(user.find(ui.input).elements)).value == "FakeLib.A"
+
+
+async def test_a_results_only_event_refreshes_the_verdict(shell):
+    """A rescore that stages nothing (D's tree is materializable, but a
+    rescore with no change emits `results` only) must still redraw."""
+    from dstf.authoring.capabilities import StoreWrite
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        user.find(marker=A).click()
+        await user.should_see("FAIL")
+        work = shell.session.project.config.work_dir
+        import json as _json
+
+        t = [i / 4 for i in range(5)]
+        (work / "test_0001" / "result.json").write_text(
+            _json.dumps({"success": True, "time": t, "variables": {"x": t}}),
+            encoding="utf-8",
+        )
+        shell.session.apply(
+            StoreWrite(run=lambda store: None, models=frozenset({B}))
+        )  # reloads results
+        await user.should_see("PASS  NRMSE")
 
 
 async def test_an_artifact_is_shown_as_a_link(shell):
