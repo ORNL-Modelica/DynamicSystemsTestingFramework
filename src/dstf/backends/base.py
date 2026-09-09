@@ -22,11 +22,7 @@ from typing import TYPE_CHECKING
 
 from ..config import Config
 from ..discovery.test_registry import TestModel
-from ..storage.batch_manifest import (
-    PENDING_RUN_STATUS,
-    RECORDED_RUN_STATUSES,
-    BatchManifest,
-)
+from ..storage.batch_manifest import RECORDED_RUN_STATUSES, BatchManifest
 from .types import Capability, DatasetType, TestResult, TestRunResult
 
 if TYPE_CHECKING:
@@ -211,30 +207,6 @@ def _apply_run_verdicts(
             if status in FAILED_RUN_STATUSES:
                 _force_failed(results.get(entry["model_id"]), status)
     _apply_status_verdicts(work_dir, results, skip=covered)
-
-
-def unfinished_run_models(work_dir: Path) -> set[str]:
-    """Model IDs whose last run started them and never reached a verdict.
-
-    A manifest entry still reading :data:`PENDING_RUN_STATUS` means a run
-    stamped it at startup and was aborted (Ctrl-C, crash, killed worker pool)
-    before that test finished. The accept path uses this: blessing such a
-    test's on-disk ``.mat`` would bake in whatever the simulator had flushed
-    at the moment it died, and a truncated result file can still parse.
-
-    Entries with no field at all are NOT included — a manifest written before
-    the field existed says nothing about completeness, so those keep the
-    pre-existing status.json-guard behaviour (old data, not old code).
-    Returns an empty set when the work dir has no manifest.
-    """
-    manifest_path = work_dir / "batch_manifest.json"
-    if not manifest_path.exists():
-        return set()
-    return {
-        entry["model_id"]
-        for entry in BatchManifest.load(manifest_path).manifest.values()
-        if entry.get("last_run_status") == PENDING_RUN_STATUS
-    }
 
 
 def _apply_status_verdicts(

@@ -159,6 +159,18 @@ def _dataset_kind_for(backend):
     return DatasetType.TIME_SERIES
 
 
+def _report_accept(config, stored: int, skipped: list[tuple[str, str]]) -> int:
+    """Print the accept outcome; nonzero when anything was skipped (review
+    2026-07-06 finding 30: a partial accept is a failure CI must see)."""
+    print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
+    if skipped:
+        print(f"Skipped {len(skipped)} test(s):")
+        for model_id, reason in skipped:
+            print(f"  {model_id}: {reason}")
+        return 1
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Run tests and compare/accept results."""
     config = _build_config(args)
@@ -296,17 +308,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         # scope (`scope_tests`) — the merged scope's results for
         # out-of-scope tests are stale on-disk artifacts from older runs,
         # and stale results must never become baselines.
-        stored, skipped = store.accept_results(tests, results)
-        print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
-        if skipped:
-            # review 2026-07-06 finding 30 (part 1): a partial accept is a
-            # failure — name what was skipped and exit nonzero so CI can't
-            # silently bless an incomplete baseline set.
-            print(f"Skipped {len(skipped)} test(s):")
-            for model_id, reason in skipped:
-                print(f"  {model_id}: {reason}")
-            return 1
-        return 0
+        from ..storage.accept import accept_run_results
+
+        stored, skipped = accept_run_results(store, tests, results, config.work_dir)
+        return _report_accept(config, stored, skipped)
     elif args.interactive is not None:
         from ..comparison.comparator import compare_all
 
@@ -496,41 +501,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
         # batch manifest records as failed/timed_out to success=False (falling
         # back to the status.json cross-check only for manifest entries
         # written before that field existed), so accept_results skips them —
-        # a partial/stale .mat can't become a baseline.
-        #
-        # Pending entries need their own refusal: a test that was in flight
-        # when a run was aborted has no recorded verdict at all, and its
-        # truncated .mat may still parse cleanly. Acceptance requires an
-        # authoritative *successful run*, so refuse rather than guess.
-        # Note this is deliberately NOT keyed on the comparison verdict — a
-        # test that ran fine and now compares FAILED is exactly the drift case
-        # `--accept` exists to re-baseline.
+        # a partial/stale .mat can't become a baseline. The pending-entry
+        # refusal `accept_run_results` adds on top is documented there.
         # Terminal, mirroring `run --accept` (finding 30: partial accept
         # exits nonzero).
-        from ..backends.base import unfinished_run_models
+        from ..storage.accept import accept_run_results
 
-        unfinished = unfinished_run_models(config.work_dir) & {
-            t.model_id for t in tests
-        }
-        stored, skipped = store.accept_results(
-            [t for t in tests if t.model_id not in unfinished], results
-        )
-        skipped = list(skipped) + [
-            (
-                model_id,
-                f"last run did not complete for this test (aborted while it was "
-                f"in flight; {config.work_dir} still records it as pending) — "
-                f"re-run before accepting",
-            )
-            for model_id in sorted(unfinished)
-        ]
-        print(f"\nAccepted {stored} test baselines to {config.reference_dir}")
-        if skipped:
-            print(f"Skipped {len(skipped)} test(s):")
-            for model_id, reason in skipped:
-                print(f"  {model_id}: {reason}")
-            return 1
-        return 0
+        stored, skipped = accept_run_results(store, tests, results, config.work_dir)
+        return _report_accept(config, stored, skipped)
 
     comparisons = compare_all(
         tests,

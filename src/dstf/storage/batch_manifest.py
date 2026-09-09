@@ -158,3 +158,27 @@ class BatchManifest:
             else:
                 normalized[key] = val
         return cls(work_dir=path.parent, manifest=normalized)
+
+
+def unfinished_run_models(work_dir: Path) -> set[str]:
+    """Model IDs whose last run started them and never reached a verdict.
+
+    A manifest entry still reading :data:`PENDING_RUN_STATUS` means a run
+    stamped it at startup and was aborted (Ctrl-C, crash, killed worker pool)
+    before that test finished. The accept path uses this: blessing such a
+    test's on-disk ``.mat`` would bake in whatever the simulator had flushed
+    at the moment it died, and a truncated result file can still parse.
+
+    Entries with no field at all are NOT included — a manifest written before
+    the field existed says nothing about completeness, so those keep the
+    pre-existing status.json-guard behaviour (old data, not old code).
+    Returns an empty set when the work dir has no manifest.
+    """
+    manifest_path = work_dir / "batch_manifest.json"
+    if not manifest_path.exists():
+        return set()
+    return {
+        entry["model_id"]
+        for entry in BatchManifest.load(manifest_path).manifest.values()
+        if entry.get("last_run_status") == PENDING_RUN_STATUS
+    }

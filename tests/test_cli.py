@@ -506,6 +506,32 @@ class TestAcceptExitCodeAndScope:
         assert rc == 0
         assert _stored_model_ids(run_env) == {"Lib.T1"}
 
+    def test_run_accept_refuses_a_test_the_manifest_records_as_pending(
+        self, run_env, capsys
+    ):
+        """A test still stamped pending after the run was in flight when the
+        run aborted. cmd_run persists the manifest its backend returns
+        (`enrich_ref_ids` saves it), so the fake's manifest_map is what the
+        guard reads — and the run path refuses with the message the compare
+        path prints."""
+        t1 = _mk_test("Lib.T1")
+        run_env.make(
+            [t1],
+            results={"Lib.T1": _mk_result("Lib.T1")},
+            manifest_map={
+                "test_0001": {
+                    "model_id": "Lib.T1",
+                    "ref_id": None,
+                    "last_run_status": "pending",
+                }
+            },
+        )
+        rc = cmd_run(_run_args(run_env, "--accept"))
+        out = capsys.readouterr().out
+        assert rc != 0
+        assert "Lib.T1" in out and "re-run before accepting" in out
+        assert _stored_model_ids(run_env) == set()
+
     def test_accept_with_merge_stores_only_this_runs_tests(self, run_env, capsys):
         """--merge expands the report scope, but stale on-disk results for
         out-of-scope tests must never become baselines."""

@@ -378,7 +378,7 @@ class TestAbortWindow:
 
 class TestUnfinishedRunModels:
     def test_pending_entries_are_reported(self, tmp_path):
-        from dstf.backends.base import unfinished_run_models
+        from dstf.storage.batch_manifest import unfinished_run_models
 
         _manifest(
             tmp_path,
@@ -395,7 +395,7 @@ class TestUnfinishedRunModels:
         """Old data, not old code: a manifest predating the field says nothing
         about completeness, so it must not be treated as unfinished — those
         keep today's status.json-guard behaviour."""
-        from dstf.backends.base import unfinished_run_models
+        from dstf.storage.batch_manifest import unfinished_run_models
 
         _manifest(
             tmp_path, {"test_0001": {"model_id": "Lib.Old", "ref_id": None}}
@@ -403,7 +403,7 @@ class TestUnfinishedRunModels:
         assert unfinished_run_models(tmp_path) == set()
 
     def test_no_manifest_is_empty(self, tmp_path):
-        from dstf.backends.base import unfinished_run_models
+        from dstf.storage.batch_manifest import unfinished_run_models
 
         assert unfinished_run_models(tmp_path) == set()
 
@@ -477,16 +477,12 @@ def _good_result(model_id):
 class TestAcceptRefusesPending:
     def _accept(self, config, tests, results):
         """Drive the same refusal cmd_compare's accept branch applies."""
-        from dstf.backends.base import unfinished_run_models
+        from dstf.storage.accept import accept_run_results
         from dstf.storage.reference_store import ReferenceStore
 
-        unfinished = unfinished_run_models(config.work_dir) & {
-            t.model_id for t in tests
-        }
-        stored, skipped = ReferenceStore(config).accept_results(
-            [t for t in tests if t.model_id not in unfinished], results
+        return accept_run_results(
+            ReferenceStore(config), tests, results, config.work_dir
         )
-        return stored, list(skipped), unfinished
 
     def test_pending_plus_running_is_refused(self, tmp_path):
         """The reviewer's case: nothing marks it failed, its .mat parses, and
@@ -505,11 +501,11 @@ class TestAcceptRefusesPending:
         _apply_run_verdicts(config.work_dir, [], results)
         assert results["FakeLib.InFlight"].success is True  # nothing forced it down
 
-        stored, skipped, unfinished = self._accept(config, tests, results)
+        stored, skipped = self._accept(config, tests, results)
 
         assert stored == 0
-        assert unfinished == {"FakeLib.InFlight"}
-        assert skipped == []  # the store never saw it; the caller adds the reason
+        assert [m for m, _ in skipped] == ["FakeLib.InFlight"]
+        assert "re-run before accepting" in skipped[0][1]
 
     def test_the_refusal_message_names_the_aborted_run(self, tmp_path, capsys):
         """Through the real CLI, so the printed line is what a user sees."""
@@ -555,9 +551,8 @@ class TestAcceptRefusesPending:
         results = {"FakeLib.Drifted": _good_result("FakeLib.Drifted")}
         _apply_run_verdicts(config.work_dir, [], results)
 
-        stored, skipped, unfinished = self._accept(config, tests, results)
+        stored, skipped = self._accept(config, tests, results)
 
-        assert unfinished == set()
         assert stored == 1
         assert skipped == []
 
@@ -571,9 +566,9 @@ class TestAcceptRefusesPending:
         )
         results = {"FakeLib.Old": _good_result("FakeLib.Old")}
 
-        stored, skipped, unfinished = self._accept(config, tests, results)
+        stored, skipped = self._accept(config, tests, results)
 
-        assert unfinished == set()
+        assert skipped == []
         assert stored == 1
 
     def test_an_old_field_less_manifest_still_honors_a_failed_status(self, tmp_path):
@@ -589,7 +584,7 @@ class TestAcceptRefusesPending:
             results,
         )
 
-        stored, skipped, _unfinished = self._accept(config, tests, results)
+        stored, skipped = self._accept(config, tests, results)
 
         assert stored == 0
         assert [m for m, _r in skipped] == ["FakeLib.Old"]
