@@ -1828,7 +1828,7 @@ def _project(tmp_path: Path) -> tuple[Path, Path]:
     FAIL at the config tolerance 0.01. B: no baseline (NO_REF). C: no result
     (SIM_FAIL). D: baseline x=t, result x=1.001t — nrmse 6e-4, PASS at 0.01
     and FAIL at the 1e-4 default, so a scorer that drops config.tolerance is
-    caught. G: like A but tracked as ["*"] — a glob spec (Conventions #7)."""
+    caught. G: like D but tracked as ["*"] — a glob spec (Conventions #7)."""
     lib = tmp_path / "FakeLib"
     (lib / "Examples").mkdir(parents=True)
     for short in ("A", "B", "C", "D", "G"):
@@ -1866,7 +1866,7 @@ def _project(tmp_path: Path) -> tuple[Path, Path]:
         ("test_0001", [v * 1.25 for v in t]),
         ("test_0002", t),
         ("test_0004", [v * 1.001 for v in t]),
-        ("test_0005", [v * 1.25 for v in t]),
+        ("test_0005", [v * 1.001 for v in t]),  # like D: PASS as loaded; a `*` leaf would flip it
     ):
         (work / key).mkdir()
         (work / key / "result.json").write_text(
