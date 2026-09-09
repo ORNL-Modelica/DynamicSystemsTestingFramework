@@ -36,7 +36,7 @@ Create a `testing.json` in your reference results directory. This is the single 
 | `backends` | No | Map of backend names to candidate executable paths (first existing path wins). Falls back to system PATH. |
 | `dependencies` | No | Paths to dependency library roots loaded before simulation. Relative to `testing.json` location. |
 | `backend_setup` | No | Modelica commands run after library loading. For user-specific settings only — `OutputCPUtime` and translation log capture are handled automatically by the Dymola backend. |
-| `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. |
+| `test_spec` | No | Path to external test definitions file. Relative to `testing.json` location. When unset, `<reference_root>/test_spec.json` is used if it exists — the file `add` writes — and every command that discovers tests reads it. |
 | `diagnostic_variables` | No | Variables auto-captured but not compared (default: `["CPUtime", "EventCounter"]`). |
 | `reference_root` | No | Override where references are stored. Defaults to the directory containing `testing.json` if it's named `ReferenceResults`, otherwise `<repo>/Resources/ReferenceResults`. |
 
@@ -339,6 +339,24 @@ markup the server rendered. It shows
 
 Changing a criterion is not something the page does — edit `test_spec.json`, or
 apply a patch with `spec-update`.
+
+`spec-update` reads a JSON-Patch envelope in either of two shapes. The
+multi-model form carries any number of models:
+
+```json
+{"patches": [
+  {"model": "MyLib.Examples.SimpleTest", "patch": [
+    {"op": "replace", "path": "/comparison/tolerance", "value": 0.01}
+  ]},
+  {"model": "MyLib.Examples.Other", "patch": [
+    {"op": "add", "path": "/variables/-", "value": "tank.level"}
+  ]}
+]}
+```
+
+The single-model form — `{"model": ..., "patch": [...]}` — is read too, because
+files in that shape exist. The authoring tool writes only the multi-model form.
+Paths in each `patch` are relative to that model's entry in `test_spec.json`.
 
 #### Report layout and offline use
 

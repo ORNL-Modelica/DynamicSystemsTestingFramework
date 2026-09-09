@@ -18,12 +18,15 @@ DynamicSystemsTestingFramework/
 │   ├── cli/                      # CLI package: run, compare, discover, manifest, spec-update,
 │   │                             #      companion, soft-check, import-baseline, export-schema
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect backend
-│   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse, RFC 6902 patch_apply
+│   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse, RFC 6902 patch_apply,
+│   │                             #      patch_envelope (both envelope forms), spec_update (the shared read-modify-write)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
 │   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
 │   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers
-│   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline (4 modules)
+│   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path)
+│   ├── authoring/                # Session, capability contract, spec document — the tool's core;
+│   │                             #      the shell lands with `dstf author`
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly) + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py classifier + console/junit + context_builder + report_suite + dashboard_render
 │       ├── ui/                   # mode_controls: derive_schema only (JSON-Schema export + the authoring tool's forms)
@@ -83,7 +86,8 @@ uv run dstf --config testing.json compare
 uv run dstf --config testing.json run --report-format junit --output results.xml
 uv run dstf --config testing.json compare --report-format html --output report.html
 
-# Apply an RFC 6902 JSON-Patch envelope against test_spec.json (from any source)
+# Apply an RFC 6902 JSON-Patch envelope against test_spec.json — single- or
+# multi-model form, from any source
 uv run dstf --config testing.json spec-update spec_patch.json
 
 # Baseline-role CLIs

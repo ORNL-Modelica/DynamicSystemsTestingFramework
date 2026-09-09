@@ -73,6 +73,9 @@ src/dstf/
 │   ├── json_recognizer.py    # Declarative recognizers from testing.json
 │   ├── spec_parser.py        # Parses test_spec.json (external test definitions)
 │   ├── patch_apply.py        # RFC 6902 JSON-Patch round-trip (powers `dstf spec-update`)
+│   ├── patch_envelope.py     # ModelPatch + parse/build for the patch envelope (both forms)
+│   ├── spec_update.py        # Read-modify-write of the spec: entry lookup, implicit-tree
+│   │                         #   materialization, tree validation, apply_validated_patches
 │   └── test_registry.py      # TestModel dataclass, discover_tests() merges all sources
 ├── backends/
 │   ├── __init__.py           # Backend registry: @register decorator, get_backend() factory
@@ -96,7 +99,12 @@ src/dstf/
 │   ├── baseline.py           # Baseline value type + PRIMARY_BASELINE
 │   ├── ref_index.py          # RefIndex + atomic text writes
 │   ├── roles.py              # soft_check/companion CRUD mixin
+│   ├── accept.py             # accept_run_results — the one accept path, with the aborted-run refusal
 │   └── reference_store.py    # ReferenceStore: primary CRUD + accept path
+├── authoring/
+│   ├── session.py            # Session: open / rescore / view / stage / save / discard / export / apply
+│   ├── capabilities.py       # The capability contract: Capability, Scope, the five outcomes
+│   └── spec_document.py      # SpecDocument — the spec as loaded, its pending ops and its on-disk hash
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
     ├── junit_report.py       # JUnit XML for CI
@@ -118,8 +126,16 @@ The figure layer sits beside them, and both tiers draw from it:
 src/dstf/figures/
 ├── view.py                   # VariableView — the library-neutral picture of one variable
 ├── plotly.py                 # VariableView → a plotly figure dict (traces + shapes)
+├── assemble.py               # Trajectories + evaluated leaves → a VariableView
 └── decimate.py               # LTTB decimation on the view, before any trace exists
 ```
+
+`authoring/` is the authoring tier's core — the tool's state machine, with no UI
+framework in it; the shell that drives it lands in sub-project 4. It shares the
+CLI's paths rather than duplicating them: `discovery/spec_update.py` is the
+read-modify-write both `dstf spec-update` and `Session.save` call, and
+`storage/accept.py` is the one accept path `run --accept` and `compare --accept`
+call, and the one an authoring Accept capability will call.
 
 ## Data Flow
 

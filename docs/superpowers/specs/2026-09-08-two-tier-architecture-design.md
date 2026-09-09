@@ -396,6 +396,18 @@ def register_capability(cap: Capability) -> Capability   # loud on duplicate nam
 def registered_capabilities() -> tuple[Capability, ...]  # registration order
 ```
 
+**Amended in sub-project 3.** The dataclasses above are built keyword-only, and
+`Job` and `StoreWrite` each carry `models: frozenset[str]` — the models the
+outcome touches, so a job can lock them and a locked model can refuse a store
+write. A job's completion is posted through `Session(post=...)`, the UI loop the
+shell supplies; with no `post` it runs on the worker thread. `rescore` stages the
+implicit-tree materialization only when the synthesized tree scores what the flat
+path scored — a spec whose variables are glob patterns scores without staging and
+is not editable in the tool until the owner decides how such a spec materializes
+(§9). `SessionView.project` is a frozen `ProjectView` — config, tests, results and
+two store readers — not the `Project`; the store's writers are reachable only
+through `StoreWrite.run` and `JobContext`.
+
 Registration goes through the existing single entry-point group
 (`dstf.plugins`, `plugins.py`); a plug-in module calls `register_capability`
 on import exactly as it calls `register_metric`. Built-in capabilities register
@@ -635,6 +647,13 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
    tool**, except that `run -i`'s detail text is now mode-aware and
    `spec-update` also reads the multi-model envelope. `dstf author` is an
    addition. `export-schema` and the JSON-Schema handoff are unchanged.
+   Three further changes are visible and intended: every command that
+   discovers tests now reads `<reference_root>/test_spec.json` when no
+   `test_spec` is configured — the file `add` writes — so a stray one is
+   discovered; `spec-update` refuses to materialize a tree for a spec whose
+   variables are glob patterns, instead of silently writing a `*` leaf; and a
+   model-less envelope exits 2 as a config error, where it printed and exited
+   1.
 5. **TRANSFORM** `compare --report` renders every test, and its 331 stored
    verdicts are unchanged by steps 1–4.
 
@@ -669,6 +688,11 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
   instrument: a capability that needs a new results model belongs to a
   sibling tool. If a session finds itself scoping a sweep into the Session,
   that is the moment to stop and ask, not proceed.
+- **How a glob-pattern spec materializes.** `"variables": ["*"]` has no
+  one-leaf-per-variable tree: either the patterns resolve against the result's
+  variables when the tree is written (which also changes what `spec-update`
+  writes), or such tests stay uneditable in the tool. Undecided; until then
+  `rescore` scores them without staging.
 - **Cancel.** No cancel path exists in `ProgressReporter`, `run_tests` or the
   persistent worker pool. It is backend work: a cancel token threaded through
   `run_tests` and honoured by the pool's dispatch loop. Not promised by v1.

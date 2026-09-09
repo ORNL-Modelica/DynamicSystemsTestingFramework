@@ -158,7 +158,8 @@ uv run dstf --config testing.json run --rerun failed,sim-failed --merge --report
 # Compare without re-simulating (uses last results)
 uv run dstf --config testing.json compare
 
-# Apply an RFC 6902 JSON-Patch against test_spec.json (from any source)
+# Apply an RFC 6902 JSON-Patch envelope against test_spec.json — single- or
+# multi-model form, from any source
 uv run dstf --config testing.json spec-update spec_patch.json
 
 # Manage the other baseline roles

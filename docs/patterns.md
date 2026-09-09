@@ -149,7 +149,7 @@
 - Three-panel layout per variable: trajectory (actual vs reference), absolute error, and NRMSE — the NRMSE panel shows a tolerance line that updates live
 - Error overlay dropdown on each variable plot: overlay signed error, absolute error, or NRMSE on the trajectory chart (right y-axis)
 - Live tolerance editing: global test tolerance input at the top recomputes all pass/fail; per-variable tolerance inputs in the variable table override the global value when modified (highlighted orange); summary stats and key cards update live
-- Export tolerance config panel (expanded by default): shows a JSON snippet that updates live as tolerances are edited; "Copy to Clipboard" and "Download JSON" buttons for saving the config; the downloaded JSON can be applied via `dstf spec-update`
+- `dstf spec-update` applies a patch file, from the authoring tool's Export or written by hand — the page itself edits nothing (D125)
 
 ## Anti-Patterns
 

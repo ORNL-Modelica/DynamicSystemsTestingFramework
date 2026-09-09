@@ -437,10 +437,26 @@ whether it is available, builds its own controls, and returns an *outcome*; it
 applies nothing itself, so the session stays the single place where a spec is
 mutated, a store is written, or a job is launched.
 
-The protocol, the outcome types and the registration call are specified in §4.6
-of [the two-tier architecture design](superpowers/specs/2026-09-08-two-tier-architecture-design.md).
-It lands in sub-project 4 — there is no `dstf.authoring` package to import
-against yet, so nothing here is callable today.
+The contract lives in `dstf.authoring.capabilities`: the `Capability` protocol
+(`name`, `label`, `scope`, and `available` / `panel` / `act`), the `Scope` enum
+(`PROJECT`, `TESTS`, `VARIABLE`, `LEAF`), and the five outcomes `act` may return
+— `Patch` (ops for the Session to stage), `StoreWrite`, `Job`, `Artifact`,
+`OpenProject` — or `None`, or a sequence of them. `Job` and `StoreWrite` each
+carry `models: frozenset[str]`, the models they touch: the Session locks a job's
+models while it runs and a locked model refuses a `StoreWrite`. Every outcome is
+keyword-only, so a field added later cannot silently take a positional argument's
+place.
+
+Register with `register_capability(cap)` from a module the `dstf.plugins`
+entry-point group loads, exactly as a metric calls `register_metric`; a duplicate
+name is an error rather than an import-order race.
+
+A capability receives a `SessionView` — readers only — and applies nothing
+itself: the Session is the single place a spec is mutated, a store is written or
+a job is launched. The shell that lists capabilities by scope and gives `panel`
+its container is sub-project 4; §4.6 of [the two-tier architecture
+design](superpowers/specs/2026-09-08-two-tier-architecture-design.md) has the
+full specification.
 
 ---
 

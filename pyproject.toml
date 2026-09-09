@@ -98,8 +98,10 @@ ignore = [
 # flow have poor type signal and are left out of scope for now.
 python_version = "3.10"
 files = [
+    "src/dstf/authoring",
     "src/dstf/comparison",
     "src/dstf/discovery",
+    "src/dstf/figures",
     "src/dstf/plugins.py",
     "src/dstf/storage",
     "src/dstf/config.py",
