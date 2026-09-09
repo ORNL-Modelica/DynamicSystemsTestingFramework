@@ -333,7 +333,7 @@ def test_view_from_trajectory_reads_the_report_shape():
         "act_time": [0, 1],
         "act_values": [1, 2],
         "ref_time": [0, 1],
-        "ref_values": [1, 2],
+        "ref_values": [1, 3],  # differs from act, so a swap is caught
         "overlays": [
             {
                 "name": "s",
@@ -345,9 +345,8 @@ def test_view_from_trajectory_reads_the_report_shape():
         ],
     }
     view = view_from_trajectory("x", traj, [])
-    assert (
-        view.name == "x" and list(view.act_values) == [1, 2] and len(view.overlays) == 1
-    )
+    assert view.name == "x" and len(view.overlays) == 1
+    assert list(view.act_values) == [1, 2] and list(view.ref_values) == [1, 3]
     assert view_from_trajectory("x", {}, []).act_time is None
 
 

@@ -1199,6 +1199,23 @@ def test_unregistered_recorded_backend_is_a_config_error(tmp_path, capsys):
     assert "Traceback" not in err
 
 
+def test_compare_prints_the_stale_work_dir_warning(tmp_path, capsys):
+    """The warning is `recorded_backend`'s return value now; `cmd_compare`
+    is what puts it in front of the user. Dropping that print would let
+    `compare` fall back to auto-detect on a pre-D123 work dir with nothing
+    said — the failure D123 records."""
+    lib = _fake_library(tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "status.json").write_text(
+        json.dumps({"tests": [], "metadata": {"simulator": "OpenModelica"}}),
+        encoding="utf-8",
+    )
+    main(["--source-path", str(lib), "compare", "--work-dir", str(work)])
+    err = capsys.readouterr().err
+    assert "predates the Backend rename" in err and "--backend" in err
+
+
 def test_stale_work_dir_without_backend_name_warns(tmp_path):
     """A work dir written before the Backend rename must say so.
 

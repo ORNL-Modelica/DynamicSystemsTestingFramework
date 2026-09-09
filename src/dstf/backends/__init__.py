@@ -26,6 +26,7 @@ __all__ = [
     "resolve_variable_patterns",
     "get_backend",
     "get_backend_class",
+    "dataset_kind_for",
 ]
 
 
