@@ -18,6 +18,8 @@ from dstf.comparison.registry import metric
 from test_session import A, D, _project
 
 REF = (np.array([0, 0.25, 0.5, 0.75, 1.0]), np.array([0, 0.25, 0.5, 0.75, 1.0]))
+# A TRANSFORM-sized baseline: time 0..10, where a pixel is ~1e-3 of the span.
+WIDE = (np.linspace(0.0, 10.0, 2001), np.sin(np.linspace(0.0, 10.0, 2001)))
 
 TREE = {
     "combinator": "and",
@@ -254,6 +256,25 @@ class TestTube:
         assert new["tube_points"][0]["time"] == 1.0
         assert new["tube_points"][0]["upper"] == pytest.approx(0.3)
 
+    def test_a_real_browsers_vertical_drag_is_not_a_time_move(self):
+        # Measured on a TRANSFORM baseline (time 0..10, 2000 samples, ~800 px
+        # plot): the pixel round trip sent this x for a ring at t=5.
+        leaf = _with(BAND, tube_points=[{"time": 5.0, "upper": 0.1, "lower": 0.1}])
+        new = _edit(leaf, "tube/upper/0", 4.99998293759, 1.5, reference=WIDE)
+        assert new["tube_points"][0]["time"] == 5.0
+        assert new["tube_points"][0]["upper"] == pytest.approx(1.5 - np.sin(5.0))
+
+    def test_a_small_real_time_move_above_the_tolerance_moves(self):
+        # 2e-5 of the span: above the 1e-5 no-move tolerance.
+        leaf = _with(BAND, tube_points=[{"time": 5.0, "upper": 0.1, "lower": 0.1}])
+        new = _edit(leaf, "tube/upper/0", 5.0 + 2e-4, None, reference=WIDE)
+        assert new["tube_points"][0]["time"] == 5.0002
+
+    def test_without_a_reference_only_float_noise_is_no_time_move(self):
+        leaf = _with(ABS, tube_points=[{"time": 5.0, "upper": 1.5, "lower": -0.5}])
+        new = _edit(leaf, "tube/upper/0", 5.0 + 1e-6, 2.0, reference=None)
+        assert new["tube_points"][0] == {"time": 5.000001, "upper": 2.0, "lower": -0.5}
+
     def test_a_refusal_after_a_clamp_names_the_clamp(self):
         leaf = _with(
             BAND,
@@ -425,6 +446,16 @@ class TestPoints:
 
     def test_a_vertical_drag_of_a_following_point_changes_nothing(self):
         assert _edit(POINTS, "points/target/0", 0.25, 0.9) == POINTS
+
+    def test_a_real_browsers_vertical_drag_of_a_following_point_changes_nothing(
+        self,
+    ):
+        # The TRANSFORM-measured round trip (see TestTube): x off t=5 by
+        # 1.7e-6 of the span must not move the checkpoint's time.
+        leaf = _with(POINTS, points=[{"time": 5.0, "tolerance": 0.05}])
+        assert _edit(leaf, "points/target/0", 4.99998293759, 0.9, reference=WIDE) == (
+            leaf
+        )
 
     def test_a_following_points_time_is_clamped_into_the_reference_span(self):
         new = _edit(POINTS, "points/target/0", 1.5, 0.9)

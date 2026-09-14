@@ -129,12 +129,27 @@ def _reference(edit: HandleEdit) -> tuple[np.ndarray, np.ndarray] | None:
 def _time_move(edit: HandleEdit, t: float) -> float | None:
     """``edit.x`` as a time move from the handle's current time ``t``, or
     ``None`` when it is not one. The ring always sends its ``x``, and a
-    vertical drag sends it back within float noise of ``t``; read as a move,
-    that noise was clamped (moving a value checkpoint drawn outside the span)
-    or refused (an ``against``-other leaf, a time shared with another point),
-    so a vertical drag changed or lost a time. Decided before any clamp,
-    ``against`` or shared-time check."""
-    if edit.x is None or abs(edit.x - t) <= 1e-9 * max(1.0, abs(t)):
+    vertical drag sends it back off ``t`` by the data→pixel→data round trip;
+    read as a move, that offset was clamped (moving a value checkpoint drawn
+    outside the span) or refused (an ``against``-other leaf, a time shared
+    with another point), so a vertical drag changed or lost a time. Decided
+    before any clamp, ``against`` or shared-time check.
+
+    The tolerance is pixel-scale, not float noise: a vertical drag in a real
+    browser on a TRANSFORM baseline (time 0..10, 2000 samples, ~800 px plot)
+    sent ``4.99998293759`` for a point at 5 — about 1.7e-6 of the span, far
+    above ``1e-9``. ``1e-5`` of the reference's time span is well under one
+    pixel at default zoom and still under one at 100x zoom, so no real drag
+    falls inside it; the float-noise term remains the floor, and is all
+    there is with no reference."""
+    if edit.x is None:
+        return None
+    tol = 1e-9 * max(1.0, abs(t))
+    reference = _reference(edit)
+    if reference is not None:
+        ref_time = reference[0]
+        tol = max(tol, 1e-5 * float(ref_time[-1] - ref_time[0]))
+    if abs(edit.x - t) <= tol:
         return None
     return float(edit.x)
 
@@ -204,8 +219,8 @@ def edit_tube_handle(edit: HandleEdit) -> dict:
 
     The index addresses ``tube_points`` in authored order, as
     ``algorithms._tube_geometry`` enumerates it. ``x`` sets the point's
-    ``time`` — unless it lies within float noise of the current time, which
-    is no time move at all (:func:`_time_move`) — clamped into the span
+    ``time`` — unless it lies within a sub-pixel tolerance of the current
+    time, which is no time move at all (:func:`_time_move`) — clamped into the span
     where the handle is drawn (the first reference sample
     ``>= window.start`` to the last ``<= window.end``, either end absent
     meaning the reference's own; with no reference, the window's ends
@@ -379,8 +394,8 @@ def _edit_bounds(edit: HandleEdit, *, strict: bool) -> dict:
 def edit_points_handle(edit: HandleEdit) -> dict:
     """``points/target/i`` → ``points[i]``.
 
-    ``x`` sets ``time`` — unless it lies within float noise of the current
-    time (:func:`_time_move`) — and is refused on a leaf whose ``against``
+    ``x`` sets ``time`` — unless it lies within a sub-pixel tolerance of the
+    current time (:func:`_time_move`) — and is refused on a leaf whose ``against``
     is not ``"primary"``. The time is clamped: for a checkpoint that follows
     the baseline, into the span where it is drawn (the tube rule: the first
     reference sample ``>= window.start`` to the last ``<= window.end``); for
