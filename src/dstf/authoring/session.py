@@ -191,12 +191,14 @@ class Session:
         self.spec = spec
         self.selection = Selection()
         self.comparisons = {}
-        # A notice is project-scoped text ("stored 2 baselines for LibA.X"); a
-        # swap calls open, never close, and must not carry it into LibB's panel.
-        # Assigned here, at the commit point, and not on entry: an open that
-        # fails leaves the live project's panel as it was. The recorded-backend
-        # warning is this project's first notice, so the job panel shows it.
+        # A notice is project-scoped text ("stored 2 baselines for LibA.X"), and
+        # so is an artifact's path; a swap calls open, never close, and must not
+        # carry either into LibB's panel. Assigned here, at the commit point,
+        # and not on entry: an open that fails leaves the live project's panel
+        # as it was. The recorded-backend warning is this project's first
+        # notice, so the job panel shows it.
         self.notices = [warning] if warning else []
+        self.artifacts = []
         self.last_job = None
         self._emit("spec", models={t.model_id for t in tests})
         self._reload_results()
@@ -734,7 +736,8 @@ class SessionView:
 
     @property
     def notices(self) -> tuple[str, ...]:
-        """What the store writes applied so far reported, oldest first."""
+        """The lines the job panel shows, oldest first: what each store write
+        applied so far reported, plus the open-time warning if there was one."""
         return tuple(self._session.notices)
 
     def is_locked(self, model_id: str) -> bool:

@@ -144,10 +144,11 @@ def _interactive_review(
                 # trajectory (leftover B: it must not crash the loop) and a
                 # test the last run left pending — and stores no baseline for
                 # a simulate-only test, which it reports as neither.
-                # `test` is never missing on the `[a]` path: `cmd_run` builds
-                # `comparisons` from the same `scope_tests` it passes as
-                # `tests`, and a caller passing no tests has no result either,
-                # so `has_result` keeps the branch out of reach.
+                # `test` is never missing on the `[a]` path: `cmd_run` hands the
+                # same `scope_tests` to `compare_all` (one comparison per test)
+                # and to this function, and `RunOutcome.results` is keyed by
+                # exactly those models — so a model with a comparison and a
+                # result has an entry in `test_lookup`.
                 stored, skipped = accept_run_results(
                     store, [test], {test.model_id: result}, config.work_dir
                 )

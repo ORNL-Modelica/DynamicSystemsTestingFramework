@@ -645,6 +645,14 @@ class TestOutcomes:
         session.open(config.config_file, work_dir=config.work_dir)
         assert session.notices == []
 
+    def test_open_empties_the_artifacts(self, session, tmp_path):
+        """An artifact's links point into this project's work dir; like a
+        notice, a swap must not leave them under the next project."""
+        session.apply(Artifact(paths=[Path("x.png")], label="PNG"))
+        other_cfg, other_work = _project(tmp_path / "other")
+        session.open(other_cfg, work_dir=other_work)
+        assert session.artifacts == [] and SessionView(session).artifacts == ()
+
     def test_a_failed_open_keeps_the_live_projects_notices(self, session):
         """The reset sits at the commit point, after the Project is built:
         hoisting it to the top of ``open`` empties a live project's panel on
@@ -652,13 +660,15 @@ class TestOutcomes:
         from dstf.config import ConfigError
 
         session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        art = Artifact(paths=[Path("x.png")], label="PNG")
+        session.apply(art)
         config = session.project.config
         (config.work_dir / "status.json").write_text(
             json.dumps({"metadata": {"backend_name": "Nonesuch"}, "tests": []})
         )
         with pytest.raises(ConfigError, match="Nonesuch"):
             session.open(config.config_file, work_dir=config.work_dir)
-        assert session.notices == ["stored 1"]
+        assert session.notices == ["stored 1"] and session.artifacts == [art]
         assert session.project is not None
 
     def test_job_runs_on_a_thread_locks_its_models_and_reloads_on_completion(
