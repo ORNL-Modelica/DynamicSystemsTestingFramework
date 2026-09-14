@@ -108,10 +108,13 @@ class FigureHook(Protocol):
       The shell does not interpret positions: the capability does, from the
       handle's primitive type (a Marker's ring moves only by
       ``xanchor``/``yanchor``).
+      A relayout mixing shape keys with others is a shape relayout.
     - Any other relayout (a zoom): once, with id ``""`` and the raw payload.
 
-    Handlers run from a snapshot taken when dispatch starts: one registered
-    during dispatch is first called on the next event."""
+    Handler semantics are the DOM's: each shape is its own event, dispatched
+    from a snapshot taken when that event starts. A handler registered since
+    the snapshot is first called on the next event; one removed since (its
+    panel rebuilt) is skipped."""
 
     def on(self, kind: str, handler: Callable[[str, dict], None]) -> None: ...
 

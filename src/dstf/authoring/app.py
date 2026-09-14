@@ -59,7 +59,8 @@ _BADGE_COLOR = {
 }
 
 
-_SHAPE_KEY = re.compile(r"^shapes\[(\d+)\]\.(.+)$")
+# The index is bounded so a hostile key cannot reach `int()`'s digit limit.
+_SHAPE_KEY = re.compile(r"^shapes\[(\d{1,9})\]\.(.+)$")
 
 
 class FigureHook:
@@ -81,14 +82,20 @@ class FigureHook:
       ring's pixel resize ``{"x0": -7, ..., "y1": 7}``. Positions arrive in
       data coordinates. The hook does not interpret them: the capability does,
       from the handle's primitive type (a Marker's ring moves only by
-      ``xanchor``/``yanchor``). ``on_shape_moved`` is then called once.
+      ``xanchor``/``yanchor``). ``on_shape_moved`` is then called once, in a
+      ``finally``: a raising handler still gets its snap-back. A relayout
+      mixing shape keys with others (a zoom) is a shape relayout; the other
+      keys are dropped.
     - Any other relayout (a zoom): dispatched once with id ``""`` and the raw
       payload (``{}`` when it is not a dict); ``on_shape_moved`` is not called.
 
-    Handlers run from a snapshot taken when dispatch starts, so a handler
-    registered during dispatch (a panel rebuilt by the act it triggered) is
-    not called until the next event. A malformed payload never makes dispatch
-    raise; a handler's own exception propagates."""
+    Handler semantics are the DOM's: each shape index is its own event,
+    dispatched from a snapshot taken when that event starts. A handler
+    registered since the snapshot (a panel rebuilt by the act it triggered)
+    is not called for it; a handler removed since the snapshot (``clear``)
+    is skipped, so a rebuilt panel's predecessor never runs. A malformed
+    payload never makes dispatch raise; a handler's own exception
+    propagates."""
 
     def __init__(self, on_shape_moved: Callable[[], None] | None = None) -> None:
         self._on_shape_moved = on_shape_moved
@@ -99,8 +106,7 @@ class FigureHook:
     def clear(self, owner: str | None = None) -> None:
         """Remove one owner's handlers, or every handler. The tabs region
         rebuilds panels on selection and job events; a subscriber that
-        re-registers in `panel()` must not accumulate. New lists are built,
-        never edited in place."""
+        re-registers in `panel()` must not accumulate."""
         if owner is None:
             self._handlers = {}
             return
@@ -143,14 +149,14 @@ class FigureHook:
                 if match is not None:
                     by_shape.setdefault(int(match.group(1)), {})[match.group(2)] = value
             if not by_shape:
-                self._call(kind, [("", data)])
+                self._call(kind, "", data)
                 return
-            self._call(
-                kind,
-                [(self._shape_name(i), by_shape[i]) for i in sorted(by_shape)],
-            )
-            if self._on_shape_moved is not None:
-                self._on_shape_moved()
+            try:
+                for i in sorted(by_shape):
+                    self._call(kind, self._shape_name(i), by_shape[i])
+            finally:
+                if self._on_shape_moved is not None:
+                    self._on_shape_moved()
             return
         points = data.get("points")
         points = (
@@ -170,15 +176,18 @@ class FigureHook:
             primitive = _meta(chosen).get("id")
         if primitive is None:
             primitive = chosen.get("curveNumber")
-        self._call(kind, [("" if primitive is None else str(primitive), data)])
+        self._call(kind, "" if primitive is None else str(primitive), data)
 
-    def _call(self, kind: str, calls: list[tuple[str, dict]]) -> None:
-        handlers = list(self._handlers.get(kind, []))  # the snapshot
+    def _call(self, kind: str, primitive: str, payload: dict) -> None:
+        """One event: the snapshot is taken here, and each entry is checked
+        by identity against the current list just before it is called."""
+        snapshot = list(self._handlers.get(kind, []))
         was, self.dispatching = self.dispatching, True
         try:
-            for primitive, payload in calls:
-                for _owner, handler in handlers:
-                    handler(primitive, payload)
+            for entry in snapshot:
+                if not any(e is entry for e in self._handlers.get(kind, [])):
+                    continue  # removed since the snapshot
+                entry[1](primitive, payload)
         finally:
             self.dispatching = was
 
