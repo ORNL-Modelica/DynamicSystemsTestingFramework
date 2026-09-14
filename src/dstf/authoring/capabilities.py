@@ -111,10 +111,14 @@ class FigureHook(Protocol):
       A relayout mixing shape keys with others is a shape relayout.
     - Any other relayout (a zoom): once, with id ``""`` and the raw payload.
 
-    Handler semantics are the DOM's: each shape is its own event, dispatched
-    from a snapshot taken when that event starts. A handler registered since
-    the snapshot is first called on the next event; one removed since (its
-    panel rebuilt) is skipped."""
+    Handler semantics: each shape index is dispatched in turn, ascending,
+    from its own snapshot of the handlers, taken when that shape's dispatch
+    starts. A handler registered since the snapshot is not called for that
+    shape; one removed since the snapshot (its panel rebuilt) is skipped,
+    checked by identity. A handler registered twice is called twice. A
+    handler that raises ENDS the relayout: later handlers and later shapes
+    are not dispatched, the exception propagates, and the shell still
+    re-sends the figure so the plot snaps back."""
 
     def on(self, kind: str, handler: Callable[[str, dict], None]) -> None: ...
 

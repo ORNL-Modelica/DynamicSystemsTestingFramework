@@ -935,8 +935,8 @@ def test_the_figure_hook_dispatches_from_a_snapshot():
 
 
 def test_a_handler_removed_during_dispatch_is_skipped():
-    """The DOM's rule: a handler removed since the snapshot does not run, so
-    a rebuilt panel's destroyed predecessor never sees the event."""
+    """A handler removed since the snapshot does not run, so a rebuilt
+    panel's destroyed predecessor never sees the event."""
     from dstf.authoring.app import FigureHook
 
     hook = FigureHook()
@@ -1004,6 +1004,138 @@ def test_the_figure_hook_is_dispatching_only_while_handlers_run():
     with pytest.raises(RuntimeError):
         hook._dispatch("plotly_click", {})
     assert hook.dispatching is False
+
+
+def test_clearing_another_owner_mid_dispatch_does_not_skip_a_live_handler():
+    """`clear` keeps the SAME entry objects for the handlers it leaves: the
+    removed-since-snapshot check is by identity, so a rebuilt entry would
+    look removed and a live handler would be skipped."""
+    from dstf.authoring.app import FigureHook
+
+    hook = FigureHook()
+    seen = []
+
+    def x(primitive, payload):
+        seen.append("x")
+        hook.clear("z")
+
+    def y(primitive, payload):
+        seen.append("y")
+
+    hook.owned("x").on("plotly_click", x)
+    hook.owned("y").on("plotly_click", y)
+    hook._dispatch("plotly_click", {})
+    assert seen == ["x", "y"]
+
+
+def _reregistering_hook(handler):
+    """A hook where owner "x" clears owner "cap" and re-registers ``handler``
+    under it on the FIRST dispatch only; "cap" starts with ``handler``."""
+    from dstf.authoring.app import FigureHook
+
+    hook = FigureHook()
+    done = []
+
+    def x(primitive, payload):
+        if not done:
+            done.append(True)
+            hook.clear("cap")
+            hook.owned("cap").on("plotly_click", handler)
+
+    hook.owned("x").on("plotly_click", x)
+    hook.owned("cap").on("plotly_click", handler)
+    return hook
+
+
+def test_a_handler_cleared_and_re_registered_mid_dispatch_is_skipped_by_identity():
+    """The same function object re-registered makes an EQUAL entry, not the
+    same one: it is not called in that dispatch, and called once in the
+    next."""
+    calls = []
+
+    def cap(primitive, payload):
+        calls.append(primitive)
+
+    hook = _reregistering_hook(cap)
+    hook._dispatch("plotly_click", {})
+    assert calls == []
+    hook._dispatch("plotly_click", {})
+    assert len(calls) == 1
+
+
+def test_a_bound_method_cleared_and_re_registered_mid_dispatch_is_skipped():
+    """A bound method compares equal but is a new object on each access."""
+
+    class Panel:
+        def __init__(self):
+            self.calls = 0
+
+        def handle(self, primitive, payload):
+            self.calls += 1
+
+    panel = Panel()
+    assert panel.handle == panel.handle and panel.handle is not panel.handle
+    hook = _reregistering_hook(panel.handle)
+    hook._dispatch("plotly_click", {})
+    assert panel.calls == 0
+    hook._dispatch("plotly_click", {})
+    assert panel.calls == 1
+
+
+def test_a_raising_handler_ends_the_relayout():
+    """Later handlers and later shapes are not dispatched, the exception
+    propagates, and the shape-moved callback still runs once."""
+    from dstf.authoring.app import FigureHook
+
+    moved = []
+    hook = FigureHook(on_shape_moved=lambda: moved.append(True))
+    hook.attach(_StandInPlot(_SHAPES))
+    seen = []
+
+    def first(primitive, payload):
+        seen.append(("first", primitive))
+        raise RuntimeError("boom")
+
+    def second(primitive, payload):
+        seen.append(("second", primitive))
+
+    hook.on("plotly_relayout", first)
+    hook.on("plotly_relayout", second)
+    with pytest.raises(RuntimeError, match="boom"):
+        hook._dispatch("plotly_relayout", {"shapes[0].y0": 1, "shapes[1].y0": 2})
+    assert seen == [("first", "/metrics/children/1/range/max")]
+    assert moved == [True]
+    assert hook.dispatching is False
+
+
+def test_a_nested_dispatch_restores_the_outer_dispatching_flag():
+    from dstf.authoring.app import FigureHook
+
+    hook = FigureHook()
+    during = []
+
+    def inner(primitive, payload):
+        during.append(("inner", hook.dispatching))
+
+    def outer(primitive, payload):
+        hook._dispatch("plotly_click", {})
+        during.append(("outer after inner", hook.dispatching))
+
+    hook.on("plotly_click", inner)
+    hook.on("plotly_relayout", outer)
+    hook._dispatch("plotly_relayout", {"xaxis.range[0]": 0.5})
+    assert during == [("inner", True), ("outer after inner", True)]
+    assert hook.dispatching is False
+
+
+def test_a_shape_key_with_a_trailing_newline_or_a_non_ascii_digit_is_not_a_shape():
+    """`$` matches before a trailing newline and `\\d` matches any Unicode
+    digit (which `int()` accepts): both would make these shape relayouts."""
+    for payload in ({"shapes[0].y0\n": 1.0}, {"shapes[\u0661].y0": 1.0}):
+        hook, seen, moved = _recording_hook(_StandInPlot(_SHAPES))
+        hook._dispatch("plotly_relayout", payload)
+        assert [(p, d) for _, p, d in seen] == [("", payload)]
+        assert moved == []
 
 
 async def test_the_figure_hook_does_not_accumulate_handlers_across_tab_rebuilds(shell):

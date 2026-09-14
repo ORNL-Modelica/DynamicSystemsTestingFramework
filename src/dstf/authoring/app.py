@@ -59,8 +59,10 @@ _BADGE_COLOR = {
 }
 
 
-# The index is bounded so a hostile key cannot reach `int()`'s digit limit.
-_SHAPE_KEY = re.compile(r"^shapes\[(\d{1,9})\]\.(.+)$")
+# The index is bounded so a hostile key cannot reach `int()`'s digit limit;
+# `[0-9]`, not `\d` (which matches any Unicode digit, and `int()` accepts
+# those), and `\Z`, not `$` (which also matches before a trailing newline).
+_SHAPE_KEY = re.compile(r"^shapes\[([0-9]{1,9})\]\.(.+)\Z")
 
 
 class FigureHook:
@@ -89,13 +91,16 @@ class FigureHook:
     - Any other relayout (a zoom): dispatched once with id ``""`` and the raw
       payload (``{}`` when it is not a dict); ``on_shape_moved`` is not called.
 
-    Handler semantics are the DOM's: each shape index is its own event,
-    dispatched from a snapshot taken when that event starts. A handler
-    registered since the snapshot (a panel rebuilt by the act it triggered)
-    is not called for it; a handler removed since the snapshot (``clear``)
-    is skipped, so a rebuilt panel's predecessor never runs. A malformed
-    payload never makes dispatch raise; a handler's own exception
-    propagates."""
+    Handler semantics: each shape index is dispatched in turn, ascending,
+    from its own snapshot of the handlers, taken when that shape's dispatch
+    starts. A handler registered since the snapshot (a panel rebuilt by the
+    act it triggered) is not called for that shape; one removed since the
+    snapshot (``clear``) is skipped, checked by identity against the current
+    list, so a rebuilt panel's predecessor never runs. A handler registered
+    twice is called twice. A handler that raises ENDS the relayout: later
+    handlers and later shapes are not dispatched, the exception propagates,
+    and ``on_shape_moved`` still runs. A malformed payload never makes
+    dispatch raise."""
 
     def __init__(self, on_shape_moved: Callable[[], None] | None = None) -> None:
         self._on_shape_moved = on_shape_moved
@@ -110,6 +115,10 @@ class FigureHook:
         if owner is None:
             self._handlers = {}
             return
+        # `_call` skips a handler removed mid-dispatch by IDENTITY against
+        # the current list, so the entries left here must be the SAME tuple
+        # objects — rebuilding them (`(o, h)` anew) would make every
+        # surviving handler look removed and skip it.
         self._handlers = {
             kind: [entry for entry in entries if entry[0] != owner]
             for kind, entries in self._handlers.items()
