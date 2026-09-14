@@ -77,7 +77,7 @@ This is the natural completion of the "Modelica is the first consumer, not the r
 
 Backends are not all equivalent. Rather than assume every backend supports every workflow, backends declare **capabilities** on their contract — a `capabilities: frozenset[Capability]` class attribute. `Capability` has exactly three members:
 
-- `PERSISTENT_WORKERS` — can hold a loaded model in memory and simulate many tests per worker (Dymola, OpenModelica and Julia: yes; FMPy: no — it runs in-process and declares nothing). Declare it on the **registered** class: `_get_backend` reads the batch class's `capabilities` to decide whether to select the persistent variant, so declaring it only on the persistent class means it is never seen.
+- `PERSISTENT_WORKERS` — can hold a loaded model in memory and simulate many tests per worker (Dymola, OpenModelica and Julia: yes; FMPy: no — it runs in-process and declares nothing). Declare it on the **registered** class: `backends.select_backend` (the CLI's `_get_backend` is its wrapper) reads the batch class's `capabilities` to decide whether to select the persistent variant, so declaring it only on the persistent class means it is never seen.
 - `BATCH_FALLBACK` — exposes a script-driven non-interactive fallback (Dymola, OpenModelica, Julia and Python: yes; FMPy: no).
 - `FMU_EXPORT` — can export a test artefact as an FMU. Declared by `PersistentDymolaBackend`, since the export needs a live interface; the batch class does not have one. Enables cross-backend verification (see below).
 A separate class attribute, `produced_datasets: frozenset[DatasetType]`, declares the set of dataset kinds a backend can yield (most produce `TimeSeries` and `Events`; a data-file backend may produce only `TimeSeries`).

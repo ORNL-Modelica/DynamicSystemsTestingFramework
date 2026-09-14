@@ -41,6 +41,8 @@ Features (e.g. cross-backend verification, which chains `Backend.export_fmu()` �
 | Metric | `comparison/modes.py`: `NrmseMode`, `TubeMode`, `PointsMode`, `RangeMode`, `EventTimingMode`, `DominantFrequencyMode`, `ScalarMode`; `VariableComparison.diagnostics` carries structured extras | 7 concrete leaf types spanning trajectory-comparison, signal-only bounds, event-timing, spectral shapes, and single-number (reduction / stored-statistic) checks |
 | MetricTree | `comparison/metric_tree.py` (`And`/`Or`/`KOfN`/`Warn`/`Weighted` + `MetricResult`), `comparison/tree_spec.py`, `comparison/tree_eval.py`. `compare_test` derives `passed` from the tree root; users author trees via `test_spec.json` `"metrics"` block | 5 combinators (weighted is direction-aware); `simulate_only` leaf short-circuits comparison entirely |
 | Reference | Role-partitioned storage; `Baseline` view presents named baselines uniformly | primary baseline flat-at-top-level; soft_checks and companions in role subdirs beside it |
+| (the run itself) | `pipeline.py`: `run_pipeline(config, tests, *, backend, store, merge, candidates)` — id mapping, stale-state wipe, live dashboard, `run_tests`, cross-backend chains, scope widening, result read. No printing, no exits, no browser, no prompts; failures are exceptions. Belongs to no layer — it orchestrates a backend, a store and a work dir — so it sits beside `config.py`. | Both callers go through it: the CLI and the authoring tool's Rerun |
+| (the run's CLI) | `cli/run_cmds.py`: `cmd_run` is the wrapper — selection and filtering, `_get_backend` (the CLI's wrapper over `backends.select_backend`), `run_pipeline`, then the outcome's notices, `--accept` / `-i` / the report. `cmd_compare` shares the same helpers without simulating. | — |
 
 Forward work: cross-backend verification beyond the Dymola→FMPy chain (each new primary backend needs its own `export_fmu`), and richer metrics (event-timing, spectral, Fréchet, KS). See [extensibility.md](extensibility.md) for per-layer plug-in contracts.
 
@@ -65,8 +67,10 @@ DynamicSystemsTestingFramework/          # repo root (project name: DSTF)
 ```
 src/dstf/
 ├── cli/                      # argparse CLI package: discover, run, compare, export, manifest, add, spec-update,
-│                             #   companion, soft-check, import-baseline, export-schema, check-dymola
+│   │                         #   companion, soft-check, import-baseline, export-schema, check-dymola
+│   └── run_cmds.py           # cmd_run / cmd_compare — the CLI wrapper around pipeline.run_pipeline
 ├── config.py                 # Config dataclass, path resolution, testing.json loading, backend auto-detect
+├── pipeline.py               # run_pipeline + RunOutcome — the run as a library callable (no printing, no exits)
 ├── discovery/
 │   ├── recognizer.py         # Recognizer registry (bundled + user-declared, merged by model_id)
 │   ├── mo_parser.py          # Scans .mo files for UnitTests components
@@ -108,7 +112,8 @@ src/dstf/
 │   ├── spec_document.py      # SpecDocument — the spec as loaded, its pending ops and its on-disk hash
 │   ├── app.py                # The NiceGUI shell: fixed layout, event→refresh bridge, capability routing
 │   ├── forms.py              # NiceGUI controls from a mode's derived schema
-│   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_tree.py
+│   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_tree.py,
+│                             #   accept.py (the shared accept function), rerun.py (run_pipeline)
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
     ├── junit_report.py       # JUnit XML for CI
@@ -139,8 +144,9 @@ UI framework; the Session, the capability contract and the spec document stay
 pure, so the rest of `dstf` runs without the `[author]` extra. It shares the
 CLI's paths rather than duplicating them: `discovery/spec_update.py` is the
 read-modify-write both `dstf spec-update` and `Session.save` call, and
-`storage/accept.py` is the one accept path `run --accept` and `compare --accept`
-call, and the one an authoring Accept capability will call.
+`storage/accept.py` is the one accept path `run --accept`, `compare --accept`,
+`run -i`'s `[a]` and the tool's Accept capability all call, and `pipeline.py` is
+the run itself, which `cmd_run` and the tool's Rerun both drive.
 
 ## Data Flow
 
@@ -362,7 +368,7 @@ Each backend declares its capabilities via `frozenset[Capability]`:
 - `BATCH_FALLBACK` — per-test subprocess; robust but slower per-test startup cost.
 - `FMU_EXPORT` — can export an FMU from the source (`PersistentDymolaBackend` only today — the batch `DymolaBackend` has no `.mos` export path and does not declare it; OM deferred per D69).
 
-CLI's `_get_backend(persistent=True)` swaps to the persistent variant only when the backend **declares** `PERSISTENT_WORKERS`; a backend without the flag takes the batch path. A persistent preflight that raises `RuntimeError` aborts with a message pointing at `--batch` (no silent fallback). The cross-backend chain gates the same way on `FMU_EXPORT`.
+`backends.select_backend(config, persistent=True)` — which `cli/run_cmds.py`'s `_get_backend` wraps for the CLI — swaps to the persistent variant only when the backend **declares** `PERSISTENT_WORKERS`; a backend without the flag takes the batch path. A persistent preflight that raises `RuntimeError` aborts with a message pointing at `--batch` (no silent fallback). The cross-backend chain gates the same way on `FMU_EXPORT`.
 
 ### Forward
 

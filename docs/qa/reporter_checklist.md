@@ -107,10 +107,14 @@ Requires a registered companion (see Prep). On BouncingBall's `h` plot:
 
 ## Authoring tool
 
-`dstf author` is covered in Python (the shell's regions and both built-in
+`dstf author` is covered in Python (the shell's regions and the built-in
 capabilities through NiceGUI's in-process `user_simulation`) and by one
 Chromium smoke test that edits a tolerance and saves nothing. What stays
 manual is the feel of a live edit and the states a single page cannot reach.
+
+Accept writes baselines and Rerun simulates: run the two below against a
+throwaway copy of the example library, never a reference tree you would mind
+re-accepting.
 
 ### Prep
 
@@ -142,6 +146,24 @@ left as you edited it.
       and Edit criteria is not listed at all — its scope is a leaf. Uncheck
       them all and the tab area says nothing applies to the selection; no v1
       capability is PROJECT-scope.
+- [ ] Select two tests with results and open Accept: each is listed as
+      `model · status · will store`, the button reads `Accept 2`. Click it —
+      the footer gains one line naming what it stored and where, and both
+      tests' verdicts flip to PASS (the tree is scored against the baseline
+      just written).
+- [ ] Select a test the last run never finished (interrupt a run with Ctrl-C
+      to make one): its Accept row reads `re-run before accepting`, the tab is
+      greyed with that same reason, and nothing offers to store it.
+- [ ] Select one test and open Rerun: the panel names the backend it will run
+      through. Click `Rerun 1` — the footer reads `running: rerun`, then one
+      row for that test with its status, phase and elapsed time while the run
+      goes; when it ends the footer reads `finished: rerun` and the test's
+      verdict reflects the new results. The console that started `dstf author`
+      printed nothing the whole time.
+- [ ] Make a rerun fail (point `testing.json` at a backend executable that is
+      not there, or at an unregistered backend name): the footer reads
+      `failed: rerun — <error type>: <message>` and every verdict is exactly
+      what it was before the click.
 - [ ] The dashboard link opens the suite page in a new tab.
 - [ ] Quit shuts the server down; the tab shows NiceGUI's disconnected banner.
 

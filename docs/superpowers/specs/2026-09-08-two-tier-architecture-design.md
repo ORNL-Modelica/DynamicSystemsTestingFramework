@@ -510,6 +510,38 @@ and shows the path, where §4.7 said only "writes an envelope". `tube_points`
 editing stays sub-project 6's: this tier shows it read-only, and the split
 upper / lower form waits for the plot handles it belongs with.
 
+**Amended in sub-project 5.** Seven calls its plan made that this text did not:
+`StoreWrite.run` returns `str | None`, the one line the job panel shows — a
+partial write has no other way to say which tests it refused and why, and
+raising after some baselines were written would mislead. `RunningJob` carries
+`started_wall`, epoch seconds sampled before the worker thread starts; the panel
+ignores a `status.json` whose `start_wall` is older, so the previous run's
+snapshot is never shown as this job's progress. `Backend.quiet` (instance
+attribute, default `False`) gates every run-narration print in `backends/`;
+`Session.open` sets it on the project's backend and Rerun on the backend it
+builds, and the CLI's stays loud. `backends.select_backend(config, *,
+persistent)` is the persistent-or-batch choice, raising `BackendUnavailableError`
+where `cli.run_cmds._get_backend` printed and exited; `_get_backend` stays as the
+CLI's wrapper. Rerun builds its own backend per job through
+`select_backend(..., persistent=True)` — exactly the CLI's default — rather than
+running through the batch instance `Session.open` holds for reading. The run
+callable takes `store` and `backend` rather than building them (the CLI needs
+the backend before the run, the Session holds both), plus `candidates`, the
+population `merge` widens the read scope over. And
+`backends.progress.read_status(work_dir)` is the one reader of `status.json`,
+public because the dashboard renderer and the shell both call it.
+
+Two more the build added. `Session.last_job` — the job that ran last in this
+project, whatever its outcome — carries the panel's `finished:` / `failed:`
+line, since `running` is already `None` by the time there is an outcome to
+show; it is per project, like the notices. And Accept's confirm list says per
+selected model what the write will do: `will store`, or the refusal `no
+simulation result`, `simulation failed`, `re-run before accepting`,
+`simulate-only: no baseline`, `no tracked variables in result`. The button
+counts only the `will store` rows and the tab reads its own availability off
+that same forecast, so an enabled Accept never fronts an `Accept 0` and the
+list never promises what the shared accept function declines.
+
 ### 4.7 The tool's v1 surface
 
 **Launch.** `dstf author --config testing.json [--filter ...] [--port N]`
@@ -697,6 +729,14 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
    exits 2 as a config error, where it printed and exited 1; and `run
    --accept` applies the same aborted-run refusal `compare --accept` did, which
    a completed run never triggers.
+   Sub-project 5 adds four more: an unregistered backend name, or a missing
+   `python` / `julia` / `fmpy` dependency, exits 1 with the message where it
+   printed a traceback; the persistent-abort message now ends with "Aborting."
+   instead of opening with it; `run -i`'s `[a]` refuses a test the last
+   run left pending and stores nothing for a simulate-only one, both as
+   `--accept` already did; and where a cross-backend chain runs, its lines
+   print after the read-phase lines instead of between the simulation and the
+   read.
 5. **TRANSFORM** `compare --report` renders every test, and its 331 stored
    verdicts are unchanged by steps 1–4.
 

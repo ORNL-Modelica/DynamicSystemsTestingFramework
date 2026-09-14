@@ -233,7 +233,65 @@ Worked example: `backends/openmodelica/persistent_backend.py` has the most compa
 - `PythonBackend` declares `{BATCH_FALLBACK}` — subprocess per test; a long-lived Python worker is deferred, and FMU export isn't meaningful for arbitrary `simulate()` scripts.
 - `FmpyBackend` declares `frozenset()` — no persistent worker exists, no batch fallback (FMPy *is* the Python path), no FMU export (FMPy consumes FMUs).
 
-All five produce `{TIME_SERIES}`. The framework *does* gate on the declarations: `cli/run_cmds.py` swaps to the persistent variant only when `PERSISTENT_WORKERS` is declared, `backends/__init__.py` rejects a registration whose flags have no matching method override, and `backends/cross_backend.py` refuses the export chain unless the primary backend declares `FMU_EXPORT`.
+All five produce `{TIME_SERIES}`. The framework *does* gate on the declarations: `backends.select_backend` swaps to the persistent variant only when `PERSISTENT_WORKERS` is declared, `backends/__init__.py` rejects a registration whose flags have no matching method override, and `backends/cross_backend.py` refuses the export chain unless the primary backend declares `FMU_EXPORT`.
+
+### Selecting a backend
+
+`backends.select_backend(config, *, persistent: bool)` is the choice itself, and
+it lives in `backends/` so callers that are not a CLI can reach it. It returns
+the persistent variant when the registered class declares `PERSISTENT_WORKERS`
+and that variant's `preflight` passes, and the batch class otherwise — a
+`persistent=True` against a batch-only backend is a no-op, not an error, so one
+CLI works across a mixed-backend config.
+
+When the backend cannot be built here it raises `BackendUnavailableError`
+(a `RuntimeError` subclass): an unregistered backend name, a constructor whose
+tool is not installed, or a persistent probe that failed — the last carrying
+both fixes, the install hint and `--batch`. "Cannot be built here" is a
+`RuntimeError` by contract, the one `Backend.preflight` names; every backend
+whose optional dependency may be missing raises that, FMPy's `fmpy` import
+included, and `select_backend` translates it. The translation is deliberately
+narrow — it wraps exactly `get_backend_class(config)` and exactly the
+`cls(config)` call — so a genuine bug inside a constructor still reaches you as its own
+traceback.
+
+`cli.run_cmds._get_backend` is the CLI's wrapper over it and nothing more: it
+prints the message and exits 1, where a caller with a UI puts the same message
+on the job that asked for the run.
+
+### The run as a library
+
+`pipeline.run_pipeline(config, tests, *, backend, store, merge=False,
+candidates=None) -> RunOutcome` is the run itself, without a CLI around it:
+the ref-ID mapping, the stale-state wipe for the tests in scope, the live
+dashboard's first paint, `backend.run_tests`, the cross-backend chains, the
+`merge` scope widening and the result read. It never prints, never exits the
+process, never opens a browser and never prompts; a backend that cannot start
+raises, and the caller decides whether that is an exit code or a red job panel.
+`cmd_run` is its CLI wrapper — selection, the outcome's notices printed,
+`--accept` / `-i` / the report — and the authoring tool's Rerun capability is
+the other caller.
+
+`RunOutcome` carries `manifests`, `scope_tests`, `notices` (the cross-backend
+chain's lines, for the caller to show however it shows things) and `results`,
+which is keyed by exactly the models in `scope_tests` — wider than what just
+ran when `merge` is set, never wider than the scope, whatever else the work
+dir's accumulated manifest holds from earlier runs.
+
+The run's real product is on disk, not in the return: `batch_manifest.json`,
+`status.json`, `dashboard.html`, `reference_manifest.json` and the per-test sim
+dirs. The authoring Session reads a finished run back through
+`backend.read_last_results`, so a caller that drops the returned outcome has
+lost nothing the next read cannot recover.
+
+Nothing in `backends/` narrates a run to the console unless it is asked to:
+`Backend.quiet` (instance attribute, default `False`) suppresses the run header,
+the progress bar, the summary, the read phase and the worker-lifecycle lines.
+The CLI leaves it false; the authoring tool sets it, because its backend's
+console belongs to nobody. **A new run-narration `print` in a backend is gated
+on it** — inside one of the `base.py` narration helpers, which return when
+`quiet` is set, or under an `if not self.quiet:` of its own. Logging is not
+narration and is not gated.
 
 ---
 
@@ -447,6 +505,27 @@ models while it runs and a locked model refuses a `StoreWrite`. Every outcome is
 keyword-only, so a field added later cannot silently take a positional argument's
 place.
 
+`StoreWrite.run` returns `str | None`: the one line the job panel shows, saying
+what the write did — what it stored and what it refused, with the reason. A
+partial write has no other way to report its skips, and raising after some
+baselines were already stored would say something false. The Session appends
+that line to its notices and emits `job` with `state="written"`; returning
+`None` says there is nothing to report and appends nothing.
+
+The view carries the job panel's other readers: `notices`, the panel's lines
+oldest first — what each store write reported, plus the open-time warning where
+there was one; `last_job`, the job that ran last in this project whatever its
+outcome; and on a `RunningJob`, `started_wall` — epoch seconds sampled before
+the worker thread starts. A `status.json` whose `start_wall` is older than that
+belongs to the previous run, and the panel does not show it as this job's
+progress. `notices`, `last_job` and `artifacts` are per project: opening another
+one resets all three at the commit point, so one library's panel is never shown
+under another's, and an open that fails leaves the live project's as it was.
+
+`backends.progress.read_status(work_dir)` is the one reader of `status.json` —
+the dashboard renderer, the backends' verdict fallback and the shell's job panel
+all come through it, and it never raises, because a UI timer calls it.
+
 Register with `register_capability(cap)` from a module the `dstf.plugins`
 entry-point group loads, exactly as a metric calls `register_metric`; a duplicate
 name is an error rather than an import-order race.
@@ -481,8 +560,12 @@ shown as the control's placeholder and never written; `ui_min` / `ui_max`
 validate rather than clamp; `passthrough` fields are shown read-only. The same
 `derive_schema` feeds `dstf export-schema`'s JSON-Schema emitter.
 
-The two shipped capabilities live in `authoring/builtin/` and register through
-this same call. §4.6 and §4.7 of [the two-tier architecture
+The four shipped capabilities live in `authoring/builtin/` and register through
+this same call — Edit criteria and Edit tree return a `Patch`, Accept a
+`StoreWrite` over the shared accept function, Rerun a `Job` that builds its own
+backend through `select_backend` and runs it through `run_pipeline`.
+
+§4.6 and §4.7 of [the two-tier architecture
 design](superpowers/specs/2026-09-08-two-tier-architecture-design.md) have the
 full specification; [usage.md](usage.md#the-authoring-tool) describes the tool
 they build.

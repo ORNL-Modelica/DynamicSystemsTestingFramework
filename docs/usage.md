@@ -300,12 +300,21 @@ uv run dstf --config testing.json run -i
 
 | Key | Action |
 |-----|--------|
-| `a` | Accept this test's results as new baseline |
+| `a` | Accept this test's results as new baseline (through the shared accept path, so it refuses what `--accept` refuses) |
 | `s` | Skip (don't update baseline) |
 | `d` | Show detailed per-variable comparison |
 | `p` | Generate plots and open in browser |
 | `v` | Add variable patterns to track (updates test_spec.json) |
 | `q` | Quit interactive review |
+
+`a` stores through the same function `run --accept` and `compare --accept`
+call, so it accepts exactly what they accept. A test the last run left
+recorded as pending — a run aborted while it was in flight — is refused with
+`re-run before accepting`; a result the store declines (a trajectory carrying
+`NaN`, say) is refused with that reason and the review moves on to the next
+test; and a simulate-only test stores no baseline at all
+(`simulate-only test: no baseline stored`), since there is nothing to compare
+it against.
 
 ### Live progress + final report
 
@@ -488,8 +497,16 @@ selected, shows the variable picker, that variable's figure, and the scored
 metric tree read-only — verdict, criterion and score per leaf; clicking a leaf
 selects it. Right is one tab per capability whose scope matches the selection,
 greyed with its reason when it is not available (nothing selected, or a job
-running on the test). The footer shows the running job's label and links to the
-artifacts capabilities wrote.
+running on the test). The footer is the job panel: while a job runs it reads
+`running: <label>` and one row per test in the job, taken from the `status.json`
+the run itself writes — model, status, phase, elapsed and the backend's detail
+line — refreshed on a timer until the job ends. (A snapshot older than the job
+belongs to the previous run and is not shown as this job's progress.) When the
+job is over the panel reads `finished: <label>`, with one row per test it ran
+carrying the backend's failure message where a result failed, or
+`failed: <label> — <type>: <message>` when the job itself failed. Below that
+come the lines the store writes reported, then links to the artifacts
+capabilities wrote.
 
 **Edit criteria** applies to a selected leaf: the metric, the form derived from
 that metric's config dataclass, the window, and the baseline the leaf scores
@@ -507,6 +524,38 @@ structural change: wrap a node in a combinator, change a combinator's kind and
 its `k` / weights / threshold, add a leaf under a combinator, remove a node (the
 root has nothing to be removed from). A test the flat path scored gets its
 implicit tree materialized by the same op.
+
+**Accept** applies to the selected tests: their current results become
+baselines through the same accept function `run --accept` and `compare --accept`
+call, so the tool cannot accept a result the CLI would refuse. The panel lists
+one row per selected test — `model · status · what accepting will do` — and the
+button counts only the rows that will be stored. A row reads `will store`, or
+the reason it will not: `no simulation result`, `simulation failed`,
+`re-run before accepting` (the last run still records that test as pending, so
+its result may be whatever the simulator had flushed when the run was aborted),
+`simulate-only: no baseline` (a simulate-only test is neither stored nor
+skipped — it has nothing to compare) or `no tracked variables in result`. The
+tab itself is greyed when no row will be stored, carrying that first row's own
+reason — and, when there are no rows at all because nothing is selected, "no
+successful result in the selection". The write reports one line in the footer — how
+many baselines it stored, where, and every test it skipped with its reason —
+and the results reload, so a re-baselined test's verdict flips in place.
+
+**Rerun** simulates the selected tests again on a worker thread, as a job: the
+rest of the tool stays usable, and the tests in the selection are locked until
+the job ends (an edit to one of them is refused, since the run rewrites their
+simulation directories). The panel names the backend the run will use — `runs
+through Dymola` — lists the selected tests in project order, and the button
+starts them. The job builds its own backend, the same choice a CLI run makes by
+default: the persistent workers when the backend declares them, the batch path
+otherwise. It narrates nothing to the console `dstf author` was started from.
+One job at a time, and there is no cancel — a rerun ends when the backend ends
+or its per-test timeout does. A job that finishes reloads the results and
+rescores every verdict; a job that fails leaves the verdicts exactly as they
+were and shows its error in the footer instead. Afterwards the dashboard link
+shows the tests that reran and no others: one invocation writes one
+`status.json`, so a partial rerun's page is that subset, exactly as a CLI
+`--rerun ... --merge` leaves it.
 
 **Save, Discard, Export.** Save applies exactly the pending ops through the same
 read-modify-write `dstf spec-update` uses, and refuses when the file changed on

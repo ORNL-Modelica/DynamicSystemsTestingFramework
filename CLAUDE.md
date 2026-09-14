@@ -18,6 +18,7 @@ DynamicSystemsTestingFramework/
 │   ├── cli/                      # CLI package: run, compare, discover, manifest, spec-update,
 │   │                             #      companion, soft-check, import-baseline, export-schema
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect backend
+│   ├── pipeline.py               # run_pipeline — the run as a library callable; cmd_run is its CLI wrapper
 │   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse, RFC 6902 patch_apply,
 │   │                             #      patch_envelope (both envelope forms), spec_update (the shared read-modify-write)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
@@ -27,7 +28,7 @@ DynamicSystemsTestingFramework/
 │   │                             #      mode_schema (derive_schema — JSON-Schema export + the tool's forms)
 │   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path)
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
-│   │                             #      app.py (the NiceGUI shell), forms.py, builtin/ (edit criteria + edit tree)
+│   │                             #      app.py (the NiceGUI shell), forms.py, builtin/ (edit criteria + edit tree + accept + rerun)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly) + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py classifier + console/junit + context_builder + report_suite + dashboard_render
 │       └── templates/            # interactive.html + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + vendor/plotly.min.js (offline-capable reports)
@@ -90,7 +91,8 @@ uv run dstf --config testing.json compare --report-format html --output report.h
 # multi-model form, from any source
 uv run dstf --config testing.json spec-update spec_patch.json
 
-# The authoring tool: a browser shell over the last run (needs the [author] extra)
+# The authoring tool: a browser shell over the last run (needs the [author] extra).
+# Edit criteria / edit tree; Accept the selection's results as baselines; Rerun the selection.
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs
