@@ -1358,3 +1358,47 @@ planning.
   - The conformance test reads `git status` once per module; on this /mnt/d
     tree that call costs 1.5 s, and a concurrent editor's write during the
     module trips it with a message naming the moved lines.
+
+- **After accept and rerun (2026-09-14), follow-ups** — sub-project 5 of the
+  two-tier split shipped (`pipeline.run_pipeline`, `select_backend`,
+  `Backend.quiet`, Accept, Rerun, the job panel on `status.json`, the §6
+  end-to-end test over the Python example). None blocks sub-project 6:
+  - A partial rerun (the tool's, or `run --filter X` then `compare`) can flip a
+    NON-rerun test's verdict on OLD data: a manifest entry with no
+    `last_run_status` whose only failure record was the previous `status.json`
+    row loses that row when the subset snapshot overwrites the file, and a
+    parseable result reads back as a success. Current-writer data is immune
+    (`mark_pending` / `record_result` touch only in-scope entries). The fix
+    belongs in `ProgressReporter` / `_apply_status_verdicts` (carry the
+    out-of-scope rows forward), not in Rerun.
+  - `status.json` is per invocation, so a partial rerun's dashboard shows the
+    rerun subset, exactly as `--merge` leaves it.
+  - `Backend.quiet` gates every print of ours; Dymola's own interface logger
+    (`dymola/persistent_backend.py` `_filtered_print`) still writes to the
+    tool's console outside its suppression window, and Python's last-resort
+    logging handler prints WARNING+ (nothing configures logging in `src/`).
+  - `PersistentBackendBase.run_tests` closes its workers on the normal path,
+    not in a `finally` around the dispatch loop; in a long-lived tool process a
+    job that raises there could leak a Dymola/OMC worker per Rerun. Unverified
+    (the named-as-unrun owner gate is where it would show).
+  - `overlay_loader._sibling_backend_index` is `lru_cache`d for the CLI's
+    lifetime; a tool process that accepts into a sibling partition and then
+    re-renders serves stale cross-backend overlays.
+  - Accept's forecast cannot see a non-finite trajectory: the row reads `will
+    store`, the shared function declines it, the notice line says so. A
+    finiteness scan over the result in hand would close it at the cost of
+    touching every sample on every tab refresh.
+  - `Accept.available` reads the batch manifest through `BatchManifest.load`,
+    which moves a corrupt file to `.corrupt` — a write side effect in a read
+    path, reachable only if the file corrupts between open and a refresh.
+  - `run -i` still offers `[a]` for a simulate-only test (it now stores
+    nothing and says so); `--accept` and `[a]` print a poisoned trajectory's
+    refusal twice (the store's `logger.warning` plus the loop's line).
+  - The unregistered-backend message reads `Available: (none)` when no builtin
+    backend has been imported yet (`get_backend_class` imports only the
+    requested name).
+  - Two jobs cannot queue and there is no cancel (§9); a second Rerun while
+    one runs is refused with the running job's label.
+  - `Session.open` builds its reading backend with `persistent=False`; the
+    Rerun job builds its own persistent-preferring one. Two backend instances
+    per project is the v1 shape.
