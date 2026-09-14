@@ -26,10 +26,11 @@ from dstf.cli.common import (
 from dstf.cli.main import build_arg_parser
 from dstf.cli.review import _interactive_review
 from dstf.cli.run_cmds import cmd_run
-from dstf.config import detect_os
+from dstf.config import Config, detect_os
 from dstf.discovery.test_registry import TestModel
 from dstf.pipeline import write_id_mapping
 from dstf.storage.batch_manifest import BatchManifest
+from dstf.storage.reference_store import ReferenceStore
 
 
 @dataclass
@@ -631,9 +632,31 @@ class _FakeComp:
     metric_tree: object = None
 
 
-class _AcceptingStore:
-    def store_reference(self, test, result):
-        return True
+def _review_env(tmp_path, statuses=None):
+    """A real config + store over a tmp project whose last run completed.
+
+    The review loop's `[a]` goes through `accept_run_results`, which reads the
+    run's batch manifest — so a store fake carrying only `store_reference` can
+    no longer stand in for the store here.
+    """
+    lib = tmp_path / "Lib"
+    lib.mkdir()
+    (lib / "package.mo").write_text("package Lib\nend Lib;\n", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    manifest = {
+        f"test_{i:04d}": {
+            "model_id": model_id,
+            "ref_id": None,
+            "last_run_status": status,
+        }
+        for i, (model_id, status) in enumerate(
+            (statuses or {"Lib.A": "passed", "Lib.B": "passed"}).items(), 1
+        )
+    }
+    (work / "batch_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    config = Config(source_path=lib, reference_root=tmp_path / "refs", work_dir=work)
+    return config, ReferenceStore(config)
 
 
 def _feed_inputs(monkeypatch, answers):
@@ -642,31 +665,36 @@ def _feed_inputs(monkeypatch, answers):
 
 
 class TestInteractiveReviewExitCode:
-    def test_skipping_all_failing_tests_exits_one(self, monkeypatch):
+    def test_skipping_all_failing_tests_exits_one(self, monkeypatch, tmp_path):
+        config, store = _review_env(tmp_path)
         _feed_inputs(monkeypatch, ["s"])
         rc = _interactive_review(
-            [], {}, [_FakeComp("Lib.A", passed=False)], _AcceptingStore()
+            [], {}, [_FakeComp("Lib.A", passed=False)], store, config
         )
         assert rc == 1
 
-    def test_quit_on_green_suite_exits_zero(self, monkeypatch):
+    def test_quit_on_green_suite_exits_zero(self, monkeypatch, tmp_path):
+        config, store = _review_env(tmp_path)
         _feed_inputs(monkeypatch, ["q"])
         comps = [_FakeComp("Lib.A"), _FakeComp("Lib.B")]
-        rc = _interactive_review([], {}, comps, _AcceptingStore())
+        rc = _interactive_review([], {}, comps, store, config)
         assert rc == 0
 
-    def test_completed_green_review_exits_zero(self, monkeypatch):
+    def test_completed_green_review_exits_zero(self, monkeypatch, tmp_path):
+        config, store = _review_env(tmp_path)
         _feed_inputs(monkeypatch, ["s", "s"])
         comps = [_FakeComp("Lib.A"), _FakeComp("Lib.B")]
-        rc = _interactive_review([], {}, comps, _AcceptingStore())
+        rc = _interactive_review([], {}, comps, store, config)
         assert rc == 0
 
-    def test_sim_failed_auto_skip_exits_one(self):
+    def test_sim_failed_auto_skip_exits_one(self, tmp_path):
+        config, store = _review_env(tmp_path)
         comps = [_FakeComp("Lib.A", passed=False, sim_success=False)]
-        rc = _interactive_review([], {}, comps, _AcceptingStore())
+        rc = _interactive_review([], {}, comps, store, config)
         assert rc == 1
 
-    def test_accepting_the_failure_resolves_it(self, monkeypatch):
+    def test_accepting_the_failure_resolves_it(self, monkeypatch, tmp_path, capsys):
+        config, store = _review_env(tmp_path)
         test = _mk_test("Lib.A")
         result = _mk_result("Lib.A")
         _feed_inputs(monkeypatch, ["a"])
@@ -674,34 +702,58 @@ class TestInteractiveReviewExitCode:
             [test],
             {"Lib.A": result},
             [_FakeComp("Lib.A", passed=False)],
-            _AcceptingStore(),
+            store,
+            config,
         )
         assert rc == 0
+        assert "Done. Accepted 1, skipped 0." in capsys.readouterr().out
+        assert store.get_reference("Lib.A") is not None
 
-    def test_quit_after_skipping_a_failure_exits_one(self, monkeypatch):
+    def test_quit_after_skipping_a_failure_exits_one(self, monkeypatch, tmp_path):
+        config, store = _review_env(tmp_path)
         _feed_inputs(monkeypatch, ["s", "q"])
         comps = [_FakeComp("Lib.A", passed=False), _FakeComp("Lib.B", passed=False)]
-        rc = _interactive_review([], {}, comps, _AcceptingStore())
+        rc = _interactive_review([], {}, comps, store, config)
         assert rc == 1
 
-    def test_store_valueerror_does_not_crash_review(self, monkeypatch):
-        """Leftover B interplay: a poisoned result raises in store_reference;
-        the review loop must report it and continue, not traceback."""
+    def test_a_poisoned_result_is_refused_and_the_loop_continues(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """Leftover B interplay: the store refuses a non-finite trajectory;
+        the review loop reports the reason and reviews the next test."""
+        config, store = _review_env(tmp_path)
+        tests = [_mk_test("Lib.A"), _mk_test("Lib.B")]
+        results = {
+            "Lib.A": _mk_result("Lib.A", values=[1.0] * 5 + [float("nan")] + [1.0] * 5),
+            "Lib.B": _mk_result("Lib.B"),
+        }
+        comps = [_FakeComp("Lib.A", passed=False), _FakeComp("Lib.B", passed=False)]
+        _feed_inputs(monkeypatch, ["a", "s"])
+        rc = _interactive_review(tests, results, comps, store, config)
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "non-finite" in out
+        assert "Done. Accepted 0, skipped 2." in out
+        assert store.get_reference("Lib.A") is None
 
-        class _PoisonStore:
-            def store_reference(self, test, result):
-                raise ValueError("refusing to store baseline: non-finite values")
-
+    def test_a_pending_test_is_refused_and_stores_nothing(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """`[a]` refuses what `compare --accept` refuses: a test the last run
+        left in flight has no authoritative result to bless."""
+        config, store = _review_env(tmp_path, {"Lib.A": "pending"})
         test = _mk_test("Lib.A")
-        result = _mk_result("Lib.A")
         _feed_inputs(monkeypatch, ["a"])
         rc = _interactive_review(
             [test],
-            {"Lib.A": result},
+            {"Lib.A": _mk_result("Lib.A")},
             [_FakeComp("Lib.A", passed=False)],
-            _PoisonStore(),
+            store,
+            config,
         )
         assert rc == 1
+        assert "re-run before accepting" in capsys.readouterr().out
+        assert not list(store.ref_dir.glob("ref_*.json"))
 
 
 # ---------------------------------------------------------------------------

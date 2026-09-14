@@ -1,6 +1,7 @@
 """The interactive review loop (`run -i`): accept / skip / detail / plot."""
 
 from ..discovery.test_registry import TestModel
+from ..storage.accept import accept_run_results
 from .common import _parse_review_filter, _should_review
 
 
@@ -9,7 +10,7 @@ def _interactive_review(
     results: dict,
     comparisons: list,
     store,
-    config=None,
+    config,
     review_filter: str = "all",
 ) -> int:
     """Interactively review each test and accept/reject results."""
@@ -46,7 +47,7 @@ def _interactive_review(
 
     n_total = len(comparisons)
 
-    spec_path = config.spec_path if config else None
+    spec_path = config.spec_path
 
     # ANSI colors
     GREEN = "\033[92m"
@@ -129,7 +130,7 @@ def _interactive_review(
 
             if choice == "a" and has_result:
                 # If variables were added, re-read the .mat to resolve them
-                if added_patterns and test and config:
+                if added_patterns and test:
                     test.variable_patterns = list(
                         set(test.variable_patterns + added_patterns)
                     )
@@ -138,23 +139,28 @@ def _interactive_review(
                         backend = _get_backend(config)
                         result = backend.read_result(test, test_key, None)
 
-                stored_ok = False
-                store_err = None
-                if test and result:
-                    try:
-                        stored_ok = store.store_reference(test, result)
-                    except ValueError as e:
-                        # review 2026-07-06 leftover B: store_reference now
-                        # rejects non-finite trajectories — one poisoned
-                        # result must not crash the review loop.
-                        store_err = str(e)
-                if stored_ok:
+                # The one accept path: `accept_run_results` refuses here
+                # exactly what `compare --accept` refuses — a poisoned
+                # trajectory (leftover B: it must not crash the loop) and a
+                # test the last run left pending — and stores no baseline for
+                # a simulate-only test, which it reports as neither.
+                if test is not None:
+                    stored, skipped = accept_run_results(
+                        store, [test], {test.model_id: result}, config.work_dir
+                    )
+                else:
+                    stored, skipped = 0, [(model_id, "no test definition")]
+                if stored:
                     n_vars = len(result.variables) if result.variables else 0
                     print(f"  {GREEN}Accepted ({n_vars} variables).{RESET}\n")
                     n_accepted += 1
                 else:
-                    detail = f": {store_err}" if store_err else "."
-                    print(f"  {RED}Failed to store{detail}{RESET}\n")
+                    reason = (
+                        skipped[0][1]
+                        if skipped
+                        else "simulate-only test: no baseline stored"
+                    )
+                    print(f"  {RED}Not accepted: {reason}{RESET}\n")
                     n_skipped += 1
                     if _still_failing(comp):
                         n_unresolved += 1
@@ -180,22 +186,21 @@ def _interactive_review(
                             f"  Added {len(new_patterns)} pattern(s) (in-memory only, no spec file configured)"
                         )
                     # Show what would match from the .mat
-                    if config:
-                        test_key = _find_test_key(model_id, config)
-                        if test_key:
-                            test_dir = config.work_dir / test_key
-                            mat_path = test_dir / "dsres.mat"
-                            if mat_path.exists():
-                                available = list_result_mat_variables(mat_path)
-                                if available:
-                                    matched = resolve_variable_patterns(
-                                        new_patterns, available
-                                    )
-                                    print(
-                                        f"  Matched {len(matched)} variables: {', '.join(matched[:10])}"
-                                    )
-                                    if len(matched) > 10:
-                                        print(f"    ... and {len(matched) - 10} more")
+                    test_key = _find_test_key(model_id, config)
+                    if test_key:
+                        test_dir = config.work_dir / test_key
+                        mat_path = test_dir / "dsres.mat"
+                        if mat_path.exists():
+                            available = list_result_mat_variables(mat_path)
+                            if available:
+                                matched = resolve_variable_patterns(
+                                    new_patterns, available
+                                )
+                                print(
+                                    f"  Matched {len(matched)} variables: {', '.join(matched[:10])}"
+                                )
+                                if len(matched) > 10:
+                                    print(f"    ... and {len(matched) - 10} more")
 
             elif choice == "s":
                 print("  Skipped.\n")
@@ -208,12 +213,7 @@ def _interactive_review(
                 _print_detail(comp)
 
             elif choice == "p":
-                if config:
-                    _generate_and_open_plots(
-                        model_id, comp, result, store, config, test
-                    )
-                else:
-                    print("  No config available for plot generation.")
+                _generate_and_open_plots(model_id, comp, result, store, config, test)
 
             elif choice == "q":
                 auto = f", {n_auto_skipped} auto-skipped" if n_auto_skipped else ""
