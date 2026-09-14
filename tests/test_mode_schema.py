@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import dataclasses
+import types
+import typing
 from dataclasses import dataclass, field
 from typing import Literal
 
 import pytest
 
+from dstf.comparison import modes
 from dstf.comparison.mode_schema import derive_schema
 from dstf.comparison.modes import (
     DominantFrequencyConfig,
@@ -16,6 +20,7 @@ from dstf.comparison.modes import (
     RangeConfig,
     TubeConfig,
 )
+from dstf.comparison.registry import metrics as registered_metrics
 
 
 class TestDeriveSchemaPerMode:
@@ -88,6 +93,81 @@ class TestDeriveSchemaPerMode:
         # list[dict] shape → passthrough fallback.
         assert by_name["peaks"].type == "passthrough"
         assert by_name["peaks"].optional is True
+
+
+def _is_list_of_dicts(hint) -> bool:
+    """``list[dict]`` (or ``list[dict[...]]``), bare or ``| None``."""
+    if typing.get_origin(hint) in (typing.Union, types.UnionType):
+        args = [a for a in typing.get_args(hint) if a is not type(None)]
+        if len(args) != 1:
+            return False
+        hint = args[0]
+    if typing.get_origin(hint) is not list:
+        return False
+    (item,) = typing.get_args(hint) or (None,)
+    return item is dict or typing.get_origin(item) is dict
+
+
+class TestListFieldColumns:
+    """The Config's list-of-dict fields declare their row columns.
+
+    ``"float"`` is a key the reader in ``algorithms.py`` indexes
+    (required), ``"float?"`` one it reads with ``.get`` (optional), a
+    tuple is the choices with the mode's default first. ``time`` / ``freq``
+    stay required even where the reader tolerates a missing one: a row
+    without its position is not a handle.
+    """
+
+    def test_the_four_fields_columns(self):
+        expected = {
+            (TubeConfig, "tube_points"): (
+                ("time", "float"),
+                ("upper", "float?"),
+                ("lower", "float?"),
+            ),
+            (PointsConfig, "points"): (
+                ("time", "float"),
+                ("value", "float?"),
+                ("tolerance", "float?"),
+                ("tolerance_mode", ("abs", "rel")),
+                ("time_tolerance", "float?"),
+            ),
+            (EventTimingConfig, "events"): (
+                ("time", "float"),
+                ("tolerance", "float?"),
+            ),
+            (DominantFrequencyConfig, "peaks"): (
+                ("freq", "float"),
+                ("tolerance", "float?"),
+                ("tolerance_mode", ("rel", "abs")),
+            ),
+        }
+        for (cls, name), columns in expected.items():
+            f = next(f for f in dataclasses.fields(cls) if f.name == name)
+            assert f.metadata.get("columns") == columns, (cls.__name__, name)
+
+    def test_every_builtin_list_of_dicts_field_has_columns(self):
+        builtin = [
+            d.config_cls
+            for d in registered_metrics()
+            if d.config_cls.__module__ == modes.__name__
+        ]
+        list_fields = []
+        for cls in builtin:
+            hints = typing.get_type_hints(cls)
+            for f in dataclasses.fields(cls):
+                if _is_list_of_dicts(hints[f.name]):
+                    list_fields.append((cls.__name__, f.name))
+                    assert "columns" in f.metadata, (cls.__name__, f.name)
+        # The scan found the fields it guards (a broken type check would pass vacuously).
+        assert set(list_fields) >= {
+            ("TubeConfig", "tube_points"),
+            ("PointsConfig", "points"),
+            ("EventTimingConfig", "events"),
+            ("DominantFrequencyConfig", "peaks"),
+        }
+        # scalar's ``quantity`` is passthrough but not a list: no table.
+        assert ("ScalarConfig", "quantity") not in list_fields
 
 
 class TestDeriveSchemaEdgeCases:

@@ -146,9 +146,14 @@ class TubeConfig:
         metadata={
             "label": "Control points",
             "help": (
-                "Time-varying tube defined by control points. Edit via the "
-                "rich tube editor below the plot."
+                "Time-varying tube defined by control points. Edit on the "
+                "authoring tool's Edit on plot tab: drag a handle, or edit "
+                "the table."
             ),
+            # Row keys as ``_interpolate_tube_widths`` reads them: ``time``
+            # indexed, each width ``.get`` with a 0 default (a row with
+            # neither is refused there, not here).
+            "columns": (("time", "float"), ("upper", "float?"), ("lower", "float?")),
         },
     )
     tube_interpolation: Literal["linear", "constant"] = field(
@@ -196,8 +201,19 @@ class PointsConfig:
                 "Optional list of (time, value, tolerance, "
                 "tolerance_mode, time_tolerance) checkpoints. When None "
                 "or empty, the mode falls back to final-value comparison "
-                "with the global ``tolerance``. Authored via the table "
-                "editor in the interactive HTML reporter."
+                "with the global ``tolerance``. Edit on the authoring "
+                "tool's Edit on plot tab: drag a handle, or edit the table."
+            ),
+            # ``time`` stays required although ``_compare_points`` reads it
+            # with ``.get`` (a missing one means the trace end): a row
+            # without its position is not a handle. ``value`` is optional
+            # so a new checkpoint follows the baseline.
+            "columns": (
+                ("time", "float"),
+                ("value", "float?"),
+                ("tolerance", "float?"),
+                ("tolerance_mode", ("abs", "rel")),
+                ("time_tolerance", "float?"),
             ),
         },
     )
@@ -290,9 +306,10 @@ class EventTimingConfig:
                 "(seconds) and an optional ``tolerance`` (seconds; falls "
                 "back to the leaf's ``time_tolerance`` if omitted). When "
                 "None, events are auto-detected from duplicate-time samples "
-                "in ``ref_time``. Authored via the table editor in the "
-                "interactive HTML reporter."
+                "in ``ref_time``. Edit the table on the authoring tool's "
+                "Edit on plot tab (event-timing has no draggable handles)."
             ),
+            "columns": (("time", "float"), ("tolerance", "float?")),
         },
     )
 
@@ -319,9 +336,16 @@ class DominantFrequencyConfig:
             "help": (
                 "Declared peaks to track. Each entry has a frequency, a "
                 "tolerance, and a tolerance mode ('rel' = fractional, "
-                "'abs' = Hz). Authored via the table editor; use 'Detect "
-                "peaks from reference' on a fresh test to seed values from "
-                "the reference spectrum's top peaks."
+                "'abs' = Hz). Edit on the authoring tool's Edit on plot "
+                "tab: drag a handle, or edit the table."
+            ),
+            # ``freq`` stays required although ``_compare_dominant_frequency``
+            # reads it with ``.get``: a row without its position is not a
+            # handle. The reader defaults ``tolerance_mode`` to "rel".
+            "columns": (
+                ("freq", "float"),
+                ("tolerance", "float?"),
+                ("tolerance_mode", ("rel", "abs")),
             ),
         },
     )
