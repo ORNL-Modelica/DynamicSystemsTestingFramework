@@ -448,7 +448,9 @@ capability that builds a second store and draws in its own panel). It also
 exposes the shell's centre figure through `panel.figure.on(kind, handler)`:
 the handler receives the primitive `id` and the Plotly event payload (click,
 relayout, selected). The hook exists from v1 and no v1 capability uses it;
-on-plot editing is its first client.
+on-plot editing is its first client. (Amended in sub-project 6, below: the hook
+dispatches a shape relayout once per shape with that shape's keys stripped of
+their prefix, not the raw payload, and Edit on plot is its client.)
 
 **The shell** (`authoring/app.py`, NiceGUI) is fixed and knows no capability
 by name. Header: project, backend, pending count, Save, Discard, Export, Quit,
@@ -469,7 +471,7 @@ subscribes to the four Session events and re-renders the affected region.
 | Edit tree | TESTS, exactly one selected | add / remove / wrap / combinator kind, k, weights | Patch | v1 |
 | Accept | TESTS | confirm list | StoreWrite | v1 |
 | Rerun | TESTS | confirm list, backend shown | Job | v1 |
-| On-plot editing | VARIABLE | handlers on the handle rings via the figure hook; a table per list field | Patch | v1 (sub-project 6) |
+| On-plot editing | VARIABLE | handlers on the handle rings and bound lines via the figure hook; a table per list field | Patch | v1 (sub-project 6) |
 | Annotate a leaf (`info` note) | LEAF | text field | Patch | attaches; nothing else changes |
 | Export figures as PNG | TESTS | format picker | Artifact | attaches; nothing else changes |
 | Side-by-side against another backend | VARIABLE | own figure in its panel | None | attaches; nothing else changes |
@@ -612,8 +614,10 @@ The centre updates its figure in place (owner ruling): while the selected model,
 variable and the picker's names are unchanged and the plot element exists, the
 `spec` and `results` events and a shape drag only mark the figure dirty, and the
 0.1 s tick calls `update_figure` once. A rebuilt element reset the zoom after
-every drag; `update_figure` goes through `Plotly.react`, which keeps it. Any
-other selection, an open, a close or a changed name list rebuilds the centre.
+every drag; `update_figure` goes through `Plotly.react`, which keeps it. A
+tree-row click that keeps the test and the variable is such a selection too: the
+plot stays and is redrawn in place, only the tree below it refreshed. Any other
+selection, an open, a close or a changed name list rebuilds the centre.
 
 Panels follow `results`. Every spec change (stage, discard, save, reload, open)
 emits `results` once the comparisons are rescored, and on it the shell rebuilds
@@ -631,7 +635,9 @@ the next tick: review found that a rebuild inside the dispatch cleared and
 replaced every other subscriber's handler before it heard the event, and that a
 panel rescoring during its own build would re-enter it. A selection change lands
 on the first enabled tab; every other rebuild keeps the active tab while it is
-still enabled. A panel whose build raises shows the exception in its slot.
+still enabled. A panel whose build raises shows the exception in its slot. A
+success after a refusal clears the actor's error label in place rather than
+rebuilding its slot, which would destroy the field being typed in.
 
 `MetricDescriptor.edit_handle: Callable[[HandleEdit], dict] | None`, beside
 `summarize`, is the inverse of a mode's handles (`comparison/handles.py`): the
@@ -646,9 +652,13 @@ reference sample at or after the leaf window's start to the last at or before
 its end — lands on the span's edge and the vertical part still applies, because
 refusing it refused the vertical drag of a ring at the trace end, whose
 `xanchor` comes back from the pixel round trip just past the last sample.
-An `x` within float noise of the handle's time is no time move at all, so a
-vertical drag never changes or refuses on a time. A checkpoint follows the
-baseline when its `value` is absent or null, and moves in time only (owner
+An `x` within a sub-pixel tolerance of the handle's time (1e-5 of the
+reference's time span, float noise with no reference) is no time move at all,
+so a vertical drag never changes a time, clamps one or refuses a time move; the
+shared-time refusal below still applies to any drag of a point that shares its
+time. Every float an editor writes is rounded to 12 significant digits, so drag
+arithmetic (`0.8 - 0.5`) never lands float noise in the spec file. A checkpoint
+follows the baseline when its `value` is absent or null, and moves in time only (owner
 ruling: a drag never silently makes a checkpoint baseline-free); one with an
 explicit `value` moves in both axes and clamps only to its window's own ends,
 since the forward code draws it wherever its time tolerance meets the actual
@@ -672,7 +682,15 @@ read-only.
 Every staged edit, a drag or a table cell, is one `replace` of the whole leaf,
 the op Edit criteria stages, so consecutive drags on one leaf collapse into one
 pending op and a drag and a form edit of the same leaf read as "leaf → new leaf"
-in the drawer. A drag or table edit that changes nothing stages nothing.
+in the drawer. A drag or table edit that changes nothing stages nothing. A
+blank required cell is held in the table — marked on the cell, the list not
+submitted until it is filled — since a submitted blank would be refused and the
+rebuilt slot would lose the field being typed in; `act` still refuses one called
+directly. `Add row` puts a new row's time at the midpoint of the largest gap
+among the reference's first and last samples and the existing times (with no
+reference, among the times alone, or `1.0` past the last when fewer than two),
+so it stays clear of the existing times — two points sharing one are refused on
+the plot.
 
 The shell serves one browser tab: the in-place redraw and the figure hook follow
 the last-built plot, so a second tab's centre does not redraw in place.
@@ -857,7 +875,13 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
    event that follows each change — except the one whose own control staged
    it (a panel that captured its leaf would re-stage stale values after
    another capability's edit, a Discard, a Save or a Reload). Both are
-   general to any capability, not specific to on-plot editing.
+   general to any capability, not specific to on-plot editing. The hook
+   itself was also rewritten: its payload contract (it named `points[0]` and
+   passed the raw relayout; it now picks the first handle point of a click and
+   dispatches a relayout once per shape, prefix stripped) and its handler
+   ownership (handlers registered per capability and cleared per slot), and
+   the tab and error handling changed with them (a selection lands on the
+   first enabled tab, a success clears an error in place).
 3. **The report lost nothing it should keep.** Every entry in §4.4's kept
    list has a Playwright assertion that passes on the slimmed page.
 4. **No existing CLI behaviour changes for a user who never opens the

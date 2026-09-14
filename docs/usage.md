@@ -588,13 +588,17 @@ drags of one leaf collapse into one pending op. What a drag means:
   distance over |reference| for `rel`); moving it sideways moves the control
   point's time.
 - A checkpoint with an explicit `value` moves in both time and value. One that
-  follows the baseline (no `value`) moves in time only — dragging it straight up
-  or down stages nothing, so a drag never turns it into a fixed-value check.
+  follows the baseline (no `value`) moves in time only, so a drag never turns it
+  into a fixed-value check: dragged straight up or down it stages nothing, but
+  a drag that also moves sideways — by more than a sub-pixel tolerance,
+  1e-5 of the reference's time span — is a time move and stages the new time.
 - A peak moves in frequency only; a bound moves in value only.
 - A time dragged past where the handle can be drawn lands on that edge, and
   the rest of the drag still applies. For a tube point or a baseline-following
   checkpoint that is the first or last reference sample inside the leaf's
   window; for a checkpoint with a `value`, the window's own start or end.
+- A number a drag writes into the leaf is rounded to 12 significant digits, so
+  the spec file reads `0.3`, not `0.30000000000000004`.
 
 After every drag the plot is redrawn from the staged spec, so anything the drag
 did not change goes back where it was. Everything on the plot is draggable —
@@ -617,9 +621,13 @@ on the variable — `<path> · <metric> · <field>` for `tube_points`, `points`,
 change stages the whole list as one `replace` of the leaf. A blank optional cell
 leaves its key out (a checkpoint with a blank `value` follows the baseline); a
 blank required cell (`time` on a tube point or an event, `freq` on a peak) is
-refused as `row <i>: <key> is required`. `Remove row` drops the row. `Add row`
-copies the last row, its time (where the table has one) moved to the end of the
-reference; on an empty table it adds a row at the middle of the reference with
+marked on the cell as `<key> is required`, and nothing in that table is staged
+until it is filled. `Remove row` drops the row. `Add row` copies the last row;
+where the table has a time, the new row's goes at the midpoint of the largest
+gap between the reference's first and last samples and the existing rows'
+times, so it stays clear of them (with no reference, the largest gap between
+the rows' times, or `1.0` past the last time when fewer than two rows have
+one). On an empty table that is the middle of the reference, and the row has
 required numbers `0.0`, optional ones blank and each choice at its default — a
 tube row gets `upper` and `lower` `0.0`, a zero-width band to widen. Save writes
 table and drag edits like any other pending op.

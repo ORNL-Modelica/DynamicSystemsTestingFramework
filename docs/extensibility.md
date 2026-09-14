@@ -375,17 +375,23 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    the new raw leaf, or raises `HandleEditError` naming the handle and the
    reason for a drag the leaf cannot take. The tool stages what comes back as
    ONE `replace` of the whole leaf, so an editor rewrites the leaf, never a
-   field path, and a leaf equal to the input stages nothing. Leave it `None`
+   field path, and a leaf equal to the input stages nothing. The builtin
+   editors round every float they write to 12 significant digits
+   (`handles._written`), so drag arithmetic never lands float noise in the
+   author's spec file. Leave it `None`
    and a drag of the metric's handles is refused ("has no on-plot handles");
    the builtins `nrmse` and `event-timing` do. The builtin editors are the
    worked examples: `tube`, `points` and `dominant-frequency` move a list
    entry, `range` and `scalar` a bound.
 8. A config field holding a list of row dicts declares `columns` in its
    metadata — `(key, type)` pairs, one per row key, where `type` is
-   `"float"` (a key the metric indexes: required, a blank cell is refused),
+   `"float"` (a key the metric indexes: required, a blank cell is never staged),
    `"float?"` (read with `.get`: optional, a blank cell omits the key) or a
    tuple of choices whose first is the metric's default. The authoring tool's
-   Edit on plot tab draws a table from it, with add and remove rows. `columns`
+   Edit on plot tab draws a table from it, with add and remove rows. The table
+   holds a blank required cell locally — marked on the cell, nothing submitted
+   until it is filled — and the capability's `act` still refuses one when called
+   directly. `columns`
    is read from `dataclasses.fields`, not through `derive_schema`, so it
    never reaches `export-schema`. A list field without `columns` gets no
    table; Edit criteria shows every list field read-only either way.

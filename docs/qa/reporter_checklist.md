@@ -189,10 +189,13 @@ left as you edited it.
 - [ ] Select Dahlquist and drag one of its checkpoint tolerance boxes: the
       box snaps back, and the Edit on plot tab shows the leaf path with
       `cannot be moved on the plot`. Drag a checkpoint ring that has no
-      `value` in the table straight up: nothing is staged.
+      `value` in the table straight up, with no sideways movement: nothing is
+      staged (a visible sideways jitter is a time move, and stages the new
+      time).
 - [ ] In a table, change a cell, then `Add row` and `Remove row`: each
       stages, and the drawer reads "leaf → new leaf". Clear a required
-      cell (a tube row's `time`): the tab shows `row <i>: time is required`.
+      cell (a tube row's `time`): the cell is marked `time is required`, and
+      nothing is staged until it is filled.
 - [ ] Save: `test_spec.json` carries the dragged and table edits along
       with the rest of what the drawer listed, and nothing it did not.
 - [ ] The dashboard link opens the suite page in a new tab.
