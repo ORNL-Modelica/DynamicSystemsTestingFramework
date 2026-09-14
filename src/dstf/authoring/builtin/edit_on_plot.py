@@ -268,7 +268,7 @@ class EditOnPlot:
         name = raw.get("metric", DEFAULT_METRIC)
         desc = metric(name)
         if desc is None or desc.edit_handle is None:
-            raise HandleEditError(f"{name} has no on-plot handles")
+            raise HandleEditError(f"{path}: {name} has no on-plot handles")
         # Several leaves on one variable can refuse the same local id: every
         # refusal below names its leaf.
         try:

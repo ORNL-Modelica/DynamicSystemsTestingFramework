@@ -1183,6 +1183,35 @@ async def test_a_plain_click_selects_the_first_variable(shell):
         assert shell.session.selection.variable == "x"
 
 
+async def test_ticking_one_test_selects_its_first_variable(shell):
+    """A single tick puts the same plot up as a plain click, so a
+    VARIABLE-scope capability (Edit on plot) applies to it too."""
+
+    class _OnPlot:
+        name, label, scope = "on-plot", "OnPlot", caps.Scope.VARIABLE
+
+        def available(self, s):
+            return True
+
+        def panel(self, s, ui_panel):
+            pass
+
+        def act(self, s, **inputs):
+            return None
+
+    caps.register_capability(_OnPlot())
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        (button,) = user.find(marker=A).elements
+        # the checkbox in A's row (find()'s elements are not in page order)
+        (box,) = [c for c in button.parent_slot.parent if isinstance(c, ui.checkbox)]
+        box.set_value(True)
+        await _settled(lambda: shell.session.selection.tests == {A})
+        assert shell.session.selection.variable == "x"
+        assert shell.session.selection.leaf_path is None
+        assert "OnPlot" in [c.label for c, _ in shell.applicable()]
+
+
 async def test_a_capabilitys_error_does_not_follow_to_another_selection(shell):
     shell.errors["edit-criteria"] = "ValueError: from leaf 0"
     async with user_simulation(root=shell.root) as user:

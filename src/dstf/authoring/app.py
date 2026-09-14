@@ -746,6 +746,12 @@ class Shell:
     def _toggle(self, model_id: str, on: bool) -> None:
         tests = set(self.session.selection.tests)
         (tests.add if on else tests.discard)(model_id)
+        if len(tests) == 1:
+            # One test left ticked: the centre plots it, so select its first
+            # variable as a plain click does and VARIABLE-scope capabilities
+            # apply to that plot.
+            self._select_one(next(iter(tests)))
+            return
         self.session.select(tests=tests, variable=None, leaf_path=None)
 
     @ui.refreshable_method

@@ -192,14 +192,18 @@ def test_a_single_leaf_root_is_its_own_leaf_path(shell):
 
 def test_metrics_without_an_editor_refuse_before_reading_a_position(shell):
     shell.session.select(tests={A}, variable="x", leaf_path=None)
-    with pytest.raises(HandleEditError, match="nrmse has no on-plot handles"):
+    with pytest.raises(
+        HandleEditError, match="^/metrics/children/0: nrmse has no on-plot handles"
+    ):
         _drag(shell, "/metrics/children/0/anything", {"y0": 1.0}, model_id=A)
     _root_leaf_on_a(
         shell, {"metric": "event-timing", "variable": "x", "events": [{"time": 0.5}]}
     )
     ids = {p.id for leaf in shell.session.view(A, "x").leaves for p in leaf.geometry}
     assert "/metrics/events/window/0" in ids  # measured: the leaf's handle Box
-    with pytest.raises(HandleEditError, match="event-timing has no on-plot handles"):
+    with pytest.raises(
+        HandleEditError, match="^/metrics: event-timing has no on-plot handles"
+    ):
         _drag(shell, "/metrics/events/window/0", {"x0": 0.4, "x1": 0.6}, model_id=A)
 
 
