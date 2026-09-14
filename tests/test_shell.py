@@ -1674,7 +1674,7 @@ async def test_an_act_that_raises_shows_in_the_actors_slot(shell):
         setter.ui_panel.submit(boom="act boom")
         await user.should_see("RuntimeError: act boom")
         (label,) = user.find(kind=ui.label, content="RuntimeError: act boom").elements
-        assert _inside(label, shell._slots["setter"][0])
+        assert _inside(label, shell._slots["setter"].container)
         assert shell.errors == {"setter": "RuntimeError: act boom"}
         assert panels.value == "Setter" and not panels.is_deleted
         assert shell.session.spec.pending == pending
@@ -1701,7 +1701,7 @@ async def test_a_panel_whose_build_raises_shows_the_error_in_its_slot(shell):
         await _open_on_range_leaf(shell, user)
         await user.should_see("RuntimeError: panel boom")
         (label,) = user.find(kind=ui.label, content="RuntimeError: panel boom").elements
-        assert _inside(label, shell._slots["broken"][0])
+        assert _inside(label, shell._slots["broken"].container)
         assert _upper_bound(user) == 2.0  # the other tabs still render
         assert user.find(marker="setter-input").elements
 
@@ -1742,12 +1742,69 @@ async def test_a_success_clears_the_actors_old_error(shell):
         setter.ui_panel.submit(leaf=_range_leaf(3.0))
         await _settled(lambda: _upper_bound(user) == 3.0)
         assert "setter" not in shell.errors
-        slot = shell._slots["setter"][0]
+        slot = shell._slots["setter"].container
         assert not [
             e
             for e in slot.descendants()
             if isinstance(e, ui.label) and "act boom" in str(e.text)
         ]
+
+
+async def test_a_success_clears_the_old_error_in_place_keeping_the_typed_in_field(
+    shell,
+):
+    """A refusal refills the actor's slot; the success after it only empties
+    the error label — a refill would destroy the field being typed in."""
+    import asyncio
+
+    class _Typist:
+        name, label, scope = "typist", "Typist", caps.Scope.VARIABLE
+
+        def available(self, s):
+            return True
+
+        def panel(self, s, ui_panel):
+            self.ui_panel = ui_panel
+            ui.input("typing").mark("typing-input")
+
+        def act(self, s, **inputs):
+            from dstf.authoring.capabilities import Patch
+            from dstf.authoring.spec_document import PatchOp
+
+            if "boom" in inputs:
+                raise RuntimeError(inputs["boom"])
+            return Patch(
+                ops=[PatchOp(D, "replace", "/metrics/children/1", inputs["leaf"])]
+            )
+
+    typist = _Typist()
+    caps.register_capability(typist)
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        (panels,) = user.find(ui.tab_panels).elements
+        panels.set_value("Typist")
+
+        def error_texts() -> list[str]:
+            slot = shell._slots["typist"].container
+            return [
+                str(e.text)
+                for e in slot.descendants()
+                if isinstance(e, ui.label) and "type boom" in str(e.text)
+            ]
+
+        typist.ui_panel.submit(boom="type boom")
+        await user.should_see("RuntimeError: type boom")
+        assert error_texts() == ["RuntimeError: type boom"]
+        (field,) = user.find(marker="typing-input").elements
+        typist.ui_panel.submit(leaf=_range_leaf(3.0))
+        assert shell.session.tree(D)["children"][1]["max_value"] == 3.0
+        assert "typist" not in shell.errors
+        assert error_texts() == []
+        await asyncio.sleep(0.25)  # two ticks: any deferred rebuild has run
+        assert error_texts() == []
+        assert [e.id for e in user.find(marker="typing-input").elements] == [field.id]
+        assert not field.is_deleted
 
 
 async def test_panels_read_the_rescored_comparisons(shell):
@@ -1773,7 +1830,7 @@ async def test_panels_read_the_rescored_comparisons(shell):
         await _open_on_range_leaf(shell, user)
 
         def paths_shown() -> list[str]:
-            slot = shell._slots["paths"][0]
+            slot = shell._slots["paths"].container
             return [str(e.text) for e in slot.descendants() if isinstance(e, ui.label)]
 
         assert "/metrics/children/1" in paths_shown()
@@ -1848,7 +1905,7 @@ async def test_a_selection_that_drops_the_active_tab_lands_on_an_enabled_one(she
         active = _active_tab(user)
         assert active != "Edit criteria"
         (cap,) = [c for c, _ in shell.applicable() if c.label == active]
-        container, _ = shell._slots[cap.name]
+        container = shell._slots[cap.name].container
         assert not container.is_deleted
 
 
@@ -1920,7 +1977,7 @@ async def test_a_results_event_during_a_panel_build_is_deferred_not_re_entered(s
         await _settled(lambda: shell._panels_pending is None)
 
         def labels() -> list:
-            slot = shell._slots["rescorer"][0]
+            slot = shell._slots["rescorer"].container
             return [
                 e
                 for e in user.find(marker="rescorer-label").elements
@@ -1959,7 +2016,7 @@ async def test_an_act_error_during_a_dispatch_is_shown_after_the_tick(shell):
         setter.on_relayout = lambda: setter.ui_panel.submit(boom="drag boom")
 
         def error_labels() -> list:
-            slot = shell._slots["setter"][0]
+            slot = shell._slots["setter"].container
             return [
                 e
                 for e in slot.descendants()

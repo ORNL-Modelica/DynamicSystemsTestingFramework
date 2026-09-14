@@ -240,6 +240,17 @@ class ShellPanel:
         self._shell.act(self._cap, **inputs)
 
 
+class _Slot:
+    """One capability's panel slot: its container, the capability, and the
+    error label `_fill_slot` builds at the top of the container — kept here
+    so an error is cleared IN PLACE (`Shell._clear_slot_error`), never by a
+    rebuild that would destroy the field being typed in."""
+
+    def __init__(self, container: ui.element, cap: Capability) -> None:
+        self.container, self.cap = container, cap
+        self.error: ui.label | None = None
+
+
 class Shell:
     """One per process, one browser tab: the v1 shape (two tabs already share
     the drawer element). ``root`` builds the page; every region is a
@@ -268,14 +279,14 @@ class Shell:
         self._plot_key: tuple[str, str, tuple[str, ...]] | None = None
         self._figure_dirty = False
         self._figure_rev = 0  # stamped as `layout.editrevision`
-        # The capability panels: one slot (container, capability) per
-        # available capability, rebuilt in place by `_fill_slot`; the tab
-        # panels element whose `value` is the active tab; the capability
+        # The capability panels: one `_Slot` per available capability,
+        # rebuilt in place by `_fill_slot`; the tab panels element whose
+        # `value` is the active tab; the capability
         # whose `act` is running; the panel builds in progress, innermost
         # last (a capability's name, "" for the tabs region itself); and the
         # slots a rebuild deferred out of a figure-hook dispatch or a panel
         # build owes (`_tick` performs it), None for none.
-        self._slots: dict[str, tuple[ui.element, Capability]] = {}
+        self._slots: dict[str, _Slot] = {}
         self._tab_panels: ui.tab_panels | None = None
         self._acting: Capability | None = None
         self._filling: list[str] = []
@@ -363,7 +374,7 @@ class Shell:
             return
         for name in list(self._slots):
             if name in names:
-                self._fill_slot(self._slots[name][1])
+                self._fill_slot(self._slots[name].cap)
 
     def _fill_slot_later_or_now(self, cap: Capability) -> None:
         """One capability's slot: now, or at the next tick while the figure
@@ -507,7 +518,10 @@ class Shell:
             finally:
                 self._acting = was
             if self.errors.pop(cap.name, None) is not None:
-                self._fill_slot_later_or_now(cap)  # the error it showed is gone
+                # In place, not a refill: the panel's own act skipped its
+                # rebuild so the field being typed in survives, and a refill
+                # to drop the error would destroy that field after all.
+                self._clear_slot_error(cap)
         except Exception as e:  # shown in the tab, never raised into NiceGUI
             self.errors[cap.name] = f"{type(e).__name__}: {e}"
             self._fill_slot_later_or_now(cap)
@@ -857,7 +871,7 @@ class Shell:
                             avail if isinstance(avail, str) else "not available"
                         ).classes("text-grey")
                         continue
-                    self._slots[cap.name] = (ui.column().classes("w-full"), cap)
+                    self._slots[cap.name] = _Slot(ui.column().classes("w-full"), cap)
                     self._fill_slot(cap)
 
     def _fill_slot(self, cap: Capability) -> None:
@@ -867,21 +881,31 @@ class Shell:
         panel whose build raises shows the exception here, and the other
         tabs still render. The active tab is untouched."""
         slot = self._slots.get(cap.name)
-        if slot is None or slot[0].is_deleted:
+        if slot is None or slot.container.is_deleted:
             return
-        container = slot[0]
-        container.clear()
+        slot.container.clear()
         self.figure_hook.clear(cap.name)
         self._filling.append(cap.name)
         try:
-            self._build_slot(container, cap)
+            self._build_slot(slot)
         finally:
             self._filling.pop()
 
-    def _build_slot(self, container: ui.element, cap: Capability) -> None:
-        with container:
-            if cap.name in self.errors:
-                ui.label(self.errors[cap.name]).classes("text-negative")
+    def _clear_slot_error(self, cap: Capability) -> None:
+        """Empty ``cap``'s error label in place; the rest of its slot is
+        untouched."""
+        slot = self._slots.get(cap.name)
+        if slot is None or slot.error is None or slot.error.is_deleted:
+            return
+        slot.error.set_text("")
+        slot.error.set_visibility(False)
+
+    def _build_slot(self, slot: _Slot) -> None:
+        cap = slot.cap
+        with slot.container:
+            error = self.errors.get(cap.name, "")
+            slot.error = ui.label(error).classes("text-negative")
+            slot.error.set_visibility(bool(error))
             if cap.scope is Scope.LEAF:
                 self._leaf_error()
             try:
