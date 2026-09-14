@@ -322,6 +322,26 @@ def test_the_real_page_drags_a_tube_handle_and_a_range_bound(
         assert after_zoom[1] == pytest.approx(zoom[1], abs=1e-9)
         assert page.evaluate("document.querySelectorAll('.js-plotly-plot').length") == 1
 
+        # The same ring dropped at y = 0.3, below the reference x(0.5) = 0.5:
+        # a negative band width, refused. The shell re-sends the figure after
+        # every shape relayout with a new `editrevision`, so the ring snaps
+        # back to where the Session says it is — without that, Plotly.react
+        # keeps the user's drop.
+        revision = page.evaluate(_EDITREVISION)
+        _drag(
+            page,
+            page.evaluate(_TO_PAGE, [moved["xanchor"], moved["yanchor"]]),
+            page.evaluate(_TO_PAGE, [moved["xanchor"], 0.3]),
+        )
+        tab = page.get_by_role("tab", name="Edit on plot")
+        if tab.get_attribute("aria-selected") != "true":
+            tab.click()
+        expect(page.get_by_text("negative")).to_be_visible(timeout=EXPECT_TIMEOUT)
+        _wait_editrevision_change(page, revision)
+        refused = page.evaluate(_SHAPE, RING)
+        assert refused["yanchor"] == pytest.approx(0.8, abs=0.02)
+        expect(pending).to_contain_text("1 pending", timeout=EXPECT_TIMEOUT)
+
         # The range line, grabbed mid-span: a whole-line move (y0 == y1).
         line = page.evaluate(_SHAPE, LINE)
         revision = page.evaluate(_EDITREVISION)
