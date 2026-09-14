@@ -91,7 +91,27 @@ Outcome = Patch | StoreWrite | Job | Artifact | OpenProject | None
 
 
 class FigureHook(Protocol):
-    """The shell's centre figure, as a capability may subscribe to it."""
+    """The shell's centre figure, as a capability may subscribe to it.
+
+    ``on(kind, handler)`` calls ``handler(primitive_id, payload)``:
+
+    - ``plotly_click`` / ``plotly_selected``: the id of the first point whose
+      trace ``meta.kind`` is ``"handle"``, else of the first point
+      (``customdata``, then ``meta.id``, then ``curveNumber``), with the event
+      payload — under x-unified hover a click lists every trace at that x.
+    - ``plotly_relayout`` moving shapes: once PER SHAPE, the payload being
+      that shape's keys without their ``shapes[N].`` prefix
+      (``{"y0": 6.0, "y1": 6.0}``, ``{"xanchor": 4.0, "yanchor": 2.99}``, or a
+      ring's pixel resize ``{"x0": -7, ..., "y1": 7}``), in data coordinates.
+      Plotly's payload never names the shape; the shell resolves the id from
+      the rendered figure's ``layout.shapes[N].name``, ``""`` when it cannot.
+      The shell does not interpret positions: the capability does, from the
+      handle's primitive type (a Marker's ring moves only by
+      ``xanchor``/``yanchor``).
+    - Any other relayout (a zoom): once, with id ``""`` and the raw payload.
+
+    Handlers run from a snapshot taken when dispatch starts: one registered
+    during dispatch is first called on the next event."""
 
     def on(self, kind: str, handler: Callable[[str, dict], None]) -> None: ...
 

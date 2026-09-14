@@ -646,6 +646,265 @@ def test_the_figure_hook_names_the_primitive_from_meta_id():
     ]
 
 
+class _StandInPlot:
+    """What `FigureHook.attach` needs of a `ui.plotly`: a `figure` dict and
+    an `on` that records registrations. No page."""
+
+    def __init__(self, figure=None):
+        self.figure = figure if figure is not None else {}
+        self.registered = []
+
+    def on(self, event, handler):
+        self.registered.append(event)
+
+
+def _recording_hook(plot=None):
+    from dstf.authoring.app import FigureHook
+
+    moved = []
+    hook = FigureHook(on_shape_moved=lambda: moved.append(True))
+    seen = []
+    for kind in ("plotly_click", "plotly_relayout", "plotly_selected"):
+        hook.on(
+            kind,
+            lambda primitive, payload, k=kind: seen.append((k, primitive, payload)),
+        )
+    if plot is not None:
+        hook.attach(plot)
+    return hook, seen, moved
+
+
+def test_an_x_unified_click_names_the_handle_not_the_first_trace():
+    """The spike: under the figure's `hovermode: "x unified"` a click on a
+    handle lists the Actual trace first."""
+    hook, seen, moved = _recording_hook()
+    hook._dispatch(
+        "plotly_click",
+        {
+            "event": {},
+            "points": [
+                {
+                    "curveNumber": 0,
+                    "pointNumber": 50,
+                    "x": 5,
+                    "y": 5,
+                    "data": {"meta": {"id": "actual", "kind": "act"}},
+                },
+                {
+                    "curveNumber": 1,
+                    "pointNumber": 1,
+                    "x": 5,
+                    "y": 7,
+                    "customdata": "/metrics/children/0/tube/upper/1",
+                    "data": {"meta": {"family": "tube/upper", "kind": "handle"}},
+                },
+            ],
+        },
+    )
+    assert [primitive for _, primitive, _ in seen] == [
+        "/metrics/children/0/tube/upper/1"
+    ]
+    assert moved == []
+
+
+_SHAPES = {
+    "layout": {
+        "shapes": [
+            {"name": "/metrics/children/1/range/max"},
+            {"name": "/metrics/children/2/points/box/0"},
+            {"name": "/metrics/children/0/tube/lower/0"},
+        ]
+    }
+}
+
+
+def test_a_shape_relayout_is_dispatched_per_shape_with_the_rendered_name():
+    """The spike's drag payloads carry the shape's index, never its name."""
+    plot = _StandInPlot(_SHAPES)
+    hook, seen, moved = _recording_hook(plot)
+    assert plot.registered == ["plotly_click", "plotly_relayout", "plotly_selected"]
+    cases = [
+        (
+            {
+                "shapes[0].x0": 0,
+                "shapes[0].x1": 10,
+                "shapes[0].y0": 6.0,
+                "shapes[0].y1": 6.0,
+            },
+            [
+                (
+                    "/metrics/children/1/range/max",
+                    {"x0": 0, "x1": 10, "y0": 6.0, "y1": 6.0},
+                )
+            ],
+        ),
+        (
+            {"shapes[2].xanchor": 4.0, "shapes[2].yanchor": 2.99},
+            [("/metrics/children/0/tube/lower/0", {"xanchor": 4.0, "yanchor": 2.99})],
+        ),
+        (
+            {"shapes[0].x0": 0, "shapes[0].y0": 2.0},
+            [("/metrics/children/1/range/max", {"x0": 0, "y0": 2.0})],
+        ),
+        (
+            {"shapes[2].xanchor": 4.0, "shapes[0].y0": 2.0, "shapes[2].yanchor": 2.99},
+            [
+                ("/metrics/children/1/range/max", {"y0": 2.0}),
+                ("/metrics/children/0/tube/lower/0", {"xanchor": 4.0, "yanchor": 2.99}),
+            ],
+        ),
+    ]
+    for payload, expected in cases:
+        seen.clear()
+        moved.clear()
+        hook._dispatch("plotly_relayout", payload)
+        assert [(p, d) for _, p, d in seen] == expected
+        assert moved == [True]  # once per relayout, however many shapes
+
+
+def test_a_zoom_relayout_is_dispatched_once_raw_and_moves_no_shape():
+    hook, seen, moved = _recording_hook(_StandInPlot(_SHAPES))
+    zoom = {"xaxis.range[0]": 0.49, "xaxis.range[1]": 1.49}
+    hook._dispatch("plotly_relayout", zoom)
+    assert [(p, d) for _, p, d in seen] == [("", zoom)]
+    assert moved == []
+
+
+def test_nothing_malformed_makes_the_hook_dispatch_raise():
+    """The docstring's "no malformed payload makes dispatch raise": every
+    input it rules out, tried."""
+    from dstf.authoring.app import FigureHook
+
+    # A shape key whose index cannot be resolved: id "" for that shape, and
+    # the shape-moved callback still runs.
+    unresolvable = [
+        (_StandInPlot(_SHAPES), {"shapes[9].y0": 1.0}, {"y0": 1.0}),
+        (None, {"shapes[0].y0": 1.0}, {"y0": 1.0}),
+        (
+            _StandInPlot({"layout": {"shapes": [{"type": "line"}]}}),
+            {"shapes[0].y0": 1.0},
+            {"y0": 1.0},
+        ),
+        (_StandInPlot({"layout": {}}), {"shapes[0].y0": 1.0}, {"y0": 1.0}),
+        (_StandInPlot("not a dict"), {"shapes[0].y0": 1.0}, {"y0": 1.0}),
+    ]
+    for plot, payload, stripped in unresolvable:
+        hook, seen, moved = _recording_hook(plot)
+        hook._dispatch("plotly_relayout", payload)
+        assert [(p, d) for _, p, d in seen] == [("", stripped)]
+        assert moved == [True]
+    # A key NOT matching the shape pattern is any other relayout.
+    for payload in ({"shapes[x].y0": 1.0}, {"shapes[0]": 1.0}):
+        hook, seen, moved = _recording_hook(_StandInPlot(_SHAPES))
+        hook._dispatch("plotly_relayout", payload)
+        assert [(p, d) for _, p, d in seen] == [("", payload)]
+        assert moved == []
+    for kind in ("plotly_click", "plotly_relayout", "plotly_selected"):
+        for payload in (
+            None,
+            [],
+            {"points": [5, "x", None]},
+            {"points": "not a list"},
+            {"points": [{"curveNumber": 2, "data": {"meta": "not a dict"}}]},
+            {"points": [{"data": "not a dict"}]},
+        ):
+            hook = FigureHook()
+            got: list[str] = []
+            hook.on(kind, lambda primitive, data, got=got: got.append(primitive))
+            hook._dispatch(kind, payload)
+            assert len(got) == 1 and isinstance(got[0], str)
+
+
+def test_the_figure_hook_clears_handlers_by_owner():
+    from dstf.authoring.app import FigureHook
+
+    hook = FigureHook()
+    got = []
+
+    def h1(primitive, payload):
+        got.append("h1")
+
+    def h2(primitive, payload):
+        got.append("h2")
+
+    hook.owned("a").on("plotly_click", h1)
+    hook.owned("b").on("plotly_click", h2)
+    hook._dispatch("plotly_click", {})
+    assert got == ["h1", "h2"]
+    hook.clear("a")
+    got.clear()
+    hook._dispatch("plotly_click", {})
+    assert got == ["h2"]
+    hook.clear()
+    got.clear()
+    hook._dispatch("plotly_click", {})
+    assert got == []
+
+
+def test_the_figure_hook_dispatches_from_a_snapshot():
+    """A handler registered during dispatch — a panel rebuilt by the act it
+    triggered — is first called on the next event."""
+    from dstf.authoring.app import FigureHook
+
+    hook = FigureHook()
+    calls = {"old": 0, "new": 0, "extra": 0}
+
+    def bounded(name):
+        calls[name] += 1
+        if sum(calls.values()) > 5:
+            raise AssertionError(f"dispatch did not stop: {calls}")
+
+    def new(primitive, payload):
+        bounded("new")
+
+    def old(primitive, payload):
+        bounded("old")
+        hook.clear("a")  # what a slot rebuild does
+        hook.owned("a").on("plotly_click", new)
+
+    hook.owned("a").on("plotly_click", old)
+    hook._dispatch("plotly_click", {})
+    assert (calls["old"], calls["new"]) == (1, 0)
+    hook._dispatch("plotly_click", {})
+    assert (calls["old"], calls["new"]) == (1, 1)
+
+    # A handler that registers another without clearing: the added one does
+    # not run in the dispatch that added it.
+    hook = FigureHook()
+    calls.update(old=0, new=0, extra=0)
+
+    def extra(primitive, payload):
+        bounded("extra")
+
+    def adder(primitive, payload):
+        bounded("old")
+        hook.owned("b").on("plotly_click", extra)
+
+    hook.owned("a").on("plotly_click", adder)
+    hook._dispatch("plotly_click", {})
+    assert (calls["old"], calls["extra"]) == (1, 0)
+
+
+def test_the_figure_hook_is_dispatching_only_while_handlers_run():
+    from dstf.authoring.app import FigureHook
+
+    hook = FigureHook()
+    during = []
+    hook.on("plotly_click", lambda primitive, payload: during.append(hook.dispatching))
+    assert hook.dispatching is False
+    hook._dispatch("plotly_click", {})
+    assert during == [True]
+    assert hook.dispatching is False
+
+    def boom(primitive, payload):
+        raise RuntimeError("boom")
+
+    hook.on("plotly_click", boom)
+    with pytest.raises(RuntimeError):
+        hook._dispatch("plotly_click", {})
+    assert hook.dispatching is False
+
+
 async def test_the_figure_hook_does_not_accumulate_handlers_across_tab_rebuilds(shell):
     """§7.2: on-plot editing subscribes in panel(); the tabs region rebuilds
     on every selection, so the shell clears the hook before each build."""
