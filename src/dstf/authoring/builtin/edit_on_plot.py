@@ -1,0 +1,364 @@
+"""Edit on plot (§4.6 table, §4.7): VARIABLE scope — any handle on the
+centre plot drags, and the op targets the leaf the handle's id names. Below
+the plot's hook, a table per handle-bearing list field (the Config fields
+that declare ``columns``: ``tube_points``, ``points``, ``events``,
+``peaks``) with add and remove rows.
+
+Every staged edit is one ``replace`` of the whole leaf — the op Edit
+criteria stages — so consecutive drags on one leaf collapse into one
+pending op, and a drag and a form edit of the same leaf read as "leaf ->
+new leaf" in the drawer.
+"""
+
+from __future__ import annotations
+
+import copy
+import dataclasses
+from typing import TYPE_CHECKING, Any
+
+from ...comparison.geometry import HLine, Marker
+from ...comparison.handles import HandleEdit, HandleEditError
+from ...comparison.registry import DEFAULT_METRIC, metric
+from ...figures.assemble import leaves_by_variable
+from ..capabilities import Panel, Patch, Scope
+from ..spec_document import PatchOp
+from .edit_tree import _node_at
+
+if TYPE_CHECKING:
+    from ..session import SessionView
+
+# NO module-level `nicegui` import: `import dstf.authoring` runs
+# register_builtins(), and the Session must import without the extra.
+
+Columns = tuple[tuple[str, Any], ...]
+
+
+def _selected(s: SessionView) -> tuple[str, str] | None:
+    """``(model_id, variable)`` for exactly one test and a variable."""
+    sel = s.selection
+    if len(sel.tests) != 1 or sel.variable is None:
+        return None
+    (model_id,) = tuple(sel.tests)
+    return model_id, sel.variable
+
+
+def _leaf_paths(s: SessionView, model_id: str, variable: str) -> list[tuple[str, str]]:
+    """``(leaf_path, metric)`` for every scored leaf on ``variable``, in tree
+    order. Cheap: no figure, no view."""
+    comp = s.comparisons.get(model_id)
+    tree = comp.metric_tree if comp is not None else None
+    return [(path, vc.mode) for path, vc in leaves_by_variable(tree).get(variable, [])]
+
+
+def _list_fields(name: str) -> list[tuple[str, Columns]]:
+    """The Config list fields of metric ``name`` that declare their row
+    ``columns`` (Task 6's metadata), read from the dataclass fields — not
+    through ``derive_schema``, whose ``FieldSpec`` does not carry them."""
+    desc = metric(name)
+    if desc is None or not dataclasses.is_dataclass(desc.config_cls):
+        return []
+    return [
+        (f.name, f.metadata["columns"])
+        for f in dataclasses.fields(desc.config_cls)
+        if "columns" in f.metadata
+    ]
+
+
+def _has_handles(name: str) -> bool:
+    desc = metric(name)
+    return desc is not None and (
+        desc.edit_handle is not None or bool(_list_fields(name))
+    )
+
+
+def _leaf_path_of(handle: str, paths: list[str]) -> str | None:
+    """The longest leaf path ``handle`` starts with FOLLOWED BY ``/``: a
+    handle of ``/metrics/children/10`` never resolves to
+    ``/metrics/children/1``."""
+    matches = [p for p in paths if handle.startswith(p + "/")]
+    return max(matches, key=len) if matches else None
+
+
+def _position(
+    primitive: object, shape: dict
+) -> tuple[float | None, float | None] | None:
+    """The dragged position the hook's per-shape payload means for the
+    handle's PRIMITIVE TYPE, or None when it is no move. A Marker's ring
+    moves only by ``xanchor``/``yanchor`` — its ``x0``..``y1`` are a pixel
+    RESIZE (an off-centre grab), never a position. An HLine moves by
+    ``y0``/``y1``: both when the whole line was dragged, the one present
+    when one end was, neither (a horizontal-only drag) is no move. Any
+    other primitive, or none: no position — the editor refuses its local
+    by name."""
+    if isinstance(primitive, Marker):
+        x, y = shape.get("xanchor"), shape.get("yanchor")
+        if x is None and y is None:
+            return None
+        return x, y
+    if isinstance(primitive, HLine):
+        y0, y1 = shape.get("y0"), shape.get("y1")
+        if y0 is None and y1 is None:
+            return None
+        return None, (y0 if y0 is not None else y1)
+    return None, None
+
+
+def _new_row(
+    columns: Columns, rows: list[dict], span: tuple[float, float] | None
+) -> dict:
+    """The row ``Add row`` appends. After existing rows: a copy of the last
+    one, its ``time`` (when the table has one) at the reference span's end.
+    On an empty table: a ``time`` column — required or optional — at the
+    span's midpoint (``0.0`` with no reference); any other required float
+    ``0.0``; any other optional float blank, so omitted (a new checkpoint
+    follows the baseline); a choice its first. The one exception: a
+    ``tube_points`` row gets ``upper`` and ``lower`` ``0.0`` — optional in
+    the reader, which refuses a tube with no width at all."""
+    keys = [key for key, _ in columns]
+    if rows:
+        last = copy.deepcopy(rows[-1])
+        if "time" in keys and span is not None:
+            last["time"] = span[1]
+        return last
+    row: dict[str, Any] = {}
+    for key, kind in columns:
+        if key == "time":
+            row[key] = (span[0] + span[1]) / 2 if span is not None else 0.0
+        elif isinstance(kind, tuple):
+            row[key] = kind[0]
+        elif kind == "float":
+            row[key] = 0.0
+    if keys == ["time", "upper", "lower"]:  # tube_points
+        row.update(upper=0.0, lower=0.0)
+    return row
+
+
+class EditOnPlot:
+    """Drag a handle on the plot, or edit its table; one replace of the leaf
+    per edit."""
+
+    name = "edit-on-plot"
+    label = "Edit on plot"
+    scope = Scope.VARIABLE
+
+    def available(self, s: SessionView) -> bool | str:
+        selected = _selected(s)
+        if selected is None:
+            return "select one test"
+        model_id, variable = selected
+        running = s.running
+        if running is not None and s.is_locked(model_id):
+            return f"{running.label} is running on {model_id}"
+        if not any(_has_handles(m) for _, m in _leaf_paths(s, model_id, variable)):
+            return f"no criterion on {variable} has on-plot handles"
+        return True
+
+    def panel(self, s: SessionView, ui_panel: Panel) -> None:
+        from nicegui import ui
+
+        selected = _selected(s)
+        assert selected is not None  # `available` said so
+        model_id, variable = selected
+
+        def on_relayout(handle: str, payload: dict) -> None:
+            if handle:
+                ui_panel.submit(
+                    kind="handle",
+                    model_id=model_id,
+                    variable=variable,
+                    handle=handle,
+                    shape=payload,
+                )
+
+        ui_panel.figure.on("plotly_relayout", on_relayout)
+        ui.label("drag a handle on the plot, or edit a table").classes("text-xs")
+        tree = s.tree(model_id)
+        if tree is None:
+            return
+
+        def span() -> tuple[float, float] | None:
+            view = s.view(model_id, variable)
+            if view.ref_time is None or len(view.ref_time) == 0:
+                return None
+            return float(view.ref_time[0]), float(view.ref_time[-1])
+
+        for path, _mode in _leaf_paths(s, model_id, variable):
+            raw = _node_at(tree, path)
+            name = raw.get("metric", DEFAULT_METRIC)
+            for field, columns in _list_fields(name):
+                ui.label(f"{path} · {name} · {field}").classes("text-xs text-bold")
+                rows = copy.deepcopy(raw.get(field) or [])
+                _table(ui, path, field, columns, rows, span, ui_panel, model_id)
+
+    def act(self, s: SessionView, **inputs: Any) -> Patch | None:
+        kind = inputs["kind"]
+        if kind == "handle":
+            return self._act_handle(s, **inputs)
+        if kind == "rows":
+            return self._act_rows(s, **inputs)
+        raise ValueError(f"unknown kind {kind!r}")
+
+    def _act_handle(
+        self,
+        s: SessionView,
+        *,
+        model_id: str,
+        variable: str,
+        handle: str,
+        shape: dict,
+        **_: Any,
+    ) -> Patch | None:
+        if not handle:
+            return None
+        paths = [p for p, _ in _leaf_paths(s, model_id, variable)]
+        path = _leaf_path_of(handle, paths)
+        if path is None:
+            raise ValueError(f"{handle} names no leaf on {variable} of {model_id}")
+        tree = s.tree(model_id)
+        if tree is None:
+            raise ValueError(f"{model_id} has no tree to edit")
+        raw = _node_at(tree, path)
+        name = raw.get("metric", DEFAULT_METRIC)
+        desc = metric(name)
+        if desc is None or desc.edit_handle is None:
+            raise HandleEditError(f"{name} has no on-plot handles")
+        # Several leaves on one variable can refuse the same local id: every
+        # refusal below names its leaf.
+        try:
+            view = s.view(model_id, variable)  # full resolution, not the figure
+            leaf = next((lv for lv in view.leaves if lv.path == path), None)
+            primitive = next(
+                (p for p in (leaf.geometry if leaf else ()) if p.id == handle), None
+            )
+            position = _position(primitive, shape if isinstance(shape, dict) else {})
+            if position is None:
+                return None
+            x, y = position
+            new = desc.edit_handle(
+                HandleEdit(
+                    leaf=raw,
+                    local=handle[len(path) + 1 :],
+                    x=x,
+                    y=y,
+                    reference=(
+                        (view.ref_time, view.ref_values)
+                        if view.ref_time is not None and view.ref_values is not None
+                        else None
+                    ),
+                )
+            )
+        except HandleEditError as e:
+            raise HandleEditError(f"{path}: {e}") from None
+        if new == raw:
+            return None
+        return Patch(ops=[PatchOp(model_id, "replace", path, new)])
+
+    def _act_rows(
+        self,
+        s: SessionView,
+        *,
+        model_id: str,
+        path: str,
+        field: str,
+        rows: list[dict],
+        **_: Any,
+    ) -> Patch | None:
+        tree = s.tree(model_id)
+        if tree is None:
+            raise ValueError(f"{model_id} has no tree to edit")
+        raw = _node_at(tree, path)
+        name = raw.get("metric", DEFAULT_METRIC)
+        columns = dict(_list_fields(name)).get(field)
+        if columns is None:
+            raise ValueError(f"{name} has no table {field!r}")
+        required = [key for key, kind in columns if kind == "float"]
+        cleaned: list[dict] = []
+        for i, row in enumerate(rows):
+            for key in required:
+                if row.get(key) is None:
+                    raise ValueError(f"row {i}: {key} is required")
+            cleaned.append({k: v for k, v in row.items() if v is not None})
+        new = copy.deepcopy(raw)
+        new[field] = cleaned
+        if new == raw:
+            return None
+        return Patch(ops=[PatchOp(model_id, "replace", path, new)])
+
+
+def _table(
+    ui: Any,
+    path: str,
+    field: str,
+    columns: Columns,
+    rows: list[dict],
+    span: Any,
+    ui_panel: Panel,
+    model_id: str,
+) -> None:
+    """One list field's rows, a control per column, ``Remove row`` per row
+    and ``Add row``. The rows live here: the shell does not rebuild the
+    acting capability's slot during its own panel-originated act, so the
+    table re-renders its own container after adding or removing; a refused
+    submit makes the shell rebuild the slot with the error, which re-reads
+    the rows from the Session."""
+    container = ui.column().classes("w-full")
+    mark = f"{path}:{field}"
+
+    def submit() -> None:
+        ui_panel.submit(
+            kind="rows",
+            model_id=model_id,
+            path=path,
+            field=field,
+            rows=copy.deepcopy(rows),
+        )
+
+    def set_cell(i: int, key: str, value: Any) -> None:
+        rows[i][key] = value
+        submit()
+
+    def remove(i: int) -> None:
+        rows.pop(i)
+        render()
+        submit()
+
+    def add() -> None:
+        rows.append(_new_row(columns, rows, span()))
+        render()
+        submit()
+
+    def render() -> None:
+        container.clear()
+        with container:
+            for i, row in enumerate(rows):
+                with ui.row().classes("items-center no-wrap"):
+                    for key, kind in columns:
+                        if isinstance(kind, tuple):
+                            value = row.get(key, kind[0])
+                            # A value the author wrote outside the choices
+                            # stays selectable rather than break the build.
+                            options = list(kind) + ([] if value in kind else [value])
+                            ui.select(
+                                options,
+                                label=key,
+                                value=value,
+                                on_change=lambda e, i=i, key=key: set_cell(
+                                    i, key, e.value
+                                ),
+                            ).props("dense").mark(f"{mark}:{i}:{key}")
+                        else:
+                            ui.number(
+                                label=key,
+                                value=row.get(key),
+                                on_change=lambda e, i=i, key=key: set_cell(
+                                    i, key, e.value
+                                ),
+                            ).props("dense").mark(f"{mark}:{i}:{key}")
+                    ui.button("Remove row", on_click=lambda i=i: remove(i)).props(
+                        "flat dense no-caps"
+                    ).mark(f"{mark}:{i}:remove")
+            ui.button("Add row", on_click=add).props("flat dense no-caps").mark(
+                f"{mark}:add"
+            )
+
+    render()

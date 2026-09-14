@@ -11,6 +11,7 @@ def register_builtins() -> None:
     names = {c.name for c in registered_capabilities()}
     from .accept import Accept
     from .edit_criteria import EditCriteria
+    from .edit_on_plot import EditOnPlot
     from .edit_tree import EditTree
     from .rerun import Rerun
 
@@ -22,3 +23,5 @@ def register_builtins() -> None:
         register_capability(Accept())
     if Rerun.name not in names:
         register_capability(Rerun())
+    if EditOnPlot.name not in names:
+        register_capability(EditOnPlot())

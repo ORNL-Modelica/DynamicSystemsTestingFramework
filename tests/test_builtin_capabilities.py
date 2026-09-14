@@ -577,12 +577,13 @@ async def test_accept_reports_the_row_reason_and_the_empty_selection(shell):
 # -- Rerun (§4.6 table, §4.7) ---------------------------------------------
 
 
-def test_the_four_builtins_register_in_order():
+def test_the_builtins_register_in_order():
     assert [c.label for c in caps.registered_capabilities()] == [
         "Edit criteria",
         "Edit tree",
         "Accept",
         "Rerun",
+        "Edit on plot",
     ]
 
 
