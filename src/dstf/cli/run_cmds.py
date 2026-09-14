@@ -86,57 +86,26 @@ def _wipe_stale_state_for_scope(
 
 
 def _get_backend(config, persistent: bool = False):
-    """Get the appropriate backend for the configured backend name.
+    """The CLI's wrapper over :func:`backends.select_backend`.
 
-    When *persistent* is True and the backend **declares**
-    :attr:`Capability.PERSISTENT_WORKERS`, pre-flight the variant's
-    dependency probe and instantiate it. When the probe raises
-    :class:`RuntimeError`, print a unified abort message pointing at both
-    fixes (install the dep, or re-run with ``--batch``) and exit ``1`` — no
-    silent fallback.
+    The choice itself — persistent variant when the backend declares
+    :attr:`Capability.PERSISTENT_WORKERS` and its dependency probe passes,
+    batch otherwise — lives in ``backends``, where callers that are not a
+    CLI can reach it. Backend-agnostic: no string matching on backend
+    names; new persistent backends plug in by declaring the capability and
+    overriding ``persistent_backend_cls`` + ``preflight``.
 
-    The declaration is what gates, not the presence of the hook: a backend
-    that ships an experimental ``persistent_backend_cls`` it isn't ready to
-    have driven says so by leaving the flag off, and lands on the batch
-    path. Registration-time validation
-    (:func:`backends._validate_capabilities`) guarantees the converse —
-    flag implies a real override — so a declaring backend always has a
-    class to return.
-
-    Backend-agnostic: no string matching on backend names. New persistent
-    backends plug in by declaring the capability and overriding
-    ``persistent_backend_cls`` + ``preflight`` on their backend classes.
+    This layer is only the CLI's answer to "the backend is unavailable":
+    print the message and exit ``1``, rather than fall back silently or
+    traceback.
     """
-    from ..backends import get_backend_class
-    from ..backends.types import Capability
+    from ..backends import BackendUnavailableError, select_backend
 
-    batch_cls = get_backend_class(config)
-    if not persistent:
-        return batch_cls(config)
-    if Capability.PERSISTENT_WORKERS not in batch_cls.capabilities:
-        # Batch-only backend (FMPy, Python today). Persistent flag is a
-        # no-op rather than an error so a single CLI works across mixed
-        # backends in a multi-library config.
-        return batch_cls(config)
-    pcls = batch_cls.persistent_backend_cls()
-    if pcls is None:
-        # Unreachable for a validated backend (the flag implies the
-        # override); kept as the type narrowing for the calls below.
-        return batch_cls(config)
     try:
-        pcls.preflight(config)
-    except RuntimeError as exc:
-        backend = config.backend
-        print(
-            f"Persistent-worker {backend} unavailable. Aborting.\n"
-            f"\n"
-            f"{exc}\n"
-            f"\n"
-            f"Or re-run with `--batch` to use the per-test subprocess backend instead.",
-            file=sys.stderr,
-        )
+        return select_backend(config, persistent=persistent)
+    except BackendUnavailableError as exc:
+        print(f"{exc} Aborting.", file=sys.stderr)
         sys.exit(1)
-    return pcls(config)
 
 
 def _report_accept(config, stored: int, skipped: list[tuple[str, str]]) -> int:

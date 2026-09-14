@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dstf.backends import dataset_kind_for
+from dstf.backends import BackendUnavailableError, dataset_kind_for, select_backend
 from dstf.backends.base import Backend
 from dstf.backends.types import Capability, DatasetType
 from dstf.cli import run_cmds as cli_mod
@@ -113,6 +113,127 @@ class TestPersistentWorkersGate:
         for name, cls in _all_registered_backends().items():
             declared = Capability.PERSISTENT_WORKERS in cls.capabilities
             assert declared is (cls.persistent_backend_cls() is not None), name
+
+
+class TestSelectBackend:
+    """The selection as a library call: it raises where the CLI exits.
+
+    `_get_backend` is now the CLI's wrapper over `select_backend`; anything
+    that is not a CLI (the authoring tool's rerun) needs the choice without
+    a `sys.exit` in it.
+    """
+
+    def test_batch_request_returns_the_batch_backend(self, monkeypatch):
+        _ProbeBackend.persistent_cls_asked = False
+        _use_probe(monkeypatch)
+
+        backend = select_backend(SimpleNamespace(), persistent=False)
+
+        assert type(backend) is _ProbeBackend
+        assert _ProbeBackend.persistent_cls_asked is False
+
+    def test_undeclared_backend_stays_batch_when_persistent_asked(self, monkeypatch):
+        _ProbeBackend.persistent_cls_asked = False
+        _ProbePersistentBackend.preflighted = False
+        _use_probe(monkeypatch)
+
+        backend = select_backend(SimpleNamespace(), persistent=True)
+
+        assert type(backend) is _ProbeBackend
+        assert _ProbeBackend.persistent_cls_asked is False
+        assert _ProbePersistentBackend.preflighted is False
+
+    def test_python_backend_has_no_persistent_variant_to_select(self, tmp_path):
+        """A real batch-only builtin: persistent=True is a no-op, not an error."""
+        from dstf.backends.python.backend import PythonBackend
+        from dstf.config import Config
+
+        source = tmp_path / "lib"
+        source.mkdir()
+        config = Config(
+            source_path=source,
+            reference_root=tmp_path / "refs",
+            source_type="python",
+            backend_name="Python",
+            work_dir=tmp_path / "work",
+        )
+
+        assert type(select_backend(config, persistent=True)) is PythonBackend
+
+    def test_preflight_failure_raises_instead_of_exiting(self, monkeypatch):
+        class _Declared(_ProbeBackend):
+            capabilities = frozenset(
+                {Capability.BATCH_FALLBACK, Capability.PERSISTENT_WORKERS}
+            )
+
+            @classmethod
+            def persistent_backend_cls(cls):
+                return _Unavailable
+
+        class _Unavailable(_Declared):
+            @classmethod
+            def preflight(cls, config) -> None:
+                raise RuntimeError("no omc")
+
+        _use_probe(monkeypatch, _Declared)
+
+        with pytest.raises(BackendUnavailableError) as excinfo:
+            select_backend(SimpleNamespace(backend="Probe"), persistent=True)
+
+        message = str(excinfo.value)
+        assert "no omc" in message
+        assert "--batch" in message
+
+    def test_cli_wrapper_turns_the_error_into_exit_1(self, monkeypatch, capsys):
+        """`_get_backend` is the only place the abort message is printed."""
+
+        def _raise(config, *, persistent):
+            raise BackendUnavailableError("Persistent-worker Probe unavailable.")
+
+        monkeypatch.setattr("dstf.backends.select_backend", _raise)
+
+        with pytest.raises(SystemExit) as excinfo:
+            cli_mod._get_backend(SimpleNamespace(), persistent=True)
+
+        assert excinfo.value.code == 1
+        assert "Persistent-worker Probe unavailable." in capsys.readouterr().err
+
+    def test_unregistered_backend_name_is_unavailable_not_a_value_error(self):
+        with pytest.raises(BackendUnavailableError) as excinfo:
+            select_backend(
+                SimpleNamespace(backend="Nope", backend_name="Nope"), persistent=False
+            )
+
+        assert "Unsupported backend: Nope" in str(excinfo.value)
+
+    def test_missing_executable_is_unavailable(self, monkeypatch):
+        """A constructor's `RuntimeError` ("julia not found") is the same class
+        of problem as a failed preflight: the backend cannot be built here."""
+
+        class _NoBinary(_ProbeBackend):
+            def __init__(self, config):
+                raise RuntimeError("Julia binary not found.")
+
+        _use_probe(monkeypatch, _NoBinary)
+
+        with pytest.raises(BackendUnavailableError) as excinfo:
+            select_backend(SimpleNamespace(), persistent=False)
+
+        assert "Julia binary not found." in str(excinfo.value)
+
+    def test_a_constructor_bug_still_tracebacks(self, monkeypatch):
+        """The translation is narrow: only `RuntimeError` from the constructor
+        means "unavailable". Anything else is a bug and must not be dressed up
+        as a missing dependency."""
+
+        class _Buggy(_ProbeBackend):
+            def __init__(self, config):
+                raise KeyError("work_dir")
+
+        _use_probe(monkeypatch, _Buggy)
+
+        with pytest.raises(KeyError):
+            select_backend(SimpleNamespace(), persistent=False)
 
 
 class TestDatasetKindThreading:

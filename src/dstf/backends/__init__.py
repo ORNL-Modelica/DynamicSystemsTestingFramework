@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Backend",
+    "BackendUnavailableError",
     "VariableResult",
     "TestResult",
     "TestRunResult",
@@ -26,6 +27,7 @@ __all__ = [
     "resolve_variable_patterns",
     "get_backend",
     "get_backend_class",
+    "select_backend",
     "dataset_kind_for",
 ]
 
@@ -139,6 +141,86 @@ def get_backend_class(config: Config) -> type[Backend]:
             f"(from '{config.backend_name}'). Available: {available}"
         )
     return cls
+
+
+class BackendUnavailableError(RuntimeError):
+    """The configured backend cannot be built on this machine.
+
+    Not a bug: an unregistered backend name, a missing executable, or a
+    persistent variant whose dependency probe failed. Callers decide what
+    to do about it — the CLI prints the message and exits 1
+    (:func:`cli.run_cmds._get_backend`), the authoring tool shows it on the
+    job that asked for the run.
+    """
+
+
+def select_backend(config, *, persistent: bool) -> Backend:
+    """Instantiate the backend for *config*, persistent variant when asked.
+
+    When *persistent* is True and the backend **declares**
+    :attr:`Capability.PERSISTENT_WORKERS`, pre-flight the variant's
+    dependency probe and instantiate it. When the probe raises
+    :class:`RuntimeError`, raise :class:`BackendUnavailableError` naming
+    both fixes (install the dep, or re-run with ``--batch``) — no silent
+    fallback.
+
+    The declaration is what gates, not the presence of the hook: a backend
+    that ships an experimental ``persistent_backend_cls`` it isn't ready to
+    have driven says so by leaving the flag off, and lands on the batch
+    path. Registration-time validation (:func:`_validate_capabilities`)
+    guarantees the converse — flag implies a real override — so a declaring
+    backend always has a class to return.
+
+    Backend-agnostic: no string matching on backend names. New persistent
+    backends plug in by declaring the capability and overriding
+    ``persistent_backend_cls`` + ``preflight`` on their backend classes.
+
+    ``config.backend`` is read only on the persistent-failure path, so a
+    caller probing the choice can pass a config that carries no name.
+    """
+    try:
+        batch_cls = get_backend_class(config)
+    except ValueError as exc:
+        # An unregistered backend name is a configuration problem, not a
+        # bug; same class of failure as a missing executable.
+        raise BackendUnavailableError(str(exc)) from exc
+    if not persistent or Capability.PERSISTENT_WORKERS not in batch_cls.capabilities:
+        # Batch-only backend (FMPy, Python today). Persistent flag is a
+        # no-op rather than an error so a single CLI works across mixed
+        # backends in a multi-library config.
+        return _instantiate(batch_cls, config)
+    pcls = batch_cls.persistent_backend_cls()
+    if pcls is None:
+        # Unreachable for a validated backend (the flag implies the
+        # override); kept as the type narrowing for the call below.
+        return _instantiate(batch_cls, config)
+    try:
+        pcls.preflight(config)
+    except RuntimeError as exc:
+        raise BackendUnavailableError(
+            f"Persistent-worker {config.backend} unavailable.\n"
+            f"\n"
+            f"{exc}\n"
+            f"\n"
+            f"Or re-run with `--batch` to use the per-test subprocess "
+            f"backend instead."
+        ) from exc
+    return _instantiate(pcls, config)
+
+
+def _instantiate(cls: type[Backend], config) -> Backend:
+    """``cls(config)``, with a missing-executable ``RuntimeError`` translated.
+
+    The ``try`` wraps exactly the constructor call: backends raise
+    ``RuntimeError`` when the tool they drive isn't installed
+    (``python/backend.py``, ``julia/backend.py``), which is an unavailable
+    backend, while any other exception is a genuine bug and keeps its
+    traceback.
+    """
+    try:
+        return cls(config)
+    except RuntimeError as exc:
+        raise BackendUnavailableError(str(exc)) from exc
 
 
 def _import_builtin_backend(name: str) -> None:
