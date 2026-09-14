@@ -127,13 +127,13 @@ class Shell:
         self._built = False
         self.needle = ""  # the test list's filter text; survives refreshes
         self._routes_added = False
-        self.last_job: RunningJob | None = None  # the footer's outcome line
         # Session events -> regions. `tabs` is NOT on spec/results: Edit
         # criteria stages on every control change, and rebuilding the tab
         # would destroy the control being typed in. Tabs follow the
         # selection, the job (the lock reason), and an act error.
         self.session.on(
-            "spec", lambda e: self._refresh("header", "tests", "centre", "drawer")
+            "spec",
+            lambda e: self._refresh("header", "tests", "centre", "drawer", "jobs"),
         )
         self.session.on(
             "results", lambda e: self._refresh("tests", "centre", "leaf_error")
@@ -168,7 +168,6 @@ class Shell:
         if event.get("state") in ("finished", "failed"):
             # A lock refusal shown in a tab is about a job that is now over.
             self.errors.clear()
-            self.last_job = event["job"]
         # Unconditional, for every state including `written`: the `results`
         # event deliberately skips `tabs`, so this is what re-renders a
         # panel's rows after a store write.
@@ -536,18 +535,21 @@ class Shell:
         say went wrong, then the store writes' lines and the artifacts.
         Nothing here may raise — a malformed snapshot renders what it has."""
         job = self.session.running
+        last = self.session.last_job
         ui.label(f"running: {job.label}" if job else "no job running")
         if job is not None:
             self._progress_rows(job)
-        elif self.last_job is not None:
-            last = self.last_job
+        elif last is not None:
             if last.error is None:
                 ui.label(f"finished: {last.label}")
+                # Only a job that succeeded reloaded the results, so only its
+                # rows are its own: after a failure the failed line stands
+                # alone rather than over the previous run's messages.
+                self._result_rows(last)
             else:
                 ui.label(
                     f"failed: {last.label} — {type(last.error).__name__}: {last.error}"
                 ).classes("text-negative")
-            self._result_rows(last)
         for notice in self.session.notices:
             ui.label(notice).classes("text-xs")
         for artifact in self.session.artifacts:
@@ -557,7 +559,12 @@ class Shell:
     def _progress_rows(self, job: RunningJob) -> None:
         """One row per scoped test in the snapshot — but only a snapshot this
         job wrote: a ``start_wall`` older than the job's start belongs to the
-        previous run (the same guard `dashboard_render` applies to a sidecar)."""
+        previous run (the same guard `dashboard_render` applies to a sidecar).
+        The slack is small because the job's own snapshot can never be older
+        than ``started_wall`` — that is sampled before the thread starts, the
+        reporter's inside ``run_tests`` — so it only ever admits a stale one,
+        and a sub-second rerun re-clicked at once would show the last run's
+        rows. Every shape here is whatever a file on disk held."""
         project = self.session.project
         work_dir = project.config.work_dir if project is not None else None
         if work_dir is None:
@@ -565,12 +572,19 @@ class Shell:
         status = read_status(work_dir)
         if status is None:
             return
-        if (status.get("start_wall") or 0.0) < job.started_wall - 1.0:
+        start_wall = status.get("start_wall")
+        if not isinstance(start_wall, (int, float)):
+            start_wall = 0.0
+        if start_wall < job.started_wall - 0.1:
             return
-        for row in status.get("tests") or []:
-            if not isinstance(row, dict) or row.get("model_id") not in job.models:
+        rows = status.get("tests")
+        if not isinstance(rows, list):
+            rows = []
+        for row in rows:
+            model_id = row.get("model_id") if isinstance(row, dict) else None
+            if not isinstance(model_id, str) or model_id not in job.models:
                 continue
-            parts = [str(row.get("model_id"))]
+            parts = [model_id]
             for key in ("status", "phase"):
                 if row.get(key):
                     parts.append(str(row[key]))

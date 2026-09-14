@@ -134,6 +134,9 @@ class Session:
         )
         self.selection = Selection()
         self.running: RunningJob | None = None
+        #: The job that ran last, whatever its outcome — the job panel's
+        #: outcome line. Project-scoped: LibA's outcome is not LibB's.
+        self.last_job: RunningJob | None = None
         self.comparisons: dict[str, TestComparison] = {}
         self.artifacts: list[Artifact] = []
         self.notices: list[str] = []
@@ -194,6 +197,7 @@ class Session:
         # fails leaves the live project's panel as it was. The recorded-backend
         # warning is this project's first notice, so the job panel shows it.
         self.notices = [warning] if warning else []
+        self.last_job = None
         self._emit("spec", models={t.model_id for t in tests})
         self._reload_results()
 
@@ -202,6 +206,7 @@ class Session:
         self.project = None
         self.artifacts = []
         self.notices = []
+        self.last_job = None
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
         self.selection = Selection()
@@ -478,11 +483,12 @@ class Session:
         ).start()
 
     def _finish_job(self, job: RunningJob, reloads_results: bool) -> None:
-        """Release the lock, reload if the job asked and succeeded, tell the
-        listeners, mark done — the last two whatever the reload or a
-        listener does, so a waiting shell never sees a job that neither
-        finished nor failed."""
+        """Release the lock, record the job as this project's last, reload if
+        the job asked and succeeded, tell the listeners, mark done — the last
+        two whatever the reload or a listener does, so a waiting shell never
+        sees a job that neither finished nor failed."""
         self.running = None
+        self.last_job = job
         try:
             if reloads_results and job.error is None and self.project is not None:
                 self._reload_results()
@@ -712,6 +718,11 @@ class SessionView:
     @property
     def running(self) -> RunningJob | None:
         return self._session.running
+
+    @property
+    def last_job(self) -> RunningJob | None:
+        """The job that ran last in THIS project, whatever its outcome."""
+        return self._session.last_job
 
     @property
     def comparisons(self) -> Mapping[str, TestComparison]:

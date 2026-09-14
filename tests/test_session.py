@@ -910,6 +910,7 @@ class TestSessionView:
             "pending",
             "selection",
             "running",
+            "last_job",
             "comparisons",
             "artifacts",
             "notices",

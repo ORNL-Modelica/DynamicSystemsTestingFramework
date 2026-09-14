@@ -3,7 +3,6 @@ no browser. The shell is fixed and knows no capability by name."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 
@@ -216,7 +215,8 @@ async def test_the_job_panel_shows_per_test_rows_from_the_running_status(shell):
         await user.should_see("no job running")
         await user.should_not_see("simulating")
         assert shell.session.running is None
-        assert shell.last_job is not None and shell.last_job.error is None
+        last = shell.session.last_job
+        assert last is not None and last.error is None
 
 
 async def test_a_status_from_an_older_run_is_not_this_jobs_progress(shell):
@@ -242,10 +242,10 @@ async def test_a_status_from_an_older_run_is_not_this_jobs_progress(shell):
     async with user_simulation(root=shell.root) as user:
         await user.open("/")
         shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        # The `started` event refreshes `jobs`, so `_progress_rows` has
+        # already run against the stale file by the time this returns: the
+        # absence is the guard's doing, not a timer that has yet to fire.
         await user.should_see("running: rerun")
-        # The poll's first tick is at 1 s: assert the absence only after one
-        # has certainly fired, so this proves the guard and not the timer.
-        await asyncio.sleep(1.3)
         await user.should_not_see("failed")
         # Still the stale file: the gated job wrote no snapshot of its own.
         assert (
@@ -268,8 +268,8 @@ async def test_a_job_that_raises_shows_its_failure_and_the_message(shell):
         shell.session.apply(Job(run=boom, label="rerun", models=frozenset({A})))
         await user.should_see("failed: rerun", retries=20)
         await user.should_see("no omc", retries=20)
-        assert shell.last_job is not None
-        assert isinstance(shell.last_job.error, RuntimeError)
+        assert shell.session.last_job is not None
+        assert isinstance(shell.session.last_job.error, RuntimeError)
 
 
 async def test_a_store_writes_line_is_shown_in_the_footer(shell):
@@ -310,6 +310,94 @@ async def test_a_finished_jobs_failed_result_shows_its_error_message(shell):
         await user.should_see("finished: rerun", retries=20)
         await user.should_see("division by zero", retries=20)
         assert shell.session.project.results[A].error_message == "division by zero"
+
+
+async def test_a_failed_job_shows_no_result_rows_from_before_it(tmp_path):
+    """A failed job reloads nothing, so the results under it are the ones
+    that were already there — an old failure (or a bare model id, reading as
+    "ran fine") would sit under `failed:` as if this job had produced it."""
+    from dstf.authoring.capabilities import Job
+
+    cfg, work = _project(tmp_path)
+    (work / "test_0001" / "result.json").write_text(
+        json.dumps({"success": False, "error": "OLD FAILURE"}), encoding="utf-8"
+    )
+    shell = Shell()
+    shell.open(cfg, work_dir=work)
+    assert shell.session.project.results[A].error_message == "OLD FAILURE"
+
+    def boom(ctx):
+        raise RuntimeError("no omc")
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.apply(Job(run=boom, label="rerun", models=frozenset({A})))
+        await user.should_see("failed: rerun", retries=20)
+        await user.should_not_see("OLD FAILURE", retries=20)
+        # The result itself is untouched: what changed is whose outcome it is.
+        assert shell.session.project.results[A].error_message == "OLD FAILURE"
+
+
+async def test_a_malformed_status_snapshot_renders_what_it_has(shell):
+    """`_jobs` may not raise: ``status.json`` is a file, and its shapes are
+    whatever wrote it. Each bad shape drops the rows and leaves the rest of
+    the footer standing — the notice BELOW the rows is what proves a raise
+    would have been caught here, since a partial rebuild would lose it."""
+    from dstf.authoring.capabilities import Job, StoreWrite
+
+    work = shell.session.project.config.work_dir
+    good_row = {
+        "test_key": "test_0001",
+        "model_id": A,
+        "status": "running",
+        "phase": "simulating",
+        "elapsed": 0.5,
+    }
+    malformed = [
+        {"start_wall": "abc", "tests": [good_row]},
+        {"start_wall": time.time(), "tests": 5},
+        {"start_wall": time.time(), "tests": [{"model_id": ["x"]}]},
+    ]
+    gate = _Gate()
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.apply(
+            StoreWrite(run=lambda store: "stored 1", models=frozenset({B}))
+        )
+        await user.should_see("stored 1")
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await user.should_see("running: rerun")
+        for status in malformed:
+            # A good snapshot first, so the row's disappearance proves the
+            # footer was rebuilt against the bad one and not left as it was.
+            _write_status(work, start_wall=time.time(), rows=[good_row])
+            shell._refresh("jobs")
+            await user.should_see("simulating", retries=20)
+            (work / "status.json").write_text(json.dumps(status), encoding="utf-8")
+            shell._refresh("jobs")
+            await user.should_not_see("simulating", retries=20)
+            await user.should_see("running: rerun")
+            await user.should_see("stored 1")  # nothing below the rows was lost
+        gate.release.set()
+        await user.should_see("no job running", retries=20)
+
+
+async def test_the_last_jobs_outcome_is_the_projects_and_goes_with_it(shell):
+    """The last job is the Session's, not the shell's: LibA's `finished:`
+    line must not sit under "no project open" (nor under LibB after a swap)."""
+    from dstf.authoring.capabilities import Job
+
+    gate = _Gate()
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await user.should_see("running: rerun")
+        gate.release.set()
+        await user.should_see("finished: rerun", retries=20)
+        user.find("Close project").click()
+        await user.should_see("no project open")
+        await user.should_not_see("finished: rerun", retries=20)
+        assert shell.session.last_job is None
 
 
 async def test_the_pending_drawer_lists_staged_ops_by_model(shell):
