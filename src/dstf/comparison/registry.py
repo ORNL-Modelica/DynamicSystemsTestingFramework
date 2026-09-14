@@ -25,6 +25,7 @@ from .summaries import summarize_default
 from .types import ScoreSummary, VariableComparison
 
 if TYPE_CHECKING:
+    from .handles import HandleEdit
     from .metric_tree import Combinator
     from .modes import ComparisonMode
     from .tree_spec import CombinatorSpec
@@ -64,6 +65,12 @@ class MetricDescriptor:
 
     ``summarize`` turns the mode's ``VariableComparison`` into the pill
     text and criterion sentence; see :mod:`.summaries`.
+
+    ``edit_handle`` is the inverse of the mode's ``kind="handle"``
+    primitives: the raw leaf, the handle's local id and its dragged position
+    in, the new raw leaf out, :class:`~.handles.HandleEditError` for a drag
+    the leaf cannot take; see :mod:`.handles`. ``None`` for a metric no drag
+    edits (the builtins ``nrmse`` and ``event-timing``).
     """
 
     name: str
@@ -75,6 +82,8 @@ class MetricDescriptor:
     #: One leaf's verdict in words. The default is NRMSE-shaped; every
     #: builtin supplies its own in :mod:`.builtins`.
     summarize: Callable[[VariableComparison], ScoreSummary] = summarize_default
+    #: A drag on one of the mode's handles, as the new raw leaf.
+    edit_handle: Callable[[HandleEdit], dict] | None = None
 
 
 @dataclass(frozen=True)

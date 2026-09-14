@@ -10,6 +10,12 @@ turns into a configured mode.
 from __future__ import annotations
 
 from ..backends.types import DatasetType
+from .handles import (
+    edit_bound_handle,
+    edit_peaks_handle,
+    edit_points_handle,
+    edit_tube_handle,
+)
 from .metric_tree import (
     AndCombinator,
     KOfNCombinator,
@@ -144,6 +150,7 @@ def register_builtins() -> None:
             # Tube's score is the fraction of samples inside the envelope.
             score_direction="higher",
             summarize=summarize_tube,
+            edit_handle=edit_tube_handle,
         )
     )
     register_metric(
@@ -153,6 +160,7 @@ def register_builtins() -> None:
             build=_build_points,
             score_direction="lower",
             summarize=summarize_points,
+            edit_handle=edit_points_handle,
         )
     )
     register_metric(
@@ -162,6 +170,7 @@ def register_builtins() -> None:
             build=_build_range,
             score_direction="lower",
             summarize=summarize_range,
+            edit_handle=edit_bound_handle,
         )
     )
     register_metric(
@@ -180,6 +189,7 @@ def register_builtins() -> None:
             build=_build_dominant_frequency,
             score_direction="lower",
             summarize=summarize_dominant_frequency,
+            edit_handle=edit_peaks_handle,
         )
     )
     register_metric(
@@ -195,6 +205,7 @@ def register_builtins() -> None:
             # The only builtin whose ``quantity`` names its data source.
             accepts_quantity=True,
             summarize=summarize_scalar,
+            edit_handle=edit_bound_handle,
         )
     )
 
