@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from ..backends.types import DatasetType
 from .handles import (
-    edit_bound_handle,
     edit_peaks_handle,
     edit_points_handle,
+    edit_range_handle,
+    edit_scalar_handle,
     edit_tube_handle,
 )
 from .metric_tree import (
@@ -170,7 +171,7 @@ def register_builtins() -> None:
             build=_build_range,
             score_direction="lower",
             summarize=summarize_range,
-            edit_handle=edit_bound_handle,
+            edit_handle=edit_range_handle,
         )
     )
     register_metric(
@@ -205,7 +206,7 @@ def register_builtins() -> None:
             # The only builtin whose ``quantity`` names its data source.
             accepts_quantity=True,
             summarize=summarize_scalar,
-            edit_handle=edit_bound_handle,
+            edit_handle=edit_scalar_handle,
         )
     )
 

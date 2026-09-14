@@ -317,13 +317,24 @@ def _refuse_shared_time(edit: HandleEdit, rows: list, i: int, t: float) -> None:
 # -- range / scalar bounds -----------------------------------------------------
 
 
-def edit_bound_handle(edit: HandleEdit) -> dict:
-    """``<metric>/min`` and ``<metric>/max`` → ``min_value`` / ``max_value``,
-    from ``y``; ``x`` is ignored. ``<metric>`` is the leaf's own metric
-    (``range`` and ``scalar`` share this editor). Refused when the result
-    has ``min_value > max_value``; equal bounds are accepted for ``range``
-    and refused for ``scalar``, whose ``modes._validate_scalar_config``
-    requires ``min_value < max_value``."""
+def edit_range_handle(edit: HandleEdit) -> dict:
+    """``range/min`` and ``range/max`` → ``min_value`` / ``max_value``, from
+    ``y``; ``x`` is ignored. Refused when the result has ``min_value >
+    max_value``; equal bounds are accepted."""
+    return _edit_bounds(edit, strict=False)
+
+
+def edit_scalar_handle(edit: HandleEdit) -> dict:
+    """``scalar/min`` and ``scalar/max`` → ``min_value`` / ``max_value``, from
+    ``y``; ``x`` is ignored. Refused when the result has ``min_value >=
+    max_value`` — ``modes._validate_scalar_config`` requires them strictly
+    ordered."""
+    return _edit_bounds(edit, strict=True)
+
+
+def _edit_bounds(edit: HandleEdit, *, strict: bool) -> dict:
+    """The shared rule; ``<metric>`` in the local id is the leaf's own
+    metric."""
     _check_position(edit)
     family = edit.leaf.get("metric")
     if not isinstance(family, str):
@@ -343,7 +354,7 @@ def edit_bound_handle(edit: HandleEdit) -> dict:
             raise _refuse(
                 edit, f"min_value {_num(lo)} would exceed max_value {_num(hi)}"
             )
-        if family == "scalar" and lo == hi:
+        if strict and lo == hi:
             raise _refuse(
                 edit,
                 f"min_value {_num(lo)} would equal max_value {_num(hi)}; "
