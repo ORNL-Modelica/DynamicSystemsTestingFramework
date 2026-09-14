@@ -130,7 +130,7 @@ def _interactive_review(
 
             if choice == "a" and has_result:
                 # If variables were added, re-read the .mat to resolve them
-                if added_patterns and test:
+                if added_patterns:
                     test.variable_patterns = list(
                         set(test.variable_patterns + added_patterns)
                     )
@@ -144,12 +144,13 @@ def _interactive_review(
                 # trajectory (leftover B: it must not crash the loop) and a
                 # test the last run left pending — and stores no baseline for
                 # a simulate-only test, which it reports as neither.
-                if test is not None:
-                    stored, skipped = accept_run_results(
-                        store, [test], {test.model_id: result}, config.work_dir
-                    )
-                else:
-                    stored, skipped = 0, [(model_id, "no test definition")]
+                # `test` is never missing on the `[a]` path: `cmd_run` builds
+                # `comparisons` from the same `scope_tests` it passes as
+                # `tests`, and a caller passing no tests has no result either,
+                # so `has_result` keeps the branch out of reach.
+                stored, skipped = accept_run_results(
+                    store, [test], {test.model_id: result}, config.work_dir
+                )
                 if stored:
                     n_vars = len(result.variables) if result.variables else 0
                     print(f"  {GREEN}Accepted ({n_vars} variables).{RESET}\n")

@@ -755,6 +755,29 @@ class TestInteractiveReviewExitCode:
         assert "re-run before accepting" in capsys.readouterr().out
         assert not list(store.ref_dir.glob("ref_*.json"))
 
+    def test_a_simulate_only_test_stores_nothing_and_still_exits_zero(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """A simulate-only test is neither stored nor skipped by the accept
+        function; the loop reports that outcome and counts it as skipped.
+        The exit code stays 0 — the comparison passed, so nothing the loop
+        passed over is still failing."""
+        config, store = _review_env(tmp_path, {"Lib.S": "passed"})
+        test = _mk_test("Lib.S", simulate_only=True)
+        _feed_inputs(monkeypatch, ["a"])
+        rc = _interactive_review(
+            [test],
+            {"Lib.S": _mk_result("Lib.S")},
+            [_FakeComp("Lib.S")],
+            store,
+            config,
+        )
+        out = capsys.readouterr().out
+        assert "simulate-only test: no baseline stored" in out
+        assert "Done. Accepted 0, skipped 1." in out
+        assert store.index.get_id("Lib.S") is None
+        assert rc == 0
+
 
 # ---------------------------------------------------------------------------
 # Finding 63 — case-sensitive filter matching on every OS
