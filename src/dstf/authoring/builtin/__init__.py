@@ -9,6 +9,7 @@ from ..capabilities import register_capability, registered_capabilities
 def register_builtins() -> None:
     """Idempotent, like ``comparison.builtins.register_builtins``."""
     names = {c.name for c in registered_capabilities()}
+    from .accept import Accept
     from .edit_criteria import EditCriteria
     from .edit_tree import EditTree
 
@@ -16,3 +17,5 @@ def register_builtins() -> None:
         register_capability(EditCriteria())
     if EditTree.name not in names:
         register_capability(EditTree())
+    if Accept.name not in names:
+        register_capability(Accept())

@@ -13,7 +13,7 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.app import Shell  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from test_session import A, D, _Gate, _project  # noqa: E402
+from test_session import A, B, C, D, _Gate, _project  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -411,3 +411,66 @@ async def test_edit_tree_wrap_add_remove_and_combinator_edits(shell):
         user.find(marker="remove:/metrics/children/1").click()
         await user.should_see("k-of-n k=1 [1]")  # the centre's root row
         assert len(shell.session.tree(A)["children"]) == 1
+
+
+# -- Accept (§4.6 table, §4.7) --------------------------------------------
+
+
+async def test_accept_is_greyed_without_a_result_and_stores_the_rest(shell):
+    """C has no result and is `pending` in the batch manifest, so the shared
+    accept function refuses it; A and B are stored, and the reload flips
+    their verdicts."""
+    import json
+
+    from dstf.reporting.status import PASS, classify
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={C})
+        await user.should_see("no successful result in the selection")
+        shell.session.select(tests={A, B, C})
+        await user.should_see("Accept")
+        user.find("Accept").click()  # the tab (lowest id); the button reads "Accept 2"
+        await user.should_see("Accept 2")  # names what it will store: A and B
+        await user.should_see("re-run before accepting")  # C's row, from the manifest
+        user.find("Accept 2").click()
+        # The written event refreshes the tabs: B's row carries its new verdict.
+        await user.should_see(f"{B} · {PASS}", retries=20)
+        notice = shell.session.notices[-1]
+        assert notice.startswith("Accept: stored 2")
+        assert C in notice and "re-run before accepting" in notice
+        assert classify(shell.session.comparisons[B]) == PASS  # NO_REF -> PASS
+        assert classify(shell.session.comparisons[A]) == PASS  # re-baselined
+        rid = shell.session.project.store.index.get_id(B)
+        assert rid == "0004"  # A, D and G hold 0001-0003
+        raw = (
+            shell.session.project.config.reference_dir / f"ref_{rid}.json"
+        ).read_bytes()
+        assert b"\r" not in raw and json.loads(raw)["model_id"] == B
+
+
+def test_accept_act_returns_a_store_write_over_the_selection(shell):
+    """`act` is pure: the StoreWrite names the selection and its `run`
+    reports one line — what it stored and what it refused."""
+    from dstf.authoring.builtin.accept import Accept
+    from dstf.authoring.capabilities import StoreWrite
+
+    shell.session.select(tests={A, B, C})
+    out = Accept().act(shell.view)
+    assert isinstance(out, StoreWrite) and out.models == {A, B, C}
+    line = out.run(shell.session.project.store)
+    assert line.startswith("Accept: stored 2") and C in line
+
+
+async def test_accept_is_greyed_while_a_selected_test_is_locked(shell):
+    from dstf.authoring.capabilities import Job
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={A})
+        await user.should_see("Accept")
+        gate = _Gate()
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await user.should_see(f"rerun is running on {A}")
+        gate.release.set()
+        await user.should_see("no job running", retries=20)
