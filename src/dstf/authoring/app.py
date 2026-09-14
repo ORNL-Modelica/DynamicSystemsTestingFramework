@@ -232,7 +232,7 @@ class ShellPanel:
 
     figure: FigureHookProtocol
 
-    def __init__(self, shell: Shell, cap: Capability, figure: FigureHook):
+    def __init__(self, shell: Shell, cap: Capability, figure: FigureHookProtocol):
         self._shell, self._cap, self.figure = shell, cap, figure
 
     def submit(self, **inputs: Any) -> None:
@@ -267,10 +267,20 @@ class Shell:
         self._plot_key: tuple[str, str, tuple[str, ...]] | None = None
         self._figure_dirty = False
         self._figure_rev = 0  # stamped as `layout.editrevision`
-        # Session events -> regions. `tabs` is NOT on spec/results: Edit
-        # criteria stages on every control change, and rebuilding the tab
-        # would destroy the control being typed in. Tabs follow the
-        # selection, the job (the lock reason), and an act error.
+        # The capability panels: one slot (container, capability) per
+        # available capability, rebuilt in place by `_fill_slot`; the tab
+        # panels element whose `value` is the active tab; the capability
+        # whose `act` is running; and the slots a rebuild deferred out of a
+        # figure-hook dispatch owes (`_tick` performs it), None for none.
+        self._slots: dict[str, tuple[ui.element, Capability]] = {}
+        self._tab_panels: ui.tab_panels | None = None
+        self._acting: Capability | None = None
+        self._panels_pending: set[str] | None = None
+        # Session events -> regions. The whole `tabs` region is NOT on
+        # spec/results: Edit criteria stages on every control change, and
+        # rebuilding the tab would destroy the control being typed in. Tabs
+        # follow the selection, the job (the lock reason) and a close; the
+        # panels inside them follow `results` slot by slot (`_follow_panels`).
         self.session.on("spec", self._on_spec)
         self.session.on("results", self._on_results)
         self.session.on("job", self._on_job)
@@ -297,10 +307,56 @@ class Shell:
     def _on_spec(self, event: dict) -> None:
         self._refresh("header", "tests", "drawer", "jobs")
         self._follow_centre()
+        if self.session.project is None:
+            # A close emits only `spec` — no rescore, so no `results` for
+            # the panels to follow — and resets the selection.
+            self._refresh("tabs")
 
     def _on_results(self, event: dict) -> None:
         self._refresh("tests", "leaf_error")
         self._follow_centre()
+        self._follow_panels()
+
+    def _follow_panels(self) -> None:
+        """Rebuild every capability's panel after a rescore, so none shows —
+        or re-stages on its next keystroke — a leaf another capability, a
+        Discard, a Save or a Reload has since changed. On `results`, not
+        `spec`: `spec` fires before the rescore, and a panel rebuilt there
+        would read the old comparisons.
+
+        The acting capability's own slot is skipped while its panel-originated
+        act runs (the field being typed in survives); an act from the figure
+        hook rebuilds it too, and is deferred to `_tick`, because a rebuild
+        inside the dispatch would clear and replace the handlers of every
+        other subscriber to that event before they heard it. A changed set
+        of available capabilities rebuilds the tabs instead. Nothing before
+        the page is built: `Shell.open` runs before `root`."""
+        if not self._built:
+            return
+        if self.figure_hook.dispatching:
+            self._panels_pending = (self._panels_pending or set()) | set(self._slots)
+            return
+        skip = self._acting.name if self._acting is not None else None
+        self._rebuild_panels({name for name in self._slots if name != skip})
+
+    def _rebuild_panels(self, names: set[str]) -> None:
+        """The tabs, when the available capabilities changed; otherwise the
+        slots ``names`` names."""
+        available = [cap.name for cap, avail in self.applicable() if avail is True]
+        if available != list(self._slots):
+            self._refresh("tabs")
+            return
+        for name in list(self._slots):
+            if name in names:
+                self._fill_slot(self._slots[name][1])
+
+    def _fill_slot_later_or_now(self, cap: Capability) -> None:
+        """One capability's slot: now, or at the next tick while the figure
+        hook is dispatching (see `_follow_panels`)."""
+        if self.figure_hook.dispatching:
+            self._panels_pending = (self._panels_pending or set()) | {cap.name}
+        else:
+            self._fill_slot(cap)
 
     def _follow_centre(self) -> None:
         """Redraw the centre after a spec, results or selection event. While
@@ -378,9 +434,10 @@ class Shell:
         if event.get("state") in ("finished", "failed"):
             # A lock refusal shown in a tab is about a job that is now over.
             self.errors.clear()
-        # Unconditional, for every state including `written`: the `results`
-        # event deliberately skips `tabs`, so this is what re-renders a
-        # panel's rows after a store write.
+        # Unconditional, for every state including `written`: `results`
+        # rebuilds panels but not the tabs (a lock reason), and skips the
+        # acting capability's own panel, so this is what re-renders the rows
+        # of the panel whose act made the store write.
         self._refresh("jobs", "tests", "tabs")
 
     def _refresh(self, *regions: str) -> None:
@@ -417,15 +474,20 @@ class Shell:
     def act(self, cap: Capability, **inputs: Any) -> None:
         """``Panel.submit`` lands here: the capability's ``act``, then the
         Session applies the outcome. An exception is shown in the tab and
-        the Session is what it was."""
+        the Session is what it was. While it runs the capability is
+        ``_acting``: the panels the outcome's events rebuild skip its own."""
         try:
-            outcome = cap.act(self.view, **inputs)
-            self.session.apply(outcome)
+            was, self._acting = self._acting, cap
+            try:
+                outcome = cap.act(self.view, **inputs)
+                self.session.apply(outcome)
+            finally:
+                self._acting = was
             if self.errors.pop(cap.name, None) is not None:
-                self._refresh("tabs")
+                self._fill_slot_later_or_now(cap)  # the error it showed is gone
         except Exception as e:  # shown in the tab, never raised into NiceGUI
             self.errors[cap.name] = f"{type(e).__name__}: {e}"
-            self._refresh("tabs")
+            self._fill_slot_later_or_now(cap)
 
     # -- the page ----------------------------------------------------------
 
@@ -475,13 +537,17 @@ class Shell:
         """Drain what worker threads posted (a job's completion); the
         Session events it emits refresh the regions. Then, if a spec or
         results event (or a shape drag) marked the centre figure dirty and
-        the plot still shows the same key, redraw it in place, once."""
+        the plot still shows the same key, redraw it in place, once. Before
+        either, the panel rebuilds a figure-hook dispatch deferred."""
         while True:
             try:
                 fn = self._posted.get_nowait()
             except queue.Empty:
                 break
             fn()
+        if self._panels_pending is not None and not self.figure_hook.dispatching:
+            names, self._panels_pending = self._panels_pending, None
+            self._rebuild_panels(names)
         if not self._figure_dirty:
             return
         self._figure_dirty = False
@@ -723,6 +789,11 @@ class Shell:
 
     @ui.refreshable_method
     def _tabs(self) -> None:
+        # A slot from the previous build has a deleted container: none may
+        # survive into this one.
+        self._slots = {}
+        previous = self._tab_panels.value if self._tab_panels is not None else None
+        self._tab_panels = None
         self.figure_hook.clear()  # every panel below registers afresh
         applicable = self.applicable()
         if not applicable:
@@ -735,11 +806,15 @@ class Shell:
                     tab.disable()
                     if isinstance(avail, str):
                         tab.tooltip(avail)
-        first = next(
-            (cap.label for cap, avail in applicable if avail is True),
-            applicable[0][0].label,
+        enabled = [cap.label for cap, avail in applicable if avail is True]
+        # The active tab is kept when it is still available.
+        active = (
+            previous
+            if previous in enabled
+            else (enabled[0] if enabled else applicable[0][0].label)
         )
-        with ui.tab_panels(tabs, value=first).classes("w-full"):
+        with ui.tab_panels(tabs, value=active).classes("w-full") as panels:
+            self._tab_panels = panels
             for cap, avail in applicable:
                 with ui.tab_panel(cap.label):
                     if avail is not True:
@@ -747,18 +822,39 @@ class Shell:
                             avail if isinstance(avail, str) else "not available"
                         ).classes("text-grey")
                         continue
-                    if cap.name in self.errors:
-                        ui.label(self.errors[cap.name]).classes("text-negative")
-                    if cap.scope is Scope.LEAF:
-                        self._leaf_error()
-                    cap.panel(self.view, ShellPanel(self, cap, self.figure_hook))
+                    self._slots[cap.name] = (ui.column().classes("w-full"), cap)
+                    self._fill_slot(cap)
+
+    def _fill_slot(self, cap: Capability) -> None:
+        """Build (or rebuild in place) ``cap``'s panel in its slot: its
+        error, the leaf's config error for a LEAF-scope panel, the panel.
+        The capability's previous hook handlers go with the old panel. A
+        panel whose build raises shows the exception here, and the other
+        tabs still render. The active tab is untouched."""
+        slot = self._slots.get(cap.name)
+        if slot is None or slot[0].is_deleted:
+            return
+        container = slot[0]
+        container.clear()
+        self.figure_hook.clear(cap.name)
+        with container:
+            if cap.name in self.errors:
+                ui.label(self.errors[cap.name]).classes("text-negative")
+            if cap.scope is Scope.LEAF:
+                self._leaf_error()
+            try:
+                cap.panel(
+                    self.view, ShellPanel(self, cap, self.figure_hook.owned(cap.name))
+                )
+            except Exception as e:  # shown in the slot, never breaks the page
+                ui.label(f"{type(e).__name__}: {e}").classes("text-negative")
 
     @ui.refreshable_method
     def _leaf_error(self) -> None:
         """The selected leaf's config error, above every LEAF-scope panel
-        (§4.7 "inline on its form"), refreshed on every rescore — the panel
-        itself is not rebuilt on results, so the capability cannot keep
-        this current and the shell does."""
+        (§4.7 "inline on its form"), refreshed on every rescore — the
+        acting panel is not rebuilt by its own act's rescore, so the
+        capability cannot keep this current and the shell does."""
         sel = self.session.selection
         if len(sel.tests) != 1 or sel.leaf_path is None:
             return

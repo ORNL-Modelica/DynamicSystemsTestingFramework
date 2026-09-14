@@ -62,7 +62,9 @@ class EditCriteria:
         model_id = next(iter(sel.tests))
         path = sel.leaf_path or ""
         leaf = _leaf_node(s.tree_view(model_id), path)
-        if leaf is None:
+        # The panel is rebuilt after edits made elsewhere: Edit tree wrapping
+        # the selected leaf leaves the selection's path naming a combinator.
+        if leaf is None or leaf.get("kind") != "leaf":
             ui.label("this leaf is not in the scored tree")
             return
         state: dict[str, Any] = {

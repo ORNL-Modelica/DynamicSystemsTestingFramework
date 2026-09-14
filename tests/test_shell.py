@@ -1449,3 +1449,361 @@ async def test_a_tree_row_click_keeps_the_plot_element(shell):
         await asyncio.sleep(0.25)  # a deferred centre rebuild would have run
         assert not plot.is_deleted
         assert [p.id for p in user.find(ui.plotly).elements] == [plot.id]
+
+
+# -- panels follow edits made elsewhere (Conventions call 6) ----------------
+
+
+def _range_leaf(max_value: float) -> dict:
+    from test_handles import TREE
+
+    return {**TREE["children"][1], "max_value": max_value}
+
+
+def _stage_tree_on_d(shell) -> None:
+    from dstf.authoring.spec_document import PatchOp
+    from test_handles import TREE
+
+    shell.session.stage([PatchOp(D, "add", "/metrics", TREE)])
+
+
+class _Setter:
+    """VARIABLE scope; its panel is one input and one relayout handler; its
+    act replaces D's child 1 with the ``leaf`` it is given (or raises
+    ``boom``). ``on_relayout`` is what the handler does; ``builds`` counts
+    panel builds."""
+
+    name, label, scope = "setter", "Setter", caps.Scope.VARIABLE
+
+    def __init__(self):
+        self.ui_panel = None
+        self.builds = 0
+        self.relayouts: list[str] = []
+        self.on_relayout = None
+
+    def available(self, s):
+        return True
+
+    def panel(self, s, ui_panel):
+        self.ui_panel = ui_panel
+        self.builds += 1
+        ui.input("setter").mark("setter-input")
+        ui_panel.figure.on("plotly_relayout", self._relayout)
+
+    def _relayout(self, primitive, payload):
+        self.relayouts.append(primitive)
+        if self.on_relayout is not None:
+            self.on_relayout()
+
+    def act(self, s, **inputs):
+        from dstf.authoring.capabilities import Patch
+        from dstf.authoring.spec_document import PatchOp
+
+        if "boom" in inputs:
+            raise RuntimeError(inputs["boom"])
+        return Patch(ops=[PatchOp(D, "replace", "/metrics/children/1", inputs["leaf"])])
+
+
+class _Listener:
+    """A second relayout subscriber that never acts."""
+
+    name, label, scope = "listener", "Listener", caps.Scope.VARIABLE
+
+    def __init__(self):
+        self.builds = 0
+        self.relayouts: list[str] = []
+
+    def available(self, s):
+        return True
+
+    def panel(self, s, ui_panel):
+        self.builds += 1
+        ui_panel.figure.on(
+            "plotly_relayout",
+            lambda primitive, payload: self.relayouts.append(primitive),
+        )
+
+    def act(self, s, **inputs):
+        return None
+
+
+async def _open_on_range_leaf(shell, user) -> None:
+    """The page on D's range leaf (child 1), Edit criteria's form drawn."""
+    await user.open("/")
+    shell.session.select(tests={D}, variable="x", leaf_path="/metrics/children/1")
+    await user.should_see("Edit criteria")
+    await user.should_see("Upper bound")
+
+
+def _upper_bound(user):
+    """Edit criteria's range `max_value` control's value, None while absent."""
+    try:
+        (number,) = user.find(kind=ui.number, content="Upper bound (optional)").elements
+    except (AssertionError, ValueError):
+        return None
+    return number.value
+
+
+def _setter_input_id(user):
+    (element,) = user.find(marker="setter-input").elements
+    return element.id
+
+
+async def test_a_panel_follows_an_edit_another_capability_staged(shell):
+    setter = _Setter()
+    caps.register_capability(setter)
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        assert _upper_bound(user) == 2.0
+        setter.ui_panel.submit(leaf=_range_leaf(3.0))
+        await _settled(lambda: shell.session.tree(D)["children"][1]["max_value"] == 3.0)
+        await _settled(lambda: _upper_bound(user) == 3.0)
+        assert "setter" not in shell.errors
+
+
+async def test_the_actors_own_slot_is_not_rebuilt_by_its_panel_originated_act(shell):
+    setter = _Setter()
+    caps.register_capability(setter)
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        before = _setter_input_id(user)
+        setter.ui_panel.submit(leaf=_range_leaf(3.0))
+        await _settled(lambda: _upper_bound(user) == 3.0)  # the others rebuilt
+        assert shell.session.tree(D)["children"][1]["max_value"] == 3.0
+        assert _setter_input_id(user) == before
+
+
+async def test_a_figure_originated_act_rebuilds_the_actors_slot_too(shell):
+    setter = _Setter()
+    caps.register_capability(setter)
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        before = _setter_input_id(user)
+        builds = setter.builds
+        setter.on_relayout = lambda: setter.ui_panel.submit(leaf=_range_leaf(3.0))
+        # D's plot is attached; its first shape is the range leaf's min line.
+        shell.figure_hook._dispatch("plotly_relayout", {"shapes[0].y0": 1.0})
+        assert setter.relayouts == ["/metrics/children/1/range/min"]
+        assert shell.session.tree(D)["children"][1]["max_value"] == 3.0
+        await _settled(lambda: setter.builds > builds)
+        await _settled(lambda: _setter_input_id(user) != before)
+        assert _upper_bound(user) == 3.0
+
+
+async def test_slot_rebuilds_do_not_accumulate_hook_handlers(shell):
+    setter = _Setter()
+    caps.register_capability(setter)
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        for value in (2.5, 3.0, 3.5):
+            builds = setter.builds
+            setter.on_relayout = lambda v=value: setter.ui_panel.submit(
+                leaf=_range_leaf(v)
+            )
+            shell.figure_hook._dispatch("plotly_relayout", {"shapes[0].y0": 1.0})
+            await _settled(lambda b=builds: setter.builds > b)
+        assert shell.session.tree(D)["children"][1]["max_value"] == 3.5
+        owners = [
+            owner
+            for entries in shell.figure_hook._handlers.values()
+            for owner, _ in entries
+        ]
+        assert owners == ["setter"]  # what one build of each panel registers
+
+
+async def test_the_active_tab_is_kept_and_a_changed_availability_rebuilds_the_tabs(
+    shell,
+):
+    class _Late:
+        name, label, scope = "late", "Late", caps.Scope.VARIABLE
+
+        def available(self, s):
+            children = (s.tree(D) or {}).get("children") or []
+            if len(children) > 1 and children[1].get("max_value") == 3.0:
+                return True
+            return "needs D's child 1 at max 3.0"
+
+        def panel(self, s, ui_panel):
+            ui.label("late panel")
+
+        def act(self, s, **inputs):
+            return None
+
+    setter = _Setter()
+    caps.register_capability(setter)
+    caps.register_capability(_Late())
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        assert "late" not in shell._slots
+        (panels,) = user.find(ui.tab_panels).elements
+        panels.set_value("Setter")
+        setter.ui_panel.submit(leaf=_range_leaf(2.5))
+        await _settled(lambda: _upper_bound(user) == 2.5)
+        assert panels.value == "Setter" and not panels.is_deleted
+        setter.ui_panel.submit(leaf=_range_leaf(3.0))
+        await user.should_see("late panel")
+        assert "late" in shell._slots
+        (tab,) = [
+            t for t in user.find(ui.tab).elements if t._props.get("label") == "Late"
+        ]
+        assert tab.enabled
+        (rebuilt,) = user.find(ui.tab_panels).elements
+        assert rebuilt is not panels  # the tabs were rebuilt ...
+        assert rebuilt.value == "Setter"  # ... and the active tab kept
+        assert shell.session.tree(D)["children"][1]["max_value"] == 3.0
+
+
+async def test_an_act_that_raises_shows_in_the_actors_slot(shell):
+    setter = _Setter()
+    caps.register_capability(setter)
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        (panels,) = user.find(ui.tab_panels).elements
+        panels.set_value("Setter")
+        pending = list(shell.session.spec.pending)
+        tree = shell.session.tree(D)
+        setter.ui_panel.submit(boom="act boom")
+        await user.should_see("RuntimeError: act boom")
+        (label,) = user.find(kind=ui.label, content="RuntimeError: act boom").elements
+        assert _inside(label, shell._slots["setter"][0])
+        assert shell.errors == {"setter": "RuntimeError: act boom"}
+        assert panels.value == "Setter" and not panels.is_deleted
+        assert shell.session.spec.pending == pending
+        assert shell.session.tree(D) == tree
+
+
+async def test_a_panel_whose_build_raises_shows_the_error_in_its_slot(shell):
+    class _Broken:
+        name, label, scope = "broken", "Broken", caps.Scope.VARIABLE
+
+        def available(self, s):
+            return True
+
+        def panel(self, s, ui_panel):
+            raise RuntimeError("panel boom")
+
+        def act(self, s, **inputs):
+            return None
+
+    caps.register_capability(_Broken())
+    caps.register_capability(_Setter())
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        await user.should_see("RuntimeError: panel boom")
+        (label,) = user.find(kind=ui.label, content="RuntimeError: panel boom").elements
+        assert _inside(label, shell._slots["broken"][0])
+        assert _upper_bound(user) == 2.0  # the other tabs still render
+        assert user.find(marker="setter-input").elements
+
+
+async def test_panels_follow_a_discard(tmp_path):
+    from test_handles import TREE
+
+    cfg, work = _project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    (entry,) = [e for e in spec["tests"] if e["model"] == D]
+    entry["metrics"] = TREE
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    shell = Shell()
+    shell.open(cfg, work_dir=work)
+    assert shell.session.spec.pending == []  # loaded, not pending
+    setter = _Setter()
+    caps.register_capability(setter)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        assert _upper_bound(user) == 2.0
+        setter.ui_panel.submit(leaf=_range_leaf(3.0))
+        await _settled(lambda: _upper_bound(user) == 3.0)
+        user.find("Discard").click()
+        await _settled(lambda: shell.session.spec.pending == [])
+        await _settled(lambda: _upper_bound(user) == 2.0)
+        assert shell.session.tree(D)["children"][1]["max_value"] == 2.0
+
+
+async def test_a_success_clears_the_actors_old_error(shell):
+    setter = _Setter()
+    caps.register_capability(setter)
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        setter.ui_panel.submit(boom="act boom")
+        await user.should_see("RuntimeError: act boom")
+        setter.ui_panel.submit(leaf=_range_leaf(3.0))
+        await _settled(lambda: _upper_bound(user) == 3.0)
+        assert "setter" not in shell.errors
+        slot = shell._slots["setter"][0]
+        assert not [
+            e
+            for e in slot.descendants()
+            if isinstance(e, ui.label) and "act boom" in str(e.text)
+        ]
+
+
+async def test_panels_read_the_rescored_comparisons(shell):
+    from dstf.figures.assemble import leaves_by_variable
+
+    class _Paths:
+        name, label, scope = "paths", "Paths", caps.Scope.VARIABLE
+
+        def available(self, s):
+            return True
+
+        def panel(self, s, ui_panel):
+            for path, _ in leaves_by_variable(s.comparisons[D].metric_tree)["x"]:
+                ui.label(path)
+
+        def act(self, s, **inputs):
+            return None
+
+    caps.register_capability(_Paths())
+    _stage_tree_on_d(shell)
+    edit_tree = next(c for c in caps.registered_capabilities() if c.name == "edit-tree")
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+
+        def paths_shown() -> list[str]:
+            slot = shell._slots["paths"][0]
+            return [str(e.text) for e in slot.descendants() if isinstance(e, ui.label)]
+
+        assert "/metrics/children/1" in paths_shown()
+        shell.act(
+            edit_tree,
+            action="wrap",
+            model_id=D,
+            path="/metrics/children/1",
+            kind="warn",
+        )
+        assert shell.errors == {}
+        assert shell.session.tree(D)["children"][1]["combinator"] == "warn"
+        await _settled(lambda: "/metrics/children/1/children/0" in paths_shown())
+        assert "/metrics/children/1" not in paths_shown()
+
+
+async def test_a_rebuild_is_deferred_out_of_the_figure_hooks_dispatch(shell):
+    """Two subscribers to one event, the first acting on it: a rebuild inside
+    the dispatch would clear the second's handler before it heard the event."""
+    setter, listener = _Setter(), _Listener()
+    caps.register_capability(setter)
+    caps.register_capability(listener)
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        builds = (setter.builds, listener.builds)
+        setter.on_relayout = lambda: setter.ui_panel.submit(leaf=_range_leaf(3.0))
+        shell.figure_hook._dispatch("plotly_relayout", {"shapes[0].y0": 1.0})
+        assert (setter.builds, listener.builds) == builds  # not inside it
+        assert setter.relayouts == ["/metrics/children/1/range/min"]
+        assert listener.relayouts == ["/metrics/children/1/range/min"]
+        assert shell.session.tree(D)["children"][1]["max_value"] == 3.0
+        await _settled(
+            lambda: setter.builds > builds[0] and listener.builds > builds[1]
+        )
+        assert _upper_bound(user) == 3.0

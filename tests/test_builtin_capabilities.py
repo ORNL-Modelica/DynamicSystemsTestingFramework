@@ -674,3 +674,41 @@ async def test_rerun_names_the_backend_and_is_greyed_while_a_job_runs(shell):
         gate.release.set()
         await user.should_see("no job running", retries=20)
         assert Rerun().available(shell.view) is True
+
+
+async def test_edit_criteria_follows_a_wrap_of_its_leaf_through_the_shell(shell):
+    """Edit tree wraps the selected leaf in `warn` through `Shell.act` — the
+    path a user's click takes. The slots rebuild on the rescore, and the
+    selection's path now names the combinator: Edit criteria says so rather
+    than raising."""
+    from nicegui import app
+
+    from dstf.authoring.spec_document import PatchOp
+    from test_handles import TREE
+
+    shell.session.stage([PatchOp(D, "add", "/metrics", TREE)])
+    edit_tree = next(c for c in caps.registered_capabilities() if c.name == "edit-tree")
+    errors: list[Exception] = []
+    async with user_simulation(root=shell.root) as user:
+        app.on_exception(errors.append)
+        try:
+            await user.open("/")
+            shell.session.select(
+                tests={D}, variable="x", leaf_path="/metrics/children/1"
+            )
+            await user.should_see("Upper bound")  # Edit criteria's range form
+            shell.act(
+                edit_tree,
+                action="wrap",
+                model_id=D,
+                path="/metrics/children/1",
+                kind="warn",
+            )
+            await user.should_see("this leaf is not in the scored tree")
+            await user.should_not_see("Upper bound")
+        finally:
+            app._exception_handlers.remove(errors.append)
+    assert errors == []
+    assert shell.errors == {}
+    assert shell.session.tree(D)["children"][1]["combinator"] == "warn"
+    assert shell.session.selection.leaf_path == "/metrics/children/1"
