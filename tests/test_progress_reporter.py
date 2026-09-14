@@ -153,3 +153,17 @@ def test_reading_back_the_status_is_none_on_an_undecodable_file(tmp_path):
     document — but the reader runs in a UI timer and must not raise."""
     (tmp_path / "status.json").write_text("{", encoding="utf-8")
     assert read_status(tmp_path) is None
+
+
+def test_reading_back_the_status_is_none_on_non_utf8_bytes(tmp_path):
+    """A UTF-16 BOM decodes to a UnicodeDecodeError, not a JSONDecodeError —
+    still no traceback in the UI timer."""
+    (tmp_path / "status.json").write_bytes(b"\xff\xfe{")
+    assert read_status(tmp_path) is None
+
+
+def test_reading_back_the_status_is_none_when_the_document_is_not_an_object(tmp_path):
+    """Valid JSON, wrong shape: every caller subscripts the snapshot by name,
+    so a list is no snapshot rather than an AttributeError downstream."""
+    (tmp_path / "status.json").write_text("[]", encoding="utf-8")
+    assert read_status(tmp_path) is None

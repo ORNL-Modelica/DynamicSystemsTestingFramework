@@ -9,7 +9,6 @@ module; the value types it passes around live in
 :mod:`dstf.backends.types`.
 """
 
-import json
 import logging
 import sys
 import time
@@ -232,10 +231,10 @@ def _apply_status_verdicts(
     No-op when status.json is absent or unreadable — a work dir with neither
     record simply keeps the disk read.
     """
-    status_path = work_dir / "status.json"
-    try:
-        snap = json.loads(status_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    from .progress import read_status
+
+    snap = read_status(work_dir)
+    if snap is None:
         return
     for row in snap.get("tests", []):
         model_id = row.get("model_id")

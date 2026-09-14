@@ -61,7 +61,11 @@ def python_example_copy(tmp_path, *, baselines: bool = True):
     from dstf.discovery.test_registry import discover_tests
 
     lib = tmp_path / "lib"
-    shutil.copytree(PROJECT_ROOT / "examples" / "python" / "PythonTestingLib", lib)
+    shutil.copytree(
+        PROJECT_ROOT / "examples" / "python" / "PythonTestingLib",
+        lib,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
     ref_root = lib / "Resources" / "ReferenceResults"
     if not baselines:
         shutil.rmtree(ref_root / "Python", ignore_errors=True)

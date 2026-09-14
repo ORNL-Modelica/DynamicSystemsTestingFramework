@@ -175,7 +175,8 @@ class TestOpen:
         session = Session()
         session.open(cfg, work_dir=work)
         assert session.project.backend.quiet is True
-        assert capsys.readouterr().out == ""
+        # Both streams: the run header goes to stderr, the read phase to stdout.
+        assert capsys.readouterr() == ("", "")
 
 
 class TestRescoreAndStage:
@@ -616,6 +617,16 @@ class TestOutcomes:
         session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
         assert session.notices == ["stored 1"]
         session.close()
+        assert session.notices == []
+
+    def test_open_empties_the_notices(self, session):
+        """A notice names a project's models; an OpenProject swap calls open,
+        never close, so without this it would show in the next project's
+        panel."""
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        assert session.notices == ["stored 1"]
+        config = session.project.config
+        session.open(config.config_file, work_dir=config.work_dir)
         assert session.notices == []
 
     def test_job_runs_on_a_thread_locks_its_models_and_reloads_on_completion(

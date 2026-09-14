@@ -190,6 +190,9 @@ class Session:
         self.spec = spec
         self.selection = Selection()
         self.comparisons = {}
+        # A notice is project-scoped text ("stored 2 baselines for LibA.X"); a
+        # swap calls open, never close, and must not carry it into LibB's panel.
+        self.notices = []
         self._emit("spec", models={t.model_id for t in tests})
         self._reload_results()
 

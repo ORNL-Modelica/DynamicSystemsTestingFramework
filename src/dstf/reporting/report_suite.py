@@ -565,14 +565,11 @@ def _read_run_metadata(work_dir: Path) -> dict | None:
     """Read + shape the run provenance from ``work_dir/status.json`` for the
     per-test banner. Returns None (banner omitted) when status.json is absent,
     unreadable, or predates the ``metadata`` field. Never raises."""
-    import json as _json
-
+    from ..backends.progress import read_status
     from .dashboard_render import format_run_metadata
 
-    status_path = work_dir / "status.json"
-    try:
-        snapshot = _json.loads(status_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    snapshot = read_status(work_dir)
+    if snapshot is None:
         return None
     return format_run_metadata(snapshot.get("metadata"))
 

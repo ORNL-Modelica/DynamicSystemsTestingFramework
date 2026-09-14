@@ -247,18 +247,23 @@ def read_status(work_dir: Path) -> dict | None:
     """The last snapshot ``ProgressReporter`` wrote to *work_dir*, or ``None``
     when there is none to read.
 
-    The one reader of ``status.json``: the dashboard renderer and the
-    authoring shell's job panel both come through here. Never raises — the
-    shell calls it from a UI timer, and an unreadable snapshot is a page
-    with no progress rows, not a traceback.
+    The one reader of ``status.json``: the dashboard renderer, the backends'
+    verdict fallback, the per-test banner and the authoring shell's job panel
+    all come through here. Never raises — the shell calls it from a UI timer,
+    and an unreadable snapshot is a page with no progress rows, not a
+    traceback. ``ValueError`` covers both a malformed document
+    (``JSONDecodeError``) and bytes that are not UTF-8
+    (``UnicodeDecodeError``). A document that is valid JSON but not an object
+    reads as no snapshot: every caller subscripts it by name.
     """
     p = work_dir / "status.json"
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        snapshot = json.loads(p.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
         return None
+    return snapshot if isinstance(snapshot, dict) else None
 
 
 def recorded_backend(work_dir: Path) -> tuple[str | None, str | None]:
@@ -275,9 +280,8 @@ def recorded_backend(work_dir: Path) -> tuple[str | None, str | None]:
     say, an OpenModelica work dir against the Dymola partition. Reading the
     old key would be a compatibility path; saying so is not.
     """
-    try:
-        snap = json.loads((work_dir / "status.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    snap = read_status(work_dir)
+    if snap is None:
         return None, None
     meta = snap.get("metadata") or {}
     label = meta.get("backend_name")
