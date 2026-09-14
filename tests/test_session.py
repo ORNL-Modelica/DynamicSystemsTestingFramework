@@ -165,6 +165,21 @@ class TestOpen:
         with pytest.raises(ConfigError, match="Nonesuch"):
             Session().open(cfg, work_dir=work)
 
+    def test_a_snapshot_predating_the_backend_rename_notices_its_warning(
+        self, tmp_path
+    ):
+        """``metadata`` with no ``backend_name`` (written when the key was
+        "simulator") — ``recorded_backend``'s warning is the project's first
+        notice, so the job panel shows it."""
+        cfg, work = _project(tmp_path)
+        (work / "status.json").write_text(
+            json.dumps({"metadata": {"simulator_name": "Python"}, "tests": []})
+        )
+        session = Session()
+        session.open(cfg, work_dir=work)
+        assert any("predates the Backend rename" in n for n in session.notices)
+        assert not hasattr(session, "warnings")
+
     def test_the_projects_backend_is_quiet_and_open_narrates_nothing(
         self, tmp_path, capsys
     ):
@@ -175,7 +190,8 @@ class TestOpen:
         session = Session()
         session.open(cfg, work_dir=work)
         assert session.project.backend.quiet is True
-        # Both streams: the run header goes to stderr, the read phase to stdout.
+        # Both streams: the run header and the progress bar go to stderr, the
+        # "Reading N result files..." and "Read phase:" lines to stdout.
         assert capsys.readouterr() == ("", "")
 
 
@@ -628,6 +644,22 @@ class TestOutcomes:
         config = session.project.config
         session.open(config.config_file, work_dir=config.work_dir)
         assert session.notices == []
+
+    def test_a_failed_open_keeps_the_live_projects_notices(self, session):
+        """The reset sits at the commit point, after the Project is built:
+        hoisting it to the top of ``open`` empties a live project's panel on
+        an open that never replaces it."""
+        from dstf.config import ConfigError
+
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        config = session.project.config
+        (config.work_dir / "status.json").write_text(
+            json.dumps({"metadata": {"backend_name": "Nonesuch"}, "tests": []})
+        )
+        with pytest.raises(ConfigError, match="Nonesuch"):
+            session.open(config.config_file, work_dir=config.work_dir)
+        assert session.notices == ["stored 1"]
+        assert session.project is not None
 
     def test_job_runs_on_a_thread_locks_its_models_and_reloads_on_completion(
         self, session

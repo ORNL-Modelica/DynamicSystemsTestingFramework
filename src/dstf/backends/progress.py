@@ -253,8 +253,12 @@ def read_status(work_dir: Path) -> dict | None:
     and an unreadable snapshot is a page with no progress rows, not a
     traceback. ``ValueError`` covers both a malformed document
     (``JSONDecodeError``) and bytes that are not UTF-8
-    (``UnicodeDecodeError``). A document that is valid JSON but not an object
-    reads as no snapshot: every caller subscripts it by name.
+    (``UnicodeDecodeError``). One behaviour changed when the three former
+    readers folded into this one: a document that is valid JSON but not an
+    object (``[]``, ``null``, a bare string) now reads as no snapshot, where
+    each of them raised ``AttributeError`` on ``.get``. Every caller
+    subscripts the snapshot by name, so a non-object is no more usable than an
+    unparseable one.
     """
     p = work_dir / "status.json"
     if not p.exists():

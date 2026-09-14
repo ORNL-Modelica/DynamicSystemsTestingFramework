@@ -137,7 +137,6 @@ class Session:
         self.comparisons: dict[str, TestComparison] = {}
         self.artifacts: list[Artifact] = []
         self.notices: list[str] = []
-        self.warnings: list[str] = []
         self._post = post or (lambda fn: fn())
         self._listeners: dict[str, list[Listener]] = {}
 
@@ -159,11 +158,10 @@ class Session:
         config = Config(
             config_file=config_path, backend_name=backend, work_dir=work_dir
         )
+        warning: str | None = None
         if backend is None:
             assert config.work_dir is not None  # resolved in __post_init__
             recorded, warning = recorded_backend(config.work_dir)
-            if warning:
-                self.warnings.append(warning)
             if recorded and recorded != config.backend_name:
                 config = Config(
                     config_file=config_path, backend_name=recorded, work_dir=work_dir
@@ -192,7 +190,10 @@ class Session:
         self.comparisons = {}
         # A notice is project-scoped text ("stored 2 baselines for LibA.X"); a
         # swap calls open, never close, and must not carry it into LibB's panel.
-        self.notices = []
+        # Assigned here, at the commit point, and not on entry: an open that
+        # fails leaves the live project's panel as it was. The recorded-backend
+        # warning is this project's first notice, so the job panel shows it.
+        self.notices = [warning] if warning else []
         self._emit("spec", models={t.model_id for t in tests})
         self._reload_results()
 
@@ -201,7 +202,6 @@ class Session:
         self.project = None
         self.artifacts = []
         self.notices = []
-        self.warnings = []
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
         self.selection = Selection()
