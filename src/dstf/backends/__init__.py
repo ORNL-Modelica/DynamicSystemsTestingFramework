@@ -127,8 +127,9 @@ def get_backend_class(config: Config) -> type[Backend]:
     """Return the backend *class* for the config's backend, without instantiating.
 
     Useful for reading class-level attributes (e.g. ``artifact_files``) from
-    contexts that don't want to pay instantiation cost or trigger optional-
-    dependency import errors (FmpyBackend.__init__ imports fmpy).
+    contexts that don't want to pay instantiation cost or raise the
+    unavailable-backend ``RuntimeError`` an optional dependency's absence
+    signals (FmpyBackend.__init__ imports fmpy).
     """
     backend = config.backend
     if backend not in _REGISTRY:

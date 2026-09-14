@@ -427,7 +427,9 @@ async def test_accept_is_greyed_without_a_result_and_stores_the_rest(shell):
     async with user_simulation(root=shell.root) as user:
         await user.open("/")
         shell.session.select(tests={C})
-        await user.should_see("no successful result in the selection")
+        # C is `pending` in the batch manifest, so the tab carries its row's
+        # own reason — the same string the panel draws for it below.
+        await user.should_see("re-run before accepting")
         shell.session.select(tests={A, B, C})
         await user.should_see("Accept")
         user.find("Accept").click()  # the tab (lowest id); the button reads "Accept 2"
@@ -552,6 +554,26 @@ async def test_accept_excludes_a_result_with_no_tracked_variables(shell):
         assert Accept().available(shell.view) == NO_VARIABLES
 
 
+async def test_accept_reports_the_row_reason_and_the_empty_selection(shell):
+    """With rows to draw, the greyed tab says exactly what the first row
+    says; the generic line is left for a selection with no rows at all."""
+    from dstf.authoring.builtin.accept import SIM_FAILED, Accept
+    from dstf.backends.types import TestResult
+
+    shell.session.project.results[A] = TestResult(
+        model_id=A, success=False, variables=[], error_message="boom"
+    )
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={A})
+        assert Accept().available(shell.view) == SIM_FAILED
+        await user.should_see(SIM_FAILED)  # the greyed tab's reason
+        await user.should_not_see("Accept 0")
+        shell.session.select(tests=set())
+        assert Accept().available(shell.view) == "no successful result in the selection"
+
+
 # -- Rerun (§4.6 table, §4.7) ---------------------------------------------
 
 
@@ -605,7 +627,30 @@ def test_rerun_act_returns_a_job_over_the_selection(shell, monkeypatch):
     assert kwargs == {}  # no merge, no candidates: the scope is the run
 
 
+def test_rerun_job_run_propagates_an_unbuildable_backend(shell, monkeypatch):
+    """`run` has no `try`: a backend that cannot be built on this machine
+    raises out of the job. That is what the Session's thread body catches
+    into `job.error` (tests/test_session.py) rather than the tool reporting
+    a rerun that did nothing."""
+    from dstf.authoring.builtin import rerun as rerun_mod
+    from dstf.authoring.builtin.rerun import Rerun
+    from dstf.authoring.capabilities import JobContext
+    from dstf.backends import BackendUnavailableError
+
+    def _unavailable(config, *, persistent):
+        raise BackendUnavailableError("no omc")
+
+    monkeypatch.setattr(rerun_mod, "select_backend", _unavailable)
+
+    shell.session.select(tests={A})
+    job = Rerun().act(shell.view)
+    ctx = JobContext(project=shell.session.project, models=frozenset({A}))
+    with pytest.raises(BackendUnavailableError, match="no omc"):
+        job.run(ctx)
+
+
 async def test_rerun_names_the_backend_and_is_greyed_while_a_job_runs(shell):
+    from dstf.authoring.builtin.rerun import Rerun
     from dstf.authoring.capabilities import Job
 
     async with user_simulation(root=shell.root) as user:
@@ -620,6 +665,12 @@ async def test_rerun_names_the_backend_and_is_greyed_while_a_job_runs(shell):
         assert label.text == "runs through Python"
         gate = _Gate()
         shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
-        await user.should_see("rerun is running")  # the greyed tab's reason
+        # The page text alone does not pin THIS tab: Accept's greyed reason
+        # for the same selection reads `rerun is running on FakeLib.A` and
+        # contains the string. The wait holds until the refresh has drawn a
+        # greyed tab; `Rerun.available` is asserted on the Session.
+        await user.should_see("rerun is running")
+        assert Rerun().available(shell.view) == "rerun is running"
         gate.release.set()
         await user.should_see("no job running", retries=20)
+        assert Rerun().available(shell.view) is True

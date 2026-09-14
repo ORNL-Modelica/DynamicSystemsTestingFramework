@@ -139,7 +139,9 @@ class TestAbstractExportFmuDefault:
         # RuntimeError, not an ImportError.
         try:
             backend = FmpyBackend(config)  # type: ignore[arg-type]
-        except RuntimeError:
+        except RuntimeError as exc:
+            if "fmpy" not in str(exc):
+                raise  # any other construction failure is a real failure
             pytest.skip("fmpy not installed")
         with pytest.raises(NotImplementedError, match="FMU_EXPORT"):
             backend.export_fmu(_mock_test(), tmp_path)

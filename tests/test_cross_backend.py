@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -247,3 +248,48 @@ class TestCrossBackendSoftCheckValueError:
             ok = produce_dymola_via_fmpy_baseline(test, primary, config, store)
         assert ok is False  # logged + skipped, not raised
         assert "cannot store baseline" in caplog.text
+
+
+class TestCrossBackendFmpyMissing:
+    """Step 3's ``except RuntimeError`` — the chain skips on the
+    unavailable-backend signal ``FmpyBackend.__init__`` raises, and writes
+    nothing on the way out."""
+
+    def test_missing_fmpy_is_logged_and_skipped_without_a_write(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        from dstf.backends.cross_backend import produce_dymola_via_fmpy_baseline
+        from dstf.config import Config
+
+        fmu_dir = tmp_path / "fmu_examples"
+        fmu_dir.mkdir()
+        fmu_path = fmu_dir / "Model.fmu"
+        fmu_path.write_bytes(b"fake")
+
+        config = Config(
+            source_path=fmu_dir,
+            reference_root=tmp_path / "refs",
+            source_type="fmu",
+            backend_name="FMPy",
+            work_dir=tmp_path / "work",
+        )
+
+        # The REAL FmpyBackend, with its deferred `import fmpy` failing:
+        # `None` in sys.modules is what makes that import raise ImportError,
+        # which the constructor translates into the RuntimeError this path
+        # catches. A constructor that let the ImportError out would
+        # traceback through the chain instead of skipping.
+        monkeypatch.setitem(sys.modules, "fmpy", None)
+
+        primary = MagicMock()
+        primary.capabilities = frozenset({Capability.FMU_EXPORT})
+        primary.export_fmu.return_value = fmu_path
+
+        store = MagicMock()
+
+        test = _tm("Model", variable_patterns=["h"])
+        with caplog.at_level(logging.WARNING):
+            ok = produce_dymola_via_fmpy_baseline(test, primary, config, store)
+        assert ok is False
+        assert "FMPy not installed" in caplog.text
+        store.add_soft_check.assert_not_called()

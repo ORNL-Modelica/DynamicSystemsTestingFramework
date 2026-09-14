@@ -112,8 +112,7 @@ class Accept:
         rows = _rows(s)
         if any(action == WILL_STORE for _, _, action in rows):
             return True
-        ran = [project.results.get(model_id) for model_id in selection]
-        if not rows or not any(r is not None and r.success for r in ran):
+        if not rows:
             return "no successful result in the selection"
         return rows[0][2]
 
