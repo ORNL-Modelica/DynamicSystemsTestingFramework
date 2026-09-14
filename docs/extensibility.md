@@ -364,6 +364,31 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    `variable` be omitted in the spec. Leave it `False` and an unrecognized
    `quantity` stays an inert param — a trajectory metric keeps scoring
    trajectories.
+7. `edit_handle` (default `None`) is the inverse of the metric's
+   `kind="handle"` geometry: what the authoring tool calls when a user drags
+   one of its handles on the plot (`comparison/handles.py`). It takes a
+   `HandleEdit` — `leaf` (the raw leaf as `metrics` holds it; never mutate
+   it), `local` (the handle's id without its leaf path, e.g.
+   `"tube/upper/3"`), `x` and `y` (the dragged position in data coordinates,
+   `None` for an axis that did not move) and `reference` (the primary
+   baseline's `(time, values)` at full resolution, or `None`) — and returns
+   the new raw leaf, or raises `HandleEditError` naming the handle and the
+   reason for a drag the leaf cannot take. The tool stages what comes back as
+   ONE `replace` of the whole leaf, so an editor rewrites the leaf, never a
+   field path, and a leaf equal to the input stages nothing. Leave it `None`
+   and a drag of the metric's handles is refused ("has no on-plot handles");
+   the builtins `nrmse` and `event-timing` do. The builtin editors are the
+   worked examples: `tube`, `points` and `dominant-frequency` move a list
+   entry, `range` and `scalar` a bound.
+8. A config field holding a list of row dicts declares `columns` in its
+   metadata — `(key, type)` pairs, one per row key, where `type` is
+   `"float"` (a key the metric indexes: required, a blank cell is refused),
+   `"float?"` (read with `.get`: optional, a blank cell omits the key) or a
+   tuple of choices whose first is the metric's default. The authoring tool's
+   Edit on plot tab draws a table from it, with add and remove rows. `columns`
+   is read from `dataclasses.fields`, not through `derive_schema`, so it
+   never reaches `export-schema`. A list field without `columns` gets no
+   table; Edit criteria shows every list field read-only either way.
 
 ### Currently registered
 
@@ -547,13 +572,60 @@ materialization — so `available` must not call it.
 **Building a panel.** `Panel` is a container the capability owns entirely: it
 builds its controls into the shell's current slot, and may subscribe to the
 shell's centre figure through `panel.figure.on(kind, handler)`, whose handler
-receives the primitive's id and the Plotly event payload. When a control fires,
-the capability calls `panel.submit(**inputs)`: the shell calls
-`act(view, **inputs)` and hands what comes back to `Session.apply`. A capability
-never calls `act` or `apply` itself, and an exception from either is shown in
-the capability's tab with the Session unchanged. Import the UI framework inside
-`panel`, not at module level, so the module stays importable without the
-`[author]` extra — the built-ins do.
+receives the primitive's id and a payload. When a control fires, the capability
+calls `panel.submit(**inputs)`: the shell calls `act(view, **inputs)` and hands
+what comes back to `Session.apply`. A capability never calls `act` or `apply`
+itself, and an exception from either is shown in the capability's tab with the
+Session unchanged. Import the UI framework inside `panel`, not at module level,
+so the module stays importable without the `[author]` extra — the built-ins do.
+
+**Build from the view, every time.** The shell rebuilds every capability's panel
+in place whenever the results change — after every staged edit, Discard, Save,
+Reload or open, once the comparisons are rescored — except the acting
+capability's own panel while an act from its own controls runs, so a field being
+typed in survives; when that act came from the figure hook, the acting panel is
+rebuilt too. When the set of available capabilities changes, the whole tab set
+rebuilds instead. So a panel must read what it shows from the view on each
+build, never from state it kept from an earlier one: a panel that captured its
+leaf when first built would show — and on its next change re-stage — values
+another capability, a Discard or a Reload has since replaced. State a panel does
+keep between its own acts (a table's rows while rows are added) is fine, because
+the next rebuild reads the Session again. A panel's hook handlers go with it:
+each rebuild clears the capability's handlers before `panel` registers them
+again.
+
+**The figure hook's payloads.** `panel.figure.on(kind, handler)` calls
+`handler(primitive_id, payload)` for three kinds:
+
+- `plotly_click` / `plotly_selected` — the id of the first point whose trace
+  `meta.kind` is `"handle"`, else of the first point (its `customdata`, then
+  `meta.id`, then `curveNumber`), with the event payload. Under the figure's
+  x-unified hover a click lists every trace at that x, so a handle is not
+  necessarily the first point.
+- `plotly_relayout` that moved shapes — once per shape, ascending by index.
+  Plotly's payload names the shape only by index; the shell resolves the id
+  from the rendered figure's `layout.shapes[N].name` (`""` when it cannot) and
+  hands over that shape's keys without their `shapes[N].` prefix, in data
+  coordinates: `{"y0": 6.0, "y1": 6.0}` for a line dragged whole, one end's
+  keys for a line dragged by an end, `{"xanchor": 4.0, "yanchor": 2.99}` for a
+  handle ring moved. A ring grabbed off-centre is resized instead and sends
+  pixel offsets in `x0`..`y1`, so read a ring only by `xanchor` / `yanchor`.
+  The shell interprets no positions; the capability does, from the handle's
+  primitive type. After the handlers run, the shell re-sends the figure
+  whether or not anything was staged, so a drag that changed nothing snaps
+  back.
+- Any other relayout (a zoom) — once, with id `""` and the raw payload.
+
+In the tool's figure every shape is draggable (plotly.js has no working
+per-shape switch), and each `kind="handle"` Marker gets a ring shape named with
+its id; lines, boxes and windows keep their own names. The handler semantics
+are the hook's own, not the DOM's: each shape is dispatched from a snapshot of
+the handlers taken when its dispatch starts; a handler registered since is not
+called for it, one removed since (its panel rebuilt) is skipped; a handler
+registered twice is called twice; a handler that raises ends the relayout —
+later handlers and shapes are not dispatched — and the snap-back still runs.
+Panel rebuilds an act triggers during a dispatch wait for the next tick, so
+every subscriber hears the event before any handler is replaced.
 
 **Forms.** A panel over a typed config need not hand-build its controls.
 `derive_schema(config_cls, mode=...)` (`comparison/mode_schema.py`) describes
@@ -564,10 +636,12 @@ shown as the control's placeholder and never written; `ui_min` / `ui_max`
 validate rather than clamp; `passthrough` fields are shown read-only. The same
 `derive_schema` feeds `dstf export-schema`'s JSON-Schema emitter.
 
-The four shipped capabilities live in `authoring/builtin/` and register through
+The five shipped capabilities live in `authoring/builtin/` and register through
 this same call — Edit criteria and Edit tree return a `Patch`, Accept a
 `StoreWrite` over the shared accept function, Rerun a `Job` that builds its own
-backend through `select_backend` and runs it through `run_pipeline`.
+backend through `select_backend` and runs it through `run_pipeline`, and Edit on
+plot a `Patch` from a metric's `edit_handle` or a table's rows — the one
+builtin client of the figure hook.
 
 §4.6 and §4.7 of [the two-tier architecture
 design](superpowers/specs/2026-09-08-two-tier-architecture-design.md) have the

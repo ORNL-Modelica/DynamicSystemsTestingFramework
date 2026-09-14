@@ -97,6 +97,8 @@ src/dstf/
 │   ├── modes.py              # ComparisonMode ABC + 7 modes (nrmse, tube, points, range, event-timing,
 │   │                         #   dominant-frequency, scalar); typed configs; resolve_mode()
 │   ├── mode_schema.py        # derive_schema — per-mode schema from typed comparison configs
+│   ├── handles.py            # edit_handle editors: a dragged handle back to a raw leaf (HandleEdit,
+│   │                         #   HandleEditError); wired on MetricDescriptor beside summarize
 │   ├── tree_spec.py          # MetricTree LeafSpec / CombinatorSpec + implicit_and_tree() builder
 │   ├── tree_eval.py          # Tree evaluator threading primary + named baselines
 │   └── validator.py          # Baseline-role rules (≥ 1 primary leaf outside warn; soft_checks warn-wrapped)
@@ -113,7 +115,8 @@ src/dstf/
 │   ├── app.py                # The NiceGUI shell: fixed layout, event→refresh bridge, capability routing
 │   ├── forms.py              # NiceGUI controls from a mode's derived schema
 │   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_tree.py,
-│                             #   accept.py (the shared accept function), rerun.py (run_pipeline)
+│                             #   accept.py (the shared accept function), rerun.py (run_pipeline),
+│                             #   edit_on_plot.py (drag a handle or edit a list's table)
 └── reporting/
     ├── console_report.py     # Terminal output with pass/fail, NRMSE, structural warnings
     ├── junit_report.py       # JUnit XML for CI
@@ -133,7 +136,8 @@ The figure layer sits beside them, and both tiers draw from it:
 ```
 src/dstf/figures/
 ├── view.py                   # VariableView — the library-neutral picture of one variable
-├── plotly.py                 # VariableView → a plotly figure dict (traces + shapes)
+├── plotly.py                 # VariableView → a plotly figure dict (traces + shapes); editable=True
+│                             #   (the tool's, never the report's) adds a draggable ring per handle
 ├── assemble.py               # Trajectories + evaluated leaves → a VariableView
 └── decimate.py               # LTTB decimation on the view, before any trace exists
 ```
@@ -147,6 +151,17 @@ read-modify-write both `dstf spec-update` and `Session.save` call, and
 `storage/accept.py` is the one accept path `run --accept`, `compare --accept`,
 `run -i`'s `[a]` and the tool's Accept capability all call, and `pipeline.py` is
 the run itself, which `cmd_run` and the tool's Rerun both drive.
+
+On-plot editing crosses the layers without either importing the tool. The
+figure layer draws the editable figure — `variable_figure(view, editable=True)`
+turns on plotly.js shape dragging and adds one ring shape per handle marker,
+named with the handle's id — and `Session.figure` is its one caller. The
+comparison layer owns the inverse of each mode's handles in
+`comparison/handles.py`, reached as `MetricDescriptor.edit_handle`, and each
+list field's `columns` metadata in `modes.py`. The shell's figure hook turns a
+drag into a per-shape payload, and the Edit on plot capability joins the two:
+the handle's id names the leaf, `edit_handle` returns the new leaf, and the
+Session stages one `replace` of it.
 
 ## Data Flow
 

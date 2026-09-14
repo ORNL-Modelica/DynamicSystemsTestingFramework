@@ -25,10 +25,11 @@ DynamicSystemsTestingFramework/
 │   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
 │   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers,
-│   │                             #      mode_schema (derive_schema — JSON-Schema export + the tool's forms)
+│   │                             #      mode_schema (derive_schema — JSON-Schema export + the tool's forms),
+│   │                             #      handles.py (edit_handle — a dragged handle back to a raw leaf)
 │   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path)
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
-│   │                             #      app.py (the NiceGUI shell), forms.py, builtin/ (edit criteria + edit tree + accept + rerun)
+│   │                             #      app.py (the NiceGUI shell), forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly) + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py classifier + console/junit + context_builder + report_suite + dashboard_render
 │       └── templates/            # interactive.html + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + vendor/plotly.min.js (offline-capable reports)
@@ -92,7 +93,8 @@ uv run dstf --config testing.json compare --report-format html --output report.h
 uv run dstf --config testing.json spec-update spec_patch.json
 
 # The authoring tool: a browser shell over the last run (needs the [author] extra).
-# Edit criteria / edit tree; Accept the selection's results as baselines; Rerun the selection.
+# Edit criteria / edit tree; Accept the selection's results as baselines; Rerun the selection;
+# Edit on plot drags a criterion's handles or edits its list tables.
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs

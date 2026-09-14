@@ -469,7 +469,7 @@ subscribes to the four Session events and re-renders the affected region.
 | Edit tree | TESTS, exactly one selected | add / remove / wrap / combinator kind, k, weights | Patch | v1 |
 | Accept | TESTS | confirm list | StoreWrite | v1 |
 | Rerun | TESTS | confirm list, backend shown | Job | v1 |
-| On-plot editing | LEAF | handlers on `kind="handle"` primitives via the figure hook | Patch | after v1 |
+| On-plot editing | VARIABLE | handlers on the handle rings via the figure hook; a table per list field | Patch | v1 (sub-project 6) |
 | Annotate a leaf (`info` note) | LEAF | text field | Patch | attaches; nothing else changes |
 | Export figures as PNG | TESTS | format picker | Artifact | attaches; nothing else changes |
 | Side-by-side against another backend | VARIABLE | own figure in its panel | None | attaches; nothing else changes |
@@ -551,6 +551,132 @@ result rows only for a job whose completion reloaded the results
 (`RunningJob.reloaded`), never under a `failed:` line, where the rows on screen
 would describe a run whose results were never read back.
 
+**Amended in sub-project 6.** On-plot editing shipped as one builtin, **Edit on
+plot**, and its plan made nine calls this text did not. Most rest on a spike run
+2026-09-14 — a NiceGUI 3.16 page in headless Chromium serving a figure shaped
+like the figure layer's output, every forwarded event logged server-side — and
+on three owner rulings asked after it the same day.
+
+It is VARIABLE scope, where the table said LEAF (owner ruling): as soon as a
+test's plot is up any leaf's handle drags, and the op targets the leaf the
+handle's id names — the longest scored leaf path the id starts with followed by
+`/`, so `/metrics/children/1` never claims `/metrics/children/10/...`. Beside
+the plot's handlers the panel draws a table per list field (`tube_points`,
+`points`, `events`, `peaks`) with add and remove rows.
+
+The figure gains an editable variant, `variable_figure(view, max_samples=None,
+*, editable=False)`, because the spike found that plotly.js drags shapes, never
+trace points, and only through `config.edits.shapePosition`: a per-shape
+`editable: true` did nothing on a plain drag, and after click-to-activate wrote
+pixel values into a data-referenced shape on every mouse move. That config makes
+every shape draggable — windows, event lines and checkpoint boxes too — so the
+editable figure adds one pixel-sized ring shape per `kind="handle"` Marker,
+named with its id and anchored at its `x`/`y` on its panel's axes, after every
+other shape: where shapes overlap, the one later in `layout.shapes` takes the
+drag. The marker traces stay. `Session.figure` asks for the editable figure and
+the report never does, so the report's figures and their goldens are unchanged.
+
+The shell stamps `layout.editrevision` with a counter that changes on every
+in-place update, and re-sends the figure after every shape drag whether or not
+anything was staged. The spike's reason: with `uirevision` constant,
+`Plotly.react` keeps a user's shape drag whenever the new figure repeats the
+value the server sent last, so without the counter a refused or no-op drag stays
+where the user dropped it instead of snapping back to where the Session puts the
+handle.
+
+The figure hook's payload contract is stated over what plotly.js sends. Under
+the figure's `hovermode: "x unified"` a click lists every trace at that x, the
+actual trace first, so a click is dispatched with the id of the first point
+whose trace `meta.kind` is `"handle"`, else of the first point. A drag emits one
+`plotly_relayout` on release, in data coordinates, keyed `shapes[N].<key>` — by
+index, never by name. The hook dispatches it once per shape index, ascending,
+with the id resolved from the rendered figure's `layout.shapes[N].name` (`""`
+when that lookup fails) and that shape's keys with the prefix stripped; `N` is
+one to nine ASCII digits, because an unbounded index let a hostile key reach
+`int()`'s digit limit. Any other relayout (a zoom) is dispatched once with id
+`""` and the raw payload. The hook does not interpret positions: a ring grabbed
+off-centre is resized rather than moved and sends pixel offsets in `x0`..`y1`,
+so the capability reads a Marker's ring only by `xanchor`/`yanchor` and a line
+by `y0`/`y1`. The handler semantics are not the DOM's — an earlier plan text
+called them that, and review found the code and its tests said otherwise. Each
+shape index is dispatched from its own snapshot of the handlers; a handler
+registered since is not called, one removed since is skipped by identity (so
+`clear` keeps the same entry objects for the handlers it leaves); a handler
+registered twice is called twice; a handler that raises ends the relayout, and
+the snap-back still runs. The index is resolved against the figure the server
+last sent, so a drag released in the instant an in-place update changes the
+shape list can resolve to the wrong name; the window runs from the update
+through both websocket legs.
+
+The centre updates its figure in place (owner ruling): while the selected model,
+variable and the picker's names are unchanged and the plot element exists, the
+`spec` and `results` events and a shape drag only mark the figure dirty, and the
+0.1 s tick calls `update_figure` once. A rebuilt element reset the zoom after
+every drag; `update_figure` goes through `Plotly.react`, which keeps it. Any
+other selection, an open, a close or a changed name list rebuilds the centre.
+
+Panels follow `results`. Every spec change (stage, discard, save, reload, open)
+emits `results` once the comparisons are rescored, and on it the shell rebuilds
+each available capability's panel in place — except the acting capability's own
+while its panel-originated act runs, which is what keeps a field being typed in
+(Edit criteria stages on every control change). Without this, a panel that
+captured its leaf when built shows, and on its next keystroke re-stages, values
+another capability, a Discard, a Save or a Reload has since changed. `results`,
+not `spec`: `spec` fires before the rescore, and a panel rebuilt there reads the
+old comparisons. When the act changes which capabilities are available, the
+tabs rebuild instead, the actor's panel included. A figure-originated act
+rebuilds the actor's panel too — nothing is being typed during a drag. While
+the hook is dispatching, or a panel is being built, the rebuilds are deferred to
+the next tick: review found that a rebuild inside the dispatch cleared and
+replaced every other subscriber's handler before it heard the event, and that a
+panel rescoring during its own build would re-enter it. A selection change lands
+on the first enabled tab; every other rebuild keeps the active tab while it is
+still enabled. A panel whose build raises shows the exception in its slot.
+
+`MetricDescriptor.edit_handle: Callable[[HandleEdit], dict] | None`, beside
+`summarize`, is the inverse of a mode's handles (`comparison/handles.py`): the
+raw leaf, the handle's id without its leaf path and the dragged position in, the
+new raw leaf out, `HandleEditError` for a refusal. The builtins wire `tube`,
+`range`, `scalar`, `points` and `dominant-frequency`; `nrmse` and `event-timing`
+have none, and a drag of one of their handles is refused as a metric with no
+on-plot handles. Review of the
+first editors changed their rules from refusal to clamping: a time dragged
+beyond the span where the forward geometry draws the handle — the first
+reference sample at or after the leaf window's start to the last at or before
+its end — lands on the span's edge and the vertical part still applies, because
+refusing it refused the vertical drag of a ring at the trace end, whose
+`xanchor` comes back from the pixel round trip just past the last sample.
+An `x` within float noise of the handle's time is no time move at all, so a
+vertical drag never changes or refuses on a time. A checkpoint follows the
+baseline when its `value` is absent or null, and moves in time only (owner
+ruling: a drag never silently makes a checkpoint baseline-free); one with an
+explicit `value` moves in both axes and clamps only to its window's own ends,
+since the forward code draws it wherever its time tolerance meets the actual
+trajectory. A checkpoint with no `time` (the trace-end sentinel) keeps it. A
+drag onto another control point's time, or of a point sharing its time, is
+refused: the forward interpolation reads the later point there. Widths in a
+`band` or `rel` tube, and any time drag, are refused on a leaf scored `against`
+a baseline other than the primary, whose curve the plot does not draw. Bounds
+accept `min_value == max_value` for `range` and refuse it for `scalar`, whose
+config validation requires `min_value < max_value`.
+
+Every list field of a builtin Config declares `columns` in its field metadata —
+each row key with `"float"` (the mode indexes it, required), `"float?"` (read
+with `.get`, optional: a blank cell omits the key) or a tuple of choices, the
+mode's default first. Edit on plot reads it from `dataclasses.fields`, not
+through `derive_schema`, so `FieldSpec` and the `export-schema` output keep
+their shape; only the four fields' `help` strings changed, because they named
+editors deleted in sub-project 2. Edit criteria keeps showing these lists
+read-only.
+
+Every staged edit, a drag or a table cell, is one `replace` of the whole leaf,
+the op Edit criteria stages, so consecutive drags on one leaf collapse into one
+pending op and a drag and a form edit of the same leaf read as "leaf → new leaf"
+in the drawer. A drag or table edit that changes nothing stages nothing.
+
+The shell serves one browser tab: the in-place redraw and the figure hook follow
+the last-built plot, so a second tab's centre does not redraw in place.
+
 ### 4.7 The tool's v1 surface
 
 **Launch.** `dstf author --config testing.json [--filter ...] [--port N]`
@@ -565,8 +691,9 @@ gains a NiceGUI emitter (`authoring/forms.py`) and loses its HTML one
 after the split is a plan decision); window inputs; the `against` selector
 over the test's baselines. Each change stages one patch op and rescores the
 test, so figure and verdicts update live. `tube_points` is displayed
-read-only; edits write the split upper / lower form. A leaf config error shows
-inline on its form.
+read-only here; the lists (`tube_points`, `points`, `events`, `peaks`) are
+edited in the Edit on plot tab, and edits write the split upper / lower form. A
+leaf config error shows inline on its form.
 
 **Edit tree.** The operations the browser tree editor performs today, as
 patch ops against the same paths.
@@ -723,6 +850,14 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
    capability with no change to the shell beyond the hook that existed since
    step 4; the three "attaches; nothing else changes" rows of §4.6 hold by
    inspection of the contract.
+   Sub-project 6 changed the shell in two places the hook could not reach:
+   the centre updates its figure in place (owner ruling 2026-09-14: a
+   rebuilt plot element loses the user's zoom on every drag), and every
+   capability's panel is rebuilt when the spec changes — on the `results`
+   event that follows each change — except the one whose own control staged
+   it (a panel that captured its leaf would re-stage stale values after
+   another capability's edit, a Discard, a Save or a Reload). Both are
+   general to any capability, not specific to on-plot editing.
 3. **The report lost nothing it should keep.** Every entry in §4.4's kept
    list has a Playwright assertion that passes on the slimmed page.
 4. **No existing CLI behaviour changes for a user who never opens the
@@ -752,6 +887,10 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
    object reads as no snapshot where it raised `AttributeError`; and
    (negligible, ordering) the run's first dashboard paint and browser open now
    precede the in-scope wipe by milliseconds.
+   Sub-project 6 adds one more: `export-schema`'s `description` for
+   `tube_points`, `points`, `events` and `peaks` now names the authoring
+   tool's Edit on plot tab instead of the browser editors deleted in
+   sub-project 2.
 5. **TRANSFORM** `compare --report` renders every test, and its 331 stored
    verdicts are unchanged by steps 1–4.
 

@@ -108,8 +108,9 @@ Requires a registered companion (see Prep). On BouncingBall's `h` plot:
 ## Authoring tool
 
 `dstf author` is covered in Python (the shell's regions and the built-in
-capabilities through NiceGUI's in-process `user_simulation`) and by one
-Chromium smoke test that edits a tolerance and saves nothing. What stays
+capabilities through NiceGUI's in-process `user_simulation`) and by two
+Chromium smoke tests, neither of which saves: one edits a tolerance, the other
+drags a tube handle and a range bound. What stays
 manual is the feel of a live edit and the states a single page cannot reach.
 
 Accept writes baselines and Rerun simulates: run the two below against a
@@ -172,6 +173,28 @@ left as you edited it.
       that cannot be built at all — an unregistered name, a missing
       executable — never reaches a job: `dstf author` refuses to open the
       project, printing one `Config error: ...` line.)
+- [ ] Select BouncingBall with `h` plotted: Edit on plot is enabled (the
+      `range` leaf). Zoom into part of the plot, then drag the `range` upper
+      bound line down: the pending count rises, the leaf's verdict follows,
+      the line stays where you dropped it, and the zoom is unchanged.
+- [ ] Select an `nrmse` leaf (BouncingBall's first), switch Edit criteria's
+      metric to `tube` with width mode `band`; Edit on plot's
+      `tube_points` table for that leaf appears. `Add row` stages a
+      zero-width row at the middle of the trajectory; type an `upper` and
+      a `lower` width and two green rings separate on the plot. Drag the
+      upper ring up by its centre: the band widens there, one pending op
+      for that leaf (not one per drag), zoom kept.
+- [ ] Grab a ring slightly off its centre and drag: it is resized, then
+      snaps back, and nothing is staged.
+- [ ] Select Dahlquist and drag one of its checkpoint tolerance boxes: the
+      box snaps back, and the Edit on plot tab shows the leaf path with
+      `cannot be moved on the plot`. Drag a checkpoint ring that has no
+      `value` in the table straight up: nothing is staged.
+- [ ] In a table, change a cell, then `Add row` and `Remove row`: each
+      stages, and the drawer reads "leaf → new leaf". Clear a required
+      cell (a tube row's `time`): the tab shows `row <i>: time is required`.
+- [ ] Save: `test_spec.json` carries the dragged and table edits along
+      with the rest of what the drawer listed, and nothing it did not.
 - [ ] The dashboard link opens the suite page in a new tab.
 - [ ] Quit shuts the server down; the tab shows NiceGUI's disconnected banner.
 

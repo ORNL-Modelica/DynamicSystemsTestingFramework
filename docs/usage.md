@@ -486,7 +486,9 @@ refused rather than pointing it at a different spec than it shows. `--filter`
 and `--package` narrow the test list; `--work-dir` and `--backend` choose the
 run outputs and the reference partition to read; `--port` moves the server off
 8080; `--no-browser` serves without opening a tab. The server binds `127.0.0.1`
-only, one project per process, and runs until Ctrl-C or Quit.
+only, one project per process, and runs until Ctrl-C or Quit. Use it from one
+browser tab: the centre plot and its drag handles follow the tab that last drew
+the plot, so a second tab's plot does not redraw after an edit.
 
 **The layout.** The header carries the library, the backend, the pending-op
 count (click it for the drawer of staged ops, grouped by model), Save, Discard,
@@ -513,11 +515,12 @@ that metric's config dataclass, the window, and the baseline the leaf scores
 `against` — `primary`, plus the soft_checks when the leaf sits under a `warn`,
 since a soft_check anywhere else is what the validator refuses. A dataclass
 default is shown as a placeholder and never written, so an unset tolerance keeps
-falling back to the test's. Structured fields — tube control points, declared
-peaks, checkpoints — are shown read-only. Every control change stages one
-`replace` of the whole leaf and rescores the test, so the figure and the
-verdicts follow the edit; consecutive replaces of one leaf collapse into one
-pending op, so the drawer reads "leaf → new leaf" rather than a keystroke log.
+falling back to the test's. Structured fields — tube control points,
+checkpoints, declared events and peaks — are shown read-only here and edited in
+Edit on plot. Every control change stages one `replace` of the whole leaf and
+rescores the test, so the figure and the verdicts follow the edit; consecutive
+replaces of one leaf collapse into one pending op, so the drawer reads "leaf →
+new leaf" rather than a keystroke log.
 
 **Edit tree** applies to exactly one selected test and stages one op per
 structural change: wrap a node in a combinator, change a combinator's kind and
@@ -562,6 +565,64 @@ were and shows its error in the footer instead. Afterwards the dashboard link
 shows the tests that reran and no others: one invocation writes one
 `status.json`, so a partial rerun's page is that subset, exactly as a CLI
 `--rerun ... --merge` leaves it.
+
+**Edit on plot** applies to one selected test with a variable plotted, and is
+available when some criterion on that variable has handles or a table: a
+`tube`, `range`, `scalar`, `points`, `event-timing` or `dominant-frequency`
+leaf. (An `nrmse`-only variable greys it with `no criterion on <variable> has
+on-plot handles`.) While it is available, the handles on the centre plot drag,
+whichever tab is open:
+
+- a green ring on each tube control point (upper and lower edge), each
+  checkpoint and each declared peak (on the spectrum panel) — grab it at its
+  centre; a ring grabbed off its centre is resized rather than moved, and snaps
+  back with nothing staged;
+- the horizontal line of a `range` or `scalar` bound — drag it up or down.
+
+Releasing a drag stages one `replace` of the leaf the handle belongs to and
+rescores the test; the plot redraws in place, so your zoom stays. Consecutive
+drags of one leaf collapse into one pending op. What a drag means:
+
+- A tube handle's vertical position sets that edge's width at the point's time
+  (the value itself for `abs`, the distance from the reference for `band`, that
+  distance over |reference| for `rel`); moving it sideways moves the control
+  point's time.
+- A checkpoint with an explicit `value` moves in both time and value. One that
+  follows the baseline (no `value`) moves in time only — dragging it straight up
+  or down stages nothing, so a drag never turns it into a fixed-value check.
+- A peak moves in frequency only; a bound moves in value only.
+- A time dragged past where the handle can be drawn lands on that edge, and
+  the rest of the drag still applies. For a tube point or a baseline-following
+  checkpoint that is the first or last reference sample inside the leaf's
+  window; for a checkpoint with a `value`, the window's own start or end.
+
+After every drag the plot is redrawn from the staged spec, so anything the drag
+did not change goes back where it was. Everything on the plot is draggable —
+plotly.js offers no per-shape switch — but only the rings and bound lines edit:
+a window, an event line or a checkpoint's tolerance box snaps back. A drag the
+leaf cannot take snaps back too, and the reason shows in the Edit on plot tab,
+prefixed with the leaf's path: an upper edge dragged below the lower one, a
+negative width, a `rel` width where the reference is zero, a control point moved
+onto another's time, a lower bound above the upper one (a `scalar` leaf also
+refuses equal bounds, which `range` accepts), a peak at zero or negative
+frequency, a `band` or `rel` width or any time on a leaf scored `against` a
+baseline other than the primary (the plot draws only the primary), the
+final-value ring of a `points` leaf with no declared points, or any handle of a
+metric with none to move (`event-timing`'s windows). Where two shapes overlap,
+the one drawn on top takes the drag; zoom in to separate them.
+
+Beside the handles, the tab draws a table for each list field of each criterion
+on the variable — `<path> · <metric> · <field>` for `tube_points`, `points`,
+`events` and `peaks` — one row per entry and a control per key. Every cell
+change stages the whole list as one `replace` of the leaf. A blank optional cell
+leaves its key out (a checkpoint with a blank `value` follows the baseline); a
+blank required cell (`time` on a tube point or an event, `freq` on a peak) is
+refused as `row <i>: <key> is required`. `Remove row` drops the row. `Add row`
+copies the last row, its time (where the table has one) moved to the end of the
+reference; on an empty table it adds a row at the middle of the reference with
+required numbers `0.0`, optional ones blank and each choice at its default — a
+tube row gets `upper` and `lower` `0.0`, a zero-width band to widen. Save writes
+table and drag edits like any other pending op.
 
 **Save, Discard, Export.** Save applies exactly the pending ops through the same
 read-modify-write `dstf spec-update` uses, and refuses when the file changed on
