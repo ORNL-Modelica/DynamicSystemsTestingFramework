@@ -474,3 +474,76 @@ async def test_accept_is_greyed_while_a_selected_test_is_locked(shell):
         await user.should_see(f"rerun is running on {A}")
         gate.release.set()
         await user.should_see("no job running", retries=20)
+
+
+# -- Rerun (§4.6 table, §4.7) ---------------------------------------------
+
+
+def test_the_four_builtins_register_in_order():
+    assert [c.label for c in caps.registered_capabilities()] == [
+        "Edit criteria",
+        "Edit tree",
+        "Accept",
+        "Rerun",
+    ]
+
+
+def test_rerun_act_returns_a_job_over_the_selection(shell, monkeypatch):
+    """`act` is pure: the Job names the selection, and its `run` builds a
+    fresh quiet persistent-preferring backend and hands the selected tests,
+    in project order, to the run callable."""
+    from dstf.authoring.builtin import rerun as rerun_mod
+    from dstf.authoring.builtin.rerun import Rerun
+    from dstf.authoring.capabilities import Job, JobContext
+
+    shell.session.select(tests={A, D})
+    job = Rerun().act(shell.view)
+    assert isinstance(job, Job)
+    assert job.label == "rerun" and job.models == {A, D} and job.reloads_results
+
+    class _Backend:
+        quiet = False
+
+    built = _Backend()
+    calls: dict = {}
+
+    def _select_backend(config, *, persistent):
+        calls["select"] = (config, persistent)
+        return built
+
+    def _run_pipeline(config, tests, *, backend, store, **kwargs):
+        calls["pipeline"] = (config, list(tests), backend, store, kwargs)
+
+    monkeypatch.setattr(rerun_mod, "select_backend", _select_backend)
+    monkeypatch.setattr(rerun_mod, "run_pipeline", _run_pipeline)
+
+    project = shell.session.project
+    job.run(JobContext(project=project, models=frozenset({A, D})))
+
+    assert calls["select"] == (project.config, True)
+    assert built.quiet is True  # the tool's process never narrates
+    config, tests, backend, store, kwargs = calls["pipeline"]
+    assert config is project.config
+    assert backend is built and store is project.store
+    assert [t.model_id for t in tests] == [A, D]  # project order
+    assert kwargs == {}  # no merge, no candidates: the scope is the run
+
+
+async def test_rerun_names_the_backend_and_is_greyed_while_a_job_runs(shell):
+    from dstf.authoring.capabilities import Job
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={A})
+        await user.should_see("Rerun")
+        user.find("Rerun").click()  # the tab (lowest id); the button reads "Rerun 1"
+        await user.should_see("Rerun 1")
+        # Via the MARKER: the header already reads `backend: Python`, so a
+        # `should_see("Python")` would pass without the panel's label.
+        (label,) = user.find(marker="rerun-backend").elements
+        assert label.text == "runs through Python"
+        gate = _Gate()
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await user.should_see("rerun is running")  # the greyed tab's reason
+        gate.release.set()
+        await user.should_see("no job running", retries=20)

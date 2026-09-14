@@ -12,6 +12,7 @@ def register_builtins() -> None:
     from .accept import Accept
     from .edit_criteria import EditCriteria
     from .edit_tree import EditTree
+    from .rerun import Rerun
 
     if EditCriteria.name not in names:
         register_capability(EditCriteria())
@@ -19,3 +20,5 @@ def register_builtins() -> None:
         register_capability(EditTree())
     if Accept.name not in names:
         register_capability(Accept())
+    if Rerun.name not in names:
+        register_capability(Rerun())
