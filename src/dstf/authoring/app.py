@@ -7,6 +7,7 @@ from the Session: the figure dict, the report's tree view, the verdicts.
 from __future__ import annotations
 
 import json
+import math
 import queue
 from collections.abc import Callable
 from pathlib import Path
@@ -542,10 +543,12 @@ class Shell:
         elif last is not None:
             if last.error is None:
                 ui.label(f"finished: {last.label}")
-                # Only a job that succeeded reloaded the results, so only its
-                # rows are its own: after a failure the failed line stands
-                # alone rather than over the previous run's messages.
-                self._result_rows(last)
+                # Only a job that reloaded the results owns them: after a
+                # failure, or after a job that asked for no reload, the
+                # outcome line stands alone rather than over the previous
+                # run's messages.
+                if last.reloaded:
+                    self._result_rows(last)
             else:
                 ui.label(
                     f"failed: {last.label} — {type(last.error).__name__}: {last.error}"
@@ -573,7 +576,10 @@ class Shell:
         if status is None:
             return
         start_wall = status.get("start_wall")
-        if not isinstance(start_wall, (int, float)):
+        # `json.loads` accepts the literal `NaN`, and every comparison with a
+        # NaN is False — so a non-finite value would slip past the staleness
+        # test below. Non-finite is no timestamp: treat it as stale.
+        if not isinstance(start_wall, (int, float)) or not math.isfinite(start_wall):
             start_wall = 0.0
         if start_wall < job.started_wall - 0.1:
             return
@@ -598,7 +604,8 @@ class Shell:
     def _result_rows(self, last: RunningJob) -> None:
         """What the finished job left: the reloaded result's failure message
         per model it ran (§4.7 "the backend's failure message from the
-        results"), in project order."""
+        results"), in project order. Only ever called for a job whose reload
+        ran, so every row here is that job's own."""
         project = self.session.project
         if project is None:
             return

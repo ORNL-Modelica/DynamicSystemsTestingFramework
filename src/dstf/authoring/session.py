@@ -93,6 +93,10 @@ class RunningJob:
     #: ``start_wall`` is older, so the previous run's snapshot is never shown
     #: as this job's progress.
     started_wall: float = field(default_factory=time.time)
+    #: Set once ``_finish_job``'s reload has run. The job panel shows the
+    #: results' rows only then: a job that asked for no reload, or one that
+    #: failed, would otherwise show the previous run's rows as its own.
+    reloaded: bool = False
 
 
 class LockedError(RuntimeError):
@@ -494,6 +498,7 @@ class Session:
         try:
             if reloads_results and job.error is None and self.project is not None:
                 self._reload_results()
+                job.reloaded = True
         except BaseException as e:
             job.error = e
         finally:

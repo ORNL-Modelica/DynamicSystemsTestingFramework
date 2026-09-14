@@ -338,11 +338,50 @@ async def test_a_failed_job_shows_no_result_rows_from_before_it(tmp_path):
         assert shell.session.project.results[A].error_message == "OLD FAILURE"
 
 
+async def test_a_job_that_reloads_nothing_shows_no_result_rows(tmp_path):
+    """The same defect as the failed job's, on the succeeding path: a job
+    that asked for no reload leaves the previous run's results in place, so
+    its `finished:` line must not stand over them either. The gate is the
+    reload, not the outcome."""
+    from dstf.authoring.capabilities import Job
+
+    cfg, work = _project(tmp_path)
+    (work / "test_0001" / "result.json").write_text(
+        json.dumps({"success": False, "error": "OLD FAILURE"}), encoding="utf-8"
+    )
+    shell = Shell()
+    shell.open(cfg, work_dir=work)
+    assert shell.session.project.results[A].error_message == "OLD FAILURE"
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.apply(
+            Job(
+                run=lambda ctx: None,
+                label="export",
+                models=frozenset({A}),
+                reloads_results=False,
+            )
+        )
+        await user.should_see("finished: export", retries=20)
+        await user.should_not_see("OLD FAILURE", retries=20)
+        with pytest.raises(AssertionError):  # every row a rebuild would draw
+            user.find(marker="job-row")
+        last = shell.session.last_job
+        assert last is not None and last.error is None and last.reloaded is False
+
+
 async def test_a_malformed_status_snapshot_renders_what_it_has(shell):
     """`_jobs` may not raise: ``status.json`` is a file, and its shapes are
     whatever wrote it. Each bad shape drops the rows and leaves the rest of
     the footer standing — the notice BELOW the rows is what proves a raise
-    would have been caught here, since a partial rebuild would lose it."""
+    would have been caught here, since a partial rebuild would lose it.
+
+    Every snapshot's ``start_wall`` is sampled at WRITE time (the job is
+    already running by then, so it is never stale): a timestamp taken before
+    the page opened would fall outside the staleness guard's 0.1 s slack and
+    that guard, not the shape guard under test, would be what dropped the
+    rows."""
     from dstf.authoring.capabilities import Job, StoreWrite
 
     work = shell.session.project.config.work_dir
@@ -354,9 +393,12 @@ async def test_a_malformed_status_snapshot_renders_what_it_has(shell):
         "elapsed": 0.5,
     }
     malformed = [
-        {"start_wall": "abc", "tests": [good_row]},
-        {"start_wall": time.time(), "tests": 5},
-        {"start_wall": time.time(), "tests": [{"model_id": ["x"]}]},
+        lambda now: {"start_wall": "abc", "tests": [good_row]},
+        lambda now: {"start_wall": now, "tests": 5},
+        lambda now: {"start_wall": now, "tests": [{"model_id": ["x"]}]},
+        # `json.dumps` writes the literal `NaN` and `json.loads` reads it back:
+        # a float that passes the isinstance check and loses every comparison.
+        lambda now: {"start_wall": float("nan"), "tests": [good_row]},
     ]
     gate = _Gate()
     async with user_simulation(root=shell.root) as user:
@@ -367,13 +409,15 @@ async def test_a_malformed_status_snapshot_renders_what_it_has(shell):
         await user.should_see("stored 1")
         shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
         await user.should_see("running: rerun")
-        for status in malformed:
+        for make_status in malformed:
             # A good snapshot first, so the row's disappearance proves the
             # footer was rebuilt against the bad one and not left as it was.
             _write_status(work, start_wall=time.time(), rows=[good_row])
             shell._refresh("jobs")
             await user.should_see("simulating", retries=20)
-            (work / "status.json").write_text(json.dumps(status), encoding="utf-8")
+            (work / "status.json").write_text(
+                json.dumps(make_status(time.time())), encoding="utf-8"
+            )
             shell._refresh("jobs")
             await user.should_not_see("simulating", retries=20)
             await user.should_see("running: rerun")
