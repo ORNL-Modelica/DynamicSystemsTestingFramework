@@ -164,7 +164,8 @@ left as you edited it.
       reach it.
 - [ ] Make a rerun fail — it has to fail *inside the job*, so use a backend
       whose batch class builds but whose persistent probe does not: point
-      `testing.json` at `OpenModelica` on a machine with no OMPython, so the
+      `testing.json` at `OpenModelica` on a machine with no OMPython (re-sync
+      the venv without `--extra om` if it is installed), so the
       project opens and the job's `select_backend(persistent=True)` is what
       raises. The footer reads `failed: rerun — BackendUnavailableError: …`
       and every verdict is exactly what it was before the click. (A backend

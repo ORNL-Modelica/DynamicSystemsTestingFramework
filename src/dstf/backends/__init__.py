@@ -151,7 +151,8 @@ class BackendUnavailableError(RuntimeError):
     persistent variant whose dependency probe failed. Callers decide what
     to do about it — the CLI prints the message and exits 1
     (:func:`cli.run_cmds._get_backend`), the authoring tool shows it on the
-    job that asked for the run.
+    job that asked for the run, and ``Session.open`` turns it into a
+    ``ConfigError`` so ``dstf author`` refuses the project with one line.
     """
 
 
