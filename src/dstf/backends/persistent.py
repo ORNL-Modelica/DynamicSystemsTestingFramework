@@ -554,12 +554,14 @@ class PersistentBackendBase(Backend):
             self.config.work_dir,
             timeout_per_test=True,
             metadata=setup.run_metadata,
+            quiet=self.quiet,
         )
 
         workers = [self.make_worker(i) for i in range(n_workers)]
 
         start_all = time.monotonic()
-        print(self.starting_workers_message(n_workers), file=sys.stderr)
+        if not self.quiet:
+            print(self.starting_workers_message(n_workers), file=sys.stderr)
 
         live_workers = self._start_workers_parallel(workers)
         if not live_workers:
@@ -581,11 +583,12 @@ class PersistentBackendBase(Backend):
                 f"All {self.backend_label} persistent workers failed to start. "
                 f"See per-worker errors above. Try re-running with --batch."
             )
-        print(
-            f"  {len(live_workers)}/{n_workers} workers ready in "
-            f"{time.monotonic() - start_all:.1f}s",
-            file=sys.stderr,
-        )
+        if not self.quiet:
+            print(
+                f"  {len(live_workers)}/{n_workers} workers ready in "
+                f"{time.monotonic() - start_all:.1f}s",
+                file=sys.stderr,
+            )
 
         # Now that a worker is live, ask it for the real tool version and the
         # loaded library versions (e.g. MSL) and stamp them into the run
@@ -632,14 +635,16 @@ class PersistentBackendBase(Backend):
                 dt = time.monotonic() - t0
                 with ready_lock:
                     worker_ready[w.worker_id] = True
-                print(f"  Worker {w.worker_id}: ready ({dt:.1f}s)", file=sys.stderr)
+                if not self.quiet:
+                    print(f"  Worker {w.worker_id}: ready ({dt:.1f}s)", file=sys.stderr)
             except Exception as exc:
                 with ready_lock:
                     worker_ready[w.worker_id] = False
-                print(
-                    f"  Worker {w.worker_id}: start FAILED — {exc}",
-                    file=sys.stderr,
-                )
+                if not self.quiet:
+                    print(
+                        f"  Worker {w.worker_id}: start FAILED — {exc}",
+                        file=sys.stderr,
+                    )
                 # review 2026-07-06 (finding 24): a worker that failed mid-
                 # start may already have spawned its subprocess; close it so
                 # the process (and its license seat) doesn't leak. close() is
@@ -720,6 +725,7 @@ class PersistentBackendBase(Backend):
                 status,
                 elapsed=tr.elapsed,
                 detail=detail_str,
+                quiet=self.quiet,
             )
             if self.progress is not None:
                 self.progress.on_finish(
@@ -772,41 +778,45 @@ class PersistentBackendBase(Backend):
             last_exc: Exception | None = None
             for attempt in (1, 2):
                 if attempt == 2:
-                    print(
-                        f"  Worker {w.worker_id}: retrying restart in "
-                        f"{backoff:.0f}s (one retry, then the worker is retired)",
-                        file=sys.stderr,
-                    )
+                    if not self.quiet:
+                        print(
+                            f"  Worker {w.worker_id}: retrying restart in "
+                            f"{backoff:.0f}s (one retry, then the worker is retired)",
+                            file=sys.stderr,
+                        )
                     time.sleep(backoff)
                     t0 = time.monotonic()
                 try:
                     w.start()
                 except Exception as exc:
                     last_exc = exc
-                    print(
-                        f"  Worker {w.worker_id}: restart FAILED — {exc}",
-                        file=sys.stderr,
-                    )
+                    if not self.quiet:
+                        print(
+                            f"  Worker {w.worker_id}: restart FAILED — {exc}",
+                            file=sys.stderr,
+                        )
                     continue
-                if count_against_budget:
-                    print(
-                        f"  Worker {w.worker_id}: restarted "
-                        f"({time.monotonic() - t0:.1f}s, attempt {n_restarts}/"
-                        f"{self.max_restarts_per_worker})",
-                        file=sys.stderr,
-                    )
-                else:
-                    print(
-                        f"  Worker {w.worker_id}: restarted post-timeout "
-                        f"({time.monotonic() - t0:.1f}s — not counted)",
-                        file=sys.stderr,
-                    )
+                if not self.quiet:
+                    if count_against_budget:
+                        print(
+                            f"  Worker {w.worker_id}: restarted "
+                            f"({time.monotonic() - t0:.1f}s, attempt {n_restarts}/"
+                            f"{self.max_restarts_per_worker})",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            f"  Worker {w.worker_id}: restarted post-timeout "
+                            f"({time.monotonic() - t0:.1f}s — not counted)",
+                            file=sys.stderr,
+                        )
                 return True
-            print(
-                f"  Worker {w.worker_id}: restart failed twice "
-                f"({type(last_exc).__name__}) — retiring the worker",
-                file=sys.stderr,
-            )
+            if not self.quiet:
+                print(
+                    f"  Worker {w.worker_id}: restart failed twice "
+                    f"({type(last_exc).__name__}) — retiring the worker",
+                    file=sys.stderr,
+                )
             return False
 
         # review 2026-07-06 (finding 20): dispatch-thread liveness registry.

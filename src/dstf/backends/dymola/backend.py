@@ -146,6 +146,7 @@ class DymolaBackend(Backend):
             self.config.work_dir,
             timeout_per_test=True,
             metadata=setup.run_metadata,
+            quiet=self.quiet,
         )
 
         # Generate and run batch scripts
@@ -452,6 +453,7 @@ class DymolaBackend(Backend):
                     label,
                     "ok",
                     elapsed=per_elapsed,
+                    quiet=self.quiet,
                 )
                 results.append(
                     TestRunResult(
@@ -497,6 +499,7 @@ class DymolaBackend(Backend):
                     "FAIL",
                     elapsed=per_elapsed,
                     detail=msg[:80],
+                    quiet=self.quiet,
                 )
                 results.append(
                     TestRunResult(

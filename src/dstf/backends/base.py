@@ -88,6 +88,7 @@ def _print_run_header(
     *,
     timeout_per_test: bool = False,
     metadata: dict | None = None,
+    quiet: bool = False,
 ) -> None:
     """Print the standard "Running N tests..." header + dashboard URL.
 
@@ -101,7 +102,12 @@ def _print_run_header(
     batch loop applies one timeout per test, while batch Dymola and the
     persistent template apply it per worker-test, so both prefer the
     ``s/test`` rendering.
+
+    *quiet* (``Backend.quiet``) drops the whole header: a run driven from a
+    UI process narrates a console nobody is reading.
     """
+    if quiet:
+        return
     timeout_label = (
         f"timeout={timeout_s}s/test" if timeout_per_test else f"timeout={timeout_s}s"
     )
@@ -133,8 +139,12 @@ def _print_progress(
     status: str,
     elapsed: float | None = None,
     detail: str | None = None,
+    *,
+    quiet: bool = False,
 ):
-    """Thread-safe progress output."""
+    """Thread-safe progress output; *quiet* (``Backend.quiet``) prints nothing."""
+    if quiet:
+        return
     with _print_lock:
         pct = (index / total) * 100
         bar_len = 30
@@ -284,9 +294,16 @@ class Backend(ABC):
     #: exist — lets each backend own its artifact names without the reporter
     #: hardcoding anyone's on-disk conventions.
     artifact_files: tuple[tuple[str, str], ...] = ()
+    #: Suppress every console line a run narrates (header, progress bar,
+    #: summary, read phase, worker lifecycle). The CLI leaves it False; the
+    #: authoring tool sets it, because its backend's console is nobody's.
+    #: Declared on the class as well as set in ``__init__`` so a test double
+    #: that never calls ``__init__`` still reads a value.
+    quiet: bool = False
 
     def __init__(self, config: Config):
         self.config = config
+        self.quiet: bool = False
         self.progress = None  # set to a ProgressReporter during run_tests()
         # Optional model_id → "ref_NNNN" map for dashboard report links
         # (set by CLI before run_tests if reference IDs are known)
@@ -477,6 +494,8 @@ class Backend(ABC):
         wall: float,
     ) -> None:
         """End-of-run counts + timing, identical in shape for every backend."""
+        if self.quiet:
+            return
         total_work = sum(r.elapsed for r in results)
         speedup = (total_work / wall) if wall > 0 else 0.0
         n_ok = sum(1 for r in results if r.success)
@@ -515,6 +534,7 @@ class Backend(ABC):
             self.config.timeout,
             self.config.work_dir,
             metadata=setup.run_metadata,
+            quiet=self.quiet,
         )
 
         def _result_status(rr: TestRunResult) -> str:
@@ -541,6 +561,7 @@ class Backend(ABC):
                     f"{test_key} {test.model_id}",
                     _result_status(result),
                     elapsed=result.elapsed,
+                    quiet=self.quiet,
                 )
         else:
             futures = {}
@@ -564,6 +585,7 @@ class Backend(ABC):
                         f"{test_key} {model_id}",
                         _result_status(result),
                         elapsed=result.elapsed,
+                        quiet=self.quiet,
                     )
 
         self._print_run_summary(run_results, total, time.monotonic() - wall_start)
@@ -618,7 +640,8 @@ class Backend(ABC):
 
         total = len(work_items)
         completed = 0
-        print(f"\nReading {total} result files...")
+        if not self.quiet:
+            print(f"\nReading {total} result files...")
         wall_start = time.monotonic()
         per_test_elapsed: list[float] = []
         elapsed_lock = Lock()
@@ -639,11 +662,13 @@ class Backend(ABC):
                     per_test_elapsed.append(dt)
                 completed += 1
                 short = model_id.rsplit(".", 1)[-1]
-                _print_progress(completed, total, f"{test_key} {short}", "read")
+                _print_progress(
+                    completed, total, f"{test_key} {short}", "read", quiet=self.quiet
+                )
 
         wall = time.monotonic() - wall_start
         total_work = sum(per_test_elapsed)
-        if per_test_elapsed:
+        if per_test_elapsed and not self.quiet:
             speedup = (total_work / wall) if wall > 0 else 0.0
             avg = total_work / len(per_test_elapsed)
             slowest = max(per_test_elapsed)

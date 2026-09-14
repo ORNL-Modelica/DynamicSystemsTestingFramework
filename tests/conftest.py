@@ -43,6 +43,33 @@ def make_test_model(model_id: str = "Lib.T", **kw) -> TestModel:
     return TestModel(**defaults)
 
 
+def python_example_copy(tmp_path, *, baselines: bool = True):
+    """Copy ``examples/python/PythonTestingLib`` into *tmp_path* and discover it.
+
+    Returns ``(config, tests)`` — a :class:`~dstf.config.Config` reading the
+    copy's ``testing.json`` with an explicit ``work_dir`` under *tmp_path*
+    (the default work dir is derived from the CWD, which a test must never
+    write into), and the discovered :class:`TestModel` list. With
+    ``baselines=False`` the committed ``Python/`` reference tree is removed,
+    so the copy has no primary baselines.
+
+    Lives in conftest rather than in one test module so the run-pipeline,
+    quiet-backend and shell tests share one runnable library copy without any
+    test module importing another (same reason as ``make_test_model``).
+    """
+    from dstf.config import Config
+    from dstf.discovery.test_registry import discover_tests
+
+    lib = tmp_path / "lib"
+    shutil.copytree(PROJECT_ROOT / "examples" / "python" / "PythonTestingLib", lib)
+    ref_root = lib / "Resources" / "ReferenceResults"
+    if not baselines:
+        shutil.rmtree(ref_root / "Python", ignore_errors=True)
+
+    config = Config(config_file=ref_root / "testing.json", work_dir=tmp_path / "work")
+    return config, discover_tests(config)
+
+
 @pytest.fixture
 def fixtures_dir():
     """Path to the fixtures directory."""
