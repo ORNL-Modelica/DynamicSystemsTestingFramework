@@ -3,6 +3,10 @@ no browser. The shell is fixed and knows no capability by name."""
 
 from __future__ import annotations
 
+import asyncio
+import json
+import time
+
 import pytest
 
 pytest.importorskip("nicegui")
@@ -154,6 +158,158 @@ async def test_a_thread_posted_completion_reaches_the_page(shell):
         await user.should_see("running: rerun")
         gate.release.set()
         await user.should_see("no job running")  # the drained completion cleared it
+
+
+def _write_status(work, *, start_wall, rows) -> None:
+    """A ``status.json`` in ProgressReporter's shape. The poll reads it
+    through ``progress.read_status``, as the live dashboard does."""
+    (work / "status.json").write_text(
+        json.dumps(
+            {
+                "total": len(rows),
+                "counts": {"running": sum(r.get("status") == "running" for r in rows)},
+                "tests": rows,
+                "start_wall": start_wall,
+                "updated_at": time.time(),
+                "metadata": {"backend_name": "Python"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+async def test_the_job_panel_shows_per_test_rows_from_the_running_status(shell):
+    """§4.7: progress is the ``status.json`` the pipeline already writes,
+    polled — no log tail. The idle label stays; the outcome is a second line."""
+    from dstf.authoring.capabilities import Job
+
+    work = shell.session.project.config.work_dir
+    gate = _Gate()
+
+    def write_status_then_wait(ctx):
+        _write_status(
+            work,
+            start_wall=time.time(),
+            rows=[
+                {
+                    "test_key": "test_0001",
+                    "model_id": A,
+                    "status": "running",
+                    "phase": "simulating",
+                    "elapsed": 0.5,
+                    "detail": None,
+                }
+            ],
+        )
+        gate(ctx)
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.apply(
+            Job(run=write_status_then_wait, label="rerun", models=frozenset({A}))
+        )
+        await user.should_see("running: rerun")
+        # The poll is 1 s; should_see's default budget is 0.3 s.
+        await user.should_see("simulating", retries=20)
+        gate.release.set()
+        await user.should_see("finished: rerun", retries=20)
+        await user.should_see("no job running")
+        await user.should_not_see("simulating")
+        assert shell.session.running is None
+        assert shell.last_job is not None and shell.last_job.error is None
+
+
+async def test_a_status_from_an_older_run_is_not_this_jobs_progress(shell):
+    """``RunningJob.started_wall`` against the snapshot's ``start_wall``: the
+    previous run's rows are never shown as this job's."""
+    from dstf.authoring.capabilities import Job
+
+    work = shell.session.project.config.work_dir
+    _write_status(
+        work,
+        start_wall=time.time() - 3600,
+        rows=[
+            {
+                "test_key": "test_0001",
+                "model_id": A,
+                "status": "failed",
+                "phase": None,
+                "elapsed": 2.0,
+            }
+        ],
+    )
+    gate = _Gate()
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await user.should_see("running: rerun")
+        # The poll's first tick is at 1 s: assert the absence only after one
+        # has certainly fired, so this proves the guard and not the timer.
+        await asyncio.sleep(1.3)
+        await user.should_not_see("failed")
+        # Still the stale file: the gated job wrote no snapshot of its own.
+        assert (
+            json.loads((work / "status.json").read_text(encoding="utf-8"))["start_wall"]
+            < shell.session.running.started_wall
+        )
+        gate.release.set()
+        await user.should_see("no job running", retries=20)
+
+
+async def test_a_job_that_raises_shows_its_failure_and_the_message(shell):
+    """§4.7 "Failure handling": the job panel carries the message."""
+    from dstf.authoring.capabilities import Job
+
+    def boom(ctx):
+        raise RuntimeError("no omc")
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.apply(Job(run=boom, label="rerun", models=frozenset({A})))
+        await user.should_see("failed: rerun", retries=20)
+        await user.should_see("no omc", retries=20)
+        assert shell.last_job is not None
+        assert isinstance(shell.last_job.error, RuntimeError)
+
+
+async def test_a_store_writes_line_is_shown_in_the_footer(shell):
+    from dstf.authoring.capabilities import StoreWrite
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.apply(
+            StoreWrite(run=lambda store: "stored 1", models=frozenset({B}))
+        )
+        await user.should_see("stored 1")
+        assert shell.session.notices == ["stored 1"]
+
+
+async def test_a_finished_jobs_failed_result_shows_its_error_message(shell):
+    """§4.7: "the backend's failure message from the results" — reloaded by
+    the job's completion, one row per model the job ran."""
+    from dstf.authoring.capabilities import Job
+
+    work = shell.session.project.config.work_dir
+    gate = _Gate()
+
+    def fail_a_then_wait(ctx):
+        # The Python driver's failing shape; read_result maps it to error_message.
+        (work / "test_0001" / "result.json").write_text(
+            json.dumps({"success": False, "error": "division by zero"}),
+            encoding="utf-8",
+        )
+        gate(ctx)
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.apply(
+            Job(run=fail_a_then_wait, label="rerun", models=frozenset({A}))
+        )
+        await user.should_see("running: rerun")
+        gate.release.set()
+        await user.should_see("finished: rerun", retries=20)
+        await user.should_see("division by zero", retries=20)
+        assert shell.session.project.results[A].error_message == "division by zero"
 
 
 async def test_the_pending_drawer_lists_staged_ops_by_model(shell):

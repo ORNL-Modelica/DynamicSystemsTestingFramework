@@ -15,6 +15,7 @@ from typing import Any
 from fastapi.responses import FileResponse, JSONResponse
 from nicegui import app, ui
 
+from ..backends.progress import read_status
 from ..cli.common import _filter_tests
 from ..reporting.status import classify_with_class
 from ..storage.ref_index import _atomic_write_text
@@ -27,6 +28,7 @@ from .capabilities import FigureHook as FigureHookProtocol
 from .session import (
     JobRunningError,
     PendingEditsError,
+    RunningJob,
     Session,
     SessionView,
     StaleSpecError,
@@ -125,6 +127,7 @@ class Shell:
         self._built = False
         self.needle = ""  # the test list's filter text; survives refreshes
         self._routes_added = False
+        self.last_job: RunningJob | None = None  # the footer's outcome line
         # Session events -> regions. `tabs` is NOT on spec/results: Edit
         # criteria stages on every control change, and rebuilding the tab
         # would destroy the control being typed in. Tabs follow the
@@ -165,6 +168,10 @@ class Shell:
         if event.get("state") in ("finished", "failed"):
             # A lock refusal shown in a tab is about a job that is now over.
             self.errors.clear()
+            self.last_job = event["job"]
+        # Unconditional, for every state including `written`: the `results`
+        # event deliberately skips `tabs`, so this is what re-renders a
+        # panel's rows after a store write.
         self._refresh("jobs", "tests", "tabs")
 
     def _refresh(self, *regions: str) -> None:
@@ -233,6 +240,7 @@ class Shell:
         with ui.footer():
             self._jobs()
         ui.timer(0.1, self._tick)
+        ui.timer(1.0, self._poll, immediate=False)
         self._built = True
 
     def _add_routes(self) -> None:
@@ -263,6 +271,12 @@ class Shell:
             except queue.Empty:
                 return
             fn()
+
+    def _poll(self) -> None:
+        """While a job runs, re-read its progress: the job panel polls
+        ``status.json``, exactly as the live dashboard does (§4.7)."""
+        if self.session.running is not None:
+            self._refresh("jobs")
 
     @ui.refreshable_method
     def _header(self) -> None:
@@ -517,11 +531,71 @@ class Shell:
 
     @ui.refreshable_method
     def _jobs(self) -> None:
+        """The footer (§4.7): the running job's per-test progress from
+        ``status.json``, else the last job's outcome and what its results
+        say went wrong, then the store writes' lines and the artifacts.
+        Nothing here may raise — a malformed snapshot renders what it has."""
         job = self.session.running
         ui.label(f"running: {job.label}" if job else "no job running")
+        if job is not None:
+            self._progress_rows(job)
+        elif self.last_job is not None:
+            last = self.last_job
+            if last.error is None:
+                ui.label(f"finished: {last.label}")
+            else:
+                ui.label(
+                    f"failed: {last.label} — {type(last.error).__name__}: {last.error}"
+                ).classes("text-negative")
+            self._result_rows(last)
+        for notice in self.session.notices:
+            ui.label(notice).classes("text-xs")
         for artifact in self.session.artifacts:
             for path in artifact.paths:
                 ui.link(f"{artifact.label}: {path.name}", path.as_uri(), new_tab=True)
+
+    def _progress_rows(self, job: RunningJob) -> None:
+        """One row per scoped test in the snapshot — but only a snapshot this
+        job wrote: a ``start_wall`` older than the job's start belongs to the
+        previous run (the same guard `dashboard_render` applies to a sidecar)."""
+        project = self.session.project
+        work_dir = project.config.work_dir if project is not None else None
+        if work_dir is None:
+            return
+        status = read_status(work_dir)
+        if status is None:
+            return
+        if (status.get("start_wall") or 0.0) < job.started_wall - 1.0:
+            return
+        for row in status.get("tests") or []:
+            if not isinstance(row, dict) or row.get("model_id") not in job.models:
+                continue
+            parts = [str(row.get("model_id"))]
+            for key in ("status", "phase"):
+                if row.get(key):
+                    parts.append(str(row[key]))
+            elapsed = row.get("elapsed")
+            if isinstance(elapsed, (int, float)):
+                parts.append(f"{elapsed:.1f} s")
+            if row.get("detail"):
+                parts.append(str(row["detail"]))
+            ui.label(" · ".join(parts)).classes("text-xs").mark("job-row")
+
+    def _result_rows(self, last: RunningJob) -> None:
+        """What the finished job left: the reloaded result's failure message
+        per model it ran (§4.7 "the backend's failure message from the
+        results"), in project order."""
+        project = self.session.project
+        if project is None:
+            return
+        for test in project.tests:
+            if test.model_id not in last.models:
+                continue
+            result = project.results.get(test.model_id)
+            text = test.model_id
+            if result is not None and not result.success:
+                text = f"{text} · {result.error_message or 'simulation failed'}"
+            ui.label(text).classes("text-xs").mark("job-row")
 
 
 def run_app(
