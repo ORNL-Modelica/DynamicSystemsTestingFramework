@@ -534,8 +534,6 @@ class TestEmbeddedFigures:
 
         from dstf.backends.types import TestResult, VariableResult
         from dstf.comparison.comparator import compare_test
-        from dstf.comparison.geometry import Marker
-        from dstf.comparison.tree_eval import leaf_comparisons_by_path
         from dstf.discovery.test_registry import TestModel
         from dstf.reporting import report_suite
 
@@ -549,6 +547,8 @@ class TestEmbeddedFigures:
             model_id="M",
             success=True,
             variables=[VariableResult(index=1, name="x", time=t, values=t + 0.001)],
+            # A diagnostic, so the page builds a diagnostic figure too.
+            diagnostics=[VariableResult(index=0, name="CPUtime", time=t, values=t)],
         )
         test = TestModel(
             model_id="M",
@@ -559,13 +559,6 @@ class TestEmbeddedFigures:
             variable_overrides={"x": {"mode": "points", "tolerance": 0.01}},
         )
         comp = compare_test(test, result, ref)
-        handles = [
-            p
-            for vc in leaf_comparisons_by_path(comp.metric_tree).values()
-            for p in vc.geometry
-            if isinstance(p, Marker) and p.kind == "handle"
-        ]
-        assert handles, "no handle Marker: the assertion below would be vacuous"
 
         built: list[dict] = []
         real = report_suite._build_figures
@@ -585,14 +578,24 @@ class TestEmbeddedFigures:
             test_model=test,
             metric_tree=comp.metric_tree,
         )
-        assert len(built) == 1
-        figs = [
-            *built[0]["figures"].values(),
-            *built[0]["diag_figures"],
-            *built[0]["nb_figures"],
-        ]
-        assert "x" in built[0]["figures"]
-        for fig in figs:
+        # No baseline, no comparisons: the page builds no-baseline figures.
+        report_suite.generate_comparison_plots(
+            "M", None, result, [], tmp_path / "nb_plots", test_model=test
+        )
+        assert len(built) == 2
+        figures, diag, nb = (
+            built[0]["figures"],
+            built[0]["diag_figures"],
+            built[1]["nb_figures"],
+        )
+        # Every list the loop checks is non-empty, and the per-variable
+        # figure really carries a handle — else the loop is vacuous.
+        assert "x" in figures and diag and nb
+        assert any(
+            (tr.get("meta") or {}).get("kind") == "handle"
+            for tr in figures["x"]["data"]
+        )
+        for fig in [*figures.values(), *diag, *nb]:
             assert "edits" not in fig["config"]
             assert not any(
                 s.get("type") == "circle" for s in fig["layout"].get("shapes") or []

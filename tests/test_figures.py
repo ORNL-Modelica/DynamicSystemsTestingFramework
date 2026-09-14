@@ -327,9 +327,10 @@ class TestFigure:
 
 
 def _handle_view():
-    """Two time-panel handle Markers, one spectrum-panel handle Marker, a
-    non-handle Marker (a detected spectrum peak, the kind a mode really
-    emits), an HLine handle and a Box handle."""
+    """Two time-panel handle Markers, one spectrum-panel handle Marker, two
+    non-handle Markers (a detected spectrum peak, the kind a mode really
+    emits, and one left at the DEFAULT kind — what a third-party metric's
+    Marker gets), an HLine handle and a Box handle."""
     t = np.linspace(0.0, 1.0, 11)
     vc = _compare_range(t, t, min_value=None, max_value=None)
     vc.name = "x"
@@ -338,6 +339,7 @@ def _handle_view():
         Marker(id="tube/lower/0", kind="handle", x=0.5, y=0.3),
         Marker(id="peaks/declared/0", kind="handle", panel="spectrum", x=2.0, y=1.5),
         Marker(id="peaks/detected/0", kind="detected", panel="spectrum", x=3.0, y=0.5),
+        Marker(id="custom/marker/0", x=0.7, y=0.7),
         HLine(id="range/max", kind="handle", value=0.9),
         Box(id="points/box/0", kind="handle", t0=0.2, t1=0.3, y0=0.2, y1=0.3),
     )
@@ -368,18 +370,49 @@ class TestEditableFigure:
         }
         assert got == expected
         assert all(r["xsizemode"] == r["ysizemode"] == "pixel" for r in rings)
-        # The detected-peak Marker gets no ring.
+        # Neither non-handle Marker gets a ring: not the detected peak, and
+        # not one at the default "result" kind.
         assert f"{p}/peaks/detected/0" not in got
+        assert f"{p}/custom/marker/0" not in got
         # Rings come LAST: the later shape takes a drag, and a point's
         # target ring sits at the centre of its box rect.
         shapes = fig["layout"]["shapes"]
         assert shapes[-len(rings) :] == rings
-        first_ring = next(i for i, s in enumerate(shapes) if s["type"] == "circle")
-        assert all(s["type"] == "circle" for s in shapes[first_ring:])
         others = [s for s in shapes if s["type"] != "circle"]
         assert others == plain["layout"]["shapes"]
         assert {s["name"] for s in others} >= {f"{p}/range/max", f"{p}/points/box/0"}
         assert fig["data"] == plain["data"]
+
+    def test_rings_follow_every_leafs_shapes(self):
+        """Rings are collected across ALL leaves and appended once: a later
+        leaf's line must not be drawn above an earlier leaf's ring, or it
+        takes the drag."""
+        t = np.linspace(0.0, 1.0, 11)
+        first = _compare_range(t, t, min_value=None, max_value=None)
+        first.name = "x"
+        first.geometry = (Marker(id="tube/lower/0", kind="handle", x=0.0, y=-0.5),)
+        second = _compare_range(t, t, min_value=-0.5, max_value=None)
+        second.name = "x"
+        view = build_view(
+            "x",
+            act_time=t,
+            act_values=t,
+            ref_time=t,
+            ref_values=t,
+            leaves=[
+                _stamped(first, "/metrics/children/0"),
+                _stamped(second, "/metrics/children/1"),
+            ],
+        )
+        shapes = variable_figure(view, editable=True)["layout"]["shapes"]
+        rings = [s for s in shapes if s["type"] == "circle"]
+        assert [r["name"] for r in rings] == ["/metrics/children/0/tube/lower/0"]
+        # The second leaf really draws a non-ring shape, after the ring's leaf.
+        assert any(
+            s["name"].startswith("/metrics/children/1/") and s["type"] != "circle"
+            for s in shapes
+        )
+        assert shapes[-len(rings) :] == rings
 
     def test_the_default_figure_is_not_editable(self):
         view = _handle_view()
