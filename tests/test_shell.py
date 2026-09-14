@@ -1348,3 +1348,104 @@ async def test_a_shape_drag_redraws_the_figure_and_stages_nothing(shell):
         await _settled(lambda: plot.figure["layout"].get("editrevision") != rev)
         assert [p.id for p in user.find(ui.plotly).elements] == [plot.id]
         assert shell.session.spec.pending == pending_before
+
+
+async def test_a_changed_name_list_rebuilds_the_plot_and_the_picker(shell):
+    """The picker's names are part of the centre's key: a staged tree that
+    adds a variable must rebuild the centre, or the select keeps the old
+    options."""
+    from dstf.authoring.spec_document import PatchOp
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        plot = await _select_a_plot(user)
+        shell.session.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/metrics",
+                    {
+                        "combinator": "and",
+                        "children": [
+                            {"metric": "nrmse", "variable": "x"},
+                            {"metric": "range", "variable": "y", "max_value": 5.0},
+                        ],
+                    },
+                )
+            ]
+        )
+        await _settled(lambda: plot.is_deleted)
+        (select,) = user.find(ui.select).elements
+        assert "y" in select.options
+        (new,) = user.find(ui.plotly).elements
+        assert new.id != plot.id
+
+
+async def test_a_dirty_figure_is_not_redrawn_for_a_selection_it_was_not_built_for(
+    shell,
+):
+    """Between a selection change and the deferred centre rebuild the old
+    plot element still exists: the tick must not draw the new selection's
+    figure into it."""
+    import asyncio
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        plot = await _select_a_plot(user)
+        calls = [0]
+        original = plot.update_figure
+
+        def counting(figure):
+            calls[0] += 1
+            original(figure)
+
+        plot.update_figure = counting
+        shell._mark_figure_dirty()
+        shell.session.select(tests={D}, variable="x", leaf_path=None)
+        assert not plot.is_deleted  # the rebuild has not run yet
+        shell._tick()
+        await _settled(lambda: plot.is_deleted)
+        await asyncio.sleep(0.25)
+        assert calls[0] == 0
+
+
+async def test_a_tree_refresh_after_close_does_not_raise(shell):
+    """A results event defers a `_tree` refresh; a close in the same pass
+    runs before it, so the refresh finds no project."""
+    import asyncio
+
+    from nicegui import app
+
+    errors: list[Exception] = []
+    async with user_simulation(root=shell.root) as user:
+        app.on_exception(errors.append)
+        try:
+            await user.open("/")
+            await _select_a_plot(user)
+            shell.session._reload_results()
+            shell.session.close()
+            await user.should_see("dstf author --config")
+            await asyncio.sleep(0.25)  # every deferred refresh has run
+        finally:
+            app._exception_handlers.remove(errors.append)
+    assert errors == []
+    assert shell.session.project is None
+
+
+async def test_a_tree_row_click_keeps_the_plot_element(shell):
+    """A leaf click changes only `leaf_path`: the centre's key is the same,
+    so the plot (and the user's zoom) stays."""
+    import asyncio
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        plot = await _select_a_plot(user)
+        user.find("/metrics/children/0").click()
+        await _settled(
+            lambda: shell.session.selection.leaf_path == "/metrics/children/0"
+        )
+        await user.should_see("/metrics/children/0")
+        await asyncio.sleep(0.25)  # a deferred centre rebuild would have run
+        assert not plot.is_deleted
+        assert [p.id for p in user.find(ui.plotly).elements] == [plot.id]

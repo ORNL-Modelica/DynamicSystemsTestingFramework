@@ -141,10 +141,13 @@ class FigureHook:
 
     def _shape_name(self, index: int) -> str:
         # A known race: the index is resolved against the figure the SERVER
-        # last sent. A drag released between an in-place `update_figure`
-        # that changed the shape list and the browser receiving it can
-        # resolve to the wrong name. The window is one tick plus a websocket
-        # round trip, and the snap-back redraw corrects the picture.
+        # last sent. A drag released after an in-place `update_figure` that
+        # changed the shape list, but resolved before the browser has applied
+        # that update and the relayout has flown back, can resolve to the
+        # wrong name. The window runs from `update_figure` through both
+        # websocket legs. The snap-back redraw corrects only the picture: once
+        # edits are staged from drags, a wrongly resolved handle's edit stays
+        # staged.
         figure = getattr(self._plot, "figure", None)
         layout = figure.get("layout") if isinstance(figure, dict) else None
         shapes = layout.get("shapes") if isinstance(layout, dict) else None
@@ -237,8 +240,11 @@ class ShellPanel:
 
 
 class Shell:
-    """One per process. ``root`` builds the page; every region is a
-    refreshable method the Session's events refresh."""
+    """One per process, one browser tab: the v1 shape (two tabs already share
+    the drawer element). ``root`` builds the page; every region is a
+    refreshable method the Session's events refresh. The in-place redraw and
+    the figure hook follow the last-built plot, so a second tab's centre does
+    not redraw in place."""
 
     def __init__(
         self, *, filter: str | None = None, package: str | None = None
@@ -253,7 +259,10 @@ class Shell:
         self.needle = ""  # the test list's filter text; survives refreshes
         self._routes_added = False
         # The centre's plot element, the `_centre_key` it was built for, and
-        # the in-place redraw state `_follow_centre` / `_tick` share.
+        # the in-place redraw state `_follow_centre` / `_tick` share. One tab
+        # (the class docstring): the in-place redraw and the figure hook
+        # follow the last-built plot; a second tab's centre does not redraw
+        # in place.
         self._plot: ui.plotly | None = None
         self._plot_key: tuple[str, str, tuple[str, ...]] | None = None
         self._figure_dirty = False
@@ -294,15 +303,17 @@ class Shell:
         self._follow_centre()
 
     def _follow_centre(self) -> None:
-        """Redraw the centre after a spec or results event. While the plot
-        element shows the same (model, variable, names) it is kept and only
-        marked dirty — `_tick` redraws it once, however many events a single
-        change emitted — and the tree below it is refreshed. A rebuilt plot
-        element loses the user's zoom (the spike: replacing the element
+        """Redraw the centre after a spec, results or selection event. While
+        the plot element shows the same (model, variable, names) it is kept
+        and only marked dirty — `_tick` redraws it once, however many events a
+        single change emitted — and the tree below it is refreshed. A rebuilt
+        plot element loses the user's zoom (the spike: replacing the element
         resets it; `update_figure` goes through `Plotly.react`, which keeps
-        it). Anything else — a selection change, an open, a close, a changed
-        name list — rebuilds the centre; open and close reset the selection,
-        so the key needs no project identity."""
+        it). Anything else — a selection of another test or variable, an
+        open, a close, a changed name list — rebuilds the centre; open and
+        close reset the selection, so the key needs no project identity.
+        Before the page is built there is no plot, so this only ever reaches
+        the guarded `_refresh`."""
         key = self._centre_key()
         if (
             key is not None
@@ -323,8 +334,22 @@ class Shell:
 
     def _centre_key(self) -> tuple[str, str, tuple[str, ...]] | None:
         """``(model_id, variable, names)`` the centre plots for the current
-        selection — the same variable resolution `_centre` does — or None
-        when it plots nothing."""
+        selection, or None when it plots nothing."""
+        resolved = self._centre_selection()
+        if resolved is None:
+            return None
+        model_id, variable, names = resolved
+        if variable is None:
+            return None
+        return (model_id, variable, names)
+
+    def _centre_selection(
+        self,
+    ) -> tuple[str, str | None, tuple[str, ...]] | None:
+        """The one resolution `_centre` and `_centre_key` share: the single
+        selected test, the variable it plots (the selected one when the
+        picker lists it, else the first name, else None) and the picker's
+        names. None without a project or a single selected test."""
         if self.session.project is None:
             return None
         sel = self.session.selection
@@ -335,14 +360,19 @@ class Shell:
         variable = (
             sel.variable if sel.variable in names else (names[0] if names else None)
         )
-        if variable is None:
-            return None
         return (model_id, variable, tuple(names))
 
     def _on_selection(self, event: dict) -> None:
         # A capability's refusal is about the selection it was shown for.
         self.errors.clear()
-        self._refresh("tests", "centre", "tabs")
+        self._refresh("tests")
+        # A tree-row click changes only `leaf_path`: the key is the same, so
+        # the plot (and the user's zoom) stays and only the tree is refreshed.
+        # Before `tabs`, the order the regions always refreshed in: a panel
+        # (Edit tree) repeats the leaf path, and the simulated click in the
+        # shell tests picks the lowest element id among the matches.
+        self._follow_centre()
+        self._refresh("tabs")
 
     def _on_job(self, event: dict) -> None:
         if event.get("state") in ("finished", "failed"):
@@ -619,21 +649,16 @@ class Shell:
             ui.label("No project open. Start the tool on one:").classes("text-lg")
             ui.code("dstf author --config <path/to/testing.json>")
             return
-        sel = self.session.selection
-        if len(sel.tests) != 1:
-            ui.label(
-                f"{len(sel.tests)} tests selected" if sel.tests else "select a test"
-            )
+        resolved = self._centre_selection()
+        if resolved is None:
+            tests = self.session.selection.tests
+            ui.label(f"{len(tests)} tests selected" if tests else "select a test")
             return
-        (model_id,) = tuple(sel.tests)
-        names = self._variable_names(model_id)
-        variable = (
-            sel.variable if sel.variable in names else (names[0] if names else None)
-        )
+        model_id, variable, names = resolved
         ui.label(model_id).classes("text-lg")
         if names:
             ui.select(
-                names,
+                list(names),
                 value=variable,
                 label="variable",
                 on_change=lambda e: self.session.select(
@@ -644,14 +669,19 @@ class Shell:
             fig = self.session.figure(model_id, variable)
             fig.setdefault("layout", {})["editrevision"] = self._figure_rev
             plot = ui.plotly(fig).classes("w-full")
-            self._plot, self._plot_key = plot, self._centre_key()
+            self._plot, self._plot_key = plot, (model_id, variable, names)
             self.figure_hook.attach(plot)
         self._tree(model_id)
 
     @ui.refreshable_method
     def _tree(self, model_id: str) -> None:
         """The selected test's criteria rows, below the plot: refreshed on
-        its own when the plot is kept in place."""
+        its own when the plot is kept in place. A deferred refresh can run
+        after a close or an open in the same pass: with no project, or a
+        model the open project does not test, there is nothing to draw."""
+        project = self.session.project
+        if project is None or project.test(model_id) is None:
+            return
         view = self.session.tree_view(model_id)
         if view is None:
             ui.label("no criteria scored")
