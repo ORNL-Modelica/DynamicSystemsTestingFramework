@@ -131,6 +131,11 @@ class FigureHook:
             plot.on(event, lambda e, kind=event: self._dispatch(kind, e.args))
 
     def _shape_name(self, index: int) -> str:
+        # A known race: the index is resolved against the figure the SERVER
+        # last sent. A drag released between an in-place `update_figure`
+        # that changed the shape list and the browser receiving it can
+        # resolve to the wrong name. The window is one tick plus a websocket
+        # round trip, and the snap-back redraw corrects the picture.
         figure = getattr(self._plot, "figure", None)
         layout = figure.get("layout") if isinstance(figure, dict) else None
         shapes = layout.get("shapes") if isinstance(layout, dict) else None
@@ -234,21 +239,22 @@ class Shell:
         self.view = SessionView(self.session)
         self.filter, self.package = filter, package
         self.errors: dict[str, str] = {}  # capability name -> last error in its tab
-        self.figure_hook = FigureHook()
+        self.figure_hook = FigureHook(on_shape_moved=self._mark_figure_dirty)
         self._built = False
         self.needle = ""  # the test list's filter text; survives refreshes
         self._routes_added = False
+        # The centre's plot element, the `_centre_key` it was built for, and
+        # the in-place redraw state `_follow_centre` / `_tick` share.
+        self._plot: ui.plotly | None = None
+        self._plot_key: tuple[str, str, tuple[str, ...]] | None = None
+        self._figure_dirty = False
+        self._figure_rev = 0  # stamped as `layout.editrevision`
         # Session events -> regions. `tabs` is NOT on spec/results: Edit
         # criteria stages on every control change, and rebuilding the tab
         # would destroy the control being typed in. Tabs follow the
         # selection, the job (the lock reason), and an act error.
-        self.session.on(
-            "spec",
-            lambda e: self._refresh("header", "tests", "centre", "drawer", "jobs"),
-        )
-        self.session.on(
-            "results", lambda e: self._refresh("tests", "centre", "leaf_error")
-        )
+        self.session.on("spec", self._on_spec)
+        self.session.on("results", self._on_results)
         self.session.on("job", self._on_job)
         self.session.on("selection", self._on_selection)
 
@@ -269,6 +275,60 @@ class Shell:
             return []
         tests = _filter_tests(project.tests, self.filter, self.package)
         return [t.model_id for t in tests]
+
+    def _on_spec(self, event: dict) -> None:
+        self._refresh("header", "tests", "drawer", "jobs")
+        self._follow_centre()
+
+    def _on_results(self, event: dict) -> None:
+        self._refresh("tests", "leaf_error")
+        self._follow_centre()
+
+    def _follow_centre(self) -> None:
+        """Redraw the centre after a spec or results event. While the plot
+        element shows the same (model, variable, names) it is kept and only
+        marked dirty — `_tick` redraws it once, however many events a single
+        change emitted — and the tree below it is refreshed. A rebuilt plot
+        element loses the user's zoom (the spike: replacing the element
+        resets it; `update_figure` goes through `Plotly.react`, which keeps
+        it). Anything else — a selection change, an open, a close, a changed
+        name list — rebuilds the centre; open and close reset the selection,
+        so the key needs no project identity."""
+        key = self._centre_key()
+        if (
+            key is not None
+            and key == self._plot_key
+            and self._plot is not None
+            and not self._plot.is_deleted
+        ):
+            self._figure_dirty = True
+            self._tree.refresh()
+        else:
+            self._refresh("centre")
+
+    def _mark_figure_dirty(self) -> None:
+        """The hook's shape-moved callback. A drag moved a shape in the
+        browser whether or not anything was staged; the redraw re-sends the
+        figure so the shape lands where the Session says the handle is."""
+        self._figure_dirty = True
+
+    def _centre_key(self) -> tuple[str, str, tuple[str, ...]] | None:
+        """``(model_id, variable, names)`` the centre plots for the current
+        selection — the same variable resolution `_centre` does — or None
+        when it plots nothing."""
+        if self.session.project is None:
+            return None
+        sel = self.session.selection
+        if len(sel.tests) != 1:
+            return None
+        (model_id,) = tuple(sel.tests)
+        names = self._variable_names(model_id)
+        variable = (
+            sel.variable if sel.variable in names else (names[0] if names else None)
+        )
+        if variable is None:
+            return None
+        return (model_id, variable, tuple(names))
 
     def _on_selection(self, event: dict) -> None:
         # A capability's refusal is about the selection it was shown for.
@@ -374,13 +434,32 @@ class Shell:
 
     def _tick(self) -> None:
         """Drain what worker threads posted (a job's completion); the
-        Session events it emits refresh the regions."""
+        Session events it emits refresh the regions. Then, if a spec or
+        results event (or a shape drag) marked the centre figure dirty and
+        the plot still shows the same key, redraw it in place, once."""
         while True:
             try:
                 fn = self._posted.get_nowait()
             except queue.Empty:
-                return
+                break
             fn()
+        if not self._figure_dirty:
+            return
+        self._figure_dirty = False
+        key = self._centre_key()
+        if key is None or key != self._plot_key:
+            return  # the centre is (being) rebuilt with a fresh figure
+        if self._plot is None or self._plot.is_deleted:
+            return
+        model_id, variable, _names = key
+        self._figure_rev += 1
+        fig = self.session.figure(model_id, variable)
+        # `editrevision` must change on every update: with `uirevision`
+        # constant, `Plotly.react` otherwise KEEPS a user's shape drag when
+        # the new figure repeats the value sent last, and a refused or no-op
+        # drag would not snap back (the spike).
+        fig.setdefault("layout", {})["editrevision"] = self._figure_rev
+        self._plot.update_figure(fig)
 
     def _poll(self) -> None:
         """While a job runs, re-read its progress: the job panel polls
@@ -525,6 +604,7 @@ class Shell:
 
     @ui.refreshable_method
     def _centre(self) -> None:
+        self._plot, self._plot_key = None, None
         project = self.session.project
         if project is None:
             ui.label("No project open. Start the tool on one:").classes("text-lg")
@@ -552,8 +632,17 @@ class Shell:
                 ),
             ).props("dense")
         if variable is not None:
-            plot = ui.plotly(self.session.figure(model_id, variable)).classes("w-full")
+            fig = self.session.figure(model_id, variable)
+            fig.setdefault("layout", {})["editrevision"] = self._figure_rev
+            plot = ui.plotly(fig).classes("w-full")
+            self._plot, self._plot_key = plot, self._centre_key()
             self.figure_hook.attach(plot)
+        self._tree(model_id)
+
+    @ui.refreshable_method
+    def _tree(self, model_id: str) -> None:
+        """The selected test's criteria rows, below the plot: refreshed on
+        its own when the plot is kept in place."""
         view = self.session.tree_view(model_id)
         if view is None:
             ui.label("no criteria scored")

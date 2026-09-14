@@ -1117,3 +1117,102 @@ async def test_close_project_reaches_the_project_less_state(shell):
         user.find("Close project").click()
         await user.should_see("dstf author --config")
         assert shell.session.project is None
+
+
+# -- the centre figure updates in place (owner ruling 2) --------------------
+
+
+async def _select_a_plot(user):
+    user.find(marker=A).click()
+    await user.should_see("/metrics/children/0")
+    (plot,) = user.find(ui.plotly).elements
+    return plot
+
+
+async def _stage_loosen_and_wait(shell, user, plot) -> None:
+    """Stage LOOSEN on A; wait for the tree row's rescored text (a bare
+    "PASS" would match D's and G's list badges before any rescore) and for
+    the tick's redraw — in place, or (what the identity assertions after
+    this rule out) by replacing the element."""
+    rev = plot.figure["layout"].get("editrevision")
+    shell.session.stage([LOOSEN])
+    await user.should_see("PASS  NRMSE 1.531e-01", retries=20)
+    await _settled(
+        lambda: plot.is_deleted or plot.figure["layout"].get("editrevision") != rev
+    )
+
+
+async def test_a_staged_edit_keeps_the_plot_element(shell):
+    """A rebuilt plot element loses the user's zoom; a staged edit keeps it
+    and redraws the figure through `update_figure`."""
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        plot = await _select_a_plot(user)
+        plot_id, rev0 = plot.id, plot.figure["layout"].get("editrevision")
+        await _stage_loosen_and_wait(shell, user, plot)
+        assert [p.id for p in user.find(ui.plotly).elements] == [plot_id]
+        assert plot.figure["layout"]["editrevision"] != rev0
+        assert shell.session.comparisons[A].passed
+        assert shell.session.selection.tests == {A}
+
+
+async def test_a_selection_change_rebuilds_the_plot_element(shell):
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        plot = await _select_a_plot(user)
+        user.find(marker=D).click()
+        await user.should_see(D)
+        await _settled(lambda: plot.is_deleted)
+        (new,) = user.find(ui.plotly).elements
+        assert new.id != plot.id
+        assert shell.session.selection.tests == {D}
+
+
+async def test_a_results_only_event_redraws_the_plot_in_place(shell):
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        plot = await _select_a_plot(user)
+        # Every fixture test is flat: a first `rescore` would STAGE the
+        # materialization and emit `spec`. After LOOSEN it is a pure rescore.
+        await _stage_loosen_and_wait(shell, user, plot)
+        rev = plot.figure["layout"]["editrevision"]
+        shell.session.rescore(A)
+        await _settled(lambda: plot.figure["layout"]["editrevision"] != rev)
+        assert [p.id for p in user.find(ui.plotly).elements] == [plot.id]
+
+
+async def test_one_stage_redraws_the_figure_exactly_once(shell):
+    """`stage` emits `spec` then `results` synchronously, with no tick
+    between them: the dirty flag makes that one redraw, not two."""
+    import asyncio
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        plot = await _select_a_plot(user)
+        calls = [0]
+        original = plot.update_figure
+
+        def counting(figure):
+            calls[0] += 1
+            original(figure)
+
+        plot.update_figure = counting
+        shell.session.stage([LOOSEN])
+        await _settled(lambda: calls[0] >= 1)
+        await asyncio.sleep(0.25)  # two more ticks
+        assert calls[0] == 1
+        assert shell.session.comparisons[A].passed
+
+
+async def test_a_shape_drag_redraws_the_figure_and_stages_nothing(shell):
+    """The hook's shape-moved callback re-sends the figure whether or not
+    anything was staged, so a dragged shape snaps back."""
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        plot = await _select_a_plot(user)
+        pending_before = list(shell.session.spec.pending)
+        rev = plot.figure["layout"].get("editrevision")
+        shell.figure_hook._dispatch("plotly_relayout", {"shapes[0].y0": 1.0})
+        await _settled(lambda: plot.figure["layout"].get("editrevision") != rev)
+        assert [p.id for p in user.find(ui.plotly).elements] == [plot.id]
+        assert shell.session.spec.pending == pending_before
