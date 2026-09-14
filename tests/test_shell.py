@@ -1612,7 +1612,10 @@ async def test_slot_rebuilds_do_not_accumulate_hook_handlers(shell):
             for entries in shell.figure_hook._handlers.values()
             for owner, _ in entries
         ]
-        assert owners == ["setter"]  # what one build of each panel registers
+        # What one build of each panel registers: `_Setter` one handler, and
+        # so does every other panel present (Edit on plot, with TREE staged).
+        assert "setter" in owners
+        assert all(owners.count(owner) == 1 for owner in owners)
 
 
 async def test_the_active_tab_is_kept_and_a_changed_availability_rebuilds_the_tabs(
@@ -1807,3 +1810,165 @@ async def test_a_rebuild_is_deferred_out_of_the_figure_hooks_dispatch(shell):
             lambda: setter.builds > builds[0] and listener.builds > builds[1]
         )
         assert _upper_bound(user) == 3.0
+
+
+def _active_tab(user) -> str:
+    (panels,) = user.find(ui.tab_panels).elements
+    return panels.value
+
+
+def _enabled_labels(shell) -> list[str]:
+    return [cap.label for cap, avail in shell.applicable() if avail is True]
+
+
+async def test_a_selection_change_lands_on_the_first_enabled_tab(shell):
+    """A leaf click lands on Edit criteria (registered first) even when the
+    plain selection before it had another tab active."""
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={D}, variable="x", leaf_path=None)
+        await user.should_see("Edit tree")
+        (panels,) = user.find(ui.tab_panels).elements
+        panels.set_value("Edit tree")
+        shell.session.select(tests={D}, variable="x", leaf_path="/metrics/children/1")
+        await _settled(lambda: "edit-criteria" in shell._slots)
+        await _settled(lambda: _active_tab(user) == "Edit criteria")
+        assert _active_tab(user) == _enabled_labels(shell)[0]
+
+
+async def test_a_selection_that_drops_the_active_tab_lands_on_an_enabled_one(shell):
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        assert _active_tab(user) == "Edit criteria"
+        shell.session.select(tests={A}, variable="x", leaf_path=None)
+        await _settled(lambda: "edit-criteria" not in shell._slots and shell._slots)
+        await _settled(lambda: _active_tab(user) in _enabled_labels(shell))
+        active = _active_tab(user)
+        assert active != "Edit criteria"
+        (cap,) = [c for c, _ in shell.applicable() if c.label == active]
+        container, _ = shell._slots[cap.name]
+        assert not container.is_deleted
+
+
+async def test_an_availability_change_that_drops_the_active_tab_lands_on_an_enabled_one(
+    shell,
+):
+    """The `previous in enabled` guard, on a rebuild no selection caused."""
+
+    class _Fading:
+        name, label, scope = "fading", "Fading", caps.Scope.VARIABLE
+
+        def available(self, s):
+            children = (s.tree(D) or {}).get("children") or []
+            if len(children) > 1 and children[1].get("max_value") == 3.0:
+                return "gone once D's child 1 is at max 3.0"
+            return True
+
+        def panel(self, s, ui_panel):
+            ui.label("fading panel")
+
+        def act(self, s, **inputs):
+            return None
+
+    setter = _Setter()
+    caps.register_capability(setter)
+    caps.register_capability(_Fading())
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        (panels,) = user.find(ui.tab_panels).elements
+        panels.set_value("Fading")
+        setter.ui_panel.submit(leaf=_range_leaf(3.0))
+        await _settled(lambda: "fading" not in shell._slots and shell._slots)
+        await _settled(lambda: _active_tab(user) in _enabled_labels(shell))
+        assert _active_tab(user) != "Fading"
+
+
+class _Rescorer:
+    """VARIABLE scope; its panel rescores D once per build, then renders one
+    label."""
+
+    name, label, scope = "rescorer", "Rescorer", caps.Scope.VARIABLE
+
+    def __init__(self):
+        self.builds = 0
+
+    def available(self, s):
+        return True
+
+    def panel(self, s, ui_panel):
+        self.builds += 1
+        s.rescore(D)
+        ui.label("rescored").mark("rescorer-label")
+
+    def act(self, s, **inputs):
+        return None
+
+
+async def test_a_results_event_during_a_panel_build_is_deferred_not_re_entered(shell):
+    import asyncio
+
+    rescorer = _Rescorer()
+    caps.register_capability(rescorer)
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={D}, variable="x", leaf_path=None)
+        await _settled(lambda: "rescorer" in shell._slots)
+        await _settled(lambda: shell._panels_pending is None)
+
+        def labels() -> list:
+            slot = shell._slots["rescorer"][0]
+            return [
+                e
+                for e in user.find(marker="rescorer-label").elements
+                if _inside(e, slot)
+            ]
+
+        await _settled(lambda: len(labels()) == 1)
+        await asyncio.sleep(0.25)  # two ticks
+        builds = rescorer.builds
+        await asyncio.sleep(0.25)  # two more
+        assert rescorer.builds == builds  # no growth
+        assert len(labels()) == 1
+        assert len(user.find(marker="rescorer-label").elements) == 1
+
+
+async def test_a_close_rebuilds_the_tabs(shell):
+    setter = _Setter()
+    caps.register_capability(setter)
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={D}, variable="x", leaf_path=None)
+        await _settled(lambda: "setter" in shell._slots)
+        assert shell.figure_hook._handlers  # the setter's handler, at least
+        shell.session.close()
+        await user.should_see("nothing applies to this selection", retries=20)
+        await _settled(lambda: shell._slots == {})
+        assert not any(shell.figure_hook._handlers.values())
+
+
+async def test_an_act_error_during_a_dispatch_is_shown_after_the_tick(shell):
+    setter = _Setter()
+    caps.register_capability(setter)
+    _stage_tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_on_range_leaf(shell, user)
+        setter.on_relayout = lambda: setter.ui_panel.submit(boom="drag boom")
+
+        def error_labels() -> list:
+            slot = shell._slots["setter"][0]
+            return [
+                e
+                for e in slot.descendants()
+                if isinstance(e, ui.label) and "drag boom" in str(e.text)
+            ]
+
+        shell.figure_hook._dispatch("plotly_relayout", {"shapes[0].y0": 1.0})
+        assert shell.errors["setter"] == "RuntimeError: drag boom"
+        assert not error_labels()  # not rebuilt inside the dispatch
+        assert "setter" in (shell._panels_pending or set())
+        await user.should_see("RuntimeError: drag boom", retries=20)
+        assert error_labels()

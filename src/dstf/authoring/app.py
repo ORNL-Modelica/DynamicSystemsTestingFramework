@@ -109,9 +109,10 @@ class FigureHook:
         self.dispatching = False  # true while handlers run
 
     def clear(self, owner: str | None = None) -> None:
-        """Remove one owner's handlers, or every handler. The tabs region
-        rebuilds panels on selection and job events; a subscriber that
-        re-registers in `panel()` must not accumulate."""
+        """Remove one owner's handlers, or every handler. The shell rebuilds
+        panels on selection and job events (the whole tabs region) and on
+        results events (slot by slot); a subscriber that re-registers in
+        `panel()` must not accumulate."""
         if owner is None:
             self._handlers = {}
             return
@@ -270,11 +271,14 @@ class Shell:
         # The capability panels: one slot (container, capability) per
         # available capability, rebuilt in place by `_fill_slot`; the tab
         # panels element whose `value` is the active tab; the capability
-        # whose `act` is running; and the slots a rebuild deferred out of a
-        # figure-hook dispatch owes (`_tick` performs it), None for none.
+        # whose `act` is running; the panel builds in progress, innermost
+        # last (a capability's name, "" for the tabs region itself); and the
+        # slots a rebuild deferred out of a figure-hook dispatch or a panel
+        # build owes (`_tick` performs it), None for none.
         self._slots: dict[str, tuple[ui.element, Capability]] = {}
         self._tab_panels: ui.tab_panels | None = None
         self._acting: Capability | None = None
+        self._filling: list[str] = []
         self._panels_pending: set[str] | None = None
         # Session events -> regions. The whole `tabs` region is NOT on
         # spec/results: Edit criteria stages on every control change, and
@@ -325,16 +329,27 @@ class Shell:
         would read the old comparisons.
 
         The acting capability's own slot is skipped while its panel-originated
-        act runs (the field being typed in survives); an act from the figure
-        hook rebuilds it too, and is deferred to `_tick`, because a rebuild
-        inside the dispatch would clear and replace the handlers of every
-        other subscriber to that event before they heard it. A changed set
-        of available capabilities rebuilds the tabs instead. Nothing before
-        the page is built: `Shell.open` runs before `root`."""
+        act runs (the field being typed in survives) — EXCEPT when the act
+        changes which capabilities are available: then the whole tab set
+        rebuilds, the actor's panel included. An act from the figure hook
+        rebuilds the actor's slot too, and is deferred to `_tick`, because a
+        rebuild inside the dispatch would clear and replace the handlers of
+        every other subscriber to that event before they heard it.
+
+        A results event emitted while a panel is being built (a panel that
+        rescores in its build) is deferred to `_tick` as well, without the
+        slots being built: rebuilding them synchronously would re-enter the
+        build that emitted it, and a panel that rescores on every build would
+        recurse. Nothing before the page is built: `Shell.open` runs before
+        `root`."""
         if not self._built:
             return
         if self.figure_hook.dispatching:
             self._panels_pending = (self._panels_pending or set()) | set(self._slots)
+            return
+        if self._filling:
+            owed = set(self._slots) - set(self._filling)
+            self._panels_pending = (self._panels_pending or set()) | owed
             return
         skip = self._acting.name if self._acting is not None else None
         self._rebuild_panels({name for name in self._slots if name != skip})
@@ -352,8 +367,8 @@ class Shell:
 
     def _fill_slot_later_or_now(self, cap: Capability) -> None:
         """One capability's slot: now, or at the next tick while the figure
-        hook is dispatching (see `_follow_panels`)."""
-        if self.figure_hook.dispatching:
+        hook is dispatching or a panel is being built (see `_follow_panels`)."""
+        if self.figure_hook.dispatching or self._filling:
             self._panels_pending = (self._panels_pending or set()) | {cap.name}
         else:
             self._fill_slot(cap)
@@ -421,6 +436,12 @@ class Shell:
     def _on_selection(self, event: dict) -> None:
         # A capability's refusal is about the selection it was shown for.
         self.errors.clear()
+        # A new selection lands on the first enabled tab (a leaf click on
+        # Edit criteria, which registers first); only the rebuilds other
+        # causes trigger keep the active tab. `_tabs` reads the tab to keep
+        # from this element, so forgetting it is the cause passed along —
+        # the rebuild itself runs later, deferred.
+        self._tab_panels = None
         self._refresh("tests")
         # A tree-row click changes only `leaf_path`: the key is the same, so
         # the plot (and the user's zoom) stays and only the tree is refreshed.
@@ -473,8 +494,10 @@ class Shell:
 
     def act(self, cap: Capability, **inputs: Any) -> None:
         """``Panel.submit`` lands here: the capability's ``act``, then the
-        Session applies the outcome. An exception is shown in the tab and
-        the Session is what it was. While it runs the capability is
+        Session applies the outcome. An exception is shown in the tab. An
+        ``act`` that raises changes nothing; an outcome that is a sequence
+        whose later item fails leaves its earlier items applied — the
+        Session is not rolled back. While it runs the capability is
         ``_acting``: the panels the outcome's events rebuild skip its own."""
         try:
             was, self._acting = self._acting, cap
@@ -545,7 +568,11 @@ class Shell:
             except queue.Empty:
                 break
             fn()
-        if self._panels_pending is not None and not self.figure_hook.dispatching:
+        if (
+            self._panels_pending is not None
+            and not self.figure_hook.dispatching
+            and not self._filling
+        ):
             names, self._panels_pending = self._panels_pending, None
             self._rebuild_panels(names)
         if not self._figure_dirty:
@@ -789,6 +816,13 @@ class Shell:
 
     @ui.refreshable_method
     def _tabs(self) -> None:
+        self._filling.append("")  # a results event meanwhile is deferred
+        try:
+            self._build_tabs()
+        finally:
+            self._filling.pop()
+
+    def _build_tabs(self) -> None:
         # A slot from the previous build has a deleted container: none may
         # survive into this one.
         self._slots = {}
@@ -807,7 +841,8 @@ class Shell:
                     if isinstance(avail, str):
                         tab.tooltip(avail)
         enabled = [cap.label for cap, avail in applicable if avail is True]
-        # The active tab is kept when it is still available.
+        # The active tab is kept when it is still available; after a
+        # selection change there is none to keep (`_on_selection`).
         active = (
             previous
             if previous in enabled
@@ -837,6 +872,13 @@ class Shell:
         container = slot[0]
         container.clear()
         self.figure_hook.clear(cap.name)
+        self._filling.append(cap.name)
+        try:
+            self._build_slot(container, cap)
+        finally:
+            self._filling.pop()
+
+    def _build_slot(self, container: ui.element, cap: Capability) -> None:
         with container:
             if cap.name in self.errors:
                 ui.label(self.errors[cap.name]).classes("text-negative")
