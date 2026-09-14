@@ -3,7 +3,7 @@
 import json
 import threading
 
-from dstf.backends.progress import ProgressReporter
+from dstf.backends.progress import ProgressReporter, read_status
 
 
 def _status(work_dir):
@@ -135,3 +135,21 @@ class TestProgressSnapshotUnderLock:
         # snapshot can never overwrite a newer one.
         assert done == sorted(done)
         assert written[-1]["counts"]["passed"] == n
+
+
+def test_reading_back_the_status_returns_the_snapshot(tmp_path):
+    pr = ProgressReporter(tmp_path, total=1)
+    pr.register("test_0001", "Lib.A")
+    snap = read_status(tmp_path)
+    assert snap is not None and snap["tests"][0]["model_id"] == "Lib.A"
+
+
+def test_reading_back_the_status_is_none_without_a_file(tmp_path):
+    assert read_status(tmp_path) is None
+
+
+def test_reading_back_the_status_is_none_on_an_undecodable_file(tmp_path):
+    """The writer's atomic replace means only a foreign file is ever half a
+    document — but the reader runs in a UI timer and must not raise."""
+    (tmp_path / "status.json").write_text("{", encoding="utf-8")
+    assert read_status(tmp_path) is None

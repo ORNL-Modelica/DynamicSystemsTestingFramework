@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import logging
 import threading
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -88,6 +89,10 @@ class RunningJob:
     models: frozenset[str]
     done: threading.Event = field(default_factory=threading.Event)
     error: BaseException | None = None
+    #: Epoch seconds at start. The job panel ignores a ``status.json`` whose
+    #: ``start_wall`` is older, so the previous run's snapshot is never shown
+    #: as this job's progress.
+    started_wall: float = field(default_factory=time.time)
 
 
 class LockedError(RuntimeError):
@@ -131,6 +136,7 @@ class Session:
         self.running: RunningJob | None = None
         self.comparisons: dict[str, TestComparison] = {}
         self.artifacts: list[Artifact] = []
+        self.notices: list[str] = []
         self.warnings: list[str] = []
         self._post = post or (lambda fn: fn())
         self._listeners: dict[str, list[Listener]] = {}
@@ -166,6 +172,8 @@ class Session:
             backend_obj = get_backend(config)
         except ValueError as e:
             raise ConfigError(str(e)) from e
+        # A UI process has no console to narrate a run or a read to.
+        backend_obj.quiet = True
         store = ReferenceStore(config)
         spec = SpecDocument.load(config.spec_path)
         scanned = scan_source_tests(config)
@@ -189,6 +197,7 @@ class Session:
         self._refuse_if_busy()
         self.project = None
         self.artifacts = []
+        self.notices = []
         self.warnings = []
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
@@ -420,8 +429,13 @@ class Session:
             self.stage(outcome.ops)
         elif isinstance(outcome, StoreWrite):
             self._refuse_if_locked(outcome.models)
-            outcome.run(self._require_project().store)
+            message = outcome.run(self._require_project().store)
             self._reload_results()
+            # The reload first, so a listener that reads verdicts on
+            # ``written`` sees what the write did to them.
+            if message:
+                self.notices.append(message)
+                self._emit("job", state="written", message=message)
         elif isinstance(outcome, Job):
             self._start_job(outcome)
         elif isinstance(outcome, Artifact):
@@ -703,6 +717,11 @@ class SessionView:
     @property
     def artifacts(self) -> tuple[Artifact, ...]:
         return tuple(self._session.artifacts)
+
+    @property
+    def notices(self) -> tuple[str, ...]:
+        """What the store writes applied so far reported, oldest first."""
+        return tuple(self._session.notices)
 
     def is_locked(self, model_id: str) -> bool:
         running = self._session.running

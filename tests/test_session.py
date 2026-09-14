@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -163,6 +164,18 @@ class TestOpen:
 
         with pytest.raises(ConfigError, match="Nonesuch"):
             Session().open(cfg, work_dir=work)
+
+    def test_the_projects_backend_is_quiet_and_open_narrates_nothing(
+        self, tmp_path, capsys
+    ):
+        """A UI process has no console to narrate to. Not the `session`
+        fixture: it opens before capsys starts capturing, so the assertion
+        would pass against nothing."""
+        cfg, work = _project(tmp_path)
+        session = Session()
+        session.open(cfg, work_dir=work)
+        assert session.project.backend.quiet is True
+        assert capsys.readouterr().out == ""
 
 
 class TestRescoreAndStage:
@@ -577,6 +590,34 @@ class TestOutcomes:
         assert session.spec.pending == [] and session.running is None
         assert seen and seen[-1] == {A, B, C, D, G}
 
+    def test_a_store_write_that_reports_a_line_notices_it_after_the_reload(
+        self, session
+    ):
+        order = []
+        session.on("results", lambda e: order.append("results"))
+        session.on("job", lambda e: order.append(e["state"]))
+        events = []
+        session.on(
+            "job", lambda e: events.append(e) if e["state"] == "written" else None
+        )
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        assert session.notices == ["stored 1"]
+        assert [e["state"] for e in events] == ["written"]
+        assert events[0]["message"] == "stored 1"
+        assert order == ["results", "written"]  # the reload first
+
+    def test_a_store_write_that_reports_nothing_notices_nothing(self, session):
+        states = []
+        session.on("job", lambda e: states.append(e["state"]))
+        session.apply(StoreWrite(run=lambda store: None, models=frozenset({B})))
+        assert session.notices == [] and states == []
+
+    def test_close_empties_the_notices(self, session):
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        assert session.notices == ["stored 1"]
+        session.close()
+        assert session.notices == []
+
     def test_job_runs_on_a_thread_locks_its_models_and_reloads_on_completion(
         self, session
     ):
@@ -724,6 +765,16 @@ class TestLockAndCompletion:
         gate.release.set()
         assert jobs[0].done.wait(5)
 
+    def test_a_running_job_records_when_it_started(self, session):
+        """The job panel ignores a status.json older than this, so the
+        previous run's snapshot is never shown as this job's progress."""
+        gate = _Gate()
+        jobs = _started(session)
+        session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        assert abs(session.running.started_wall - time.time()) < 5.0
+        gate.release.set()
+        assert jobs[0].done.wait(5)
+
     def test_a_reload_during_a_job_keeps_the_locked_model_as_it_was(self, session):
         """What the run pipeline does at start: clear the model's directory.
         A StoreWrite on a free model reloads results; the locked model must
@@ -818,6 +869,7 @@ class TestSessionView:
             "running",
             "comparisons",
             "artifacts",
+            "notices",
             "rescore",
             "view",
             "figure",
@@ -870,3 +922,6 @@ class TestSessionView:
         assert view.is_locked(A) is False
         with pytest.raises(TypeError):
             view.comparisons[A] = None  # a read-only mapping
+        assert view.notices == ()
+        session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
+        assert view.notices == ("stored 1",)

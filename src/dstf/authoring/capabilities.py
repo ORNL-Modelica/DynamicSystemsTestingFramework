@@ -50,9 +50,14 @@ class Patch:
 @dataclass(frozen=True, kw_only=True)
 class StoreWrite:
     """A write against the reference store; results reload afterwards.
-    ``models`` names what it touches, so a locked model can refuse it."""
+    ``models`` names what it touches, so a locked model can refuse it.
 
-    run: Callable[[ReferenceStore], None]
+    ``run`` returns the one line the job panel shows — what the write did,
+    including what it refused and why — or ``None`` when there is nothing
+    to say. A partial write has no other way to report its skips, and
+    raising after some baselines were stored would mislead."""
+
+    run: Callable[[ReferenceStore], str | None]
     models: frozenset[str]
 
 

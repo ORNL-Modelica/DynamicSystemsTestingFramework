@@ -243,6 +243,24 @@ class ProgressReporter:
             self._render_dashboard(mode="final")
 
 
+def read_status(work_dir: Path) -> dict | None:
+    """The last snapshot ``ProgressReporter`` wrote to *work_dir*, or ``None``
+    when there is none to read.
+
+    The one reader of ``status.json``: the dashboard renderer and the
+    authoring shell's job panel both come through here. Never raises — the
+    shell calls it from a UI timer, and an unreadable snapshot is a page
+    with no progress rows, not a traceback.
+    """
+    p = work_dir / "status.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def recorded_backend(work_dir: Path) -> tuple[str | None, str | None]:
     """``(label, warning)``: the backend the last run in *work_dir* used, per
     ``status.json``'s metadata, and a warning for the caller to show when the

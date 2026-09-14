@@ -29,21 +29,13 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from ..backends.progress import read_status
+
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _env = Environment(
     loader=FileSystemLoader(_TEMPLATE_DIR),
     autoescape=select_autoescape(["html"]),
 )
-
-
-def _read_status(work_dir: Path) -> dict | None:
-    p = work_dir / "status.json"
-    if not p.exists():
-        return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
 
 
 def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:
@@ -226,7 +218,7 @@ def build_dashboard_context(
     The same template renders both; JS reads `DASHBOARD_MODE` to
     decide whether to start the fetch loop.
     """
-    snapshot = _read_status(work_dir) or {
+    snapshot = read_status(work_dir) or {
         "total": 0,
         "elapsed": 0.0,
         "eta_seconds": None,
