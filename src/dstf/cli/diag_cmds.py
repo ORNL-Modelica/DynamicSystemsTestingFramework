@@ -4,11 +4,11 @@ import argparse
 from pathlib import Path
 
 from ..discovery.test_registry import discover_tests
+from ..pipeline import write_id_mapping
 from .common import (
     _build_config,
     _filter_tests,
     _find_orphan_manifest_entries,
-    _write_id_mapping,
 )
 
 
@@ -109,7 +109,7 @@ def cmd_manifest(args: argparse.Namespace) -> int:
         return 0
 
     elif action == "dump":
-        _write_id_mapping(store, config)
+        write_id_mapping(store, config)
         mapping_path = config.work_dir / "reference_manifest.json"
         print(f"Written to {mapping_path}")
         return 0

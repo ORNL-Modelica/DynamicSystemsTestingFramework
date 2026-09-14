@@ -150,22 +150,6 @@ def _find_orphan_manifest_entries(config, all_tests: list) -> dict[str, str]:
     }
 
 
-def _write_id_mapping(store, config) -> None:
-    """Write a ref ID → model ID mapping file to the work directory."""
-    active = store.index.active_tests()
-    if not active:
-        return
-    import json
-
-    mapping_path = config.work_dir / "reference_manifest.json"
-    config.work_dir.mkdir(parents=True, exist_ok=True)
-    mapping = {f"ref_{tid}": active[tid] for tid in sorted(active)}
-    # LF on every platform, like every other JSON we write.
-    mapping_path.write_text(
-        json.dumps(mapping, indent=2) + "\n", encoding="utf-8", newline="\n"
-    )
-
-
 _VALID_REVIEW_FILTERS = {
     "all",
     "failed",

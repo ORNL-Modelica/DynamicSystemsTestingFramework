@@ -65,7 +65,7 @@ def _enrich_row_from_comparison(
     with sidecars written before the summary block was added.
 
     Two defensive guards prevent stale sidecars from overriding fresh
-    verdicts (D91 — see ``cli._wipe_stale_state_for_scope``):
+    verdicts (D91 — see ``pipeline.wipe_stale_state_for_scope``):
 
     1. **model_id mismatch.** If the sidecar's ``summary.model_id`` doesn't
        match the row's ``model_id``, the sidecar belongs to a different

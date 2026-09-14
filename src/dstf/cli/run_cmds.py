@@ -9,13 +9,13 @@ from ..backends import dataset_kind_for
 from ..backends.progress import recorded_backend
 from ..config import ConfigError
 from ..discovery.test_registry import discover_tests
+from ..pipeline import run_pipeline, wipe_stale_state_for_scope, write_id_mapping
 from .common import (
     _build_config,
     _filter_tests,
     _find_orphan_manifest_entries,
     _parse_review_filter,
     _should_review,
-    _write_id_mapping,
 )
 from .review import _interactive_review
 
@@ -28,61 +28,6 @@ def _notify_orphans(config, all_tests: list) -> None:
             f"Note: {len(orphans)} orphan manifest entries (models no longer in "
             f"discovery). Run 'manifest cleanup --orphans' to list/prune."
         )
-
-
-def _wipe_stale_state_for_scope(
-    config,
-    tests: list,
-    ref_id_map: dict,
-    *,
-    wipe_sim_dirs: bool,
-) -> None:
-    """Clear per-test report sidecars (and optionally sim work dirs) for
-    the tests this invocation is about to (re-)process.
-
-    A run cleans its own footprint so a prior run's stale state cannot
-    bleed through. Out-of-scope tests' directories are left untouched —
-    that's what makes ``--merge`` and ``--rerun`` work.
-
-    Two layers of state to clear:
-
-    1. Per-test report dir at ``<work_dir>/reports/<report_dir>/``. Holds
-       the ``comparison_data.json`` sidecar (read by the dashboard's
-       enricher) and ``interactive.html``. ``report_dir`` is ``ref_NNNN``
-       when a baseline exists for the model, else ``test_NNNN``.
-
-    2. Per-test sim work dir at ``<work_dir>/<test_key>/``. Holds the
-       backend's outputs (.mat, log, dsfinal, etc.). ``wipe_sim_dirs=True``
-       only for ``cmd_run`` — ``cmd_compare`` reads these dirs to
-       re-evaluate prior sims and must not erase them.
-
-    test_key for an in-scope test is read from the persistent
-    ``batch_manifest.json``. Tests not yet in the manifest (first-time
-    runs) have nothing to wipe — the backend will create a fresh dir.
-    """
-    import shutil
-
-    manifest_path = config.work_dir / "batch_manifest.json"
-    if manifest_path.exists():
-        from ..backends import BatchManifest
-
-        manifest = BatchManifest.load(manifest_path).manifest
-        model_to_key = {entry["model_id"]: tk for tk, entry in manifest.items()}
-    else:
-        model_to_key = {}
-
-    reports_root = config.work_dir / "reports"
-    for test in tests:
-        test_key = model_to_key.get(test.model_id)
-        report_dir = ref_id_map.get(test.model_id) or test_key
-        if wipe_sim_dirs and test_key:
-            sim_dir = config.work_dir / test_key
-            if sim_dir.exists():
-                shutil.rmtree(sim_dir)
-        if report_dir:
-            rep_dir = reports_root / report_dir
-            if rep_dir.exists():
-                shutil.rmtree(rep_dir)
 
 
 def _get_backend(config, persistent: bool = False):
@@ -130,7 +75,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     from ..storage.reference_store import ReferenceStore
 
     store = ReferenceStore(config)
-    _write_id_mapping(store, config)
+    write_id_mapping(store, config)
 
     backend = _get_backend(config, persistent=not getattr(args, "batch", False))
 
@@ -188,38 +133,28 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("No tests matched the filter.")
         return 1
 
-    # Pre-populate model_id → "ref_NNNN" map so the live dashboard can link
-    # to the correct per-test report directory (matches generate_report_suite naming).
-    for test in tests:
-        ref_id = store.index.get_id(test.model_id)
-        if ref_id:
-            backend.ref_id_map[test.model_id] = f"ref_{ref_id}"
-
-    # Clean each in-scope test's prior footprint before running. Without
-    # this, a prior run's stale `comparison_data.json` sidecar could bleed
-    # through `_enrich_row_from_comparison` and override a fresh sim's
-    # verdict in the dashboard. Out-of-scope tests are untouched so
-    # `--merge` and `--rerun` keep working.
-    config.work_dir.mkdir(parents=True, exist_ok=True)
-    _wipe_stale_state_for_scope(
-        config,
-        tests,
-        backend.ref_id_map,
-        wipe_sim_dirs=True,
-    )
-
     # Open the unified dashboard *before* the run starts so the user sees
     # live progress as tests register. The first ProgressReporter.register
     # call will overwrite this initial empty page; subsequent meta-refresh
     # ticks pick up updates. Final mode lands at the same URL after compare.
+    # The page has to exist before the tab opens on it — run_pipeline paints
+    # it again a moment later, which is idempotent.
     from ..reporting.dashboard_render import build_rerun_prefix, render_live
     from ..reporting.report_suite import open_in_browser
 
+    config.work_dir.mkdir(parents=True, exist_ok=True)
     render_live(config.work_dir, rerun_prefix=build_rerun_prefix(config))
     open_in_browser(config.work_dir / "dashboard.html")
 
     try:
-        manifests = backend.run_tests(tests)
+        outcome = run_pipeline(
+            config,
+            tests,
+            backend=backend,
+            store=store,
+            merge=getattr(args, "merge", False),
+            candidates=all_tests,
+        )
     except RuntimeError as exc:
         # Backends raise on unrecoverable startup conditions (e.g. all persistent
         # workers failed to spawn). Convert to a clean exit instead of dumping a
@@ -227,29 +162,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"\nRun aborted: {exc}", file=sys.stderr)
         return 1
 
-    # Enrich batch manifest with ref IDs now that store is available
-    for m in manifests:
-        m.enrich_ref_ids(store.index)
-
-    # 4.B.4 — cross-backend chains. Tests whose recognizer set
-    # requested_baselines to include a known chain target (today only
-    # "dymola-via-fmpy") get a second baseline produced by chaining backends.
-    # MetricTree leaves can then score against it via "against": "<chain-name>".
-    _run_cross_backend_chains(tests, backend, config, store)
-
-    # --merge expands the read/compare/report scope to every test that has
-    # results on disk (per the persistent batch manifest), not just what was
-    # rerun this invocation. Lets you incrementally rerun a subset and still
-    # get a full report covering the whole suite.
-    if getattr(args, "merge", False):
-        merged_model_ids = {
-            entry["model_id"] for m in manifests for entry in m.manifest.values()
-        }
-        scope_tests = [t for t in all_tests if t.model_id in merged_model_ids]
-    else:
-        scope_tests = tests
-
-    results = backend.read_results(manifests, scope_tests)
+    for line in outcome.notices:
+        print(line)
+    results, scope_tests = outcome.results, outcome.scope_tests
 
     if args.accept:
         # review 2026-07-06 finding 30 (part 2): accept ONLY the tests
@@ -308,44 +223,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         return _output_report(comparisons, args, config)
 
 
-def _run_cross_backend_chains(tests, backend, config, store) -> None:
-    """For each test with ``requested_baselines`` listing a known chain target,
-    invoke the chain and store the resulting named baseline (4.B.4).
-
-    Today only ``dymola-via-fmpy`` is recognized. Failures are logged + skipped
-    (don't abort the run); chains are best-effort enrichment of baselines.
-    Requires Windows + Dymola (with FMI export) for the export step — the chain
-    silently no-ops on platforms that don't support it (logs a warning).
-    """
-    from ..backends.cross_backend import (
-        CROSS_BACKEND_BASELINE_NAME,
-        produce_dymola_via_fmpy_baseline,
-    )
-
-    chain_tests = [
-        t for t in tests if CROSS_BACKEND_BASELINE_NAME in (t.requested_baselines or [])
-    ]
-    if not chain_tests:
-        return
-
-    print(
-        f"[experimental] Cross-backend chain '{CROSS_BACKEND_BASELINE_NAME}' is "
-        f"scoped to autonomous FMU-exportable tests only (no external inputs, "
-        f"no python-driver tests); end-to-end validation on real Dymola pending. "
-        f"See D65."
-    )
-    print(f"Running cross-backend chains for {len(chain_tests)} test(s)...")
-    n_ok = 0
-    for t in chain_tests:
-        ok = produce_dymola_via_fmpy_baseline(t, backend, config, store)
-        if ok:
-            n_ok += 1
-            print(f"  {t.model_id}: '{CROSS_BACKEND_BASELINE_NAME}' baseline written")
-        else:
-            print(f"  {t.model_id}: chain skipped (see logs)")
-    print(f"Cross-backend chains: {n_ok}/{len(chain_tests)} succeeded")
-
-
 def cmd_compare(args: argparse.Namespace) -> int:
     """Compare last run results against stored references."""
     config = _build_config(args)
@@ -393,7 +270,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
     backend = _get_backend(config)
     store = ReferenceStore(config)
-    _write_id_mapping(store, config)
+    write_id_mapping(store, config)
 
     # Pre-compute ref_id_map so the wipe + downstream report rendering can
     # find each test's `ref_NNNN/` report dir. Compare reads prior sim
@@ -404,7 +281,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         if ref_id:
             backend.ref_id_map[test.model_id] = f"ref_{ref_id}"
     config.work_dir.mkdir(parents=True, exist_ok=True)
-    _wipe_stale_state_for_scope(
+    wipe_stale_state_for_scope(
         config,
         tests,
         backend.ref_id_map,

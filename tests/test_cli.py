@@ -22,13 +22,13 @@ from dstf.cli.common import (
     _parse_review_filter,
     _resolve_filter_patterns,
     _should_review,
-    _write_id_mapping,
 )
 from dstf.cli.main import build_arg_parser
 from dstf.cli.review import _interactive_review
 from dstf.cli.run_cmds import cmd_run
 from dstf.config import detect_os
 from dstf.discovery.test_registry import TestModel
+from dstf.pipeline import write_id_mapping
 from dstf.storage.batch_manifest import BatchManifest
 
 
@@ -1344,6 +1344,6 @@ def test_id_mapping_written_with_lf(tmp_path, monkeypatch):
         return real(self, data, *args, **kwargs)
 
     monkeypatch.setattr(Path, "write_text", spy)
-    _write_id_mapping(_Store(), _Config())
+    write_id_mapping(_Store(), _Config())
 
     assert seen["reference_manifest.json"] == "\n"
