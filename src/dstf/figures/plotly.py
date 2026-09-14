@@ -9,6 +9,12 @@ builder.
 Every trace carries the primitive id in ``meta`` (grouped marker traces
 carry the ids in ``customdata`` and the family in ``meta``); every shape
 carries it as ``name``. Those are the handles on-plot editing attaches to.
+
+The editable figure (``editable=True``, the tool's; never the report's) adds
+one pixel-sized ring shape per ``kind="handle"`` marker and turns on
+``config.edits.shapePosition``. That makes every shape draggable — plotly.js
+offers no per-shape switch that works — and the rings are what an editor
+attaches to, since Plotly drags shapes, not trace points.
 """
 
 from __future__ import annotations
@@ -352,6 +358,38 @@ def _marker_traces(markers: list[Marker], leaf: LeafView) -> list[dict]:
     return traces
 
 
+HANDLE_RING = "#2e7d32"
+HANDLE_RING_FILL = "rgba(46,125,50,0.25)"
+
+
+def _handle_rings(markers: list[Marker]) -> list[dict]:
+    """One draggable ring per handle marker, named with the marker's id.
+
+    The fill is visible on purpose: a shape drags by its painted area, and a
+    transparent fill is not guaranteed to receive the pointer.
+    """
+    return [
+        {
+            "type": "circle",
+            "xref": _xref(m),
+            "yref": "y2" if m.panel == "spectrum" else "y",
+            "xsizemode": "pixel",
+            "ysizemode": "pixel",
+            "xanchor": m.x,
+            "yanchor": m.y,
+            "x0": -7,
+            "x1": 7,
+            "y0": -7,
+            "y1": 7,
+            "line": {"color": HANDLE_RING, "width": 2},
+            "fillcolor": HANDLE_RING_FILL,
+            "name": m.id,
+        }
+        for m in markers
+        if m.kind == "handle"
+    ]
+
+
 def _base_traces(view: VariableView) -> list[dict]:
     traces = []
     if view.act_time is not None and view.act_values is not None:
@@ -496,8 +534,14 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
     return layout
 
 
-def variable_figure(view: VariableView, max_samples: int | None = None) -> dict:
-    """The one figure both tiers draw. ``max_samples`` decimates the view first."""
+def variable_figure(
+    view: VariableView, max_samples: int | None = None, *, editable: bool = False
+) -> dict:
+    """The one figure both tiers draw. ``max_samples`` decimates the view first.
+
+    ``editable`` adds a draggable ring per handle marker and
+    ``config.edits.shapePosition``; the report's figure never passes it.
+    """
     if max_samples:
         view = decimate_view(view, max_samples)
     x_min, x_max = _time_span(view)
@@ -509,6 +553,7 @@ def variable_figure(view: VariableView, max_samples: int | None = None) -> dict:
     )
     data: list[dict] = _base_traces(view)
     shapes: list[dict] = []
+    rings: list[dict] = []
     for leaf in view.leaves:
         window = next((p for p in leaf.geometry if isinstance(p, Window)), None)
         markers: list[Marker] = []
@@ -526,10 +571,15 @@ def variable_figure(view: VariableView, max_samples: int | None = None) -> dict:
             data.extend(traces)
             shapes.extend(new_shapes)
         data.extend(_marker_traces(markers, leaf))
+        if editable:
+            rings.extend(_handle_rings(markers))
     for s in view.errors:
         data.append(_error_trace(s, ctx))
+    config: dict = dict(PLOT_CONFIG)
+    if editable:
+        config["edits"] = {"shapePosition": True}
     return {
         "data": data,
-        "layout": _layout(view, shapes, bool(view.errors)),
-        "config": dict(PLOT_CONFIG),
+        "layout": _layout(view, shapes + rings, bool(view.errors)),
+        "config": config,
     }

@@ -10,7 +10,7 @@ from dstf.comparison.algorithms import (
     _compare_trajectories,
     _compare_tube,
 )
-from dstf.comparison.geometry import Band, Window
+from dstf.comparison.geometry import Band, Box, HLine, Marker, Window
 from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
 from dstf.figures.decimate import decimate_band
 from dstf.figures.plotly import variable_figure
@@ -324,6 +324,62 @@ class TestFigure:
         assert fig["data"] == [] or all(
             "anchor_for" in tr.get("meta", {}) for tr in fig["data"]
         )
+
+
+def _handle_view():
+    """Two time-panel handle Markers, one spectrum-panel handle Marker, a
+    result Marker, an HLine handle and a Box handle."""
+    t = np.linspace(0.0, 1.0, 11)
+    vc = _compare_range(t, t, min_value=None, max_value=None)
+    vc.name = "x"
+    vc.geometry = (
+        Marker(id="tube/upper/0", kind="handle", x=0.5, y=0.6),
+        Marker(id="tube/lower/0", kind="handle", x=0.5, y=0.3),
+        Marker(id="peaks/declared/0", kind="handle", panel="spectrum", x=2.0, y=1.5),
+        Marker(id="points/target/0", kind="result", x=0.25, y=0.25),
+        HLine(id="range/max", kind="handle", value=0.9),
+        Box(id="points/box/0", kind="handle", t0=0.2, t1=0.3, y0=0.2, y1=0.3),
+    )
+    return build_view(
+        "x", act_time=t, act_values=t, ref_time=t, ref_values=t, leaves=[_stamped(vc)]
+    )
+
+
+class TestEditableFigure:
+    def test_editable_turns_on_shape_dragging(self):
+        fig = variable_figure(_handle_view(), editable=True)
+        assert fig["config"]["edits"] == {"shapePosition": True}
+
+    def test_one_ring_per_handle_marker_and_everything_else_unchanged(self):
+        view = _handle_view()
+        plain = variable_figure(view)
+        fig = variable_figure(view, editable=True)
+        rings = [s for s in fig["layout"]["shapes"] if s["type"] == "circle"]
+        p = "/metrics/children/0"
+        expected = {
+            f"{p}/tube/upper/0": (0.5, 0.6, "x", "y"),
+            f"{p}/tube/lower/0": (0.5, 0.3, "x", "y"),
+            f"{p}/peaks/declared/0": (2.0, 1.5, "x2", "y2"),
+        }
+        assert len(rings) == len(expected)
+        got = {
+            r["name"]: (r["xanchor"], r["yanchor"], r["xref"], r["yref"]) for r in rings
+        }
+        assert got == expected
+        assert all(r["xsizemode"] == r["ysizemode"] == "pixel" for r in rings)
+        # The result Marker gets no ring.
+        assert f"{p}/points/target/0" not in got
+        others = [s for s in fig["layout"]["shapes"] if s["type"] != "circle"]
+        assert others == plain["layout"]["shapes"]
+        assert {s["name"] for s in others} >= {f"{p}/range/max", f"{p}/points/box/0"}
+        assert fig["data"] == plain["data"]
+
+    def test_the_default_figure_is_not_editable(self):
+        view = _handle_view()
+        plain = variable_figure(view)
+        assert "edits" not in plain["config"]
+        assert not any(s["type"] == "circle" for s in plain["layout"]["shapes"])
+        assert plain == variable_figure(view, editable=False)
 
 
 def test_view_from_trajectory_reads_the_report_shape():

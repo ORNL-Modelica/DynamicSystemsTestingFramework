@@ -511,6 +511,73 @@ class TestView:
         fig = session.figure(A, "x")
         assert {"data", "layout"} <= fig.keys() and len(fig["data"]) >= 2
 
+    def test_the_tools_figure_rings_every_marker_handle(self, session):
+        tree = {
+            "combinator": "and",
+            "children": [
+                {
+                    "metric": "tube",
+                    "variable": "x",
+                    "tube_width_mode": "band",
+                    "tube_points": [
+                        {"time": 0.5, "upper": 0.1, "lower": 0.2},
+                        {"time": 0.9, "upper": 0.1, "lower": 0.1},
+                    ],
+                },
+                {
+                    "metric": "range",
+                    "variable": "x",
+                    "min_value": -0.5,
+                    "max_value": 2.0,
+                },
+                {
+                    "metric": "points",
+                    "variable": "x",
+                    "points": [
+                        {"time": 0.25, "tolerance": 0.05},
+                        {"time": 0.75, "value": 0.75, "tolerance": 0.05},
+                    ],
+                },
+                {
+                    "metric": "scalar",
+                    "variable": "x",
+                    "quantity": {"reduce": "max"},
+                    "min_value": 0.0,
+                    "max_value": 2.0,
+                },
+                {
+                    "metric": "tube",
+                    "variable": "x",
+                    "tube_width_mode": "rel",
+                    "tube_points": [{"time": 0.5, "upper": 0.1, "lower": 0.1}],
+                },
+                {
+                    "metric": "tube",
+                    "variable": "x",
+                    "tube_width_mode": "abs",
+                    "tube_points": [{"time": 0.0, "upper": 1.5, "lower": -0.5}],
+                },
+            ],
+        }
+        session.stage([PatchOp(D, "add", "/metrics", tree)])
+        fig = session.figure(D, "x")
+        assert fig["config"]["edits"] == {"shapePosition": True}
+        rings = {s["name"] for s in fig["layout"]["shapes"] if s["type"] == "circle"}
+        c = "/metrics/children"
+        assert rings == {
+            f"{c}/0/tube/upper/0",
+            f"{c}/0/tube/lower/0",
+            f"{c}/0/tube/upper/1",
+            f"{c}/0/tube/lower/1",
+            f"{c}/2/points/target/0",
+            f"{c}/2/points/target/1",
+            f"{c}/4/tube/upper/0",
+            f"{c}/4/tube/lower/0",
+            f"{c}/5/tube/upper/0",
+            f"{c}/5/tube/lower/0",
+        }
+        assert not any("/points/box/" in name for name in rings)
+
     def test_no_baseline_is_the_empty_state_with_the_trajectory(self, session):
         view = session.view(B, "x")
         assert view.act_time is not None and view.ref_time is None and view.leaves == ()

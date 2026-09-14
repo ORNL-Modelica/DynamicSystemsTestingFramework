@@ -305,11 +305,15 @@ class Session:
         return view_from_trajectory(variable, traj, leaves)
 
     def figure(self, model_id: str, variable: str) -> dict:
+        """The tool's figure is the editable one — handle rings a user can
+        drag (``variable_figure(..., editable=True)``); the report's is not."""
         from ..figures.plotly import variable_figure
 
         project = self._require_project()
         return variable_figure(
-            self.view(model_id, variable), project.config.max_embedded_samples
+            self.view(model_id, variable),
+            project.config.max_embedded_samples,
+            editable=True,
         )
 
     def tree_view(self, model_id: str) -> dict | None:
