@@ -231,9 +231,59 @@ class TestTube:
     def test_abs_refuses_a_time_drag_against_a_named_baseline(self):
         leaf = _with(ABS, against="other")
         with pytest.raises(HandleEditError, match="'other'"):
-            _edit(leaf, "tube/upper/0", 0.0, 2.0)
-        # A vertical drag needs no reference, so it still edits.
-        assert _edit(leaf, "tube/upper/0", None, 2.0)["tube_points"][0]["upper"] == 2.0
+            _edit(leaf, "tube/upper/0", 0.1, 2.0)
+        # A vertical drag needs no reference, so it still edits — also when
+        # the ring sends its x back within float noise of the point's time.
+        for x in (None, 0.0, 1e-12):
+            new = _edit(leaf, "tube/upper/0", x, 2.0)
+            assert new["tube_points"][0] == {"time": 0.0, "upper": 2.0, "lower": -0.5}
+
+    def test_a_noise_level_x_on_a_named_baseline_edits_the_width(self):
+        leaf = _with(ABS, against="other", tube_points=[{"time": 0.5, "upper": 1.5}])
+        new = _edit(leaf, "tube/upper/0", 0.5 + 1e-12, 2.0)
+        assert new["tube_points"][0] == {"time": 0.5, "upper": 2.0}
+        with pytest.raises(HandleEditError, match="'other'"):
+            _edit(leaf, "tube/upper/0", 0.5 + 0.1, 2.0)
+
+    def test_a_noise_level_x_is_not_a_time_move(self):
+        leaf = _with(BAND, tube_points=[{"time": 1.0, "upper": 0.1, "lower": 0.1}])
+        new = _edit(leaf, "tube/upper/0", 1.0 + 1e-12, 1.3)
+        assert new["tube_points"][0]["time"] == 1.0
+        assert new["tube_points"][0]["upper"] == pytest.approx(0.3)
+
+    def test_a_refusal_after_a_clamp_names_the_clamp(self):
+        leaf = _with(
+            BAND,
+            tube_points=[
+                {"time": 0.5, "upper": 0.1, "lower": 0.1},
+                {"time": 1.0, "upper": 0.1, "lower": 0.1},
+            ],
+        )
+        with pytest.raises(HandleEditError) as err:
+            _edit(leaf, "tube/upper/0", 1.3, 1.2)
+        assert "control points 0 and 1 share time 1" in str(err.value)
+        assert "x=1.3 was clamped to t=1" in str(err.value)
+        # An unclamped refusal does not claim a clamp.
+        with pytest.raises(HandleEditError) as err:
+            _edit(leaf, "tube/upper/0", 1.0, 1.2)
+        assert "clamped" not in str(err.value)
+
+    def test_a_refusal_prints_numbers_without_float_noise(self):
+        # ref(0.75) = 0.75; -0.777 - 0.75 is -1.5270000000000001 as a float.
+        with pytest.raises(HandleEditError, match=r"upper width -1\.527 would"):
+            _edit(BAND, "tube/upper/1", 0.75, -0.777)
+
+    def test_an_empty_reference_is_no_reference(self):
+        empty = (np.array([]), np.array([]))
+        with pytest.raises(HandleEditError, match="needs a reference"):
+            _edit(BAND, "tube/upper/0", None, 0.8, reference=empty)
+        with pytest.raises(HandleEditError, match="needs a reference"):
+            _edit(REL, "tube/upper/0", 0.5, 0.8, reference=empty)
+        # abs needs none: only the window's own ends bound the time.
+        new = _edit(ABS, "tube/upper/0", 5.0, 2.0, reference=empty)
+        assert new["tube_points"][0] == {"time": 5.0, "upper": 2.0, "lower": -0.5}
+        new = _edit(POINTS, "points/target/0", 5.0, None, reference=empty)
+        assert new["points"][0]["time"] == 5.0
 
     def test_rel_on_a_negative_reference_writes_a_positive_width(self):
         negative = (REF[0], -REF[1])
@@ -321,12 +371,21 @@ class TestBounds:
         only_min = {"metric": "range", "variable": "x", "min_value": 2.0}
         assert _edit(only_min, "range/min", None, 50.0)["min_value"] == 50.0
 
-    def test_equal_bounds_accepted(self):
+    def test_equal_bounds_accepted_for_range(self):
         assert _edit(RANGE, "range/min", None, 2.0)["min_value"] == 2.0
+        assert _edit(RANGE, "range/max", None, -0.5)["max_value"] == -0.5
 
-    def test_a_bound_just_past_the_other_prints_past_it(self):
-        with pytest.raises(HandleEditError, match=r"min_value 2\.0000001 "):
+    def test_equal_bounds_refused_for_scalar(self):
+        # modes._validate_scalar_config requires min_value < max_value.
+        with pytest.raises(HandleEditError, match="would equal max_value 2;"):
+            _edit(SCALAR, "scalar/min", None, 2.0)
+        with pytest.raises(HandleEditError, match="would equal"):
+            _edit(SCALAR, "scalar/max", None, 0.0)
+
+    def test_a_bound_just_past_the_other_prints_distinguishably(self):
+        with pytest.raises(HandleEditError) as err:
             _edit(RANGE, "range/min", None, 2.0000001)
+        assert "min_value 2.0000001 would exceed max_value 2" in str(err.value)
 
     def test_scalar(self):
         assert _edit(SCALAR, "scalar/min", None, -1.0)["min_value"] == -1.0
@@ -364,12 +423,25 @@ class TestPoints:
     def test_a_vertical_drag_of_a_following_point_changes_nothing(self):
         assert _edit(POINTS, "points/target/0", 0.25, 0.9) == POINTS
 
-    def test_a_time_is_clamped_into_the_span(self):
+    def test_a_following_points_time_is_clamped_into_the_reference_span(self):
         new = _edit(POINTS, "points/target/0", 1.5, 0.9)
         assert new["points"][0] == {"time": 1.0, "tolerance": 0.05}
         leaf = _with(POINTS, window={"end": 0.8})
-        new = _edit(leaf, "points/target/1", 0.95, 0.7)
-        assert new["points"][1] == {"time": 0.75, "value": 0.7, "tolerance": 0.05}
+        new = _edit(leaf, "points/target/0", 0.95, 0.9)
+        assert new["points"][0] == {"time": 0.75, "tolerance": 0.05}
+
+    def test_a_value_points_time_is_clamped_into_the_windows_ends_only(self):
+        assert _edit(POINTS, "points/target/1", 1.7, None)["points"][1]["time"] == 1.7
+        leaf = _with(POINTS, window={"end": 0.8})
+        assert _edit(leaf, "points/target/1", 1.7, None)["points"][1]["time"] == 0.8
+        leaf = _with(POINTS, window={"start": 0.1})
+        assert _edit(leaf, "points/target/1", -3.0, None)["points"][1]["time"] == 0.1
+
+    def test_a_vertical_drag_keeps_a_time_outside_the_reference_span(self):
+        # The review's case: the ring sends x back at the point's own time.
+        leaf = _with(POINTS, points=[{"time": 1.5, "value": 1.5, "tolerance": 0.1}])
+        new = _edit(leaf, "points/target/0", 1.5, 1.6)
+        assert new["points"][0] == {"time": 1.5, "value": 1.6, "tolerance": 0.1}
 
     def test_without_a_reference_only_the_windows_ends_bound_a_time(self):
         assert (
@@ -619,6 +691,33 @@ def test_staging_the_edit_puts_the_handle_where_it_was_dragged(
     prim = _marker(session, D, f"/metrics/children/{child}/{local}")
     landed = prim.value if isinstance(prim, HLine) else prim.y
     assert landed == pytest.approx(y)
+
+
+def test_a_vertical_drag_keeps_a_checkpoint_drawn_before_its_window(session):
+    # The box [0, 0.8] meets the windowed trajectory (0.75, 1.0), so the
+    # checkpoint at 0.4 is drawn though the window starts at 0.6; the ring's
+    # noise-level x must not clamp it onto the window.
+    leaf = {
+        "metric": "points",
+        "variable": "x",
+        "window": {"start": 0.6},
+        "points": [{"time": 0.4, "value": 0.5, "time_tolerance": 0.4}],
+    }
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(leaf))])
+    before = _marker(session, D, "/metrics/points/target/0")
+    assert (before.x, before.y) == (0.4, 0.5)
+    view = session.view(D, "x")
+    new = _edit(
+        session.tree(D),
+        "points/target/0",
+        0.4 + 1e-12,
+        0.6,
+        reference=(view.ref_time, view.ref_values),
+    )
+    assert new["points"][0]["time"] == 0.4
+    session.stage([PatchOp(D, "replace", "/metrics", new)])
+    prim = _marker(session, D, "/metrics/points/target/0")
+    assert (prim.x, prim.y) == (0.4, pytest.approx(0.6))
 
 
 def test_a_width_dragged_under_the_min_width_rescores_onto_the_minimum(session):

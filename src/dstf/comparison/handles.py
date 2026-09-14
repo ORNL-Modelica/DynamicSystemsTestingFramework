@@ -54,10 +54,11 @@ def _unnamed(edit: HandleEdit) -> HandleEditError:
 
 
 def _num(value: float) -> str:
-    """A number for a refusal message: the shortest text that reads back
-    as the same float, so a value just outside a bound never prints as a
-    value on it (``:g`` prints ``2.0000001`` as ``2``)."""
-    return repr(float(value))
+    """A number for a refusal message, to 12 significant digits: enough
+    that a value just outside a bound never prints as a value on it (``:g``
+    prints ``2.0000001`` as ``2``), few enough that float noise from the
+    width arithmetic does not (``repr`` prints ``-1.5270000000000001``)."""
+    return f"{float(value):.12g}"
 
 
 def _is_number(value: object) -> bool:
@@ -101,6 +102,31 @@ def _index(edit: HandleEdit, segment: str, rows: object) -> int:
     if not isinstance(rows, list) or i >= len(rows) or not isinstance(rows[i], dict):
         raise _refuse(edit, f"there is no entry {i} to move")
     return i
+
+
+def _reference(edit: HandleEdit) -> tuple[np.ndarray, np.ndarray] | None:
+    """``edit.reference``, or ``None`` when either array is empty: an empty
+    baseline has nothing to measure from, and reading it as one would reach
+    numpy's own errors (``np.interp`` on no samples) instead of a refusal."""
+    if edit.reference is None:
+        return None
+    ref_time, ref_values = edit.reference
+    if len(ref_time) == 0 or len(ref_values) == 0:
+        return None
+    return edit.reference
+
+
+def _time_move(edit: HandleEdit, t: float) -> float | None:
+    """``edit.x`` as a time move from the handle's current time ``t``, or
+    ``None`` when it is not one. The ring always sends its ``x``, and a
+    vertical drag sends it back within float noise of ``t``; read as a move,
+    that noise was clamped (moving a value checkpoint drawn outside the span)
+    or refused (an ``against``-other leaf, a time shared with another point),
+    so a vertical drag changed or lost a time. Decided before any clamp,
+    ``against`` or shared-time check."""
+    if edit.x is None or abs(edit.x - t) <= 1e-9 * max(1.0, abs(t)):
+        return None
+    return float(edit.x)
 
 
 def _refuse_other_baseline(edit: HandleEdit, leaf: dict, what: str) -> None:
@@ -147,12 +173,16 @@ def _time_span(
     return float(inside[0]), float(inside[-1])
 
 
-def _clamped_time(edit: HandleEdit, leaf: dict, x: float) -> float:
-    """``x`` clamped into :func:`_time_span`. Clamped, not refused: a
-    handle grabbed on the span's edge comes back a hair outside it from the
-    pixel round trip, and refusing that would refuse the vertical part of
-    the drag too."""
-    lo, hi = _time_span(edit, leaf, edit.reference)
+def _clamped_time(
+    edit: HandleEdit,
+    leaf: dict,
+    x: float,
+    reference: tuple[np.ndarray, np.ndarray] | None,
+) -> float:
+    """``x`` clamped into :func:`_time_span` over ``reference`` (``None``:
+    the window's own ends alone). Clamped, not refused: a real drag past the
+    span's edge lands on the edge, where the handle is still drawn."""
+    lo, hi = _time_span(edit, leaf, reference)
     return float(min(max(float(x), lo), hi))
 
 
@@ -164,10 +194,12 @@ def edit_tube_handle(edit: HandleEdit) -> dict:
 
     The index addresses ``tube_points`` in authored order, as
     ``algorithms._tube_geometry`` enumerates it. ``x`` sets the point's
-    ``time``, clamped into the span where the handle is drawn (the first
-    reference sample ``>= window.start`` to the last ``<= window.end``,
-    either end absent meaning the reference's own; with no reference, the
-    window's ends alone). ``y`` sets that side's width at the point's (new)
+    ``time`` — unless it lies within float noise of the current time, which
+    is no time move at all (:func:`_time_move`) — clamped into the span
+    where the handle is drawn (the first reference sample
+    ``>= window.start`` to the last ``<= window.end``, either end absent
+    meaning the reference's own; with no reference, the window's ends
+    alone). ``y`` sets that side's width at the point's (new)
     time ``t``, where ``ref(t)`` interpolates the reference:
 
     * ``abs`` — the value itself; refused when upper would fall below the
@@ -183,7 +215,8 @@ def edit_tube_handle(edit: HandleEdit) -> dict:
     would come from the wrong reference). A point sharing its time with
     another is refused, and so is a time drag landing on another point's
     time: the forward interpolation reads the later point there, so the
-    handle would not follow the edit. A width under ``tube_min_width`` is
+    handle would not follow the edit. A refusal after a clamp says so,
+    naming the clamped time. A width under ``tube_min_width`` is
     written as dragged; the band then draws at the minimum, so the handle
     lands on the band's real edge.
     """
@@ -198,19 +231,42 @@ def edit_tube_handle(edit: HandleEdit) -> dict:
     mode = leaf.get("tube_width_mode")
     if mode not in ("abs", "band", "rel"):
         raise _refuse(edit, f"tube_width_mode {mode!r} has no draggable widths")
+    reference = _reference(edit)
     if mode != "abs":
         _refuse_other_baseline(edit, leaf, "its widths")
-        if edit.reference is None:
+        if reference is None:
             raise _refuse(edit, f"a {mode} tube needs a reference to measure from")
 
     t = _authored_number(edit, point.get("time"), f"tube_points[{i}].time")
     _refuse_shared_time(edit, rows, i, t)
-    if edit.x is not None:
-        _refuse_other_baseline(edit, leaf, "its time")
-        t = _clamped_time(edit, leaf, edit.x)
+    x = _time_move(edit, t)
+    if x is None:
+        return _set_tube_width(edit, leaf, point, i, side, mode, t, reference)
+    _refuse_other_baseline(edit, leaf, "its time")
+    t = _clamped_time(edit, leaf, x, reference)
+    try:
         _refuse_shared_time(edit, rows, i, t)
         point["time"] = t
+        return _set_tube_width(edit, leaf, point, i, side, mode, t, reference)
+    except HandleEditError as err:
+        if t == x:
+            raise
+        raise HandleEditError(
+            f"{err} (x={_num(x)} was clamped to t={_num(t)})"
+        ) from None
 
+
+def _set_tube_width(
+    edit: HandleEdit,
+    leaf: dict,
+    point: dict,
+    i: int,
+    side: str,
+    mode: str,
+    t: float,
+    reference: tuple[np.ndarray, np.ndarray] | None,
+) -> dict:
+    """``edit.y`` written as ``point``'s ``side`` width at time ``t``."""
     if edit.y is None:
         return leaf
     y = float(edit.y)
@@ -233,8 +289,8 @@ def edit_tube_handle(edit: HandleEdit) -> dict:
                 )
         point[side] = y
         return leaf
-    assert edit.reference is not None  # refused above for band / rel
-    ref_t = float(np.interp(t, edit.reference[0], edit.reference[1]))
+    assert reference is not None  # refused above for band / rel
+    ref_t = float(np.interp(t, reference[0], reference[1]))
     width = y - ref_t if side == "upper" else ref_t - y
     if width < 0:
         raise _refuse(edit, f"{side} width {_num(width)} would be negative")
@@ -265,7 +321,9 @@ def edit_bound_handle(edit: HandleEdit) -> dict:
     """``<metric>/min`` and ``<metric>/max`` → ``min_value`` / ``max_value``,
     from ``y``; ``x`` is ignored. ``<metric>`` is the leaf's own metric
     (``range`` and ``scalar`` share this editor). Refused when the result
-    has ``min_value > max_value`` (equal bounds are accepted)."""
+    has ``min_value > max_value``; equal bounds are accepted for ``range``
+    and refused for ``scalar``, whose ``modes._validate_scalar_config``
+    requires ``min_value < max_value``."""
     _check_position(edit)
     family = edit.leaf.get("metric")
     if not isinstance(family, str):
@@ -285,6 +343,12 @@ def edit_bound_handle(edit: HandleEdit) -> dict:
             raise _refuse(
                 edit, f"min_value {_num(lo)} would exceed max_value {_num(hi)}"
             )
+        if family == "scalar" and lo == hi:
+            raise _refuse(
+                edit,
+                f"min_value {_num(lo)} would equal max_value {_num(hi)}; "
+                "a scalar leaf needs min_value < max_value",
+            )
     return leaf
 
 
@@ -294,16 +358,20 @@ def edit_bound_handle(edit: HandleEdit) -> dict:
 def edit_points_handle(edit: HandleEdit) -> dict:
     """``points/target/i`` → ``points[i]``.
 
-    ``x`` sets ``time``, clamped into the span where the checkpoint is drawn
-    (the tube rule: the first reference sample ``>= window.start`` to the
-    last ``<= window.end``), and refused on a leaf whose ``against`` is not
-    ``"primary"``. A checkpoint whose ``time`` is absent or null — the
-    trace-end sentinel — keeps it: ``x`` is ignored, a time is typed in the
-    table. ``y`` sets ``value`` only when the point has a non-null one —
-    ``point.get("value") is not None``, the forward code's test in
-    ``algorithms._compare_points`` — so a checkpoint that follows the
-    baseline (``value`` absent or null) moves in time only and a drag never
-    makes it baseline-free. ``points/target/final`` (the final-value check
+    ``x`` sets ``time`` — unless it lies within float noise of the current
+    time (:func:`_time_move`) — and is refused on a leaf whose ``against``
+    is not ``"primary"``. The time is clamped: for a checkpoint that follows
+    the baseline, into the span where it is drawn (the tube rule: the first
+    reference sample ``>= window.start`` to the last ``<= window.end``); for
+    one with an explicit ``value``, only into the window's own ends — the
+    forward code draws it wherever ``t ± time_tolerance`` meets the actual
+    trajectory, which the editor does not have. A checkpoint whose ``time``
+    is absent or null — the trace-end sentinel — keeps it: ``x`` is ignored,
+    a time is typed in the table. ``y`` sets ``value`` only when the point
+    has a non-null one — ``point.get("value") is not None``, the forward
+    code's test in ``algorithms._compare_points`` — so a checkpoint that
+    follows the baseline (``value`` absent or null) moves in time only and a
+    drag never makes it baseline-free. ``points/target/final`` (the final-value check
     of an empty list) is refused: there is no declared point to move."""
     _check_position(edit)
     _, role, segment = _parse(edit, "points", 3)
@@ -314,9 +382,15 @@ def edit_points_handle(edit: HandleEdit) -> dict:
     leaf = copy.deepcopy(edit.leaf)
     i = _index(edit, segment, leaf.get("points"))
     point = leaf["points"][i]
-    if edit.x is not None and point.get("time") is not None:
+    time = point.get("time")
+    x = None
+    if time is not None:
+        x = _time_move(edit, _authored_number(edit, time, f"points[{i}].time"))
+    if x is not None:
         _refuse_other_baseline(edit, leaf, "its time")
-        point["time"] = _clamped_time(edit, leaf, edit.x)
+        follows_baseline = point.get("value") is None
+        reference = _reference(edit) if follows_baseline else None
+        point["time"] = _clamped_time(edit, leaf, x, reference)
     if edit.y is not None and point.get("value") is not None:
         point["value"] = float(edit.y)
     return leaf
