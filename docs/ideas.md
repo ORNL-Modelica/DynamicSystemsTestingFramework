@@ -1334,3 +1334,27 @@ planning.
     through `accept_run_results` when the tool's Accept lands.
   - `docs/patterns.md` still describes the pre-D125 browser editors in the
     present tense; a docs sweep with this file's older entries.
+
+- **After the shell (2026-09-14), follow-ups** — sub-project 4 of the
+  two-tier split shipped (`dstf author`, Edit criteria, Edit tree, the form
+  emitter, the conformance test). None blocks sub-project 5:
+  - Edit tree offers wrap, unwrap, add, remove and combinator kind / k /
+    weights / threshold. The deleted browser editor also offered the
+    `weighted` `direction` and a "reset leaf to original"; neither has a
+    control. `direction` keeps whatever the node has.
+  - The tabs region is rebuilt on every selection and job event; a control
+    being typed in survives a stage (tabs are not rebuilt on spec/results),
+    but a job event mid-keystroke would drop focus. Only the Chromium smoke
+    test types into a real field.
+  - An `int` form field rounds on blur in the browser (`precision=0`) and
+    truncates on the server; no registered mode has an int field today.
+  - Two browser tabs on one shell share the drawer element: the first tab's
+    pending button toggles the second tab's drawer. One process, one tab is
+    the v1 shape (§4.7); a per-client drawer is the fix if that changes.
+  - A cleared `str` form field stages `""` rather than omitting the key.
+  - `Session.open` still prints the backend's read-phase progress to stdout
+    inside the UI process (from the Session follow-ups; plan 5's run
+    callable is where a `quiet` flag belongs).
+  - The conformance test reads `git status` once per module; on this /mnt/d
+    tree that call costs 1.5 s, and a concurrent editor's write during the
+    module trips it with a message naming the moved lines.
