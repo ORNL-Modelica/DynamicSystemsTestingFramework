@@ -328,7 +328,8 @@ class TestFigure:
 
 def _handle_view():
     """Two time-panel handle Markers, one spectrum-panel handle Marker, a
-    result Marker, an HLine handle and a Box handle."""
+    non-handle Marker (a detected spectrum peak, the kind a mode really
+    emits), an HLine handle and a Box handle."""
     t = np.linspace(0.0, 1.0, 11)
     vc = _compare_range(t, t, min_value=None, max_value=None)
     vc.name = "x"
@@ -336,7 +337,7 @@ def _handle_view():
         Marker(id="tube/upper/0", kind="handle", x=0.5, y=0.6),
         Marker(id="tube/lower/0", kind="handle", x=0.5, y=0.3),
         Marker(id="peaks/declared/0", kind="handle", panel="spectrum", x=2.0, y=1.5),
-        Marker(id="points/target/0", kind="result", x=0.25, y=0.25),
+        Marker(id="peaks/detected/0", kind="detected", panel="spectrum", x=3.0, y=0.5),
         HLine(id="range/max", kind="handle", value=0.9),
         Box(id="points/box/0", kind="handle", t0=0.2, t1=0.3, y0=0.2, y1=0.3),
     )
@@ -367,9 +368,15 @@ class TestEditableFigure:
         }
         assert got == expected
         assert all(r["xsizemode"] == r["ysizemode"] == "pixel" for r in rings)
-        # The result Marker gets no ring.
-        assert f"{p}/points/target/0" not in got
-        others = [s for s in fig["layout"]["shapes"] if s["type"] != "circle"]
+        # The detected-peak Marker gets no ring.
+        assert f"{p}/peaks/detected/0" not in got
+        # Rings come LAST: the later shape takes a drag, and a point's
+        # target ring sits at the centre of its box rect.
+        shapes = fig["layout"]["shapes"]
+        assert shapes[-len(rings) :] == rings
+        first_ring = next(i for i, s in enumerate(shapes) if s["type"] == "circle")
+        assert all(s["type"] == "circle" for s in shapes[first_ring:])
+        others = [s for s in shapes if s["type"] != "circle"]
         assert others == plain["layout"]["shapes"]
         assert {s["name"] for s in others} >= {f"{p}/range/max", f"{p}/points/box/0"}
         assert fig["data"] == plain["data"]

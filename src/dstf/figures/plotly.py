@@ -13,8 +13,9 @@ carries it as ``name``. Those are the handles on-plot editing attaches to.
 The editable figure (``editable=True``, the tool's; never the report's) adds
 one pixel-sized ring shape per ``kind="handle"`` marker and turns on
 ``config.edits.shapePosition``. That makes every shape draggable — plotly.js
-offers no per-shape switch that works — and the rings are what an editor
-attaches to, since Plotly drags shapes, not trace points.
+offers no per-shape switch that works (measured on plotly.js 3.8.2, the
+build NiceGUI 3.16 bundles) — and the rings are what an editor attaches to,
+since Plotly drags shapes, not trace points.
 """
 
 from __future__ import annotations
@@ -332,7 +333,7 @@ def _marker_traces(markers: list[Marker], leaf: LeafView) -> list[dict]:
         # One colour PER marker: a leaf with one passed and one failed
         # checkpoint must not paint both red (the boxes beside them carry
         # their own verdicts, and the two would contradict).
-        ok_colour = "#2e7d32" if group[0].kind == "handle" else ACTUAL
+        ok_colour = HANDLE_RING if group[0].kind == "handle" else ACTUAL
         traces.append(
             {
                 "type": "scatter",

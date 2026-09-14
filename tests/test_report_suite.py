@@ -525,6 +525,79 @@ class TestEmbeddedFigures:
         assert len(sidecar["trajectories"][0]["act_time"]) == 3001
         assert len(sidecar["variables_by_name"]["x"]["trajectory"]["act_time"]) == 3001
 
+    def test_the_reports_figures_are_never_editable(self, tmp_path, monkeypatch):
+        """The report draws through ``_build_figures``; a handle Marker there
+        must get no ring and the figure no ``edits`` (the tool's alone)."""
+        from pathlib import Path
+
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_test
+        from dstf.comparison.geometry import Marker
+        from dstf.comparison.tree_eval import leaf_comparisons_by_path
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting import report_suite
+
+        t = np.linspace(0.0, 1.0, 11)
+        ref = {
+            "test_id": "ref_0001",
+            "time": t.tolist(),
+            "variables": [{"index": 1, "name": "x", "values": t.tolist()}],
+        }
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[VariableResult(index=1, name="x", time=t, values=t + 0.001)],
+        )
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=1,
+            variable_overrides={"x": {"mode": "points", "tolerance": 0.01}},
+        )
+        comp = compare_test(test, result, ref)
+        handles = [
+            p
+            for vc in leaf_comparisons_by_path(comp.metric_tree).values()
+            for p in vc.geometry
+            if isinstance(p, Marker) and p.kind == "handle"
+        ]
+        assert handles, "no handle Marker: the assertion below would be vacuous"
+
+        built: list[dict] = []
+        real = report_suite._build_figures
+
+        def spy(*args, **kwargs):
+            out = real(*args, **kwargs)
+            built.append(out)
+            return out
+
+        monkeypatch.setattr(report_suite, "_build_figures", spy)
+        report_suite.generate_comparison_plots(
+            "M",
+            ref,
+            result,
+            comp.variables,
+            tmp_path / "plots",
+            test_model=test,
+            metric_tree=comp.metric_tree,
+        )
+        assert len(built) == 1
+        figs = [
+            *built[0]["figures"].values(),
+            *built[0]["diag_figures"],
+            *built[0]["nb_figures"],
+        ]
+        assert "x" in built[0]["figures"]
+        for fig in figs:
+            assert "edits" not in fig["config"]
+            assert not any(
+                s.get("type") == "circle" for s in fig["layout"].get("shapes") or []
+            )
+
     def test_the_banner_names_every_decimated_trace(self, tmp_path):
         from dstf.reporting.report_suite import _decimated_traces
 
