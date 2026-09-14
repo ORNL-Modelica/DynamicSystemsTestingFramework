@@ -101,7 +101,12 @@ class FmpyBackend(Backend):
         try:
             import fmpy  # noqa: F401
         except ImportError as exc:
-            raise ImportError(
+            # RuntimeError, not ImportError: `Backend.preflight` names it as
+            # the contract for "this backend cannot be built here", and it is
+            # what `backends._instantiate` translates into
+            # `BackendUnavailableError`. The OpenModelica and Dymola
+            # dependency probes convert the same way.
+            raise RuntimeError(
                 "The FMPy backend requires the optional 'fmpy' extra.\n"
                 "  source checkout:  uv sync --extra fmpy --locked --inexact\n"
                 "  installed tool:   reinstall with the [fmpy] extra"

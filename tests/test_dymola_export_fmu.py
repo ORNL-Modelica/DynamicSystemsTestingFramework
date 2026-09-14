@@ -134,10 +134,12 @@ class TestAbstractExportFmuDefault:
             timeout=60,
             work_dir=tmp_path,
         )
-        # Skip if fmpy not installed — instantiation would fail before our test
+        # Skip if fmpy not installed — instantiation would fail before our
+        # test. The constructor signals that with the Backend contract's
+        # RuntimeError, not an ImportError.
         try:
             backend = FmpyBackend(config)  # type: ignore[arg-type]
-        except ImportError:
+        except RuntimeError:
             pytest.skip("fmpy not installed")
         with pytest.raises(NotImplementedError, match="FMU_EXPORT"):
             backend.export_fmu(_mock_test(), tmp_path)

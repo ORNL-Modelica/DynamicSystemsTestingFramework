@@ -416,7 +416,7 @@ class PersistentBackendBase(Backend):
         patches that must apply before any worker spawns (Dymola: log
         filter + parallel-startup lock).
       - Override :meth:`preflight` (already declared on ``Backend``)
-        to add a cheap dependency probe — see :meth:`_get_backend` in the CLI.
+        to add a cheap dependency probe — see :func:`backends.select_backend`.
 
     The :meth:`run_tests` template enforces the lifecycle:
 

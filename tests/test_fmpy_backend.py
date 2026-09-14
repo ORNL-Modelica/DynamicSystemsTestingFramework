@@ -287,3 +287,45 @@ class TestFmpyBackendFixes:
         rr = backend.run_single_test(test, "test_0001", 1, 1)  # must NOT raise
         assert rr.success is False
         assert "disk full" in (rr.error_message or "")
+
+
+# ---------------------------------------------------------------------------
+# The missing-dependency signal is the Backend contract's RuntimeError
+# ---------------------------------------------------------------------------
+
+
+class TestFmpyMissingDependency:
+    """A machine without fmpy is an unavailable backend, not a bug.
+
+    ``Backend.preflight`` names ``RuntimeError`` as the signal, and it is what
+    ``backends._instantiate`` translates into ``BackendUnavailableError`` (the
+    OpenModelica and Dymola dependency probes convert the same way). The
+    constructor raised ``ImportError`` instead, which ``_instantiate`` — narrow
+    by design — let through as a traceback.
+    """
+
+    def test_select_backend_reports_it_as_unavailable_with_the_hint(
+        self, tmp_path, monkeypatch
+    ):
+        from dstf.backends import BackendUnavailableError, select_backend
+        from dstf.config import Config
+
+        # `None` in sys.modules is the interpreter's own "this import fails".
+        monkeypatch.setitem(sys.modules, "fmpy", None)
+
+        source = tmp_path / "fmus"
+        source.mkdir()
+        config = Config(
+            source_path=source,
+            reference_root=tmp_path / "refs",
+            source_type="fmu",
+            backend_name="FMPy",
+            work_dir=tmp_path / "work",
+        )
+
+        with pytest.raises(BackendUnavailableError) as excinfo:
+            select_backend(config, persistent=False)
+
+        message = str(excinfo.value)
+        assert "optional 'fmpy' extra" in message
+        assert "--extra fmpy" in message

@@ -25,7 +25,7 @@ This is the default backend; pass ``--batch`` to opt out. There is no
 automatic fallback: if Julia's dependencies aren't ready (no Manifest.toml,
 failed `using`), ``preflight`` raises RuntimeError and the CLI aborts with
 a message naming both fixes — same pattern as Dymola and OpenModelica (see
-``cli._get_backend``).
+``backends.select_backend``).
 """
 
 from __future__ import annotations

@@ -175,8 +175,9 @@ def select_backend(config, *, persistent: bool) -> Backend:
     backends plug in by declaring the capability and overriding
     ``persistent_backend_cls`` + ``preflight`` on their backend classes.
 
-    ``config.backend`` is read only on the persistent-failure path, so a
-    caller probing the choice can pass a config that carries no name.
+    This function itself reads ``config.backend`` only to phrase the
+    persistent-failure message; :func:`get_backend_class`, which it calls
+    first, requires the attribute.
     """
     try:
         batch_cls = get_backend_class(config)

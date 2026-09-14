@@ -17,7 +17,7 @@ The default CLI mode selects this backend; pass ``--batch`` to opt out and
 use the subprocess-per-test backend, which doesn't require OMPython. There
 is no automatic fallback: if OMPython can't be imported, ``preflight``
 raises and the CLI aborts with a message naming both fixes (see
-``cli._get_backend``).
+``backends.select_backend``).
 
 Phase labels are cosmetic — OM's ``simulate()`` bundles build + run in one
 call with no mid-call progress hook, so we emit ``translating`` before the

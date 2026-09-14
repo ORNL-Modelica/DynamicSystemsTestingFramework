@@ -16,7 +16,7 @@ Benefits:
 This is the default backend; pass `--batch` to opt out and use the `.mos`
 batched backend instead. There is no automatic fallback: if the Dymola
 Python interface can't be imported, `preflight` raises and the CLI aborts
-with a message naming both fixes (see `cli._get_backend`).
+with a message naming both fixes (see `backends.select_backend`).
 """
 
 from __future__ import annotations

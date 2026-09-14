@@ -235,6 +235,15 @@ class TestSelectBackend:
         with pytest.raises(KeyError):
             select_backend(SimpleNamespace(), persistent=False)
 
+    def test_a_registry_bug_still_tracebacks(self):
+        """The same fence on the other translation: only `get_backend_class`'s
+        `ValueError` ("unsupported backend") means "unavailable". A config with
+        no `backend` attribute is a caller bug — it must traceback, not be
+        dressed up as a machine that can't run this backend. Widening that
+        `except` to `Exception` would hide it."""
+        with pytest.raises(AttributeError):
+            select_backend(SimpleNamespace(), persistent=False)
+
 
 class TestDatasetKindThreading:
     def test_single_declared_kind_is_used(self):

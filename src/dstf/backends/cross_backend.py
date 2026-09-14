@@ -110,7 +110,9 @@ def produce_dymola_via_fmpy_baseline(
     )
     try:
         fmpy_backend = FmpyBackend(fmpy_config)
-    except ImportError as exc:
+    except RuntimeError as exc:
+        # The constructor's "fmpy not installed" is a RuntimeError, the same
+        # unavailable-backend signal `backends._instantiate` translates.
         logger.warning(
             "cross-backend chain: FMPy not installed (%s); skipping %s",
             exc,
