@@ -94,6 +94,9 @@ class TestTube:
             "upper": pytest.approx(0.3),
             "lower": 0.2,
         }
+        # Written to 12 significant digits: 0.8 - 0.5 is
+        # 0.30000000000000004 in floats, never what the spec file shows.
+        assert new["tube_points"][0]["upper"] == 0.3
         new = _edit(BAND, "tube/lower/1", 0.9, 0.6)
         assert new["tube_points"][1]["lower"] == pytest.approx(0.3)
         assert new["tube_points"][1]["upper"] == 0.1

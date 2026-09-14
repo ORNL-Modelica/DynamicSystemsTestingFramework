@@ -7,6 +7,7 @@ in-process user simulation — no browser."""
 
 from __future__ import annotations
 
+import asyncio
 import copy
 
 import pytest
@@ -242,6 +243,66 @@ def test_a_blank_required_cell_is_refused_by_name(shell):
     assert shell.session.spec.pending == pending
 
 
+def _rows(shell, rows, *, model_id=D, path="/metrics/children/0", field="tube_points"):
+    return EditOnPlot().act(
+        shell.view,
+        kind="rows",
+        model_id=model_id,
+        path=path,
+        field=field,
+        rows=rows,
+    )
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("key", ["time", "upper"])
+def test_a_non_finite_cell_is_refused_by_row_and_column(shell, bad, key):
+    _tree_on_d(shell)
+    rows = [
+        {"time": 0.5, "upper": 0.1, "lower": 0.2},
+        {"time": 0.9, "upper": 0.1, "lower": 0.1},
+    ]
+    rows[1][key] = bad
+    with pytest.raises(ValueError, match=f"row 1: {key} = .* is not a finite number"):
+        _rows(shell, rows)
+
+
+def test_a_tube_table_with_no_width_in_any_row_is_refused(shell):
+    """The reader's own refusal (`_interpolate_tube_widths`), by name."""
+    _tree_on_d(shell)
+    with pytest.raises(ValueError, match="tube_points: no row has an upper or a lower"):
+        _rows(shell, [{"time": 0.5, "upper": None, "lower": None}, {"time": 0.9}])
+    # One width in one row is enough; an empty table is no tube width at all.
+    assert _rows(shell, [{"time": 0.5, "lower": 0.1}, {"time": 0.9}]) is not None
+    assert _rows(shell, []) is not None
+
+
+def test_a_rows_edit_names_what_its_path_or_model_is_instead(shell):
+    _tree_on_d(shell)
+    ok = [{"time": 0.5, "upper": 0.1}]
+    for path in ("/metrics/children/9", "/metrics/children/0/tube_points", "/x/0"):
+        with pytest.raises(ValueError, match=f"^{path} names no leaf of {D}$"):
+            _rows(shell, ok, path=path)
+    with pytest.raises(ValueError, match="^/metrics is a combinator, not a leaf$"):
+        _rows(shell, ok, path="/metrics")
+    with pytest.raises(ValueError, match="^Nope.Model is not a test of this project$"):
+        _rows(shell, ok, model_id="Nope.Model")
+
+
+def test_a_rows_edit_equal_to_the_current_list_stages_nothing(shell):
+    _tree_on_d(shell)
+    current = shell.session.tree(D)["children"][0]["tube_points"]
+    assert _rows(shell, copy.deepcopy(current)) is None
+
+
+def test_a_rows_edit_of_a_field_without_columns_is_refused(shell):
+    _tree_on_d(shell)
+    with pytest.raises(ValueError, match="tube has no table 'tube_width_mode'"):
+        _rows(shell, [], field="tube_width_mode")
+    with pytest.raises(ValueError, match="range has no table 'tube_points'"):
+        _rows(shell, [], path="/metrics/children/1")
+
+
 # -- available --------------------------------------------------------------
 
 
@@ -330,7 +391,10 @@ async def test_the_panel_draws_a_table_per_list_field_and_stages_edits(shell):
         )
 
         user.find(marker=f"{t0}:add").click()
-        added = {"time": 1.0, "upper": 0.1, "lower": 0.1}
+        # Times 0.5 and 0.9 over the reference [0, 1]: the largest gap is
+        # [0, 0.5], so the new row lands at 0.25 (Add row never lands on an
+        # existing time; it used to put the row at the span's end).
+        added = {"time": 0.25, "upper": 0.1, "lower": 0.1}
         await _settled(
             lambda: (
                 len(
@@ -352,6 +416,40 @@ async def test_the_panel_draws_a_table_per_list_field_and_stages_edits(shell):
             {"time": 0.5, "upper": 0.25, "lower": 0.2},
             {"time": 0.9, "upper": 0.1, "lower": 0.1},
         ]
+
+
+async def test_a_blank_required_cell_is_marked_and_held_until_it_is_filled(shell):
+    """Clearing a required cell to retype it: nothing is submitted (a refusal
+    would rebuild the slot and lose the field being typed in), the cell is
+    marked, and the keystroke that fills it submits the whole list."""
+    _tree_on_d(shell)
+    async with user_simulation(root=shell.root) as user:
+        await _open_edit_on_plot(shell, user)
+        marker = "/metrics/children/0:tube_points:0:time"
+        cell = _cell(user, marker)
+        pending = list(shell.session.spec.pending)
+        cell.set_value(None)
+        await asyncio.sleep(0.25)  # two ticks: anything submitted has landed
+        assert shell.session.spec.pending == pending
+        assert "edit-on-plot" not in shell.errors
+        assert "error" in cell.props
+        assert _cell(user, marker) is cell  # not rebuilt
+        cell.set_value(0.6)
+        await _settled(
+            lambda: (
+                (_pending_value(shell, "/metrics/children/0") or {})
+                .get("tube_points", [{}])[0]
+                .get("time")
+                == 0.6
+            )
+        )
+        assert _pending_value(shell, "/metrics/children/0")["tube_points"] == [
+            {"time": 0.6, "upper": 0.1, "lower": 0.2},
+            {"time": 0.9, "upper": 0.1, "lower": 0.1},
+        ]
+        assert "error" not in cell.props
+        await asyncio.sleep(0.25)
+        assert _cell(user, marker) is cell
 
 
 async def test_add_row_on_an_empty_points_table(shell):
@@ -396,7 +494,44 @@ def test_add_row_rules():
         "tolerance_mode": "rel",
     }
     last = {"time": 0.9, "upper": 0.1, "lower": 0.1}
-    assert _new_row(tube, [last], span) == {"time": 1.0, "upper": 0.1, "lower": 0.1}
+    assert _new_row(tube, [last], span) == {"time": 0.45, "upper": 0.1, "lower": 0.1}
+
+
+def test_add_row_lands_in_the_largest_gap_never_on_an_existing_time():
+    """The midpoint of the largest gap among the span's ends and the rows'
+    times (the first such on a tie); without a reference, among the rows'
+    times alone, or past the last row when there are fewer than two."""
+    import dataclasses
+
+    from dstf.authoring.builtin.edit_on_plot import _new_row
+    from dstf.comparison.modes import TubeConfig
+
+    (f,) = [f for f in dataclasses.fields(TubeConfig) if f.name == "tube_points"]
+    tube = f.metadata["columns"]
+    span = (0.0, 1.0)
+
+    def times(rows):
+        return [r["time"] for r in rows]
+
+    rows = [
+        {"time": 0.5, "upper": 0.1, "lower": 0.1},
+        {"time": 1.0, "upper": 0.2, "lower": 0.2},
+    ]
+    rows.append(_new_row(tube, rows, span))
+    assert rows[-1] == {"time": 0.25, "upper": 0.2, "lower": 0.2}
+    rows.append(_new_row(tube, rows, span))
+    assert times(rows) == [0.5, 1.0, 0.25, 0.75]
+    rows.append(_new_row(tube, rows, span))  # four gaps of 0.25: the first
+    assert times(rows)[-1] == 0.125
+    two = [{"time": 0.0, "upper": 0.1}, {"time": 1.0, "upper": 0.1}]
+    assert _new_row(tube, two, span)["time"] == 0.5
+    assert _new_row(tube, [], span)["time"] == 0.5
+    # No reference.
+    assert _new_row(tube, [{"time": 0.2}, {"time": 1.0}, {"time": 0.4}], None)[
+        "time"
+    ] == pytest.approx(0.7)
+    assert _new_row(tube, [{"time": 0.2, "upper": 0.1}], None)["time"] == 1.2
+    assert _new_row(tube, [], None)["time"] == 0.0
 
 
 # -- the drag, end to end through the hook -----------------------------------

@@ -13,6 +13,8 @@ mutated — and refuses with :class:`HandleEditError`, naming the handle and
 the reason, rather than return a leaf the drag cannot mean: a non-finite
 or non-numeric position, a local it does not name, or a rule below broken. The locals are
 the ids the modes emit (``algorithms._tube_geometry`` and its siblings).
+Every number an editor writes is rounded to 12 significant digits
+(:func:`_written`).
 """
 
 from __future__ import annotations
@@ -59,6 +61,14 @@ def _num(value: float) -> str:
     prints ``2.0000001`` as ``2``), few enough that float noise from the
     width arithmetic does not (``repr`` prints ``-1.5270000000000001``)."""
     return f"{float(value):.12g}"
+
+
+def _written(value: float) -> float:
+    """A number an editor WRITES into the leaf, to 12 significant digits —
+    the precision :func:`_num` prints: the arithmetic from a drag's position
+    (``0.8 - 0.5``) otherwise lands ``0.30000000000000004`` in the spec file
+    the author reads and version-controls."""
+    return float(f"{float(value):.12g}")
 
 
 def _is_number(value: object) -> bool:
@@ -243,13 +253,13 @@ def edit_tube_handle(edit: HandleEdit) -> dict:
     if x is None:
         return _set_tube_width(edit, leaf, point, i, side, mode, t, reference)
     _refuse_other_baseline(edit, leaf, "its time")
-    t = _clamped_time(edit, leaf, x, reference)
+    t = _written(_clamped_time(edit, leaf, x, reference))
     try:
         _refuse_shared_time(edit, rows, i, t)
         point["time"] = t
         return _set_tube_width(edit, leaf, point, i, side, mode, t, reference)
     except HandleEditError as err:
-        if t == x:
+        if t == _written(x):
             raise
         raise HandleEditError(
             f"{err} (x={_num(x)} was clamped to t={_num(t)})"
@@ -287,7 +297,7 @@ def _set_tube_width(
                 raise _refuse(
                     edit, f"lower {_num(y)} would rise above upper {_num(upper)}"
                 )
-        point[side] = y
+        point[side] = _written(y)
         return leaf
     assert reference is not None  # refused above for band / rel
     ref_t = float(np.interp(t, reference[0], reference[1]))
@@ -298,7 +308,7 @@ def _set_tube_width(
         if abs(ref_t) < _EPS:
             raise _refuse(edit, f"the reference is zero at t={_num(t)}")
         width = width / abs(ref_t)
-    point[side] = width
+    point[side] = _written(width)
     return leaf
 
 
@@ -345,7 +355,7 @@ def _edit_bounds(edit: HandleEdit, *, strict: bool) -> dict:
     leaf = copy.deepcopy(edit.leaf)
     if edit.y is None:
         return leaf
-    leaf[f"{which}_value"] = float(edit.y)
+    leaf[f"{which}_value"] = _written(edit.y)
     lo, hi = leaf.get("min_value"), leaf.get("max_value")
     if lo is not None and hi is not None:
         lo = _authored_number(edit, lo, "min_value")
@@ -401,9 +411,9 @@ def edit_points_handle(edit: HandleEdit) -> dict:
         _refuse_other_baseline(edit, leaf, "its time")
         follows_baseline = point.get("value") is None
         reference = _reference(edit) if follows_baseline else None
-        point["time"] = _clamped_time(edit, leaf, x, reference)
+        point["time"] = _written(_clamped_time(edit, leaf, x, reference))
     if edit.y is not None and point.get("value") is not None:
-        point["value"] = float(edit.y)
+        point["value"] = _written(edit.y)
     return leaf
 
 
@@ -422,5 +432,5 @@ def edit_peaks_handle(edit: HandleEdit) -> dict:
     if edit.x is not None:
         if edit.x <= 0:
             raise _refuse(edit, f"frequency {_num(edit.x)} must be positive")
-        leaf["peaks"][i]["freq"] = float(edit.x)
+        leaf["peaks"][i]["freq"] = _written(edit.x)
     return leaf

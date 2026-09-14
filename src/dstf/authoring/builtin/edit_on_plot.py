@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import math
 from typing import TYPE_CHECKING, Any
 
 from ...comparison.geometry import HLine, Marker
@@ -64,6 +65,29 @@ def _list_fields(name: str) -> list[tuple[str, Columns]]:
     ]
 
 
+def _leaf_at(s: SessionView, model_id: str, path: str) -> dict:
+    """The raw leaf at ``path`` of ``model_id``'s tree, or a ValueError
+    naming what ``path`` or ``model_id`` is instead."""
+    try:
+        tree = s.tree(model_id)
+    except KeyError:
+        raise ValueError(f"{model_id} is not a test of this project") from None
+    if tree is None:
+        raise ValueError(f"{model_id} has no tree to edit")
+    tokens = [t for t in path.split("/") if t]
+    node: Any = None
+    if tokens[:1] == ["metrics"]:
+        try:
+            node = _node_at(tree, path)
+        except (KeyError, IndexError, TypeError, ValueError):
+            node = None
+    if not isinstance(node, dict):
+        raise ValueError(f"{path} names no leaf of {model_id}")
+    if "combinator" in node:
+        raise ValueError(f"{path} is a combinator, not a leaf")
+    return node
+
+
 def _has_handles(name: str) -> bool:
     desc = metric(name)
     return desc is not None and (
@@ -103,27 +127,50 @@ def _position(
     return None, None
 
 
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _new_time(rows: list[dict], span: tuple[float, float] | None) -> float:
+    """Where ``Add row`` puts a new row's ``time``: never on an existing one
+    (two tube points sharing a time are refused on the plot, and the later
+    one wins the interpolation). The midpoint of the LARGEST gap — the first
+    such — among the span's start, the rows' numeric times and the span's
+    end, sorted; with no reference, among the rows' times alone; with no
+    reference and fewer than two timed rows, the last row's time ``+ 1.0``
+    (``0.0`` on a table with none)."""
+    times = [float(r["time"]) for r in rows if _is_number(r.get("time"))]
+    if span is not None:
+        marks = sorted([span[0], *times, span[1]])
+    elif len(times) >= 2:
+        marks = sorted(times)
+    else:
+        return times[-1] + 1.0 if times else 0.0
+    gaps = [(b - a, (a + b) / 2) for a, b in zip(marks, marks[1:])]
+    width = max(gap for gap, _ in gaps)
+    return next(mid for gap, mid in gaps if gap == width)
+
+
 def _new_row(
     columns: Columns, rows: list[dict], span: tuple[float, float] | None
 ) -> dict:
-    """The row ``Add row`` appends. After existing rows: a copy of the last
-    one, its ``time`` (when the table has one) at the reference span's end.
-    On an empty table: a ``time`` column — required or optional — at the
-    span's midpoint (``0.0`` with no reference); any other required float
-    ``0.0``; any other optional float blank, so omitted (a new checkpoint
-    follows the baseline); a choice its first. The one exception: a
-    ``tube_points`` row gets ``upper`` and ``lower`` ``0.0`` — optional in
-    the reader, which refuses a tube with no width at all."""
+    """The row ``Add row`` appends; its ``time`` (when the table has one) is
+    :func:`_new_time`'s. After existing rows: a copy of the last one. On an
+    empty table: any other required float ``0.0``; any other optional float
+    blank, so omitted (a new checkpoint follows the baseline); a choice its
+    first. The one exception: a ``tube_points`` row gets ``upper`` and
+    ``lower`` ``0.0`` — optional in the reader, which refuses a tube with no
+    width at all."""
     keys = [key for key, _ in columns]
     if rows:
         last = copy.deepcopy(rows[-1])
-        if "time" in keys and span is not None:
-            last["time"] = span[1]
+        if "time" in keys:
+            last["time"] = _new_time(rows, span)
         return last
     row: dict[str, Any] = {}
     for key, kind in columns:
         if key == "time":
-            row[key] = (span[0] + span[1]) / 2 if span is not None else 0.0
+            row[key] = _new_time(rows, span)
         elif isinstance(kind, tuple):
             row[key] = kind[0]
         elif kind == "float":
@@ -263,10 +310,7 @@ class EditOnPlot:
         rows: list[dict],
         **_: Any,
     ) -> Patch | None:
-        tree = s.tree(model_id)
-        if tree is None:
-            raise ValueError(f"{model_id} has no tree to edit")
-        raw = _node_at(tree, path)
+        raw = _leaf_at(s, model_id, path)
         name = raw.get("metric", DEFAULT_METRIC)
         columns = dict(_list_fields(name)).get(field)
         if columns is None:
@@ -277,7 +321,21 @@ class EditOnPlot:
             for key in required:
                 if row.get(key) is None:
                     raise ValueError(f"row {i}: {key} is required")
+            for key, value in row.items():
+                if _is_number(value) and not math.isfinite(value):
+                    raise ValueError(
+                        f"row {i}: {key} = {value!r} is not a finite number"
+                    )
             cleaned.append({k: v for k, v in row.items() if v is not None})
+        # The reader's own refusal (`algorithms._interpolate_tube_widths`),
+        # raised here by name rather than as the rescore's config error.
+        is_tube = [key for key, _ in columns] == ["time", "upper", "lower"]
+        if (
+            is_tube
+            and cleaned
+            and not any("upper" in r or "lower" in r for r in cleaned)
+        ):
+            raise ValueError(f"{field}: no row has an upper or a lower width")
         new = copy.deepcopy(raw)
         new[field] = cleaned
         if new == raw:
@@ -300,11 +358,33 @@ def _table(
     acting capability's slot during its own panel-originated act, so the
     table re-renders its own container after adding or removing; a refused
     submit makes the shell rebuild the slot with the error, which re-reads
-    the rows from the Session."""
+    the rows from the Session.
+
+    A number cell reports every keystroke, so clearing a REQUIRED cell to
+    retype it passes through blank. Submitted, that blank is refused and the
+    rebuilt slot loses the field being typed in; so while any required cell
+    is blank the table keeps its rows here, marks the blank cells and
+    submits nothing — the keystroke that fills the last one submits the
+    whole list. (``act`` still refuses a blank, for a direct call.)"""
     container = ui.column().classes("w-full")
     mark = f"{path}:{field}"
+    required = [key for key, kind in columns if kind == "float"]
+    cells: dict[tuple[int, str], Any] = {}  # the required cells, as rendered
+
+    def blanks() -> bool:
+        """Mark each required cell blank or not; True when any is."""
+        found = False
+        for (i, key), cell in cells.items():
+            if rows[i].get(key) is None:
+                cell.props(f'error error-message="{key} is required"')
+                found = True
+            else:
+                cell.props(remove="error error-message")
+        return found
 
     def submit() -> None:
+        if blanks():
+            return
         ui_panel.submit(
             kind="rows",
             model_id=model_id,
@@ -329,6 +409,7 @@ def _table(
 
     def render() -> None:
         container.clear()
+        cells.clear()
         with container:
             for i, row in enumerate(rows):
                 with ui.row().classes("items-center no-wrap"):
@@ -347,13 +428,19 @@ def _table(
                                 ),
                             ).props("dense").mark(f"{mark}:{i}:{key}")
                         else:
-                            ui.number(
-                                label=key,
-                                value=row.get(key),
-                                on_change=lambda e, i=i, key=key: set_cell(
-                                    i, key, e.value
-                                ),
-                            ).props("dense").mark(f"{mark}:{i}:{key}")
+                            cell = (
+                                ui.number(
+                                    label=key,
+                                    value=row.get(key),
+                                    on_change=lambda e, i=i, key=key: set_cell(
+                                        i, key, e.value
+                                    ),
+                                )
+                                .props("dense")
+                                .mark(f"{mark}:{i}:{key}")
+                            )
+                            if key in required:
+                                cells[(i, key)] = cell
                     ui.button("Remove row", on_click=lambda i=i: remove(i)).props(
                         "flat dense no-caps"
                     ).mark(f"{mark}:{i}:remove")
