@@ -342,6 +342,9 @@ def _handle_view():
         Marker(id="custom/marker/0", x=0.7, y=0.7),
         HLine(id="range/max", kind="handle", value=0.9),
         Box(id="points/box/0", kind="handle", t0=0.2, t1=0.3, y0=0.2, y1=0.3),
+        # A full-height window rectangle covers every handle inside it: the
+        # rings must still come after it.
+        Window(id="window", start=0.1, end=0.95),
     )
     return build_view(
         "x", act_time=t, act_values=t, ref_time=t, ref_values=t, leaves=[_stamped(vc)]

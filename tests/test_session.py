@@ -577,6 +577,10 @@ class TestView:
             f"{c}/5/tube/lower/0",
         }
         assert not any("/points/box/" in name for name in rings)
+        # Real modes over several leaves: every ring is drawn after every other
+        # shape (the later shape takes a drag).
+        shapes = fig["layout"]["shapes"]
+        assert all(s["type"] == "circle" for s in shapes[-len(rings) :])
 
     def test_no_baseline_is_the_empty_state_with_the_trajectory(self, session):
         view = session.view(B, "x")
