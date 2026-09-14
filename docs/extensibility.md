@@ -257,7 +257,11 @@ traceback.
 
 `cli.run_cmds._get_backend` is the CLI's wrapper over it and nothing more: it
 prints the message and exits 1, where a caller with a UI puts the same message
-on the job that asked for the run.
+on the job that asked for the run. `Session.open` builds through
+`select_backend(config, persistent=False)` — the batch class, since the
+Session's backend reads results rather than running them — and turns
+`BackendUnavailableError` into `ConfigError`, so `dstf author` on a machine
+that cannot build the backend prints one `Config error: ...` line and exits 2.
 
 ### The run as a library
 
@@ -523,8 +527,8 @@ one resets all three at the commit point, so one library's panel is never shown
 under another's, and an open that fails leaves the live project's as it was.
 
 `backends.progress.read_status(work_dir)` is the one reader of `status.json` —
-the dashboard renderer, the backends' verdict fallback and the shell's job panel
-all come through it, and it never raises, because a UI timer calls it.
+every reader comes through it, and it never raises, because a UI timer calls
+it.
 
 Register with `register_capability(cap)` from a module the `dstf.plugins`
 entry-point group loads, exactly as a metric calls `register_metric`; a duplicate

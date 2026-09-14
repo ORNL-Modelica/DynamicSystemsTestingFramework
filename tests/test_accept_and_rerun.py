@@ -117,8 +117,8 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
 
     reference = project.config.reference_dir / "ref_0001.json"  # empty partition
     assert json.loads(reference.read_text())["model_id"] == CONSTANT_CSV
-    # One accepted test, one baseline file: the two the accept refused wrote
-    # nothing, and no id was burned on them.
+    # The selection is ConstantCsv alone, so the accept stored exactly that
+    # test: one baseline file, and no id burned on anything else.
     assert sorted(p.name for p in reference.parent.glob("ref_*.json")) == [
         "ref_0001.json"
     ]

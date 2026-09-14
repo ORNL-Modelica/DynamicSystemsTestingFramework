@@ -531,7 +531,7 @@ population `merge` widens the read scope over. And
 `backends.progress.read_status(work_dir)` is the one reader of `status.json`,
 public because the dashboard renderer and the shell both call it.
 
-Two more the build added. `Session.last_job` — the job that ran last in this
+Four more the build added. `Session.last_job` — the job that ran last in this
 project, whatever its outcome — carries the panel's `finished:` / `failed:`
 line, since `running` is already `None` by the time there is an outcome to
 show; it is per project, like the notices. And Accept's confirm list says per
@@ -540,7 +540,16 @@ simulation result`, `simulation failed`, `re-run before accepting`,
 `simulate-only: no baseline`, `no tracked variables in result`. The button
 counts only the `will store` rows and the tab reads its own availability off
 that same forecast, so an enabled Accept never fronts an `Accept 0` and the
-list never promises what the shared accept function declines.
+list never promises what the shared accept function declines — save for the one
+refusal no forecast can reach, a trajectory carrying NaN/Inf, which
+`store_reference` declines as it writes and the write's own line reports.
+`Session.open` assigns `artifacts` — with `notices` and `last_job` — at the
+commit point, after everything that can fail: an `OpenProject` swap carries
+none of the previous project's panel into the new one, and an open that fails
+leaves the live project's panel as it was. And the job panel draws per-test
+result rows only for a job whose completion reloaded the results
+(`RunningJob.reloaded`), never under a `failed:` line, where the rows on screen
+would describe a run whose results were never read back.
 
 ### 4.7 The tool's v1 surface
 
@@ -729,14 +738,20 @@ from the tool, and Windows. Owner-run, once, at the end of step 5.
    exits 2 as a config error, where it printed and exited 1; and `run
    --accept` applies the same aborted-run refusal `compare --accept` did, which
    a completed run never triggers.
-   Sub-project 5 adds four more: an unregistered backend name, or a missing
+   Sub-project 5 adds eight more: an unregistered backend name, or a missing
    `python` / `julia` / `fmpy` dependency, exits 1 with the message where it
    printed a traceback; the persistent-abort message now ends with "Aborting."
    instead of opening with it; `run -i`'s `[a]` refuses a test the last
    run left pending and stores nothing for a simulate-only one, both as
-   `--accept` already did; and where a cross-backend chain runs, its lines
+   `--accept` already did; where a cross-backend chain runs, its lines
    print after the read-phase lines instead of between the simulation and the
-   read.
+   read; `cmd_run`'s "Run aborted" handling now covers the whole pipeline, so a
+   `RuntimeError` out of a result reader prints that line and exits 1 where it
+   tracebacked; the review loop's refusal reads `Not accepted: <reason>` where
+   it read `Failed to store`; a `status.json` holding valid JSON that is not an
+   object reads as no snapshot where it raised `AttributeError`; and
+   (negligible, ordering) the run's first dashboard paint and browser open now
+   precede the in-scope wipe by milliseconds.
 5. **TRANSFORM** `compare --report` renders every test, and its 331 stored
    verdicts are unchanged by steps 1–4.
 

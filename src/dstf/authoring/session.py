@@ -18,7 +18,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
-from ..backends import dataset_kind_for, get_backend
+from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
 from ..backends.progress import recorded_backend
 from ..backends.types import DatasetType, TestResult
@@ -174,8 +174,14 @@ class Session:
                     config_file=config_path, backend_name=recorded, work_dir=work_dir
                 )
         try:
-            backend_obj = get_backend(config)
-        except ValueError as e:
+            # The Session's backend reads results; it is not the rerun
+            # backend, so the batch class is what it wants. `select_backend`
+            # is the seam that turns every "this machine can't build it"
+            # failure — an unregistered name, a missing executable, an
+            # absent optional dependency — into one class, so `dstf author`
+            # prints a line where a RuntimeError tracebacked.
+            backend_obj = select_backend(config, persistent=False)
+        except BackendUnavailableError as e:
             raise ConfigError(str(e)) from e
         # A UI process has no console to narrate a run or a read to.
         backend_obj.quiet = True

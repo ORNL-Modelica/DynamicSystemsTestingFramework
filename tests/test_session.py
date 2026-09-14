@@ -165,6 +165,28 @@ class TestOpen:
         with pytest.raises(ConfigError, match="Nonesuch"):
             Session().open(cfg, work_dir=work)
 
+    def test_a_backend_that_cannot_be_built_opens_as_a_config_error(
+        self, tmp_path, monkeypatch
+    ):
+        """A missing executable raises ``RuntimeError`` out of the backend's
+        constructor. ``open`` builds through ``select_backend``, so it reaches
+        `dstf author` as the ConfigError the CLI prints and exits 2 on, not a
+        traceback."""
+        import shutil
+
+        cfg, work = _project(tmp_path)
+        testing = json.loads(cfg.read_text(encoding="utf-8"))
+        testing["backends"] = {"Python": [str(tmp_path / "no-such-python")]}
+        cfg.write_text(json.dumps(testing), encoding="utf-8")
+        # The map's one path does not exist; without this neither does the
+        # PATH fallback, in the config and in the backend alike.
+        monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+
+        from dstf.config import ConfigError
+
+        with pytest.raises(ConfigError, match="Python binary not found"):
+            Session().open(cfg, work_dir=work)
+
     def test_a_snapshot_predating_the_backend_rename_notices_its_warning(
         self, tmp_path
     ):

@@ -159,11 +159,18 @@ left as you edited it.
       row for that test with its status, phase and elapsed time while the run
       goes; when it ends the footer reads `finished: rerun` and the test's
       verdict reflects the new results. The console that started `dstf author`
-      printed nothing the whole time.
-- [ ] Make a rerun fail (point `testing.json` at a backend executable that is
-      not there, or at an unregistered backend name): the footer reads
-      `failed: rerun — <error type>: <message>` and every verdict is exactly
-      what it was before the click.
+      printed nothing of the tool's own the whole time — a logged warning
+      (Python's last-resort handler) or a simulator's own log lines can still
+      reach it.
+- [ ] Make a rerun fail — it has to fail *inside the job*, so use a backend
+      whose batch class builds but whose persistent probe does not: point
+      `testing.json` at `OpenModelica` on a machine with no OMPython, so the
+      project opens and the job's `select_backend(persistent=True)` is what
+      raises. The footer reads `failed: rerun — BackendUnavailableError: …`
+      and every verdict is exactly what it was before the click. (A backend
+      that cannot be built at all — an unregistered name, a missing
+      executable — never reaches a job: `dstf author` refuses to open the
+      project, printing one `Config error: ...` line.)
 - [ ] The dashboard link opens the suite page in a new tab.
 - [ ] Quit shuts the server down; the tab shows NiceGUI's disconnected banner.
 

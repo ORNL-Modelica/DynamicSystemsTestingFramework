@@ -529,15 +529,19 @@ implicit tree materialized by the same op.
 baselines through the same accept function `run --accept` and `compare --accept`
 call, so the tool cannot accept a result the CLI would refuse. The panel lists
 one row per selected test — `model · status · what accepting will do` — and the
-button counts only the rows that will be stored. A row reads `will store`, or
+button counts the rows that will be stored. The one refusal a row cannot
+forecast is a trajectory carrying `NaN`/`Inf`: the store reads the values only
+as it writes them, so that test is declined during the write and the footer
+line reports it with its reason. A row reads `will store`, or
 the reason it will not: `no simulation result`, `simulation failed`,
 `re-run before accepting` (the last run still records that test as pending, so
 its result may be whatever the simulator had flushed when the run was aborted),
 `simulate-only: no baseline` (a simulate-only test is neither stored nor
 skipped — it has nothing to compare) or `no tracked variables in result`. The
 tab itself is greyed when no row will be stored, carrying that first row's own
-reason — and, when there are no rows at all because nothing is selected, "no
-successful result in the selection". The write reports one line in the footer — how
+reason. (With nothing selected there are no rows and no tab at all — Accept is
+TESTS-scope, so an empty selection leaves it off the tab bar entirely.) The
+write reports one line in the footer — how
 many baselines it stored, where, and every test it skipped with its reason —
 and the results reload, so a re-baselined test's verdict flips in place.
 
@@ -548,7 +552,9 @@ simulation directories). The panel names the backend the run will use — `runs
 through Dymola` — lists the selected tests in project order, and the button
 starts them. The job builds its own backend, the same choice a CLI run makes by
 default: the persistent workers when the backend declares them, the batch path
-otherwise. It narrates nothing to the console `dstf author` was started from.
+otherwise. It narrates nothing of its own to the console `dstf author` was
+started from — a logged warning or a simulator's own output is not narration
+and still appears there.
 One job at a time, and there is no cancel — a rerun ends when the backend ends
 or its per-test timeout does. A job that finishes reloads the results and
 rescores every verdict; a job that fails leaves the verdicts exactly as they

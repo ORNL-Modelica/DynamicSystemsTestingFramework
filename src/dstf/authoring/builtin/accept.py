@@ -5,7 +5,9 @@ cannot accept a result the CLI would refuse.
 
 The confirm list says, per selected model, what accepting will do with it,
 including the aborted-run refusal, so it never promises what the shared
-function declines. The tab's own availability is read off those same rows,
+function declines — with one exception it cannot see from here: a trajectory
+carrying NaN/Inf is refused by ``store_reference`` as it writes, and shows up
+in the write's own line instead. The tab's own availability is read off those same rows,
 so an enabled Accept always has at least one baseline to write. The write
 reports one line (§4.6 amendment 1): what it stored, and every refusal with
 its reason.
