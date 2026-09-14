@@ -505,7 +505,7 @@ spec and the store; and `dstf author` gains `--no-browser` for a headless launch
 change as one `replace` of the whole leaf, and `Session.stage` collapses
 consecutive replaces of one path into one pending op, so the drawer and the
 exported envelope read "leaf → new leaf" rather than a keystroke log; Edit tree
-stages one op per structural action. Export writes `<work_dir>/spec_patch.json`
+stages one Patch per structural action (a kind change is several ops in it). Export writes `<work_dir>/spec_patch.json`
 and shows the path, where §4.7 said only "writes an envelope". `tube_points`
 editing stays sub-project 6's: this tier shows it read-only, and the split
 upper / lower form waits for the plot handles it belongs with.

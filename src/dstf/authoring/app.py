@@ -17,6 +17,7 @@ from nicegui import app, ui
 
 from ..cli.common import _filter_tests
 from ..reporting.status import classify_with_class
+from ..storage.ref_index import _atomic_write_text
 from .capabilities import (
     Capability,
     Scope,
@@ -61,6 +62,11 @@ class FigureHook:
 
     def __init__(self) -> None:
         self._handlers: dict[str, list[Callable[[str, dict], None]]] = {}
+
+    def clear(self) -> None:
+        """The tabs region rebuilds every panel on a selection or job event;
+        a subscriber that re-registers in `panel()` must not accumulate."""
+        self._handlers.clear()
 
     def on(self, kind: str, handler: Callable[[str, dict], None]) -> None:
         self._handlers.setdefault(kind, []).append(handler)
@@ -130,7 +136,7 @@ class Shell:
             "results", lambda e: self._refresh("tests", "centre", "leaf_error")
         )
         self.session.on("job", self._on_job)
-        self.session.on("selection", lambda e: self._refresh("tests", "centre", "tabs"))
+        self.session.on("selection", self._on_selection)
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -149,6 +155,11 @@ class Shell:
             return []
         tests = _filter_tests(project.tests, self.filter, self.package)
         return [t.model_id for t in tests]
+
+    def _on_selection(self, event: dict) -> None:
+        # A capability's refusal is about the selection it was shown for.
+        self.errors.clear()
+        self._refresh("tests", "centre", "tabs")
 
     def _on_job(self, event: dict) -> None:
         if event.get("state") in ("finished", "failed"):
@@ -258,6 +269,7 @@ class Shell:
         project = self.session.project
         if project is None:
             ui.label("dstf — no project open")
+            ui.button("Quit", on_click=app.shutdown)
             return
         cfg = project.config
         ui.label(cfg.library_name or "").classes("text-lg").mark("project")
@@ -311,9 +323,7 @@ class Shell:
         work_dir = project.config.work_dir
         assert work_dir is not None  # resolved in Config.__post_init__
         path = work_dir / "spec_patch.json"
-        path.write_text(
-            json.dumps(self.session.export(), indent=2) + "\n", encoding="utf-8"
-        )
+        _atomic_write_text(path, json.dumps(self.session.export(), indent=2) + "\n")
         ui.notify(f"wrote {path}")
 
     def _close(self) -> None:
@@ -354,7 +364,6 @@ class Shell:
                         ).props("flat dense no-caps").mark(model_id)
                         ui.badge(status, color=_BADGE_COLOR.get(css, "grey"))
 
-        self._draw_rows = draw
         draw()
 
     def _on_filter(self, e) -> None:
@@ -362,7 +371,28 @@ class Shell:
         self._refresh("tests")
 
     def _select_one(self, model_id: str) -> None:
-        self.session.select(tests={model_id}, variable=None, leaf_path=None)
+        names = self._variable_names(model_id)
+        self.session.select(
+            tests={model_id}, variable=names[0] if names else None, leaf_path=None
+        )
+
+    def _variable_names(self, model_id: str) -> list[str]:
+        """The variables the centre can plot: the scored names, else the
+        result's. What a plain click selects is the first of them, so a
+        VARIABLE-scope capability applies as soon as a plot is up."""
+        project = self.session.project
+        if project is None:
+            return []
+        comp = self.session.comparisons.get(model_id)
+        names = (
+            list(dict.fromkeys(vc.name for vc in comp.variables if vc.name))
+            if comp is not None
+            else []
+        )
+        if not names:
+            result = project.results.get(model_id)
+            names = [v.name for v in result.variables if v.name] if result else []
+        return names
 
     def _toggle(self, model_id: str, on: bool) -> None:
         tests = set(self.session.selection.tests)
@@ -383,19 +413,7 @@ class Shell:
             )
             return
         (model_id,) = tuple(sel.tests)
-        comp = self.session.comparisons.get(model_id)
-        names = (
-            list(dict.fromkeys(vc.name for vc in comp.variables if vc.name))
-            if comp is not None
-            else []
-        )
-        if not names:
-            result = project.results.get(model_id)
-            names = (
-                [v.name for v in result.variables if v.name]
-                if result is not None
-                else []
-            )
+        names = self._variable_names(model_id)
         variable = (
             sel.variable if sel.variable in names else (names[0] if names else None)
         )
@@ -453,6 +471,7 @@ class Shell:
 
     @ui.refreshable_method
     def _tabs(self) -> None:
+        self.figure_hook.clear()  # every panel below registers afresh
         applicable = self.applicable()
         if not applicable:
             ui.label("nothing applies to this selection").classes("text-xs")

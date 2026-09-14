@@ -240,21 +240,30 @@ async def _settled(predicate, tries: int = 40) -> None:
 
 async def test_the_filter_survives_a_click(shell):
     """Typed over 300 tests, the filter must not vanish on the next event."""
+
+    def b_hidden() -> bool:
+        try:
+            user.find(marker=B)
+        except AssertionError:
+            return True
+        return False
+
     async with user_simulation(root=shell.root) as user:
         await user.open("/")
         box = next(iter(user.find(ui.input).elements))
         box.set_value("FakeLib.A")
-        await user.should_not_see(B)  # the filter's refresh landed
-        rebuilt_from = id(next(iter(user.find(ui.input).elements)))
+        await _settled(b_hidden)  # the filter's refresh landed
         user.find(marker=A).click()
-        await user.should_see("/metrics/children/0")
-        # The selection event rebuilds the list region; wait for that rebuild.
+        await user.should_see("/metrics/children/0")  # the selection's refresh landed
+        # The list region was rebuilt by the selection event too: the
+        # filter text and its effect must both have survived that rebuild.
         await _settled(
-            lambda: id(next(iter(user.find(ui.input).elements))) != rebuilt_from
+            lambda: (
+                b_hidden()
+                and next(iter(user.find(ui.input).elements)).value == "FakeLib.A"
+            )
         )
-        with pytest.raises(AssertionError):
-            user.find(marker=B)  # still filtered
-        assert next(iter(user.find(ui.input).elements)).value == "FakeLib.A"
+        assert shell.needle == "FakeLib.A"
 
 
 async def test_a_failing_advisory_leaf_reads_warn_not_fail(shell):
@@ -347,6 +356,67 @@ def test_the_figure_hook_names_the_primitive_from_meta_id():
         "0",
         "",
     ]
+
+
+async def test_the_figure_hook_does_not_accumulate_handlers_across_tab_rebuilds(shell):
+    """§7.2: on-plot editing subscribes in panel(); the tabs region rebuilds
+    on every selection, so the shell clears the hook before each build."""
+
+    class _Sub:
+        name, label, scope = "sub", "Sub", caps.Scope.LEAF
+
+        def available(self, s):
+            return True
+
+        def panel(self, s, ui_panel):
+            ui_panel.figure.on("plotly_click", lambda primitive, payload: None)
+
+        def act(self, s, **inputs):
+            return None
+
+    caps.register_capability(_Sub())
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        for _ in range(3):
+            shell.session.select(
+                tests={A}, variable="x", leaf_path="/metrics/children/0"
+            )
+            await user.should_see("Sub")
+            shell.session.select(tests={A}, variable="x", leaf_path=None)
+            await _settled(
+                lambda: "Sub" not in [t.label for t, _ in shell.applicable()]
+            )
+        shell.session.select(tests={A}, variable="x", leaf_path="/metrics/children/0")
+        await user.should_see("Sub")
+        await _settled(
+            lambda: len(shell.figure_hook._handlers.get("plotly_click", [])) == 1
+        )
+        assert len(shell.figure_hook._handlers["plotly_click"]) == 1
+
+
+async def test_a_plain_click_selects_the_first_variable(shell):
+    """A VARIABLE-scope capability applies as soon as a plot is up."""
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        user.find(marker=A).click()
+        await user.should_see("/metrics/children/0")
+        assert shell.session.selection.variable == "x"
+
+
+async def test_a_capabilitys_error_does_not_follow_to_another_selection(shell):
+    shell.errors["edit-criteria"] = "ValueError: from leaf 0"
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        user.find(marker=D).click()
+        await user.should_see(D)
+        assert shell.errors == {}
+
+
+async def test_project_less_header_keeps_quit(tmp_path):
+    s = Shell()
+    async with user_simulation(root=s.root) as user:
+        await user.open("/")
+        await user.should_see("Quit")
 
 
 async def test_a_results_only_event_refreshes_the_verdict(shell):

@@ -131,7 +131,7 @@ left as you edited it.
       the metric tree, and the tree's verdicts agree with what the CLI printed.
 - [ ] Click a leaf, open Edit criteria, and change the tolerance so the leaf
       fails: the verdict flips, the figure follows, and the header's pending
-      count reads 1 — not one per keystroke.
+      count reads 2 (the tree materialized once, plus your edit) — not one per keystroke.
 - [ ] Discard: the verdict comes back, the drawer is empty, the count is 0.
 - [ ] Stage the edit again and Save: `test_spec.json` carries exactly that
       change and the count is 0. Edit the file in another editor, stage

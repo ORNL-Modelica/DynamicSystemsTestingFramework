@@ -174,6 +174,11 @@ class EditTree:
                         f"add leaf under {path}",
                         on_click=lambda p=path: open_add_form(p),
                     ).props("flat dense no-caps").mark(f"add:{path}")
+                if is_combinator and len(node.get("children") or []) == 1:
+                    ui.button(
+                        f"unwrap {path}",
+                        on_click=lambda p=path: submit(action="unwrap", path=p),
+                    ).props("flat dense no-caps").mark(f"unwrap:{path}")
                 if path != ROOT:  # the root has nothing to be removed from
                     ui.button(
                         f"remove {path}",
@@ -204,6 +209,16 @@ class EditTree:
         if tree is None:
             raise ValueError(f"{model_id} has no tree to edit")
         node = _node_at(tree, path)
+        if action == "unwrap":
+            # A single-child combinator gives way to its child (the browser
+            # editor's unwrap): `warn(leaf)` becomes `leaf`, params kept.
+            children = node.get("children") or []
+            if len(children) != 1:
+                raise ValueError(
+                    f"{path} has {len(children)} children; unwrap needs one"
+                )
+            op = "add" if path == ROOT else "replace"
+            return Patch(ops=[PatchOp(model_id, op, path, children[0])])
         kind = inputs["kind"]
         fields = _kind_fields(kind, inputs)
         if action == "wrap":

@@ -308,6 +308,49 @@ def test_edit_tree_reaches_nested_nodes(shell):
     assert outcome.ops[0].path == "/metrics/children/1/children/0"
 
 
+def test_edit_tree_unwraps_a_single_child_combinator(shell):
+    """The browser editor's unwrap: warn(leaf) becomes leaf, params kept;
+    remove would have lost the leaf."""
+    from dstf.authoring.builtin.edit_tree import EditTree
+    from dstf.authoring.session import SessionView
+    from dstf.authoring.spec_document import PatchOp
+
+    shell.session.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/metrics/children/-",
+                {
+                    "combinator": "warn",
+                    "children": [
+                        {"metric": "nrmse", "variable": "x", "tolerance": 0.3}
+                    ],
+                },
+            )
+        ]
+    )
+    view = SessionView(shell.session)
+    shell.session.select(tests={A})
+    outcome = EditTree().act(
+        view, action="unwrap", model_id=A, path="/metrics/children/1"
+    )
+    (op,) = outcome.ops
+    assert op.op == "replace" and op.value == {
+        "metric": "nrmse",
+        "variable": "x",
+        "tolerance": 0.3,
+    }
+    shell.session.apply(outcome)
+    assert shell.session.tree(A)["children"][1] == {
+        "metric": "nrmse",
+        "variable": "x",
+        "tolerance": 0.3,
+    }
+    with pytest.raises(ValueError, match="unwrap needs one"):
+        EditTree().act(view, action="unwrap", model_id=A, path="/metrics")
+
+
 async def test_edit_tree_wrap_add_remove_and_combinator_edits(shell):
     async with user_simulation(root=shell.root) as user:
         await user.open("/")
