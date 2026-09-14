@@ -5,8 +5,10 @@ cannot accept a result the CLI would refuse.
 
 The confirm list says, per selected model, what accepting will do with it,
 including the aborted-run refusal, so it never promises what the shared
-function declines. The write reports one line (§4.6 amendment 1): what it
-stored, and every refusal with its reason.
+function declines. The tab's own availability is read off those same rows,
+so an enabled Accept always has at least one baseline to write. The write
+reports one line (§4.6 amendment 1): what it stored, and every refusal with
+its reason.
 """
 
 from __future__ import annotations
@@ -27,11 +29,15 @@ if TYPE_CHECKING:
 # NO module-level `nicegui` import: `import dstf.authoring` runs
 # register_builtins(), and the Session must import without the extra.
 
-#: The confirm row's verdict on a model — the first three are what the
-#: shared accept function skips it with; the last is what it stores.
+#: The confirm row's verdict on a model — every word but the last is a
+#: reason the shared accept function stores no baseline for it; the last is
+#: what it stores. ``WILL_STORE`` is the one truth the button's count, the
+#: tab's availability and this forecast share.
 REFUSED = "re-run before accepting"
 NO_RESULT = "no simulation result"
 SIM_FAILED = "simulation failed"
+SIMULATE_ONLY = "simulate-only: no baseline"
+NO_VARIABLES = "no tracked variables in result"
 WILL_STORE = "will store"
 
 
@@ -59,6 +65,13 @@ def _rows(s: SessionView) -> list[tuple[str, str, str]]:
             action = NO_RESULT
         elif not result.success:
             action = SIM_FAILED
+        elif test.simulate_only:
+            # `accept_results` neither stores nor skips these, by design.
+            action = SIMULATE_ONLY
+        elif not result.variables:
+            # `store_reference` returns False for a variable-less result and
+            # `accept_results` skips it with exactly this reason.
+            action = NO_VARIABLES
         else:
             action = WILL_STORE
         rows.append((model_id, status, action))
@@ -92,11 +105,17 @@ class Accept:
             locked = [m for m in locked if m in selection]
             if locked:
                 return f"{running.label} is running on {locked[0]}"
-        for model_id in selection:
-            result = project.results.get(model_id)
-            if result is not None and result.success:
-                return True
-        return "no successful result in the selection"
+        # The tab's answer comes from the rows the panel draws, so an
+        # enabled tab never fronts an `Accept 0` button: a pending,
+        # simulate-only or variable-less result is a row the write will not
+        # store, and the tab carries that row's reason.
+        rows = _rows(s)
+        if any(action == WILL_STORE for _, _, action in rows):
+            return True
+        ran = [project.results.get(model_id) for model_id in selection]
+        if not rows or not any(r is not None and r.success for r in ran):
+            return "no successful result in the selection"
+        return rows[0][2]
 
     def panel(self, s: SessionView, ui_panel: Panel) -> None:
         from nicegui import ui

@@ -460,9 +460,12 @@ def test_accept_act_returns_a_store_write_over_the_selection(shell):
     assert isinstance(out, StoreWrite) and out.models == {A, B, C}
     line = out.run(shell.session.project.store)
     assert line.startswith("Accept: stored 2") and C in line
+    # The line is a report of an effect that happened: B has a baseline now.
+    assert shell.session.project.store.index.get_id(B) == "0004"
 
 
 async def test_accept_is_greyed_while_a_selected_test_is_locked(shell):
+    from dstf.authoring.builtin.accept import Accept
     from dstf.authoring.capabilities import Job
 
     async with user_simulation(root=shell.root) as user:
@@ -474,6 +477,79 @@ async def test_accept_is_greyed_while_a_selected_test_is_locked(shell):
         await user.should_see(f"rerun is running on {A}")
         gate.release.set()
         await user.should_see("no job running", retries=20)
+        # The lock is the Session's, not the page's: it is gone with the job.
+        assert shell.session.running is None
+        assert Accept().available(shell.view) is True
+
+
+async def test_accept_is_greyed_when_the_selection_is_a_pending_test(tmp_path):
+    """The tab's answer and the button's count come from the same rows: A's
+    result file parses, but the run never finished, so the shared accept
+    function would refuse it and the tab says so instead of offering
+    `Accept 0`."""
+    import json
+
+    from dstf.authoring.builtin.accept import REFUSED, Accept
+
+    cfg, work = _project(tmp_path)
+    manifest_path = work / "batch_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["test_0001"]["last_run_status"] = "pending"  # A, in flight
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    shell = Shell()
+    shell.open(cfg, work_dir=work)
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={A})
+        assert Accept().available(shell.view) == REFUSED
+        await user.should_see(REFUSED)  # the greyed tab's reason
+        await user.should_not_see("Accept 0")
+
+
+async def test_accept_excludes_a_simulate_only_test_from_the_count(shell):
+    """A simulate-only test is neither stored nor skipped by the shared
+    accept function — the forecast says so and the count leaves it out."""
+    from dstf.authoring.builtin.accept import SIMULATE_ONLY, Accept
+    from dstf.reporting.status import NO_REF
+
+    shell.session.project.test(B).simulate_only = True
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={A, B})
+        await user.should_see("Accept")
+        user.find("Accept").click()
+        await user.should_see(f"{B} · {NO_REF} · {SIMULATE_ONLY}")
+        await user.should_see("Accept 1")  # A only
+        shell.session.select(tests={B})
+        await user.should_see(SIMULATE_ONLY)  # now the greyed tab's reason
+        await user.should_not_see("Accept 0")
+        assert Accept().available(shell.view) == SIMULATE_ONLY
+
+
+async def test_accept_excludes_a_result_with_no_tracked_variables(shell):
+    """`store_reference` returns False for a variable-less result and
+    `accept_results` skips it with this reason; the panel has the result in
+    hand, so it never promises the baseline."""
+    from dstf.authoring.builtin.accept import NO_VARIABLES, Accept
+    from dstf.backends.types import TestResult
+    from dstf.reporting.status import NO_REF
+
+    shell.session.project.results[B] = TestResult(
+        model_id=B, success=True, variables=[]
+    )
+
+    async with user_simulation(root=shell.root) as user:
+        await user.open("/")
+        shell.session.select(tests={A, B})
+        await user.should_see("Accept")
+        user.find("Accept").click()
+        await user.should_see(f"{B} · {NO_REF} · {NO_VARIABLES}")
+        await user.should_see("Accept 1")  # A only
+        shell.session.select(tests={B})
+        await user.should_see(NO_VARIABLES)
+        assert Accept().available(shell.view) == NO_VARIABLES
 
 
 # -- Rerun (§4.6 table, §4.7) ---------------------------------------------
