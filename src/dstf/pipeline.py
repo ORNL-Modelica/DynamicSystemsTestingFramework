@@ -41,9 +41,11 @@ if TYPE_CHECKING:
 class RunOutcome:
     """What one pipeline run produced.
 
-    ``results`` covers every model in scope — with ``merge`` that is wider
-    than the tests just simulated, because the out-of-scope entries are read
-    back from the previous runs' files.
+    ``results`` is keyed by exactly the models in ``scope_tests`` — with
+    ``merge`` that is wider than the tests just simulated, because the
+    out-of-scope entries are read back from the previous runs' files, and
+    never wider than the scope, whatever else the work dir's manifest holds
+    from earlier runs.
     """
 
     manifests: list[BatchManifest]
@@ -58,8 +60,10 @@ def write_id_mapping(store: ReferenceStore, config: Config) -> None:
     if not active:
         return
 
-    mapping_path = config.work_dir / "reference_manifest.json"
-    config.work_dir.mkdir(parents=True, exist_ok=True)
+    work_dir = config.work_dir
+    assert work_dir is not None  # resolved in Config.__post_init__
+    mapping_path = work_dir / "reference_manifest.json"
+    work_dir.mkdir(parents=True, exist_ok=True)
     mapping = {f"ref_{tid}": active[tid] for tid in sorted(active)}
     # LF on every platform, like every other JSON we write.
     mapping_path.write_text(
@@ -100,7 +104,9 @@ def wipe_stale_state_for_scope(
     ``batch_manifest.json``. Tests not yet in the manifest (first-time
     runs) have nothing to wipe — the backend will create a fresh dir.
     """
-    manifest_path = config.work_dir / "batch_manifest.json"
+    work_dir = config.work_dir
+    assert work_dir is not None  # resolved in Config.__post_init__
+    manifest_path = work_dir / "batch_manifest.json"
     if manifest_path.exists():
         from .storage.batch_manifest import BatchManifest
 
@@ -109,12 +115,12 @@ def wipe_stale_state_for_scope(
     else:
         model_to_key = {}
 
-    reports_root = config.work_dir / "reports"
+    reports_root = work_dir / "reports"
     for test in tests:
         test_key = model_to_key.get(test.model_id)
         report_dir = ref_id_map.get(test.model_id) or test_key
         if wipe_sim_dirs and test_key:
-            sim_dir = config.work_dir / test_key
+            sim_dir = work_dir / test_key
             if sim_dir.exists():
                 shutil.rmtree(sim_dir)
         if report_dir:
@@ -194,6 +200,9 @@ def run_pipeline(
     if not tests:
         return RunOutcome(manifests=[], results={}, scope_tests=[], notices=[])
 
+    work_dir = config.work_dir
+    assert work_dir is not None  # resolved in Config.__post_init__
+
     write_id_mapping(store, config)
 
     # Pre-populate model_id → "ref_NNNN" map so the live dashboard can link
@@ -209,7 +218,7 @@ def run_pipeline(
     # through `_enrich_row_from_comparison` and override a fresh sim's
     # verdict in the dashboard. Out-of-scope tests are untouched so
     # `merge` keeps working.
-    config.work_dir.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
     wipe_stale_state_for_scope(config, tests, backend.ref_id_map, wipe_sim_dirs=True)
 
     # Paint the unified dashboard before the run starts, so a reader sees
@@ -218,7 +227,7 @@ def run_pipeline(
     # it a moment earlier too, before opening a browser tab on it.
     from .reporting.dashboard_render import build_rerun_prefix, render_live
 
-    render_live(config.work_dir, rerun_prefix=build_rerun_prefix(config))
+    render_live(work_dir, rerun_prefix=build_rerun_prefix(config))
 
     manifests = backend.run_tests(tests)
 
@@ -241,7 +250,16 @@ def run_pipeline(
     else:
         scope_tests = list(tests)
 
-    results = backend.read_results(manifests, scope_tests)
+    # `read_results` walks the whole accumulating batch manifest and emits a
+    # "not found in discovery" failure for every model outside `scope_tests`,
+    # so on a work dir with history the raw dict carries phantom failures for
+    # earlier runs' models. The outcome is the scope, nothing wider.
+    scope_ids = {t.model_id for t in scope_tests}
+    results = {
+        k: v
+        for k, v in backend.read_results(manifests, scope_tests).items()
+        if k in scope_ids
+    }
 
     return RunOutcome(
         manifests=list(manifests),

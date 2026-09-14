@@ -83,6 +83,9 @@ def test_merge_widens_the_read_scope_over_candidates(example):
     # Without `candidates` the widening has only `tests` to widen over, so the
     # scope is the run even though the manifest now holds both models.
     assert [t.model_id for t in second.scope_tests] == [SIMPLE_RAMP]
+    # And the results are the scope, not every model the work dir's manifest
+    # has accumulated: ConstantCsv ran a moment ago and is not in this outcome.
+    assert set(second.results) == {SIMPLE_RAMP}
 
     ramp_dir = next(
         d
@@ -126,23 +129,28 @@ class _RaisingBackend:
 
     def __init__(self):
         self.ref_id_map: dict = {}
+        self.boom = RuntimeError("all workers dead")
 
     def run_tests(self, tests):
-        raise RuntimeError("all workers dead")
+        raise self.boom
 
 
 def test_a_failing_run_propagates_unchanged(example):
     """Exceptions are the callable's error channel — the CLI's "Run aborted"
     exit stays in the CLI."""
     config, all_tests, _backend, store = example
+    backend = _RaisingBackend()
 
-    with pytest.raises(RuntimeError, match="all workers dead"):
+    with pytest.raises(RuntimeError) as exc_info:
         run_pipeline(
             config,
             _pick(all_tests, CONSTANT_CSV),
-            backend=_RaisingBackend(),
+            backend=backend,
             store=store,
         )
+
+    # The instance, not a lookalike: a re-raise as a fresh RuntimeError fails.
+    assert exc_info.value is backend.boom
 
 
 def test_no_tests_is_an_empty_outcome_that_touches_nothing(example):
