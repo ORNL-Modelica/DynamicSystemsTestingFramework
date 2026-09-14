@@ -5,6 +5,7 @@ path it edits" over the Session."""
 from __future__ import annotations
 
 import copy
+import re
 
 import numpy as np
 import pytest
@@ -139,24 +140,54 @@ class TestTube:
         with pytest.raises(HandleEditError, match="negative"):
             _edit(REL, "tube/upper/0", 0.5, 0.4)
 
-    def test_time_outside_the_reference_span_refused(self):
-        with pytest.raises(HandleEditError, match="outside"):
-            _edit(BAND, "tube/upper/0", 1.5, 0.8)
-        with pytest.raises(HandleEditError, match="outside"):
-            _edit(ABS, "tube/upper/0", -0.1, 1.5)
+    def test_time_outside_the_reference_span_is_clamped_to_its_edge(self):
+        # The y part of the drag still applies, at the clamped time.
+        new = _edit(BAND, "tube/upper/0", 1.5, 1.3)
+        assert new["tube_points"][0]["time"] == 1.0
+        assert new["tube_points"][0]["upper"] == pytest.approx(0.3)
+        new = _edit(ABS, "tube/upper/0", -0.1, 1.2)
+        assert new["tube_points"][0] == {"time": 0.0, "upper": 1.2, "lower": -0.5}
+
+    def test_a_handle_grabbed_on_the_span_edge_keeps_its_vertical_drag(self):
+        # The pixel round trip sends a ring at t=1.0 back a hair outside.
+        leaf = _with(
+            BAND,
+            tube_points=[
+                {"time": 0.0, "upper": 0.1, "lower": 0.1},
+                {"time": 1.0, "upper": 0.1, "lower": 0.1},
+            ],
+        )
+        new = _edit(leaf, "tube/upper/1", 1.0 + 1e-12, 1.3)
+        assert new["tube_points"][1]["time"] == 1.0
+        assert new["tube_points"][1]["upper"] == pytest.approx(0.3)
+        new = _edit(leaf, "tube/upper/0", -1e-12, 0.2)
+        assert new["tube_points"][0]["time"] == 0.0
+        assert new["tube_points"][0]["upper"] == pytest.approx(0.2)
 
     def test_window_bounds_the_span_by_its_reference_samples(self):
         leaf = _with(BAND, window={"start": 0.6})
-        with pytest.raises(HandleEditError, match="outside"):
-            _edit(leaf, "tube/upper/1", 0.55, None)
-        # Inside the window but before its first reference sample, 0.75.
-        with pytest.raises(HandleEditError, match="outside"):
-            _edit(leaf, "tube/upper/1", 0.65, None)
+        # Before the window, and inside it but before its first reference
+        # sample 0.75: both clamp to 0.75, where ref = 0.75.
+        for x in (0.55, 0.65):
+            new = _edit(leaf, "tube/upper/1", x, 0.95)
+            assert new["tube_points"][1]["time"] == 0.75
+            assert new["tube_points"][1]["upper"] == pytest.approx(0.2)
         assert _edit(leaf, "tube/upper/1", 0.8, None)["tube_points"][1]["time"] == 0.8
         leaf = _with(BAND, window={"end": 0.6})
-        with pytest.raises(HandleEditError, match="outside"):
-            _edit(leaf, "tube/upper/0", 0.55, None)
+        new = _edit(leaf, "tube/upper/0", 0.55, 0.8)
+        assert new["tube_points"][0]["time"] == 0.5
+        assert new["tube_points"][0]["upper"] == pytest.approx(0.3)
         assert _edit(leaf, "tube/upper/0", 0.5, None)["tube_points"][0]["time"] == 0.5
+
+    def test_a_window_starting_on_a_reference_sample_includes_it(self):
+        leaf = _with(
+            BAND,
+            window={"start": 0.5},
+            tube_points=[{"time": 0.9, "upper": 0.1, "lower": 0.1}],
+        )
+        new = _edit(leaf, "tube/upper/0", 0.5, 0.8)
+        assert new["tube_points"][0]["time"] == 0.5
+        assert new["tube_points"][0]["upper"] == pytest.approx(0.3)
 
     def test_window_holding_no_reference_sample_refused(self):
         leaf = _with(BAND, window={"start": 0.3, "end": 0.4})
@@ -175,8 +206,12 @@ class TestTube:
             == 0.7
         )
         leaf = _with(ABS, window={"end": 0.5})
-        with pytest.raises(HandleEditError, match="outside"):
-            _edit(leaf, "tube/upper/0", 0.7, None, reference=None)
+        assert (
+            _edit(leaf, "tube/upper/0", 0.7, None, reference=None)["tube_points"][0][
+                "time"
+            ]
+            == 0.5
+        )
 
     def test_band_and_rel_need_the_primary_reference(self):
         with pytest.raises(HandleEditError, match="needs a reference"):
@@ -186,6 +221,59 @@ class TestTube:
         with pytest.raises(HandleEditError, match="'other'"):
             _edit(_with(BAND, against="other"), "tube/upper/0", 0.5, 0.8)
         assert _edit(_with(BAND, against="primary"), "tube/upper/0", 0.5, 0.8)
+
+    def test_band_and_rel_refuse_a_named_baseline_even_vertically(self):
+        with pytest.raises(HandleEditError, match="'other'"):
+            _edit(_with(BAND, against="other"), "tube/upper/0", None, 0.8)
+        with pytest.raises(HandleEditError, match="'other'"):
+            _edit(_with(REL, against="other"), "tube/upper/0", None, 0.6)
+
+    def test_abs_refuses_a_time_drag_against_a_named_baseline(self):
+        leaf = _with(ABS, against="other")
+        with pytest.raises(HandleEditError, match="'other'"):
+            _edit(leaf, "tube/upper/0", 0.0, 2.0)
+        # A vertical drag needs no reference, so it still edits.
+        assert _edit(leaf, "tube/upper/0", None, 2.0)["tube_points"][0]["upper"] == 2.0
+
+    def test_rel_on_a_negative_reference_writes_a_positive_width(self):
+        negative = (REF[0], -REF[1])
+        new = _edit(REL, "tube/upper/0", 0.5, -0.4, reference=negative)
+        assert new["tube_points"][0]["upper"] == pytest.approx(0.2)
+
+    def test_a_time_drag_onto_another_points_time_refused(self):
+        with pytest.raises(
+            HandleEditError, match=r"control points 0 and 1 share time 0\.9"
+        ):
+            _edit(BAND, "tube/upper/0", 0.9, 1.0)
+
+    def test_any_drag_of_a_point_sharing_its_time_refused(self):
+        leaf = _with(
+            BAND,
+            tube_points=[
+                {"time": 0.5, "upper": 0.1, "lower": 0.1},
+                {"time": 0.5, "upper": 0.2, "lower": 0.2},
+            ],
+        )
+        with pytest.raises(
+            HandleEditError, match=r"control points 0 and 1 share time 0\.5"
+        ):
+            _edit(leaf, "tube/upper/1", None, 0.8)
+        with pytest.raises(HandleEditError, match="control points 0 and 1"):
+            _edit(leaf, "tube/lower/0", 0.25, 0.1)
+
+    def test_an_authored_null_width_read_by_abs_refused(self):
+        leaf = _with(ABS, tube_points=[{"time": 0.0, "upper": 1.5, "lower": None}])
+        with pytest.raises(HandleEditError, match="lower is None, not a number"):
+            _edit(leaf, "tube/upper/0", None, 1.0)
+        leaf = _with(ABS, tube_points=[{"time": 0.0, "upper": None, "lower": -0.5}])
+        with pytest.raises(HandleEditError, match="upper is None, not a number"):
+            _edit(leaf, "tube/lower/0", None, -1.0)
+
+    def test_a_refusal_prints_a_tiny_negative_width_as_nonzero(self):
+        with pytest.raises(HandleEditError) as err:
+            _edit(BAND, "tube/upper/0", 0.5, 0.5 - 1e-9)
+        assert re.search(r"width -1(\.\d+)?e-09 would be negative", str(err.value))
+        assert "-0 " not in str(err.value)
 
     def test_min_width_is_written_as_dragged(self):
         leaf = _with(BAND, tube_min_width=0.3)
@@ -198,6 +286,7 @@ class TestTube:
             "tube/upper/-1",
             "tube/upper/01",
             "tube/upper/x",
+            "tube/upper/\u00b2",
             "tube/upper",
             "tube/band",
             "tube/middle/0",
@@ -231,6 +320,13 @@ class TestBounds:
         assert _edit(only_max, "range/max", None, -50.0)["max_value"] == -50.0
         only_min = {"metric": "range", "variable": "x", "min_value": 2.0}
         assert _edit(only_min, "range/min", None, 50.0)["min_value"] == 50.0
+
+    def test_equal_bounds_accepted(self):
+        assert _edit(RANGE, "range/min", None, 2.0)["min_value"] == 2.0
+
+    def test_a_bound_just_past_the_other_prints_past_it(self):
+        with pytest.raises(HandleEditError, match=r"min_value 2\.0000001 "):
+            _edit(RANGE, "range/min", None, 2.0000001)
 
     def test_scalar(self):
         assert _edit(SCALAR, "scalar/min", None, -1.0)["min_value"] == -1.0
@@ -267,6 +363,51 @@ class TestPoints:
 
     def test_a_vertical_drag_of_a_following_point_changes_nothing(self):
         assert _edit(POINTS, "points/target/0", 0.25, 0.9) == POINTS
+
+    def test_a_time_is_clamped_into_the_span(self):
+        new = _edit(POINTS, "points/target/0", 1.5, 0.9)
+        assert new["points"][0] == {"time": 1.0, "tolerance": 0.05}
+        leaf = _with(POINTS, window={"end": 0.8})
+        new = _edit(leaf, "points/target/1", 0.95, 0.7)
+        assert new["points"][1] == {"time": 0.75, "value": 0.7, "tolerance": 0.05}
+
+    def test_without_a_reference_only_the_windows_ends_bound_a_time(self):
+        assert (
+            _edit(POINTS, "points/target/0", 5.0, None, reference=None)["points"][0][
+                "time"
+            ]
+            == 5.0
+        )
+        leaf = _with(POINTS, window={"start": 0.1, "end": 0.8})
+        for x, landed in ((0.95, 0.8), (0.05, 0.1)):
+            new = _edit(leaf, "points/target/0", x, None, reference=None)
+            assert new["points"][0]["time"] == landed
+
+    def test_a_null_value_follows_the_baseline(self):
+        leaf = _with(POINTS, points=[{"time": 0.25, "value": None, "tolerance": 0.05}])
+        new = _edit(leaf, "points/target/0", 0.3, 0.9)
+        assert new["points"][0] == {"time": 0.3, "value": None, "tolerance": 0.05}
+
+    @pytest.mark.parametrize(
+        "point", [{"tolerance": 0.05}, {"time": None, "tolerance": 0.05}]
+    )
+    def test_a_trace_end_checkpoint_keeps_its_time(self, point):
+        # x is ignored; y follows the value rule.
+        leaf = _with(POINTS, points=[copy.deepcopy(point)])
+        assert _edit(leaf, "points/target/0", 0.3, 0.9)["points"][0] == point
+        leaf = _with(POINTS, points=[{**point, "value": 0.5}])
+        assert _edit(leaf, "points/target/0", 0.3, 0.9)["points"][0] == {
+            **point,
+            "value": 0.9,
+        }
+
+    def test_a_time_drag_against_a_named_baseline_refused(self):
+        leaf = _with(POINTS, against="other")
+        with pytest.raises(HandleEditError, match="'other'"):
+            _edit(leaf, "points/target/0", 0.3, None)
+        # A vertical drag of an explicit value needs no reference.
+        new = _edit(leaf, "points/target/1", None, 0.7)
+        assert new["points"][1] == {"time": 0.75, "value": 0.7, "tolerance": 0.05}
 
     def test_refusals(self):
         with pytest.raises(HandleEditError, match="no declared point"):
@@ -320,6 +461,15 @@ def test_a_non_finite_position_is_refused(leaf, local, x, y, bad, axis):
     assert _edit(leaf, local, x, y) != leaf
     pos = {"x": x, "y": y, axis: bad}
     with pytest.raises(HandleEditError, match="not a finite number"):
+        _edit(leaf, local, pos["x"], pos["y"])
+
+
+@pytest.mark.parametrize(("leaf", "local", "x", "y"), FAMILIES)
+@pytest.mark.parametrize("bad", ["0.5", True, [1.0]])
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_a_non_numeric_position_is_refused(leaf, local, x, y, bad, axis):
+    pos = {"x": x, "y": y, axis: bad}
+    with pytest.raises(HandleEditError, match="is not a number"):
         _edit(leaf, local, pos["x"], pos["y"])
 
 
@@ -469,3 +619,19 @@ def test_staging_the_edit_puts_the_handle_where_it_was_dragged(
     prim = _marker(session, D, f"/metrics/children/{child}/{local}")
     landed = prim.value if isinstance(prim, HLine) else prim.y
     assert landed == pytest.approx(y)
+
+
+def test_a_width_dragged_under_the_min_width_rescores_onto_the_minimum(session):
+    tree = copy.deepcopy(TREE)
+    tree["children"][0]["tube_min_width"] = 0.3
+    session.stage([PatchOp(D, "add", "/metrics", tree)])
+    view = session.view(D, "x")
+    leaf = session.tree(D)["children"][0]
+    new = _edit(
+        leaf, "tube/upper/0", 0.5, 0.6, reference=(view.ref_time, view.ref_values)
+    )
+    assert new["tube_points"][0]["upper"] == pytest.approx(0.1)  # written as dragged
+    session.stage([PatchOp(D, "replace", "/metrics/children/0", new)])
+    prim = _marker(session, D, "/metrics/children/0/tube/upper/0")
+    # D's baseline is x = t: ref(0.5) + tube_min_width.
+    assert prim.y == pytest.approx(0.5 + 0.3)

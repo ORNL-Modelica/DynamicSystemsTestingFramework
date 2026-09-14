@@ -151,8 +151,9 @@ class TubeConfig:
                 "the table."
             ),
             # Row keys as ``_interpolate_tube_widths`` reads them: ``time``
-            # indexed, each width ``.get`` with a 0 default (a row with
-            # neither is refused there, not here).
+            # indexed, each width ``.get`` with a 0 default. A row with
+            # neither reads 0/0 and pinches the tube there; the reader
+            # refuses only a list in which NO row has a width.
             "columns": (("time", "float"), ("upper", "float?"), ("lower", "float?")),
         },
     )
@@ -204,12 +205,11 @@ class PointsConfig:
                 "with the global ``tolerance``. Edit on the authoring "
                 "tool's Edit on plot tab: drag a handle, or edit the table."
             ),
-            # ``time`` stays required although ``_compare_points`` reads it
-            # with ``.get`` (a missing one means the trace end): a row
-            # without its position is not a handle. ``value`` is optional
-            # so a new checkpoint follows the baseline.
+            # As ``_compare_points`` reads them, all with ``.get``: a blank
+            # ``time`` is the documented trace-end sentinel (``time: null``),
+            # a blank ``value`` follows the baseline.
             "columns": (
-                ("time", "float"),
+                ("time", "float?"),
                 ("value", "float?"),
                 ("tolerance", "float?"),
                 ("tolerance_mode", ("abs", "rel")),
@@ -307,7 +307,7 @@ class EventTimingConfig:
                 "back to the leaf's ``time_tolerance`` if omitted). When "
                 "None, events are auto-detected from duplicate-time samples "
                 "in ``ref_time``. Edit the table on the authoring tool's "
-                "Edit on plot tab (event-timing has no draggable handles)."
+                "Edit on plot tab."
             ),
             "columns": (("time", "float"), ("tolerance", "float?")),
         },
@@ -340,8 +340,8 @@ class DominantFrequencyConfig:
                 "tab: drag a handle, or edit the table."
             ),
             # ``freq`` stays required although ``_compare_dominant_frequency``
-            # reads it with ``.get``: a row without its position is not a
-            # handle. The reader defaults ``tolerance_mode`` to "rel".
+            # reads it with ``.get``: a peak without a frequency is
+            # meaningless. The reader defaults ``tolerance_mode`` to "rel".
             "columns": (
                 ("freq", "float"),
                 ("tolerance", "float?"),

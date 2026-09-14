@@ -10,7 +10,6 @@ from typing import Literal
 
 import pytest
 
-from dstf.comparison import modes
 from dstf.comparison.mode_schema import derive_schema
 from dstf.comparison.modes import (
     DominantFrequencyConfig,
@@ -113,9 +112,11 @@ class TestListFieldColumns:
 
     ``"float"`` is a key the reader in ``algorithms.py`` indexes
     (required), ``"float?"`` one it reads with ``.get`` (optional), a
-    tuple is the choices with the mode's default first. ``time`` / ``freq``
-    stay required even where the reader tolerates a missing one: a row
-    without its position is not a handle.
+    tuple is the choices with the mode's default first. ``peaks.freq``
+    stays required although its reader tolerates a missing one: a peak
+    without a frequency is meaningless. ``tube_points.time`` and
+    ``events.time`` are required because their readers index them.
+    ``points.time`` is optional: a blank one is the trace-end sentinel.
     """
 
     def test_the_four_fields_columns(self):
@@ -126,7 +127,7 @@ class TestListFieldColumns:
                 ("lower", "float?"),
             ),
             (PointsConfig, "points"): (
-                ("time", "float"),
+                ("time", "float?"),
                 ("value", "float?"),
                 ("tolerance", "float?"),
                 ("tolerance_mode", ("abs", "rel")),
@@ -150,7 +151,7 @@ class TestListFieldColumns:
         builtin = [
             d.config_cls
             for d in registered_metrics()
-            if d.config_cls.__module__ == modes.__name__
+            if d.config_cls.__module__.startswith("dstf.")
         ]
         list_fields = []
         for cls in builtin:
