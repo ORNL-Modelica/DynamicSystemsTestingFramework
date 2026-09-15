@@ -387,7 +387,7 @@ class _FakeBackend:
         }
         return [BatchManifest(work_dir=self.work_dir, manifest=mm)]
 
-    def read_results(self, manifests, scope_tests):
+    def read_results(self, manifests, scope_tests, on_result=None):
         return {
             t.model_id: self.results[t.model_id]
             for t in scope_tests

@@ -56,7 +56,7 @@ from .capabilities import (
 )
 from .spec_document import PatchOp, SpecDocument
 
-Event = Literal["spec", "results", "job", "selection"]
+Event = Literal["spec", "results", "job", "selection", "loading"]
 Listener = Callable[[dict[str, Any]], None]
 
 logger = logging.getLogger(__name__)
@@ -201,7 +201,16 @@ class Session:
         backend_obj.quiet = True
         store = ReferenceStore(config)
         spec = SpecDocument.load(config.spec_path)
-        scanned = scan_source_tests(config)
+        started = time.monotonic()
+        # "scanning library…" before the first file — and the only scan
+        # event for a source type that scans nothing (Python, FMU, Julia).
+        self._emit("loading", phase="scan", done=0, total=0)
+        scanned = scan_source_tests(
+            config,
+            progress=lambda done, total: self._emit(
+                "loading", phase="scan", done=done, total=total
+            ),
+        )
         tests = self._merge(config, scanned, spec.effective())
         self.project = Project(
             config=config,
@@ -235,6 +244,7 @@ class Session:
             name="dstf-overlay-index",
             daemon=True,
         ).start()
+        self._emit("loading", phase="done", seconds=time.monotonic() - started)
 
     def _warm_overlay_index(self, config: Config, ready: threading.Event) -> None:
         from ..reporting.overlay_loader import warm_sibling_backend_index
@@ -646,24 +656,47 @@ class Session:
 
     def _reload_results(self) -> None:
         """Re-read the last run and rescore — every model except the ones a
-        running job has locked: their directories are being rewritten, so
+        running job has locked (their directories are being rewritten, so
         their in-memory result and verdict stand until that job's own
-        completion reload (which runs after the lock is released)."""
+        completion reload). Each result is scored as it is read and
+        announced as ``loading(phase="results")``; ONE ``results`` event
+        follows for the batch."""
         project = self._require_project()
         locked = self.running.models if self.running is not None else frozenset()
-        fresh = project.backend.read_last_results(
-            [t for t in project.tests if t.model_id not in locked]
-        )
-        for model_id in locked:
-            if model_id in project.results:
-                fresh[model_id] = project.results[model_id]
-            else:
-                fresh.pop(model_id, None)
-        project.results = fresh
+        to_read = [t for t in project.tests if t.model_id not in locked]
+        project.results = {m: r for m, r in project.results.items() if m in locked}
         for model_id in list(self._reads):
             if model_id not in locked:
                 del self._reads[model_id]
-        self._score_all(t.model_id for t in project.tests if t.model_id not in locked)
+        done = 0
+
+        def on_result(model_id: str, result: TestResult) -> None:
+            nonlocal done
+            if model_id in locked:
+                # `read_results` reports every manifest entry, and a locked
+                # model — excluded from `to_read` — comes back as "not found
+                # in discovery": storing it would rescore the model to
+                # SIM_FAIL in the middle of its own job.
+                return
+            project.results[model_id] = result
+            if project.test(model_id) is not None:
+                self._score(model_id)
+                done += 1
+                self._emit(
+                    "loading",
+                    phase="results",
+                    model=model_id,
+                    done=done,
+                    total=len(to_read),
+                )
+
+        project.backend.read_last_results(to_read, on_result=on_result)
+        # Tests with no result at all (never run, or dropped from the
+        # manifest) are scored now — NO_REF / SIM_FAIL states.
+        for test in to_read:
+            if test.model_id not in project.results:
+                self._score(test.model_id)
+        self._emit("results", models={t.model_id for t in to_read})
 
     def _materialization(self, model_id: str) -> dict | None:
         """The ``add /metrics`` op for a test the flat path scored, built

@@ -2,6 +2,7 @@
 
 import copy
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -171,9 +172,12 @@ def _build_test_model_from_recognizer_results(
     return model
 
 
-def scan_source_tests(config: Config) -> dict[str, TestModel]:
+def scan_source_tests(
+    config: Config, progress: Callable[[int, int], None] | None = None
+) -> dict[str, TestModel]:
     """Step 1 of discovery: recognizer results over the source tree, keyed
-    by model_id. Empty unless ``source_type == "modelica"``."""
+    by model_id. Empty unless ``source_type == "modelica"``. ``progress(done,
+    total)`` is called after each ``.mo`` file is scanned."""
     # Trigger bundled-recognizer registration on first call.
     from . import mo_parser  # noqa: F401
 
@@ -193,13 +197,16 @@ def scan_source_tests(config: Config) -> dict[str, TestModel]:
         recognizers = bundled + user
 
         per_model: dict[str, list[RecognizerResult]] = {}
-        for mo_file in sorted(library_dir.rglob("*.mo")):
+        files = sorted(library_dir.rglob("*.mo"))
+        for done, mo_file in enumerate(files, start=1):
             for recognizer in recognizers:
                 if not recognizer.applies_to_path(mo_file, library_dir):
                     continue
                 result = recognizer.recognize(mo_file)
                 if result is not None:
                     per_model.setdefault(result.model_id, []).append(result)
+            if progress is not None:
+                progress(done, len(files))
 
         for model_id, results in per_model.items():
             ut_tests[model_id] = _build_test_model_from_recognizer_results(

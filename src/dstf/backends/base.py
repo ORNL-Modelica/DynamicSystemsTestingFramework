@@ -13,6 +13,7 @@ import logging
 import sys
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -178,12 +179,9 @@ def _force_failed(result: "TestResult | None", status: str) -> None:
         result.error_message = result.error_message or f"Run recorded {status}"
 
 
-def _apply_run_verdicts(
-    work_dir: Path,
-    manifests: list[BatchManifest],
-    results: dict[str, "TestResult"],
-) -> None:
-    """Force results whose last run failed/timed out to ``success=False``.
+def run_verdicts(work_dir: Path, manifests: list[BatchManifest]) -> dict[str, str]:
+    """``model_id -> failed run status`` for every test whose last run the
+    manifests record as failed or timed out.
 
     The on-disk result read can be fooled by a partial or stale ``.mat`` into
     reporting success, which would let ``compare`` show a green test whose run
@@ -204,8 +202,12 @@ def _apply_run_verdicts(
       what pending replaced, would mean reporting a previous run's green over
       this run's partial ``.mat``.
 
-    Mutates *results* in place.
+    A work dir with neither record (status.json absent or unreadable) yields
+    no verdicts — the disk read stands.
     """
+    from .progress import read_status
+
+    verdicts: dict[str, str] = {}
     covered: set[str] = set()
     for manifest in manifests:
         for entry in manifest.manifest.values():
@@ -214,34 +216,24 @@ def _apply_run_verdicts(
                 continue
             covered.add(entry["model_id"])
             if status in FAILED_RUN_STATUSES:
-                _force_failed(results.get(entry["model_id"]), status)
-    _apply_status_verdicts(work_dir, results, skip=covered)
-
-
-def _apply_status_verdicts(
-    work_dir: Path,
-    results: dict[str, "TestResult"],
-    skip: set[str] | None = None,
-) -> None:
-    """The pre-manifest fallback for :func:`_apply_run_verdicts`.
-
-    Reads the run's per-test verdict out of ``status.json``. Only reached for
-    tests the manifest is not authoritative about — a pre-field entry or a
-    ``pending`` one from an aborted run (everything else is named in *skip*).
-    No-op when status.json is absent or unreadable — a work dir with neither
-    record simply keeps the disk read.
-    """
-    from .progress import read_status
-
+                verdicts[entry["model_id"]] = status
     snap = read_status(work_dir)
-    if snap is None:
-        return
-    for row in snap.get("tests", []):
+    for row in (snap or {}).get("tests", []):
         model_id = row.get("model_id")
-        if skip and model_id in skip:
+        if model_id in covered:
             continue
         if row.get("status") in FAILED_RUN_STATUSES:
-            _force_failed(results.get(model_id), row["status"])
+            verdicts[model_id] = row["status"]
+    return verdicts
+
+
+def _apply_run_verdicts(
+    work_dir: Path, manifests: list[BatchManifest], results: dict[str, "TestResult"]
+) -> None:
+    """Force results whose last run failed/timed out to ``success=False``.
+    Mutates *results* in place."""
+    for model_id, status in run_verdicts(work_dir, manifests).items():
+        _force_failed(results.get(model_id), status)
 
 
 # ---------------------------------------------------------------------------
@@ -597,8 +589,11 @@ class Backend(ABC):
         self,
         manifests: list[BatchManifest],
         tests: list[TestModel],
+        on_result: Callable[[str, TestResult], None] | None = None,
     ) -> dict[str, TestResult]:
-        """Read all simulation results from completed batch runs (parallel)."""
+        """Read all simulation results from completed batch runs (parallel).
+        ``on_result(model_id, result)`` is called on the calling thread as
+        each result is stored."""
         test_lookup = {t.model_id: t for t in tests}
         results: dict[str, TestResult] = {}
 
@@ -622,6 +617,8 @@ class Backend(ABC):
                         error_message=rr.error_message or "Simulation failed",
                         statistics=rr.statistics if rr else None,
                     )
+                    if on_result is not None:
+                        on_result(model_id, results[model_id])
                     continue
 
                 if test_model is None:
@@ -630,6 +627,8 @@ class Backend(ABC):
                         success=False,
                         error_message="Test model not found in discovery",
                     )
+                    if on_result is not None:
+                        on_result(model_id, results[model_id])
                     continue
 
                 work_items.append((test_key, model_id, test_model, rr))
@@ -657,6 +656,8 @@ class Backend(ABC):
             for future in as_completed(futures):
                 test_key, model_id, result, dt = future.result()
                 results[model_id] = result
+                if on_result is not None:
+                    on_result(model_id, results[model_id])
                 with elapsed_lock:
                     per_test_elapsed.append(dt)
                 completed += 1
@@ -680,8 +681,11 @@ class Backend(ABC):
     def read_last_results(
         self,
         tests: list[TestModel],
+        on_result: Callable[[str, TestResult], None] | None = None,
     ) -> dict[str, TestResult]:
-        """Read results from the most recent batch run in the work directory."""
+        """Read results from the most recent batch run in the work directory.
+        Each result reaches ``on_result`` with its run verdict already
+        applied."""
         work_dir = self.config.work_dir
         if not work_dir.exists():
             return {}
@@ -691,10 +695,19 @@ class Backend(ABC):
             return {}
 
         manifests = [BatchManifest.load(p) for p in manifest_paths]
-        results = self.read_results(manifests, tests)
         # A test the run recorded as failed/timed_out can read back as success
         # here just because a partial/stale .mat survived on disk — that would
         # let `compare` mislabel it and `compare --accept` bless a garbage
-        # baseline. The manifest carries the run's own verdict per test.
-        _apply_run_verdicts(work_dir, manifests, results)
+        # baseline. The manifest carries the run's own verdict per test; it
+        # is applied per result, before the callback, so a caller scoring
+        # results as they land never sees the disk read's green.
+        verdicts = run_verdicts(work_dir, manifests)
+
+        def _with_verdict(model_id: str, result: TestResult) -> None:
+            if model_id in verdicts:
+                _force_failed(result, verdicts[model_id])
+            if on_result is not None:
+                on_result(model_id, result)
+
+        results = self.read_results(manifests, tests, on_result=_with_verdict)
         return results

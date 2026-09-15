@@ -381,6 +381,20 @@ class TestDiscoverTests:
             "metric_tree_spec from test_spec.metrics must survive the merge"
         )
 
+    def test_scan_reports_progress_per_file(self, tmp_path):
+        from dstf.discovery.test_registry import scan_source_tests
+
+        config = _write_lib(tmp_path)
+        ticks = []
+        scanned = scan_source_tests(
+            config, progress=lambda done, total: ticks.append((done, total))
+        )
+        assert scanned
+        assert (
+            ticks[-1][0] == ticks[-1][1] == len(list(config.library_dir.rglob("*.mo")))
+        )
+        assert [d for d, _ in ticks] == list(range(1, len(ticks) + 1))
+
 
 def test_field_sources_records_annotation_default():
     """A test discovered only via Modelica annotation has field_sources='annotation'."""

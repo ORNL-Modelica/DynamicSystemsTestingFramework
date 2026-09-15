@@ -261,6 +261,78 @@ class TestOpen:
         # "Reading N result files..." and "Read phase:" lines to stdout.
         assert capsys.readouterr() == ("", "")
 
+    def test_read_last_results_reports_each_result_with_its_run_verdict_applied(
+        self, tmp_path
+    ):
+        """The tool scores each result as it lands (Session._reload_results);
+        a test whose run failed must arrive already forced to success=False,
+        or it is scored green for the seconds before the batch verdict."""
+        cfg, work = _project(tmp_path)
+        # Record A's last run as failed in the manifest _project wrote. The
+        # file IS the test-key map (BatchManifest.save writes `.manifest`
+        # at the top level, src/dstf/storage/batch_manifest.py:69); A's
+        # result.json still reads as a success.
+        path = work / "batch_manifest.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for entry in data.values():
+            if entry["model_id"] == A:
+                entry["last_run_status"] = "failed"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        seen = []
+        results = s.project.backend.read_last_results(
+            s.project.tests,
+            on_result=lambda model_id, result: seen.append((model_id, result.success)),
+        )
+        assert sorted(seen) == sorted((m, r.success) for m, r in results.items())
+        assert dict(seen)[A] is False  # the verdict, before the callback
+        assert dict(seen)[D] is True
+
+    def test_open_reports_its_phases_and_every_scored_test(self, tmp_path):
+        """Brief §3.8: the page shows "scanning… N found", fills rows as
+        results are scored, and a test opens as soon as it is scored."""
+        cfg, work = _project(tmp_path)
+        s = Session()
+        events = []
+        s.on("loading", events.append)
+        s.on("results", lambda e: events.append({"event": "results", **e}))
+        s.open(cfg, work_dir=work)
+        phases = [e["phase"] for e in events if e["event"] == "loading"]
+        assert (
+            phases[0] == "scan" and phases[-1] == "done"
+        )  # "scanning…" fires even for a source that scans nothing
+        scored = [e["model"] for e in events if e.get("phase") == "results"]
+        # Every model the manifest names: C has no result.json and the reader
+        # returns it as a failed result, which is read and announced too.
+        assert set(scored) == {A, B, C, D, G}
+        # Each results event names a model already scored.
+        for e in events:
+            if e.get("phase") == "results":
+                assert e["done"] <= e["total"]
+        # ONE batch results event, after the per-test events (Conventions #7).
+        kinds = [e["event"] for e in events]
+        assert kinds.count("results") == 1
+        assert kinds.index("results") > max(
+            i for i, e in enumerate(events) if e.get("phase") == "results"
+        )
+        assert events[-1]["phase"] == "done" and events[-1]["seconds"] >= 0
+
+    def test_a_test_is_scored_when_its_loading_event_fires(self, tmp_path):
+        cfg, work = _project(tmp_path)
+        s = Session()
+        verdicts = {}
+        s.on(
+            "loading",
+            lambda e: (
+                verdicts.update({e["model"]: s.comparisons[e["model"]].passed})
+                if e["phase"] == "results"
+                else None
+            ),
+        )
+        s.open(cfg, work_dir=work)
+        assert verdicts[A] is False and verdicts[D] is True
+
 
 class TestRescoreAndStage:
     def test_rescore_on_a_flat_test_stages_the_materialization_spec_update_would(
