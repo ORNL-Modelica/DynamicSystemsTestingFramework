@@ -178,3 +178,22 @@ def playwright_browser():
         browser = p.chromium.launch()
         yield browser
         browser.close()
+
+
+#: Background threads the authoring Session starts per open. They outlive the
+#: test that opened the Session unless joined, and the overlay-index one
+#: reads the process-wide ``_sibling_backend_index`` cache — a late thread
+#: from an earlier test turns a later test's ``cache_info()`` counts into a
+#: flake (reproduced with a slowed index build).
+_SESSION_THREADS = ("dstf-overlay-index",)
+
+
+@pytest.fixture(autouse=True)
+def _join_session_threads():
+    """Join every Session background thread a test left running."""
+    yield
+    import threading
+
+    for thread in threading.enumerate():
+        if thread.name in _SESSION_THREADS:
+            thread.join(timeout=30.0)

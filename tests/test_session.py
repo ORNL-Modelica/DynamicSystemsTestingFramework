@@ -155,21 +155,50 @@ class TestOpen:
         Session().open(cfg, work_dir=work)
         assert _snapshot(work) == before
 
-    def test_open_warms_the_overlay_index_off_the_calling_thread(self, tmp_path):
+    def test_open_warms_the_overlay_index_off_the_calling_thread(
+        self, tmp_path, monkeypatch
+    ):
         """Brief §2.2: the first click paid 3 s for the sibling-backend
         index. It is built once, right after open, on its own thread."""
         from dstf.reporting import overlay_loader as ol
 
+        warmed_on = []
+        real_warm = ol.warm_sibling_backend_index
+
+        def spy(config):
+            warmed_on.append(threading.current_thread().name)
+            real_warm(config)
+
+        monkeypatch.setattr(ol, "warm_sibling_backend_index", spy)
         cfg, work = _project(tmp_path)
         ol._sibling_backend_index.cache_clear()
         s = Session()
         s.open(cfg, work_dir=work)
         assert s.overlay_index_ready.wait(5.0)
+        assert warmed_on == ["dstf-overlay-index"]
         before = ol._sibling_backend_index.cache_info()
         s.view(A, "x")
         after = ol._sibling_backend_index.cache_info()
         assert before.misses == 1
         assert after.misses == 1 and after.hits == before.hits + 1
+
+    def test_a_failed_warm_still_marks_the_index_ready(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """A sibling tree that raises (a PermissionError from iterdir) is
+        logged, and the Event is set anyway — a waiter never hangs on it."""
+        from dstf.reporting import overlay_loader as ol
+
+        def broken(config):
+            raise PermissionError("sibling tree unreadable")
+
+        monkeypatch.setattr(ol, "warm_sibling_backend_index", broken)
+        cfg, work = _project(tmp_path)
+        s = Session()
+        with caplog.at_level("ERROR", logger="dstf.authoring.session"):
+            s.open(cfg, work_dir=work)
+            assert s.overlay_index_ready.wait(5.0)
+        assert "warming the sibling-backend overlay index failed" in caplog.text
 
     def test_the_recorded_backend_wins_over_the_config(self, tmp_path):
         cfg, work = _project(tmp_path)
