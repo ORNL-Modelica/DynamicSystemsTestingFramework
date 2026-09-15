@@ -20,6 +20,7 @@ from nicegui import app, ui
 from ..backends.progress import read_status
 from ..cli.common import _filter_tests
 from ..reporting.status import classify_with_class
+from ..reporting.theme import css_variables, quasar_palette
 from ..storage.ref_index import _atomic_write_text
 from .capabilities import (
     Capability,
@@ -534,6 +535,8 @@ class Shell:
         layout elements (header, footer, drawer) are created here, once;
         only their CONTENT is refreshable."""
         self._add_routes()
+        ui.colors(**quasar_palette())
+        ui.add_css(css_variables())
         with ui.header().classes("items-center"):
             self._header()
         with ui.right_drawer(value=False) as self._drawer_el:

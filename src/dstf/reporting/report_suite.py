@@ -422,15 +422,22 @@ def _decimated_traces(context: dict) -> list[dict]:
     return out
 
 
-def _render_template(template_name: str, context: dict, output_path: Path) -> None:
-    """Render a Jinja2 template with the given context."""
+def jinja_env():
+    """The per-test report's Jinja environment: the templates dir, autoescape,
+    and the token block every page starts its stylesheet with. One
+    constructor, so a test that renders a page gets the same globals."""
     from jinja2 import Environment, FileSystemLoader
 
-    env = Environment(
-        loader=FileSystemLoader(str(_TEMPLATE_DIR)),
-        autoescape=True,
-    )
-    template = env.get_template(template_name)
+    from .theme import css_variables
+
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
+    env.globals["dstf_css"] = css_variables()
+    return env
+
+
+def _render_template(template_name: str, context: dict, output_path: Path) -> None:
+    """Render a Jinja2 template with the given context."""
+    template = jinja_env().get_template(template_name)
     html = template.render(**context)
     output_path.write_text(html, encoding="utf-8")
 

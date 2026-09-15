@@ -15,11 +15,6 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
 
-_TEMPLATE_DIR = (
-    Path(__file__).resolve().parents[1] / "src" / "dstf" / "reporting" / "templates"
-)
-
-
 def _fixture_context() -> dict:
     """A minimal render context: one variable, one tube leaf, no figures yet.
 
@@ -110,12 +105,9 @@ def _fixture_context() -> dict:
 
 def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
     """Render a context to ``tmp_path/interactive.html`` with its assets."""
-    from jinja2 import Environment, FileSystemLoader
+    from dstf.reporting.report_suite import jinja_env, write_report_assets
 
-    from dstf.reporting.report_suite import write_report_assets
-
-    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
-    html = env.get_template("interactive.html").render(**ctx)
+    html = jinja_env().get_template("interactive.html").render(**ctx)
     html_path = tmp_path / "interactive.html"
     html_path.write_text(html, encoding="utf-8")
     write_report_assets(tmp_path)

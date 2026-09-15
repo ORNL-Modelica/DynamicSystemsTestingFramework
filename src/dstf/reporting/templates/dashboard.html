@@ -5,9 +5,10 @@
 {% if auto_refresh %}<meta http-equiv="refresh" content="5">{% endif %}
 <title>{{ title }} — {{ total }} tests</title>
 <style>
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; margin: 1.5em; background: #fafafa; color: #333; }
+{{ dstf_css|safe }}
+body { font-family: var(--dstf-font); margin: 1.5em; background: var(--dstf-page); color: var(--dstf-text); }
 h1 { margin-bottom: 0.2em; font-size: 1.4em; }
-.status-bar { font-size: 0.85em; color: #666; margin-bottom: 1em; }
+.status-bar { font-size: 0.85em; color: var(--dstf-text-secondary); margin-bottom: 1em; }
 .counters { display: flex; gap: 0.6em; flex-wrap: wrap; margin-bottom: 1em; }
 /* Sticky top region: h1 + status-bar + progress bar + counter pills stay
  * visible as the table body scrolls. The thead rows below stack at
@@ -18,37 +19,37 @@ h1 { margin-bottom: 0.2em; font-size: 1.4em; }
   position: sticky;
   top: 0;
   z-index: 50;
-  background: #fafafa;
+  background: var(--dstf-page);
   margin-left: -1.5em;
   margin-right: -1.5em;
   padding: 0 1.5em 0.6em;
-  border-bottom: 1px solid #ddd;
+  border-bottom: 1px solid var(--dstf-border);
 }
-.counter { background: white; border: 1px solid #ddd; border-left-width: 4px; border-radius: 4px; padding: 0.4em 0.8em; min-width: 90px; cursor: pointer; user-select: none; transition: background 0.1s, box-shadow 0.1s; }
-.counter:hover { background: #f5f5f5; }
+.counter { background: var(--dstf-surface); border: 1px solid var(--dstf-border); border-left-width: 4px; border-radius: 4px; padding: 0.4em 0.8em; min-width: 90px; cursor: pointer; user-select: none; transition: background 0.1s, box-shadow 0.1s; }
+.counter:hover { background: var(--dstf-surface-hover); }
 .counter.disabled { cursor: default; opacity: 0.5; }
-.counter.disabled:hover { background: white; }
-.counter.active { box-shadow: 0 0 0 2px #1976D2 inset; background: #e3f2fd; }
-.counter .label { font-size: 0.7em; color: #888; text-transform: uppercase; }
+.counter.disabled:hover { background: var(--dstf-surface); }
+.counter.active { box-shadow: 0 0 0 2px var(--dstf-accent) inset; background: var(--dstf-selection); }
+.counter .label { font-size: 0.7em; color: var(--dstf-text-muted); text-transform: uppercase; }
 .counter .value { font-size: 1.3em; font-weight: 600; }
-.counter.queued     { border-left-color: #888;    } .counter.queued .value     { color: #555;    }
-.counter.running    { border-left-color: #2196F3; } .counter.running .value    { color: #1976D2; }
-.counter.passed     { border-left-color: #4CAF50; } .counter.passed .value     { color: #2E7D32; }
-.counter.failed     { border-left-color: #f44336; } .counter.failed .value     { color: #C62828; }
-.counter.sim_failed { border-left-color: #d32f2f; } .counter.sim_failed .value { color: #B71C1C; }
-.counter.no_ref     { border-left-color: #FF9800; } .counter.no_ref .value     { color: #E65100; }
-.counter.warnings   { border-left-color: #ff9800; } .counter.warnings .value   { color: #E65100; }
-.counter.timed_out  { border-left-color: #9C27B0; } .counter.timed_out .value  { color: #6A1B9A; }
-.counter.total      { border-left-color: #555;    }
-.bar { height: 14px; background: #eee; border-radius: 7px; overflow: hidden; margin-bottom: 1em; display: flex; }
+.counter.queued     { border-left-color: var(--dstf-queued-fill); } .counter.queued .value     { color: var(--dstf-text-secondary); }
+.counter.running    { border-left-color: var(--dstf-running-fill); } .counter.running .value    { color: var(--dstf-running-dark); }
+.counter.passed     { border-left-color: var(--dstf-pass-fill); } .counter.passed .value     { color: var(--dstf-pass-dark); }
+.counter.failed     { border-left-color: var(--dstf-fail-fill); } .counter.failed .value     { color: var(--dstf-fail-dark); }
+.counter.sim_failed { border-left-color: var(--dstf-sim-fail-fill); } .counter.sim_failed .value { color: var(--dstf-sim-fail-dark); }
+.counter.no_ref     { border-left-color: var(--dstf-no-ref-fill); } .counter.no_ref .value     { color: var(--dstf-no-ref-dark); }
+.counter.warnings   { border-left-color: var(--dstf-warn-fill); } .counter.warnings .value   { color: var(--dstf-warn-dark); }
+.counter.timed_out  { border-left-color: var(--dstf-timed-out-fill); } .counter.timed_out .value  { color: var(--dstf-timed-out-dark); }
+.counter.total      { border-left-color: var(--dstf-text-secondary); }
+.bar { height: 14px; background: var(--dstf-border-hairline); border-radius: 7px; overflow: hidden; margin-bottom: 1em; display: flex; }
 .bar span { display: block; height: 100%; }
-.bar .b-passed { background: #4CAF50; }
-.bar .b-failed { background: #f44336; }
-.bar .b-timed_out { background: #9C27B0; }
-.bar .b-running { background: #2196F3; }
-table { border-collapse: collapse; width: 100%; background: white; font-size: 0.85em; }
-th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; }
-th { background: #f5f5f5; cursor: pointer; user-select: none; position: relative; }
+.bar .b-passed { background: var(--dstf-pass-fill); }
+.bar .b-failed { background: var(--dstf-fail-fill); }
+.bar .b-timed_out { background: var(--dstf-timed-out-fill); }
+.bar .b-running { background: var(--dstf-running-fill); }
+table { border-collapse: collapse; width: 100%; background: var(--dstf-surface); font-size: 0.85em; }
+th, td { border: 1px solid var(--dstf-border); padding: 4px 8px; text-align: left; }
+th { background: var(--dstf-surface-hover); cursor: pointer; user-select: none; position: relative; }
 /* Drag handle on the right edge of each header th. Drives a JS-driven
  * width override via dashboard.js; widths persist to localStorage so they
  * survive meta-refresh ticks. The handle is a thin invisible strip
@@ -58,8 +59,8 @@ th { background: #f5f5f5; cursor: pointer; user-select: none; position: relative
   width: 6px; cursor: col-resize; z-index: 5;
   user-select: none;
 }
-.col-resize-handle:hover { background: rgba(25, 118, 210, 0.2); }
-th.resizing { background: #e3f2fd; }
+.col-resize-handle:hover { background: var(--dstf-selection); }
+th.resizing { background: var(--dstf-selection); }
 /* Two thead rows stack below the sticky chrome. Header row sits at the
  * chrome's bottom edge; filter row sits below the header row. CSS variables
  * are kept fresh by the ResizeObserver in dashboard.js (fallback hard-coded
@@ -74,31 +75,31 @@ thead tr.filter-row th {
   top: calc(var(--chrome-height, 140px) + var(--header-row-height, 28px));
   z-index: 40;
 }
-th:hover { background: #e8e8e8; }
-th.sorted-asc::after { content: " ▲"; color: #1976D2; font-size: 0.85em; }
-th.sorted-desc::after { content: " ▼"; color: #1976D2; font-size: 0.85em; }
-input.col-filter { box-sizing: border-box; width: 100%; padding: 2px 4px; font-size: 0.78em; border: 1px solid #ccc; border-radius: 2px; }
-tr.queued td    { color: #888; }
-tr.running td   { background: #e3f2fd; font-weight: 500; }
-tr.pass td      { background: #f1f8e9; }
-tr.fail td      { background: #ffebee; }
-tr.sim-fail td  { background: #ffebee; }
-tr.no-ref td    { background: #fff8e1; }
-tr.timed-out td { background: #f3e5f5; }
+th:hover { background: var(--dstf-surface-hover); }
+th.sorted-asc::after { content: " ▲"; color: var(--dstf-accent); font-size: 0.85em; }
+th.sorted-desc::after { content: " ▼"; color: var(--dstf-accent); font-size: 0.85em; }
+input.col-filter { box-sizing: border-box; width: 100%; padding: 2px 4px; font-size: 0.78em; border: 1px solid var(--dstf-border); border-radius: 2px; }
+tr.queued td    { color: var(--dstf-text-muted); }
+tr.running td   { background: var(--dstf-running-tint); font-weight: 500; }
+tr.pass td      { background: var(--dstf-pass-tint); }
+tr.fail td      { background: var(--dstf-fail-tint); }
+tr.sim-fail td  { background: var(--dstf-fail-tint); }
+tr.no-ref td    { background: var(--dstf-no-ref-tint); }
+tr.timed-out td { background: var(--dstf-timed-out-tint); }
 .status-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.75em; font-weight: 700; letter-spacing: 0.03em; color: white; white-space: nowrap; }
-.status-badge.pass      { background: #4CAF50; }
-.status-badge.fail      { background: #f44336; }
-.status-badge.sim-fail  { background: #d32f2f; }
-.status-badge.no-ref    { background: #FF9800; }
-.status-badge.timed-out { background: #9C27B0; }
-.status-badge.queued    { background: #888;    }
-.status-badge.running   { background: #2196F3; }
-.warn { color: #ff9800; font-weight: 600; }
-.unscored { color: #888; font-style: italic; }
+.status-badge.pass      { background: var(--dstf-pass-fill); }
+.status-badge.fail      { background: var(--dstf-fail-fill); }
+.status-badge.sim-fail  { background: var(--dstf-sim-fail-fill); }
+.status-badge.no-ref    { background: var(--dstf-no-ref-fill); }
+.status-badge.timed-out { background: var(--dstf-timed-out-fill); }
+.status-badge.queued    { background: var(--dstf-queued-fill); }
+.status-badge.running   { background: var(--dstf-running-fill); }
+.warn { color: var(--dstf-warn-fill); font-weight: 600; }
+.unscored { color: var(--dstf-text-muted); font-style: italic; }
 .detail-cell {
   max-width: var(--col-w-detail, 30em);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: #666; font-size: 0.8em;
+  color: var(--dstf-text-secondary); font-size: 0.8em;
 }
 /* Model column truncation. Default ellipsis at 28em so long fully-qualified
  * IDs don't push the rest of the table off-screen. Users can drag the
@@ -114,35 +115,35 @@ tr.timed-out td { background: #f3e5f5; }
 .sel-col { width: 28px; text-align: center; cursor: default; }
 .sel-col input { cursor: pointer; }
 table th.sel-col { cursor: default; }
-table th.sel-col:hover { background: #f5f5f5; }
-tr.row-selected td { background: #e3f2fd !important; }
-a { color: #1976D2; text-decoration: none; }
+table th.sel-col:hover { background: var(--dstf-surface-hover); }
+tr.row-selected td { background: var(--dstf-selection) !important; }
+a { color: var(--dstf-accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 /* Sticky footer: hidden when 0 selected. */
 .sel-footer {
   position: fixed; bottom: 0; left: 0; right: 0;
-  background: white; border-top: 2px solid #1976D2;
-  box-shadow: 0 -2px 8px rgba(0,0,0,0.1);
+  background: var(--dstf-surface); border-top: 2px solid var(--dstf-accent);
+  box-shadow: 0 -2px 8px var(--dstf-shadow);
   padding: 0.6em 1.2em; font-size: 0.85em;
   display: none;  /* shown by JS when selection.size > 0 */
   align-items: center; gap: 0.8em; flex-wrap: wrap;
   z-index: 10;
 }
 .sel-footer.shown { display: flex; }
-.sel-footer .count { font-weight: 600; color: #1976D2; }
-.sel-footer .count .hidden-hint { color: #888; font-weight: normal; font-size: 0.9em; margin-left: 0.4em; }
-.sel-footer button { padding: 0.35em 0.8em; border: 1px solid #ccc; border-radius: 3px; background: white; cursor: pointer; font-size: 0.85em; }
-.sel-footer button:hover { background: #f0f0f0; }
-.sel-footer button.btn-primary { background: #1976D2; color: white; border-color: #1976D2; }
-.sel-footer button.btn-primary:hover { background: #1565C0; }
-.sel-footer .cmd-out { flex: 1; min-width: 16em; font-family: monospace; font-size: 0.8em; padding: 0.3em 0.5em; border: 1px solid #ccc; border-radius: 3px; background: #fafafa; }
-.sel-footer .cmd-kind-label { font-size: 0.85em; color: #555; display: inline-flex; align-items: center; gap: 0.35em; }
-.sel-footer .cmd-kind-label select { font-family: monospace; font-size: 0.85em; padding: 0.25em 0.3em; border: 1px solid #ccc; border-radius: 3px; background: white; }
-.sel-footer .save-status { color: #4CAF50; font-size: 0.82em; display: none; }
+.sel-footer .count { font-weight: 600; color: var(--dstf-accent); }
+.sel-footer .count .hidden-hint { color: var(--dstf-text-muted); font-weight: normal; font-size: 0.9em; margin-left: 0.4em; }
+.sel-footer button { padding: 0.35em 0.8em; border: 1px solid var(--dstf-border); border-radius: 3px; background: var(--dstf-surface); cursor: pointer; font-size: 0.85em; }
+.sel-footer button:hover { background: var(--dstf-surface-hover); }
+.sel-footer button.btn-primary { background: var(--dstf-accent); color: white; border-color: var(--dstf-accent); }
+.sel-footer button.btn-primary:hover { background: var(--dstf-accent-hover); }
+.sel-footer .cmd-out { flex: 1; min-width: 16em; font-family: var(--dstf-mono); font-size: 0.8em; padding: 0.3em 0.5em; border: 1px solid var(--dstf-border); border-radius: 3px; background: var(--dstf-page); }
+.sel-footer .cmd-kind-label { font-size: 0.85em; color: var(--dstf-text-secondary); display: inline-flex; align-items: center; gap: 0.35em; }
+.sel-footer .cmd-kind-label select { font-family: var(--dstf-mono); font-size: 0.85em; padding: 0.25em 0.3em; border: 1px solid var(--dstf-border); border-radius: 3px; background: var(--dstf-surface); }
+.sel-footer .save-status { color: var(--dstf-pass-fill); font-size: 0.82em; display: none; }
 .sel-footer .save-status.shown { display: inline; }
-.sel-footer .help-link { color: #888; font-size: 0.78em; margin-left: auto; }
-.sel-footer .help-link:hover { color: #1976D2; }
+.sel-footer .help-link { color: var(--dstf-text-muted); font-size: 0.78em; margin-left: auto; }
+.sel-footer .help-link:hover { color: var(--dstf-accent); }
 /* Pad the bottom of body so the table's last row isn't hidden under the footer when it's open. */
 body.has-selection { padding-bottom: 5em; }
 </style>
@@ -151,7 +152,7 @@ body.has-selection { padding-bottom: 5em; }
 <div id="sticky-chrome">
 <h1>{{ title }}</h1>
 {% if run_metadata %}
-<div class="run-meta" style="font-size:0.8em; color:#888; margin:-4px 0 8px;">
+<div class="run-meta" style="font-size:0.8em; color: var(--dstf-text-muted); margin:-4px 0 8px;">
   <strong>{{ run_metadata.label }}</strong>{% if run_metadata.tool_version and run_metadata.tool_version != run_metadata.label %} <span title="version reported by the backend">({{ run_metadata.tool_version }})</span>{% endif %}
   {% if run_metadata.msl %}· MSL {{ run_metadata.msl }}{% endif %}
   {% if run_metadata.os %}· {{ run_metadata.os }}{% endif %}

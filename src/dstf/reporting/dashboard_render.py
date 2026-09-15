@@ -30,12 +30,14 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..backends.progress import read_status
+from .theme import css_variables
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _env = Environment(
     loader=FileSystemLoader(_TEMPLATE_DIR),
     autoescape=select_autoescape(["html"]),
 )
+_env.globals["dstf_css"] = css_variables()
 
 
 def _read_comparison_sidecar(work_dir: Path, report_dir: str) -> dict | None:
