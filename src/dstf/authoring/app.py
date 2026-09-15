@@ -538,12 +538,20 @@ class Shell:
             self._header()
         with ui.right_drawer(value=False) as self._drawer_el:
             self._drawer()
+        # Nothing here may be wider than the page: a tab strip or a panel
+        # table that overflows makes the document scroll sideways, and clicking
+        # the last tab then scrolls the test list off the left edge. The centre
+        # takes what the side columns and gaps leave; min-w-0 lets a column
+        # shrink below its content; the tabs take their column's width (Quasar
+        # then shows scroll arrows) and the panel column scrolls its own wide
+        # content. The `dstf-*` classes name the regions for the browser tests,
+        # which must not locate them by a width utility.
         with ui.row().classes("w-full no-wrap"):
-            with ui.column().classes("w-1/5"):
+            with ui.column().classes("dstf-tests w-1/5 min-w-0"):
                 self._tests()
-            with ui.column().classes("w-3/5"):
+            with ui.column().classes("dstf-centre flex-1 min-w-0"):
                 self._centre()
-            with ui.column().classes("w-1/5"):
+            with ui.column().classes("dstf-panels w-1/5 min-w-0 overflow-x-auto"):
                 self._tabs()
         with ui.footer():
             self._jobs()
@@ -853,7 +861,7 @@ class Shell:
         if not applicable:
             ui.label("nothing applies to this selection").classes("text-xs")
             return
-        with ui.tabs() as tabs:
+        with ui.tabs().classes("w-full") as tabs:
             for cap, avail in applicable:
                 tab = ui.tab(cap.label)
                 if avail is not True:

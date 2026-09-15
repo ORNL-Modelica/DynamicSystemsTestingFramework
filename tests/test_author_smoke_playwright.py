@@ -1,4 +1,4 @@
-"""The one browser test (§4.7): the real page, served by `dstf author`, in
+"""The browser tests (§4.7): the real page, served by `dstf author`, in
 Chromium.
 
 Everything else about the shell is driven by NiceGUI's in-process user
@@ -107,9 +107,9 @@ def test_the_real_page_edits_one_tolerance_and_saves_nothing(
         pending = page.get_by_role("button", name=re.compile(r"\d+ pending"))
         expect(pending).to_contain_text("0 pending", timeout=EXPECT_TIMEOUT)
 
-        # The test list is the first `w-1/5` column; its rows are buttons
+        # The test list is the `dstf-tests` column; its rows are buttons
         # named by the model's short name ("A", not "FakeLib.A").
-        tests_column = page.locator("div.w-1\\/5").first
+        tests_column = page.locator("div.dstf-tests")
         tests_column.get_by_role(
             "button", name=A.rsplit(".", 1)[-1], exact=True
         ).click()
@@ -120,7 +120,7 @@ def test_the_real_page_edits_one_tolerance_and_saves_nothing(
         # rather than `get_by_role(name=re.compile(...))`: Playwright
         # serializes a regex into the role selector delimited by slashes,
         # and the leaf's path is full of them.
-        centre = page.locator("div.w-3\\/5").first
+        centre = page.locator("div.dstf-centre")
         leaf = centre.get_by_role("button").filter(has_text="/metrics/children/0")
         expect(leaf).to_contain_text("FAIL", timeout=EXPECT_TIMEOUT)
         leaf.click()
@@ -254,7 +254,7 @@ def test_the_real_page_drags_a_tube_handle_and_a_range_bound(
         pending = page.get_by_role("button", name=re.compile(r"\d+ pending"))
         expect(pending).to_contain_text("0 pending", timeout=EXPECT_TIMEOUT)
 
-        tests_column = page.locator("div.w-1\\/5").first
+        tests_column = page.locator("div.dstf-tests")
         tests_column.get_by_role(
             "button", name=D.rsplit(".", 1)[-1], exact=True
         ).click()
@@ -304,6 +304,18 @@ def test_the_real_page_drags_a_tube_handle_and_a_range_bound(
         expect(page.get_by_text("drag a handle on the plot")).to_be_visible(
             timeout=EXPECT_TIMEOUT
         )
+        # Nothing on the page is wider than the viewport: a tab strip that
+        # overflowed made the document scroll sideways when its last tab was
+        # clicked, and the test list's checkboxes and names left the page.
+        layout = page.evaluate(
+            "() => ({scroll: document.documentElement.scrollWidth,"
+            " client: document.documentElement.clientWidth,"
+            " x: window.scrollX,"
+            " left: document.querySelector('.q-checkbox')"
+            ".getBoundingClientRect().left})"
+        )
+        assert layout["scroll"] <= layout["client"] and layout["x"] == 0, layout
+        assert layout["left"] >= 0, layout
 
         # The ring, grabbed at its EXACT centre: off-centre, plotly resizes it.
         ring = page.evaluate(_SHAPE, RING)
