@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.10+, numpy, Jinja2, NiceGUI 3.16 (`[author]`), the vendored plotly.js 2.35.0 (report) and NiceGUI's bundled plotly.js 3.1.1 (tool), pytest + pytest-asyncio (`user_simulation`), Playwright + Chromium, uv.
 
-**Revision:** this is the second text. A fresh-context review of the first found eleven sketches that failed as typed and two silent production defects the tests could not see: the scan cache's key was computed before the bundled recognizer registered, so a fresh `dstf author` never hit it (Task 9); a locked model's manifest entry arrived through the new per-result callback as "not found in discovery" and was rescored mid-job (Task 8). Also folded: a per-test report test rendering through a Jinja environment without the token global (Task 4), the figure cache test counting `lttb` calls the second decimation makes (Task 7), cache-drop tests counting the reads `compare_one` makes (Task 7), the `scan` phase never emitted for a non-Modelica source and C counted wrong (Task 8), the LTTB hoist's "identical output" claim false on collinear data (Task 5), a missing import and a missing `mkdir` (Tasks 6, 9), a wrong fixture pointer and class name (Task 8), a rescan rescoring every model (Task 9), a stale thread marking the next open ready (Tasks 6, 9), and a `done` / `rescan` order race (Task 9).
+**Revision:** this is the third text. A second review, of the first fold-in alone, found a test reading a manifest key that does not exist, a run step importing a helper the same task deletes, and a false claim about plotly keeping listeners across `newPlot` (it purges them; `axes.js` now asks the emitter, with a re-plot browser test) — folded, with seven one-line corrections. The first review: A fresh-context review of the first found eleven sketches that failed as typed and two silent production defects the tests could not see: the scan cache's key was computed before the bundled recognizer registered, so a fresh `dstf author` never hit it (Task 9); a locked model's manifest entry arrived through the new per-result callback as "not found in discovery" and was rescored mid-job (Task 8). Also folded: a per-test report test rendering through a Jinja environment without the token global (Task 4), the figure cache test counting `lttb` calls the second decimation makes (Task 7), cache-drop tests counting the reads `compare_one` makes (Task 7), the `scan` phase never emitted for a non-Modelica source and C counted wrong (Task 8), the LTTB hoist's "identical output" claim false on collinear data (Task 5), a missing import and a missing `mkdir` (Tasks 6, 9), a wrong fixture pointer and class name (Task 8), a rescan rescoring every model (Task 9), a stale thread marking the next open ready (Tasks 6, 9), and a `done` / `rescan` order race (Task 9).
 
 **Spike results this plan rests on** (run 2026-09-15 from this venv, scripts in the session scratchpad, gone):
 - **Two right-hand axes lay out side by side under both builds.** A figure from `variable_figure(_tube_view())` with `yaxis4 = {overlaying: "y", side: "right", anchor: "free", autoshift: true}` rendered under plotly.js 2.35.0 puts the `yaxis4` title 132 px right of the `yaxis3` title (`_shift` 58.25 px), both right of the plot area; under NiceGUI's plotly.js **3.1.1** (`Plotly.version` in the served page — not the 3.8.2 an earlier note recorded) `_fullLayout.yaxis4` exists with `autoshift` honoured. `automargin` on both axes keeps the titles inside the container.
@@ -41,7 +41,7 @@
 |---|---|
 | `src/dstf/figures/plotly.py` | `ERROR_AXES` (series id → axis); `_layout` emits `yaxis3` "Error [signal units]" and `yaxis4` "NRMSE [–]", both hidden, `yaxis4` free-anchored and autoshifted. |
 | `src/dstf/figures/view.py` | `decimate_view` and `_decimate_overlay` keep a `full_samples` already stamped (a decimated base view decimates again as a no-op). |
-| `src/dstf/figures/decimate.py` | `lttb` with the bucket bounds and the next-bucket means precomputed; identical output. |
+| `src/dstf/figures/decimate.py` | `lttb` with the bucket bounds and the next-bucket means precomputed; the same picks on non-degenerate data. |
 | `src/dstf/reporting/templates/axes.js` (new) | `dstfWireSecondaryAxes(gd)` / `dstfFollowSecondaryAxes(gd)`; a MutationObserver wires every `.js-plotly-plot` on the page. |
 | `src/dstf/reporting/templates/report.js` | `paintFigure` wires the axes; `setErrorOverlay` restyles traces only. |
 | `src/dstf/reporting/report_suite.py` | `INTERACTIVE_JS_PARTS = ("axes.js", "report.js")`; `axes_js_source()`; the Jinja env carries `dstf_css`. |
@@ -336,17 +336,24 @@ def test_a_legend_click_drives_the_axis_too(playwright_browser, page_path):
     if (Object.keys(update).length) Plotly.relayout(gd, update);
   }
 
+  function isWired(gd) {
+    // Plotly.newPlot on an already-plotted node purges it, which removes
+    // every listener (plotly.min.js 2.35.0: purge ends in
+    // removeAllListeners) while the node object survives — so a flag on
+    // the node would lie after a re-plot. Ask the emitter instead.
+    return !!(gd._ev && gd._ev.listenerCount && gd._ev.listenerCount('plotly_restyle') > 0);
+  }
+
   function dstfWireSecondaryAxes(gd) {
-    if (!gd || typeof gd.on !== 'function' || gd._dstfAxesWired) return;
-    gd._dstfAxesWired = true;
+    if (!gd || typeof gd.on !== 'function' || isWired(gd)) return;
     gd.on('plotly_restyle', function () { dstfFollowSecondaryAxes(gd); });
     dstfFollowSecondaryAxes(gd);
   }
 
-  // The tool creates its plot after the page is built and replaces the
-  // node on a full redraw; a node that is not yet a plot has no `on` and
-  // is skipped until Plotly adds the class. (Plotly keeps a node's event
-  // emitter across a second newPlot, so a wired node stays wired.)
+  // The tool creates its plot after the page is built and re-plots the
+  // same node when the figure's config changes (NiceGUI's element calls
+  // newPlot then, react otherwise); a node that is not yet a plot has no
+  // `on` and is skipped until Plotly adds the class.
   var observer = new MutationObserver(function () {
     document.querySelectorAll('.js-plotly-plot').forEach(dstfWireSecondaryAxes);
   });
@@ -404,7 +411,7 @@ def test_the_served_script_defines_the_axis_follow_before_the_page_script():
     assert src.index("dstfWireSecondaryAxes") < src.index("renderAllPlots")
 ```
 
-- [ ] **Step 5: Run the browser suite.** `uv run --no-sync pytest -q -m playwright tests/test_axes_js_playwright.py tests/test_interactive_report.py tests/test_interactive_figures.py` → all pass. The legend-click test is the one that fails if `axes.js` only listens to the select (it does not) — that is the state in which this guard fails.
+- [ ] **Step 5: Run the browser suite.** `uv run --no-sync pytest -q -m playwright tests/test_axes_js_playwright.py tests/test_interactive_report.py tests/test_interactive_figures.py` → all pass. The legend-click test is the one that fails if `axes.js` only listens to the select (it does not) — that is the state in which this guard fails. Add to `test_axes_js_playwright.py` one more test: call `Plotly.newPlot('p', FIG.data, FIG.layout, FIG.config)` a second time on the same node, then `dstfWireSecondaryAxes(document.getElementById('p'))`, then the legend click — the axis must still follow (a node-flag implementation fails here, because `newPlot` purges the listeners and leaves the flag).
 
 - [ ] **Step 6: Gate and commit.**
 
@@ -706,7 +713,7 @@ def jinja_env():
     return env
 ```
 
-and make `_render_template` use `template = jinja_env().get_template(template_name)`. `tests/test_interactive_figures.py::_render_with_context` (lines 111-121) builds its own `Environment` — change it to `jinja_env().get_template("interactive.html")`, or `{{ dstf_css }}` renders empty there and Step 1's report test fails on `":root {" in html`. In `dashboard_render` after `_env = Environment(...)` add `_env.globals["dstf_css"] = css_variables()` with `from .theme import css_variables`.
+and make `_render_template` use `template = jinja_env().get_template(template_name)`. `tests/test_interactive_figures.py::_render_with_context` (lines 111-121) builds its own `Environment` — change it to `jinja_env().get_template("interactive.html")` and drop its now-unused `from jinja2 import Environment, FileSystemLoader` (ruff F401), or `{{ dstf_css }}` renders empty there and Step 1's report test fails on `":root {" in html`. In `dashboard_render` after `_env = Environment(...)` add `_env.globals["dstf_css"] = css_variables()` with `from .theme import css_variables`.
 
 - [ ] **Step 5: The per-test template.** In `interactive.html` the `<style>` block starts `<style>\n{{ dstf_css }}` (autoescape is on and the block has no `<`, `>` or `&`; if a later token ever needs one, mark it `|safe` — a test in Step 1 reads the rendered page and would show `&quot;` in the stack). Then replace every literal, by this table (selectors from the current file):
 
@@ -843,7 +850,10 @@ class TestHoistedLoopIsTheSameAlgorithm:
     pick is as good as the old one: the samples lie on the line. The
     docstring on ``lttb`` says so."""
 
-    @pytest.mark.parametrize("n_in,n_out", [(11, 5), (1000, 7), (2001, 1000), (50_000, 1000), (1003, 1002)])
+    @pytest.mark.parametrize(
+        "n_in,n_out",
+        [(7, 3), (11, 5), (20, 19), (1000, 7), (2001, 1000), (50_000, 1000), (1003, 1002)],
+    )
     @pytest.mark.parametrize("seed", [0, 1, 2])
     def test_same_points_as_the_reference_loop_on_non_degenerate_data(self, n_in, n_out, seed):
         rng = np.random.default_rng(seed)
@@ -913,7 +923,7 @@ class TestHoistedLoopIsTheSameAlgorithm:
     return t[out_idx], v[out_idx]
 ```
 
-Add to `lttb`'s docstring: "Bucket means come from ``np.add.reduceat``, which sums a segment left to right where ``np.mean`` sums pairwise; the two differ by round-off, which changes a pick only where every candidate's triangle area IS round-off — collinear data — and then the other sample lies on the same line." `np.add.reduceat(t, ends)` sums `t[ends[i]:ends[i+1]]` for every `i` but the last, which sums to the array's end. `ends[i+1] == min(b[i+2], n_in-1)` and `next_ends[i] == min(b[i+2], n_in)` differ only when `b[i+2] >= n_in - 1`, i.e. for the last interior bucket, whose reduceat segment runs to `n_in` anyway; and a segment with `ends[i] >= ends[i+1]` returns `t[ends[i]]`, which `has_next` masks out. The regression test in Step 1 is what says this index reasoning holds on non-degenerate data — a mismatch fails it by index; the review checked 60 non-degenerate cases including (1003, 1002), (20, 19) and (7, 3) with no difference.
+Add to `lttb`'s docstring: "Bucket means come from ``np.add.reduceat``, which sums a segment left to right where ``np.mean`` sums pairwise; the two differ by round-off, which changes a pick only where every candidate's triangle area IS round-off — collinear data — and then the other sample lies on the same line." `np.add.reduceat(t, ends)` sums `t[ends[i]:ends[i+1]]` for every `i` but the last, which sums to the array's end. `ends[i+1] == min(b[i+2], n_in-1)` and `next_ends[i] == min(b[i+2], n_in)` differ only when `b[i+2] >= n_in - 1`, i.e. for the last interior bucket, whose reduceat segment runs to `n_in` anyway; and a segment with `ends[i] >= ends[i+1]` returns `t[ends[i]]`, which `has_next` masks out. The regression test in Step 1 is what says this index reasoning holds on non-degenerate data — a mismatch fails it by index; the parametrize covers the boundary shapes the review probed — (7, 3), (20, 19), (1003, 1002) — with no difference found.
 
 - [ ] **Step 4: Run.** `uv run --no-sync pytest tests/test_decimate.py tests/test_figures.py tests/test_figure_goldens.py -q` → pass. Re-run the timing line → record the number in the commit message (expected: the per-trace cost drops by the two `np.mean` calls and the float conversions; well under 13 ms, still a Python loop).
 
@@ -1128,8 +1138,12 @@ class TestReadCache:
         session.figure(A, "x")
         # The base — actual, reference, three error series (FakeLib has no
         # overlays) — is decimated on the first call only; a second call
-        # decimates the leaves' Series primitives and nothing else. Bands go
-        # through decimate.py's own `lttb`, which this spy does not see.
+        # decimates the leaves' Series primitives and nothing else. No
+        # bundled metric emits a Series (nrmse emits no geometry; tube is a
+        # Band plus Markers; Bands go through decimate.py's own `lttb`,
+        # which this spy does not see), so `leaf_series` is 0 here and the
+        # guard is "5, then 0"; per-call leaf decimation is guarded by
+        # `test_the_tools_figure_rings_every_marker_handle`.
         from dstf.comparison.geometry import Series
 
         leaf_series = sum(
@@ -1274,12 +1288,12 @@ In `__init__`: `self._reads: dict[str, _ModelReads] = {}`. Add:
         or it is scored green for the seconds before the batch verdict."""
         cfg, work = _project(tmp_path)
         # Record A's last run as failed in the manifest _project wrote. The
-        # per-test entries live under the key BatchManifest.load reads as
-        # `.manifest` (src/dstf/storage/batch_manifest.py); A's result.json
-        # still reads as a success.
+        # file IS the test-key map (BatchManifest.save writes `.manifest`
+        # at the top level, src/dstf/storage/batch_manifest.py:69); A's
+        # result.json still reads as a success.
         path = work / "batch_manifest.json"
         data = json.loads(path.read_text(encoding="utf-8"))
-        for entry in data["manifest"].values():
+        for entry in data.values():
             if entry["model_id"] == A:
                 entry["last_run_status"] = "failed"
         path.write_text(json.dumps(data), encoding="utf-8")
@@ -1390,7 +1404,7 @@ def _apply_run_verdicts(
         _force_failed(results.get(model_id), status)
 ```
 
-(Move the old docstring's reasoning onto `run_verdicts`; delete `_apply_status_verdicts`.) `read_results(self, manifests, tests, on_result=None)`: after each `results[model_id] = ...` assignment — the two early failures and the pool loop — call `if on_result is not None: on_result(model_id, results[model_id])`. `read_last_results(self, tests, on_result=None)`:
+(Move the old docstring's reasoning onto `run_verdicts`; delete `_apply_status_verdicts`. `tests/test_compare_accept.py:19` imports it and six tests at lines 36-76 call `_apply_status_verdicts(tmp_path, results)`: change each call to `_apply_run_verdicts(tmp_path, [], results)` — with no manifests, `run_verdicts` falls entirely to `status.json`, the behaviour those tests pin — and drop the name from the import.) `read_results(self, manifests, tests, on_result=None)`: after each `results[model_id] = ...` assignment — the two early failures and the pool loop — call `if on_result is not None: on_result(model_id, results[model_id])`. `read_last_results(self, tests, on_result=None)`:
 
 ```python
         manifests = [BatchManifest.load(p) for p in manifest_paths]
@@ -1479,7 +1493,7 @@ def _apply_run_verdicts(
 
 - [ ] **Step 6: Run.** `uv run --no-sync pytest tests/test_session.py tests/test_compare_accept.py tests/test_discovery.py tests/test_shell.py tests/test_accept_and_rerun.py tests/test_cli.py -q` → pass. `test_open_emits_spec_before_results` still holds (`spec` is emitted after the merge, before the reload); `test_a_reload_during_a_job_keeps_the_locked_model_as_it_was` is the guard for the `locked` return in `on_result`.
 
-- [ ] **Step 7: Gate and commit.** `git commit -F msg -- src/dstf/backends/base.py src/dstf/discovery/test_registry.py src/dstf/authoring/session.py tests/test_discovery.py tests/test_session.py`. Message: `author: the Session reports its phases — scan progress, each result scored as it is read, done — as loading events`.
+- [ ] **Step 7: Gate and commit.** `git commit -F msg -- src/dstf/backends/base.py src/dstf/discovery/test_registry.py src/dstf/authoring/session.py tests/test_discovery.py tests/test_session.py tests/test_compare_accept.py`. Message: `author: the Session reports its phases — scan progress, each result scored as it is read, done — as loading events`.
 
 ---
 
@@ -1812,7 +1826,7 @@ def store_scan(config: Config, scanned: dict[str, TestModel]) -> Path | None:
 
 (`Config.recognizers` entries: check the attribute that names a recognizer — `r.name` per `test_registry.py:190-192`; `r.applies_to` is what `scan_source_tests` reads.)
 
-- [ ] **Step 4: The Session.** `self.rescan_done = threading.Event()` in `__init__` (never set there). In `open`, the scan becomes:
+- [ ] **Step 4: The Session.** `self.rescan_done = threading.Event()` in `__init__` (never set there). In `open`, the scan becomes the block below — Task 8's unconditional `self._emit("loading", phase="scan", done=0, total=0)` stays ABOVE it, so a cached open still announces "scanning…" first:
 
 ```python
         cached = load_scan(config)
@@ -1866,7 +1880,7 @@ and
                 finally:
                     done.set()
 
-            self._post(failed)
+            self._post_or_run(failed)
             return
         changed_models = {
             m for m in set(fresh) | set(cached) if fresh.get(m) != cached.get(m)
@@ -1881,12 +1895,24 @@ and
                     project.scanned = fresh
                     # Only what changed is rescored: a one-file edit over
                     # TRANSFORM must not run 331 comparisons on the UI loop.
-                    self._rebuild_tests(changed_models)
+                    # A model a running job has locked is left to that job's
+                    # completion reload, as `stage` and `rescore` leave it.
+                    locked = self.running.models if self.running is not None else frozenset()
+                    self._rebuild_tests(changed_models - locked)
                 self._emit("loading", phase="rescan", changed=bool(changed_models))
             finally:
                 done.set()
 
-        self._post(apply)
+        self._post_or_run(apply)
+
+    def _post_or_run(self, fn: Callable[[], None]) -> None:
+        """Hand ``fn`` to the UI loop; when the loop is gone (``post``
+        raises — the case ``_start_job`` handles the same way) run it here,
+        so a waiter on the Event is never left hanging."""
+        try:
+            self._post(fn)
+        except BaseException:
+            fn()
 ```
 
 Imports: `from ..discovery.scan_cache import load_scan, store_scan`. `_rebuild_tests(models)` re-merges every test (cheap) and rescores `models` plus any model the merge newly names, exactly as a `reload` does; a pending op on a changed model is re-applied by the merge (`self.spec.effective()`), as after a Save.
