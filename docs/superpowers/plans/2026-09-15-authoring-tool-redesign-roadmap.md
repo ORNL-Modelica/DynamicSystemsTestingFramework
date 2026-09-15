@@ -109,6 +109,32 @@ them) and so opens from the cache and rescans in the background.
 4. A warm `Session.open` over TRANSFORM does not parse `.mo` files; a source
    edit is picked up by the background rescan without a restart.
 
+**Status (built 2026-09-15, not yet gated).** Tasks 0–2 and 4–10 landed, with
+their fresh-context reviews' test and wording folds. Held, each for its own
+correction text and review:
+- Task 3 — the tool's page loading `axes.js`: its wired check counts any
+  `plotly_restyle` listener, and NiceGUI registers its own first, so the axes
+  never follow in the tool (predicate 1's tool half). `axes.js` also does not
+  follow a `Plotly.react`, which NiceGUI uses when the config is unchanged.
+- The Session's cached base traces go stale when a rescore changes which
+  variables are scored (a staged edit, or the background rescan).
+- The background rescan rescores a model added since the cache against the
+  result read before it (SIM_FAIL where a cold open says NO_REF).
+- A failed scan-cache write fails the open, or stops the rescan without
+  setting `rescan_done`.
+- A test added since the last run is scored after the per-result loop and
+  never announced; a scoring exception mid-read leaves the results partial.
+- Predicate 2's tool half: the tool's body keeps Quasar's font stack (it ends
+  in sans-serif, but not from the token).
+
+Gate over TRANSFORM so far: the report's two error axes follow the select and
+the legend, both titles laid out side by side without overlap, body stack
+ending in sans-serif; the tool's first HTTP 200 at 48 s cold and 24 s warm;
+the rescan over 331 models reports no change and leaves the cache file as it
+was. A click in the current shell takes 1.2 s (the first 2.5 s) while
+`Session.figure` takes 72 ms and then under 1 ms, so the rest of the click is
+the shell's, which sub-project 2 replaces.
+
 ## 2. The Suite page and the new shell
 
 **Goal.** Brief §3.2 "two pages" and §3.3, §3.8: the new shell (header per
