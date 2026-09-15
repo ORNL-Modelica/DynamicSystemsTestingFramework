@@ -15,6 +15,7 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
 
+
 def _fixture_context() -> dict:
     """A minimal render context: one variable, one tube leaf, no figures yet.
 
