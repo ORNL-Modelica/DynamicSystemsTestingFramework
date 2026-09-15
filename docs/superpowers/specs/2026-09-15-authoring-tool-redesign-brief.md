@@ -359,6 +359,36 @@ figure layer's colours. The owner ruled:
   times), and a glob-named criterion (`pipe.T[*]`) scoring every index under
   one leaf, if the plan finds the spec's leaves accept globs.
 
+### 3.10 Rulings on the three points the plan was to settle (2026-09-15)
+
+Ruled by the owner before the implementation plan, on a recommendation
+whose reasoning is recorded here so the plan does not reopen them:
+
+- **Plot layout persists as an optional `plots` key per test in
+  `test_spec.json`.** Read by both tiers, ignored by scoring; absent means
+  one plot per tracked variable. Why: "both tiers draw the same plots" is
+  the requirement, and only the spec is a file the report already reads; a
+  sidecar is a second file to travel and to find, and browser storage rules
+  the report out. Additive: old files stay valid, and the writer never omits
+  the key once set. Shape: `{"kind": "time", "series": [{"var": ...}, ...]}`
+  per plot; `kind` reserved for later plot kinds, `series` entries later grow
+  an expression and unit label.
+- **Glob variables expand at save time; leaves stay literal.** The drawer's
+  folded row (`pipe.T[1..20]`, a slice field) writes one concrete leaf per
+  index into the spec; the tool shows them folded. Why: a glob leaf changes
+  what is scored, which is registry-gated with negative tests (mind 12) and a
+  scoring sub-project of its own; the redesign is a layout project. A resized
+  array is re-expanded from the same folded row. A true glob leaf stays
+  deferred (§5).
+- **`theme` is a name from a bundled set** (`"theme": "default"` or
+  `"dark"`), switchable for the session in the tool. Why: extracting one
+  shared stylesheet with the DESIGN.md tokens as variables is the whole
+  mechanism, and a second theme is one more file; a user-authored theme file
+  would make the variable names a documented surface with a path rule and a
+  CSS-to-plot-template derivation, and has no asker yet. A path accepted
+  where a name is accepted is the additive extension if one appears. Inline
+  colour overrides in `testing.json` are not built in any version.
+
 ---
 
 ## 4. The design pass
