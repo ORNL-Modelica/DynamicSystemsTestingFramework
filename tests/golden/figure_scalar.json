@@ -61,7 +61,7 @@
       "id": "error/nrmse",
       "n": 200,
       "xaxis": null,
-      "yaxis": "y3"
+      "yaxis": "y4"
     }
   ],
   "shapes": [
@@ -86,6 +86,7 @@
     "uirevision",
     "xaxis",
     "yaxis",
-    "yaxis3"
+    "yaxis3",
+    "yaxis4"
   ]
 }

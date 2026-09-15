@@ -250,16 +250,38 @@ class TestFigure:
         )
         assert window["xref"] == "x2" and window["yref"] == "paper"
 
-    def test_error_series_ride_on_a_right_axis_hidden_by_default(self):
+    def test_error_series_ride_on_two_right_axes_hidden_by_default(self):
+        """Brief §3.4: one labelled right axis per unit family — signed and
+        absolute error in signal units, per-point NRMSE dimensionless —
+        both laid out hidden until a series on them is shown (axes.js)."""
         fig = variable_figure(_tube_view())
         err = [tr for tr in fig["data"] if tr["meta"].get("kind") == "error"]
-        assert [tr["meta"]["id"] for tr in err] == [
-            "error/signed",
-            "error/abs",
-            "error/nrmse",
-        ]
-        assert all(tr["visible"] == "legendonly" and tr["yaxis"] == "y3" for tr in err)
-        assert fig["layout"]["yaxis3"]["overlaying"] == "y"
+        assert {tr["meta"]["id"]: tr["yaxis"] for tr in err} == {
+            "error/signed": "y3",
+            "error/abs": "y3",
+            "error/nrmse": "y4",
+        }
+        assert all(tr["visible"] == "legendonly" for tr in err)
+        layout = fig["layout"]
+        for key, title in (
+            ("yaxis3", "Error [signal units]"),
+            ("yaxis4", "NRMSE [–]"),
+        ):
+            axis = layout[key]
+            assert axis["title"]["text"] == title
+            assert axis["overlaying"] == "y" and axis["side"] == "right"
+            assert axis["visible"] is False and axis["zeroline"] is False
+            assert axis["automargin"] is True
+        # The second right axis floats past the first (spike: 58 px under
+        # plotly.js 2.35.0), instead of drawing over it.
+        assert layout["yaxis4"]["anchor"] == "free"
+        assert layout["yaxis4"]["autoshift"] is True
+        assert "anchor" not in layout["yaxis3"]
+
+    def test_a_view_without_errors_lays_out_no_secondary_axis(self):
+        t = np.linspace(0.0, 1.0, 5)
+        fig = variable_figure(build_view("x", act_time=t, act_values=t))
+        assert "yaxis3" not in fig["layout"] and "yaxis4" not in fig["layout"]
 
     def test_budget_decimates_inside_variable_figure(self):
         fig = variable_figure(_tube_view(n=5001), max_samples=200)

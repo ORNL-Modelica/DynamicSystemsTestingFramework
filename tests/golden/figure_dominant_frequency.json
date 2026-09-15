@@ -88,7 +88,7 @@
       "id": "error/nrmse",
       "n": 200,
       "xaxis": null,
-      "yaxis": "y3"
+      "yaxis": "y4"
     }
   ],
   "shapes": [
@@ -115,6 +115,7 @@
     "xaxis2",
     "yaxis",
     "yaxis2",
-    "yaxis3"
+    "yaxis3",
+    "yaxis4"
   ]
 }

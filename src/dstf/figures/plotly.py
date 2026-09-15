@@ -47,6 +47,10 @@ MUTED = "rgba(117,117,117,0.35)"
 WINDOW_FILL = "rgba(33,150,243,0.08)"
 WINDOW_LINE = "rgba(33,150,243,0.4)"
 ERROR = "#f44336"
+#: Which right-hand axis an error series rides on — one axis per unit family
+#: (brief §3.4): signal units for the signed and absolute error, dimensionless
+#: for the per-point NRMSE. Unknown ids ride on the signal-units axis.
+ERROR_AXES = {"error/signed": "y3", "error/abs": "y3", "error/nrmse": "y4"}
 
 #: Vertical extent of the two panels when a spectrum is present.
 TIME_DOMAIN = (0.45, 1.0)
@@ -469,7 +473,7 @@ def _error_trace(s: Series, ctx: _Ctx) -> dict:
         "name": _label(s.id),
         "line": {"color": ERROR, "width": 1},
         "opacity": 0.6,
-        "yaxis": "y3",
+        "yaxis": ERROR_AXES.get(s.id, "y3"),
         "visible": "legendonly",
         "hovertemplate": f"{_label(s.id)}: %{{y:.4g}}<extra></extra>",
         "meta": {
@@ -517,22 +521,35 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
             "anchor": "x2",
         }
     if has_errors:
-        layout["yaxis3"] = {
-            "title": {"text": "Error", "font": {"color": ERROR, "size": 10}},
-            "tickformat": ".4g",
-            "nticks": 4,
-            "automargin": True,
-            "overlaying": "y",
-            "side": "right",
-            "showgrid": False,
-            "tickfont": {"color": ERROR, "size": 10},
-            # Hidden until an error series is shown: a laid-out axis with
-            # only legend-only traces gets a placeholder range and draws
-            # its zero line as a stray black rule across the plot.
-            "zeroline": False,
-            "visible": False,
+        # Both axes are laid out hidden: a laid-out axis with only
+        # legend-only traces gets a placeholder range and draws its zero
+        # line as a stray black rule across the plot. templates/axes.js
+        # shows an axis while a series on it is visible, in both tiers.
+        layout["yaxis3"] = _secondary_axis("Error [signal units]")
+        layout["yaxis4"] = {
+            **_secondary_axis("NRMSE [–]"),
+            # A second right axis anchored to x would draw over the first;
+            # free + autoshift stacks it outward (plotly.js >= 2.25; the
+            # report vendors 2.35.0, NiceGUI 3.16 bundles 3.1.1).
+            "anchor": "free",
+            "autoshift": True,
         }
     return layout
+
+
+def _secondary_axis(title: str) -> dict:
+    return {
+        "title": {"text": title, "font": {"color": ERROR, "size": 10}},
+        "tickformat": ".4g",
+        "nticks": 4,
+        "automargin": True,
+        "overlaying": "y",
+        "side": "right",
+        "showgrid": False,
+        "tickfont": {"color": ERROR, "size": 10},
+        "zeroline": False,
+        "visible": False,
+    }
 
 
 def variable_figure(
