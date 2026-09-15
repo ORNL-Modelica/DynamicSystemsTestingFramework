@@ -155,6 +155,22 @@ class TestOpen:
         Session().open(cfg, work_dir=work)
         assert _snapshot(work) == before
 
+    def test_open_warms_the_overlay_index_off_the_calling_thread(self, tmp_path):
+        """Brief §2.2: the first click paid 3 s for the sibling-backend
+        index. It is built once, right after open, on its own thread."""
+        from dstf.reporting import overlay_loader as ol
+
+        cfg, work = _project(tmp_path)
+        ol._sibling_backend_index.cache_clear()
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.overlay_index_ready.wait(5.0)
+        before = ol._sibling_backend_index.cache_info()
+        s.view(A, "x")
+        after = ol._sibling_backend_index.cache_info()
+        assert before.misses == 1
+        assert after.misses == 1 and after.hits == before.hits + 1
+
     def test_the_recorded_backend_wins_over_the_config(self, tmp_path):
         cfg, work = _project(tmp_path)
         (work / "status.json").write_text(

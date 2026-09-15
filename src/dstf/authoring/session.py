@@ -146,6 +146,7 @@ class Session:
         self.notices: list[str] = []
         self._post = post or (lambda fn: fn())
         self._listeners: dict[str, list[Listener]] = {}
+        self.overlay_index_ready = threading.Event()
 
     # -- project -----------------------------------------------------------
 
@@ -212,6 +213,24 @@ class Session:
         self.last_job = None
         self._emit("spec", models={t.model_id for t in tests})
         self._reload_results()
+        ready = threading.Event()
+        self.overlay_index_ready = ready
+        threading.Thread(
+            target=self._warm_overlay_index,
+            args=(self.project.config, ready),
+            name="dstf-overlay-index",
+            daemon=True,
+        ).start()
+
+    def _warm_overlay_index(self, config: Config, ready: threading.Event) -> None:
+        from ..reporting.overlay_loader import warm_sibling_backend_index
+
+        try:
+            warm_sibling_backend_index(config)
+        except Exception:  # a broken sibling file must not kill the thread silently
+            logger.exception("warming the sibling-backend overlay index failed")
+        finally:
+            ready.set()
 
     def close(self) -> None:
         self._refuse_if_busy()

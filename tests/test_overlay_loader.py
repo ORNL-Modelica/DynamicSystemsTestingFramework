@@ -8,7 +8,9 @@ report render.
 
 from __future__ import annotations
 
+import functools
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -411,6 +413,54 @@ class TestSiblingBackendOverlays:
         )
 
         _sibling_backend_index.cache_clear()
+
+    def test_warm_builds_the_index_once_and_a_later_load_hits_the_cache(self, tmp_path):
+        from dstf.reporting.overlay_loader import (
+            _sibling_backend_index,
+            load_sibling_backend_overlays,
+            warm_sibling_backend_index,
+        )
+
+        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
+        config = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
+        _sibling_backend_index.cache_clear()
+        warm_sibling_backend_index(config)
+        after_warm = _sibling_backend_index.cache_info()
+        load_sibling_backend_overlays(config, "M")
+        after_load = _sibling_backend_index.cache_info()
+        assert after_warm.misses == 1 and after_warm.hits == 0
+        assert after_load.misses == 1 and after_load.hits == 1
+
+    def test_two_threads_warming_at_once_build_the_index_once(
+        self, tmp_path, monkeypatch
+    ):
+        import threading
+
+        from dstf.reporting import overlay_loader as ol
+
+        _write_ref(tmp_path / "Dymola" / "windows", "ref_0001", "M")
+        config = _FakeConfigForSibling(tmp_path, "OpenModelica", "linux")
+        ol._sibling_backend_index.cache_clear()
+        builds = []
+        real = ol._sibling_backend_index.__wrapped__
+
+        def slow(*args):
+            builds.append(threading.current_thread().name)
+            time.sleep(0.2)
+            return real(*args)
+
+        monkeypatch.setattr(
+            ol, "_sibling_backend_index", functools.lru_cache(maxsize=8)(slow)
+        )
+        threads = [
+            threading.Thread(target=ol.warm_sibling_backend_index, args=(config,))
+            for _ in range(3)
+        ]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        assert len(builds) == 1
 
     def test_discovers_peer_backend_ref(self, tmp_path):
         from dstf.reporting.overlay_loader import (

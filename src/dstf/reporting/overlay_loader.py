@@ -47,6 +47,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -135,6 +136,38 @@ def load_overlays(store, model_id: str, config=None) -> list[Overlay]:
     return overlays
 
 
+_INDEX_LOCK = threading.Lock()
+
+
+def index_args(config) -> tuple[str, str, str] | None:
+    """The three values the sibling index is keyed by, or None when the
+    config names no reference root."""
+    reference_root = getattr(config, "reference_root", None)
+    if reference_root is None:
+        return None
+    return (
+        str(reference_root),
+        getattr(config, "backend", None) or "",
+        getattr(config, "os_name", None) or "",
+    )
+
+
+def sibling_backend_index(reference_root: str, current_backend: str, current_os: str):
+    """The cached index, built under a lock: ``lru_cache`` does not
+    serialise concurrent first calls, and the authoring Session warms the
+    index on a thread while a click may ask for it."""
+    with _INDEX_LOCK:
+        return _sibling_backend_index(reference_root, current_backend, current_os)
+
+
+def warm_sibling_backend_index(config) -> None:
+    """Build the index for ``config`` now (the tool calls this right after
+    open, off the UI thread), so no click pays for it."""
+    args = index_args(config)
+    if args is not None:
+        sibling_backend_index(*args)
+
+
 def load_sibling_backend_overlays(config, model_id: str) -> list[Overlay]:
     """Find peer-backend references for ``model_id`` and render them as overlays.
 
@@ -146,18 +179,10 @@ def load_sibling_backend_overlays(config, model_id: str) -> list[Overlay]:
     (missing root, unreadable ref, obsolete status) is silently skipped —
     this path must never break a report.
     """
-    if config is None:
+    args = index_args(config) if config is not None else None
+    if args is None:
         return []
-    reference_root = getattr(config, "reference_root", None)
-    if reference_root is None:
-        return []
-    current_backend = getattr(config, "backend", None) or ""
-    current_os = getattr(config, "os_name", None) or ""
-    index = _sibling_backend_index(
-        str(reference_root),
-        current_backend,
-        current_os,
-    )
+    index = sibling_backend_index(*args)
     matches = index.get(model_id, ())
     overlays: list[Overlay] = []
     for ref in matches:
