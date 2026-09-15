@@ -1402,3 +1402,47 @@ planning.
   - `Session.open` builds its reading backend with `persistent=False`; the
     Rerun job builds its own persistent-preferring one. Two backend instances
     per project is the v1 shape.
+
+- **After on-plot editing (2026-09-14), follow-ups** — sub-project 6 of the
+  two-tier split shipped (the editable figure, `edit_handle` on the
+  descriptor, `columns` on the Config list fields, the hook's per-shape
+  payload contract, the in-place centre figure, panels that follow the spec,
+  Edit on plot). None blocks v1:
+  - Tolerance boxes and windows (`points/box`, `peaks/window`,
+    `events/window`) are drawn as draggable shapes but refused: resizing a
+    tolerance on the plot is the natural next handle.
+  - One process, one browser tab: the in-place redraw and the figure hook
+    follow the last-built plot, so a second tab's centre does not redraw in
+    place and a drag there resolves shape indices against the other tab's
+    figure.
+  - The hook resolves a shape index against the figure the server last sent;
+    a drag released between an `update_figure` that changed the shape list
+    and the browser applying it can name the wrong shape, and that edit
+    stays staged (the snap-back only corrects the picture).
+  - Overlapping shapes steal each other's drags — the later shape in
+    `layout.shapes` wins: two rings within ~14 px, or a `scalar/max` line at
+    a `range/max` line's value. Nothing tells the user which one moved.
+  - Every edit rebuilds the other capabilities' panels: Edit on plot's tables
+    measured 13 ms (6 leaves × 2 rows), 212 ms (20 × 10), 2.4 s (60 × 30) per
+    rebuild, and Accept reads the batch manifest each time. A job that
+    finishes while a field in another capability is being typed in rebuilds
+    it.
+  - The pixel-scale no-move tolerance uses the full reference span, not the
+    leaf's window, so deep zoom into a narrow window brings it closer to a
+    pixel; `Add row` midpoints are not rounded to 12 significant digits as
+    drag writes are; a non-numeric value in a number column of a table is
+    not refused.
+  - After Edit tree removes a child, a stale drag id could resolve to the
+    leaf that shifted into its path when that leaf has the same metric (a
+    wrap is refused safely).
+  - A structural Edit tree action leaves the selection's leaf path naming
+    what is now a combinator; Edit criteria then says the leaf is not in the
+    scored tree rather than following the leaf.
+  - The report vendors plotly.js 2.35.0 while NiceGUI bundles 3.8.2; only the
+    tool's figure is editable, so nothing depends on the drift yet.
+  - The committed browser test compares both axis ranges after an x-only
+    zoom; that holds only because its band edit does not grow the data's y
+    extent (an x-only zoom leaves y on autorange).
+  - `docs/extensibility.md` still describes the interactive report's live
+    re-scoring and add-leaf dropdown, and `docs/patterns.md` future editing
+    through JS templates — both predate the split.
