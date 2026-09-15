@@ -30,10 +30,13 @@ def lttb(
     when ``n_out < 3`` (the algorithm requires at least first, last, and
     one interior bucket). Empty inputs return empty outputs.
 
-    Bucket means come from ``np.add.reduceat``, which sums a segment left to
-    right where ``np.mean`` sums pairwise; the two differ by round-off, which
-    changes a pick only where every candidate's triangle area IS round-off —
-    collinear data — and then the other sample lies on the same line.
+    Bucket means come from ``np.add.reduceat``, which sums a segment in a
+    different order than ``np.mean``; the two differ by round-off. That
+    changes a pick only where candidate areas tie up to round-off: collinear
+    runs (every area is round-off, the other sample lies on the same line)
+    and equal-area candidates on stepped or boolean signals over a uniform
+    grid (the tie breaks to the other plateau). Either pick is a valid LTTB
+    choice of equal area; the difference is in the drawing, not the data.
     """
     n_in = len(time)
     if n_in == 0:

@@ -149,13 +149,18 @@ def _lttb_reference(time, values, n_out):
 
 
 class TestHoistedLoopIsTheSameAlgorithm:
-    """On non-degenerate data the hoisted loop picks the same points. On
-    COLLINEAR data every triangle area is round-off noise and the argmax
-    may land on a different sample of the same line — ``np.add.reduceat``
-    does not sum pairwise as ``np.mean`` does (review measured 1.8e-12
-    differences and 411 of 1000 flipped picks on ``v = 3t + 1``). That
-    pick is as good as the old one: the samples lie on the line. The
-    docstring on ``lttb`` says so."""
+    """Where candidate areas do not tie, the hoisted loop picks the same
+    points. Where they tie up to round-off the argmax may break the tie
+    differently — ``np.add.reduceat`` and ``np.mean`` sum in a different
+    order: on COLLINEAR data (review measured 1.8e-12 differences and 411 of
+    1000 flipped picks on ``v = 3t + 1``) and on stepped or boolean signals
+    over a uniform grid (``t = linspace(0, 100, 14)``, ``v = arange(14) >= 9``,
+    ``n_out = 6`` picks the other plateau). Either pick has the same area.
+    The docstring on ``lttb`` says so. ``(51, 13)`` is the shape where the
+    last next-bucket holds two points (``(n_out - 2) * bucket_size`` rounds
+    below ``n_in - 2``) and the last interior bucket has several candidates:
+    a ``next_ends`` clipped to ``n_in - 1`` fails there and nowhere else in
+    this list."""
 
     @pytest.mark.parametrize(
         "n_in,n_out",
@@ -167,6 +172,7 @@ class TestHoistedLoopIsTheSameAlgorithm:
             (2001, 1000),
             (50_000, 1000),
             (1003, 1002),
+            (51, 13),
         ],
     )
     @pytest.mark.parametrize("seed", [0, 1, 2])

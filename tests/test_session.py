@@ -1226,6 +1226,68 @@ class TestReadCache:
         assert leaf  # the base traces are still drawn
         assert session.comparisons[A].passed is True  # the loosened verdict
 
+    def test_the_cached_figure_is_the_one_shot_figure_under_decimation(self, tmp_path):
+        """The cache must draw exactly what one uncached ``variable_figure``
+        of the view would, before and after a staged edit moves a handle —
+        with a budget small enough that every trace is decimated, leaves
+        whose geometry is decimated, and a companion overlay. Caching the
+        leaves with the base, or letting the leaves-only view's zero
+        "act"/"ref" counts win the merge, both fail here."""
+        from dstf.figures.plotly import variable_figure
+
+        cfg, work = _project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        csv = tmp_path / "companion.csv"
+        csv.write_text(
+            "time,x\n" + "".join(f"{i / 40},{0.9 * i / 40}\n" for i in range(41)),
+            encoding="utf-8",
+        )
+        s.project.store.add_companion(A, "c1", csv)
+        s._reload_results()
+        s.project.config.max_embedded_samples = 3
+        tree = {
+            "combinator": "and",
+            "children": [
+                {
+                    "metric": "tube",
+                    "variable": "x",
+                    "tube_width_mode": "band",
+                    "tube_points": [
+                        {"time": 0.5, "upper": 0.1, "lower": 0.2},
+                        {"time": 0.9, "upper": 0.1, "lower": 0.1},
+                    ],
+                },
+                {
+                    "metric": "points",
+                    "variable": "x",
+                    "points": [
+                        {"time": 0.25, "tolerance": 0.05},
+                        {"time": 0.75, "value": 0.75, "tolerance": 0.05},
+                    ],
+                },
+                {
+                    "metric": "range",
+                    "variable": "x",
+                    "min_value": -0.5,
+                    "max_value": 2.0,
+                },
+            ],
+        }
+
+        def one_shot() -> str:
+            fig = variable_figure(s.view(A, "x"), 3, editable=True)
+            return json.dumps(fig, sort_keys=True, default=str)
+
+        s.stage([PatchOp(A, "add", "/metrics", tree)])
+        first = json.dumps(s.figure(A, "x"), sort_keys=True, default=str)
+        assert "c1" in first  # the companion overlay is drawn
+        assert first == one_shot()
+        s.stage([PatchOp(A, "replace", "/metrics/children/0/tube_points/0/upper", 0.3)])
+        second = json.dumps(s.figure(A, "x"), sort_keys=True, default=str)
+        assert second == one_shot()
+        assert second != first
+
     def test_close_drops_every_cached_read(self, session):
         session.view(A, "x")
         session.close()

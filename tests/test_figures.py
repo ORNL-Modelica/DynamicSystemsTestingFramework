@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from dstf.comparison.algorithms import (
@@ -14,7 +16,7 @@ from dstf.comparison.geometry import Band, Box, HLine, Marker, Window
 from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
 from dstf.figures.decimate import decimate_band
 from dstf.figures.plotly import variable_figure
-from dstf.figures.view import build_view, decimate_view
+from dstf.figures.view import OverlayView, build_view, decimate_view
 
 
 def _stamped(vc, path="/metrics/children/0"):
@@ -80,11 +82,20 @@ class TestView:
     def test_decimating_an_already_decimated_view_keeps_the_original_counts(self):
         """The Session caches a decimated base view and decimates it again
         with the leaves; the banner must still say 2001, not 100."""
-        once = decimate_view(_tube_view(n=2001), 100)
+        base = _tube_view(n=2001)
+        overlay = OverlayView(
+            name="prev",
+            role="companion",
+            kind=None,
+            time=base.act_time,
+            values=base.act_values,
+        )
+        once = decimate_view(replace(base, overlays=(overlay,)), 100)
         twice = decimate_view(once, 100)
         assert twice.full_samples["act"] == 2001
         assert twice.full_samples["ref"] == 2001
         assert all(twice.full_samples[s.id] == 2001 for s in twice.errors)
+        assert twice.overlays[0].full_samples == 2001
         np.testing.assert_array_equal(twice.act_time, once.act_time)
 
     def test_decimate_band_reads_lower_at_the_kept_nodes(self):
