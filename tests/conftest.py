@@ -200,9 +200,12 @@ def _scan_cache_home(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _join_session_threads():
+def _join_session_threads(_scan_cache_home):
     """Join every Session background thread a test left running — the
-    overlay-index warm and the background rescan (``_SESSION_THREADS``)."""
+    overlay-index warm and the background rescan (``_SESSION_THREADS``).
+    Depends on ``_scan_cache_home`` so it tears down FIRST: a rescan still
+    running when the redirect is undone would store its scan under the real
+    ``XDG_CACHE_HOME``."""
     yield
     import threading
 
