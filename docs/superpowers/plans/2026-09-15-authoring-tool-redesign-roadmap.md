@@ -43,8 +43,8 @@ queue. Between those, the visible work follows the brief's own sequence
   `uv run pytest -q -m playwright`; the browser tests RUN (the venv carries
   `[author]` and Playwright: `uv sync --extra dev --extra fmpy --extra om
   --extra author --locked --inexact`, then `uv pip install pytest-playwright`
-  if `import playwright` fails — an `--inexact`-less sync prunes both, brief
-  DSTF-032 #5). While agents share the venv, `uv run --no-sync`.
+  if `import playwright` fails — an `--inexact`-less sync prunes both). While
+  agents share the venv, `uv run --no-sync`.
 - Commits by explicit path (`git commit -F <msgfile> -- <paths>`), never bare,
   never `--amend`; nothing pushed; the push is held until the redesign lands
   (brief §3.1). An isolated worktree is created FROM `v1.0-prep`, never from
