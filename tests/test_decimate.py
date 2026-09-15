@@ -109,3 +109,83 @@ class TestDecimatePair:
         t_out, v_out = decimate_pair(t, v, 100)
         assert t_out == t
         assert v_out == v
+
+
+def _lttb_reference(time, values, n_out):
+    """The loop as shipped before the hoist, kept verbatim as the oracle."""
+    n_in = len(time)
+    t = np.asarray(time, dtype=np.float64)
+    v = np.asarray(values, dtype=np.float64)
+    bucket_size = (n_in - 2) / (n_out - 2)
+    out_idx = np.empty(n_out, dtype=np.int64)
+    out_idx[0] = 0
+    out_idx[-1] = n_in - 1
+    a = 0
+    for i in range(n_out - 2):
+        bucket_start = int(np.floor(i * bucket_size)) + 1
+        bucket_end = int(np.floor((i + 1) * bucket_size)) + 1
+        bucket_end = min(bucket_end, n_in - 1)
+        if bucket_start >= bucket_end:
+            chosen = max(a + 1, min(bucket_start, n_in - 2))
+            out_idx[i + 1] = chosen
+            a = chosen
+            continue
+        next_start = bucket_end
+        next_end = int(np.floor((i + 2) * bucket_size)) + 1
+        next_end = min(next_end, n_in)
+        if next_end > next_start:
+            avg_t = float(np.mean(t[next_start:next_end]))
+            avg_v = float(np.mean(v[next_start:next_end]))
+        else:
+            avg_t, avg_v = t[-1], v[-1]
+        ta, va = t[a], v[a]
+        seg_t = t[bucket_start:bucket_end]
+        seg_v = v[bucket_start:bucket_end]
+        area = np.abs((ta - avg_t) * (seg_v - va) - (ta - seg_t) * (avg_v - va))
+        chosen = bucket_start + int(np.argmax(area))
+        out_idx[i + 1] = chosen
+        a = chosen
+    return t[out_idx], v[out_idx]
+
+
+class TestHoistedLoopIsTheSameAlgorithm:
+    """On non-degenerate data the hoisted loop picks the same points. On
+    COLLINEAR data every triangle area is round-off noise and the argmax
+    may land on a different sample of the same line — ``np.add.reduceat``
+    does not sum pairwise as ``np.mean`` does (review measured 1.8e-12
+    differences and 411 of 1000 flipped picks on ``v = 3t + 1``). That
+    pick is as good as the old one: the samples lie on the line. The
+    docstring on ``lttb`` says so."""
+
+    @pytest.mark.parametrize(
+        "n_in,n_out",
+        [
+            (7, 3),
+            (11, 5),
+            (20, 19),
+            (1000, 7),
+            (2001, 1000),
+            (50_000, 1000),
+            (1003, 1002),
+        ],
+    )
+    @pytest.mark.parametrize("seed", [0, 1, 2])
+    def test_same_points_as_the_reference_loop_on_non_degenerate_data(
+        self, n_in, n_out, seed
+    ):
+        rng = np.random.default_rng(seed)
+        t = np.sort(rng.uniform(0.0, 100.0, n_in))
+        v = np.cumsum(rng.standard_normal(n_in))
+        want_t, want_v = _lttb_reference(t, v, n_out)
+        got_t, got_v = lttb(t, v, n_out)
+        np.testing.assert_array_equal(got_t, want_t)
+        np.testing.assert_array_equal(got_v, want_v)
+
+    def test_a_bucket_narrower_than_a_point_still_advances(self):
+        # n_out close to n_in makes empty buckets; the reference's
+        # `max(a + 1, ...)` rule must be reproduced exactly.
+        t = np.arange(20.0)
+        v = t**2
+        want = _lttb_reference(t, v, 19)
+        got = lttb(t, v, 19)
+        np.testing.assert_array_equal(got[0], want[0])

@@ -29,6 +29,11 @@ def lttb(
     Returns the original arrays unchanged when ``len(time) <= n_out`` or
     when ``n_out < 3`` (the algorithm requires at least first, last, and
     one interior bucket). Empty inputs return empty outputs.
+
+    Bucket means come from ``np.add.reduceat``, which sums a segment left to
+    right where ``np.mean`` sums pairwise; the two differ by round-off, which
+    changes a pick only where every candidate's triangle area IS round-off —
+    collinear data — and then the other sample lies on the same line.
     """
     n_in = len(time)
     if n_in == 0:
@@ -46,30 +51,38 @@ def lttb(
     out_idx[0] = 0
     out_idx[-1] = n_in - 1
 
+    # Every bucket boundary at once: bucket i is [starts[i], ends[i]) and
+    # the bucket after it — whose centroid the triangle uses — is
+    # [ends[i], next_ends[i]). Same floor arithmetic as the loop had.
+    b = np.floor(np.arange(n_out, dtype=np.float64) * bucket_size).astype(np.int64) + 1
+    starts = b[: n_out - 2]
+    ends = np.minimum(b[1 : n_out - 1], n_in - 1)
+    next_ends = np.minimum(b[2:n_out], n_in)
+    # Next-bucket means, one reduceat each. ``reduceat`` returns the single
+    # element at an index that is not below the next one, so the empty
+    # next-buckets are masked afterwards and fall back to the last point.
+    counts = next_ends - ends
+    sum_t = np.add.reduceat(t, ends)
+    sum_v = np.add.reduceat(v, ends)
+    # reduceat's last segment runs to the end of the array; the last
+    # next-bucket ends at next_ends[-1] (== n_in here, so it agrees).
+    has_next = counts > 0
+    avg_t = np.where(has_next, sum_t / np.maximum(counts, 1), t[-1])
+    avg_v = np.where(has_next, sum_v / np.maximum(counts, 1), v[-1])
+
     a = 0
     for i in range(n_out - 2):
-        bucket_start = int(np.floor(i * bucket_size)) + 1
-        bucket_end = int(np.floor((i + 1) * bucket_size)) + 1
-        bucket_end = min(bucket_end, n_in - 1)
+        bucket_start = int(starts[i])
+        bucket_end = int(ends[i])
         if bucket_start >= bucket_end:
             chosen = max(a + 1, min(bucket_start, n_in - 2))
             out_idx[i + 1] = chosen
             a = chosen
             continue
-
-        next_start = bucket_end
-        next_end = int(np.floor((i + 2) * bucket_size)) + 1
-        next_end = min(next_end, n_in)
-        if next_end > next_start:
-            avg_t = float(np.mean(t[next_start:next_end]))
-            avg_v = float(np.mean(v[next_start:next_end]))
-        else:
-            avg_t, avg_v = t[-1], v[-1]
-
         ta, va = t[a], v[a]
         seg_t = t[bucket_start:bucket_end]
         seg_v = v[bucket_start:bucket_end]
-        area = np.abs((ta - avg_t) * (seg_v - va) - (ta - seg_t) * (avg_v - va))
+        area = np.abs((ta - avg_t[i]) * (seg_v - va) - (ta - seg_t) * (avg_v[i] - va))
         chosen = bucket_start + int(np.argmax(area))
         out_idx[i + 1] = chosen
         a = chosen
