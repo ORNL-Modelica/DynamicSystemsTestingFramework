@@ -35,6 +35,7 @@ function paintFigure(el, fig) {
   // The marker the browser tests read: this plot is the Python figure
   // dict, verbatim, and nothing rebuilt it.
   el._mt_python = true;
+  dstfWireSecondaryAxes(el);
 }
 
 function renderAllPlots() {
@@ -83,9 +84,9 @@ function setOverlayVisible(plotId, role, name, visible) {
   }
 }
 
-// ---- Error overlays (signed / abs / NRMSE, right y-axis) ------------
+// ---- Error overlays (signed / abs on the error axis, NRMSE on its own; axes.js shows the axis) ----
 // The three error series ride into the figure as legend-only traces on
-// yaxis3; the dropdown only decides which one is visible.
+// yaxis3 / yaxis4; the dropdown only decides which one is visible.
 function wireErrorOverlays() {
   document.querySelectorAll('.error-overlay-select').forEach(sel => {
     sel.addEventListener('change', (e) => {
@@ -107,11 +108,6 @@ function setErrorOverlay(vidx, mode) {
     vis.push(mode !== 'none' && tr.meta.id === `error/${mode}` ? true : 'legendonly');
   });
   if (idx.length) Plotly.restyle(el, { visible: vis }, idx);
-  // The axis is laid out hidden (see dstf.figures.plotly); show it only
-  // while an error series is visible.
-  if (el.layout && el.layout.yaxis3) {
-    Plotly.relayout(el, { 'yaxis3.visible': mode !== 'none' });
-  }
 }
 
 // ---- Init ----

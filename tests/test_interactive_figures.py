@@ -270,6 +270,7 @@ def test_error_axis_is_hidden_until_an_error_series_is_shown(
         "() => { const el = document.getElementById('plot-0');"
         " const y3 = el._fullLayout.yaxis3;"
         " return { visible: y3 ? y3.visible : null,"
+        " y4: el._fullLayout.yaxis4.visible,"
         " zerolines: Array.from(el.querySelectorAll('.zl')).map(n => n.getAttribute('class')) }; }"
     )
     before = page.evaluate(probe)
@@ -282,5 +283,5 @@ def test_error_axis_is_hidden_until_an_error_series_is_shown(
     page.close()
     assert before["visible"] is False
     assert not any("y3zl" in c for c in before["zerolines"])
-    assert after["visible"] is True
-    assert again["visible"] is False
+    assert after["visible"] is True and after["y4"] is False
+    assert again["visible"] is False and again["y4"] is False

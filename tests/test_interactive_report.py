@@ -619,7 +619,7 @@ def test_error_overlay_toggle_shows_exactly_one_error_trace(
           traces: Object.fromEntries(el.data
             .filter(t => (t.meta || {{}}).kind === 'error')
             .map(t => [t.meta.id, t.visible])),
-          axis: el._fullLayout.yaxis3 ? el._fullLayout.yaxis3.visible : null,
+          axes: [el._fullLayout.yaxis3.visible, el._fullLayout.yaxis4.visible],
         }};
     }}"""
     select = page.locator(f'select.error-overlay-select[data-vidx="{idx}"]')
@@ -632,18 +632,23 @@ def test_error_overlay_toggle_shows_exactly_one_error_trace(
     page.close()
 
     assert errors == []
+    expected_axes = {
+        "signed": [True, False],
+        "abs": [True, False],
+        "nrmse": [False, True],
+    }
     for mode in ("signed", "abs", "nrmse"):
         assert seen[mode]["traces"] == {
             f"error/{m}": (True if m == mode else "legendonly")
             for m in ("signed", "abs", "nrmse")
         }, mode
-        assert seen[mode]["axis"] is True, mode
+        assert seen[mode]["axes"] == expected_axes[mode], mode
     assert seen["none"]["traces"] == {
         "error/signed": "legendonly",
         "error/abs": "legendonly",
         "error/nrmse": "legendonly",
     }
-    assert seen["none"]["axis"] is False
+    assert seen["none"]["axes"] == [False, False]
 
 
 # ---------------------------------------------------------------------------

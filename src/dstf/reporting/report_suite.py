@@ -34,12 +34,15 @@ _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _VENDOR_DIR = _TEMPLATE_DIR / "vendor"
 VENDOR_ASSETS: tuple[str, ...] = ("plotly.min.js",)
 
-# The report page loads ONE ``interactive.js``; the served name is
-# historical, the source is ``report.js``. It paints the embedded figure
-# dicts and wires the overlay picker and the error-overlay dropdown —
-# nothing else. The tuple survives so a second source part can be added
-# without touching the copy path.
-INTERACTIVE_JS_PARTS: tuple[str, ...] = ("report.js",)
+# The report page loads ONE ``interactive.js``: the axes script first (it
+# defines what report.js calls), then report.js. The served name is
+# historical.
+INTERACTIVE_JS_PARTS: tuple[str, ...] = ("axes.js", "report.js")
+
+
+def axes_js_source() -> str:
+    """The shared axis-follow script (templates/axes.js), for the tool's page."""
+    return (_TEMPLATE_DIR / "axes.js").read_text(encoding="utf-8")
 
 
 def interactive_js_source() -> str:

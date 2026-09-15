@@ -1293,3 +1293,10 @@ class TestRestoredViewingChecks:
         banner = _parse(page).by_id("decimation-banner")
         traces = [el.text() for el in banner.by_class("dec-trace")]
         assert "x Overlay: soft_check/prev 3001→500" in traces
+
+
+def test_the_served_script_defines_the_axis_follow_before_the_page_script():
+    from dstf.reporting.report_suite import interactive_js_source
+
+    src = interactive_js_source()
+    assert src.index("dstfWireSecondaryAxes") < src.index("renderAllPlots")
