@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.10+, numpy, Jinja2, NiceGUI 3.16 (`[author]`), the vendored plotly.js 2.35.0 (report) and NiceGUI's bundled plotly.js 3.1.1 (tool), pytest + pytest-asyncio (`user_simulation`), Playwright + Chromium, uv.
 
+**Revision:** this is the second text. A fresh-context review of the first found eleven sketches that failed as typed and two silent production defects the tests could not see: the scan cache's key was computed before the bundled recognizer registered, so a fresh `dstf author` never hit it (Task 9); a locked model's manifest entry arrived through the new per-result callback as "not found in discovery" and was rescored mid-job (Task 8). Also folded: a per-test report test rendering through a Jinja environment without the token global (Task 4), the figure cache test counting `lttb` calls the second decimation makes (Task 7), cache-drop tests counting the reads `compare_one` makes (Task 7), the `scan` phase never emitted for a non-Modelica source and C counted wrong (Task 8), the LTTB hoist's "identical output" claim false on collinear data (Task 5), a missing import and a missing `mkdir` (Tasks 6, 9), a wrong fixture pointer and class name (Task 8), a rescan rescoring every model (Task 9), a stale thread marking the next open ready (Tasks 6, 9), and a `done` / `rescan` order race (Task 9).
+
 **Spike results this plan rests on** (run 2026-09-15 from this venv, scripts in the session scratchpad, gone):
 - **Two right-hand axes lay out side by side under both builds.** A figure from `variable_figure(_tube_view())` with `yaxis4 = {overlaying: "y", side: "right", anchor: "free", autoshift: true}` rendered under plotly.js 2.35.0 puts the `yaxis4` title 132 px right of the `yaxis3` title (`_shift` 58.25 px), both right of the plot area; under NiceGUI's plotly.js **3.1.1** (`Plotly.version` in the served page — not the 3.8.2 an earlier note recorded) `_fullLayout.yaxis4` exists with `autoshift` honoured. `automargin` on both axes keeps the titles inside the container.
 - **The tool's plot node is `getElement(<plot.id>).$el`**: a `DIV.js-plotly-plot` whose `.data` is the figure's trace list; `window.Plotly` is a global in the tool's page (NiceGUI imports it as a module AND exposes it). NiceGUI's `plotly.js` forwards `plotly_restyle` and `plotly_legendclick` to the server, and a legend click on "Actual" sets that trace `visible: "legendonly"` in `el.data`. `Plotly.relayout(el, {...})` from page-side script works on that node.
@@ -26,7 +28,7 @@
 - **Every file under `src/dstf/authoring/` other than `app.py`, `forms.py` and `builtin/*` still imports no UI framework** (Task 11 predicate 5).
 - Calls made here, not in the brief or DESIGN.md:
   1. **The token table is Python** (`reporting/theme.py`), rendered to `:root { --dstf-...: ... }` for both templates and the tool. DESIGN.md's "a theme is one file that sets those variables" holds — the file is a mapping, and sub-project 7 adds `dark` beside `default` in the same module. The tool's Quasar palette is set from the same table (`ui.colors`). The figure layer keeps its literal hex (DESIGN.md "Plot series").
-  2. **Colours the templates use today that are not in DESIGN.md's tables map onto the nearest token** (the table in Task 4). The metric tree's combinator rows lose their purple (`#9C27B0` / `#f5f0fa`) for `text-secondary` on `surface-hover`; the decimation banner's amber becomes the `warn` tint/border/dark. Both are visible changes the owner sees in Task 11's screenshot.
+  2. **Colours the templates use today that are not in DESIGN.md's tables map onto the nearest token** (the table in Task 4). The metric tree's combinator rows lose their purple (`#9C27B0` / `#f5f0fa`) for `text-secondary` on `surface-hover`; the decimation banner's amber becomes the `warn` tint/border/dark; the dashboard's warnings counter moves from `#ff9800` / `#E65100` to the `warn` fill `#ffc107` and dark `#8a6d00`. All are visible changes the owner sees in Task 11's screenshot.
   3. **Axis visibility follows the traces in the browser** (`templates/axes.js`, one script for both tiers), because a legend click is a client-side toggle the server never hears in the report. The report's error-overlay select only restyles traces now; the axes follow.
   4. **The scan cache lives under `$XDG_CACHE_HOME/dstf/scan/` (default `~/.cache/dstf/scan/`), never in the work dir.** `Session.open` keeps writing nothing in the work dir (`tests/test_session.py::TestOpen::test_open_writes_nothing_in_the_work_dir`). The cache is keyed by the library path, the recognizer set and the DSTF version, and it validates nothing per file (spike 4).
   5. **A cached open rescans in the background and re-merges when the scan differs**; the Session exposes `rescan_done` (an Event) and emits `loading(phase="rescan", changed=...)`. A manual "Rescan library" control is sub-project 2's.
@@ -58,7 +60,7 @@
 | `tests/test_author_smoke_playwright.py` | The tool: a legend click on an error trace shows its axis. |
 | `tests/test_theme.py` (new) | The token table renders; both pages carry only tokens; the stack ends in `sans-serif`. |
 | `tests/test_decimate.py` | `lttb` equals the reference implementation on random series. |
-| `tests/test_overlay_loader.py`, `tests/test_backend_quiet.py`, `tests/test_report_suite.py`, `tests/test_discovery.py`, `tests/test_scan_cache.py` (new), `tests/test_session.py`, `tests/conftest.py` | Each task's tests; the autouse `XDG_CACHE_HOME` redirect. |
+| `tests/test_overlay_loader.py`, `tests/test_report_suite.py`, `tests/test_discovery.py`, `tests/test_scan_cache.py` (new), `tests/test_session.py`, `tests/conftest.py` | Each task's tests; the autouse `XDG_CACHE_HOME` redirect. |
 | `docs/usage.md`, `docs/architecture.md`, `CLAUDE.md`, `docs/decisions.md` (D127) | Task 10. |
 
 ---
@@ -341,14 +343,12 @@ def test_a_legend_click_drives_the_axis_too(playwright_browser, page_path):
     dstfFollowSecondaryAxes(gd);
   }
 
-  // The tool creates its plot after the page is built and replaces it on
-  // a full redraw; a full Plotly.newPlot on the same node resets the
-  // node's event emitter, so the flag is cleared when the class comes back.
+  // The tool creates its plot after the page is built and replaces the
+  // node on a full redraw; a node that is not yet a plot has no `on` and
+  // is skipped until Plotly adds the class. (Plotly keeps a node's event
+  // emitter across a second newPlot, so a wired node stays wired.)
   var observer = new MutationObserver(function () {
-    document.querySelectorAll('.js-plotly-plot').forEach(function (gd) {
-      if (!gd._fullLayout) gd._dstfAxesWired = false;
-      dstfWireSecondaryAxes(gd);
-    });
+    document.querySelectorAll('.js-plotly-plot').forEach(dstfWireSecondaryAxes);
   });
   observer.observe(document.documentElement, {
     childList: true, subtree: true, attributes: true, attributeFilter: ['class'],
@@ -472,7 +472,7 @@ with `from ..reporting.report_suite import axes_js_source` at the top of `app.py
 
 **Files:**
 - Create: `src/dstf/reporting/theme.py`, `tests/test_theme.py`
-- Modify: `src/dstf/reporting/templates/interactive.html:13-109` and its inline `style=` attributes (156, 157, 230, 243, 248, 252, 268), `src/dstf/reporting/templates/dashboard.html:7-148` and line 154, `src/dstf/reporting/report_suite.py:422` (`_render_template`), `src/dstf/reporting/dashboard_render.py:35` (`_env`), `src/dstf/authoring/app.py` (`Shell.root`)
+- Modify: `src/dstf/reporting/templates/interactive.html:13-109` and its inline `style=` attributes (156, 157, 230, 243, 248, 252, 268), `src/dstf/reporting/templates/dashboard.html:7-148` and line 154, `src/dstf/reporting/report_suite.py:422` (`_render_template` → `jinja_env`), `src/dstf/reporting/dashboard_render.py:35` (`_env`), `src/dstf/authoring/app.py` (`Shell.root`), `tests/test_interactive_figures.py:111-121` (`_render_with_context`)
 
 - [ ] **Step 1: The tests.** Create `tests/test_theme.py`:
 
@@ -690,7 +690,23 @@ def quasar_palette(theme: Mapping[str, str] = DEFAULT_THEME) -> dict[str, str]:
 
 Format with `ruff format` (the long mapping lines wrap).
 
-- [ ] **Step 4: Both Jinja environments carry `dstf_css`.** In `report_suite._render_template` after `env = Environment(...)` add `env.globals["dstf_css"] = css_variables()`; in `dashboard_render` after `_env = Environment(...)` add `_env.globals["dstf_css"] = css_variables()`; both import `from .theme import css_variables`.
+- [ ] **Step 4: Both Jinja environments carry `dstf_css`.** In `report_suite.py` add
+
+```python
+def jinja_env():
+    """The per-test report's Jinja environment: the templates dir, autoescape,
+    and the token block every page starts its stylesheet with. One
+    constructor, so a test that renders a page gets the same globals."""
+    from jinja2 import Environment, FileSystemLoader
+
+    from .theme import css_variables
+
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
+    env.globals["dstf_css"] = css_variables()
+    return env
+```
+
+and make `_render_template` use `template = jinja_env().get_template(template_name)`. `tests/test_interactive_figures.py::_render_with_context` (lines 111-121) builds its own `Environment` — change it to `jinja_env().get_template("interactive.html")`, or `{{ dstf_css }}` renders empty there and Step 1's report test fails on `":root {" in html`. In `dashboard_render` after `_env = Environment(...)` add `_env.globals["dstf_css"] = css_variables()` with `from .theme import css_variables`.
 
 - [ ] **Step 5: The per-test template.** In `interactive.html` the `<style>` block starts `<style>\n{{ dstf_css }}` (autoescape is on and the block has no `<`, `>` or `&`; if a later token ever needs one, mark it `|safe` — a test in Step 1 reads the rendered page and would show `&quot;` in the stack). Then replace every literal, by this table (selectors from the current file):
 
@@ -766,7 +782,7 @@ Format with `ruff format` (the long mapping lines wrap).
 
 ```bash
 git add src/dstf/reporting/theme.py tests/test_theme.py
-git commit -F msg -- src/dstf/reporting/theme.py src/dstf/reporting/templates/interactive.html src/dstf/reporting/templates/dashboard.html src/dstf/reporting/report_suite.py src/dstf/reporting/dashboard_render.py src/dstf/authoring/app.py tests/test_theme.py
+git commit -F msg -- src/dstf/reporting/theme.py src/dstf/reporting/templates/interactive.html src/dstf/reporting/templates/dashboard.html src/dstf/reporting/report_suite.py src/dstf/reporting/dashboard_render.py src/dstf/authoring/app.py tests/test_theme.py tests/test_interactive_figures.py
 ```
 Message: `reporting: one token table (theme.py) renders the visual system into both pages and the tool; the type stack ends in sans-serif`.
 
@@ -819,9 +835,17 @@ def _lttb_reference(time, values, n_out):
 
 
 class TestHoistedLoopIsTheSameAlgorithm:
+    """On non-degenerate data the hoisted loop picks the same points. On
+    COLLINEAR data every triangle area is round-off noise and the argmax
+    may land on a different sample of the same line — ``np.add.reduceat``
+    does not sum pairwise as ``np.mean`` does (review measured 1.8e-12
+    differences and 411 of 1000 flipped picks on ``v = 3t + 1``). That
+    pick is as good as the old one: the samples lie on the line. The
+    docstring on ``lttb`` says so."""
+
     @pytest.mark.parametrize("n_in,n_out", [(11, 5), (1000, 7), (2001, 1000), (50_000, 1000), (1003, 1002)])
     @pytest.mark.parametrize("seed", [0, 1, 2])
-    def test_same_points_as_the_reference_loop(self, n_in, n_out, seed):
+    def test_same_points_as_the_reference_loop_on_non_degenerate_data(self, n_in, n_out, seed):
         rng = np.random.default_rng(seed)
         t = np.sort(rng.uniform(0.0, 100.0, n_in))
         v = np.cumsum(rng.standard_normal(n_in))
@@ -889,11 +913,11 @@ class TestHoistedLoopIsTheSameAlgorithm:
     return t[out_idx], v[out_idx]
 ```
 
-`np.add.reduceat(t, ends)` sums `t[ends[i]:ends[i+1]]` for every `i` but the last, which sums to the array's end. `ends[i+1] == min(b[i+2], n_in-1)` and `next_ends[i] == min(b[i+2], n_in)` differ only when `b[i+2] >= n_in - 1`, i.e. for the last interior bucket, whose reduceat segment runs to `n_in` anyway; and a segment with `ends[i] >= ends[i+1]` returns `t[ends[i]]`, which `has_next` masks out. The regression test in Step 1 is what says this reasoning holds — a mismatch anywhere fails it by index.
+Add to `lttb`'s docstring: "Bucket means come from ``np.add.reduceat``, which sums a segment left to right where ``np.mean`` sums pairwise; the two differ by round-off, which changes a pick only where every candidate's triangle area IS round-off — collinear data — and then the other sample lies on the same line." `np.add.reduceat(t, ends)` sums `t[ends[i]:ends[i+1]]` for every `i` but the last, which sums to the array's end. `ends[i+1] == min(b[i+2], n_in-1)` and `next_ends[i] == min(b[i+2], n_in)` differ only when `b[i+2] >= n_in - 1`, i.e. for the last interior bucket, whose reduceat segment runs to `n_in` anyway; and a segment with `ends[i] >= ends[i+1]` returns `t[ends[i]]`, which `has_next` masks out. The regression test in Step 1 is what says this index reasoning holds on non-degenerate data — a mismatch fails it by index; the review checked 60 non-degenerate cases including (1003, 1002), (20, 19) and (7, 3) with no difference.
 
 - [ ] **Step 4: Run.** `uv run --no-sync pytest tests/test_decimate.py tests/test_figures.py tests/test_figure_goldens.py -q` → pass. Re-run the timing line → record the number in the commit message (expected: the per-trace cost drops by the two `np.mean` calls and the float conversions; well under 13 ms, still a Python loop).
 
-- [ ] **Step 5: Gate and commit.** `git commit -F msg -- src/dstf/figures/decimate.py tests/test_decimate.py`. Message: `figures: LTTB's bucket bounds and next-bucket means computed once, the loop unchanged in what it picks (<n> ms per trace, was 13)`.
+- [ ] **Step 5: Gate and commit.** `git commit -F msg -- src/dstf/figures/decimate.py tests/test_decimate.py`. Message: `figures: LTTB's bucket bounds and next-bucket means computed once; same picks on non-degenerate data, a same-line pick on collinear data (<n> ms per trace, was 13)`.
 
 ---
 
@@ -909,6 +933,7 @@ class TestHoistedLoopIsTheSameAlgorithm:
     def test_warm_builds_the_index_once_and_a_later_load_hits_the_cache(self, tmp_path):
         from dstf.reporting.overlay_loader import (
             _sibling_backend_index,
+            load_sibling_backend_overlays,
             warm_sibling_backend_index,
         )
 
@@ -1015,13 +1040,14 @@ def warm_sibling_backend_index(config) -> None:
     ... (unchanged from here)
 ```
 
-In `session.py`: `self.overlay_index_ready = threading.Event()` in `__init__`; at the end of `open`, after `self._reload_results()`:
+In `session.py`: `self.overlay_index_ready = threading.Event()` in `__init__` (set nothing; no project). At the end of `open`, after `self._reload_results()` — a FRESH event per open, captured by the thread, so a thread from a previous open that finishes late cannot mark this open ready:
 
 ```python
-        self.overlay_index_ready.clear()
+        ready = threading.Event()
+        self.overlay_index_ready = ready
         threading.Thread(
             target=self._warm_overlay_index,
-            args=(self.project.config,),
+            args=(self.project.config, ready),
             name="dstf-overlay-index",
             daemon=True,
         ).start()
@@ -1030,7 +1056,7 @@ In `session.py`: `self.overlay_index_ready = threading.Event()` in `__init__`; a
 and
 
 ```python
-    def _warm_overlay_index(self, config: Config) -> None:
+    def _warm_overlay_index(self, config: Config, ready: threading.Event) -> None:
         from ..reporting.overlay_loader import warm_sibling_backend_index
 
         try:
@@ -1038,7 +1064,7 @@ and
         except Exception:  # a broken sibling file must not kill the thread silently
             logger.exception("warming the sibling-backend overlay index failed")
         finally:
-            self.overlay_index_ready.set()
+            ready.set()
 ```
 
 - [ ] **Step 4: Run.** `uv run --no-sync pytest tests/test_overlay_loader.py tests/test_session.py -q` → pass.
@@ -1071,15 +1097,25 @@ In `tests/test_session.py`, a new class:
 
 ```python
 class TestReadCache:
-    def test_a_second_view_of_a_model_reads_nothing_from_disk(self, session, monkeypatch):
-        reads = []
-        real = session.project.store.get_reference
+    # `compare_one` reads the reference too (comparator.py:569), on every
+    # rescore, so the spy is on the overlay load: `_reads_for` is the only
+    # caller of `load_overlays` in the Session.
+    @staticmethod
+    def _spy_overlays(monkeypatch):
+        from dstf.reporting import overlay_loader as ol
+
+        loads = []
+        real = ol.load_overlays
         monkeypatch.setattr(
-            session.project.store, "get_reference", lambda m: reads.append(m) or real(m)
+            ol, "load_overlays", lambda store, m, config=None: loads.append(m) or real(store, m, config=config)
         )
+        return loads
+
+    def test_a_second_view_of_a_model_reads_nothing_from_disk(self, session, monkeypatch):
+        loads = self._spy_overlays(monkeypatch)
         session.view(A, "x")
         session.view(A, "x")
-        assert reads == [A]
+        assert loads == [A]
 
     def test_a_second_figure_decimates_only_the_leaves(self, session, monkeypatch):
         from dstf.figures import view as view_mod
@@ -1090,40 +1126,33 @@ class TestReadCache:
         session.figure(A, "x")
         first = len(calls)
         session.figure(A, "x")
-        # The base — actual, reference, three error series — is decimated
-        # on the first call only; a second call decimates the leaves'
-        # series and bands and nothing else.
-        from dstf.comparison.geometry import Band, Series
+        # The base — actual, reference, three error series (FakeLib has no
+        # overlays) — is decimated on the first call only; a second call
+        # decimates the leaves' Series primitives and nothing else. Bands go
+        # through decimate.py's own `lttb`, which this spy does not see.
+        from dstf.comparison.geometry import Series
 
-        leaf_prims = sum(
-            isinstance(p, (Band, Series))
+        leaf_series = sum(
+            isinstance(p, Series)
             for leaf in session.view(A, "x").leaves
             for p in leaf.geometry
         )
-        assert first == 5 + leaf_prims
-        assert len(calls) - first == leaf_prims
+        assert first == 5 + leaf_series
+        assert len(calls) - first == leaf_series
 
     def test_a_results_reload_drops_the_cache(self, session, monkeypatch):
-        reads = []
-        real = session.project.store.get_reference
-        monkeypatch.setattr(
-            session.project.store, "get_reference", lambda m: reads.append(m) or real(m)
-        )
+        loads = self._spy_overlays(monkeypatch)
         session.view(A, "x")
         session._reload_results()
         session.view(A, "x")
-        assert reads == [A, A]
+        assert loads == [A, A]
 
     def test_a_store_write_drops_the_cache(self, session, monkeypatch):
-        reads = []
-        real = session.project.store.get_reference
-        monkeypatch.setattr(
-            session.project.store, "get_reference", lambda m: reads.append(m) or real(m)
-        )
+        loads = self._spy_overlays(monkeypatch)
         session.view(D, "x")
         session.apply(StoreWrite(run=lambda store: "", models=frozenset({D})))
         session.view(D, "x")
-        assert reads == [D, D]
+        assert loads == [D, D]
 
     def test_a_staged_edit_keeps_the_cache_and_changes_the_leaves(self, session):
         session.figure(A, "x")
@@ -1208,8 +1237,16 @@ In `__init__`: `self._reads: dict[str, _ModelReads] = {}`. Add:
         leaves = leaves_by_variable(comp.metric_tree if comp is not None else None).get(
             variable, []
         )
-        with_leaves = replace(base, leaves=build_view(variable, leaves=leaves).leaves)
-        return variable_figure(with_leaves, budget, editable=True)
+        # The leaves are decimated on their own (no arrays but their
+        # geometry) and joined to the cached base; the figure is then built
+        # WITHOUT a budget, or `variable_figure` would decimate the base a
+        # second time. The base's counts win the merge: a leaves-only view
+        # stamps "act"/"ref" as 0.
+        leaves_view = decimate_view(build_view(variable, leaves=leaves), budget)
+        full = dict(leaves_view.full_samples)
+        full.update(base.full_samples)
+        with_leaves = replace(base, leaves=leaves_view.leaves, full_samples=full)
+        return variable_figure(with_leaves, None, editable=True)
 ```
 
 (`from dataclasses import dataclass, field, replace`.) Invalidate: in `_reload_results` after `project.results = fresh`: `for model_id in list(self._reads): if model_id not in locked: del self._reads[model_id]`; in `open` (at the commit point) and `close`: `self._reads = {}`. `StoreWrite` already calls `_reload_results`.
@@ -1224,25 +1261,41 @@ In `__init__`: `self._reads: dict[str, _ModelReads] = {}`. Add:
 
 **Files:**
 - Modify: `src/dstf/backends/base.py:181-240` (`_apply_run_verdicts` → `run_verdicts`), `:600-700` (`read_results`, `read_last_results`), `src/dstf/discovery/test_registry.py:174-209` (`scan_source_tests`), `src/dstf/authoring/session.py` (`Event`, `open`, `_reload_results`)
-- Test: `tests/test_backend_quiet.py`, `tests/test_discovery.py`, `tests/test_session.py`
+- Test: `tests/test_discovery.py`, `tests/test_session.py`
 
-- [ ] **Step 1: Tests.** In `tests/test_backend_quiet.py` (its tests build a backend over a work dir with a manifest and call `read_last_results(tests)` — lines 40 and 61; copy that setup into a `work_with_manifest` fixture that also records one entry with `"last_run_status": "failed"`, the shape `tests/test_compare_accept.py::_manifest` writes) add:
+- [ ] **Step 1: Tests.** In `tests/test_session.py`, class `TestOpen` (the `_project` work dir carries a hand-written `batch_manifest.json` and one `result.json` per model but C; the backend the Session built reads them):
 
 ```python
-def test_read_last_results_reports_each_result_with_its_run_verdict_applied(work_with_manifest):
-    """The tool scores each result as it lands (Session._reload_results);
-    a test whose run failed must arrive already forced to success=False, or
-    it is scored green for the seconds before the batch verdict."""
-    backend, tests = work_with_manifest  # one success, one recorded failure
-    seen = []
-    results = backend.read_last_results(
-        tests, on_result=lambda model_id, result: seen.append((model_id, result.success))
-    )
-    assert sorted(seen) == sorted((m, r.success) for m, r in results.items())
-    assert any(ok is False for _, ok in seen)
+    def test_read_last_results_reports_each_result_with_its_run_verdict_applied(
+        self, tmp_path
+    ):
+        """The tool scores each result as it lands (Session._reload_results);
+        a test whose run failed must arrive already forced to success=False,
+        or it is scored green for the seconds before the batch verdict."""
+        cfg, work = _project(tmp_path)
+        # Record A's last run as failed in the manifest _project wrote. The
+        # per-test entries live under the key BatchManifest.load reads as
+        # `.manifest` (src/dstf/storage/batch_manifest.py); A's result.json
+        # still reads as a success.
+        path = work / "batch_manifest.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for entry in data["manifest"].values():
+            if entry["model_id"] == A:
+                entry["last_run_status"] = "failed"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        seen = []
+        results = s.project.backend.read_last_results(
+            s.project.tests,
+            on_result=lambda model_id, result: seen.append((model_id, result.success)),
+        )
+        assert sorted(seen) == sorted((m, r.success) for m, r in results.items())
+        assert dict(seen)[A] is False  # the verdict, before the callback
+        assert dict(seen)[D] is True
 ```
 
-In `tests/test_discovery.py`, class `TestDiscoveryFromDocument`:
+In `tests/test_discovery.py`, class `TestDiscoverTests`:
 
 ```python
     def test_scan_reports_progress_per_file(self, tmp_path):
@@ -1269,9 +1322,11 @@ In `tests/test_session.py`, class `TestOpen`:
         s.on("results", lambda e: events.append({"event": "results", **e}))
         s.open(cfg, work_dir=work)
         phases = [e["phase"] for e in events if e["event"] == "loading"]
-        assert phases[0] == "scan" and phases[-1] == "done"
+        assert phases[0] == "scan" and phases[-1] == "done"  # "scanning…" fires even for a source that scans nothing
         scored = [e["model"] for e in events if e.get("phase") == "results"]
-        assert set(scored) == {A, B, D, G}  # the models with a result on disk (C has none)
+        # Every model the manifest names: C has no result.json and the reader
+        # returns it as a failed result, which is read and announced too.
+        assert set(scored) == {A, B, C, D, G}
         # Each results event names a model already scored.
         for e in events:
             if e.get("phase") == "results":
@@ -1359,6 +1414,9 @@ def _apply_run_verdicts(
 
 ```python
         started = time.monotonic()
+        # "scanning library…" before the first file — and the only scan
+        # event for a source type that scans nothing (Python, FMU, Julia).
+        self._emit("loading", phase="scan", done=0, total=0)
         scanned = scan_source_tests(
             config,
             progress=lambda done, total: self._emit(
@@ -1390,6 +1448,12 @@ def _apply_run_verdicts(
 
         def on_result(model_id: str, result: TestResult) -> None:
             nonlocal done
+            if model_id in locked:
+                # `read_results` reports every manifest entry, and a locked
+                # model — excluded from `to_read` — comes back as "not found
+                # in discovery": storing it would rescore the model to
+                # SIM_FAIL in the middle of its own job.
+                return
             project.results[model_id] = result
             if project.test(model_id) is not None:
                 self._score(model_id)
@@ -1413,9 +1477,9 @@ def _apply_run_verdicts(
 
 `_score` reads `project.results.get(model_id)`, so a model is scored against the result that just landed. `on_result` runs on the calling thread (`read_results` invokes it from its own `as_completed` loop), so no listener runs on a pool thread.
 
-- [ ] **Step 6: Run.** `uv run --no-sync pytest tests/test_session.py tests/test_backend_quiet.py tests/test_compare_accept.py tests/test_discovery.py tests/test_shell.py tests/test_accept_and_rerun.py tests/test_cli.py -q` → pass. `test_open_emits_spec_before_results` still holds (`spec` is emitted after the merge, before the reload).
+- [ ] **Step 6: Run.** `uv run --no-sync pytest tests/test_session.py tests/test_compare_accept.py tests/test_discovery.py tests/test_shell.py tests/test_accept_and_rerun.py tests/test_cli.py -q` → pass. `test_open_emits_spec_before_results` still holds (`spec` is emitted after the merge, before the reload); `test_a_reload_during_a_job_keeps_the_locked_model_as_it_was` is the guard for the `locked` return in `on_result`.
 
-- [ ] **Step 7: Gate and commit.** `git commit -F msg -- src/dstf/backends/base.py src/dstf/discovery/test_registry.py src/dstf/authoring/session.py tests/test_backend_quiet.py tests/test_discovery.py tests/test_session.py`. Message: `author: the Session reports its phases — scan progress, each result scored as it is read, done — as loading events`.
+- [ ] **Step 7: Gate and commit.** `git commit -F msg -- src/dstf/backends/base.py src/dstf/discovery/test_registry.py src/dstf/authoring/session.py tests/test_discovery.py tests/test_session.py`. Message: `author: the Session reports its phases — scan progress, each result scored as it is read, done — as loading events`.
 
 ---
 
@@ -1473,6 +1537,7 @@ def test_the_key_changes_with_the_library_path_and_the_recognizers(tmp_path):
     config = _write_lib(tmp_path)
     scanned = scan_source_tests(config)
     scan_cache.store_scan(config, scanned)
+    (tmp_path / "elsewhere").mkdir()
     other = _write_lib(tmp_path / "elsewhere")
     assert scan_cache.load_scan(other) is None
     config.disabled_bundled.append("modelica:bundled-unit-tests")
@@ -1500,6 +1565,34 @@ def test_a_non_modelica_source_is_never_cached(tmp_path):
     config.source_type = "python"
     assert scan_cache.store_scan(config, {}) is None
     assert scan_cache.load_scan(config) is None
+
+
+def test_a_fresh_process_finds_the_cache(tmp_path):
+    """The bundled recognizer registers only when `mo_parser` is imported,
+    which `scan_source_tests` does lazily; a process that loads the cache
+    BEFORE scanning anything (every warm `dstf author`) must compute the
+    same key, or the cache never hits outside the test that wrote it."""
+    import os
+    import subprocess
+    import sys
+
+    config = _write_lib(tmp_path)
+    scan_cache.store_scan(config, scan_source_tests(config))
+    probe = (
+        "from pathlib import Path\n"
+        "from dstf.config import Config\n"
+        "from dstf.discovery.scan_cache import load_scan\n"
+        f"cfg = Config(config_file={str(tmp_path / 'testing.json')!r})\n"
+        "print('HIT' if load_scan(cfg) else 'MISS')\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        env={**os.environ, "XDG_CACHE_HOME": os.environ["XDG_CACHE_HOME"]},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert out.stdout.strip() == "HIT", out.stderr
 ```
 
 In `tests/test_session.py`, class `TestOpen` (the Python-backend `_project` is `source_type: python` and never caches; these open a Modelica library through the helpers written below the tests):
@@ -1532,6 +1625,8 @@ In `tests/test_session.py`, class `TestOpen` (the Python-backend `_project` is `
         assert any(e["phase"] == "scan" and e.get("cached") for e in events)
         assert s.rescan_done.wait(10.0)
         assert calls == ["dstf-rescan"]
+        phases = [e["phase"] for e in events]
+        assert phases.index("done") < phases.index("rescan")  # `done` is emitted before the thread starts
         assert events[-1]["phase"] == "rescan" and events[-1]["changed"] is False
 
     def test_a_source_edit_reaches_the_project_through_the_rescan(self, tmp_path, monkeypatch):
@@ -1540,10 +1635,27 @@ In `tests/test_session.py`, class `TestOpen` (the Python-backend `_project` is `
         Session().open(cfg, work_dir=tmp_path / "work")
         mo, before = _bump_stop_time(tmp_path)
         s = Session()
+        rescored = []
+        s.on("results", lambda e: rescored.append(set(e["models"])))
         s.open(cfg, work_dir=tmp_path / "work")
         assert s.project.test(before.model_id).stop_time == before.stop_time  # from the cache
         assert s.rescan_done.wait(10.0)
         assert s.project.test(before.model_id).stop_time == before.stop_time + 1
+        assert rescored[-1] == {before.model_id}  # only the changed model was rescored
+
+    def test_a_late_thread_from_a_previous_open_does_not_mark_this_one_ready(self, tmp_path, monkeypatch):
+        """Each open owns its Events; a rescan or index thread still running
+        from the previous open sets ITS events, never the new open's."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        s = Session()
+        s.open(cfg, work_dir=tmp_path / "work")
+        first_rescan, first_index = s.rescan_done, s.overlay_index_ready
+        s.open(cfg, work_dir=tmp_path / "work")  # allowed: no job, no pending edits
+        assert s.rescan_done is not first_rescan
+        assert s.overlay_index_ready is not first_index
+        assert s.rescan_done.wait(10.0) and s.overlay_index_ready.wait(5.0)
 
     def test_open_writes_nothing_in_the_work_dir_even_when_it_caches(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -1619,6 +1731,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..config import Config
+from . import mo_parser  # noqa: F401  — registers the bundled recognizer; the key names it
 from .recognizer import get_recognizers
 from .test_registry import TestModel
 
@@ -1699,7 +1812,7 @@ def store_scan(config: Config, scanned: dict[str, TestModel]) -> Path | None:
 
 (`Config.recognizers` entries: check the attribute that names a recognizer — `r.name` per `test_registry.py:190-192`; `r.applies_to` is what `scan_source_tests` reads.)
 
-- [ ] **Step 4: The Session.** `self.rescan_done = threading.Event()` in `__init__`. In `open`, the scan becomes:
+- [ ] **Step 4: The Session.** `self.rescan_done = threading.Event()` in `__init__` (never set there). In `open`, the scan becomes:
 
 ```python
         cached = load_scan(config)
@@ -1716,54 +1829,67 @@ def store_scan(config: Config, scanned: dict[str, TestModel]) -> Path | None:
             store_scan(config, scanned)
 ```
 
-After the overlay thread starts, before the `done` event:
+After the overlay thread starts and AFTER the `done` event (so `rescan` can never precede `done`, whichever thread `_post` runs `apply` on) — a fresh Event per open, captured by the thread:
 
 ```python
-        self.rescan_done.clear()
+        done_event = threading.Event()
+        self.rescan_done = done_event
         if cached is not None:
             threading.Thread(
                 target=self._rescan,
-                args=(self.project, cached),
+                args=(self.project, cached, done_event),
                 name="dstf-rescan",
                 daemon=True,
             ).start()
         else:
-            self.rescan_done.set()
+            done_event.set()
 ```
 
 and
 
 ```python
-    def _rescan(self, project: Project, cached: dict[str, TestModel]) -> None:
+    def _rescan(
+        self, project: Project, cached: dict[str, TestModel], done: threading.Event
+    ) -> None:
         """A cached open trusts the cache; this finds out whether it should
-        have. Runs the full scan off the UI thread; when it differs, the
-        cache is rewritten and the project re-merged through ``_post`` (the
-        UI loop, where every other mutation happens)."""
+        have. Runs the full scan off the UI thread; everything that touches
+        the Session — the re-merge AND the events — goes through ``_post``
+        (the UI loop, where every other mutation happens)."""
         try:
             fresh = scan_source_tests(project.config)
         except Exception:
             logger.exception("background rescan failed")
-            self._emit("loading", phase="rescan", changed=False, error=True)
-            self.rescan_done.set()
+
+            def failed() -> None:
+                try:
+                    self._emit("loading", phase="rescan", changed=False, error=True)
+                finally:
+                    done.set()
+
+            self._post(failed)
             return
-        changed = fresh != cached
-        if changed:
+        changed_models = {
+            m for m in set(fresh) | set(cached) if fresh.get(m) != cached.get(m)
+        }
+        if changed_models:
             store_scan(project.config, fresh)
 
         def apply() -> None:
             try:
                 # The project may have been swapped or closed meanwhile.
-                if changed and self.project is project:
+                if changed_models and self.project is project:
                     project.scanned = fresh
-                    self._rebuild_tests({t.model_id for t in project.tests} | set(fresh))
-                self._emit("loading", phase="rescan", changed=changed)
+                    # Only what changed is rescored: a one-file edit over
+                    # TRANSFORM must not run 331 comparisons on the UI loop.
+                    self._rebuild_tests(changed_models)
+                self._emit("loading", phase="rescan", changed=bool(changed_models))
             finally:
-                self.rescan_done.set()
+                done.set()
 
         self._post(apply)
 ```
 
-Imports: `from ..discovery.scan_cache import load_scan, store_scan`. `_rebuild_tests` emits `spec` and `results` for the changed models, exactly as a `reload` does.
+Imports: `from ..discovery.scan_cache import load_scan, store_scan`. `_rebuild_tests(models)` re-merges every test (cheap) and rescores `models` plus any model the merge newly names, exactly as a `reload` does; a pending op on a changed model is re-applied by the merge (`self.spec.effective()`), as after a Save.
 
 - [ ] **Step 5: Run.** `uv run --no-sync pytest tests/test_scan_cache.py tests/test_session.py tests/test_shell.py -q` → pass. Also run the whole non-browser suite: a test elsewhere that opens a Modelica project through the Session would now write under the REAL `~/.cache` unless it sets `XDG_CACHE_HOME` — add an autouse fixture to `tests/conftest.py` that points `XDG_CACHE_HOME` at a `tmp_path_factory` dir for every test, and say so in its docstring.
 
@@ -1855,4 +1981,4 @@ reports its phases as `loading` events and scores each result as it is read.
 
 - **Brief coverage.** §3.1 "only layout-independent work precedes the design": Tasks 1–9 touch the figure layer, the templates' stylesheet, the Session, the backends' read path, discovery — no layout. §3.4: Tasks 1–3. §3.8 "page within a second", "list fills in as discovered", "badges as scored", "scan cached": the Session side is Tasks 8–9 (`loading` events, per-result scoring, the cache); the page itself is sub-project 2, which consumes them — stated in Conventions #6–7. §3.10 theme ruling: the token table is Task 4; the `dark` mapping and the `theme` setting are sub-project 7. Brief §2.2's three costs: the index (Task 6), the per-click reads (Task 7), decimation (Tasks 5 and 7); the list-rebuild cost is the shell's and is sub-project 2's.
 - **Placeholders.** None: every step carries its code or its command. Two test helpers are named but written by the implementer from an existing fixture (`_modelica_project`, `_bump_stop_time` in Task 9, `served_page` / the row click in Task 3, `work_with_manifest` in Task 8) — each names the file whose fixture it copies.
-- **Type consistency.** `axes_js_source` (Tasks 2, 3); `css_variables` / `quasar_palette` (Task 4); `index_args` / `sibling_backend_index` / `warm_sibling_backend_index` (Task 6); `_ModelReads` / `_reads` / `_reads_for` (Task 7); `run_verdicts` / `on_result` / `progress` / `loading` (Task 8); `load_scan` / `store_scan` / `rescan_done` / `_rescan` (Task 9). `Session.open`'s `started` (Task 8) is set before the scan, which Task 9 wraps — the `done` event stays last.
+- **Type consistency.** `axes_js_source` (Tasks 2, 3); `jinja_env` / `css_variables` / `quasar_palette` (Task 4); `index_args` / `sibling_backend_index` / `warm_sibling_backend_index` (Task 6); `_ModelReads` / `_reads` / `_reads_for` (Task 7); `run_verdicts` / `on_result` / `progress` / `loading` (Task 8); `load_scan` / `store_scan` / `rescan_done` / `_rescan(project, cached, done)` (Task 9). `Session.open`'s `started` (Task 8) is set before the scan, which Task 9 wraps; the `done` event is emitted before the rescan thread starts, so the order is scan → results… → done → rescan.
