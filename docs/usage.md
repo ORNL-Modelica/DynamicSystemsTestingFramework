@@ -342,7 +342,10 @@ markup the server rendered. It shows
   carries data for — the overlay traces are already in the figure, and the
   checkbox toggles their visibility;
 - an **error-overlay** dropdown per plot: signed error, absolute error, or
-  per-point NRMSE, drawn on the right-hand axis;
+  per-point NRMSE. Signed and absolute error share the right axis
+  "Error [signal units]"; NRMSE, dimensionless, has its own, "NRMSE [–]". Each
+  axis is shown while a series on it is visible, whether the select or a legend
+  click turned it on;
 - the **metric tree**, with the CLI's verdict per node, a one-line criterion
   under each leaf, and the leaf's detail pairs (what was measured against what)
   — plus a summary line counting leaves passed and flagging advisory failures
@@ -489,6 +492,16 @@ run outputs and the reference partition to read; `--port` moves the server off
 only, one project per process, and runs until Ctrl-C or Quit. Use it from one
 browser tab: the centre plot and its drag handles follow the tab that last drew
 the plot, so a second tab's plot does not redraw after an edit.
+
+**Opening a project.** The library scan is cached across restarts under
+`$XDG_CACHE_HOME/dstf/scan/` (`~/.cache/dstf/scan/` when `XDG_CACHE_HOME` is
+unset), one file per library path, recognizer set and DSTF version — never in
+the work dir. The cache is trusted without checking a single source file, so a
+cached open skips the scan; the tool then rescans the library in the background
+and re-merges any test whose scan changed. Only a Modelica source is scanned, so
+only it is cached. The index of sibling-backend overlays is built on its own
+thread as the project opens, so the first click on a test no longer pays for
+building it.
 
 **The layout.** The header carries the library, the backend, the pending-op
 count (click it for the drawer of staged ops, grouped by model), Save, Discard,

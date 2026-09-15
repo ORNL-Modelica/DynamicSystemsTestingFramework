@@ -126,8 +126,11 @@ src/dstf/
     ├── report_suite.py       # Per-test interactive.html render + comparison_data.json sidecar
     ├── overlay_loader.py     # Companion CSV/JSON ingest + soft-check baseline projection
     ├── schema_export.py      # JSON-Schema emitter for test_spec.json (powers `dstf export-schema`)
-    └── templates/            # interactive.html (server-rendered tree, summary, banner) + report.js
-                              #   (copied out as interactive.js via report_suite.INTERACTIVE_JS_PARTS)
+    ├── theme.py              # The token table — rendered to :root { --dstf-...: ... } for both
+                              #   pages and the tool, and to the tool's Quasar palette
+    └── templates/            # interactive.html (server-rendered tree, summary, banner) + axes.js
+                              #   (a secondary axis visible while a trace on it is) + report.js
+                              #   (both copied out as interactive.js via report_suite.INTERACTIVE_JS_PARTS)
                               #   + dashboard.html / dashboard.js + vendor/plotly.min.js
 ```
 
@@ -209,7 +212,8 @@ reporters render TestComparison → console / JUnit / HTML / plots
       geometry each metric emitted: band, bounds, boxes, event windows, spectrum)
     → the trajectory arrays are dropped from the page context — interactive.html
       carries figure dicts and server-rendered markup only (tree, summary, pills,
-      decimation banner); report.js paints the figures and toggles trace visibility
+      decimation banner); axes.js keeps a secondary axis visible exactly while a
+      trace on it is; report.js paints the figures and toggles trace visibility
     → per-test report directories named ref_NNNN (has reference) or test_NNNN (no baseline)
     → the sidecar keeps its shape (full trajectory data) for downstream tooling
 ```

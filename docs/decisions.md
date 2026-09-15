@@ -4102,3 +4102,38 @@ its negative test.
 - `src/dstf/comparison/comparator.py` — the warning, tree path only.
 - `src/dstf/authoring/session.py` — materialization from the scored names.
 - `docs/usage.md`, the design spec's §4.6 amendment and §9.
+
+## D127 — The visual system is one token table; the tool's scan cache lives in the user's cache dir (2026-09-15)
+
+The redesign brief (`docs/superpowers/specs/2026-09-15-authoring-tool-redesign-brief.md`)
+and `DESIGN.md` name the colours and type both tiers share. They live once, in
+`reporting/theme.py`, as a mapping rendered to `:root { --dstf-...: ... }` for the
+dashboard, the per-test report and the authoring tool's page, and mirrored into
+the tool's Quasar palette. Status fills, baseline-role chips and plot series
+never change with a theme; a theme (sub-project 7) is another mapping in the
+same module, named in `testing.json` (owner ruling, brief §3.10). The shipped
+type stack ended in `monospace` with no generic sans-serif, so a Linux browser
+without Segoe UI or Roboto rendered every report in monospace; the stack now
+ends in `sans-serif`. Two colours the report used that are in no table — the
+metric tree's combinator purple and the decimation banner's amber — map onto
+the neutral and `warn` tokens.
+
+The tool caches the library scan across restarts under
+`$XDG_CACHE_HOME/dstf/scan/` (default `~/.cache/dstf/scan/`), keyed by the
+library path, the recognizer set and the DSTF version — never in the work dir,
+which is a run's artifact directory, and `Session.open` still writes nothing
+there. The cache validates nothing per file: on the owner's `/mnt/d` mount a
+`stat` sweep over TRANSFORM's 3 269 `.mo` files measured 27 s, longer than
+parsing them (20 s). A cached open trusts the cache, rescans on a background
+thread, and re-merges what changed.
+
+Also here, no decision needed but recorded: the report's error overlays ride on
+one right axis per unit family (brief §3.4), shown while a series on it is
+visible, by one shared script (`templates/axes.js`); the Session reads a model's
+reference and overlays once per reload and decimates its base traces once; the
+sibling-backend overlay index is built at open on its own thread; the Session
+reports its phases as `loading` events and scores each result as it is read.
+
+- `src/dstf/reporting/theme.py`, `templates/axes.js`, `discovery/scan_cache.py`,
+  `authoring/session.py`.
+- Brief §3.1, §3.4, §3.8, §3.10; roadmap sub-project 1.
