@@ -24,6 +24,7 @@ from dstf.authoring.spec_document import PatchOp
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
 from dstf.discovery.spec_update import implicit_tree_op, materialize_implicit_metrics
+from dstf.discovery.test_registry import TestModel
 from dstf.reporting.status import FAIL, NO_REF, PASS, SIM_FAIL, classify
 from dstf.storage.reference_store import ReferenceStore
 
@@ -113,6 +114,41 @@ def _project(tmp_path: Path) -> tuple[Path, Path]:
             ),
         )
     return refs / "testing.json", work
+
+
+def _modelica_project(tmp_path: Path) -> Path:
+    """test_discovery._write_lib's Modelica library, opened on the Python
+    backend so `select_backend` succeeds without a simulator. The scan is
+    what these tests are about; nothing is simulated."""
+    from test_discovery import _write_lib
+
+    lib = tmp_path / "MyLib"
+    lib.mkdir()
+    _write_lib(lib)
+    cfg_path = lib / "testing.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg.update({"backend": "Python", "backends": {"Python": ["python3", "python"]}})
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    return cfg_path
+
+
+def _bump_stop_time(tmp_path: Path) -> tuple[Path, TestModel]:
+    """Raise Foo.mo's StopTime by one; returns the file and the model as
+    scanned BEFORE the edit (model_id MyLib.Foo, stop_time 100.0)."""
+    from dstf.discovery.test_registry import scan_source_tests
+
+    lib = tmp_path / "MyLib"
+    before = scan_source_tests(Config(config_file=lib / "testing.json"))["MyLib.Foo"]
+    mo = lib / "Foo.mo"
+    text = mo.read_text(encoding="utf-8")
+    assert f"StopTime={before.stop_time:g}" in text
+    mo.write_text(
+        text.replace(
+            f"StopTime={before.stop_time:g}", f"StopTime={before.stop_time + 1:g}"
+        ),
+        encoding="utf-8",
+    )
+    return mo, before
 
 
 def _snapshot(work: Path) -> list[tuple[str, bytes]]:
@@ -332,6 +368,84 @@ class TestOpen:
         )
         s.open(cfg, work_dir=work)
         assert verdicts[A] is False and verdicts[D] is True
+
+    def test_a_cached_open_parses_nothing_and_rescans_in_the_background(
+        self, tmp_path, monkeypatch
+    ):
+        from dstf.discovery import scan_cache, test_registry
+
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)  # helper: _write_lib + a Python backend entry
+        Session().open(cfg, work_dir=tmp_path / "work")  # cold: writes the cache
+        assert list(scan_cache.cache_dir().glob("*.json"))
+
+        calls = []
+        real = test_registry.scan_source_tests
+
+        def spy(config, progress=None):
+            calls.append(threading.current_thread().name)
+            return real(config, progress=progress)
+
+        monkeypatch.setattr("dstf.authoring.session.scan_source_tests", spy)
+        s = Session()
+        events = []
+        s.on("loading", events.append)
+        s.open(cfg, work_dir=tmp_path / "work")
+        assert (
+            threading.current_thread().name not in calls
+        )  # nothing parsed on the opening thread (the rescan thread may already have run)
+        assert any(e["phase"] == "scan" and e.get("cached") for e in events)
+        assert s.rescan_done.wait(10.0)
+        assert calls == ["dstf-rescan"]
+        phases = [e["phase"] for e in events]
+        assert phases.index("done") < phases.index(
+            "rescan"
+        )  # `done` is emitted before the thread starts
+        assert events[-1]["phase"] == "rescan" and events[-1]["changed"] is False
+
+    def test_a_source_edit_reaches_the_project_through_the_rescan(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        mo, before = _bump_stop_time(tmp_path)
+        s = Session()
+        rescored = []
+        s.on("results", lambda e: rescored.append(set(e["models"])))
+        s.open(cfg, work_dir=tmp_path / "work")
+        assert (
+            s.project.test(before.model_id).stop_time == before.stop_time
+        )  # from the cache
+        assert s.rescan_done.wait(10.0)
+        assert s.project.test(before.model_id).stop_time == before.stop_time + 1
+        assert rescored[-1] == {before.model_id}  # only the changed model was rescored
+
+    def test_a_late_thread_from_a_previous_open_does_not_mark_this_one_ready(
+        self, tmp_path, monkeypatch
+    ):
+        """Each open owns its Events; a rescan or index thread still running
+        from the previous open sets ITS events, never the new open's."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        s = Session()
+        s.open(cfg, work_dir=tmp_path / "work")
+        first_rescan, first_index = s.rescan_done, s.overlay_index_ready
+        s.open(cfg, work_dir=tmp_path / "work")  # allowed: no job, no pending edits
+        assert s.rescan_done is not first_rescan
+        assert s.overlay_index_ready is not first_index
+        assert s.rescan_done.wait(10.0) and s.overlay_index_ready.wait(5.0)
+
+    def test_open_writes_nothing_in_the_work_dir_even_when_it_caches(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        work = tmp_path / "work"
+        work.mkdir()
+        Session().open(cfg, work_dir=work)
+        assert _snapshot(work) == []
 
 
 class TestRescoreAndStage:

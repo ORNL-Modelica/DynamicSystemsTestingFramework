@@ -26,6 +26,7 @@ from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
 from ..discovery.patch_apply import PatchError
+from ..discovery.scan_cache import load_scan, store_scan
 from ..discovery.spec_parser import spec_models_from_document
 from ..discovery.spec_update import (
     apply_validated_patches,
@@ -159,6 +160,7 @@ class Session:
         self._post = post or (lambda fn: fn())
         self._listeners: dict[str, list[Listener]] = {}
         self.overlay_index_ready = threading.Event()
+        self.rescan_done = threading.Event()
         self._reads: dict[str, _ModelReads] = {}
 
     # -- project -----------------------------------------------------------
@@ -205,12 +207,18 @@ class Session:
         # "scanning library…" before the first file — and the only scan
         # event for a source type that scans nothing (Python, FMU, Julia).
         self._emit("loading", phase="scan", done=0, total=0)
-        scanned = scan_source_tests(
-            config,
-            progress=lambda done, total: self._emit(
-                "loading", phase="scan", done=done, total=total
-            ),
-        )
+        cached = load_scan(config)
+        if cached is not None:
+            scanned = cached
+            self._emit("loading", phase="scan", cached=True, total=len(cached))
+        else:
+            scanned = scan_source_tests(
+                config,
+                progress=lambda done, total: self._emit(
+                    "loading", phase="scan", done=done, total=total
+                ),
+            )
+            store_scan(config, scanned)
         tests = self._merge(config, scanned, spec.effective())
         self.project = Project(
             config=config,
@@ -245,6 +253,17 @@ class Session:
             daemon=True,
         ).start()
         self._emit("loading", phase="done", seconds=time.monotonic() - started)
+        done_event = threading.Event()
+        self.rescan_done = done_event
+        if cached is not None:
+            threading.Thread(
+                target=self._rescan,
+                args=(self.project, cached, done_event),
+                name="dstf-rescan",
+                daemon=True,
+            ).start()
+        else:
+            done_event.set()
 
     def _warm_overlay_index(self, config: Config, ready: threading.Event) -> None:
         from ..reporting.overlay_loader import warm_sibling_backend_index
@@ -255,6 +274,60 @@ class Session:
             logger.exception("warming the sibling-backend overlay index failed")
         finally:
             ready.set()
+
+    def _rescan(
+        self, project: Project, cached: dict[str, TestModel], done: threading.Event
+    ) -> None:
+        """A cached open trusts the cache; this finds out whether it should
+        have. Runs the full scan off the UI thread; everything that touches
+        the Session — the re-merge AND the events — goes through ``_post``
+        (the UI loop, where every other mutation happens)."""
+        try:
+            fresh = scan_source_tests(project.config)
+        except Exception:
+            logger.exception("background rescan failed")
+
+            def failed() -> None:
+                try:
+                    self._emit("loading", phase="rescan", changed=False, error=True)
+                finally:
+                    done.set()
+
+            self._post_or_run(failed)
+            return
+        changed_models = {
+            m for m in set(fresh) | set(cached) if fresh.get(m) != cached.get(m)
+        }
+        if changed_models:
+            store_scan(project.config, fresh)
+
+        def apply() -> None:
+            try:
+                # The project may have been swapped or closed meanwhile.
+                if changed_models and self.project is project:
+                    project.scanned = fresh
+                    # Only what changed is rescored: a one-file edit over
+                    # TRANSFORM must not run 331 comparisons on the UI loop.
+                    # A model a running job has locked is left to that job's
+                    # completion reload, as `stage` and `rescore` leave it.
+                    locked = (
+                        self.running.models if self.running is not None else frozenset()
+                    )
+                    self._rebuild_tests(changed_models - locked)
+                self._emit("loading", phase="rescan", changed=bool(changed_models))
+            finally:
+                done.set()
+
+        self._post_or_run(apply)
+
+    def _post_or_run(self, fn: Callable[[], None]) -> None:
+        """Hand ``fn`` to the UI loop; when the loop is gone (``post``
+        raises — the case ``_start_job`` handles the same way) run it here,
+        so a waiter on the Event is never left hanging."""
+        try:
+            self._post(fn)
+        except BaseException:
+            fn()
 
     def close(self) -> None:
         self._refuse_if_busy()

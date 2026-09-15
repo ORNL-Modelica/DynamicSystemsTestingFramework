@@ -184,13 +184,25 @@ def playwright_browser():
 #: test that opened the Session unless joined, and the overlay-index one
 #: reads the process-wide ``_sibling_backend_index`` cache — a late thread
 #: from an earlier test turns a later test's ``cache_info()`` counts into a
-#: flake (reproduced with a slowed index build).
-_SESSION_THREADS = ("dstf-overlay-index",)
+#: flake (reproduced with a slowed index build). The rescan thread a cached
+#: open starts re-merges into its Session and emits on it; one left running
+#: from an earlier test must not act while a later test runs.
+_SESSION_THREADS = ("dstf-overlay-index", "dstf-rescan")
+
+
+@pytest.fixture(autouse=True)
+def _scan_cache_home(tmp_path_factory, monkeypatch):
+    """Point ``XDG_CACHE_HOME`` at a per-test temporary dir. Any test that
+    opens a Modelica project through the Session writes the scan cache
+    (``dstf.discovery.scan_cache``), and without this it would write under
+    the user's real ``~/.cache/dstf/scan/``."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path_factory.mktemp("xdg-cache")))
 
 
 @pytest.fixture(autouse=True)
 def _join_session_threads():
-    """Join every Session background thread a test left running."""
+    """Join every Session background thread a test left running — the
+    overlay-index warm and the background rescan (``_SESSION_THREADS``)."""
     yield
     import threading
 
