@@ -1,0 +1,95 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "title": "Suite page",
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 1064
+    },
+    {
+      "file": "QueueIndicator.dc.html",
+      "title": "Header queue indicator",
+      "x": 1520,
+      "y": 0,
+      "w": 520,
+      "h": 392
+    },
+    {
+      "file": "Backend.dc.html",
+      "title": "Backend controls",
+      "x": 4160,
+      "y": 0,
+      "w": 1440,
+      "h": 544
+    },
+    {
+      "file": "Startup.dc.html",
+      "title": "Startup loading state",
+      "x": 2640,
+      "y": 0,
+      "w": 1440,
+      "h": 784
+    },
+    {
+      "file": "Test.dc.html",
+      "title": "Test page, criteria collapsed",
+      "x": 0,
+      "y": 1200,
+      "w": 1440,
+      "h": 2094
+    },
+    {
+      "file": "TestTube.dc.html",
+      "title": "Test page, tube criterion open",
+      "x": 1520,
+      "y": 1200,
+      "w": 1440,
+      "h": 1339
+    },
+    {
+      "file": "TestPoints.dc.html",
+      "title": "Test page, points criterion open",
+      "x": 3040,
+      "y": 1200,
+      "w": 1440,
+      "h": 1381
+    },
+    {
+      "file": "TestRunning.dc.html",
+      "title": "Test page while running",
+      "x": 0,
+      "y": 3414,
+      "w": 1440,
+      "h": 1571
+    },
+    {
+      "file": "PlotAnother.dc.html",
+      "title": "Variables drawer: add plot / add series / arrays",
+      "x": 1520,
+      "y": 3414,
+      "w": 1440,
+      "h": 1194
+    }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -200,
+      "w": 520,
+      "text": "Authoring tool redesign, draft 2 (2026-09-15).\nBrief: docs/superpowers/specs/2026-09-15-authoring-tool-redesign-brief.md, section 4 lists these boards.\nTokens: DESIGN.md at the repo root, lifted from the report's stylesheet.\nData is the ModelicaTestingLib demo; every button label follows brief 3.3 (object, effect, count, tooltip)."
+    },
+    {
+      "id": "rulings",
+      "x": 560,
+      "y": -200,
+      "w": 520,
+      "text": "Owner rulings (2026-09-15): Material chrome. Themes swap neutrals and accent, never status or series colours. Queue rows numbered. Plots are modular: any number, any series, tracked or plot only. Option C for picking variables: a collapsible Variables drawer (one drawer at a time with Tests), filter is substring or glob with * ? and literal [ ], regex and case toggles off by default; checkbox = on the selected plot, hover for new plot. Arrays fold by index with a start:step:stop field and draw as one hue ramped by index; a profile plot kind comes later."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

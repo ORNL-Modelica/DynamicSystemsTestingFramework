@@ -1,0 +1,74 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+body { margin: 0; background: #fafafa; color: #333333; font-family: "Segoe UI", Roboto, system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.4; }
+a { color: #1976D2; text-decoration: none; } a:hover { color: #1565C0; text-decoration: underline; }
+.mono { font-family: ui-monospace, Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+.h1 { font-size: 20px; font-weight: 600; margin: 0; }
+.h2 { font-size: 16px; font-weight: 600; margin: 0; color: #555555; }
+.small { font-size: 12px; }
+.muted { color: #888888; }
+.text2 { color: #666666; }
+.label { font-size: 10px; color: #888888; text-transform: uppercase; letter-spacing: 0.03em; }
+.wordmark { font-size: 20px; font-weight: 700; letter-spacing: 0.02em; color: #333333; }
+.header { position: sticky; top: 0; z-index: 5; background: #fafafa; border-bottom: 1px solid #dddddd; padding: 10px 24px; }
+.card { background: #ffffff; border: 1px solid #dddddd; border-radius: 4px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 3px; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; border: 1px solid transparent; background: transparent; color: #1976D2; }
+.btn.primary { background: #1976D2; color: #ffffff; }
+.btn.outline { border-color: #1976D2; }
+.btn.danger { border-color: #f44336; color: #C62828; }
+.btn.disabled { opacity: 0.5; cursor: default; }
+.btn.icon { width: 28px; padding: 0; justify-content: center; color: #666666; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; color: #ffffff; text-transform: uppercase; white-space: nowrap; }
+.pill { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; border: 1px solid; }
+.input { display: inline-flex; align-items: center; height: 32px; padding: 0 8px; border: 1px solid #cccccc; border-radius: 2px; background: #ffffff; font-size: 13px; color: #333333; box-sizing: border-box; }
+.input.sm { height: 26px; font-size: 12px; padding: 0 6px; }
+.input.ph { color: #999999; }
+.select { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 0 8px; border: 1px solid #cccccc; border-radius: 2px; background: #ffffff; font-size: 13px; box-sizing: border-box; }
+.select.sm { height: 26px; font-size: 12px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; height: 20px; border-radius: 3px; font-size: 11px; border: 1px solid #dddddd; background: #ffffff; }
+.chip.role-soft { background: #e8d8f3; color: #5e3a80; border-color: #c4a8df; }
+.chip.role-comp { background: #d8f3e4; color: #2b6b48; border-color: #a8dfc0; }
+.chip.on { border-color: #1976D2; background: #e3f2fd; }
+table { border-collapse: collapse; width: 100%; background: #ffffff; font-size: 12px; }
+th, td { border: 1px solid #dddddd; padding: 4px 8px; text-align: left; height: 28px; box-sizing: border-box; }
+th { background: #f5f5f5; font-weight: 600; }
+td.num, th.num { text-align: right; font-family: ui-monospace, Consolas, "Cascadia Mono", monospace; }
+tr.group td { background: #f5f5f5; font-weight: 600; color: #666666; }
+tr.sel td { background: #e3f2fd; }
+.counter { background: #ffffff; border: 1px solid #dddddd; border-left-width: 4px; border-radius: 4px; padding: 6px 12px; min-width: 90px; }
+.counter .value { font-size: 18px; font-weight: 600; }
+.counter.active { box-shadow: 0 0 0 2px #1976D2 inset; background: #e3f2fd; }
+.bar { height: 14px; background: #eeeeee; border-radius: 7px; overflow: hidden; display: flex; }
+.bar span { display: block; height: 100%; }
+.check { width: 16px; height: 16px; border: 1px solid #999999; border-radius: 2px; background: #ffffff; display: inline-block; box-sizing: border-box; }
+.check.on { background: #1976D2; border-color: #1976D2; }
+.crit { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-top: 1px solid #eeeeee; }
+.crit .name { font-weight: 600; }
+.crit.open { background: #e3f2fd; }
+.editor { margin: 0 0 8px 16px; padding: 12px; border-left: 3px solid #1976D2; background: #ffffff; border-top: 1px solid #eeeeee; border-bottom: 1px solid #eeeeee; }
+.hint { font-size: 12px; color: #666666; }
+.why { font-size: 12px; color: #666666; font-style: italic; }
+.rule { height: 1px; background: #eeeeee; }
+.stat { background: #ffffff; border: 1px solid #dddddd; border-radius: 4px; padding: 6px 12px; min-width: 120px; }
+.stat .value { font-size: 18px; font-weight: 600; }
+.stat .ref { font-size: 11px; color: #999999; }
+.progress { height: 6px; background: #eeeeee; border-radius: 3px; overflow: hidden; }
+.progress span { display: block; height: 100%; background: #2196F3; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; }
+.header span, .header button, .sub span, .sub button, .h2, .btn, .label, .stat .ref { white-space: nowrap; }
+.header > div > *, .sub > div > * { flex: none; }
+.header > div > div[style*="flex-grow"], .sub > div > div[style*="flex-grow"] { flex: 1 1 0; }
+</style>
+</helmet>
+<div style="width: 520px; min-height: 360px; background: #fafafa; box-sizing: border-box"><div style="display: flex; flex-direction: column; gap: 16px; padding: 24px"><span class="h2">Header queue indicator · three states</span><div style="display: flex; flex-direction: column; gap: 6px; "><span class="label">idle</span><div class="header" style="position: static; padding: 8px 16px; border: 1px solid #dddddd; border-radius: 4px"><div style="display: flex; flex-direction: row; align-items: center; gap: 6px; "><span class="dot" style="background: #bbbbbb"></span><span class="small text2">queue idle</span></div></div><span class="small text2">Nothing queued. Clicking it opens the Suite page's queue panel.</span></div><div style="display: flex; flex-direction: column; gap: 6px; "><span class="label">running</span><div class="header" style="position: static; padding: 8px 16px; border: 1px solid #dddddd; border-radius: 4px"><div style="display: flex; flex-direction: row; align-items: center; gap: 6px; "><span class="dot" style="background: #2196F3"></span><span class="small" style="color: #1976D2; font-weight: 600">1 running</span><span class="small text2">· 2 queued</span><span class="progress" style="width: 80px"><span style="width: 42%"></span></span></div></div><span class="small text2">Progress is the running item's elapsed share of its last duration. Counts update as items finish.</span></div><div style="display: flex; flex-direction: column; gap: 6px; "><span class="label">failed</span><div class="header" style="position: static; padding: 8px 16px; border: 1px solid #dddddd; border-radius: 4px"><div style="display: flex; flex-direction: row; align-items: center; gap: 6px; "><span class="dot" style="background: #f44336"></span><span class="small" style="color: #C62828; font-weight: 600">1 failed</span><span class="small text2">· 2 queued</span></div></div><span class="small text2">Stays red until the failed row is cleared or opened.</span></div></div></div>
+</x-dc>
+</body>
+</html>

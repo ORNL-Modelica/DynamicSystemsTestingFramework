@@ -323,6 +323,42 @@ feasibility test of a small browser-side listener for it.
 - **Targets:** under 0.5 s from click to plot for a typical test, under 2 s for
   the largest.
 
+### 3.9 Rulings on the first design draft (2026-09-15)
+
+The design pass drafted the §4 artboards on a Claude Design canvas from the
+tokens in `DESIGN.md` (repo root), which lifts the report's stylesheet and the
+figure layer's colours. The owner ruled:
+
+- **Material chrome**, as the report is today; a neutral alternate was shown
+  and not chosen.
+- **Themes.** Colours are replaceable: the neutrals, accent and tints are
+  variables a theme file sets; the default is the current look; dark mode is
+  a theme; a `theme` setting in `testing.json` with a session switch in the
+  tool. Status fills, role chips and plot series never change with the theme.
+  Cheap for the chrome and the report's stylesheet; the plots need one layout
+  template per theme in the figure layer.
+- **The queue numbers its rows** in run order.
+- **Plots are modular** (`DESIGN.md` "Plots are modular"): any number of
+  plots per test, any series per plot, tracked or plot-only, add / remove /
+  separate; expressions and unit conversion come later on the same series
+  model. "Plot another variable…" becomes Add plot and Add series. Open for
+  the plan: where a test's plot layout persists. Recommended: an optional
+  `plots` key per test in `test_spec.json`, ignored by scoring, read by the
+  report too so both tiers draw the same plots; absent means one plot per
+  tracked variable. That is a spec-format extension, so old files stay
+  valid and the writer never omits it once set.
+- **Picking variables (option C of three shown):** a collapsible Variables
+  drawer on the Test page's left rail, one drawer at a time with the test
+  switcher; Add series and Add plot open it. Filter: substring, or glob with
+  `*` and `?` and literal `[ ]`; regex and match-case toggles off by default.
+  Checkbox = on the selected plot; "new plot" on hover; the selected plot has
+  the accent ring. Drag-to-plot later on the same drawer.
+- **Arrays:** indexed names fold by index into one row with an indices field
+  in Modelica slice syntax; a family draws as one hue ramped by index with a
+  folded legend. Later: a profile plot kind (index on the x axis at chosen
+  times), and a glob-named criterion (`pipe.T[*]`) scoring every index under
+  one leaf, if the plan finds the spec's leaves accept globs.
+
 ---
 
 ## 4. The design pass
@@ -355,3 +391,8 @@ Artboards to draft, for the owner to refine on the canvas:
   the queued tests).
 - Re-applying a process's pending edits on top of a reloaded spec (merge on
   Reload).
+- Other plot kinds on the same plot model (owner, 2026-09-15): a profile plot
+  (index on the x axis at chosen times), an x-y plot of one variable against
+  another, a 2-D heat map over index and time, 3-D surfaces. A plot carries a
+  `kind`; the time plot is the only kind built in the redesign, and the
+  series model (name plus optional expression) serves every kind.
