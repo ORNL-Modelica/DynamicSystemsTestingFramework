@@ -80,6 +80,7 @@ src/dstf/
 │   ├── patch_envelope.py     # ModelPatch + parse/build for the patch envelope (both forms)
 │   ├── spec_update.py        # Read-modify-write of the spec: entry lookup, implicit-tree
 │   │                         #   materialization, tree validation, apply_validated_patches
+│   ├── scan_cache.py         # The source scan cached under $XDG_CACHE_HOME/dstf/scan/ (the authoring tool)
 │   └── test_registry.py      # TestModel dataclass, discover_tests() merges all sources
 ├── backends/
 │   ├── __init__.py           # Backend registry: @register decorator, get_backend() factory

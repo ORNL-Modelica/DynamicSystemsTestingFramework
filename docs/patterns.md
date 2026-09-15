@@ -146,9 +146,8 @@
 
 ### Interactive Plotly report UX
 - `interactive.html` uses a vendored Plotly.js (cartesian bundle, one copy per report suite at reports/plotly.min.js — offline-capable) for interactive charts — zoom, pan, hover tooltips on all data points
-- Three-panel layout per variable: trajectory (actual vs reference), absolute error, and NRMSE — the NRMSE panel shows a tolerance line that updates live
+- One chart per variable: actual vs reference, plus the overlays the picker toggles
 - Error overlay dropdown on each variable plot: overlay signed error, absolute error, or NRMSE on the trajectory chart — signed and absolute error on the right axis "Error [signal units]", NRMSE on its own "NRMSE [–]", each shown while a series on it is visible
-- Live tolerance editing: global test tolerance input at the top recomputes all pass/fail; per-variable tolerance inputs in the variable table override the global value when modified (highlighted orange); summary stats and key cards update live
 - `dstf spec-update` applies a patch file, from the authoring tool's Export or written by hand — the page itself edits nothing (D125)
 
 ## Anti-Patterns

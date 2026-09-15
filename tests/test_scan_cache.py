@@ -1,6 +1,6 @@
 """The library scan cached across restarts (brief §3.8), under the user's
-cache dir — never the work dir. Keyed by the library path, the recognizer
-set and the DSTF version. It validates nothing per file: on the owner's
+cache dir — never the work dir. Keyed by the library path and the
+recognizer set; a cache from another DSTF version is ignored. It validates nothing per file: on the owner's
 /mnt/d mount a stat sweep costs more than the scan (plan spike 4), so a
 cached open trusts the cache and rescans in the background (Session)."""
 

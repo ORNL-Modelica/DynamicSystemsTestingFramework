@@ -1,7 +1,8 @@
 """The source scan, cached across tool restarts (brief §3.8).
 
 Under ``$XDG_CACHE_HOME/dstf/scan/`` (default ``~/.cache/dstf/scan/``),
-one JSON file per (library path, recognizer set, DSTF version) — never in
+one JSON file per (library path, recognizer set) — a file another DSTF
+version wrote is ignored and replaced — never in
 the work dir, which is a run's artifact directory that other tools read,
 and never validated per file: on a 9P mount (``/mnt/d``) a ``stat`` sweep
 over TRANSFORM's 3 269 ``.mo`` files measured 27 s, longer than parsing

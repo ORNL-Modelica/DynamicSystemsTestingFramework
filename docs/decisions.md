@@ -4110,8 +4110,9 @@ and `DESIGN.md` name the colours and type both tiers share. They live once, in
 `reporting/theme.py`, as a mapping rendered to `:root { --dstf-...: ... }` for the
 dashboard, the per-test report and the authoring tool's page, and mirrored into
 the tool's Quasar palette. Status fills, baseline-role chips and plot series
-never change with a theme; a theme (sub-project 7) is another mapping in the
-same module, named in `testing.json` (owner ruling, brief §3.10). The shipped
+never change with a theme; a theme (the redesign roadmap's sub-project 7) will
+be another mapping in the same module, named in `testing.json` (owner ruling,
+brief §3.10). The shipped
 type stack ended in `monospace` with no generic sans-serif, so a Linux browser
 without Segoe UI or Roboto rendered every report in monospace; the stack now
 ends in `sans-serif`. Two colours the report used that are in no table — the
@@ -4120,7 +4121,8 @@ the neutral and `warn` tokens.
 
 The tool caches the library scan across restarts under
 `$XDG_CACHE_HOME/dstf/scan/` (default `~/.cache/dstf/scan/`), keyed by the
-library path, the recognizer set and the DSTF version — never in the work dir,
+library path and the recognizer set (a cache another DSTF version wrote is
+ignored and replaced) — never in the work dir,
 which is a run's artifact directory, and `Session.open` still writes nothing
 there. The cache validates nothing per file: on the owner's `/mnt/d` mount a
 `stat` sweep over TRANSFORM's 3 269 `.mo` files measured 27 s, longer than

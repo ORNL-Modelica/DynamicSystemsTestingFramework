@@ -495,13 +495,12 @@ the plot, so a second tab's plot does not redraw after an edit.
 
 **Opening a project.** The library scan is cached across restarts under
 `$XDG_CACHE_HOME/dstf/scan/` (`~/.cache/dstf/scan/` when `XDG_CACHE_HOME` is
-unset), one file per library path, recognizer set and DSTF version — never in
-the work dir. The cache is trusted without checking a single source file, so a
+unset), one file per library path and recognizer set — never in the work dir. A
+cache another DSTF version wrote is ignored and replaced. The cache is trusted without checking a single source file, so a
 cached open skips the scan; the tool then rescans the library in the background
 and re-merges any test whose scan changed. Only a Modelica source is scanned, so
 only it is cached. The index of sibling-backend overlays is built on its own
-thread as the project opens, so the first click on a test no longer pays for
-building it.
+thread as the project opens, so a click normally finds it already built.
 
 **The layout.** The header carries the library, the backend, the pending-op
 count (click it for the drawer of staged ops, grouped by model), Save, Discard,

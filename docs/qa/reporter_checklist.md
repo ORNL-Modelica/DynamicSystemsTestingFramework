@@ -14,7 +14,8 @@ those cannot judge — visual quality and feel on a real report.
   the dict declares and the criterion shapes the metric emitted.
 - Zoom, hover and legend toggles are live; the overlay picker toggles a
   soft_check and a companion trace; the error-overlay dropdown switches
-  between signed, absolute and per-point NRMSE on the right axis.
+  between signed and absolute error on the right axis "Error [signal units]"
+  and per-point NRMSE on its own "NRMSE [–]".
 - The metric tree renders read-only, with the CLI verdict, score text and
   detail pairs per leaf; no input element anywhere in it.
 - The decimation banner names the decimated traces with their sample counts.
@@ -79,8 +80,11 @@ uv run dstf --config examples/fmu/testing.json companion add \
       come back including any declared bound that sits outside the data.
 - [ ] The overlay picker only appears above plots whose variable an
       overlay carries data for, and each checkbox shows/hides that trace.
-- [ ] The error-overlay dropdown draws on the right-hand axis and its
-      three choices are visibly different curves; "none" removes it.
+- [ ] The error-overlay dropdown's three choices are visibly different
+      curves; "none" removes it. Signed and absolute error draw against
+      "Error [signal units]", NRMSE against "NRMSE [–]", and each axis
+      shows only while a series on it is visible — by the dropdown or by a
+      legend click.
 - [ ] The metric tree reads top-down: combinator nesting is clear (a
       `warn` wrapper visibly contains its child), each leaf shows its
       verdict, its one-line criterion and its detail pairs, and the

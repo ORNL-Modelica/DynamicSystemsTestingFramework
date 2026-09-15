@@ -20,7 +20,8 @@ DynamicSystemsTestingFramework/
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect backend
 │   ├── pipeline.py               # run_pipeline — the run as a library callable; cmd_run is its CLI wrapper
 │   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse, RFC 6902 patch_apply,
-│   │                             #      patch_envelope (both envelope forms), spec_update (the shared read-modify-write)
+│   │                             #      patch_envelope (both envelope forms), spec_update (the shared read-modify-write),
+│   │                             #      scan_cache (the tool's scan cache under $XDG_CACHE_HOME/dstf/scan/)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
 │   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
