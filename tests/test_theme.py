@@ -1,6 +1,7 @@
 """DESIGN.md "Colors" / "Typography" / "Themes": one token table, rendered
 as CSS custom properties into every page both tiers serve. The pages carry
-no colour that is not a token, and the type stack ends in a generic
+no hex colour outside the token block, every token they use is defined, and
+the type stack ends in a generic
 sans-serif (the shipped stack ended in `monospace`, so a Linux browser
 without Segoe UI or Roboto rendered the report in monospace)."""
 
@@ -74,7 +75,7 @@ class TestTable:
 
 class TestPages:
     def test_the_per_test_report_carries_only_tokens(self, tmp_path):
-        from test_interactive_figures import _context_with_figure, _render_with_context
+        from report_fixtures import _context_with_figure, _render_with_context
 
         ctx, _ = _context_with_figure()
         html = _render_with_context(tmp_path, ctx).read_text(encoding="utf-8")
@@ -123,6 +124,17 @@ class TestPages:
         assert f"--dstf-font: {theme.FONT_STACK};" in html
         assert _colours_outside_root(html) == []
         assert re.search(r"body\s*\{[^}]*font-family:\s*var\(--dstf-font\)", html)
+
+    def test_every_token_a_template_uses_is_defined(self):
+        """A misspelt ``var(--dstf-...)`` is not an error in CSS: the property
+        silently falls back to the browser default."""
+        defined = set(re.findall(r"(--dstf-[\w-]+):", theme.css_variables()))
+        templates = Path(theme.__file__).parent / "templates"
+        for name in ("interactive.html", "dashboard.html"):
+            html = (templates / name).read_text(encoding="utf-8")
+            used = set(re.findall(r"var\((--dstf-[\w-]+)\)", html))
+            assert used, name
+            assert used <= defined, (name, sorted(used - defined))
 
     def test_the_templates_on_disk_carry_no_hex_but_the_root_block(self):
         templates = Path(theme.__file__).parent / "templates"
