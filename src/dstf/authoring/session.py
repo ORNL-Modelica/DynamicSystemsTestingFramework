@@ -13,7 +13,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
@@ -84,6 +84,18 @@ class Selection:
 
 
 @dataclass
+class _ModelReads:
+    """What one click re-read from disk before this cache (brief §2.2): the
+    primary reference and the overlays; plus the decimated base view per
+    variable — trajectories, overlays and error series, no leaves — so an
+    edit re-decimates only the criterion's geometry."""
+
+    ref: dict | None
+    overlays: list
+    bases: dict[str, VariableView] = field(default_factory=dict)
+
+
+@dataclass
 class RunningJob:
     label: str
     models: frozenset[str]
@@ -147,6 +159,7 @@ class Session:
         self._post = post or (lambda fn: fn())
         self._listeners: dict[str, list[Listener]] = {}
         self.overlay_index_ready = threading.Event()
+        self._reads: dict[str, _ModelReads] = {}
 
     # -- project -----------------------------------------------------------
 
@@ -202,6 +215,7 @@ class Session:
         self.spec = spec
         self.selection = Selection()
         self.comparisons = {}
+        self._reads = {}
         # A notice is project-scoped text ("stored 2 baselines for LibA.X"), and
         # so is an artifact's path; a swap calls open, never close, and must not
         # carry either into LibB's panel. Assigned here, at the commit point,
@@ -240,6 +254,7 @@ class Session:
         self.last_job = None
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
+        self._reads = {}
         self.selection = Selection()
         self._emit("spec", models=set())
 
@@ -290,20 +305,18 @@ class Session:
         scoring it. A test with no result, a failed simulation or no baseline
         gets the empty state — trajectories present or not, no leaves."""
         from ..reporting.context_builder import build_trajectories
-        from ..reporting.overlay_loader import (
-            attach_overlays_to_trajectories,
-            load_overlays,
-        )
+        from ..reporting.overlay_loader import attach_overlays_to_trajectories
 
         project = self._require_project()
         if project.test(model_id) is None:
             raise KeyError(model_id)
         comp = self.comparisons.get(model_id)
         result = project.results.get(model_id)
-        ref = project.store.get_reference(model_id)
+        reads = self._reads_for(model_id)
+        ref = reads.ref
         scored = list(comp.variables) if comp is not None and comp.evaluated else []
         trajectories, _diag, nobaseline = build_trajectories(scored, result, ref)
-        overlays = load_overlays(project.store, model_id, config=project.config)
+        overlays = reads.overlays
         attach_overlays_to_trajectories(trajectories, overlays)
         attach_overlays_to_trajectories(nobaseline, overlays)
         traj = next((t for t in trajectories if t["name"] == variable), None)
@@ -323,17 +336,50 @@ class Session:
         )
         return view_from_trajectory(variable, traj, leaves)
 
-    def figure(self, model_id: str, variable: str) -> dict:
-        """The tool's figure is the editable one — handle rings a user can
-        drag (``variable_figure(..., editable=True)``); the report's is not."""
-        from ..figures.plotly import variable_figure
+    def _reads_for(self, model_id: str) -> _ModelReads:
+        from ..reporting.overlay_loader import load_overlays
 
         project = self._require_project()
-        return variable_figure(
-            self.view(model_id, variable),
-            project.config.max_embedded_samples,
-            editable=True,
+        reads = self._reads.get(model_id)
+        if reads is None:
+            reads = _ModelReads(
+                ref=project.store.get_reference(model_id),
+                overlays=load_overlays(project.store, model_id, config=project.config),
+            )
+            self._reads[model_id] = reads
+        return reads
+
+    def figure(self, model_id: str, variable: str) -> dict:
+        """The tool's figure is the editable one — handle rings a user can
+        drag (``variable_figure(..., editable=True)``); the report's is not.
+        The base traces are decimated once per model and variable and
+        cached; only the leaves' geometry is decimated per call."""
+        from ..figures.plotly import variable_figure
+        from ..figures.view import build_view, decimate_view
+
+        project = self._require_project()
+        budget = project.config.max_embedded_samples
+        reads = self._reads_for(model_id)
+        base = reads.bases.get(variable)
+        if base is None:
+            base = decimate_view(
+                replace(self.view(model_id, variable), leaves=()), budget
+            )
+            reads.bases[variable] = base
+        comp = self.comparisons.get(model_id)
+        leaves = leaves_by_variable(comp.metric_tree if comp is not None else None).get(
+            variable, []
         )
+        # The leaves are decimated on their own (no arrays but their
+        # geometry) and joined to the cached base; the figure is then built
+        # WITHOUT a budget, or `variable_figure` would decimate the base a
+        # second time. The base's counts win the merge: a leaves-only view
+        # stamps "act"/"ref" as 0.
+        leaves_view = decimate_view(build_view(variable, leaves=leaves), budget)
+        full = dict(leaves_view.full_samples)
+        full.update(base.full_samples)
+        with_leaves = replace(base, leaves=leaves_view.leaves, full_samples=full)
+        return variable_figure(with_leaves, None, editable=True)
 
     def tree_view(self, model_id: str) -> dict | None:
         """The read-only tree the report shows for this test, built by the
@@ -614,6 +660,9 @@ class Session:
             else:
                 fresh.pop(model_id, None)
         project.results = fresh
+        for model_id in list(self._reads):
+            if model_id not in locked:
+                del self._reads[model_id]
         self._score_all(t.model_id for t in project.tests if t.model_id not in locked)
 
     def _materialization(self, model_id: str) -> dict | None:

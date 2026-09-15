@@ -1047,6 +1047,90 @@ class TestLockAndCompletion:
         assert seen == [{A}] and session.comparisons[B] is untouched
 
 
+class TestReadCache:
+    # `compare_one` reads the reference too (comparator.py:569), on every
+    # rescore, so the spy is on the overlay load: `_reads_for` is the only
+    # caller of `load_overlays` in the Session.
+    @staticmethod
+    def _spy_overlays(monkeypatch):
+        from dstf.reporting import overlay_loader as ol
+
+        loads = []
+        real = ol.load_overlays
+        monkeypatch.setattr(
+            ol,
+            "load_overlays",
+            lambda store, m, config=None: (
+                loads.append(m) or real(store, m, config=config)
+            ),
+        )
+        return loads
+
+    def test_a_second_view_of_a_model_reads_nothing_from_disk(
+        self, session, monkeypatch
+    ):
+        loads = self._spy_overlays(monkeypatch)
+        session.view(A, "x")
+        session.view(A, "x")
+        assert loads == [A]
+
+    def test_a_second_figure_decimates_only_the_leaves(self, session, monkeypatch):
+        from dstf.figures import view as view_mod
+
+        calls = []
+        real = view_mod.lttb
+        monkeypatch.setattr(
+            view_mod, "lttb", lambda t, v, n: calls.append(len(t)) or real(t, v, n)
+        )
+        session.figure(A, "x")
+        first = len(calls)
+        session.figure(A, "x")
+        # The base — actual, reference, three error series (FakeLib has no
+        # overlays) — is decimated on the first call only; a second call
+        # decimates the leaves' Series primitives and nothing else. No
+        # bundled metric emits a Series (nrmse emits no geometry; tube is a
+        # Band plus Markers; Bands go through decimate.py's own `lttb`,
+        # which this spy does not see), so `leaf_series` is 0 here and the
+        # guard is "5, then 0"; per-call leaf decimation is guarded by
+        # `test_the_tools_figure_rings_every_marker_handle`.
+        from dstf.comparison.geometry import Series
+
+        leaf_series = sum(
+            isinstance(p, Series)
+            for leaf in session.view(A, "x").leaves
+            for p in leaf.geometry
+        )
+        assert first == 5 + leaf_series
+        assert len(calls) - first == leaf_series
+
+    def test_a_results_reload_drops_the_cache(self, session, monkeypatch):
+        loads = self._spy_overlays(monkeypatch)
+        session.view(A, "x")
+        session._reload_results()
+        session.view(A, "x")
+        assert loads == [A, A]
+
+    def test_a_store_write_drops_the_cache(self, session, monkeypatch):
+        loads = self._spy_overlays(monkeypatch)
+        session.view(D, "x")
+        session.apply(StoreWrite(run=lambda store: "", models=frozenset({D})))
+        session.view(D, "x")
+        assert loads == [D, D]
+
+    def test_a_staged_edit_keeps_the_cache_and_changes_the_leaves(self, session):
+        session.figure(A, "x")
+        session.stage([LOOSEN])
+        fig = session.figure(A, "x")
+        leaf = next(tr for tr in fig["data"] if tr["meta"].get("kind") == "act")
+        assert leaf  # the base traces are still drawn
+        assert session.comparisons[A].passed is True  # the loosened verdict
+
+    def test_close_drops_every_cached_read(self, session):
+        session.view(A, "x")
+        session.close()
+        assert session._reads == {}
+
+
 class TestSessionView:
     def test_exposes_readers_and_no_writer(self, session):
         view = SessionView(session)

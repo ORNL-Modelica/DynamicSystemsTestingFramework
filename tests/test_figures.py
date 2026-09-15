@@ -77,6 +77,16 @@ class TestView:
         )
         assert all(len(s.x) <= 100 for s in view.errors)
 
+    def test_decimating_an_already_decimated_view_keeps_the_original_counts(self):
+        """The Session caches a decimated base view and decimates it again
+        with the leaves; the banner must still say 2001, not 100."""
+        once = decimate_view(_tube_view(n=2001), 100)
+        twice = decimate_view(once, 100)
+        assert twice.full_samples["act"] == 2001
+        assert twice.full_samples["ref"] == 2001
+        assert all(twice.full_samples[s.id] == 2001 for s in twice.errors)
+        np.testing.assert_array_equal(twice.act_time, once.act_time)
+
     def test_decimate_band_reads_lower_at_the_kept_nodes(self):
         t = np.linspace(0.0, 1.0, 1001)
         t2, lo2, up2 = decimate_band(t, -t, t, 50)

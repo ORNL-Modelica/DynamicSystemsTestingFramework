@@ -166,7 +166,7 @@ def _decimate_overlay(ov: OverlayView, max_samples: int) -> OverlayView:
         kind=ov.kind,
         time=t2,
         values=v2,
-        full_samples=len(ov.time),
+        full_samples=len(ov.time) if ov.full_samples is None else ov.full_samples,
     )
 
 
@@ -179,19 +179,19 @@ def decimate_view(view: VariableView, max_samples: int) -> VariableView:
     rt, rv = _pair(view.ref_time, view.ref_values, max_samples)
 
     # Pre-decimation counts, keyed by primitive id, so the figure can mark
-    # every decimated trace — bands, spectra and error series included.
-    full: dict[str, int] = {
-        "act": 0 if view.act_time is None else len(view.act_time),
-        "ref": 0 if view.ref_time is None else len(view.ref_time),
-    }
+    # every decimated trace — bands, spectra and error series included. A
+    # count already stamped (a cached base view decimated again) is kept.
+    full: dict[str, int] = dict(view.full_samples)
+    full.setdefault("act", 0 if view.act_time is None else len(view.act_time))
+    full.setdefault("ref", 0 if view.ref_time is None else len(view.ref_time))
 
     def _prim(p: Primitive) -> Primitive:
         if isinstance(p, Band):
-            full[p.id] = len(p.time)
+            full.setdefault(p.id, len(p.time))
             t2, l2, u2 = decimate_band(p.time, p.lower, p.upper, max_samples)
             return replace(p, time=t2, lower=l2, upper=u2)
         if isinstance(p, Series):
-            full[p.id] = len(p.x)
+            full.setdefault(p.id, len(p.x))
             x2, y2 = lttb(p.x, p.y, max_samples)
             return replace(p, x=x2, y=y2)
         return p
