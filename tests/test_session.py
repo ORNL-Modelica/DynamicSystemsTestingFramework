@@ -557,6 +557,47 @@ class TestOpen:
         )
         assert stale.project.results["MyLib.Bar"].success is True
 
+    def test_the_rescan_stores_only_the_models_it_re_read(self, tmp_path, monkeypatch):
+        """`read_results` reports EVERY manifest entry, and a model outside
+        the re-read's own list comes back as "not found in discovery". Only
+        the changed models may be stored: without that filter an unchanged
+        Bar's result flips to a failed read on every rescan, and its next
+        rescore says SIM_FAIL where the open said NO_REF."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        _add_bar(tmp_path)
+        work = tmp_path / "work"
+        Session().open(cfg, work_dir=work)  # the cache names Foo and Bar
+        work.mkdir(exist_ok=True)
+        manifest = {
+            "test_0001": {
+                "model_id": "MyLib.Foo",
+                "ref_id": None,
+                "last_run_status": "passed",
+            },
+            "test_0002": {
+                "model_id": "MyLib.Bar",
+                "ref_id": None,
+                "last_run_status": "passed",
+            },
+        }
+        (work / "batch_manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        for key in manifest:
+            (work / key).mkdir()
+            (work / key / "result.json").write_text(
+                json.dumps({"success": True, "time": [0, 1], "variables": {}}),
+                encoding="utf-8",
+            )
+        _mo, before = _bump_stop_time(tmp_path)  # Foo changed, Bar not
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.rescan_done.wait(10.0)
+        assert s.project.test(before.model_id).stop_time == before.stop_time + 1
+        assert s.project.results["MyLib.Bar"].success is True
+        assert classify(s.rescore("MyLib.Bar")) == NO_REF
+
     def test_only_the_changed_model_of_two_is_rescored(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
         cfg = _modelica_project(tmp_path)
