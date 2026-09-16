@@ -803,8 +803,14 @@ class Session:
         running job has locked (their directories are being rewritten, so
         their in-memory result and verdict stand until that job's own
         completion reload). Each result is scored as it is read and
-        announced as ``loading(phase="results")``; ONE ``results`` event
-        follows for the batch."""
+        announced as ``loading(phase="results")``; tests with no result are
+        scored and announced after the read, so the last announcement is
+        ``done == total``; ONE ``results`` event follows for the batch. A
+        model whose scoring raises does not abort the read: the results stay
+        complete, its stale verdict is dropped, and the first failure is
+        raised after the batch event — ``_finish_job`` records it as the
+        job's error (no rows shown for a failed job); ``open`` propagates
+        it, with no ``done`` event and ``rescan_done`` untouched."""
         project = self._require_project()
         locked = self.running.models if self.running is not None else frozenset()
         to_read = [t for t in project.tests if t.model_id not in locked]
@@ -812,10 +818,27 @@ class Session:
         for model_id in list(self._reads):
             if model_id not in locked:
                 del self._reads[model_id]
-        done = 0
+        announced: set[str] = set()
+        failures: list[tuple[str, Exception]] = []
+
+        def score_and_announce(model_id: str) -> None:
+            try:
+                self._score(model_id)
+            except Exception as e:
+                self.comparisons.pop(model_id, None)
+                failures.append((model_id, e))
+            if model_id in announced:
+                return  # one model under two manifest keys is read twice
+            announced.add(model_id)
+            self._emit(
+                "loading",
+                phase="results",
+                model=model_id,
+                done=len(announced),
+                total=len(to_read),
+            )
 
         def on_result(model_id: str, result: TestResult) -> None:
-            nonlocal done
             if model_id in locked:
                 # `read_results` reports every manifest entry, and a locked
                 # model — excluded from `to_read` — comes back as "not found
@@ -824,23 +847,20 @@ class Session:
                 return
             project.results[model_id] = result
             if project.test(model_id) is not None:
-                self._score(model_id)
-                done += 1
-                self._emit(
-                    "loading",
-                    phase="results",
-                    model=model_id,
-                    done=done,
-                    total=len(to_read),
-                )
+                score_and_announce(model_id)
 
         project.backend.read_last_results(to_read, on_result=on_result)
         # Tests with no result at all (never run, or dropped from the
         # manifest) are scored now — NO_REF / SIM_FAIL states.
         for test in to_read:
             if test.model_id not in project.results:
-                self._score(test.model_id)
+                score_and_announce(test.model_id)
         self._emit("results", models={t.model_id for t in to_read})
+        if failures:
+            model_id, error = failures[0]
+            raise RuntimeError(
+                f"scoring {model_id} failed ({len(failures)} of {len(to_read)} models)"
+            ) from error
 
     def _materialization(self, model_id: str) -> dict | None:
         """The ``add /metrics`` op for a test the flat path scored, built

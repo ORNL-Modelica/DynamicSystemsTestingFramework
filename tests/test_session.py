@@ -460,6 +460,71 @@ class TestOpen:
         s.open(cfg, work_dir=work)
         assert verdicts[A] is False and verdicts[D] is True
 
+    def test_a_test_added_since_the_last_run_is_announced_and_done_reaches_total(
+        self, tmp_path
+    ):
+        """FakeLib.E is in the spec and has no manifest entry: it is scored
+        after the per-result loop (SIM_FAIL, no result). It must be
+        announced like the others — a page filling rows per event has no
+        row for it otherwise — and the last announcement is done == total."""
+        cfg, work = _project(tmp_path)
+        e_id = "FakeLib.E"
+        (cfg.parent.parent / "Examples" / "E.py").write_text(
+            "def simulate(stop_time, tolerance):\n    return {}\n", encoding="utf-8"
+        )
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        spec["tests"].append(
+            {
+                "model": e_id,
+                "source": "../Examples/E.py",
+                "variables": ["x"],
+                "simulation": {"stop_time": 1.0, "tolerance": 1e-6},
+            }
+        )
+        spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+        s = Session()
+        events = []
+        s.on("loading", events.append)
+        s.open(cfg, work_dir=work)
+        announced = [e for e in events if e["phase"] == "results"]
+        assert {e["model"] for e in announced} == {A, B, C, D, G, e_id}
+        assert [e["done"] for e in announced] == list(range(1, 7))
+        assert announced[-1]["done"] == announced[-1]["total"] == 6
+        assert classify(s.comparisons[e_id]) == SIM_FAIL
+
+    def test_one_models_scoring_failure_leaves_the_results_complete_and_is_raised(
+        self, session, monkeypatch
+    ):
+        """A scorer that raises for one model (a malformed reference, a
+        scorer bug) must not abort the read: every result is stored, every
+        model is announced, the batch event fires, the failed model's stale
+        verdict is dropped rather than shown, and the failure is raised once
+        — `_finish_job` records it as the job's error; `open` propagates it."""
+        import dstf.authoring.session as session_mod
+
+        real = session_mod.compare_one
+
+        def failing(test, *args, **kwargs):
+            if test.model_id == D:
+                raise ValueError("boom")
+            return real(test, *args, **kwargs)
+
+        monkeypatch.setattr(session_mod, "compare_one", failing)
+        events = []
+        session.on("loading", events.append)
+        session.on("results", lambda e: events.append({"event": "results", **e}))
+        with pytest.raises(RuntimeError) as exc_info:
+            session._reload_results()
+        assert isinstance(exc_info.value.__cause__, ValueError)
+        assert D in str(exc_info.value)
+        assert {A, B, C, D, G} <= set(session.project.results)
+        assert D not in session.comparisons
+        assert classify(session.comparisons[A]) == FAIL
+        announced = [e for e in events if e.get("phase") == "results"]
+        assert announced[-1]["done"] == announced[-1]["total"] == 5
+        assert events[-1]["event"] == "results"
+
     def test_a_cached_open_parses_nothing_and_rescans_in_the_background(
         self, tmp_path, monkeypatch
     ):
@@ -1481,7 +1546,11 @@ class TestLockAndCompletion:
         before = session.comparisons[A]
         session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
         (work / "test_0001" / "result.json").unlink()
+        events = []
+        session.on("loading", events.append)
         session.apply(StoreWrite(run=lambda store: None, models=frozenset({B})))
+        # A is locked: to_read is B, C, D, G — four announcements, total 4.
+        assert [e["total"] for e in events if e.get("phase") == "results"] == [4] * 4
         assert (
             session.comparisons[A] is before
             and classify(session.comparisons[A]) == FAIL
