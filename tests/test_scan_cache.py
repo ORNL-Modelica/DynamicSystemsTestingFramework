@@ -79,7 +79,6 @@ def test_a_fresh_process_finds_the_cache(tmp_path):
     which `scan_source_tests` does lazily; a process that loads the cache
     BEFORE scanning anything (every warm `dstf author`) must compute the
     same key, or the cache never hits outside the test that wrote it."""
-    import os
     import subprocess
     import sys
 
@@ -102,9 +101,7 @@ def test_a_fresh_process_finds_the_cache(tmp_path):
     assert out.stdout.strip() == "HIT", out.stderr
 
 
-def test_an_unwritable_cache_dir_is_a_warning_and_stores_nothing(
-    tmp_path, monkeypatch, caplog
-):
+def test_an_unwritable_cache_dir_is_a_warning_and_stores_nothing(tmp_path, caplog):
     """The cache is an accelerator: a home it cannot be written to (here the
     `dstf` segment is a FILE, so `mkdir -p` raises NotADirectoryError, an
     OSError) is logged and skipped, never raised at whoever wanted a scan."""
