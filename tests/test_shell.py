@@ -346,6 +346,37 @@ async def test_a_thread_posted_completion_reaches_the_page(shell):
         await user.should_see("no job running", retries=20)
 
 
+async def test_a_rescore_after_the_open_does_not_put_the_shell_back_to_loading(shell):
+    """`Session._reload_results` announces `loading(phase="results")` per
+    model on EVERY rescore — a finished job's, a store write's — and only
+    `open` closes with `done`. The shell reads those announcements only
+    while an open is in progress: read after it, the first Rerun or Accept
+    left `load` at "scoring results… 5 of 5" for good, and Save, Discard and
+    the backend select stayed disabled with "the project is still loading"
+    (found by the Task 5 review's probe)."""
+    from dstf.authoring.capabilities import Job, StoreWrite
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        gate = _Gate()
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await user.should_see("running: rerun", retries=20)
+        gate.release.set()
+        await user.should_see("no job running", retries=20)
+        assert not shell.load.in_progress and shell.busy_reason() is None
+        assert shell.load.failed_models == []
+        shell.session.apply(
+            StoreWrite(run=lambda store: "stored 1", models=frozenset({B}))
+        )
+        await user.should_see("stored 1", retries=20)
+        assert not shell.load.in_progress and shell.busy_reason() is None
+        backend = _one(user, "backend")
+        await _settled(lambda: backend.enabled)
+        shell.session.stage([LOOSEN])  # a backend change then waits on the edits
+        save = _one(user, "save")
+        await _settled(lambda: save.enabled)
+
+
 def _write_status(work, *, start_wall, rows) -> None:
     """A ``status.json`` in ProgressReporter's shape. The poll reads it
     through ``progress.read_status``, as the live dashboard does."""

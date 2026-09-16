@@ -195,6 +195,12 @@ class Shell:
                 load.done = int(event.get("done", 0))
                 load.total = int(event.get("total", 0))
             elif phase == "results":
+                if not load.in_progress:
+                    # A rescore after the open — a finished job's, a store
+                    # write's — announces the same events, and no `done`
+                    # follows them: read here, the first Rerun left the shell
+                    # "still loading" for good (the Task 5 review's probe).
+                    return
                 load.phase = "results"
                 load.done, load.total = int(event["done"]), int(event["total"])
                 if event.get("error"):
