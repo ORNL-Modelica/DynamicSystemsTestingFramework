@@ -4,7 +4,7 @@ pending count with Save / Discard / Export, the dashboard link and Stop
 server on the right. Every button's label says its object, effect and
 count; a disabled one carries the sentence that says why (DESIGN.md
 "Disabled states explain themselves"). Off-white with a hairline below,
-never an accent bar. "Open in another backend…" joins in Task 8."""
+never an accent bar."""
 
 from __future__ import annotations
 
@@ -36,6 +36,11 @@ class Header:
                 .mark("backend")
             )
             self.backend_why = ui.label().classes("dstf-why").mark("backend:why")
+            self.other = (
+                ui.button("Open in another backend…", on_click=self._open_other)
+                .props("flat dense no-caps")
+                .mark("other-backend")
+            )
             ui.space()
             self.runs = ui.label().classes("text-secondary").mark("runs")
             ui.space()
@@ -85,6 +90,7 @@ class Header:
         self.backend.set_enabled(why is None)
         self.backend_why.set_text(why or "")
         self.backend_why.set_visibility(why is not None)
+        self.other.set_enabled(project is not None)
         running = s.running
         self.runs.set_text(
             f"1 running · {running.label}" if running is not None else "idle"
@@ -137,6 +143,46 @@ class Header:
             return
         self.shell.open_async(e.value)
         self.refresh()
+
+    def _open_other(self) -> None:
+        """A second tool process on another backend (brief §3.6): its own
+        port and browser tab; one project and backend per process."""
+        project = self.shell.session.project
+        if project is None:
+            return
+        current = project.config.backend_name  # `str | None`, as in `refresh`
+        options = sorted(
+            set(project.config.backends) | ({current} if current else set())
+        )
+        self.dialog.clear()
+        with self.dialog, ui.card():
+            ui.label("Open this project in another backend").classes("text-h6")
+            ui.label(
+                "A second dstf author process on its own port, opening its own browser "
+                "tab; one project and backend per process. Stop server here ends it too."
+            ).classes("text-xs text-secondary")
+            choice = (
+                ui.select(options, value=current, label="backend")
+                .props("dense outlined")
+                .mark("other-choice")
+            )
+            link = ui.link("", "/", new_tab=True).mark("other-link")
+            link.set_visibility(False)
+
+            def start() -> None:
+                url = self.shell.spawn(str(choice.value))
+                link.set_text(f"open {url}")
+                link.props(f'href="{url}"')
+                link.set_visibility(True)
+
+            with ui.row():
+                ui.button("Start", on_click=start).props(
+                    "unelevated dense no-caps color=primary"
+                ).mark("start-other")
+                ui.button("Close", on_click=self.dialog.close).props(
+                    "flat dense no-caps"
+                )
+        self.dialog.open()
 
     # -- the edits -----------------------------------------------------------------
 

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import logging
 import queue
+import socket
 import subprocess
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -279,6 +281,39 @@ class Shell:
             if child.poll() is None:
                 child.terminate()
 
+    def spawn(self, backend: str) -> str:
+        """`Open in another backend…` (brief §3.6): a second `dstf author` on
+        `backend`, on a free port, from the same config — with this
+        process's `--work-dir`, `--filter` and `--package` when it got them
+        (decision 6: `--work-dir` means "this work dir"). The child opens its
+        own browser tab unless this process was started with `--no-browser`,
+        so no popup for the browser to block; the URL is returned for the
+        dialog's link. `terminate_children` ends what this started
+        (decision 7)."""
+        port = _free_port()
+        cmd = [
+            sys.executable,
+            "-m",
+            "dstf",
+            "--config",
+            str(self.config_path),
+            "author",
+            "--backend",
+            backend,
+            "--port",
+            str(port),
+        ]
+        if self.work_dir is not None:
+            cmd += ["--work-dir", str(self.work_dir)]
+        if self.filter:
+            cmd += ["--filter", self.filter]
+        if self.package:
+            cmd += ["--package", self.package]
+        if not self.show_browser:
+            cmd.append("--no-browser")
+        self.children.append(subprocess.Popen(cmd))
+        return f"http://127.0.0.1:{port}/"
+
     # -- the pages ---------------------------------------------------------------
 
     def page_setup(self) -> None:
@@ -326,3 +361,9 @@ class Shell:
         self.mount()
         self.start()
         await SuitePage(self).build()
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import threading
 import time
 
@@ -22,6 +23,7 @@ from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.capabilities import Job  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
+from dstf.reporting.status import FAIL, classify  # noqa: E402
 from test_session import LOOSEN, A, B, C, D, G, _Gate, _project  # noqa: E402
 
 
@@ -662,3 +664,136 @@ async def test_the_last_jobs_outcome_is_the_projects_and_goes_with_it(shell):
         await user.should_see("no project open", retries=20)
         await user.should_not_see("finished: rerun", retries=20)
         assert shell.session.last_job is None
+
+
+# -- the backend -----------------------------------------------------------
+
+
+def _with_alt_backend(cfg) -> None:
+    """A second entry in the `backends` map that resolves to the same family:
+    `Config.backend` maps "Python (alt)" to "Python", so the reopen is
+    observable — a new Config, the select's new value — without a second
+    simulator on this machine."""
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    data["backends"]["Python (alt)"] = ["python3", "python"]
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+
+
+async def test_changing_the_backend_reopens_the_project_on_it(tmp_path):
+    cfg, work = _project(tmp_path)
+    _with_alt_backend(cfg)
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        backend = _one(user, "backend")
+        assert backend.options == ["Python", "Python (alt)"]
+        backend.set_value("Python (alt)")
+        await _settled(
+            lambda: shell.load.phase == "done" and not shell.load.in_progress
+        )
+        await _settled(
+            lambda: shell.session.project.config.backend_name == "Python (alt)"
+        )
+        await _settled(lambda: backend.value == "Python (alt)")
+        assert shell.load.error is None
+        # The same family reads the same partition: the verdicts are the old ones.
+        assert classify(shell.session.comparisons[A]) == FAIL
+
+
+async def test_the_backend_select_is_greyed_with_its_sentence_while_edits_are_pending(
+    shell,
+):
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        assert _one(user, "backend").enabled
+        shell.session.stage([LOOSEN])
+        await _settled(lambda: not _one(user, "backend").enabled)
+        assert (
+            _one(user, "backend:why").text
+            == "backend change waits: save or discard 2 pending edits first"
+        )
+        shell.session.discard()
+        await _settled(lambda: _one(user, "backend").enabled)
+
+
+async def test_a_backend_that_cannot_be_built_leaves_the_project_and_says_why(shell):
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.open_async("NoSuchBackend")
+        await _settled(
+            lambda: shell.load.phase == "done" and shell.load.error is not None
+        )
+        assert shell.session.project.config.backend_name == "Python"  # as it was
+        assert _one(user, "backend").value == "Python"
+        await user.should_see("warning:", retries=20)
+        await user.should_see("NoSuchBackend")
+
+
+class _FakeProc:
+    def __init__(self, cmd, calls):
+        self.cmd, self.calls = cmd, calls
+        calls.append(cmd)
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        self.calls.append("terminated")
+
+
+async def test_open_in_another_backend_starts_a_second_process_on_a_free_port(
+    tmp_path, monkeypatch
+):
+    """Brief §3.6: one project and backend per process. The child gets this
+    process's config, the chosen backend, a free port, and its `--work-dir`
+    (decision 6); it opens its own browser tab; Stop server ends it
+    (decision 7)."""
+    cfg, work = _project(tmp_path)
+    _with_alt_backend(cfg)
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    calls: list = []
+    import dstf.authoring.shell.shell as shell_mod
+
+    monkeypatch.setattr(
+        shell_mod.subprocess, "Popen", lambda cmd: _FakeProc(cmd, calls)
+    )
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        user.find(marker="other-backend").click()
+        await user.should_see("Open this project in another backend")
+        _one(user, "other-choice").set_value("Python (alt)")
+        user.find(marker="start-other").click()
+        await user.should_see("open http://127.0.0.1:", retries=20)
+    cmd = calls[0]
+    assert cmd[:3] == [sys.executable, "-m", "dstf"]
+    assert cmd[cmd.index("--config") + 1] == str(cfg)
+    assert cmd[cmd.index("author") + 1 :][:2] == ["--backend", "Python (alt)"]
+    assert cmd[cmd.index("--work-dir") + 1] == str(work)
+    port = int(cmd[cmd.index("--port") + 1])
+    assert 1024 < port < 65536
+    assert "--no-browser" not in cmd  # the child opens its own tab
+    shell.terminate_children()
+    assert calls[-1] == "terminated"
+
+
+def test_a_no_browser_parent_starts_no_browser_children_without_a_work_dir(
+    tmp_path, monkeypatch
+):
+    cfg, _work = _project(tmp_path)
+    calls: list = []
+    import dstf.authoring.shell.shell as shell_mod
+
+    monkeypatch.setattr(
+        shell_mod.subprocess, "Popen", lambda cmd: _FakeProc(cmd, calls)
+    )
+    shell = Shell(cfg, show_browser=False, filter="FakeLib.A*", package="FakeLib")
+    url = shell.spawn("Python")
+    cmd = calls[0]
+    assert url.startswith("http://127.0.0.1:") and url.endswith("/")
+    assert "--no-browser" in cmd and "--work-dir" not in cmd
+    assert cmd[cmd.index("--filter") + 1] == "FakeLib.A*"
+    assert cmd[cmd.index("--package") + 1] == "FakeLib"
