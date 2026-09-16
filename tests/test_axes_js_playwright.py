@@ -129,7 +129,7 @@ def test_the_axis_still_follows_after_a_re_plot_of_the_same_node(
 ):
     """Plotly.newPlot on a plotted node purges its listeners but keeps the
     node, so a wired-flag on the node would skip the re-wire; the emitter's
-    listener count does not."""
+    listener list, asked for OUR handler, does not."""
     page, errors = _open(playwright_browser, page_path)
     page.evaluate(
         """() => { Plotly.newPlot('p', FIG.data, FIG.layout, FIG.config);
