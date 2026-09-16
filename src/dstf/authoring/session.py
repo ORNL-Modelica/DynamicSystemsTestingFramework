@@ -57,7 +57,7 @@ from .capabilities import (
 )
 from .spec_document import PatchOp, SpecDocument
 
-Event = Literal["spec", "results", "job", "selection", "loading"]
+Event = Literal["spec", "results", "job", "loading"]
 Listener = Callable[[dict[str, Any]], None]
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,11 @@ class Project:
 
 @dataclass(frozen=True)
 class Selection:
+    """What a page has selected, handed to a capability through its
+    SessionView (D129): the checked tests, the variable and the criterion's
+    tree path. A page builds a new view when it changes; two browser tabs
+    keep two. Not the Session's — that was the old shell's one-tab shape."""
+
     tests: frozenset[str] = frozenset()
     variable: str | None = None
     leaf_path: str | None = None
@@ -170,7 +175,6 @@ class Session:
         self.spec: SpecDocument = SpecDocument(
             Path("test_spec.json"), {"tests": []}, None
         )
-        self.selection = Selection()
         self.running: RunningJob | None = None
         #: The job that ran last, whatever its outcome — the job panel's
         #: outcome line. Project-scoped: LibA's outcome is not LibB's.
@@ -251,7 +255,6 @@ class Session:
             dataset_kind=dataset_kind_for(backend_obj),
         )
         self.spec = spec
-        self.selection = Selection()
         self.comparisons = {}
         self._reads = {}
         # A notice is project-scoped text ("stored 2 baselines for LibA.X"), and
@@ -380,7 +383,6 @@ class Session:
         self.spec = SpecDocument(Path("test_spec.json"), {"tests": []}, None)
         self.comparisons = {}
         self._reads = {}
-        self.selection = Selection()
         self._emit("spec", models=set())
 
     def reload(self) -> None:
@@ -389,20 +391,6 @@ class Session:
         project = self._require_project()
         self.spec = SpecDocument.load(project.config.spec_path)
         self._rebuild_tests(set(self.comparisons))
-
-    def select(
-        self,
-        *,
-        tests: Iterable[str] | None = None,
-        variable: str | None = None,
-        leaf_path: str | None = None,
-    ) -> None:
-        self.selection = Selection(
-            tests=frozenset(tests) if tests is not None else self.selection.tests,
-            variable=variable,
-            leaf_path=leaf_path,
-        )
-        self._emit("selection")
 
     def on(self, event: Event, cb: Listener) -> None:
         self._listeners.setdefault(event, []).append(cb)
@@ -974,14 +962,20 @@ class ProjectView:
 
 
 class SessionView:
-    """What a capability receives: the Session's state and its readers,
-    nothing that writes. The enforcement is structural — a capability never
-    holds the Session."""
+    """What a capability receives: the Session's state and its readers, and
+    the selection of the page that built the view — nothing that writes.
+    The enforcement is structural — a capability never holds the Session."""
 
-    __slots__ = ("_session",)
+    __slots__ = ("_session", "_selection")
 
-    def __init__(self, session: Session):
+    def __init__(
+        self,
+        session: Session,
+        # B008 is about a fresh mutable per call; Selection is frozen.
+        selection: Selection = Selection(),  # noqa: B008
+    ):
         self._session = session
+        self._selection = selection
 
     @property
     def project(self) -> ProjectView | None:
@@ -1006,7 +1000,7 @@ class SessionView:
 
     @property
     def selection(self) -> Selection:
-        return self._session.selection
+        return self._selection
 
     @property
     def running(self) -> RunningJob | None:

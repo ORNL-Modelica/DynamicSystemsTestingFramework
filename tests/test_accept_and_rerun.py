@@ -23,7 +23,7 @@ import pytest
 from conftest import python_example_copy
 from dstf.authoring.builtin.accept import Accept
 from dstf.authoring.builtin.rerun import Rerun
-from dstf.authoring.session import LockedError, Session, SessionView
+from dstf.authoring.session import LockedError, Selection, Session, SessionView
 from dstf.authoring.spec_document import PatchOp
 from dstf.backends.progress import read_status
 from dstf.reporting.status import PASS, SIM_FAIL, classify
@@ -46,7 +46,6 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
 
     session = Session()  # no post: the completion runs on the worker thread
     session.open(config.config_file, work_dir=work_dir)
-    view = SessionView(session)
     project = session.project
 
     # Nothing ran, so `read_last_results` is empty and every test is scored
@@ -65,7 +64,7 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
 
     # 1. The rerun starts; its models are locked from the moment `apply`
     # returns (the RunningJob is set before the thread starts).
-    session.select(tests={CONSTANT_CSV})
+    view = SessionView(session, Selection(tests=frozenset({CONSTANT_CSV})))
     session.apply(Rerun().act(view))
     job = session.running
     assert job is not None and job.label == "rerun"

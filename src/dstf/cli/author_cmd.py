@@ -8,16 +8,6 @@ from ..config import ConfigError
 
 def cmd_author(args: argparse.Namespace) -> int:
     """Open the authoring shell on this project and serve until Quit."""
-    try:
-        from ..authoring.app import run_app
-    except ImportError as e:
-        # The shell needs NiceGUI, which is an optional extra — say how to
-        # get it as one clean "Config error: ..." line, never a traceback.
-        raise ConfigError(
-            "the authoring tool needs the [author] extra: "
-            "uv sync --extra dev --extra author (or pip install "
-            f"'dynamic-systems-testing-framework[author]') — {e}"
-        ) from e
     # The Session builds the Config itself, from the file it will save
     # beside. Nothing is resolved before these checks: a full Config
     # resolution can WRITE a default testing.json next to a package.mo.
@@ -39,6 +29,16 @@ def cmd_author(args: argparse.Namespace) -> int:
             "edits and saves the spec that file names, so an override here "
             "would save to a different file than it shows"
         )
+    try:
+        from ..authoring.shell import run_app
+    except ImportError as e:
+        # The shell needs NiceGUI, which is an optional extra — say how to
+        # get it as one clean "Config error: ..." line, never a traceback.
+        raise ConfigError(
+            "the authoring tool needs the [author] extra: "
+            "uv sync --extra dev --extra author (or pip install "
+            f"'dynamic-systems-testing-framework[author]') — {e}"
+        ) from e
     run_app(
         Path(args.config),
         filter=args.filter,
