@@ -20,7 +20,9 @@ from ...reporting.status import (
     classify_with_class,
     count_by_status,
 )
-from ..capabilities import plural
+from ..capabilities import Placement, plural
+from ..session import Selection
+from .actions import ActionBar
 from .header import Header
 from .runs import RunsCard
 from .tabstate import TabState, tab_state
@@ -119,6 +121,12 @@ class SuitePage:
                 self.uncheck = Action(
                     self._uncheck, props="flat dense no-caps", marker="uncheck"
                 )
+            self.actions = ActionBar(
+                self.shell,
+                Placement.SUITE,
+                lambda: Selection(tests=frozenset(self.state.checked)),
+                marker="suite-actions",
+            )
             self.list = ui.column().classes("dstf-tests w-full gap-0").mark("tests")
             self.runs = RunsCard(self.shell)
         self.shell.register(self)
@@ -253,6 +261,7 @@ class SuitePage:
     def _toggle(self, model_id: str, on: bool) -> None:
         (self.state.checked.add if on else self.state.checked.discard)(model_id)
         self.refresh()
+        self.actions.refresh()
 
     def _open(self, model_id: str) -> None:
         """A click views (brief §3.2): the Test page, in this tab."""
@@ -279,6 +288,7 @@ class SuitePage:
             self.state.checked.add(model_id)
             self.rows[model_id].checkbox.set_value(True)
         self.refresh()
+        self.actions.refresh()
 
     def _uncheck(self) -> None:
         for model_id in list(self.state.checked):
@@ -287,6 +297,7 @@ class SuitePage:
             if row is not None:
                 row.checkbox.set_value(False)
         self.refresh()
+        self.actions.refresh()
 
     # -- the Session's events ----------------------------------------------------
 
@@ -300,6 +311,10 @@ class SuitePage:
         kind = event["event"]
         if kind in ("job", "poll", "opened", "spec"):
             self.runs.refresh()  # `spec`: an open or a close resets the card's sources
+        if kind in ("results", "job", "spec", "opened") or (
+            kind == "loading" and event.get("phase") == "done"
+        ):
+            self.actions.refresh()
         if kind == "spec":
             if set(self.rows) != set(self.shell.visible_tests()):
                 self.rebuild()  # ends with `_apply_filter` and `refresh`; repeating them below is cheap

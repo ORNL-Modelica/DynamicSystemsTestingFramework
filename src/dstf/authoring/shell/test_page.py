@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING, Any
 from nicegui import ui
 
 from ...reporting.status import classify_with_class
+from ..capabilities import Placement
+from ..session import Selection
+from .actions import ActionBar
 from .header import Header
 from .tabstate import tab_state
 
@@ -23,6 +26,7 @@ class TestPage:
         self.client: Any = None
         self.model_id = ""
         self.badge: ui.badge | None = None
+        self.actions: ActionBar | None = None
 
     async def build(self, model_id: str) -> None:
         self.client = ui.context.client
@@ -45,6 +49,12 @@ class TestPage:
             with ui.row().classes("items-center gap-3"):
                 ui.label(model_id).classes("text-h6 dstf-mono").mark("model")
                 self.badge = ui.badge("").classes("dstf-badge").mark("status")
+            self.actions = ActionBar(
+                self.shell,
+                Placement.TEST,
+                lambda: Selection(tests=frozenset({model_id})),
+                marker="test-actions",
+            )
             ui.label(
                 "Plots, criteria and the Variables drawer arrive with the Test page "
                 "(sub-project 3)."
@@ -62,5 +72,7 @@ class TestPage:
 
     def handle(self, event: dict[str, Any]) -> None:
         self.header.handle(event)
+        if self.actions is not None:
+            self.actions.refresh()
         if event["event"] in ("results", "loading", "spec"):
             self._paint()
