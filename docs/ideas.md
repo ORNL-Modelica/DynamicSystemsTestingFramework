@@ -1477,3 +1477,39 @@ planning.
   - `_rebuild_tests` drops a gone model's comparison and read but not its
     `project.results` entry; every consumer keys off `tests`, so it is
     unreachable today.
+- **After the Suite page and shell build (2026-09-16), follow-ups** — from
+  the sub-project 2 reviews (one per task, plus one per correction); none
+  blocks sub-project 3:
+  - `LoadState.failed_models` is a snapshot of the OPEN and is never cleared:
+    a model whose RESCORE raises after an Accept shows `…` (queued), not
+    "scoring failed", and one that failed at open and was fixed by a rerun is
+    masked by `comparisons` being read first. Per-model scoring errors
+    belong in the Session (or keyed per `results` event), not in the shell's
+    load state.
+  - A Job or StoreWrite applied WHILE an open is in progress is not refused
+    by the Session (`_refuse_if_busy` knows jobs and pending edits only), so
+    its `loading(results)` events would be absorbed as the open's and its
+    `_reload_results` would run beside the open thread's. No shell caller
+    exists yet; the queue (sub-project 5) is where a rule belongs.
+  - Every Session event refreshes the whole header including the pending
+    drawer (a clear and rebuild of every staged op): N `results` events in
+    an open are N drawer rebuilds. Coalesce to one refresh per tick.
+  - Check-all is N checkbox `set_value`s, each firing `_toggle` →
+    `refresh()` (O(N) each): O(N²) over 331 rows. Not measured in the gate.
+  - `ActionBar.errors[cap.name]` persists after Close: the next open of the
+    same capability shows the stale error until an act succeeds.
+  - `app.py`'s `port or 8080` turns `--port 0` (ephemeral) into 8080;
+    `terminate_children` neither waits nor prunes (zombies until
+    `app.shutdown()`); `_free_port` releases the port before the child binds.
+  - The conftest module-restore fixture leaves a `dstf.*` module FIRST
+    imported after a simulation's pop within the same test attached to a
+    duplicate parent; no test does it today.
+  - Stale prose from the tab strip: `edit_tree.py`'s docstring names
+    `Shell.act` (no such class) and "the tab"; the same word at
+    `edit_tree.py` ~95/97, `capabilities.py` (`Panel.submit`) and
+    `tests/test_capabilities.py`; two ported test docstrings in
+    `tests/test_shell.py` name `Session(post=shell.post)` and `_jobs`.
+    Sub-project 3 or 4's sweep.
+  - The disabled Save draws as a filled primary-blue button beside "no
+    pending edits" (the gate's header crop) — the most prominent element in
+    the header while nothing is pending. Owner's call, with the picture.
