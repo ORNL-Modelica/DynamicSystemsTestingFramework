@@ -109,31 +109,36 @@ them) and so opens from the cache and rescans in the background.
 4. A warm `Session.open` over TRANSFORM does not parse `.mo` files; a source
    edit is picked up by the background rescan without a restart.
 
-**Status (built 2026-09-15, not yet gated).** Tasks 0–2 and 4–10 landed, with
-their fresh-context reviews' test and wording folds. Held, each for its own
-correction text and review:
-- Task 3 — the tool's page loading `axes.js`: its wired check counts any
-  `plotly_restyle` listener, and NiceGUI registers its own first, so the axes
-  never follow in the tool (predicate 1's tool half). `axes.js` also does not
-  follow a `Plotly.react`, which NiceGUI uses when the config is unchanged.
-- The Session's cached base traces go stale when a rescore changes which
-  variables are scored (a staged edit, or the background rescan).
-- The background rescan rescores a model added since the cache against the
-  result read before it (SIM_FAIL where a cold open says NO_REF).
-- A failed scan-cache write fails the open, or stops the rescan without
-  setting `rescan_done`.
-- A test added since the last run is scored after the per-result loop and
-  never announced; a scoring exception mid-read leaves the results partial.
-- Predicate 2's tool half: the tool's body keeps Quasar's font stack (it ends
-  in sans-serif, but not from the token).
+**Status (built 2026-09-15; corrections landed and gated 2026-09-16).** Tasks
+0–2 and 4–10 landed with their fresh-context reviews' test and wording folds;
+the held items landed as
+`docs/superpowers/plans/2026-09-16-foundations-corrections.md`, one commit and
+one review each: Task 3 with `axes.js` asking the emitter for its own handler
+and following `Plotly.react`; the Session's cached bases keyed on the scored
+list; the rescan re-reading a changed model with its new TestModel; a
+scan-cache write that can fail without failing the open; every scored test
+announced and one model's scoring failure leaving the results complete.
+Beside them, a pre-existing run-path bug (D128): the run verdict is now
+applied in `Backend.read_results`, so `run --merge` / `--rerun` report a
+timed-out run as `compare` does. Still open, and not sub-project 1's: the
+tool's body keeps Quasar's font stack until sub-project 2's shell applies the
+token, and the click's 1.2 s is the current shell's.
 
-Gate over TRANSFORM so far: the report's two error axes follow the select and
-the legend, both titles laid out side by side without overlap, body stack
-ending in sans-serif; the tool's first HTTP 200 at 48 s cold and 24 s warm;
-the rescan over 331 models reports no change and leaves the cache file as it
-was. A click in the current shell takes 1.2 s (the first 2.5 s) while
-`Session.figure` takes 72 ms and then under 1 ms, so the rest of the click is
-the shell's, which sub-project 2 replaces.
+Gate over TRANSFORM (2026-09-16, over a copy of the 331-result work dir on
+local disk): the report's two error axes follow the select and the legend,
+both titles side by side (70 px apart, no overlap), body stack ending in
+sans-serif, no page errors; in the tool the legend click on "NRMSE
+(per-point)" turns `yaxis4` on (`[False, True]`), and it stays on across a
+real `Plotly.react` from a staged tolerance edit (two reacts counted,
+discarded after); the manifest's one recorded timeout (SteamWater_HCSG) reads
+back `success=False` through the merged read, none read as success. First
+HTTP 200 at 46 s cold and 18 s warm — the copy sits on local disk, so the
+warm figure is not comparable with the 24 s measured over `/mnt/d`; clicks
+2.4 s first, then 1.1–1.4 s, unchanged; `Session.figure` 72 ms then 0 ms; the
+rescan over 331 models reports no change and leaves the cache file as it
+was. Suite at the corrected HEAD: 2088 passed / 3 skipped, 30 browser tests,
+ruff, format and bare mypy clean; the spec's hash, the reference-dir listing,
+the real work dir and the real cache unchanged.
 
 ## 2. The Suite page and the new shell
 

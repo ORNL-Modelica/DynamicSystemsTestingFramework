@@ -4139,3 +4139,22 @@ reports its phases as `loading` events and scores each result as it is read.
 - `src/dstf/reporting/theme.py`, `templates/axes.js`, `discovery/scan_cache.py`,
   `authoring/session.py`.
 - Brief §3.1, §3.4, §3.8, §3.10; roadmap sub-project 1.
+
+## D128 — The run verdict is applied in the one reader (2026-09-16)
+
+`Backend.read_results` applies the batch manifest's `last_run_status` (via
+`run_verdicts`) to every result before storing it and before its `on_result`
+callback; `read_last_results` is that reader over the manifest on disk. Until
+now only `read_last_results` applied the verdict, and `run_pipeline` read back
+through `read_results` directly — so `run --merge` and `--rerun`, whose
+merged-in models have no in-memory run result, reported PASS for a test whose
+run had timed out while `compare` on the same work dir reported SIM_FAIL, and
+`run --rerun failed -i` then offered that run's partial `.mat` for acceptance
+as the primary baseline. The guard lives at the read because a call-site
+patch leaves a second place to forget; `tests/test_pipeline.py` drives the
+reader and the merged pipeline, `tests/test_cli.py` the review loop over a
+merged outcome.
+
+The partial-rerun flip over OLD data noted in `docs/ideas.md` (2026-09-14)
+is a different cause — `status.json`'s subset snapshot losing rows for
+manifest entries written before `last_run_status` existed — and stays open.
