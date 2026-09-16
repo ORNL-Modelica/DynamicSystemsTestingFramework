@@ -608,8 +608,9 @@ def test_overlay_picker_on_the_no_baseline_page(no_baseline, playwright_browser)
 def test_error_overlay_toggle_shows_exactly_one_error_trace(
     compared, playwright_browser
 ):
-    """signed / abs / per-point NRMSE, one at a time, on the right-hand
-    axis — which stays hidden while none is shown."""
+    """signed / abs / per-point NRMSE, one at a time, each on its error axis
+    (signed and abs share the signal-units axis; NRMSE has its own) — an axis
+    is hidden while no series on it is shown."""
     html, _ = compared
     page, errors = _open(playwright_browser, html)
     idx = page.evaluate("() => VARIABLE_ORDER.indexOf('x')")

@@ -8,7 +8,8 @@
 //
 // One script for both tiers: the report loads it as the first part of
 // interactive.js; the tool adds it to its page body. It computes nothing
-// about the data — it reads `visible` flags and writes `visible` flags.
+// about the data — it reads `visible` flags and writes `visible` flags
+// — on a restyle (the select, a legend click) and after a react.
 (function () {
   function anyVisibleOn(gd, axisId) {
     return (gd.data || []).some(function (t) {
@@ -30,15 +31,26 @@
 
   function isWired(gd) {
     // Plotly.newPlot on an already-plotted node purges it, which removes
-    // every listener (plotly.min.js 2.35.0: purge ends in
-    // removeAllListeners) while the node object survives — so a flag on
-    // the node would lie after a re-plot. Ask the emitter instead.
-    return !!(gd._ev && gd._ev.listenerCount && gd._ev.listenerCount('plotly_restyle') > 0);
+    // every listener (plotly.min.js 2.35.0: Plots.purge ends in
+    // removeAllListeners) while the node object — and any flag on it —
+    // survives; so ask the emitter whether OUR handler is registered. Not
+    // "any listener": the tool's plotly element (NiceGUI) registers its
+    // own plotly_restyle forwarder after every newPlot, before this
+    // script's observer runs.
+    var follow = gd._dstfFollow;
+    return !!(follow && gd._ev && typeof gd._ev.listeners === 'function' &&
+              gd._ev.listeners('plotly_restyle').indexOf(follow) !== -1);
   }
 
   function dstfWireSecondaryAxes(gd) {
     if (!gd || typeof gd.on !== 'function' || isWired(gd)) return;
-    gd.on('plotly_restyle', function () { dstfFollowSecondaryAxes(gd); });
+    var follow = function () { dstfFollowSecondaryAxes(gd); };
+    gd._dstfFollow = follow;
+    gd.on('plotly_restyle', follow);
+    // Plotly.react (the tool's update_figure, a drag's snap-back) replaces
+    // the layout with the server's — every secondary axis hidden — while
+    // uirevision keeps a legend-shown trace visible, and fires no restyle.
+    gd.on('plotly_react', follow);
     dstfFollowSecondaryAxes(gd);
   }
 

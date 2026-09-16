@@ -39,6 +39,7 @@ def page_path(tmp_path_factory) -> Path:
         f"<script>{axes_js_source()}</script></head><body>"
         "<div id='p' style='width:900px;height:350px'></div>"
         f"<script>const FIG={json.dumps(fig)};"
+        "const FIG0=JSON.parse(JSON.stringify(FIG));"
         "Plotly.newPlot('p', FIG.data, FIG.layout, FIG.config);"
         "dstfWireSecondaryAxes(document.getElementById('p'));</script>"
         "</body></html>",
@@ -141,3 +142,55 @@ def test_the_axis_still_follows_after_a_re_plot_of_the_same_node(
     assert errors == []
     assert after_show["traces"]["error/nrmse"] is True
     assert (after_show["y3"], after_show["y4"]) == (False, True)
+
+
+def test_a_foreign_restyle_listener_registered_first_does_not_count_as_wired(
+    playwright_browser, page_path
+):
+    """The tool's page: NiceGUI's plotly element registers its own
+    plotly_restyle forwarder on every newPlot, before this script's observer
+    runs. A wired check that COUNTS listeners sees one and never wires, and
+    the axes never follow a legend click in the tool. The check must ask for
+    this script's own handler — and wiring twice must not add it twice."""
+    page, errors = _open(playwright_browser, page_path)
+    page.evaluate(
+        """() => { const el = document.getElementById('p');
+           Plotly.newPlot('p', FIG.data, FIG.layout, FIG.config);  // purges ours
+           el.on('plotly_restyle', function () {});               // foreign, first
+           dstfWireSecondaryAxes(el);
+           dstfWireSecondaryAxes(el); }"""
+    )
+    page.wait_for_timeout(200)
+    count = page.evaluate(
+        "() => document.getElementById('p')._ev.listenerCount('plotly_restyle')"
+    )
+    _toggle_nrmse_in_legend(page, True)
+    after_show = page.evaluate(PROBE)
+    page.close()
+    assert errors == []
+    assert count == 2  # the foreign one and ours, once
+    assert after_show["traces"]["error/nrmse"] is True
+    assert (after_show["y3"], after_show["y4"]) == (False, True)
+
+
+def test_the_axis_survives_a_react_that_keeps_the_legend_state(
+    playwright_browser, page_path
+):
+    """Plotly.react with the figure the server holds — every secondary axis
+    hidden — is what the tool's update_figure and a drag's snap-back do.
+    `uirevision: "keep"` keeps the legend-shown trace visible, but the axis
+    flag the follow set lives in the layout and is replaced; react fires no
+    plotly_restyle. The follow must also run on plotly_react."""
+    page, errors = _open(playwright_browser, page_path)
+    _toggle_nrmse_in_legend(page, True)
+    assert page.evaluate(PROBE)["y4"] is True
+    page.evaluate(
+        """() => Plotly.react('p', JSON.parse(JSON.stringify(FIG0.data)),
+                              JSON.parse(JSON.stringify(FIG0.layout)), FIG0.config)"""
+    )
+    page.wait_for_timeout(200)
+    after_react = page.evaluate(PROBE)
+    page.close()
+    assert errors == []
+    assert after_react["traces"]["error/nrmse"] is True  # uirevision kept it
+    assert (after_react["y3"], after_react["y4"]) == (False, True)
