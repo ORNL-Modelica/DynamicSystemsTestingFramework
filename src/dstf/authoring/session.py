@@ -340,10 +340,16 @@ class Session:
                     # TRANSFORM must not run 331 comparisons on the UI loop.
                     # A model a running job has locked is left to that job's
                     # completion reload, as `stage` and `rescore` leave it.
+                    # The changed models' results are re-read with their new
+                    # TestModels before they are rescored: a model the cache
+                    # did not name was read as "not found in discovery"
+                    # (SIM_FAIL where a cold open says NO_REF), and a model
+                    # whose tracked variables changed was read with the old
+                    # list.
                     locked = (
                         self.running.models if self.running is not None else frozenset()
                     )
-                    self._rebuild_tests(changed_models - locked)
+                    self._rebuild_tests(changed_models - locked, reread=True)
                 self._emit("loading", phase="rescan", changed=bool(changed_models))
             finally:
                 done.set()
@@ -723,10 +729,12 @@ class Session:
         )
         return merge_tests(scanned, spec_tests_by_model(models))
 
-    def _rebuild_tests(self, models: set[str]) -> None:
+    def _rebuild_tests(self, models: set[str], *, reread: bool = False) -> None:
         """Re-merge the scan against the effective spec; models the spec no
         longer names drop out of ``comparisons``, models it newly names are
-        scored (with whatever result the last reload holds for them)."""
+        scored (with whatever result the last reload holds for them). With
+        ``reread`` the ``models`` are first re-read from the last run with
+        their merged TestModels (the rescan's case)."""
         project = self._require_project()
         project.tests = self._merge(
             project.config, project.scanned, self.spec.effective()
@@ -741,8 +749,29 @@ class Session:
         # must not outlive the model either.
         for model_id in set(self._reads) - current:
             del self._reads[model_id]
+        if reread:
+            self._reread_results(models & current)
         self._emit("spec", models=models | gone | new)
         self._score_all((models | new) & current)
+
+    def _reread_results(self, models: set[str]) -> None:
+        """Re-read ``models`` from the last run with their CURRENT
+        TestModels, dropping what an earlier read stored for them. Only
+        they are stored: ``read_results`` reports every manifest entry, and
+        the others are not being re-read. A model with no manifest entry
+        ends with no result and is scored NO_REF / SIM_FAIL by the caller,
+        as after a full reload."""
+        project = self._require_project()
+        for model_id in models:
+            project.results.pop(model_id, None)
+            self._reads.pop(model_id, None)
+        to_read = [t for t in project.tests if t.model_id in models]
+
+        def on_result(model_id: str, result: TestResult) -> None:
+            if model_id in models:
+                project.results[model_id] = result
+
+        project.backend.read_last_results(to_read, on_result=on_result)
 
     def _score(self, model_id: str) -> TestComparison:
         project = self._require_project()

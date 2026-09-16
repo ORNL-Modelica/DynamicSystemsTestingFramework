@@ -151,6 +151,15 @@ def _bump_stop_time(tmp_path: Path) -> tuple[Path, TestModel]:
     return mo, before
 
 
+def _add_bar(tmp_path: Path) -> None:
+    """A second model in the Modelica library `_modelica_project` writes."""
+    (tmp_path / "MyLib" / "Bar.mo").write_text(
+        "within MyLib;\nmodel Bar\n  Real y;\n  UnitTests unitTests(n=1, x={y});\n"
+        "equation\n  y = time;\n  annotation(experiment(StopTime=1));\nend Bar;\n",
+        encoding="utf-8",
+    )
+
+
 def _snapshot(work: Path) -> list[tuple[str, bytes]]:
     return sorted(
         (str(p.relative_to(work)), p.read_bytes())
@@ -502,6 +511,122 @@ class TestOpen:
         assert s.rescan_done.wait(10.0)
         assert s.project.test(before.model_id).stop_time == before.stop_time + 1
         assert rescored[-1] == {before.model_id}  # only the changed model was rescored
+
+    def test_a_model_added_since_the_cache_reads_its_result_before_it_is_scored(
+        self, tmp_path, monkeypatch
+    ):
+        """The cache names Foo only; `dstf run` has since simulated Foo and
+        Bar. The stale open reads Bar as "not found in discovery"; the
+        rescan must re-read it with its TestModel before rescoring, or Bar
+        scores SIM_FAIL where a cold open says NO_REF."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        work = tmp_path / "work"
+        Session().open(cfg, work_dir=work)  # the cache names Foo only
+        _add_bar(tmp_path)
+        work.mkdir(exist_ok=True)
+        manifest = {
+            "test_0001": {
+                "model_id": "MyLib.Foo",
+                "ref_id": None,
+                "last_run_status": "passed",
+            },
+            "test_0002": {
+                "model_id": "MyLib.Bar",
+                "ref_id": None,
+                "last_run_status": "passed",
+            },
+        }
+        (work / "batch_manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        for key in manifest:
+            (work / key).mkdir()
+            (work / key / "result.json").write_text(
+                json.dumps({"success": True, "time": [0, 1], "variables": {}}),
+                encoding="utf-8",
+            )
+        stale = Session()
+        stale.open(cfg, work_dir=work)
+        assert stale.rescan_done.wait(10.0)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cold"))
+        cold = Session()
+        cold.open(cfg, work_dir=work)
+        assert classify(stale.comparisons["MyLib.Bar"]) == classify(
+            cold.comparisons["MyLib.Bar"]
+        )
+        assert stale.project.results["MyLib.Bar"].success is True
+
+    def test_only_the_changed_model_of_two_is_rescored(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        _add_bar(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        _mo, before = _bump_stop_time(tmp_path)
+        s = Session()
+        rescored = []
+        s.on("results", lambda e: rescored.append(set(e["models"])))
+        s.open(cfg, work_dir=tmp_path / "work")
+        assert {"MyLib.Foo", "MyLib.Bar"} <= set(s.comparisons)
+        assert s.rescan_done.wait(10.0)
+        assert s.project.test(before.model_id).stop_time == before.stop_time + 1
+        assert rescored[-1] == {before.model_id}
+
+    def test_done_precedes_rescan_even_when_the_rescan_wins_the_race(
+        self, tmp_path, monkeypatch
+    ):
+        """The worst schedule: the rescan thread finishes inside `start()`.
+        `done` is emitted before the thread starts, so it still comes first."""
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        real_start = threading.Thread.start
+
+        def start(self):
+            if self.name == "dstf-rescan":
+                self.run()
+            else:
+                real_start(self)
+
+        monkeypatch.setattr(threading.Thread, "start", start)
+        s = Session()
+        events = []
+        s.on("loading", events.append)
+        s.open(cfg, work_dir=tmp_path / "work")
+        assert s.rescan_done.is_set()
+        phases = [e["phase"] for e in events]
+        assert phases.index("done") < phases.index("rescan")
+
+    def test_a_locked_model_is_left_to_its_job_by_the_rescan(
+        self, tmp_path, monkeypatch
+    ):
+        import queue
+
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        _mo, before = _bump_stop_time(tmp_path)
+        posted: queue.Queue = queue.Queue()
+        s = Session(post=posted.put)
+        s.open(cfg, work_dir=tmp_path / "work")
+        comp = s.comparisons[before.model_id]
+        release = threading.Event()
+        s.apply(
+            Job(
+                run=lambda ctx: release.wait(10),
+                label="rerun",
+                models=frozenset({before.model_id}),
+            )
+        )
+        rescored = []
+        s.on("results", lambda e: rescored.append(set(e["models"])))
+        posted.get(timeout=10)()  # the rescan's re-merge, run on "the UI loop"
+        assert s.rescan_done.is_set()
+        assert s.comparisons[before.model_id] is comp  # not rescored under the lock
+        assert all(before.model_id not in r for r in rescored)
+        release.set()
+        posted.get(timeout=10)()  # the job's completion
+        assert s.running is None
 
     def test_a_late_thread_from_a_previous_open_does_not_mark_this_one_ready(
         self, tmp_path, monkeypatch
