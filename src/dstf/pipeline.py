@@ -45,7 +45,9 @@ class RunOutcome:
     ``merge`` that is wider than the tests just simulated, because the
     out-of-scope entries are read back from the previous runs' files, and
     never wider than the scope, whatever else the work dir's manifest holds
-    from earlier runs.
+    from earlier runs. Every result carries its run verdict
+    (``Backend.read_results``): a merged-in test whose last run failed or
+    timed out is ``success=False`` here exactly as ``compare`` reports it.
     """
 
     manifests: list[BatchManifest]

@@ -584,9 +584,32 @@ class Backend(ABC):
     ) -> dict[str, TestResult]:
         """Read all simulation results from completed batch runs (parallel).
         ``on_result(model_id, result)`` is called on the calling thread as
-        each result is stored."""
+        each result is stored.
+
+        Every result carries the run's verdict. A test the manifests record
+        as failed or timed out (``last_run_status``; :func:`run_verdicts`)
+        is forced to ``success=False`` before it is stored and before the
+        callback sees it, whatever its result file reads back as — a
+        partial ``.mat`` from a timed-out run parses as a success. The
+        verdict is applied in this one reader and not by its callers
+        because the caller that forgot was ``run_pipeline``: ``run --merge``
+        / ``--rerun`` reported PASS for a merged-in test whose run timed
+        out while ``compare`` on the same work dir reported SIM_FAIL, and
+        ``run --rerun failed -i`` then offered that partial run for
+        acceptance as the primary baseline.
+        """
+        work_dir = self.config.work_dir
+        assert work_dir is not None  # resolved in Config.__post_init__
+        verdicts = run_verdicts(work_dir, manifests)
         test_lookup = {t.model_id: t for t in tests}
         results: dict[str, TestResult] = {}
+
+        def _store(model_id: str, result: TestResult) -> None:
+            if model_id in verdicts:
+                _force_failed(result, verdicts[model_id])
+            results[model_id] = result
+            if on_result is not None:
+                on_result(model_id, result)
 
         run_results = {}
         for manifest in manifests:
@@ -602,24 +625,26 @@ class Backend(ABC):
                 test_model = test_lookup.get(model_id)
 
                 if rr and not rr.success:
-                    results[model_id] = TestResult(
-                        model_id=model_id,
-                        success=False,
-                        error_message=rr.error_message or "Simulation failed",
-                        statistics=rr.statistics if rr else None,
+                    _store(
+                        model_id,
+                        TestResult(
+                            model_id=model_id,
+                            success=False,
+                            error_message=rr.error_message or "Simulation failed",
+                            statistics=rr.statistics if rr else None,
+                        ),
                     )
-                    if on_result is not None:
-                        on_result(model_id, results[model_id])
                     continue
 
                 if test_model is None:
-                    results[model_id] = TestResult(
-                        model_id=model_id,
-                        success=False,
-                        error_message="Test model not found in discovery",
+                    _store(
+                        model_id,
+                        TestResult(
+                            model_id=model_id,
+                            success=False,
+                            error_message="Test model not found in discovery",
+                        ),
                     )
-                    if on_result is not None:
-                        on_result(model_id, results[model_id])
                     continue
 
                 work_items.append((test_key, model_id, test_model, rr))
@@ -646,9 +671,7 @@ class Backend(ABC):
             futures = {executor.submit(_read_one, item): item for item in work_items}
             for future in as_completed(futures):
                 test_key, model_id, result, dt = future.result()
-                results[model_id] = result
-                if on_result is not None:
-                    on_result(model_id, results[model_id])
+                _store(model_id, result)
                 with elapsed_lock:
                     per_test_elapsed.append(dt)
                 completed += 1
@@ -674,9 +697,9 @@ class Backend(ABC):
         tests: list[TestModel],
         on_result: Callable[[str, TestResult], None] | None = None,
     ) -> dict[str, TestResult]:
-        """Read results from the most recent batch run in the work directory.
-        Each result reaches ``on_result`` with its run verdict already
-        applied."""
+        """Read results from the most recent batch run in the work
+        directory: :meth:`read_results` over the manifest on disk, so each
+        result reaches ``on_result`` with its run verdict already applied."""
         work_dir = self.config.work_dir
         if not work_dir.exists():
             return {}
@@ -686,19 +709,4 @@ class Backend(ABC):
             return {}
 
         manifests = [BatchManifest.load(p) for p in manifest_paths]
-        # A test the run recorded as failed/timed_out can read back as success
-        # here just because a partial/stale .mat survived on disk — that would
-        # let `compare` mislabel it and `compare --accept` bless a garbage
-        # baseline. The manifest carries the run's own verdict per test; it
-        # is applied per result, before the callback, so a caller scoring
-        # results as they land never sees the disk read's green.
-        verdicts = run_verdicts(work_dir, manifests)
-
-        def _with_verdict(model_id: str, result: TestResult) -> None:
-            if model_id in verdicts:
-                _force_failed(result, verdicts[model_id])
-            if on_result is not None:
-                on_result(model_id, result)
-
-        results = self.read_results(manifests, tests, on_result=_with_verdict)
-        return results
+        return self.read_results(manifests, tests, on_result=on_result)

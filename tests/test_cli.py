@@ -779,6 +779,70 @@ class TestInteractiveReviewExitCode:
         assert rc == 0
 
 
+class TestMergedOutcomeReachesTheReviewWithItsVerdict:
+    def test_a_timed_out_merged_in_test_is_never_offered_for_acceptance(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """`run --rerun failed -i` then `a`: the review is handed the merged
+        outcome. A merged-in test whose run timed out must arrive as a
+        failed simulation — the loop skips it before any prompt — so its
+        partial result can never become the primary baseline. Before the
+        verdict moved into `read_results`, it arrived green (NO BASELINE),
+        was prompted, and `a` stored it."""
+        from conftest import python_example_copy
+        from dstf.backends import dataset_kind_for, get_backend
+        from dstf.comparison.comparator import compare_all
+        from dstf.pipeline import run_pipeline
+
+        ramp_id = "PythonTestingLib.Examples.SimpleRamp"
+        constant_id = "PythonTestingLib.Examples.ConstantCsv"
+        config, all_tests = python_example_copy(tmp_path, baselines=False)
+        backend, store = get_backend(config), ReferenceStore(config)
+        backend.quiet = True
+        ramp = [t for t in all_tests if t.model_id == ramp_id]
+        constant = [t for t in all_tests if t.model_id == constant_id]
+
+        run_pipeline(config, ramp, backend=backend, store=store)
+        path = config.work_dir / "batch_manifest.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for entry in data.values():
+            if entry["model_id"] == ramp_id:
+                entry["last_run_status"] = "timed_out"
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        outcome = run_pipeline(
+            config,
+            constant,
+            backend=backend,
+            store=store,
+            merge=True,
+            candidates=all_tests,
+        )
+        comparisons = compare_all(
+            outcome.scope_tests,
+            outcome.results,
+            store,
+            config.tolerance,
+            config.default_points,
+            dataset_kind=dataset_kind_for(backend),
+        )
+        # Accept everything the loop offers, in whatever order discovery
+        # lists the two. A failed simulation is skipped without a prompt, so
+        # only ConstantCsv is prompted and one `a` is consumed; the second
+        # `a` is consumed only if the ramp IS prompted — the defect — and
+        # then stores it.
+        _feed_inputs(monkeypatch, ["a", "a"])
+        rc = _interactive_review(
+            outcome.scope_tests, outcome.results, comparisons, store, config
+        )
+        out = capsys.readouterr().out
+
+        assert "Skipping (simulation failed)" in out
+        assert store.get_reference(ramp_id) is None
+        assert store.get_reference(constant_id) is not None
+        assert rc == 1  # the timed-out test is still unresolved
+
+
 # ---------------------------------------------------------------------------
 # Finding 63 — case-sensitive filter matching on every OS
 # ---------------------------------------------------------------------------

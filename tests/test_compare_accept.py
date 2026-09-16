@@ -153,11 +153,9 @@ class TestManifestVerdicts:
         comparing against whatever stale .mat is on disk.
 
         Says "a reader", not "compare": this drives the two primitives, not a
-        CLI. `compare` reaches them through `read_last_results`; `run
-        --merge` / `--rerun` does NOT — `run_pipeline` reads via
-        `read_results`, which applies no verdict, so a merged-in test whose
-        run timed out is reported PASS there. That is a live bug, not
-        something this test covers.
+        CLI. Every reader reaches them through `Backend.read_results`, which
+        applies the verdict itself — `compare` via `read_last_results`, `run
+        --merge` / `--rerun` via `run_pipeline` (tests/test_pipeline.py).
         """
         m = _manifest(
             tmp_path,

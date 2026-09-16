@@ -13,12 +13,15 @@ in this module, everything else uses ``ConstantCsv`` (~0.25 s).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from conftest import python_example_copy
 from dstf.backends import get_backend
 from dstf.backends.progress import read_status
 from dstf.pipeline import run_pipeline
+from dstf.storage.batch_manifest import BatchManifest
 from dstf.storage.reference_store import ReferenceStore
 
 CONSTANT_CSV = "PythonTestingLib.Examples.ConstantCsv"
@@ -36,6 +39,42 @@ def _pick(tests, model_id):
     match = [t for t in tests if t.model_id == model_id]
     assert match, f"{model_id} not discovered in the example library"
     return match
+
+
+def _stamp(work, model_id: str, status: str) -> None:
+    """Record ``status`` as ``model_id``'s last run in the work dir's batch
+    manifest — what a timed-out run leaves behind beside a partial result
+    file that still parses as a success."""
+    path = work / "batch_manifest.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for entry in data.values():
+        if entry["model_id"] == model_id:
+            entry["last_run_status"] = status
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_read_results_applies_the_run_verdict_before_storing_and_before_the_callback(
+    example,
+):
+    """The manifest's verdict is authoritative over the result file: a test
+    the run recorded as timed out is forced to success=False by the reader
+    itself, so no caller — run_pipeline's merged read included — sees the
+    file's green. Both the returned dict and the per-result callback carry
+    the verdict."""
+    config, all_tests, backend, store = example
+    constant = _pick(all_tests, CONSTANT_CSV)
+    run_pipeline(config, constant, backend=backend, store=store)
+    _stamp(config.work_dir, CONSTANT_CSV, "timed_out")
+
+    manifests = [BatchManifest.load(config.work_dir / "batch_manifest.json")]
+    seen = []
+    results = backend.read_results(
+        manifests, constant, on_result=lambda m, r: seen.append((m, r.success))
+    )
+
+    assert results[CONSTANT_CSV].success is False
+    assert "timed_out" in (results[CONSTANT_CSV].error_message or "")
+    assert seen == [(CONSTANT_CSV, False)]
 
 
 def test_run_pipeline_runs_a_test_and_leaves_the_run_on_disk(example):
@@ -94,6 +133,11 @@ def test_merge_widens_the_read_scope_over_candidates(example):
     )
     ramp_mtime = (ramp_dir / "result.json").stat().st_mtime
 
+    # The ramp's run is now recorded as timed out — its result file is
+    # untouched and still parses. The merged read must carry that verdict:
+    # this is `run --rerun failed` reading the tests it did not re-run.
+    _stamp(config.work_dir, SIMPLE_RAMP, "timed_out")
+
     third = run_pipeline(
         config, constant, backend=backend, store=store, merge=True, candidates=all_tests
     )
@@ -105,7 +149,8 @@ def test_merge_widens_the_read_scope_over_candidates(example):
     assert in_candidate_order != [SIMPLE_RAMP, CONSTANT_CSV]
     assert [t.model_id for t in third.scope_tests] == in_candidate_order
     assert sorted(third.results) == sorted([SIMPLE_RAMP, CONSTANT_CSV])
-    assert third.results[SIMPLE_RAMP].success
+    assert third.results[SIMPLE_RAMP].success is False
+    assert "timed_out" in (third.results[SIMPLE_RAMP].error_message or "")
     assert third.results[CONSTANT_CSV].success
     # The out-of-scope test was read, not re-run.
     assert (ramp_dir / "result.json").stat().st_mtime == ramp_mtime
