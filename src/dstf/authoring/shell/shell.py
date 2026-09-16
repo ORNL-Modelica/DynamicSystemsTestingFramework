@@ -230,12 +230,20 @@ class Shell:
         self, placement: Placement, view: SessionView
     ) -> list[tuple[Capability, bool | str]]:
         """Every registered capability that attaches at `placement`, with
-        `available`'s answer for `view`, in registration order."""
-        return [
-            (cap, cap.available(view))
-            for cap in registered_capabilities()
-            if placement in cap.placements
-        ]
+        `available`'s answer for `view`, in registration order. An
+        `available` that raises answers with its exception: read on every
+        refresh of every page, it must never break the page (a plug-in
+        that raised here blanked the Suite page — the Task 7 review)."""
+        placed: list[tuple[Capability, bool | str]] = []
+        for cap in registered_capabilities():
+            if placement not in cap.placements:
+                continue
+            try:
+                answer: bool | str = cap.available(view)
+            except Exception as e:  # the plug-in's, shown as its button's reason
+                answer = f"{type(e).__name__}: {e}"
+            placed.append((cap, answer))
+        return placed
 
     def view_for(self, selection: Selection) -> SessionView:
         return SessionView(self.session, selection)

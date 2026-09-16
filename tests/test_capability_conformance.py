@@ -47,13 +47,17 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _git_status() -> str:
-    return subprocess.run(
+    """The tree's status, or "" where there is no repository — a `git
+    archive` copy, which is where this file's fresh-context reviews run it
+    (the check that the repository is untouched has nothing to guard there)."""
+    done = subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=REPO,
         capture_output=True,
         text=True,
-        check=True,
-    ).stdout
+        check=False,
+    )
+    return done.stdout if done.returncode == 0 else ""
 
 
 @pytest.fixture(scope="module")
@@ -258,6 +262,37 @@ async def test_an_unavailable_capability_is_greyed_with_its_reason(shell):
         with pytest.raises(AssertionError):  # `find` raises on absence
             user.find("submit accept")
         assert cap.inputs == []
+
+
+async def test_a_capability_whose_available_or_caption_raises_is_greyed_not_fatal(
+    shell,
+):
+    """The bar reads every registered capability's `available` and `caption`
+    on every refresh, so a plug-in that raises there would abort the page's
+    build — the Suite page came up blank (the Task 7 review's probe). Like
+    `panel`, they never break the page: the button is greyed with the
+    exception, and a raising `caption` falls back to the label."""
+
+    class _Broken(_Dummy):
+        def available(self, s):
+            raise KeyError("not for this view")
+
+    class _Mute(_Dummy):
+        def caption(self, s):
+            raise ValueError("no words")
+
+    broken = _Broken("broken", {Placement.SUITE})
+    mute = _Mute("mute", {Placement.SUITE})
+    caps.register_capability(broken)
+    caps.register_capability(mute)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        button = _one(user, "action:broken")
+        assert not button.enabled and button.text == "Dummy broken on 0 tests"
+        assert _one(user, "action:broken:why").text == "KeyError: 'not for this view'"
+        mute_button = _one(user, "action:mute")
+        assert mute_button.text == "Dummy mute" and mute_button.enabled
+        assert shell.pages  # the page was built and registered
 
 
 async def test_batch_actions_are_greyed_while_the_project_loads(shell):

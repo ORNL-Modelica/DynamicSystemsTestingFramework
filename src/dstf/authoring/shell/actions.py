@@ -92,7 +92,11 @@ class ActionBar:
                 reason = None
             else:
                 reason = avail if isinstance(avail, str) else "not available"
-            self.actions[cap.name].set(cap.caption(view), reason)
+            try:
+                caption = cap.caption(view)
+            except Exception:  # the label is the fallback; the page draws
+                caption = cap.label
+            self.actions[cap.name].set(caption, reason)
 
     def open(self, cap: Capability) -> None:
         """The capability's panel, in the dialog, over the selection as it is
