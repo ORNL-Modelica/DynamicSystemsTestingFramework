@@ -16,8 +16,9 @@ from dstf.authoring.capabilities import (
     JobContext,
     OpenProject,
     Patch,
-    Scope,
+    Placement,
     StoreWrite,
+    plural,
     register_capability,
     registered_capabilities,
 )
@@ -35,11 +36,14 @@ def _clean():
 
 
 class _Dummy:
-    def __init__(self, name="dummy", scope=Scope.TESTS):
-        self.name, self.label, self.scope = name, name.title(), scope
+    def __init__(self, name="dummy", placements=frozenset({Placement.SUITE})):
+        self.name, self.label, self.placements = name, name.title(), placements
 
     def available(self, s):
         return True
+
+    def caption(self, s):
+        return f"{self.label} {len(s.selection.tests)}"
 
     def panel(self, s, ui):
         pass
@@ -67,7 +71,8 @@ def test_registering_a_non_capability_is_loud_at_registration():
     the user clicks the tab."""
 
     class _Half:
-        name, label, scope = "half", "Half", Scope.TESTS
+        name, label = "half", "Half"
+        placements = frozenset({Placement.SUITE})
 
         def available(self, s):
             return True
@@ -75,9 +80,41 @@ def test_registering_a_non_capability_is_loud_at_registration():
         def panel(self, s, ui):
             pass
 
-    with pytest.raises(TypeError, match="missing act"):
+    with pytest.raises(TypeError, match="missing caption, act"):
         register_capability(_Half())  # type: ignore[arg-type]
     assert registered_capabilities() == ()
+
+
+def test_a_capability_declares_a_non_empty_frozenset_of_placements():
+    """The shell draws a button per placement named; a capability naming
+    none would register and never appear, and a plain set would let a
+    caller mutate a registered capability's placements."""
+
+    class _Nowhere(_Dummy):
+        def __init__(self):
+            super().__init__("nowhere", frozenset())
+
+    class _Loose(_Dummy):
+        def __init__(self):
+            super().__init__("loose", {Placement.SUITE})  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="non-empty frozenset of Placement"):
+        register_capability(_Nowhere())
+    with pytest.raises(TypeError, match="non-empty frozenset of Placement"):
+        register_capability(_Loose())
+    assert registered_capabilities() == ()
+
+
+def test_a_capability_may_attach_at_several_placements():
+    cap = _Dummy("both", frozenset({Placement.SUITE, Placement.TEST}))
+    register_capability(cap)
+    assert cap.placements == {Placement.SUITE, Placement.TEST}
+
+
+def test_plural_counts_its_noun():
+    assert plural(0, "test") == "0 tests"
+    assert plural(1, "test") == "1 test"
+    assert plural(2, "spec edit") == "2 spec edits"
 
 
 def test_outcomes_take_keywords_only():
@@ -93,7 +130,7 @@ def test_a_plugin_registers_through_the_entry_point_group(monkeypatch):
     reaches the entry point fails this test."""
 
     def register_mine():
-        register_capability(_Dummy("from-plugin", Scope.LEAF))
+        register_capability(_Dummy("from-plugin", frozenset({Placement.CRITERION})))
 
     class _EP:
         name = "fake"

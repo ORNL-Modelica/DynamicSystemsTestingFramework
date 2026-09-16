@@ -531,14 +531,18 @@ applies nothing itself, so the session stays the single place where a spec is
 mutated, a store is written, or a job is launched.
 
 The contract lives in `dstf.authoring.capabilities`: the `Capability` protocol
-(`name`, `label`, `scope`, and `available` / `panel` / `act`), the `Scope` enum
-(`PROJECT`, `TESTS`, `VARIABLE`, `LEAF`), and the five outcomes `act` may return
-— `Patch` (ops for the Session to stage), `StoreWrite`, `Job`, `Artifact`,
-`OpenProject` — or `None`, or a sequence of them. `Job` and `StoreWrite` each
-carry `models: frozenset[str]`, the models they touch: the Session locks a job's
-models while it runs and a locked model refuses a `StoreWrite`. Every outcome is
-keyword-only, so a field added later cannot silently take a positional argument's
-place.
+(`name`, `label`, `placements`, and `available` / `caption` / `panel` / `act`),
+the `Placement` enum (`SUITE`, `TEST`, `VARIABLE`, `CRITERION` — where the
+capability's button attaches; a capability names a frozenset of them), and the
+five outcomes `act` may return — `Patch` (ops for the Session to stage),
+`StoreWrite`, `Job`, `Artifact`, `OpenProject` — or `None`, or a sequence of
+them. `Job` and `StoreWrite` each carry `models: frozenset[str]`, the models
+they touch: the Session locks a job's models while it runs and a locked model
+refuses a `StoreWrite`. Every outcome is keyword-only, so a field added later
+cannot silently take a positional argument's place. `caption(view)` is the
+button's label — object, effect and count, `plural()` for the noun — and
+`available` the sentence beside it when it is greyed. The view's `selection`
+is the page's that built it (D129): `SessionView(session, selection)`.
 
 `StoreWrite.run` returns `str | None`: the one line the job panel shows, saying
 what the write did — what it stored and what it refused, with the reason. A

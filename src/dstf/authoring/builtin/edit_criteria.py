@@ -1,5 +1,5 @@
-"""Edit criteria (§4.6 table, §4.7): LEAF scope; a mode switch, the mode's
-form, the window, the ``against`` selector. Each change stages one
+"""Edit criteria (§4.6 table, §4.7): the CRITERION placement; a mode switch,
+the mode's form, the window, the ``against`` selector. Each change stages one
 ``replace`` of the whole leaf and the test rescores — the drawer reads
 "leaf -> new leaf", never a keystroke log (the Session collapses the
 consecutive replaces).
@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from ...comparison.mode_schema import derive_schema
 from ...comparison.registry import metric, metrics
 from ...comparison.tree_spec import LeafSpec, spec_to_raw
-from ..capabilities import Panel, Patch, Scope
+from ..capabilities import Panel, Patch, Placement
 
 if TYPE_CHECKING:
     from ..session import SessionView
@@ -41,7 +41,10 @@ class EditCriteria:
 
     name = "edit-criteria"
     label = "Edit criteria"
-    scope = Scope.LEAF
+    placements = frozenset({Placement.CRITERION})
+
+    def caption(self, s: SessionView) -> str:
+        return self.label
 
     def available(self, s: SessionView) -> bool | str:
         sel = s.selection

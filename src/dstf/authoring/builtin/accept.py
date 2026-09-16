@@ -1,16 +1,17 @@
-"""Accept (§4.6 table, §4.7): TESTS scope. The selected tests' current
-results become baselines through ``storage.accept.accept_run_results`` —
-the one function the CLI's two ``--accept`` paths call — so the tool
-cannot accept a result the CLI would refuse.
+"""Accept (§4.6 table, §4.7): SUITE and TEST placements. The selected tests'
+current results become baselines through
+``storage.accept.accept_run_results`` — the one function the CLI's two
+``--accept`` paths call — so the tool cannot accept a result the CLI would
+refuse.
 
 The confirm list says, per selected model, what accepting will do with it,
 including the aborted-run refusal, so it never promises what the shared
 function declines — with one exception it cannot see from here: a trajectory
 carrying NaN/Inf is refused by ``store_reference`` as it writes, and shows up
-in the write's own line instead. The tab's own availability is read off those same rows,
-so an enabled Accept always has at least one baseline to write. The write
-reports one line (§4.6 amendment 1): what it stored, and every refusal with
-its reason.
+in the write's own line instead. The button's own availability is read off
+those same rows, so an enabled Accept always has at least one baseline to
+write. The write reports one line (§4.6 amendment 1): what it stored, and
+every refusal with its reason.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from ...reporting.status import classify
 from ...storage.accept import accept_run_results
 from ...storage.batch_manifest import unfinished_run_models
-from ..capabilities import Panel, Scope, StoreWrite
+from ..capabilities import Panel, Placement, StoreWrite, plural
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,8 +34,8 @@ if TYPE_CHECKING:
 
 #: The confirm row's verdict on a model — every word but the last is a
 #: reason the shared accept function stores no baseline for it; the last is
-#: what it stores. ``WILL_STORE`` is the one truth the button's count, the
-#: tab's availability and this forecast share.
+#: what it stores. ``WILL_STORE`` is the one truth the button's count, its
+#: availability and this forecast share.
 REFUSED = "re-run before accepting"
 NO_RESULT = "no simulation result"
 SIM_FAILED = "simulation failed"
@@ -94,12 +95,14 @@ class Accept:
 
     name = "accept"
     label = "Accept"
-    scope = Scope.TESTS
+    placements = frozenset({Placement.SUITE, Placement.TEST})
 
     def available(self, s: SessionView) -> bool | str:
         project = s.project
         if project is None:
             return "no project open"
+        if not s.selection.tests:
+            return "Accept needs a selection"
         selection = s.selection.tests
         running = s.running
         if running is not None:
@@ -107,10 +110,10 @@ class Accept:
             locked = [m for m in locked if m in selection]
             if locked:
                 return f"{running.label} is running on {locked[0]}"
-        # The tab's answer comes from the rows the panel draws, so an
-        # enabled tab never fronts an `Accept 0` button: a pending,
-        # simulate-only or variable-less result is a row the write will not
-        # store, and the tab carries that row's reason.
+        # The button's answer comes from the rows the panel draws, so an
+        # enabled button never reads `Accept 0`: a pending, simulate-only or
+        # variable-less result is a row the write will not store, and the
+        # button carries that row's reason.
         rows = _rows(s)
         if any(action == WILL_STORE for _, _, action in rows):
             return True
@@ -118,14 +121,17 @@ class Accept:
             return "no successful result in the selection"
         return rows[0][2]
 
+    def caption(self, s: SessionView) -> str:
+        count = sum(1 for _, _, action in _rows(s) if action == WILL_STORE)
+        return f"Accept {plural(count, 'result')} as baselines"
+
     def panel(self, s: SessionView, ui_panel: Panel) -> None:
         from nicegui import ui
 
         rows = _rows(s)
         for model_id, status, action in rows:
             ui.label(f"{model_id} · {status} · {action}").classes("text-xs")
-        count = sum(1 for _, _, action in rows if action == WILL_STORE)
-        ui.button(f"Accept {count}", on_click=lambda: ui_panel.submit()).props(
+        ui.button(self.caption(s), on_click=lambda: ui_panel.submit()).props(
             "dense no-caps"
         )
 

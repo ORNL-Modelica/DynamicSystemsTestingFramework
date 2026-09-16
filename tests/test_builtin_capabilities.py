@@ -18,7 +18,7 @@ from dstf.authoring.builtin.edit_criteria import EditCriteria  # noqa: E402
 from dstf.authoring.builtin.edit_tree import EditTree  # noqa: E402
 from dstf.authoring.builtin.rerun import Rerun  # noqa: E402
 from dstf.authoring.session import Selection, Session, SessionView  # noqa: E402
-from test_session import A, B, C, D, _Gate, _project  # noqa: E402
+from test_session import LOOSEN, A, B, C, D, _Gate, _project  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -313,7 +313,7 @@ async def test_accept_stores_the_rest(session):
     async with host(session, Accept(), selection) as (user, errors, _):
         await user.should_see("Accept 2")  # names what it will store: A and B
         await user.should_see("re-run before accepting")  # C's row, from the manifest
-        user.find(kind=ui.button, content="Accept 2").click()
+        user.find(kind=ui.button, content="Accept 2 results as baselines").click()
         notice = session.notices[-1]
         assert notice.startswith("Accept: stored 2")
         assert C in notice and "re-run before accepting" in notice
@@ -418,7 +418,9 @@ async def test_accept_excludes_a_result_with_no_tracked_variables(session):
     assert Accept().available(view) == NO_VARIABLES
 
 
-async def test_accept_reports_the_row_reason_and_the_empty_selection(session):
+async def test_accept_reports_the_row_reason_the_empty_selection_and_a_selection_naming_no_test(
+    session,
+):
     """With rows to draw, the greyed capability says exactly what the first
     row says; the generic line is left for a selection with no rows at all."""
     from dstf.authoring.builtin.accept import SIM_FAILED
@@ -434,7 +436,11 @@ async def test_accept_reports_the_row_reason_and_the_empty_selection(session):
         await user.should_see(SIM_FAILED)  # the host's reason
         await user.should_not_see("Accept 0")
     empty = SessionView(session, Selection(tests=frozenset()))
-    assert Accept().available(empty) == "no successful result in the selection"
+    assert Accept().available(empty) == "Accept needs a selection"
+    assert (
+        Accept().available(SessionView(session, Selection(tests=frozenset({"Nope.X"}))))
+        == "no successful result in the selection"
+    )
 
 
 # -- Rerun (§4.6 table, §4.7) ---------------------------------------------
@@ -530,3 +536,51 @@ async def test_rerun_names_the_backend_and_is_greyed_while_a_job_runs(session):
     gate.release.set()
     assert job.done.wait(5)
     assert Rerun().available(view) is True
+
+
+def test_the_builtins_declare_their_placements():
+    """Brief §3.2: Accept and Rerun at suite and test; Edit tree on the Test
+    page's tree; Edit on plot at a variable; Edit criteria at a criterion.
+    The placements the Test page (sub-project 3) and the editing merge
+    (sub-project 4) build on."""
+    from dstf.authoring.builtin.edit_on_plot import EditOnPlot
+    from dstf.authoring.capabilities import Placement
+
+    S, T, V, C_ = (
+        Placement.SUITE,
+        Placement.TEST,
+        Placement.VARIABLE,
+        Placement.CRITERION,
+    )
+    assert Accept.placements == {S, T} and Rerun.placements == {S, T}
+    assert EditTree.placements == {T}
+    assert EditOnPlot.placements == {V}
+    assert EditCriteria.placements == {C_}
+
+
+def test_accept_caption_counts_what_it_will_store_and_needs_a_selection(session):
+    """DESIGN.md "Buttons": object, effect, count — and at zero the label
+    still says what it would do while `available` carries the sentence."""
+    three = SessionView(session, Selection(tests=frozenset({A, B, C})))
+    assert Accept().caption(three) == "Accept 2 results as baselines"  # C is refused
+    one = SessionView(session, Selection(tests=frozenset({D})))
+    assert Accept().caption(one) == "Accept 1 result as baselines"
+    none = SessionView(session, Selection())
+    assert Accept().caption(none) == "Accept 0 results as baselines"
+    assert Accept().available(none) == "Accept needs a selection"
+
+
+def test_rerun_caption_names_count_backend_and_the_selections_unsaved_edits(session):
+    one = SessionView(session, Selection(tests=frozenset({A})))
+    assert Rerun().caption(one) == "Rerun 1 selected test (Python)"
+    assert (
+        Rerun().available(SessionView(session, Selection()))
+        == "Rerun needs a selection"
+    )
+    session.stage([LOOSEN])  # two ops on A: the materialization and the edit
+    assert (
+        Rerun().caption(one) == "Rerun 1 selected test (Python) (with 2 unsaved edits)"
+    )
+    # Another model's edits are not this selection's.
+    other = SessionView(session, Selection(tests=frozenset({D})))
+    assert Rerun().caption(other) == "Rerun 1 selected test (Python)"

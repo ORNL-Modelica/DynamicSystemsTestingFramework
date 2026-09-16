@@ -1,8 +1,8 @@
 """The capability contract (two-tier design, §4.6).
 
-A capability is a plug-in the authoring shell lists by scope: it reads a
-:class:`SessionView`, builds its controls in a :class:`Panel` the shell
-provides, and returns an :class:`Outcome`. **The Session applies outcomes;
+A capability is a plug-in the authoring shell draws at the placements it
+names: it reads a :class:`SessionView`, builds its controls in a
+:class:`Panel` the shell provides, and returns an :class:`Outcome`. **The Session applies outcomes;
 a capability applies nothing.** It holds a view only, so the enforcement
 is structural. Registration goes through the single ``dstf.plugins``
 entry-point group: a plug-in module calls :func:`register_capability` on
@@ -23,11 +23,25 @@ if TYPE_CHECKING:
     from .spec_document import PatchOp
 
 
-class Scope(Enum):
-    PROJECT = "project"
-    TESTS = "tests"
+class Placement(Enum):
+    """Where a capability attaches (brief §3.2; D129): the Suite page's
+    batch bar, the Test page's header, a variable section's toolbar, the
+    inline criterion editor. A capability names the frozenset it attaches
+    at; the shell draws a button carrying its ``caption`` at each and knows
+    no capability by name. The tab strip this replaces listed one tab per
+    ``Scope``; the scopes' selection rules (TESTS needs a selection, LEAF a
+    leaf) are now what ``available`` answers for the page's selection."""
+
+    SUITE = "suite"
+    TEST = "test"
     VARIABLE = "variable"
-    LEAF = "leaf"
+    CRITERION = "criterion"
+
+
+def plural(count: int, noun: str) -> str:
+    """``"2 tests"``, ``"1 test"``: the count and its noun for a caption.
+    Regular plurals only — every noun a caption uses here is one."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 @dataclass(frozen=True)
@@ -124,8 +138,9 @@ class FigureHook(Protocol):
 
 
 class Panel(Protocol):
-    """A container the capability owns entirely (sub-project 4 provides the
-    NiceGUI one). ``figure`` is the hook on-plot editing will use first."""
+    """A container the capability owns entirely (the shell's
+    ``ShellPanel``). ``figure`` is the hook on-plot editing will use
+    first."""
 
     figure: FigureHook
 
@@ -139,10 +154,18 @@ class Panel(Protocol):
 class Capability(Protocol):
     name: str
     label: str
-    scope: Scope
+    placements: frozenset[Placement]
 
     def available(self, s: SessionView) -> bool | str:
-        """``True``, or ``False`` / the reason it is greyed out."""
+        """``True``, or ``False`` / the sentence the greyed button carries —
+        why it is unavailable and what would enable it ("Accept needs a
+        selection", "rerun is running on FakeLib.A")."""
+        ...
+
+    def caption(self, s: SessionView) -> str:
+        """The button's label: its object, its effect and a count
+        ("Rerun 2 selected tests (Dymola)"). At zero it still says what it
+        would do; ``available`` then carries the sentence."""
         ...
 
     def panel(self, s: SessionView, ui: Panel) -> None: ...
@@ -155,16 +178,34 @@ _CAPABILITIES: dict[str, Capability] = {}
 
 def register_capability(cap: Capability) -> Capability:
     """Register ``cap`` under its name; returns it. Loud on a duplicate —
-    two capabilities sharing a name would make the shell's tab list depend
-    on import order."""
+    two capabilities sharing a name would make the shell's button order
+    depend on import order — and on a shape the shell cannot draw."""
     if not isinstance(cap, Capability):
         missing = [
             a
-            for a in ("name", "label", "scope", "available", "panel", "act")
+            for a in (
+                "name",
+                "label",
+                "placements",
+                "available",
+                "caption",
+                "panel",
+                "act",
+            )
             if not hasattr(cap, a)
         ]
         raise TypeError(
             f"{cap!r} is not a Capability: missing {', '.join(missing) or 'a method'}"
+        )
+    placements = cap.placements
+    if (
+        not isinstance(placements, frozenset)
+        or not placements
+        or not all(isinstance(p, Placement) for p in placements)
+    ):
+        raise TypeError(
+            f"capability {cap.name!r}: placements must be a non-empty frozenset of "
+            f"Placement, got {placements!r}"
         )
     if cap.name in _CAPABILITIES:
         raise ValueError(f"capability {cap.name!r} is already registered")

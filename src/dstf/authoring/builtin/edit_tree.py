@@ -1,7 +1,7 @@
-"""Edit tree (§4.6 table, §4.7): TESTS scope, exactly one test selected.
-The raw tree (``SessionView.tree``) as indented rows; wrap, edit, add and
-remove each stage one structural change against the paths the report's
-tree already shows. The D66 validator's refusal reaches the tab through
+"""Edit tree (§4.6 table, §4.7): the TEST placement, exactly one test
+selected. The raw tree (``SessionView.tree``) as indented rows; wrap, edit,
+add and remove each stage one structural change against the paths the
+report's tree already shows. The D66 validator's refusal reaches the tab through
 ``Shell.act`` — the Session is what it was.
 """
 
@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ...comparison.registry import DEFAULT_METRIC, combinators, metrics
-from ..capabilities import Panel, Patch, Scope
+from ..capabilities import Panel, Patch, Placement
 
 if TYPE_CHECKING:
     from ..session import SessionView
@@ -65,7 +65,10 @@ class EditTree:
 
     name = "edit-tree"
     label = "Edit tree"
-    scope = Scope.TESTS
+    placements = frozenset({Placement.TEST})
+
+    def caption(self, s: SessionView) -> str:
+        return self.label
 
     def available(self, s: SessionView) -> bool | str:
         sel = s.selection

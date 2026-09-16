@@ -1,7 +1,7 @@
-"""Edit on plot (§4.6 table, §4.7): VARIABLE scope — any handle on the
-centre plot drags, and the op targets the leaf the handle's id names. Below
-the plot's hook, a table per handle-bearing list field (the Config fields
-that declare ``columns``: ``tube_points``, ``points``, ``events``,
+"""Edit on plot (§4.6 table, §4.7): the VARIABLE placement — any handle on
+the centre plot drags, and the op targets the leaf the handle's id names.
+Below the plot's hook, a table per handle-bearing list field (the Config
+fields that declare ``columns``: ``tube_points``, ``points``, ``events``,
 ``peaks``) with add and remove rows.
 
 Every staged edit is one ``replace`` of the whole leaf — the op Edit
@@ -21,7 +21,7 @@ from ...comparison.geometry import HLine, Marker
 from ...comparison.handles import HandleEdit, HandleEditError
 from ...comparison.registry import DEFAULT_METRIC, metric
 from ...figures.assemble import leaves_by_variable
-from ..capabilities import Panel, Patch, Scope
+from ..capabilities import Panel, Patch, Placement
 from ..spec_document import PatchOp
 from .edit_tree import _node_at
 
@@ -186,7 +186,10 @@ class EditOnPlot:
 
     name = "edit-on-plot"
     label = "Edit on plot"
-    scope = Scope.VARIABLE
+    placements = frozenset({Placement.VARIABLE})
+
+    def caption(self, s: SessionView) -> str:
+        return self.label
 
     def available(self, s: SessionView) -> bool | str:
         selected = _selected(s)

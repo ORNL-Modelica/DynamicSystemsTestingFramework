@@ -1,5 +1,5 @@
-"""Rerun (§4.6 table, §4.7): TESTS scope. The selection runs through the
-configured backend on a worker thread, as a ``Job``.
+"""Rerun (§4.6 table, §4.7): SUITE and TEST placements. The selection runs
+through the configured backend on a worker thread, as a ``Job``.
 
 The job builds its OWN backend, the persistent variant a CLI run would
 choose (§4.6 amendment 5) — the instance ``Session.open`` holds is the
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from ...backends import select_backend
 from ...pipeline import run_pipeline
-from ..capabilities import Job, JobContext, Panel, Scope
+from ..capabilities import Job, JobContext, Panel, Placement, plural
 
 if TYPE_CHECKING:
     from ..session import SessionView
@@ -38,30 +38,45 @@ class Rerun:
 
     name = "rerun"
     label = "Rerun"
-    scope = Scope.TESTS
+    placements = frozenset({Placement.SUITE, Placement.TEST})
 
     def available(self, s: SessionView) -> bool | str:
         if s.project is None:
             return "no project open"
+        if not s.selection.tests:
+            return "Rerun needs a selection"
         running = s.running
         if running is not None:
             # One job at a time: `Session._start_job` refuses a second one
-            # anyway, and the tab says so before the click.
+            # anyway, and the button says so before the click.
             return f"{running.label} is running"
         return True
+
+    def caption(self, s: SessionView) -> str:
+        """Count, backend, and the selection's unsaved edits (brief §3.6: a
+        run uses the spec with pending edits applied — `stage` re-merges
+        `project.tests` — and the button says so)."""
+        project = s.project
+        backend = project.config.backend_name if project is not None else "?"
+        models = set(_models(s))
+        text = f"Rerun {plural(len(models), 'selected test')} ({backend})"
+        edits = sum(1 for op in s.pending if op.model_id in models)
+        if edits:
+            text += f" (with {plural(edits, 'unsaved edit')})"
+        return text
 
     def panel(self, s: SessionView, ui_panel: Panel) -> None:
         from nicegui import ui
 
         project = s.project
-        assert project is not None  # `available` greys the tab without one
+        assert project is not None  # `available` greys the button without one
         ui.label(f"runs through {project.config.backend_name}").classes("text-xs").mark(
             "rerun-backend"
         )
         models = _models(s)
         for model_id in models:
             ui.label(model_id).classes("text-xs")
-        ui.button(f"Rerun {len(models)}", on_click=lambda: ui_panel.submit()).props(
+        ui.button(self.caption(s), on_click=lambda: ui_panel.submit()).props(
             "dense no-caps"
         )
 

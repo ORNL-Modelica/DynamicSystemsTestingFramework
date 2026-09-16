@@ -695,6 +695,30 @@ the plot.
 The shell serves one browser tab: the in-place redraw and the figure hook follow
 the last-built plot, so a second tab's centre does not redraw in place.
 
+**Amended in the redesign's sub-project 2 (2026-09-16; D129).** The tab strip
+is gone (brief §3.2, DESIGN.md "Tabs: none"), and with it `Scope`. A
+capability declares `placements: frozenset[Placement]` — `SUITE` (the Suite
+page's batch bar), `TEST` (the Test page's header), `VARIABLE` (a variable
+section's toolbar), `CRITERION` (the inline criterion editor) — and
+`caption(view) -> str`, the sentence its button carries: object, effect and
+count ("Rerun 2 selected tests (Dymola)"), still saying what it would do at
+zero while `available` carries the reason the button is greyed ("Rerun needs a
+selection"). The shell draws one outlined button per registered capability at
+each placement it names and hosts its `panel` in a dialog the button opens;
+`submit` there runs `act` and hands the outcome to the Session as before. It
+still knows no capability by name. `PROJECT` has no successor: Close project is
+gone, so the project-less state is unreachable; a recent-projects capability
+attaches at `SUITE` when it comes. `Panel.figure` at a placement without a
+plot raises on `on` — a subscription there is a contract misuse.
+
+Selection is the page's, not the Session's: `SessionView(session, selection)`
+carries the `Selection` (tests, variable, criterion path) of the page that
+built the view, one per browser tab. `Session.select`, `Session.selection` and
+the `selection` event are deleted; a capability's `available`, `caption`,
+`panel` and `act` read `s.selection` exactly as before. Accept and Rerun attach
+at `SUITE` and `TEST`; Edit tree at `TEST`; Edit on plot at `VARIABLE`; Edit
+criteria at `CRITERION` — the last three re-hosted by sub-projects 3 and 4.
+
 ### 4.7 The tool's v1 surface
 
 **Launch.** `dstf author --config testing.json [--filter ...] [--port N]`
