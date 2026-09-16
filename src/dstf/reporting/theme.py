@@ -23,6 +23,10 @@ DEFAULT_THEME: Mapping[str, str] = MappingProxyType(
         "page": "#fafafa",
         "surface": "#ffffff",
         "surface-hover": "#f5f5f5",
+        #: One step past surface-hover, for a control that is itself a
+        #: hoverable surface: a `th` rests on surface-hover, so its own
+        #: hover needs somewhere else to go.
+        "surface-active": "#ececec",
         "border": "#dddddd",
         "border-hairline": "#eeeeee",
         "text": "#333333",

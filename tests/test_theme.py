@@ -136,6 +136,34 @@ class TestPages:
             assert used, name
             assert used <= defined, (name, sorted(used - defined))
 
+    def test_a_warning_row_reads_its_status_word_like_every_other(self):
+        """`fill` is the filled badge and the bar segment; `dark` is text on a
+        tint. The dashboard's seven other status words take `dark`; `.warn`
+        took `fill`, and amber #ffc107 on white is 1.6:1 — the word was there
+        and unreadable. A contrast floor, not a preference."""
+        templates = Path(theme.__file__).parent / "templates"
+        html = (templates / "dashboard.html").read_text(encoding="utf-8")
+        rule = re.search(r"^\.warn \{[^}]*\}", html, re.M)
+        assert rule, "the .warn rule moved"
+        assert "var(--dstf-warn-dark)" in rule.group(0)
+        assert "var(--dstf-warn-fill)" not in rule.group(0)
+
+    def test_a_sortable_header_has_a_hover_state_distinct_from_its_rest_state(self):
+        """Every `th` is a sort control (dashboard.js binds the click). `th`
+        and `th:hover` both resolved to --dstf-surface-hover, so the only
+        affordance the header had was the cursor."""
+        templates = Path(theme.__file__).parent / "templates"
+        html = (templates / "dashboard.html").read_text(encoding="utf-8")
+
+        def background(selector):
+            rule = re.search(rf"^{re.escape(selector)} \{{[^}}]*\}}", html, re.M)
+            assert rule, selector
+            token = re.search(r"background:\s*var\((--dstf-[\w-]+)\)", rule.group(0))
+            assert token, selector
+            return token.group(1)
+
+        assert background("th:hover") != background("th")
+
     def test_the_templates_on_disk_carry_no_hex_but_the_root_block(self):
         templates = Path(theme.__file__).parent / "templates"
         for name in ("interactive.html", "dashboard.html"):
