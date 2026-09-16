@@ -1459,3 +1459,21 @@ planning.
     3.1.1); the axis follow after a react is exercised by the report-tier
     emulation and a hand probe in the gate only. A smoke test that stages an
     edit after a legend click and re-probes `yaxis4` would close it.
+- **After the foundations corrections build (2026-09-16), follow-ups** — from
+  the seven fresh-context reviews; none blocks sub-project 2:
+  - `_reload_results`'s raise counts `failures` per `_score` call, so a model
+    under two manifest keys (hand-edited manifests only; the tool never writes
+    one) can read "2 of 1 models"; a dict keyed by model would fix the message.
+  - A model whose scoring raised is announced by the same `loading(results)`
+    event as a scored one; a per-event row filler reading `comparisons[model]`
+    gets a KeyError. An `error=True` payload key when sub-project 2 consumes
+    the events.
+  - A leaf-row click in the current shell REBUILDS the plot element (two
+    `newPlot`s observed for a same-key selection) although `_follow_centre`'s
+    docstring says a same-key selection keeps it; pre-existing, zoom is lost.
+    Sub-project 2 replaces the shell; watch it there.
+  - `store_scan` leaves `<key>.<pid>.<tid>.tmp` behind when the rename fails
+    after the write; harmless to `load_scan`, litter in the user's cache dir.
+  - `_rebuild_tests` drops a gone model's comparison and read but not its
+    `project.results` entry; every consumer keys off `tests`, so it is
+    unreachable today.
