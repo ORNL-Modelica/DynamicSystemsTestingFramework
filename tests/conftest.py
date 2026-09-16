@@ -213,7 +213,9 @@ def _restore_dstf_modules_after_a_ui_simulation():
     import sys
 
     before = {
-        k: v for k, v in sys.modules.items() if k == "dstf" or k.startswith("dstf.")
+        k: v
+        for k, v in list(sys.modules.items())  # a copy: a thread may import meanwhile
+        if k == "dstf" or k.startswith("dstf.")
     }
     yield
     sys.modules.update(before)

@@ -205,6 +205,27 @@ async def test_a_filtered_out_row_stays_hidden_through_a_rescore(shell):
         )  # the paint still landed
 
 
+async def test_a_repaint_drops_the_old_tint(shell):
+    """The tint rules share one specificity and are emitted in STATUS order,
+    so a row carrying two tints shows the LATER one: a row painted queued
+    before its result and then FAIL would stay grey, a FAIL->PASS flip would
+    stay red. A repaint removes the old tint (the correction review's
+    probe; NiceGUI's class list dedupes but never drops)."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _suite(shell, user)
+        assert "dstf-tint-fail" in page.rows[A].container.classes
+        comp = shell.session.comparisons.pop(A)  # unscored again: queued
+        page.handle({"event": "results", "models": [A]})
+        classes = page.rows[A].container.classes
+        assert "dstf-tint-queued" in classes and "dstf-tint-fail" not in classes
+        shell.session.comparisons[A] = comp
+        page.handle({"event": "results", "models": [A]})
+        classes = page.rows[A].container.classes
+        assert "dstf-tint-fail" in classes and "dstf-tint-queued" not in classes
+        assert sum(c.startswith("dstf-tint-") for c in classes) == 1
+
+
 async def test_the_chips_carry_the_classifiers_counts(shell):
     async with user_simulation(root=shell.index) as user:
         await _open(user)
