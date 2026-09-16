@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 
 from .. import __version__
@@ -86,17 +87,29 @@ def load_scan(config: Config) -> dict[str, TestModel] | None:
 
 
 def store_scan(config: Config, scanned: dict[str, TestModel]) -> Path | None:
-    """Write the scan; returns the path, or None for a non-Modelica source."""
+    """Write the scan; returns the path, or None for a non-Modelica source
+    or when the cache cannot be written (a read-only home, a full disk).
+    The cache is an accelerator: a failed write is a warning, never an
+    error — an open that cannot cache still opens, and a rescan that cannot
+    cache still re-merges and finishes."""
     if config.source_type != "modelica":
         return None
     path = _path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "dstf_version": __version__,
         "library_dir": str(config.library_dir.resolve()),
         "tests": {m: _to_json(t) for m, t in scanned.items()},
     }
-    tmp = path.with_suffix(f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(payload), encoding="utf-8", newline="\n")
-    os.replace(tmp, path)
+    # Unique per thread as well as per process: a cached open's rescan
+    # thread and a second Session's in the same process write the same
+    # key, and with one name the second write replaced the first's file
+    # from under it and its own rename failed.
+    tmp = path.with_name(f"{path.stem}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(payload), encoding="utf-8", newline="\n")
+        os.replace(tmp, path)
+    except OSError as e:
+        logger.warning("not caching the scan at %s: %s", path, e)
+        return None
     return path

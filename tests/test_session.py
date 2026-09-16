@@ -654,6 +654,49 @@ class TestOpen:
         Session().open(cfg, work_dir=work)
         assert _snapshot(work) == []
 
+    def test_a_cold_open_that_cannot_cache_still_opens(self, tmp_path, monkeypatch):
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        (cache / "dstf").write_text("not a directory", encoding="utf-8")
+        monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+        cfg = _modelica_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=tmp_path / "work")
+        assert "MyLib.Foo" in s.comparisons
+        assert s.rescan_done.is_set()  # a cold open has nothing to rescan
+
+    def test_a_rescan_that_cannot_cache_still_re_merges_and_finishes(
+        self, tmp_path, monkeypatch
+    ):
+        """The cache was written by a cold open and is readable; the rescan
+        finds a change and cannot write it back. The re-merge and the
+        `rescan` event must still happen and `rescan_done` must be set."""
+        import os
+        import stat
+
+        cache = tmp_path / "cache"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+        cfg = _modelica_project(tmp_path)
+        Session().open(cfg, work_dir=tmp_path / "work")
+        from dstf.discovery.scan_cache import cache_dir
+
+        scan_dir = cache_dir()
+        assert list(scan_dir.glob("*.json"))
+        _mo, before = _bump_stop_time(tmp_path)
+        scan_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)
+        try:
+            if os.access(scan_dir, os.W_OK):
+                pytest.skip("this user can write a read-only directory (root)")
+            s = Session()
+            events = []
+            s.on("loading", events.append)
+            s.open(cfg, work_dir=tmp_path / "work")
+            assert s.rescan_done.wait(10.0)
+            assert events[-1]["phase"] == "rescan" and events[-1]["changed"] is True
+            assert s.project.test(before.model_id).stop_time == before.stop_time + 1
+        finally:
+            scan_dir.chmod(stat.S_IRWXU)
+
 
 class TestRescoreAndStage:
     def test_rescore_on_a_flat_test_stages_the_materialization_spec_update_would(

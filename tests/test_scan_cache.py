@@ -7,6 +7,9 @@ cached open trusts the cache and rescans in the background (Session)."""
 from __future__ import annotations
 
 import json
+import logging
+import os
+import threading
 
 import pytest
 
@@ -97,3 +100,54 @@ def test_a_fresh_process_finds_the_cache(tmp_path):
         check=True,
     )
     assert out.stdout.strip() == "HIT", out.stderr
+
+
+def test_an_unwritable_cache_dir_is_a_warning_and_stores_nothing(
+    tmp_path, monkeypatch, caplog
+):
+    """The cache is an accelerator: a home it cannot be written to (here the
+    `dstf` segment is a FILE, so `mkdir -p` raises NotADirectoryError, an
+    OSError) is logged and skipped, never raised at whoever wanted a scan."""
+    (tmp_path / "cache").mkdir()
+    (tmp_path / "cache" / "dstf").write_text("not a directory", encoding="utf-8")
+    config = _write_lib(tmp_path)
+    scanned = scan_source_tests(config)
+    with caplog.at_level(logging.WARNING, logger="dstf.discovery.scan_cache"):
+        assert scan_cache.store_scan(config, scanned) is None
+    assert any("not caching the scan" in r.getMessage() for r in caplog.records)
+    assert scan_cache.load_scan(config) is None
+
+
+def test_two_threads_can_store_the_same_key_at_once(tmp_path, monkeypatch):
+    """A cached open's rescan thread and a second Session's in one process
+    write the same key. Both are held at the rename until both temporaries
+    exist: with a per-process temporary name the second write replaced the
+    first thread's file from under it and its own rename raised
+    FileNotFoundError (which the OSError guard would turn into a silent
+    None — either way, not the path)."""
+    config = _write_lib(tmp_path)
+    scanned = scan_source_tests(config)
+    gate = threading.Barrier(2, timeout=10)
+    real_replace = os.replace
+
+    def held_replace(src, dst):
+        gate.wait()
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(scan_cache.os, "replace", held_replace)
+    outcomes: list = []
+
+    def store():
+        try:
+            outcomes.append(scan_cache.store_scan(config, scanned))
+        except BaseException as e:  # a failure is an outcome too
+            outcomes.append(e)
+
+    threads = [threading.Thread(target=store) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert outcomes == [scan_cache._path(config)] * 2
+    assert scan_cache.load_scan(config) == scanned
+    assert not list(scan_cache.cache_dir().glob("*.tmp"))
