@@ -194,7 +194,7 @@ _SESSION_THREADS = ("dstf-overlay-index", "dstf-rescan", "dstf-open")
 
 
 @pytest.fixture(autouse=True)
-def _relink_dstf_after_a_ui_simulation():
+def _restore_dstf_modules_after_a_ui_simulation():
     """NiceGUI's user simulation pops every ``@ui.page`` handler's module AND
     ALL ITS PARENTS from ``sys.modules`` when it tears down
     (``nicegui/testing/general.py``). The shell registers the Test page's
@@ -205,19 +205,18 @@ def _relink_dstf_after_a_ui_simulation():
     import name 'authoring' from 'dstf'`` and pytest's string-target
     ``monkeypatch.setattr("dstf.reporting...")`` raises ``AttributeError:
     module 'dstf' has no attribute 'reporting'``. Nothing pops anything in
-    the real process; this repairs the harness's own damage."""
-    yield
+    the real process; this puts the SAME module objects back, so identity
+    holds and no attribute is touched. (Re-linking submodules as attributes
+    instead overwrote ``dstf.cli.main`` — a function re-exported from the
+    submodule of that name — with the module; found when a new UI test
+    file sorted before ``test_compare_accept.py``.)"""
     import sys
 
-    if "dstf" in sys.modules:
-        return
-    import importlib
-
-    for name in sorted(n for n in sys.modules if n.startswith("dstf.")):
-        parent, _, child = name.rpartition(".")
-        if parent not in sys.modules:
-            sys.modules[parent] = importlib.import_module(parent)
-        setattr(sys.modules[parent], child, sys.modules[name])
+    before = {
+        k: v for k, v in sys.modules.items() if k == "dstf" or k.startswith("dstf.")
+    }
+    yield
+    sys.modules.update(before)
 
 
 @pytest.fixture(autouse=True)
