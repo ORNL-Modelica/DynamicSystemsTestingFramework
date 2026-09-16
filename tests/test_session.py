@@ -159,6 +159,57 @@ def _snapshot(work: Path) -> list[tuple[str, bytes]]:
     )
 
 
+def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
+    """`_project` with A and B tracking ["x", "y"], results for both, and a
+    two-variable baseline for each model in ``ref_models`` (A only by
+    default, so B stays NO_REF)."""
+    cfg, work = _project(tmp_path)
+    t = [i / 4 for i in range(5)]
+    for key in ("test_0001", "test_0002"):
+        (work / key / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {"x": [v * 1.25 for v in t], "y": [2 * v for v in t]},
+                }
+            ),
+            encoding="utf-8",
+        )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] in (A, B):
+            entry["variables"] = ["x", "y"]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    config = Config(config_file=cfg, work_dir=work)
+    tt = np.asarray(t)
+    store = ReferenceStore(config)
+    for m in ref_models:
+        store.store_reference(
+            make_test_model(m, variable_patterns=["x", "y"]),
+            TestResult(
+                model_id=m,
+                success=True,
+                variables=[
+                    VariableResult(index=1, time=tt, values=tt, name="x"),
+                    VariableResult(index=2, time=tt, values=2.1 * tt, name="y"),
+                ],
+            ),
+        )
+    return cfg, work
+
+
+def _base_kinds(fig: dict) -> list[tuple[str, str]]:
+    """The base traces a figure draws: (kind, id) of every act / ref / error
+    trace, sorted. Leaves are not base traces."""
+    return sorted(
+        (tr["meta"].get("kind"), tr["meta"].get("id"))
+        for tr in fig["data"]
+        if tr.get("meta") and tr["meta"].get("kind") in ("act", "ref", "error")
+    )
+
+
 @pytest.fixture
 def session(tmp_path) -> Session:
     cfg, work = _project(tmp_path)
@@ -1369,6 +1420,96 @@ class TestReadCache:
         leaf = next(tr for tr in fig["data"] if tr["meta"].get("kind") == "act")
         assert leaf  # the base traces are still drawn
         assert session.comparisons[A].passed is True  # the loosened verdict
+
+    # A second Session over the same project, opened fresh, is the oracle:
+    # what it draws after the same staged op is what the cached one must
+    # draw. `_base_kinds` compares base traces only — the leaves are
+    # decimated per call and are not what the cache holds.
+    @staticmethod
+    def _pair(cfg, work):
+        s1, s2 = Session(), Session()
+        s1.open(cfg, work_dir=work)
+        s2.open(cfg, work_dir=work)
+        return s1, s2
+
+    def test_a_staged_edit_that_stops_scoring_a_variable_drops_its_base(self, tmp_path):
+        cfg, work = _two_var_project(tmp_path)
+        cached, fresh = self._pair(cfg, work)
+        assert [v.name for v in cached.comparisons[A].variables] == ["x", "y"]
+        cached.figure(A, "y")  # y scored: act + ref + errors cached
+        op = PatchOp(A, "remove", "/metrics/children/1")
+        cached.stage([op])
+        fresh.stage([op])
+        assert [v.name for v in cached.comparisons[A].variables] == ["x"]
+        assert _base_kinds(cached.figure(A, "y")) == _base_kinds(fresh.figure(A, "y"))
+
+    def test_a_staged_edit_that_starts_scoring_a_variable_rebuilds_its_base(
+        self, tmp_path
+    ):
+        cfg, work = _two_var_project(tmp_path)
+        cached, fresh = self._pair(cfg, work)
+        remove = PatchOp(A, "remove", "/metrics/children/1")
+        cached.stage([remove])
+        fresh.stage([remove])
+        cached.figure(A, "y")  # y unscored: an empty base cached
+        add = PatchOp(
+            A, "add", "/metrics/children/-", {"metric": "nrmse", "variable": "y"}
+        )
+        cached.stage([add])
+        fresh.stage([add])
+        assert [v.name for v in cached.comparisons[A].variables] == ["x", "y"]
+        assert _base_kinds(cached.figure(A, "y")) == _base_kinds(fresh.figure(A, "y"))
+
+    def test_a_baseline_free_leaf_on_another_variable_moves_an_unscored_one(
+        self, tmp_path
+    ):
+        """B has no baseline: with nothing scored, x is drawn through the
+        no-baseline path (act only). A tree scoring ONLY y (a baseline-free
+        range) makes the scored list non-empty and x — still unscored —
+        becomes the empty state. A key on "is x scored" does not move; the
+        key on the whole scored list does."""
+        cfg, work = _two_var_project(tmp_path)
+        cached, fresh = self._pair(cfg, work)
+        assert not cached.comparisons[B].evaluated
+        cached.figure(B, "x")
+        op = PatchOp(
+            B,
+            "add",
+            "/metrics",
+            {
+                "combinator": "and",
+                "children": [
+                    {
+                        "metric": "range",
+                        "variable": "y",
+                        "min_value": -10,
+                        "max_value": 10,
+                    }
+                ],
+            },
+        )
+        cached.stage([op])
+        fresh.stage([op])
+        assert cached.comparisons[B].evaluated
+        assert _base_kinds(cached.figure(B, "x")) == _base_kinds(fresh.figure(B, "x"))
+
+    def test_figure_of_an_unknown_model_is_a_key_error_that_caches_nothing(
+        self, session
+    ):
+        with pytest.raises(KeyError):
+            session.figure("FakeLib.Nope", "x")
+        assert "FakeLib.Nope" not in session._reads
+
+    def test_a_model_the_spec_drops_loses_its_cached_read(self, session):
+        session.figure(D, "x")
+        p = session.spec.path
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        doc["tests"] = [e for e in doc["tests"] if e["model"] != D]
+        p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        session.reload()
+        assert D not in session._reads
+        with pytest.raises(KeyError):
+            session.figure(D, "x")
 
     def test_the_cached_figure_is_the_one_shot_figure_under_decimation(self, tmp_path):
         """The cache must draw exactly what one uncached ``variable_figure``

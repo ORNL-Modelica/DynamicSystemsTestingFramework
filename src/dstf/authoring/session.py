@@ -94,6 +94,26 @@ class _ModelReads:
     ref: dict | None
     overlays: list
     bases: dict[str, VariableView] = field(default_factory=dict)
+    #: The scored list the bases were built from (`_scored_key`). A rescore
+    #: that changes it — a staged edit that starts or stops scoring a
+    #: variable, a discard, a save, the background rescan — makes every
+    #: base of the model stale at once; `figure` drops them when it moves.
+    scored: tuple[tuple[str | None, int], ...] = ()
+
+
+def _scored_key(comp: TestComparison | None) -> tuple[tuple[str | None, int], ...]:
+    """What `view` hands `build_trajectories`, reduced to what the base
+    traces depend on: the (name, index) of every scored variable, in order;
+    empty when the test was not evaluated. The WHOLE list, not "is this
+    variable in it": with no baseline, an empty scored list draws a variable
+    through the no-baseline path and a non-empty one (a baseline-free leaf
+    on ANOTHER variable) draws it as the empty state."""
+    # `evaluated` is `metric_tree is not None or bool(variables)`
+    # (comparison/types.py), so an unevaluated comparison has no variables
+    # and the tuple is empty by construction — no separate check.
+    if comp is None:
+        return ()
+    return tuple((vc.name, vc.index) for vc in comp.variables)
 
 
 @dataclass
@@ -450,8 +470,14 @@ class Session:
         from ..figures.view import build_view, decimate_view
 
         project = self._require_project()
+        if project.test(model_id) is None:
+            raise KeyError(model_id)  # before the cache: never cache a read for it
         budget = project.config.max_embedded_samples
         reads = self._reads_for(model_id)
+        scored = _scored_key(self.comparisons.get(model_id))
+        if reads.scored != scored:
+            reads.bases.clear()
+            reads.scored = scored
         base = reads.bases.get(variable)
         if base is None:
             base = decimate_view(
@@ -708,6 +734,7 @@ class Session:
         new = current - set(self.comparisons)
         for model_id in gone:
             del self.comparisons[model_id]
+            self._reads.pop(model_id, None)
         self._emit("spec", models=models | gone | new)
         self._score_all((models | new) & current)
 
