@@ -75,7 +75,7 @@ thead tr.filter-row th {
   top: calc(var(--chrome-height, 140px) + var(--header-row-height, 28px));
   z-index: 40;
 }
-th:hover { background: var(--dstf-surface-active); }
+th[data-sort]:hover { background: var(--dstf-surface-active); }
 th.sorted-asc::after { content: " ▲"; color: var(--dstf-accent); font-size: 0.85em; }
 th.sorted-desc::after { content: " ▼"; color: var(--dstf-accent); font-size: 0.85em; }
 input.col-filter { box-sizing: border-box; width: 100%; padding: 2px 4px; font-size: 0.78em; border: 1px solid var(--dstf-border); border-radius: 2px; }

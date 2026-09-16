@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dstf.figures.decimate import decimate_pair, lttb
+from dstf.figures.decimate import bucket_boundaries, decimate_pair, lttb
 
 
 class TestLttbContract:
@@ -199,13 +199,16 @@ class TestHoistedLoopIsTheSameAlgorithm:
 
 
 def _bucket_boundaries(n_in: int, n_out: int):
-    """The boundary arithmetic ``lttb`` does, recomputed here independently."""
-    bucket_size = (n_in - 2) / (n_out - 2)
-    b = np.floor(np.arange(n_out, dtype=np.float64) * bucket_size).astype(np.int64) + 1
-    starts = b[: n_out - 2]
-    ends = b[1 : n_out - 1]
-    next_ends = np.minimum(b[2:n_out], n_in)
-    return bucket_size, starts, ends, next_ends
+    """PRODUCTION's boundary arithmetic, not a copy of it.
+
+    A recomputed copy was the first version of this, and it fenced nothing:
+    deleting the ``next_ends`` clamp this module calls load-bearing left the
+    whole sweep green, because the sweep was asserting properties of the
+    copy. The import is the point — these tests must fail when
+    ``decimate.bucket_boundaries`` drifts.
+    """
+    starts, ends, next_ends = bucket_boundaries(n_in, n_out)
+    return (n_in - 2) / (n_out - 2), starts, ends, next_ends
 
 
 def _n_out_sweep(n_in: int) -> list[int]:
@@ -247,6 +250,13 @@ class TestBucketPrecondition:
             # that really does overshoot and keeps its clamp.
             assert ends.max() <= n_in - 1, f"({n_in}, {n_out}) end past the array"
             assert next_ends[-1] == n_in, f"({n_in}, {n_out}) last next-bucket clipped"
+            # The three slices come off one array, so consecutive buckets are
+            # adjacent by construction: bucket i ends exactly where i+1 starts.
+            # Any clamp or offset applied to one slice and not its neighbour
+            # tears that seam — which is what makes this sweep, and not only
+            # the reference oracle, notice a changed boundary.
+            np.testing.assert_array_equal(starts[1:], ends[:-1])
+            np.testing.assert_array_equal(ends[1:], next_ends[:-1])
 
     @pytest.mark.parametrize("n_in,n_out", [(5, 8), (20, 40), (100, 300)])
     def test_the_precondition_predicates_have_teeth(self, n_in, n_out):
@@ -273,3 +283,10 @@ class TestBucketPrecondition:
             idx = np.searchsorted(t, t_out)
             np.testing.assert_array_equal(t[idx], t_out)
             np.testing.assert_array_equal(v[idx], v_out)
+            # And they SPAN the input: "the first n_out-1 samples plus the
+            # last" satisfies everything above, so pin that each kept index
+            # sits in its own bucket — the mid output is near the mid input.
+            mid = idx[len(idx) // 2]
+            assert abs(mid - (n_in - 1) * (len(idx) // 2) / (n_out - 1)) <= (
+                2 * (n_in - 2) / (n_out - 2) + 2
+            ), f"({n_in}, {n_out}) buckets not spanning: mid index {mid}"

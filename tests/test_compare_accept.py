@@ -38,7 +38,7 @@ def _write_status(work_dir, rows):
     (work_dir / "status.json").write_text(json.dumps({"tests": rows}), encoding="utf-8")
 
 
-class TestApplyStatusVerdicts:
+class TestStatusJsonVerdicts:
     def test_failed_status_forces_success_false(self, tmp_path):
         _write_status(
             tmp_path,
@@ -146,11 +146,19 @@ class TestManifestRecordsRunOutcome:
         assert m.manifest["test_0002"]["last_run_status"] == "passed"
 
 
-class TestApplyRunVerdicts:
+class TestManifestVerdicts:
     def test_manifest_verdict_forces_sim_fail_on_compare(self, tmp_path):
-        """The headline consequence: a compare over a work dir whose manifest
-        says the run failed reports SIM_FAIL rather than comparing against
-        whatever stale .mat is on disk."""
+        """The verdict table itself: a manifest saying the run failed yields
+        that status, so a reader applying it scores SIM_FAIL rather than
+        comparing against whatever stale .mat is on disk.
+
+        Says "a reader", not "compare": this drives the two primitives, not a
+        CLI. `compare` reaches them through `read_last_results`; `run
+        --merge` / `--rerun` does NOT — `run_pipeline` reads via
+        `read_results`, which applies no verdict, so a merged-in test whose
+        run timed out is reported PASS there. That is a live bug, not
+        something this test covers.
+        """
         m = _manifest(
             tmp_path,
             {

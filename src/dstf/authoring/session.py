@@ -244,8 +244,11 @@ class Session:
         self.last_job = None
         # Started at the commit point, not after the reload: the warm reads the
         # SIBLING backends' reference trees and the reload reads this one's, so
-        # neither waits on the other and the reload (15.6 s over TRANSFORM) is
-        # free head start for the first click's overlays. Not earlier than this:
+        # neither waits on the other and the warm gets its head start inside
+        # the reload's window (15.6 s over TRANSFORM) instead of after it. How
+        # much of that window it converts is NOT measured and is less than all
+        # of it — both sides are json.loads, whose C scanner holds the GIL, so
+        # they overlap on file IO and contend on parsing. Not earlier than this:
         # everything above can still raise, and an open that fails must leave
         # the live session's state — this Event included — as it was.
         ready = threading.Event()

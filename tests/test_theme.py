@@ -138,9 +138,13 @@ class TestPages:
 
     def test_a_warning_row_reads_its_status_word_like_every_other(self):
         """`fill` is the filled badge and the bar segment; `dark` is text on a
-        tint. The dashboard's seven other status words take `dark`; `.warn`
-        took `fill`, and amber #ffc107 on white is 1.6:1 — the word was there
-        and unreadable. A contrast floor, not a preference."""
+        tint. The dashboard's six other `.counter .value` rules take `dark`;
+        `.warn` took `fill`, and amber #ffc107 is 1.4-1.6:1 against the row
+        tints — the word was there and unreadable. `dark` gives 4.1-4.9:1
+        over the same grounds, which is legible everywhere but clears the
+        4.5:1 AA floor only on the lighter tints; darkening the shared token
+        (#7a6000 clears every ground) is an open call, because it restyles
+        the report page's advisory chip and decimation banner too."""
         templates = Path(theme.__file__).parent / "templates"
         html = (templates / "dashboard.html").read_text(encoding="utf-8")
         rule = re.search(r"^\.warn \{[^}]*\}", html, re.M)
@@ -149,20 +153,31 @@ class TestPages:
         assert "var(--dstf-warn-fill)" not in rule.group(0)
 
     def test_a_sortable_header_has_a_hover_state_distinct_from_its_rest_state(self):
-        """Every `th` is a sort control (dashboard.js binds the click). `th`
-        and `th:hover` both resolved to --dstf-surface-hover, so the only
-        affordance the header had was the cursor."""
+        """A sort control is a `th[data-sort]` — dashboard.js binds the click
+        on `#results-table thead tr:first-child th[data-sort]`, 14 of the
+        page's `th`, not all of them; the filter row's are text-input cells
+        and must not claim an affordance they do not have. `th` and
+        `th:hover` both resolved to --dstf-surface-hover, so the only
+        affordance a real sort control had was the cursor.
+
+        Resolved through the token table, not compared as names: two
+        different names holding the same hex is the same invisible hover,
+        and an earlier version of this test passed with
+        surface-active == #f5f5f5.
+        """
         templates = Path(theme.__file__).parent / "templates"
         html = (templates / "dashboard.html").read_text(encoding="utf-8")
 
         def background(selector):
             rule = re.search(rf"^{re.escape(selector)} \{{[^}}]*\}}", html, re.M)
             assert rule, selector
-            token = re.search(r"background:\s*var\((--dstf-[\w-]+)\)", rule.group(0))
+            token = re.search(r"background:\s*var\(--dstf-([\w-]+)\)", rule.group(0))
             assert token, selector
-            return token.group(1)
+            name = token.group(1)
+            assert name in theme.DEFAULT_THEME, name
+            return theme.DEFAULT_THEME[name]
 
-        assert background("th:hover") != background("th")
+        assert background("th[data-sort]:hover") != background("th")
 
     def test_the_templates_on_disk_carry_no_hex_but_the_root_block(self):
         templates = Path(theme.__file__).parent / "templates"

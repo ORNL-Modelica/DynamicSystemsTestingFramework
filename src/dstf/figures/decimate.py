@@ -19,6 +19,42 @@ import numpy as np
 from numpy.typing import NDArray
 
 
+def bucket_boundaries(
+    n_in: int, n_out: int
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
+    """Every LTTB bucket boundary at once, for ``3 <= n_out < n_in``.
+
+    Bucket ``i`` is ``[starts[i], ends[i])`` and the bucket after it — whose
+    centroid the triangle uses — is ``[ends[i], next_ends[i])``. Same floor
+    arithmetic the pre-hoist loop did, one array at a time.
+
+    ``lttb``'s guard leaves ``3 <= n_out < n_in``, so
+    ``bucket_size = (n_in - 2) / (n_out - 2)`` is strictly above 1 and
+    consecutive entries of ``b`` differ by at least one. Hence no bucket is
+    empty (``starts[i] < ends[i]``) and every next-bucket holds at least one
+    sample (``next_ends[i] - ends[i] >= 1``) — which is why ``lttb`` carries
+    no empty-bucket branch and no ``maximum(counts, 1)``.
+
+    ``ends`` needs no clamp: its largest entry is ``b[n_out - 2]``, and
+    ``(n_out - 2) * bucket_size`` is ``n_in - 2`` in exact arithmetic, so the
+    entry is ``n_in - 1`` when the float product rounds up to or past
+    ``n_in - 2`` and ``n_in - 2`` when it rounds below — never above
+    ``n_in - 1``. (Measured over every pair with ``4 <= n_in <= 1200``:
+    680,649 at ``n_in - 1``, 36,354 at ``n_in - 2``, none above.)
+
+    ``next_ends`` is the one boundary that does overshoot, and its clamp is
+    load-bearing: ``b[n_out - 1] >= n_in`` whenever ``bucket_size > 1``, and
+    clamping it to exactly ``n_in`` is what makes ``reduceat``'s last segment
+    — which runs to the end of the array — agree with the last next-bucket.
+
+    Lives here, called by both ``lttb`` and the test that sweeps these
+    claims, so the guard reads production's arithmetic rather than a copy.
+    """
+    bucket_size = (n_in - 2) / (n_out - 2)
+    b = np.floor(np.arange(n_out, dtype=np.float64) * bucket_size).astype(np.int64) + 1
+    return b[: n_out - 2], b[1 : n_out - 1], np.minimum(b[2:n_out], n_in)
+
+
 def lttb(
     time: NDArray[np.float64],
     values: NDArray[np.float64],
@@ -49,28 +85,11 @@ def lttb(
     t = np.asarray(time, dtype=np.float64)
     v = np.asarray(values, dtype=np.float64)
 
-    bucket_size = (n_in - 2) / (n_out - 2)
     out_idx = np.empty(n_out, dtype=np.int64)
     out_idx[0] = 0
     out_idx[-1] = n_in - 1
 
-    # Every bucket boundary at once: bucket i is [starts[i], ends[i]) and
-    # the bucket after it — whose centroid the triangle uses — is
-    # [ends[i], next_ends[i]). Same floor arithmetic as the loop had.
-    #
-    # The guard above leaves 3 <= n_out < n_in, so bucket_size > 1 STRICTLY
-    # and consecutive entries of ``b`` differ by at least one: no bucket is
-    # empty (starts[i] < ends[i]) and every next-bucket holds at least one
-    # sample (counts >= 1). ``ends`` needs no clamp either — its largest
-    # entry is b[n_out - 2] == floor(n_in - 2) + 1 == n_in - 1, a valid
-    # index. ``next_ends`` is the one boundary that does overshoot:
-    # b[n_out - 1] == floor(n_in - 2 + bucket_size) + 1 > n_in - 1 whenever
-    # bucket_size > 1, which is always, so the clamp to n_in is load-bearing.
-    # TestBucketPrecondition sweeps these claims over the shapes lttb sees.
-    b = np.floor(np.arange(n_out, dtype=np.float64) * bucket_size).astype(np.int64) + 1
-    starts = b[: n_out - 2]
-    ends = b[1 : n_out - 1]
-    next_ends = np.minimum(b[2:n_out], n_in)
+    starts, ends, next_ends = bucket_boundaries(n_in, n_out)
     # Next-bucket means, one reduceat each. reduceat's last segment runs to
     # the end of the array, which is where the last next-bucket ends
     # (next_ends[-1] == n_in, since b[n_out - 1] >= n_in), so the two agree.
