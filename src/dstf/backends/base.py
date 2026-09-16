@@ -586,9 +586,11 @@ class Backend(ABC):
         ``on_result(model_id, result)`` is called on the calling thread as
         each result is stored.
 
-        Every result carries the run's verdict. A test the manifests record
-        as failed or timed out (``last_run_status``; :func:`run_verdicts`)
-        is forced to ``success=False`` before it is stored and before the
+        Every result carries the run's verdict. A test whose last run is
+        recorded as failed or timed out — the manifest's ``last_run_status``,
+        or the ``status.json`` row for an entry with no recorded verdict
+        (:func:`run_verdicts`) — is forced to ``success=False`` before it is
+        stored and before the
         callback sees it, whatever its result file reads back as — a
         partial ``.mat`` from a timed-out run parses as a success. The
         verdict is applied in this one reader and not by its callers
