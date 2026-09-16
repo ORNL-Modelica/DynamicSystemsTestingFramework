@@ -180,7 +180,7 @@ def check(on: bool = False) -> str:
 def select(text: str, width: int = 160, sm: bool = False) -> str:
     return (
         f'<span class="select{" sm" if sm else ""}" style="width: {width}px">'
-        f'<span>{text}</span>{icon("chev-d", C["text2"], 12)}</span>'
+        f"<span>{text}</span>{icon('chev-d', C['text2'], 12)}</span>"
     )
 
 
@@ -199,7 +199,9 @@ def td(x: str, cls: str = "", extra: str = "") -> str:
     return f"<td{c}{extra}>{x}</td>"
 
 
-def flex(children: list[str], gap: int = 8, style: str = "", align: str = "center") -> str:
+def flex(
+    children: list[str], gap: int = 8, style: str = "", align: str = "center"
+) -> str:
     return (
         f'<div style="display: flex; flex-direction: row; align-items: {align}; '
         f'gap: {gap}px; {style}">' + "".join(children) + "</div>"
@@ -263,77 +265,135 @@ def plot(
     ]
     # gridlines
     xt = [xr[0] + i * (xr[1] - xr[0]) / 5 for i in range(6)]
-    yt = [-1.0, -0.5, 0.0, 0.5, 1.0] if yr == (-1.25, 1.25) else [
-        yr[0] + i * (yr[1] - yr[0]) / 4 for i in range(5)
-    ]
+    yt = (
+        [-1.0, -0.5, 0.0, 0.5, 1.0]
+        if yr == (-1.25, 1.25)
+        else [yr[0] + i * (yr[1] - yr[0]) / 4 for i in range(5)]
+    )
     for t in xt:
-        out.append(f'<line x1="{X(t):.1f}" y1="{T}" x2="{X(t):.1f}" y2="{T+ph}" stroke="#eeeeee"/>')
-        out.append(f'<text x="{X(t):.1f}" y="{T+ph+16}" text-anchor="middle" fill="#444444">{t:g}</text>')
+        out.append(
+            f'<line x1="{X(t):.1f}" y1="{T}" x2="{X(t):.1f}" y2="{T + ph}" stroke="#eeeeee"/>'
+        )
+        out.append(
+            f'<text x="{X(t):.1f}" y="{T + ph + 16}" text-anchor="middle" fill="#444444">{t:g}</text>'
+        )
     for v in yt:
-        out.append(f'<line x1="{L}" y1="{Y(v):.1f}" x2="{L+pw}" y2="{Y(v):.1f}" stroke="#eeeeee"/>')
-        out.append(f'<text x="{L-8}" y="{Y(v)+4:.1f}" text-anchor="end" fill="#444444">{v:.3f}</text>')
-    out.append(f'<line x1="{L}" y1="{Y(0):.1f}" x2="{L+pw}" y2="{Y(0):.1f}" stroke="#444444"/>')
-    out.append(f'<text x="{L+pw/2:.0f}" y="{height-6}" text-anchor="middle" fill="#444444" font-size="12">Time</text>')
-    out.append(f'<text transform="translate(14 {T+ph/2:.0f}) rotate(-90)" text-anchor="middle" fill="#444444" font-size="12">Value</text>')
+        out.append(
+            f'<line x1="{L}" y1="{Y(v):.1f}" x2="{L + pw}" y2="{Y(v):.1f}" stroke="#eeeeee"/>'
+        )
+        out.append(
+            f'<text x="{L - 8}" y="{Y(v) + 4:.1f}" text-anchor="end" fill="#444444">{v:.3f}</text>'
+        )
+    out.append(
+        f'<line x1="{L}" y1="{Y(0):.1f}" x2="{L + pw}" y2="{Y(0):.1f}" stroke="#444444"/>'
+    )
+    out.append(
+        f'<text x="{L + pw / 2:.0f}" y="{height - 6}" text-anchor="middle" fill="#444444" font-size="12">Time</text>'
+    )
+    out.append(
+        f'<text transform="translate(14 {T + ph / 2:.0f}) rotate(-90)" text-anchor="middle" fill="#444444" font-size="12">Value</text>'
+    )
     if error_axis:
-        out.append(f'<line x1="{L+pw}" y1="{T}" x2="{L+pw}" y2="{T+ph}" stroke="{ERROR}" stroke-width="1"/>')
+        out.append(
+            f'<line x1="{L + pw}" y1="{T}" x2="{L + pw}" y2="{T + ph}" stroke="{ERROR}" stroke-width="1"/>'
+        )
         for i, lab in enumerate(["0.02", "0.01", "0.00", "-0.01", "-0.02"]):
             y = T + i * ph / 4
-            out.append(f'<text x="{L+pw+6}" y="{y+4:.1f}" fill="{ERROR}" font-size="10">{lab}</text>')
-        out.append(f'<text transform="translate({width-8} {T+ph/2:.0f}) rotate(90)" text-anchor="middle" fill="{ERROR}" font-size="10">Error [signal units]</text>')
+            out.append(
+                f'<text x="{L + pw + 6}" y="{y + 4:.1f}" fill="{ERROR}" font-size="10">{lab}</text>'
+            )
+        out.append(
+            f'<text transform="translate({width - 8} {T + ph / 2:.0f}) rotate(90)" text-anchor="middle" fill="{ERROR}" font-size="10">Error [signal units]</text>'
+        )
     ts = [xr[0] + i * (xr[1] - xr[0]) / n for i in range(n + 1)]
     if window:
         out.append(
-            f'<rect x="{X(window[0]):.1f}" y="{T}" width="{X(window[1])-X(window[0]):.1f}" height="{ph}" '
+            f'<rect x="{X(window[0]):.1f}" y="{T}" width="{X(window[1]) - X(window[0]):.1f}" height="{ph}" '
             f'fill="{WINDOW_FILL}" stroke="{WINDOW_LINE}" stroke-dasharray="4 3"/>'
         )
     if band:
         up = [(X(t), Y(band(t)[1])) for t in ts]
         lo = [(X(t), Y(band(t)[0])) for t in reversed(ts)]
-        out.append(f'<path d="{_path(up + lo)} Z" fill="{PASS_FILL}" stroke="{PASS_LINE}" stroke-width="1"/>')
+        out.append(
+            f'<path d="{_path(up + lo)} Z" fill="{PASS_FILL}" stroke="{PASS_LINE}" stroke-width="1"/>'
+        )
     if band_fail_after is not None and band:
         tsf = [t for t in ts if t >= band_fail_after]
         up = [(X(t), Y(band(t)[1])) for t in tsf]
         lo = [(X(t), Y(band(t)[0])) for t in reversed(tsf)]
-        out.append(f'<path d="{_path(up + lo)} Z" fill="{FAIL_FILL}" stroke="{FAIL_LINE}" stroke-width="1"/>')
+        out.append(
+            f'<path d="{_path(up + lo)} Z" fill="{FAIL_FILL}" stroke="{FAIL_LINE}" stroke-width="1"/>'
+        )
     for v, color, dash in hlines or []:
-        out.append(f'<line x1="{L}" y1="{Y(v):.1f}" x2="{L+pw}" y2="{Y(v):.1f}" stroke="{color}" stroke-width="1.5" stroke-dasharray="{dash}"/>')
+        out.append(
+            f'<line x1="{L}" y1="{Y(v):.1f}" x2="{L + pw}" y2="{Y(v):.1f}" stroke="{color}" stroke-width="1.5" stroke-dasharray="{dash}"/>'
+        )
     if reference:
-        out.append(f'<path d="{_path([(X(t), Y(reference(t))) for t in ts])}" fill="none" stroke="{REFERENCE}" stroke-width="2" stroke-dasharray="6 4"/>')
+        out.append(
+            f'<path d="{_path([(X(t), Y(reference(t))) for t in ts])}" fill="none" stroke="{REFERENCE}" stroke-width="2" stroke-dasharray="6 4"/>'
+        )
     if actual:
         tsa = [t for t in ts if actual_until is None or t <= actual_until]
-        out.append(f'<path d="{_path([(X(t), Y(actual(t))) for t in tsa])}" fill="none" stroke="{ACTUAL}" stroke-width="2"/>')
+        out.append(
+            f'<path d="{_path([(X(t), Y(actual(t))) for t in tsa])}" fill="none" stroke="{ACTUAL}" stroke-width="2"/>'
+        )
     if error:
         # error scaled to the right axis: ±0.02 spans the plot height
-        out.append(f'<path d="{_path([(X(t), T + ph/2 - error(t)/0.02*ph/2) for t in ts])}" fill="none" stroke="{ERROR}" stroke-width="1" opacity="0.8"/>')
+        out.append(
+            f'<path d="{_path([(X(t), T + ph / 2 - error(t) / 0.02 * ph / 2) for t in ts])}" fill="none" stroke="{ERROR}" stroke-width="1" opacity="0.8"/>'
+        )
     if running_marker is not None and actual:
         x, y = X(running_marker), Y(actual(running_marker))
         out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="{ACTUAL}"/>')
-        out.append(f'<line x1="{x:.1f}" y1="{T}" x2="{x:.1f}" y2="{T+ph}" stroke="{ACTUAL}" stroke-dasharray="3 3"/>')
-        out.append(f'<rect x="{x+8:.1f}" y="{T+6}" width="150" height="20" rx="3" fill="{C["sel"]}" stroke="{ACTUAL}"/>')
-        out.append(f'<text x="{x+16:.1f}" y="{T+20}" fill="{STATUS["running"][1]}" font-weight="600">running · t = {running_marker:g} / {xr[1]:g} s</text>')
+        out.append(
+            f'<line x1="{x:.1f}" y1="{T}" x2="{x:.1f}" y2="{T + ph}" stroke="{ACTUAL}" stroke-dasharray="3 3"/>'
+        )
+        out.append(
+            f'<rect x="{x + 8:.1f}" y="{T + 6}" width="150" height="20" rx="3" fill="{C["sel"]}" stroke="{ACTUAL}"/>'
+        )
+        out.append(
+            f'<text x="{x + 16:.1f}" y="{T + 20}" fill="{STATUS["running"][1]}" font-weight="600">running · t = {running_marker:g} / {xr[1]:g} s</text>'
+        )
     for t, v, dt, dv in diamonds or []:
         bx, by = X(t - dt), Y(v + dv)
-        out.append(f'<rect x="{bx:.1f}" y="{by:.1f}" width="{X(t+dt)-bx:.1f}" height="{Y(v-dv)-by:.1f}" fill="{PASS_FILL}" stroke="{PASS_LINE}"/>')
-        out.append(f'<path d="M{X(t):.1f} {Y(v)-6:.1f} l6 6 l-6 6 l-6 -6 Z" fill="{HANDLE}"/>')
+        out.append(
+            f'<rect x="{bx:.1f}" y="{by:.1f}" width="{X(t + dt) - bx:.1f}" height="{Y(v - dv) - by:.1f}" fill="{PASS_FILL}" stroke="{PASS_LINE}"/>'
+        )
+        out.append(
+            f'<path d="M{X(t):.1f} {Y(v) - 6:.1f} l6 6 l-6 6 l-6 -6 Z" fill="{HANDLE}"/>'
+        )
     for t, v in rings or []:
-        out.append(f'<circle cx="{X(t):.1f}" cy="{Y(v):.1f}" r="7" fill="{HANDLE_FILL}" stroke="{HANDLE}" stroke-width="2"/>')
+        out.append(
+            f'<circle cx="{X(t):.1f}" cy="{Y(v):.1f}" r="7" fill="{HANDLE_FILL}" stroke="{HANDLE}" stroke-width="2"/>'
+        )
     if legend:
         y = T + 8
-        out.append(f'<rect x="{L+8}" y="{y-4}" width="150" height="{len(legend)*16+8}" fill="rgba(255,255,255,0.8)"/>')
+        out.append(
+            f'<rect x="{L + 8}" y="{y - 4}" width="150" height="{len(legend) * 16 + 8}" fill="rgba(255,255,255,0.8)"/>'
+        )
         for i, (name, color, kind) in enumerate(legend):
             yy = y + 8 + i * 16
             if kind == "line":
-                out.append(f'<line x1="{L+14}" y1="{yy}" x2="{L+38}" y2="{yy}" stroke="{color}" stroke-width="2"/>')
+                out.append(
+                    f'<line x1="{L + 14}" y1="{yy}" x2="{L + 38}" y2="{yy}" stroke="{color}" stroke-width="2"/>'
+                )
             elif kind == "dash":
-                out.append(f'<line x1="{L+14}" y1="{yy}" x2="{L+38}" y2="{yy}" stroke="{color}" stroke-width="2" stroke-dasharray="5 3"/>')
+                out.append(
+                    f'<line x1="{L + 14}" y1="{yy}" x2="{L + 38}" y2="{yy}" stroke="{color}" stroke-width="2" stroke-dasharray="5 3"/>'
+                )
             elif kind == "fill":
-                out.append(f'<rect x="{L+14}" y="{yy-5}" width="24" height="10" fill="{color}"/>')
+                out.append(
+                    f'<rect x="{L + 14}" y="{yy - 5}" width="24" height="10" fill="{color}"/>'
+                )
             elif kind == "diamond":
-                out.append(f'<path d="M{L+26} {yy-5} l5 5 l-5 5 l-5 -5 Z" fill="{color}"/>')
-            out.append(f'<text x="{L+44}" y="{yy+4}" fill="#444444">{name}</text>')
+                out.append(
+                    f'<path d="M{L + 26} {yy - 5} l5 5 l-5 5 l-5 -5 Z" fill="{color}"/>'
+                )
+            out.append(f'<text x="{L + 44}" y="{yy + 4}" fill="#444444">{name}</text>')
     if hint:
-        out.append(f'<text x="{L+pw-4}" y="{T+ph-8}" text-anchor="end" fill="{C["text2"]}" font-size="11">{hint}</text>')
+        out.append(
+            f'<text x="{L + pw - 4}" y="{T + ph - 8}" text-anchor="end" fill="{C["text2"]}" font-size="11">{hint}</text>'
+        )
     out.append("</svg>")
     return "".join(out)
 
@@ -363,7 +423,7 @@ def decay_off(t):
 
 def doc(body: str, extra_css: str = "") -> str:
     return (
-        "<!doctype html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n"
+        '<!doctype html>\n<html>\n<head>\n  <meta charset="utf-8">\n'
         '  <script src="./support.js"></script>\n</head>\n<body>\n<x-dc>\n'
         f"<helmet>\n  <style>{CSS}{extra_css}</style>\n</helmet>\n"
         f"{body}\n</x-dc>\n</body>\n</html>\n"
@@ -379,21 +439,94 @@ def write(name: str, body: str, extra_css: str = "") -> None:
 
 CANVAS = {
     "artboards": [
-        {"file": "Main.dc.html", "title": "Suite page", "x": 0, "y": 0, "w": 1440, "h": 1064},
-        {"file": "QueueIndicator.dc.html", "title": "Header queue indicator", "x": 1520, "y": 0, "w": 520, "h": 392},
-        {"file": "Backend.dc.html", "title": "Backend controls", "x": 4160, "y": 0, "w": 1440, "h": 544},
-        {"file": "Startup.dc.html", "title": "Startup loading state", "x": 2640, "y": 0, "w": 1440, "h": 784},
-        {"file": "Test.dc.html", "title": "Test page, criteria collapsed", "x": 0, "y": 1200, "w": 1440, "h": 2094},
-        {"file": "TestTube.dc.html", "title": "Test page, tube criterion open", "x": 1520, "y": 1200, "w": 1440, "h": 1339},
-        {"file": "TestPoints.dc.html", "title": "Test page, points criterion open", "x": 3040, "y": 1200, "w": 1440, "h": 1381},
-        {"file": "TestRunning.dc.html", "title": "Test page while running", "x": 0, "y": 3414, "w": 1440, "h": 1571},
-        {"file": "PlotAnother.dc.html", "title": "Variables drawer: add plot / add series / arrays", "x": 1520, "y": 3414, "w": 1440, "h": 1194},
+        {
+            "file": "Main.dc.html",
+            "title": "Suite page",
+            "x": 0,
+            "y": 0,
+            "w": 1440,
+            "h": 1064,
+        },
+        {
+            "file": "QueueIndicator.dc.html",
+            "title": "Header queue indicator",
+            "x": 1520,
+            "y": 0,
+            "w": 520,
+            "h": 392,
+        },
+        {
+            "file": "Backend.dc.html",
+            "title": "Backend controls",
+            "x": 4160,
+            "y": 0,
+            "w": 1440,
+            "h": 544,
+        },
+        {
+            "file": "Startup.dc.html",
+            "title": "Startup loading state",
+            "x": 2640,
+            "y": 0,
+            "w": 1440,
+            "h": 784,
+        },
+        {
+            "file": "Test.dc.html",
+            "title": "Test page, criteria collapsed",
+            "x": 0,
+            "y": 1200,
+            "w": 1440,
+            "h": 2094,
+        },
+        {
+            "file": "TestTube.dc.html",
+            "title": "Test page, tube criterion open",
+            "x": 1520,
+            "y": 1200,
+            "w": 1440,
+            "h": 1339,
+        },
+        {
+            "file": "TestPoints.dc.html",
+            "title": "Test page, points criterion open",
+            "x": 3040,
+            "y": 1200,
+            "w": 1440,
+            "h": 1381,
+        },
+        {
+            "file": "TestRunning.dc.html",
+            "title": "Test page while running",
+            "x": 0,
+            "y": 3414,
+            "w": 1440,
+            "h": 1571,
+        },
+        {
+            "file": "PlotAnother.dc.html",
+            "title": "Variables drawer: add plot / add series / arrays",
+            "x": 1520,
+            "y": 3414,
+            "w": 1440,
+            "h": 1194,
+        },
     ],
     "annotations": [
-        {"id": "brief", "x": 0, "y": -200, "w": 520,
-         "text": "Authoring tool redesign, draft 2 (2026-09-15).\nBrief: docs/superpowers/specs/2026-09-15-authoring-tool-redesign-brief.md, section 4 lists these boards.\nTokens: DESIGN.md at the repo root, lifted from the report's stylesheet.\nData is the ModelicaTestingLib demo; every button label follows brief 3.3 (object, effect, count, tooltip)."},
-        {"id": "rulings", "x": 560, "y": -200, "w": 520,
-         "text": "Owner rulings (2026-09-15): Material chrome. Themes swap neutrals and accent, never status or series colours. Queue rows numbered. Plots are modular: any number, any series, tracked or plot only. Option C for picking variables: a collapsible Variables drawer (one drawer at a time with Tests), filter is substring or glob with * ? and literal [ ], regex and case toggles off by default; checkbox = on the selected plot, hover for new plot. Arrays fold by index with a start:step:stop field and draw as one hue ramped by index; a profile plot kind comes later."},
+        {
+            "id": "brief",
+            "x": 0,
+            "y": -200,
+            "w": 520,
+            "text": "Authoring tool redesign, draft 2 (2026-09-15).\nBrief: docs/superpowers/specs/2026-09-15-authoring-tool-redesign-brief.md, section 4 lists these boards.\nTokens: DESIGN.md at the repo root, lifted from the report's stylesheet.\nData is the ModelicaTestingLib demo; every button label follows brief 3.3 (object, effect, count, tooltip).",
+        },
+        {
+            "id": "rulings",
+            "x": 560,
+            "y": -200,
+            "w": 520,
+            "text": "Owner rulings (2026-09-15): Material chrome. Themes swap neutrals and accent, never status or series colours. Queue rows numbered. Plots are modular: any number, any series, tracked or plot only. Option C for picking variables: a collapsible Variables drawer (one drawer at a time with Tests), filter is substring or glob with * ? and literal [ ], regex and case toggles off by default; checkbox = on the selected plot, hover for new plot. Arrays fold by index with a start:step:stop field and draw as one hue ramped by index; a profile plot kind comes later.",
+        },
     ],
     "launch": {"view": "canvas"},
 }
@@ -403,5 +536,7 @@ if __name__ == "__main__":
     import pages
 
     pages.build_all()
-    (HERE / "canvas.json").write_text(json.dumps(CANVAS, indent=2) + "\n", encoding="utf-8")
+    (HERE / "canvas.json").write_text(
+        json.dumps(CANVAS, indent=2) + "\n", encoding="utf-8"
+    )
     print("wrote canvas.json")
