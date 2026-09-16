@@ -19,6 +19,7 @@ from nicegui import app, ui
 
 from ..backends.progress import read_status
 from ..cli.common import _filter_tests
+from ..reporting.report_suite import axes_js_source
 from ..reporting.status import classify_with_class
 from ..reporting.theme import css_variables, quasar_palette
 from ..storage.ref_index import _atomic_write_text
@@ -537,6 +538,9 @@ class Shell:
         self._add_routes()
         ui.colors(**quasar_palette())
         ui.add_css(css_variables())
+        # The shared axis-follow script (templates/axes.js): its observer
+        # wires every plot this page creates. One script for both tiers.
+        ui.add_body_html(f"<script>{axes_js_source()}</script>")
         with ui.header().classes("items-center"):
             self._header()
         with ui.right_drawer(value=False) as self._drawer_el:

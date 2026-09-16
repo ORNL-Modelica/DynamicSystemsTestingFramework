@@ -143,6 +143,75 @@ def test_the_real_page_edits_one_tolerance_and_saves_nothing(
     assert spec_file.read_bytes() == before  # nothing was saved
 
 
+def test_a_legend_click_on_an_error_trace_shows_its_axis(tmp_path, playwright_browser):
+    """The FakeLib project has a baseline and a result for A, so the centre
+    figure carries the three error series (legend-only) and both axes."""
+    cfg, work = _project(tmp_path)
+    port = _free_port()
+    url = f"http://127.0.0.1:{port}/"
+    log = tmp_path / "author.log"
+    # See the first test: NiceGUI reads an inherited PYTEST_CURRENT_TEST as a
+    # screen test and ignores --port.
+    env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
+
+    with log.open("wb") as sink:
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "dstf",
+                "--config",
+                str(cfg),
+                "author",
+                "--work-dir",
+                str(work),
+                "--port",
+                str(port),
+                "--no-browser",
+            ],
+            stdout=sink,
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+    try:
+        _wait_until_serving(url, proc, log)
+        context = playwright_browser.new_context()
+        page = context.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        page.goto(url)
+
+        # The row buttons carry the short name ("A"), inside the tests column.
+        tests_column = page.locator("div.dstf-tests")
+        tests_column.get_by_role(
+            "button", name=A.rsplit(".", 1)[-1], exact=True
+        ).click()
+        page.wait_for_function(
+            "() => { const el = document.querySelector('.js-plotly-plot');"
+            " return !!(el && el._fullLayout && el._fullLayout.yaxis4); }",
+            timeout=EXPECT_TIMEOUT,
+        )
+        probe = (
+            "() => { const fl = document.querySelector('.js-plotly-plot')._fullLayout;"
+            " return [fl.yaxis3.visible, fl.yaxis4.visible]; }"
+        )
+        assert page.evaluate(probe) == [False, False]
+        # axes.js runs in the tool's page too: the legend is its only toggle.
+        entry = page.locator(".legend .traces").filter(has_text="NRMSE (per-point)")
+        entry.locator(".legendtoggle").click(force=True)
+        page.wait_for_function(
+            "() => document.querySelector('.js-plotly-plot')._fullLayout.yaxis4.visible === true",
+            timeout=EXPECT_TIMEOUT,
+        )
+        assert page.evaluate(probe) == [False, True]
+
+        assert errors == []
+        context.close()
+    finally:
+        proc.terminate()
+        proc.wait(10)
+
+
 # NOT test_session's TREE: in a browser, overlapping shapes steal each other's
 # drags (a scalar/max line at the same y took a drag aimed at range/max; two
 # rings 6.6 px apart resized one instead of moving the other). These rings sit
