@@ -201,8 +201,9 @@ def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
 
 
 def _base_kinds(fig: dict) -> list[tuple[str, str]]:
-    """The base traces a figure draws: (kind, id) of every act / ref / error
-    trace, sorted. Leaves are not base traces."""
+    """The act / ref / error traces a figure draws, as sorted (kind, id).
+    Leaves are not base traces; overlays are, but no fixture in this module
+    has one, so they are not collected here."""
     return sorted(
         (tr["meta"].get("kind"), tr["meta"].get("id"))
         for tr in fig["data"]

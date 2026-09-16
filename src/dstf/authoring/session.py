@@ -96,8 +96,9 @@ class _ModelReads:
     bases: dict[str, VariableView] = field(default_factory=dict)
     #: The scored list the bases were built from (`_scored_key`). A rescore
     #: that changes it — a staged edit that starts or stops scoring a
-    #: variable, a discard, a save, the background rescan — makes every
-    #: base of the model stale at once; `figure` drops them when it moves.
+    #: variable, a discard, a save, the background rescan — may leave any
+    #: base of the model stale; the key does not say which, so `figure`
+    #: drops them all when it moves (one extra decimation per variable).
     scored: tuple[tuple[str | None, int], ...] = ()
 
 
@@ -465,7 +466,8 @@ class Session:
         """The tool's figure is the editable one — handle rings a user can
         drag (``variable_figure(..., editable=True)``); the report's is not.
         The base traces are decimated once per model and variable and
-        cached; only the leaves' geometry is decimated per call."""
+        cached until the model's scored list moves (`_ModelReads.scored`);
+        only the leaves' geometry is decimated per call."""
         from ..figures.plotly import variable_figure
         from ..figures.view import build_view, decimate_view
 
@@ -734,7 +736,11 @@ class Session:
         new = current - set(self.comparisons)
         for model_id in gone:
             del self.comparisons[model_id]
-            self._reads.pop(model_id, None)
+        # Keyed off the reads, not the comparisons: a read cached for a model
+        # that has a result but no comparison (a scoring failure leaves one)
+        # must not outlive the model either.
+        for model_id in set(self._reads) - current:
+            del self._reads[model_id]
         self._emit("spec", models=models | gone | new)
         self._score_all((models | new) & current)
 
