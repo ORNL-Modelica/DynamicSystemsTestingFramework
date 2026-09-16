@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import numpy as np
+import pytest
 
 from dstf.comparison.algorithms import (
     _compare_dominant_frequency,
@@ -298,6 +299,16 @@ class TestFigure:
         assert layout["yaxis4"]["anchor"] == "free"
         assert layout["yaxis4"]["autoshift"] is True
         assert "anchor" not in layout["yaxis3"]
+
+    def test_an_error_series_with_no_declared_axis_is_refused(self):
+        """A fourth error family would otherwise be drawn silently against
+        the signed-error axis, in units that are not its own. ERROR_AXES is
+        the fence: adding a series without adding its axis is a KeyError at
+        the moment it is introduced, not a wrong scale in the report."""
+        view = _tube_view()
+        unknown = replace(view.errors[0], id="error/relative")
+        with pytest.raises(KeyError, match="error/relative"):
+            variable_figure(replace(view, errors=(*view.errors, unknown)))
 
     def test_a_view_without_errors_lays_out_no_secondary_axis(self):
         t = np.linspace(0.0, 1.0, 5)

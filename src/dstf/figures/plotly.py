@@ -49,7 +49,8 @@ WINDOW_LINE = "rgba(33,150,243,0.4)"
 ERROR = "#f44336"
 #: Which right-hand axis an error series rides on — one axis per unit family
 #: (brief §3.4): signal units for the signed and absolute error, dimensionless
-#: for the per-point NRMSE. Unknown ids ride on the signal-units axis.
+#: for the per-point NRMSE. A lookup, not a default: an error series whose
+#: family is not here raises rather than being drawn against the wrong unit.
 ERROR_AXES = {"error/signed": "y3", "error/abs": "y3", "error/nrmse": "y4"}
 
 #: Vertical extent of the two panels when a spectrum is present.
@@ -473,7 +474,7 @@ def _error_trace(s: Series, ctx: _Ctx) -> dict:
         "name": _label(s.id),
         "line": {"color": ERROR, "width": 1},
         "opacity": 0.6,
-        "yaxis": ERROR_AXES.get(s.id, "y3"),
+        "yaxis": ERROR_AXES[s.id],
         "visible": "legendonly",
         "hovertemplate": f"{_label(s.id)}: %{{y:.4g}}<extra></extra>",
         "meta": {
