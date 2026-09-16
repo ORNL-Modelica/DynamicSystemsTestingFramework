@@ -372,6 +372,11 @@ class Config:
     # tests and wants the bundled UnitTests recognizer off.
     disabled_bundled: list[str] = field(default_factory=list)
 
+    # testing.json's `backends` map, kept whole for the authoring shell's
+    # backend select (brief §3.6); the executable-path resolution below reads
+    # the same map.
+    backends: dict[str, list[str]] = field(default_factory=dict)
+
     # Config file path
     config_file: Path | None = None
 
@@ -575,6 +580,12 @@ class Config:
                 raise ConfigError(f"Invalid recognizer in {where}: {e}") from e
         if not self.disabled_bundled and "disable_bundled" in file_config:
             self.disabled_bundled = list(file_config["disable_bundled"])
+
+        if not self.backends:
+            self.backends = {
+                name: list(paths)
+                for name, paths in (file_config.get("backends") or {}).items()
+            }
 
         # Resolve backend executable path
         if self.backend_path is None:

@@ -111,9 +111,11 @@ src/dstf/
 │   └── reference_store.py    # ReferenceStore: primary CRUD + accept path
 ├── authoring/
 │   ├── session.py            # Session: open / rescore / view / stage / save / discard / export / apply
-│   ├── capabilities.py       # The capability contract: Capability, Scope, the five outcomes
+│   ├── capabilities.py       # The capability contract: Capability, Placement, the five outcomes
 │   ├── spec_document.py      # SpecDocument — the spec as loaded, its pending ops and its on-disk hash
-│   ├── app.py                # The NiceGUI shell: fixed layout, event→refresh bridge, capability routing
+│   ├── shell/                # The NiceGUI tier: shell.py (the process: Session, open thread, event fan-out),
+│   │                         #   suite.py + test_page.py (one object per browser tab), header.py, actions.py
+│   │                         #   (a button per capability at a placement), runs.py, tabstate.py, figure_hook.py
 │   ├── forms.py              # NiceGUI controls from a mode's derived schema
 │   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_tree.py,
 │                             #   accept.py (the shared accept function), rerun.py (run_pipeline),
@@ -147,9 +149,10 @@ src/dstf/figures/
 ```
 
 `authoring/` is the authoring tier — the tool's state machine and the shell
-`dstf author` serves. Only `app.py`, `forms.py` and the built-in panels import a
-UI framework; the Session, the capability contract and the spec document stay
-pure, so the rest of `dstf` runs without the `[author]` extra. It shares the
+`dstf author` serves. Only `shell/`, `forms.py` and the built-in panels import a
+UI framework (`tests/test_authoring_imports.py` holds the line); the Session,
+the capability contract and the spec document stay pure, so the rest of `dstf`
+runs without the `[author]` extra. It shares the
 CLI's paths rather than duplicating them: `discovery/spec_update.py` is the
 read-modify-write both `dstf spec-update` and `Session.save` call, and
 `storage/accept.py` is the one accept path `run --accept`, `compare --accept`,

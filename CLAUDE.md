@@ -30,7 +30,8 @@ DynamicSystemsTestingFramework/
 │   │                             #      handles.py (edit_handle — a dragged handle back to a raw leaf)
 │   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path)
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
-│   │                             #      app.py (the NiceGUI shell), forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
+│   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages, the header,
+│   │                             #      capabilities by placement), forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly) + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py classifier + console/junit + context_builder + report_suite + dashboard_render + theme.py (the token table both tiers render)
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + vendor/plotly.min.js (offline-capable reports)

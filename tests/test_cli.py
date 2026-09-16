@@ -231,9 +231,17 @@ def test_author_without_the_extra_says_how_to_install_it(monkeypatch, capsys, tm
         return real_import(name, *a, **k)
 
     monkeypatch.setattr(builtins, "__import__", no_nicegui)
-    for cached in ("dstf.authoring.app", "dstf.authoring.forms"):
-        # earlier test files may have imported them
-        monkeypatch.delitem(sys.modules, cached, raising=False)
+    # Earlier test files import the shell package and its submodules; any one
+    # of them left in `sys.modules` would satisfy the re-import from cache and
+    # the blocked `nicegui` would never be reached — the test would pass with
+    # nothing under test.
+    for cached in list(sys.modules):
+        if (
+            cached == "dstf.authoring.shell"
+            or cached.startswith("dstf.authoring.shell.")
+            or cached == "dstf.authoring.forms"
+        ):
+            monkeypatch.delitem(sys.modules, cached, raising=False)
     rc = main(["--config", str(tmp_path / "testing.json"), "author"])
     assert rc == 2
     assert "--extra author" in capsys.readouterr().err

@@ -186,8 +186,38 @@ def playwright_browser():
 #: from an earlier test turns a later test's ``cache_info()`` counts into a
 #: flake (reproduced with a slowed index build). The rescan thread a cached
 #: open starts re-merges into its Session and emits on it; one left running
-#: from an earlier test must not act while a later test runs.
-_SESSION_THREADS = ("dstf-overlay-index", "dstf-rescan")
+#: from an earlier test must not act while a later test runs. The shell's
+#: open thread is here for the same reason: it outlives a test that fails
+#: mid-open, and ``_scan_cache_home``'s redirect must not be undone while
+#: its ``store_scan`` still runs on it.
+_SESSION_THREADS = ("dstf-overlay-index", "dstf-rescan", "dstf-open")
+
+
+@pytest.fixture(autouse=True)
+def _relink_dstf_after_a_ui_simulation():
+    """NiceGUI's user simulation pops every ``@ui.page`` handler's module AND
+    ALL ITS PARENTS from ``sys.modules`` when it tears down
+    (``nicegui/testing/general.py``). The shell registers the Test page's
+    route from ``dstf.authoring.shell.shell``, so ``dstf`` itself goes while
+    every other ``dstf.*`` module stays cached — and a cache hit never
+    re-links a submodule to its parent, so the next
+    ``import dstf.authoring.session as m`` raises ``ImportError: cannot
+    import name 'authoring' from 'dstf'`` and pytest's string-target
+    ``monkeypatch.setattr("dstf.reporting...")`` raises ``AttributeError:
+    module 'dstf' has no attribute 'reporting'``. Nothing pops anything in
+    the real process; this repairs the harness's own damage."""
+    yield
+    import sys
+
+    if "dstf" in sys.modules:
+        return
+    import importlib
+
+    for name in sorted(n for n in sys.modules if n.startswith("dstf.")):
+        parent, _, child = name.rpartition(".")
+        if parent not in sys.modules:
+            sys.modules[parent] = importlib.import_module(parent)
+        setattr(sys.modules[parent], child, sys.modules[name])
 
 
 @pytest.fixture(autouse=True)

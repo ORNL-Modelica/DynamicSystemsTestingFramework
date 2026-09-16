@@ -825,3 +825,29 @@ def test_spec_path_is_the_configured_file_else_the_reference_root_fallback(tmp_p
     assert explicit.spec_path == (tmp_path / "s.json").resolve()
     fallback = Config(source_path=tmp_path, reference_root=tmp_path / "refs")
     assert fallback.spec_path == fallback.reference_root / "test_spec.json"
+
+
+def test_config_keeps_the_backends_map_for_the_tools_backend_select(tmp_path):
+    """The authoring shell offers testing.json's `backends` names as the
+    backends to switch to (brief §3.6); until now the map was read for the
+    executable path and dropped."""
+    (tmp_path / "testing.json").write_text(
+        json.dumps(
+            {
+                "source_type": "python",
+                "source_path": ".",
+                "library_name": "L",
+                "backend": "Python",
+                "backends": {
+                    "Python": ["python3"],
+                    "Dymola 2026x": ["C:/Program Files/Dymola 2026x/bin64/Dymola.exe"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = Config(config_file=tmp_path / "testing.json")
+    assert config.backends == {
+        "Python": ["python3"],
+        "Dymola 2026x": ["C:/Program Files/Dymola 2026x/bin64/Dymola.exe"],
+    }
