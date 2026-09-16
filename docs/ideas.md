@@ -1446,3 +1446,16 @@ planning.
   - `docs/extensibility.md` still describes the interactive report's live
     re-scoring and add-leaf dropdown, and `docs/patterns.md` future editing
     through JS templates — both predate the split.
+- **After the foundations corrections plan (2026-09-16), follow-ups** — noted
+  while specifying what the Session does when one model's scoring raises
+  during a reload (the plan leaves existing behaviour in place):
+  - `Session.open` propagates a scoring failure from `_reload_results` with
+    the project set and scored, but `loading(phase="done")` never fires and
+    `rescan_done` is left as it was; `dstf author` then fails to start. A
+    `finally` that emits `done` and sets `rescan_done` would make the Session
+    usable after a partial scoring failure — sub-project 2's shell decides
+    whether it wants that or the hard stop.
+  - No test drives a `Plotly.react` in the tool's page (NiceGUI's plotly.js
+    3.1.1); the axis follow after a react is exercised by the report-tier
+    emulation and a hand probe in the gate only. A smoke test that stages an
+    edit after a legend click and re-probes `yaxis4` would close it.
