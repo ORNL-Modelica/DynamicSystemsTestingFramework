@@ -169,6 +169,42 @@ async def test_the_filter_and_the_chips_narrow_the_list_without_resending_it(she
         assert shell.session.comparisons == comparisons
 
 
+async def test_a_filtered_out_row_stays_hidden_through_a_rescore(shell):
+    """A repaint must not undo the filter. NiceGUI hides an element by
+    appending a `hidden` class; a paint that REPLACED the row's whole class
+    list dropped it, and the following `set_visibility(False)` was a no-op
+    on a value that was already False — so every filtered-out row came back
+    in the browser on any rescore (a Rerun, an Accept), while "Check N shown
+    tests" still excluded them (the Task 6 review's probe). The class list
+    is the witness, not `visible`."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _suite(shell, user)
+        _one(user, "needle").set_value("d")
+        assert not page.rows[A].container.visible
+        assert "hidden" in page.rows[A].container.classes
+        page.handle(
+            {
+                "event": "loading",
+                "phase": "results",
+                "model": A,
+                "done": 1,
+                "total": 5,
+                "error": False,
+            }
+        )
+        page.handle({"event": "results", "models": [A, B, C, D, G]})
+        assert not page.rows[A].container.visible
+        assert "hidden" in page.rows[A].container.classes
+        assert (
+            page.rows[D].container.visible
+            and "hidden" not in page.rows[D].container.classes
+        )
+        assert (
+            "dstf-tint-fail" in page.rows[A].container.classes
+        )  # the paint still landed
+
+
 async def test_the_chips_carry_the_classifiers_counts(shell):
     async with user_simulation(root=shell.index) as user:
         await _open(user)

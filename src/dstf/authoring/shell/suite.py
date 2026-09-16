@@ -20,6 +20,7 @@ from ...reporting.status import (
     classify_with_class,
     count_by_status,
 )
+from ...reporting.theme import STATUS
 from ..capabilities import Placement, plural
 from ..session import Selection
 from .actions import ActionBar
@@ -205,8 +206,11 @@ class SuitePage:
         row.verdict = verdict
         row.badge.set_text(verdict or "…")
         row.badge.style(f"background-color: var(--dstf-{css}-fill)")
+        # Add and remove, never replace: NiceGUI hides an element by appending
+        # a `hidden` class, and a replaced list dropped it — every filtered-out
+        # row came back on a rescore (the Task 6 review's probe).
         row.container.classes(
-            replace=f"dstf-row items-center no-wrap gap-2 w-full dstf-tint-{css}"
+            remove=" ".join(f"dstf-tint-{s}" for s in STATUS), add=f"dstf-tint-{css}"
         )
 
     def _apply_filter(self) -> None:
