@@ -57,31 +57,31 @@ def lttb(
     # Every bucket boundary at once: bucket i is [starts[i], ends[i]) and
     # the bucket after it — whose centroid the triangle uses — is
     # [ends[i], next_ends[i]). Same floor arithmetic as the loop had.
+    #
+    # The guard above leaves 3 <= n_out < n_in, so bucket_size > 1 STRICTLY
+    # and consecutive entries of ``b`` differ by at least one: no bucket is
+    # empty (starts[i] < ends[i]) and every next-bucket holds at least one
+    # sample (counts >= 1). ``ends`` needs no clamp either — its largest
+    # entry is b[n_out - 2] == floor(n_in - 2) + 1 == n_in - 1, a valid
+    # index. ``next_ends`` is the one boundary that does overshoot:
+    # b[n_out - 1] == floor(n_in - 2 + bucket_size) + 1 > n_in - 1 whenever
+    # bucket_size > 1, which is always, so the clamp to n_in is load-bearing.
+    # TestBucketPrecondition sweeps these claims over the shapes lttb sees.
     b = np.floor(np.arange(n_out, dtype=np.float64) * bucket_size).astype(np.int64) + 1
     starts = b[: n_out - 2]
-    ends = np.minimum(b[1 : n_out - 1], n_in - 1)
+    ends = b[1 : n_out - 1]
     next_ends = np.minimum(b[2:n_out], n_in)
-    # Next-bucket means, one reduceat each. ``reduceat`` returns the single
-    # element at an index that is not below the next one, so the empty
-    # next-buckets are masked afterwards and fall back to the last point.
+    # Next-bucket means, one reduceat each. reduceat's last segment runs to
+    # the end of the array, which is where the last next-bucket ends
+    # (next_ends[-1] == n_in, since b[n_out - 1] >= n_in), so the two agree.
     counts = next_ends - ends
-    sum_t = np.add.reduceat(t, ends)
-    sum_v = np.add.reduceat(v, ends)
-    # reduceat's last segment runs to the end of the array; the last
-    # next-bucket ends at next_ends[-1] (== n_in here, so it agrees).
-    has_next = counts > 0
-    avg_t = np.where(has_next, sum_t / np.maximum(counts, 1), t[-1])
-    avg_v = np.where(has_next, sum_v / np.maximum(counts, 1), v[-1])
+    avg_t = np.add.reduceat(t, ends) / counts
+    avg_v = np.add.reduceat(v, ends) / counts
 
     a = 0
     for i in range(n_out - 2):
         bucket_start = int(starts[i])
         bucket_end = int(ends[i])
-        if bucket_start >= bucket_end:
-            chosen = max(a + 1, min(bucket_start, n_in - 2))
-            out_idx[i + 1] = chosen
-            a = chosen
-            continue
         ta, va = t[a], v[a]
         seg_t = t[bucket_start:bucket_end]
         seg_v = v[bucket_start:bucket_end]

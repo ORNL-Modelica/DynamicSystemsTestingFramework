@@ -187,11 +187,89 @@ class TestHoistedLoopIsTheSameAlgorithm:
         np.testing.assert_array_equal(got_t, want_t)
         np.testing.assert_array_equal(got_v, want_v)
 
-    def test_a_bucket_narrower_than_a_point_still_advances(self):
-        # n_out close to n_in makes empty buckets; the reference's
-        # `max(a + 1, ...)` rule must be reproduced exactly.
+    def test_the_tightest_buckets_the_guard_allows(self):
+        # n_out just below n_in gives the smallest bucket_size the guard
+        # permits (18/17 here) — one candidate in most buckets. The
+        # reference's empty-bucket arm stays unreached even here.
         t = np.arange(20.0)
         v = t**2
         want = _lttb_reference(t, v, 19)
         got = lttb(t, v, 19)
         np.testing.assert_array_equal(got[0], want[0])
+
+
+def _bucket_boundaries(n_in: int, n_out: int):
+    """The boundary arithmetic ``lttb`` does, recomputed here independently."""
+    bucket_size = (n_in - 2) / (n_out - 2)
+    b = np.floor(np.arange(n_out, dtype=np.float64) * bucket_size).astype(np.int64) + 1
+    starts = b[: n_out - 2]
+    ends = b[1 : n_out - 1]
+    next_ends = np.minimum(b[2:n_out], n_in)
+    return bucket_size, starts, ends, next_ends
+
+
+def _n_out_sweep(n_in: int) -> list[int]:
+    """Every valid ``n_out`` for small ``n_in``, a spread for the big ones."""
+    if n_in <= 100:
+        return list(range(3, n_in))
+    outs = set(range(3, 20))
+    outs |= {n_in - 1, n_in - 2, n_in - 3, n_in // 2, n_in // 3, n_in // 7}
+    outs |= {int(n_in * f) for f in (0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99)}
+    return sorted(x for x in outs if 3 <= x < n_in)
+
+
+class TestBucketPrecondition:
+    """``lttb`` carries no empty-bucket handling, and that is only sound
+    because the early guard makes empty buckets unreachable: inside the body
+    ``3 <= n_out < n_in``, so ``bucket_size = (n_in - 2) / (n_out - 2) > 1``
+    STRICTLY, consecutive bucket boundaries differ by at least one, and every
+    bucket and next-bucket holds at least one sample.
+
+    The regime these assertions guard against is a guard that stops excluding
+    ``n_out > n_in``: measured on ``v = 3t + 1`` with the guard removed,
+    ``(n_in, n_out) = (5, 8)`` gives ``bucket_size == 0.5``, 3 empty buckets,
+    3 zero ``counts``, and dies with ``ValueError: attempt to get argmax of
+    an empty sequence``; ``(20, 40)`` and ``(100, 300)`` do the same with 20
+    and 200 empty buckets. ``n_out == n_in`` is the benign edge — it gives
+    ``bucket_size == 1``, one sample per bucket and no decimation to do, so
+    only the strict ``bucket_size > 1`` assertion below notices it.
+    """
+
+    @pytest.mark.parametrize("n_in", [4, 5, 7, 11, 100, 1000, 4001])
+    def test_buckets_are_never_empty_over_the_whole_sweep(self, n_in):
+        for n_out in _n_out_sweep(n_in):
+            bucket_size, starts, ends, next_ends = _bucket_boundaries(n_in, n_out)
+            assert bucket_size > 1.0, f"({n_in}, {n_out}) bucket_size={bucket_size}"
+            assert np.all(starts < ends), f"({n_in}, {n_out}) empty bucket"
+            assert np.all(next_ends - ends >= 1), f"({n_in}, {n_out}) empty next-bucket"
+            # ``ends`` is used unclipped as reduceat's index array, so its top
+            # entry must still be a valid index; ``next_ends`` is the boundary
+            # that really does overshoot and keeps its clamp.
+            assert ends.max() <= n_in - 1, f"({n_in}, {n_out}) end past the array"
+            assert next_ends[-1] == n_in, f"({n_in}, {n_out}) last next-bucket clipped"
+
+    @pytest.mark.parametrize("n_in,n_out", [(5, 8), (20, 40), (100, 300)])
+    def test_the_precondition_predicates_have_teeth(self, n_in, n_out):
+        """The assertions above are not vacuous: outside the guard
+        (``n_out > n_in``) the same predicates go false."""
+        bucket_size, starts, ends, next_ends = _bucket_boundaries(n_in, n_out)
+        assert bucket_size < 1.0
+        assert np.any(starts >= ends)
+        assert np.any(next_ends - ends < 1)
+
+    @pytest.mark.parametrize("n_in", [4, 5, 7, 11, 100, 1000, 4001])
+    def test_output_contract_over_the_whole_sweep(self, n_in):
+        t = np.linspace(0.0, 100.0, n_in)
+        v = np.sin(0.3 * t) + 0.2 * np.cos(2.7 * t)
+        for n_out in _n_out_sweep(n_in):
+            t_out, v_out = lttb(t, v, n_out)
+            assert len(t_out) == n_out, f"({n_in}, {n_out}) length"
+            assert len(v_out) == n_out, f"({n_in}, {n_out}) length"
+            assert t_out[0] == t[0] and v_out[0] == v[0], f"({n_in}, {n_out}) first"
+            assert t_out[-1] == t[-1] and v_out[-1] == v[-1], f"({n_in}, {n_out}) last"
+            # Strictly increasing, and every kept sample is an input sample
+            # (a kept index, not an interpolation) taken in order.
+            assert np.all(np.diff(t_out) > 0), f"({n_in}, {n_out}) not increasing"
+            idx = np.searchsorted(t, t_out)
+            np.testing.assert_array_equal(t[idx], t_out)
+            np.testing.assert_array_equal(v[idx], v_out)
