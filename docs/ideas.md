@@ -1518,3 +1518,25 @@ planning.
     backend a DIFFERENT exception from the same method is not logged (the
     why-line still shows it). "Once per open" — clearing it in
     `open_async` — is the alternative; owner's call.
+- **Post-redesign: every backend end to end, with the complex criteria
+  (2026-09-16, owner)** — to be fleshed out once the redesign's seven
+  sub-projects are complete. What the inventory found: CI runs only the
+  Python tier and the mocked unit tests (every real-tool marker is
+  deselected); OpenModelica (40 tests over a real `omc`) and FMPy (14 over
+  the Reference FMUs) run for real on the owner's machine; Julia's three
+  end-to-end tests over `JuliaMtkTestingLib` have not run in any recorded
+  session — Julia is not on PATH here and the example project is not
+  instantiated; Dymola has NO end-to-end test at all (the `dymola` marker is
+  declared and unused; the `dymola` Python package is not in the venv) — it
+  is exercised only by the hand-run TRANSFORM gates, and only their rescoring
+  path since 2026-09-08. The Modelica and Julia example specs carry every
+  mode (tube, points, range, scalar, event-timing, dominant-frequency) and
+  every combinator (and / or / k-of-n / warn / weighted, `against`,
+  `window`), and nothing simulates them automatically: the metric tree is
+  proven on synthetic arrays only. The task: install Julia and instantiate
+  the example project so its tests run; add a marked, skip-if-absent Dymola
+  end-to-end test over `ModelicaTestingLib` (the Julia one is the model);
+  run the example libraries on every installed backend and score their
+  complex criteria against real results; decide what of this a CI runner
+  can carry. The OpenModelica rerun hang (sub-project 5's acceptance, still
+  unrun) belongs in the same pass.
