@@ -181,6 +181,12 @@ def test_a_legend_click_on_an_error_trace_shows_its_axis(tmp_path, playwright_br
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         page.goto(url)
 
+        # The page is mounted and the websocket is up once the header draws
+        # (the first test's gate; a click before that relies on socket.io
+        # buffering the emit).
+        pending = page.get_by_role("button", name=re.compile(r"\d+ pending"))
+        expect(pending).to_contain_text("0 pending", timeout=EXPECT_TIMEOUT)
+
         # The row buttons carry the short name ("A"), inside the tests column.
         tests_column = page.locator("div.dstf-tests")
         tests_column.get_by_role(
