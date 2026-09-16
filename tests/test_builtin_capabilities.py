@@ -130,11 +130,9 @@ async def test_a_mode_switch_starts_from_the_new_modes_defaults(session):
         assert leaf == {"metric": "range", "variable": "x", "max_value": 2.0}
 
 
-def _shell_with_soft_check(tmp_path, *ops):
+def _session_with_soft_check(tmp_path, *ops):
     """A fresh Session per simulation (a page cannot outlive its client):
     A has a soft_check `om_cross`, plus whatever ops are staged."""
-    from dstf.authoring.spec_document import PatchOp  # noqa: F401
-
     cfg, work = _project(tmp_path)
     s = Session()
     s.open(cfg, work_dir=work)
@@ -168,7 +166,7 @@ async def _against_select(user):
 
 async def test_against_offers_no_soft_check_outside_warn(tmp_path):
     """D66: a soft_check is a valid target only beneath a `warn`."""
-    s = _shell_with_soft_check(tmp_path)
+    s = _session_with_soft_check(tmp_path)
     async with host(s, EditCriteria(), LEAF0) as (user, errors, _):
         assert (await _against_select(user)).options == ["primary"]
 
@@ -176,7 +174,7 @@ async def test_against_offers_no_soft_check_outside_warn(tmp_path):
 async def test_against_offers_the_soft_check_under_warn(tmp_path):
     from dstf.authoring.spec_document import PatchOp
 
-    s = _shell_with_soft_check(
+    s = _session_with_soft_check(
         tmp_path, PatchOp(A, "add", "/metrics/children/-", WARN_LEAF)
     )
     async with host(s, EditCriteria(), UNDER_WARN) as (user, errors, _):
