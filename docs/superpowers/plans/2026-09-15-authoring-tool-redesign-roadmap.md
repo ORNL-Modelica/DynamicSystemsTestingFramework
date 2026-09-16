@@ -191,6 +191,29 @@ by nobody until sub-project 3; the conformance test covers all four through
 "Save keeps refusing when the file changed on disk" is unchanged from the old
 shell.
 
+**Gate over TRANSFORM (2026-09-16, over a copy of the 331-result Dymola/linux
+work dir; nothing written — spec md5, reference dir, real work dir and real
+cache dir listed identical before and after).** The page: first HTTP 200 at
+8.8 s cold and 8.6 s warm from process start — the interpreter's own import
+(`import nicegui` alone costs 7.0 s and `import dstf.authoring.shell` 8.1 s in
+this venv on the mounted drive), not the open, which no longer gates the
+first response (the previous gate read 18 s warm / 46 s cold); the header
+drawn at 10.8 s cold; the progress line read "scanning library…" then
+"scoring results… 131 of 331" at 44.8 s and was empty with 331 rows and 331
+verdicts at 46.9 s cold (18.3 s warm) — the rows filled in progressively on
+both runs. Chips PASS 330 / FAIL 0 / SIM_FAIL 1 / NO_REF 0, equal to `dstf
+compare` over the same copy (330/331 passed, 1 simulation error). Under
+`--filter "TRANSFORM.Fluid.*"`: 62 rows and chips summing to 62, not 331. The
+body's computed font starts with the token's first family; scrollWidth equals
+clientWidth at 1600 px with scrollX 0; with three rows checked the batch
+buttons read "Accept 3 results as baselines" and "Rerun 3 selected tests
+(Dymola)"; no page error; the Test page for the first row read "← Suite", the
+model id, PASS, "Edit tree", "Accept 1 result as baselines", "Rerun 1
+selected test (Dymola)" and the sub-project 3 note. Both screenshots READ as
+thumbnails and matched. One thing for the owner to see rendered: the DISABLED
+Save draws as a filled primary-blue button beside "no pending edits" — the
+most prominent element in the header while nothing is pending.
+
 ## 3. The Test page, inline criteria, the Variables drawer, modular plots
 
 **Goal.** Brief §3.2 "the Test page", DESIGN.md "Criteria rows", "The Variables
