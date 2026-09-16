@@ -242,8 +242,12 @@ class Session:
         self.notices = [warning] if warning else []
         self.artifacts = []
         self.last_job = None
-        self._emit("spec", models={t.model_id for t in tests})
-        self._reload_results()
+        # Started at the commit point, not after the reload: the warm reads the
+        # SIBLING backends' reference trees and the reload reads this one's, so
+        # neither waits on the other and the reload (15.6 s over TRANSFORM) is
+        # free head start for the first click's overlays. Not earlier than this:
+        # everything above can still raise, and an open that fails must leave
+        # the live session's state — this Event included — as it was.
         ready = threading.Event()
         self.overlay_index_ready = ready
         threading.Thread(
@@ -252,6 +256,8 @@ class Session:
             name="dstf-overlay-index",
             daemon=True,
         ).start()
+        self._emit("spec", models={t.model_id for t in tests})
+        self._reload_results()
         self._emit("loading", phase="done", seconds=time.monotonic() - started)
         done_event = threading.Event()
         self.rescan_done = done_event

@@ -218,6 +218,36 @@ class TestOpen:
         assert before.misses == 1
         assert after.misses == 1 and after.hits == before.hits + 1
 
+    def test_the_index_warms_alongside_the_results_read_not_after_it(
+        self, tmp_path, monkeypatch
+    ):
+        """The warm thread reads the sibling reference trees; the results read
+        reads this backend's. Neither waits on the other, so the warm belongs
+        at the commit point, where the project is live and the reload has not
+        started — over TRANSFORM the reload is 15.6 s of head start.
+
+        The reload here blocks until the warm thread is observed running, so a
+        start moved back after the reload deadlocks this test rather than
+        quietly costing the first click its overlays.
+        """
+        from dstf.reporting import overlay_loader as ol
+
+        warming = threading.Event()
+        monkeypatch.setattr(
+            ol, "warm_sibling_backend_index", lambda config: warming.set()
+        )
+        real_reload = Session._reload_results
+
+        def reload_waiting_for_the_warm(self):
+            assert warming.wait(5.0), "the overlay index was not warming yet"
+            return real_reload(self)
+
+        monkeypatch.setattr(Session, "_reload_results", reload_waiting_for_the_warm)
+        cfg, work = _project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.overlay_index_ready.wait(5.0)
+
     def test_a_failed_warm_still_marks_the_index_ready(
         self, tmp_path, monkeypatch, caplog
     ):
