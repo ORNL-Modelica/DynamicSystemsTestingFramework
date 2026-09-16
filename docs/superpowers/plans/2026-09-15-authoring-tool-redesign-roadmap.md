@@ -171,6 +171,26 @@ of the four placements; the old tab strip is gone from the codebase.
 `dstf compare`'s; nothing written; the page never scrolls sideways; a
 screenshot READ.
 
+**Status (built 2026-09-16).** Built as
+`docs/superpowers/plans/2026-09-16-suite-page-and-shell.md`, one commit and
+one fresh-context review per task. What it settled: selection is the page's,
+per browser tab, and reaches a capability through `SessionView(session,
+selection)` — the Session has none (D129); `Scope` became `Placement` (suite /
+test / variable / criterion) with `placements` and `caption(view)` on the
+contract; `Session.open` runs on the shell's thread and every Session event
+crosses to the pages through one queue an app-level timer drains; a model
+whose scoring raised is announced with `error=True` and `open` still emits
+`done`. The row model: rows are built once per test set and a check, a click,
+a filter or a rescore updates one element. The old `authoring/app.py` and its
+tests are gone; the Test page is a stub with the header, the way back, the
+model's verdict and the TEST-placement buttons. **Amended predicate:** VARIABLE
+and CRITERION placements are listed by the shell's `placed()` query and drawn
+by nobody until sub-project 3; the conformance test covers all four through
+`placed()` and the two pages that exist. Out of scope, on purpose: the queue
+(sub-project 5 replaces the runs card and fills the header's indicator);
+"Save keeps refusing when the file changed on disk" is unchanged from the old
+shell.
+
 ## 3. The Test page, inline criteria, the Variables drawer, modular plots
 
 **Goal.** Brief §3.2 "the Test page", DESIGN.md "Criteria rows", "The Variables
@@ -184,7 +204,7 @@ becomes the editing surface); the test switcher and the Variables drawer
 checkbox = on the selected plot; "new plot" on hover); arrays folded by index
 with a slice field and drawn as one hue ramp; save-time glob expansion into
 literal leaves (ruling §3.10); the `plots` key in `test_spec.json` read by
-both tiers (the report draws the same plots); "focus one variable".
+both tiers (the report draws the same plots); "focus one variable". Re-hosts what went with the old shell (sub-project 2): the plot redrawn in place after a drag through the figure hook, a refused drag shown in the editor's slot and snapped back (the two `tests/test_edit_on_plot.py` hook tests), and the figure hook's per-owner clearing on a rebuilt panel.
 
 **Settles.** The `plots` schema and its validation; the series model
 (`{"var": ...}` now, expression and unit later); how the report renders a
@@ -210,7 +230,7 @@ reference; points' box-edge drag and value-converting abs/rel switches; tube
 upper/lower sync and auto-seeded control points; reset; the scalar `quantity`
 editor; weighted `direction`, Esc, remove confirmation, clipboard copy. The
 plan may stop at any numbered item and record where; each item lands with
-its own gate.
+its own gate. Re-hosts the old shell's editor behaviours deleted with it (sub-project 2): a panel follows an edit another capability, a Discard, a Save or a Reload staged; the criterion's config error shows above its editor; a capability's error shows in its editor and a later success clears it in place, keeping the field being typed in; the editor a selection lands on is the first enabled one; the tree editor's flow through its controls — a wrap the validator refuses shown in place, add, k-of-n, remove — with the tree rows following each edit (the old `test_edit_tree_wrap_add_remove_and_combinator_edits`).
 
 **Settles.** The gesture contract (plain drag moves; Shift+click adds;
 Shift+right-click deletes; "Set window" starts the brush); which readouts are

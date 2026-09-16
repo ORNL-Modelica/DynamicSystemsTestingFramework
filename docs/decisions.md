@@ -4158,3 +4158,41 @@ merged outcome.
 The partial-rerun flip over OLD data noted in `docs/ideas.md` (2026-09-14)
 is a different cause — `status.json`'s subset snapshot losing rows for
 manifest entries written before `last_run_status` existed — and stays open.
+
+## D129 — Selection is the page's; capabilities attach by placement (2026-09-16)
+
+The authoring tool's selection — the checked tests, the variable, the
+criterion's path — is the state of a page in one browser tab, kept in
+NiceGUI's tab storage, and reaches a capability through the view the page
+builds for it: `SessionView(session, selection)`. The Session holds none;
+`Session.select`, `Session.selection` and the `selection` event are gone. Two
+tabs on one server keep two selections, which the one-tab shell (D125's tool,
+sub-projects 4–6) could not — its `Shell.select_one` wrote the Session's
+selection, so a second tab's click moved the first tab's plot. The Test page
+(redesign sub-project 3) needs the same for its variable and criterion, so
+the move was made once, here, where the shell was being rewritten anyway.
+
+With it, `Scope` — where a capability's TAB appeared — became `Placement`,
+where its BUTTON attaches: `SUITE` (the Suite page's batch bar), `TEST` (the
+Test page's header), `VARIABLE` (a variable section's toolbar), `CRITERION`
+(the inline criterion editor); a capability names a frozenset of them and a
+`caption(view)`, the sentence its button carries (object, effect, count). The
+shell draws one outlined button per capability at each placement and hosts
+its panel in a dialog; it still knows no capability by name. `PROJECT` has no
+successor because Close project is gone and the project-less state is
+unreachable. The contract's spec is amended in §4.6 of the two-tier design;
+`tests/test_capability_conformance.py` is the executable form over the four
+placements and the five outcomes.
+
+Two behaviours moved with the structure. `Session.open` runs on a thread the
+shell owns and every Session event crosses to the UI loop through one queue
+an app-level timer drains, so the page appears before a result is read and
+rows fill in per `loading` event (brief §3.8); a model whose scoring raised is
+announced with `error=True`, and `open` emits `done` and starts the rescan
+even then. And the old shell's tests of behaviours the Test page re-hosts
+(panels following a rescore, the leaf's config error above the editor, an
+error cleared in place, the plot redrawn in place after a drag) were deleted
+and named in the roadmap's sub-project 3 and 4 blocks rather than carried as
+text: their shape depends on the page sub-project 3 designs. `Session.close`
+stays as the library's counterpart to `open` — the Session is also driven
+without a page — although no page calls it since Close project went.
