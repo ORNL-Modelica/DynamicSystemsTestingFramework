@@ -281,19 +281,25 @@ class Session:
             daemon=True,
         ).start()
         self._emit("spec", models={t.model_id for t in tests})
-        self._reload_results()
-        self._emit("loading", phase="done", seconds=time.monotonic() - started)
         done_event = threading.Event()
         self.rescan_done = done_event
-        if cached is not None:
-            threading.Thread(
-                target=self._rescan,
-                args=(self.project, cached, done_event),
-                name="dstf-rescan",
-                daemon=True,
-            ).start()
-        else:
-            done_event.set()
+        try:
+            self._reload_results()
+        finally:
+            # Whether or not one model's scoring raised: the project is open
+            # and its results complete (`_reload_results`), so `done` fires
+            # and the rescan starts — a shell waiting on either must not wait
+            # forever. The failure still propagates to the caller, after both.
+            self._emit("loading", phase="done", seconds=time.monotonic() - started)
+            if cached is not None:
+                threading.Thread(
+                    target=self._rescan,
+                    args=(self.project, cached, done_event),
+                    name="dstf-rescan",
+                    daemon=True,
+                ).start()
+            else:
+                done_event.set()
 
     def _warm_overlay_index(self, config: Config, ready: threading.Event) -> None:
         from ..reporting.overlay_loader import warm_sibling_backend_index
@@ -810,7 +816,9 @@ class Session:
         complete, its stale verdict is dropped, and the first failure is
         raised after the batch event — ``_finish_job`` records it as the
         job's error (no rows shown for a failed job); ``open`` propagates
-        it, with no ``done`` event and ``rescan_done`` untouched."""
+        it after its ``done`` event. Each announcement carries ``error``:
+        True for a model whose scoring raised (its verdict is absent),
+        False otherwise."""
         project = self._require_project()
         locked = self.running.models if self.running is not None else frozenset()
         to_read = [t for t in project.tests if t.model_id not in locked]
@@ -819,14 +827,16 @@ class Session:
             if model_id not in locked:
                 del self._reads[model_id]
         announced: set[str] = set()
-        failures: list[tuple[str, Exception]] = []
+        failures: dict[str, Exception] = {}
 
         def score_and_announce(model_id: str) -> None:
+            failed = False
             try:
                 self._score(model_id)
             except Exception as e:
                 self.comparisons.pop(model_id, None)
-                failures.append((model_id, e))
+                failures.setdefault(model_id, e)
+                failed = True
             if model_id in announced:
                 return  # one model under two manifest keys is read twice
             announced.add(model_id)
@@ -836,6 +846,7 @@ class Session:
                 model=model_id,
                 done=len(announced),
                 total=len(to_read),
+                error=failed,
             )
 
         def on_result(model_id: str, result: TestResult) -> None:
@@ -857,7 +868,7 @@ class Session:
                 score_and_announce(test.model_id)
         self._emit("results", models={t.model_id for t in to_read})
         if failures:
-            model_id, error = failures[0]
+            model_id, error = next(iter(failures.items()))
             raise RuntimeError(
                 f"scoring {model_id} failed ({len(failures)} of {len(to_read)} models)"
             ) from error

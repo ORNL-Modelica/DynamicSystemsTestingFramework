@@ -525,6 +525,79 @@ class TestOpen:
         assert announced[-1]["done"] == announced[-1]["total"] == 5
         assert events[-1]["event"] == "results"
 
+    def test_a_failed_models_announcement_carries_the_error_flag(
+        self, session, monkeypatch
+    ):
+        """A per-event row filler reads `comparisons[model]` for the announced
+        model; a model whose scoring raised has none there, and its event
+        must say so: `error=True` on that announcement, `False` on every
+        other (docs/ideas.md 2026-09-16, second entry)."""
+        import dstf.authoring.session as session_mod
+
+        real = session_mod.compare_one
+
+        def failing(test, *args, **kwargs):
+            if test.model_id == D:
+                raise ValueError("boom")
+            return real(test, *args, **kwargs)
+
+        monkeypatch.setattr(session_mod, "compare_one", failing)
+        events = []
+        session.on("loading", events.append)
+        with pytest.raises(RuntimeError):
+            session._reload_results()
+        flags = {e["model"]: e["error"] for e in events if e.get("phase") == "results"}
+        assert flags == {A: False, B: False, C: False, D: True, G: False}
+
+    def test_open_emits_done_and_starts_the_rescan_when_one_models_scoring_raised(
+        self, tmp_path, monkeypatch
+    ):
+        """After a partial scoring failure the project is open and its
+        results complete (the test above); a shell waiting for `done` — or
+        for `rescan_done` — must not wait forever. The failure still reaches
+        the caller, after `done`."""
+        import dstf.authoring.session as session_mod
+
+        real = session_mod.compare_one
+
+        def failing(test, *args, **kwargs):
+            if test.model_id == D:
+                raise ValueError("boom")
+            return real(test, *args, **kwargs)
+
+        monkeypatch.setattr(session_mod, "compare_one", failing)
+        cfg, work = _project(tmp_path)
+        s = Session()
+        events = []
+        s.on("loading", events.append)
+        with pytest.raises(RuntimeError, match="scoring FakeLib.D failed"):
+            s.open(cfg, work_dir=work)
+        assert events[-1]["phase"] == "done"
+        assert s.rescan_done.wait(5)  # a Python project scans nothing: set at once
+        assert s.project is not None and {A, B, C, D, G} <= set(s.project.results)
+        assert D not in s.comparisons
+
+    def test_a_model_under_two_manifest_keys_is_one_failure(self, session, monkeypatch):
+        """`failures` counts models, not `_score` calls: a manifest listing one
+        model under two keys (hand-edited; the tool never writes one) read
+        "2 of 5 models" for one failing model (docs/ideas.md 2026-09-16)."""
+        import dstf.authoring.session as session_mod
+
+        manifest = session.project.config.work_dir / "batch_manifest.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["test_0009"] = dict(data["test_0004"])  # D, a second time
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        real = session_mod.compare_one
+
+        def failing(test, *args, **kwargs):
+            if test.model_id == D:
+                raise ValueError("boom")
+            return real(test, *args, **kwargs)
+
+        monkeypatch.setattr(session_mod, "compare_one", failing)
+        with pytest.raises(RuntimeError, match=r"\(1 of 5 models\)"):
+            session._reload_results()
+
     def test_a_cached_open_parses_nothing_and_rescans_in_the_background(
         self, tmp_path, monkeypatch
     ):
