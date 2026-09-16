@@ -1513,3 +1513,8 @@ planning.
   - The disabled Save draws as a filled primary-blue button beside "no
     pending edits" (the gate's header crop) — the most prominent element in
     the header while nothing is pending. Owner's call, with the picture.
+  - `Shell._reported` (a raising `available`/`caption` logged once per
+    capability and method) is never cleared: after a reopen on another
+    backend a DIFFERENT exception from the same method is not logged (the
+    why-line still shows it). "Once per open" — clearing it in
+    `open_async` — is the alternative; owner's call.
