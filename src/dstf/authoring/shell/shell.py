@@ -106,6 +106,9 @@ class Shell:
         self.load = LoadState()
         self._open_thread: threading.Thread | None = None
         self.children: list[subprocess.Popen[bytes]] = []
+        #: (capability name, what) already logged: `available` / `caption` are read
+        #: on every refresh, so a raising one is logged once, not per refresh.
+        self._reported: set[tuple[str, str]] = set()
         self._mounted = False
         self._timer: Any = None
         self._ticks = 0
@@ -242,8 +245,25 @@ class Shell:
                 answer: bool | str = cap.available(view)
             except Exception as e:  # the plug-in's, shown as its button's reason
                 answer = f"{type(e).__name__}: {e}"
+                self.report_once(cap.name, "available", e)
             placed.append((cap, answer))
         return placed
+
+    def report_once(self, name: str, what: str, error: Exception) -> None:
+        """Log a capability's raising `available` / `caption` with its
+        traceback, once per capability and method: the button's why-line
+        is the user's signal, the log is the plug-in author's."""
+        if (name, what) in self._reported:
+            return
+        self._reported.add((name, what))
+        logger.warning(
+            "capability %r: %s raised %s: %s",
+            name,
+            what,
+            type(error).__name__,
+            error,
+            exc_info=error,
+        )
 
     def view_for(self, selection: Selection) -> SessionView:
         return SessionView(self.session, selection)

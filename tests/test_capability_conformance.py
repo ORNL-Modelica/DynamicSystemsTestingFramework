@@ -50,14 +50,15 @@ def _git_status() -> str:
     """The tree's status, or "" where there is no repository — a `git
     archive` copy, which is where this file's fresh-context reviews run it
     (the check that the repository is untouched has nothing to guard there)."""
-    done = subprocess.run(
+    if not (REPO / ".git").exists():
+        return ""
+    return subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=REPO,
         capture_output=True,
         text=True,
-        check=False,
-    )
-    return done.stdout if done.returncode == 0 else ""
+        check=True,  # any other git failure is a real one
+    ).stdout
 
 
 @pytest.fixture(scope="module")
@@ -265,7 +266,7 @@ async def test_an_unavailable_capability_is_greyed_with_its_reason(shell):
 
 
 async def test_a_capability_whose_available_or_caption_raises_is_greyed_not_fatal(
-    shell,
+    shell, caplog
 ):
     """The bar reads every registered capability's `available` and `caption`
     on every refresh, so a plug-in that raises there would abort the page's
@@ -293,6 +294,16 @@ async def test_a_capability_whose_available_or_caption_raises_is_greyed_not_fata
         mute_button = _one(user, "action:mute")
         assert mute_button.text == "Dummy mute" and mute_button.enabled
         assert shell.pages  # the page was built and registered
+        # Logged with the traceback once per capability and method, not per
+        # refresh — the bar refreshes on every event and every checkbox.
+        _suite(shell, user).actions.refresh()
+        _suite(shell, user).actions.refresh()
+        reports = [r for r in caplog.records if r.message.startswith("capability ")]
+        assert [r.message[:38] for r in reports] == [
+            "capability 'broken': available raised ",
+            "capability 'mute': caption raised Valu",
+        ]
+        assert all(r.exc_info for r in reports)
 
 
 async def test_batch_actions_are_greyed_while_the_project_loads(shell):
