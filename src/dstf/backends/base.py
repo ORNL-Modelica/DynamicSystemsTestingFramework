@@ -227,15 +227,6 @@ def run_verdicts(work_dir: Path, manifests: list[BatchManifest]) -> dict[str, st
     return verdicts
 
 
-def _apply_run_verdicts(
-    work_dir: Path, manifests: list[BatchManifest], results: dict[str, "TestResult"]
-) -> None:
-    """Force results whose last run failed/timed out to ``success=False``.
-    Mutates *results* in place."""
-    for model_id, status in run_verdicts(work_dir, manifests).items():
-        _force_failed(results.get(model_id), status)
-
-
 # ---------------------------------------------------------------------------
 # Abstract backend interface
 # ---------------------------------------------------------------------------

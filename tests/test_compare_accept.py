@@ -16,9 +16,22 @@ from __future__ import annotations
 
 import json
 
-from dstf.backends.base import _apply_run_verdicts
+from dstf.backends.base import _force_failed, run_verdicts
 from dstf.backends.types import TestResult, TestRunResult
 from dstf.storage.batch_manifest import BatchManifest
+
+
+def _apply(verdicts, results):
+    """Compose the two primitives production composes per result
+    (``Backend.read_last_results._with_verdict``). These tests cover the
+    verdict TABLE — manifest ``last_run_status``, the status.json fallback for
+    entries written before that field, precedence and the forcing itself. That
+    production wires them per result BEFORE the callback is covered by
+    tests/test_session.py
+    ``test_read_last_results_reports_each_result_with_its_run_verdict_applied``.
+    """
+    for model_id, status in verdicts.items():
+        _force_failed(results.get(model_id), status)
 
 
 def _write_status(work_dir, rows):
@@ -38,7 +51,7 @@ class TestApplyStatusVerdicts:
             "Lib.A": TestResult(model_id="Lib.A", success=True),
             "Lib.B": TestResult(model_id="Lib.B", success=True),
         }
-        _apply_run_verdicts(tmp_path, [], results)
+        _apply(run_verdicts(tmp_path, []), results)
         assert results["Lib.A"].success is False  # partial .mat overridden
         assert results["Lib.A"].error_message  # reason stamped
         assert results["Lib.B"].success is True  # genuine pass untouched
@@ -46,7 +59,7 @@ class TestApplyStatusVerdicts:
     def test_timed_out_status_forces_success_false(self, tmp_path):
         _write_status(tmp_path, [{"model_id": "Lib.T", "status": "timed_out"}])
         results = {"Lib.T": TestResult(model_id="Lib.T", success=True)}
-        _apply_run_verdicts(tmp_path, [], results)
+        _apply(run_verdicts(tmp_path, []), results)
         assert results["Lib.T"].success is False
 
     def test_existing_error_message_preserved(self, tmp_path):
@@ -54,24 +67,24 @@ class TestApplyStatusVerdicts:
         results = {
             "Lib.A": TestResult(model_id="Lib.A", success=True, error_message="boom")
         }
-        _apply_run_verdicts(tmp_path, [], results)
+        _apply(run_verdicts(tmp_path, []), results)
         assert results["Lib.A"].error_message == "boom"
 
     def test_missing_status_json_is_noop(self, tmp_path):
         results = {"Lib.A": TestResult(model_id="Lib.A", success=True)}
-        _apply_run_verdicts(tmp_path, [], results)  # no status.json written
+        _apply(run_verdicts(tmp_path, []), results)  # no status.json written
         assert results["Lib.A"].success is True
 
     def test_unreadable_status_json_is_noop(self, tmp_path):
         (tmp_path / "status.json").write_text("{ not json", encoding="utf-8")
         results = {"Lib.A": TestResult(model_id="Lib.A", success=True)}
-        _apply_run_verdicts(tmp_path, [], results)
+        _apply(run_verdicts(tmp_path, []), results)
         assert results["Lib.A"].success is True
 
     def test_model_not_in_results_is_ignored(self, tmp_path):
         _write_status(tmp_path, [{"model_id": "Lib.Gone", "status": "failed"}])
         results = {"Lib.A": TestResult(model_id="Lib.A", success=True)}
-        _apply_run_verdicts(tmp_path, [], results)  # must not KeyError
+        _apply(run_verdicts(tmp_path, []), results)  # must not KeyError
         assert results["Lib.A"].success is True
 
 
@@ -149,7 +162,7 @@ class TestApplyRunVerdicts:
         results = {
             k: TestResult(model_id=k, success=True) for k in ("Lib.A", "Lib.B", "Lib.C")
         }
-        _apply_run_verdicts(tmp_path, [m], results)
+        _apply(run_verdicts(tmp_path, [m]), results)
 
         assert results["Lib.A"].success is False
         assert "failed" in (results["Lib.A"].error_message or "")
@@ -166,7 +179,7 @@ class TestApplyRunVerdicts:
             tmp_path, {"test_0001": {"model_id": "Lib.A", "last_run_status": "passed"}}
         )
         results = {"Lib.A": TestResult(model_id="Lib.A", success=True)}
-        _apply_run_verdicts(tmp_path, [m], results)
+        _apply(run_verdicts(tmp_path, [m]), results)
         assert results["Lib.A"].success is True
 
     def test_old_manifest_without_the_field_falls_back_to_status_json(self, tmp_path):
@@ -190,7 +203,7 @@ class TestApplyRunVerdicts:
             "Lib.Old": TestResult(model_id="Lib.Old", success=True),
             "Lib.New": TestResult(model_id="Lib.New", success=True),
         }
-        _apply_run_verdicts(tmp_path, [m], results)
+        _apply(run_verdicts(tmp_path, [m]), results)
 
         assert results["Lib.Old"].success is False  # status.json fallback applied
         assert results["Lib.New"].success is True  # manifest is authoritative
@@ -198,7 +211,7 @@ class TestApplyRunVerdicts:
     def test_no_manifest_field_and_no_status_json_keeps_the_disk_read(self, tmp_path):
         m = _manifest(tmp_path, {"test_0001": {"model_id": "Lib.A", "ref_id": None}})
         results = {"Lib.A": TestResult(model_id="Lib.A", success=True)}
-        _apply_run_verdicts(tmp_path, [m], results)
+        _apply(run_verdicts(tmp_path, [m]), results)
         assert results["Lib.A"].success is True
 
 
@@ -217,7 +230,7 @@ def test_compare_accept_still_refuses_a_test_whose_last_run_failed(tmp_path):
         tmp_path, {"test_0001": {"model_id": "FakeLib.A", "last_run_status": "failed"}}
     )
     results = {"FakeLib.A": TestResult(model_id="FakeLib.A", success=True)}
-    _apply_run_verdicts(tmp_path, [m], results)
+    _apply(run_verdicts(tmp_path, [m]), results)
 
     from dstf.discovery.test_registry import TestModel
 
@@ -312,7 +325,7 @@ class TestAbortWindow:
             "Lib.A": TestResult(model_id="Lib.A", success=True),  # stale .mat
             "Lib.B": TestResult(model_id="Lib.B", success=True),
         }
-        _apply_run_verdicts(tmp_path, [loaded], results)
+        _apply(run_verdicts(tmp_path, [loaded]), results)
         assert results["Lib.A"].success is False
 
     def test_abort_before_any_result_falls_back_to_status_json(self, tmp_path):
@@ -330,7 +343,7 @@ class TestAbortWindow:
 
         loaded = BatchManifest.load(tmp_path / "batch_manifest.json")
         results = {"Lib.A": TestResult(model_id="Lib.A", success=True)}
-        _apply_run_verdicts(tmp_path, [loaded], results)
+        _apply(run_verdicts(tmp_path, [loaded]), results)
         assert results["Lib.A"].success is False, (
             "a pending entry must fall through to the status.json fallback"
         )
@@ -341,7 +354,7 @@ class TestAbortWindow:
             tmp_path, {"test_0001": {"model_id": "Lib.A", "last_run_status": "pending"}}
         )
         results = {"Lib.A": TestResult(model_id="Lib.A", success=True)}
-        _apply_run_verdicts(tmp_path, [m], results)
+        _apply(run_verdicts(tmp_path, [m]), results)
         assert results["Lib.A"].success is True
 
     def test_happy_path_is_unchanged(self, tmp_path):
@@ -361,7 +374,7 @@ class TestAbortWindow:
             "Lib.A": TestResult(model_id="Lib.A", success=True),
             "Lib.B": TestResult(model_id="Lib.B", success=True),
         }
-        _apply_run_verdicts(tmp_path, [_manifest(tmp_path, reloaded)], results)
+        _apply(run_verdicts(tmp_path, [_manifest(tmp_path, reloaded)]), results)
         assert results["Lib.A"].success is True
         assert results["Lib.B"].success is False
 
@@ -498,7 +511,7 @@ class TestAcceptRefusesPending:
             status_rows=[{"model_id": "FakeLib.InFlight", "status": "running"}],
         )
         results = {"FakeLib.InFlight": _good_result("FakeLib.InFlight")}
-        _apply_run_verdicts(config.work_dir, [], results)
+        _apply(run_verdicts(config.work_dir, []), results)
         assert results["FakeLib.InFlight"].success is True  # nothing forced it down
 
         stored, skipped = self._accept(config, tests, results)
@@ -549,7 +562,7 @@ class TestAcceptRefusesPending:
             {"test_0001": {"model_id": "FakeLib.Drifted", "last_run_status": "passed"}},
         )
         results = {"FakeLib.Drifted": _good_result("FakeLib.Drifted")}
-        _apply_run_verdicts(config.work_dir, [], results)
+        _apply(run_verdicts(config.work_dir, []), results)
 
         stored, skipped = self._accept(config, tests, results)
 
@@ -578,9 +591,11 @@ class TestAcceptRefusesPending:
             status_rows=[{"model_id": "FakeLib.Old", "status": "failed"}],
         )
         results = {"FakeLib.Old": _good_result("FakeLib.Old")}
-        _apply_run_verdicts(
-            config.work_dir,
-            [BatchManifest.load(config.work_dir / "batch_manifest.json")],
+        _apply(
+            run_verdicts(
+                config.work_dir,
+                [BatchManifest.load(config.work_dir / "batch_manifest.json")],
+            ),
             results,
         )
 

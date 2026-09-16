@@ -1365,6 +1365,13 @@ In `tests/test_session.py`, class `TestOpen`:
 
 - [ ] **Step 3: The per-result run verdict.** In `base.py` replace `_apply_run_verdicts` with a pure lookup plus the mutating wrapper:
 
+> **Since executed (2026-09-15).** This step kept `_apply_run_verdicts` as the
+> mutating wrapper, but the `read_last_results` work below left it with no
+> production caller — Step 4's `_with_verdict` closure composes `run_verdicts`
+> and `_force_failed` itself, per result, before the callback. The wrapper has
+> been deleted as dead code and `tests/test_compare_accept.py` now composes the
+> two primitives directly. Read the steps below as history: do not reinstate it.
+
 ```python
 def run_verdicts(work_dir: Path, manifests: list[BatchManifest]) -> dict[str, str]:
     """``model_id -> failed run status`` for every test whose last run the
