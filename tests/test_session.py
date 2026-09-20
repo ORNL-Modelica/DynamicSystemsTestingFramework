@@ -1242,6 +1242,26 @@ class TestView:
         shapes = fig["layout"]["shapes"]
         assert all(s["type"] == "circle" for s in shapes[-len(rings) :])
 
+    def test_editing_names_the_leaves_that_get_rings(self, session):
+        import copy
+
+        from test_handles import TREE
+
+        session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+
+        def rings(fig):
+            return {s["name"] for s in fig["layout"]["shapes"] if s["type"] == "circle"}
+
+        every = rings(session.figure(D, "x"))
+        leaf = "/metrics/children/0"
+        some = rings(session.figure(D, "x", editing=(leaf,)))
+        assert some and some < every and all(n.startswith(leaf + "/") for n in some)
+        none = session.figure(D, "x", editing=())
+        assert not rings(none)
+        assert (
+            none["config"] == session.figure(D, "x")["config"]
+        )  # react, never newPlot
+
     def test_no_baseline_is_the_empty_state_with_the_trajectory(self, session):
         view = session.view(B, "x")
         assert view.act_time is not None and view.ref_time is None and view.leaves == ()
@@ -2057,6 +2077,36 @@ class TestPlots:
         s = self._open(tmp_path)
         view = s.view(A, "nowhere")
         assert view.act_time is None and view.leaves == ()
+
+    def test_a_multi_series_plot_is_drawn_over_the_cached_bases(
+        self, tmp_path, monkeypatch
+    ):
+        session = self._open(tmp_path)
+        session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        first = session.plot_figure(A, 0)
+        import dstf.reporting.context_builder as cb
+
+        calls = []
+        real = cb.build_trajectories
+        monkeypatch.setattr(
+            cb, "build_trajectories", lambda *a, **k: calls.append(1) or real(*a, **k)
+        )
+        again = session.plot_figure(A, 0)
+        assert again == first
+        assert calls == []  # the second draw assembles nothing
+
+    def test_a_multi_series_plot_takes_editing(self, tmp_path):
+        import copy
+
+        from test_handles import TREE
+
+        session = self._open(tmp_path)
+        session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        session.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(TREE))])
+        every = session.plot_figure(A, 0)
+        assert [s for s in every["layout"]["shapes"] if s.get("type") == "circle"]
+        fig = session.plot_figure(A, 0, editing=())
+        assert not [s for s in fig["layout"]["shapes"] if s.get("type") == "circle"]
 
     def test_a_staged_layout_is_what_plots_answers(self, tmp_path):
         s = self._open(tmp_path)

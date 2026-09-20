@@ -20,7 +20,7 @@ since Plotly drags shapes, not trace points.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from ..comparison.geometry import (
@@ -555,7 +555,11 @@ def _secondary_axis(title: str) -> dict:
 
 
 def _leaf_traces(
-    view: VariableView, ctx: _Ctx, *, editable: bool
+    view: VariableView,
+    ctx: _Ctx,
+    *,
+    editable: bool,
+    rings_for: Collection[str] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Every leaf of one view, drawn: ``(traces, shapes, rings)``.
 
@@ -582,18 +586,25 @@ def _leaf_traces(
             data.extend(traces)
             shapes.extend(new_shapes)
         data.extend(_marker_traces(markers, leaf))
-        if editable:
+        if editable and (rings_for is None or leaf.path in rings_for):
             rings.extend(_handle_rings(markers))
     return data, shapes, rings
 
 
 def variable_figure(
-    view: VariableView, max_samples: int | None = None, *, editable: bool = False
+    view: VariableView,
+    max_samples: int | None = None,
+    *,
+    editable: bool = False,
+    rings_for: Collection[str] | None = None,
 ) -> dict:
     """The one figure both tiers draw. ``max_samples`` decimates the view first.
 
     ``editable`` adds a draggable ring per handle marker and
     ``config.edits.shapePosition``; the report's figure never passes it.
+    ``rings_for``: the leaf paths whose handles get a draggable ring; ``None``
+    rings every leaf. The Test page names the open criterion, so two leaves'
+    rings never overlap; ``config`` does not depend on it.
     """
     if max_samples:
         view = decimate_view(view, max_samples)
@@ -605,7 +616,9 @@ def variable_figure(
         full_samples=view.full_samples,
     )
     data: list[dict] = _base_traces(view)
-    leaf_data, shapes, rings = _leaf_traces(view, ctx, editable=editable)
+    leaf_data, shapes, rings = _leaf_traces(
+        view, ctx, editable=editable, rings_for=rings_for
+    )
     data.extend(leaf_data)
     for s in view.errors:
         data.append(_error_trace(s, ctx))
@@ -625,6 +638,7 @@ def plot_figure(
     *,
     editable: bool = False,
     labels: Mapping[str, str] | None = None,
+    rings_for: Collection[str] | None = None,
 ) -> dict:
     """The figure for one plot of a test (DESIGN.md "Plots are modular").
 
@@ -634,9 +648,12 @@ def plot_figure(
     legend entry — with the geometry of every leaf of every series, and NO
     overlays or error traces: both are per-variable pickers keyed by trace
     name. ``labels`` overrides a family's legend text by family key.
+    ``rings_for`` is :func:`variable_figure`'s, reaching every series' leaves.
     """
     if len(views) == 1:
-        return variable_figure(views[0], max_samples, editable=editable)
+        return variable_figure(
+            views[0], max_samples, editable=editable, rings_for=rings_for
+        )
     if max_samples:
         views = [decimate_view(v, max_samples) for v in views]
     by_name = {v.name: v for v in views}
@@ -666,7 +683,9 @@ def plot_figure(
             has_spectrum=has_spectrum,
             full_samples=view.full_samples,
         )
-        leaf_data, leaf_shapes, leaf_rings = _leaf_traces(view, ctx, editable=editable)
+        leaf_data, leaf_shapes, leaf_rings = _leaf_traces(
+            view, ctx, editable=editable, rings_for=rings_for
+        )
         data.extend(leaf_data)
         shapes.extend(leaf_shapes)
         rings.extend(leaf_rings)

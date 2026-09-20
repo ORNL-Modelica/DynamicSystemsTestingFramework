@@ -12,7 +12,7 @@ import copy
 import logging
 import threading
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -558,33 +558,53 @@ class Session:
             test, self._tracked(model_id), available=self._reads_for(model_id).names
         )
 
-    def plot_figure(self, model_id: str, index: int) -> dict:
+    def plot_figure(
+        self, model_id: str, index: int, *, editing: Collection[str] | None = None
+    ) -> dict:
         """The editable figure of plot ``index`` (IndexError past the end).
-        One series is :meth:`figure` — cached base and all."""
+        One series is :meth:`figure`; several are drawn over the same cached
+        bases. ``editing`` as in :meth:`figure`."""
         from ..figures.plotly import plot_figure
 
         if index < 0:
             raise IndexError(index)
         plot = self.plots(model_id)[index]
         if len(plot.series) == 1:
-            return self.figure(model_id, plot.series[0])
-        budget = self._require_project().config.max_embedded_samples
+            return self.figure(model_id, plot.series[0], editing=editing)
         return plot_figure(
-            [self.view(model_id, name) for name in plot.series], budget, editable=True
+            [self._editable_view(model_id, name) for name in plot.series],
+            None,
+            editable=True,
+            rings_for=editing,
         )
 
-    def figure(self, model_id: str, variable: str) -> dict:
+    def figure(
+        self, model_id: str, variable: str, *, editing: Collection[str] | None = None
+    ) -> dict:
         """The tool's figure is the editable one — handle rings a user can
         drag (``variable_figure(..., editable=True)``); the report's is not.
+        ``editing``: the leaf paths whose handles get a ring, ``None`` meaning
+        every leaf; the Plotly ``config`` never depends on it."""
+        from ..figures.plotly import variable_figure
+
+        if self._require_project().test(model_id) is None:
+            raise KeyError(model_id)  # before the cache: never cache a read for it
+        return variable_figure(
+            self._editable_view(model_id, variable),
+            None,
+            editable=True,
+            rings_for=editing,
+        )
+
+    def _editable_view(self, model_id: str, variable: str) -> VariableView:
+        """The decimated base (cached) joined to the leaves decimated on
+        their own — what both figure reads draw, WITHOUT a budget.
         The base traces are decimated once per model and variable and
         cached until the model's scored list moves (`_ModelReads.scored`);
         only the leaves' geometry is decimated per call."""
-        from ..figures.plotly import variable_figure
         from ..figures.view import build_view, decimate_view
 
         project = self._require_project()
-        if project.test(model_id) is None:
-            raise KeyError(model_id)  # before the cache: never cache a read for it
         budget = project.config.max_embedded_samples
         reads = self._reads_for(model_id)
         scored = _scored_key(self.comparisons.get(model_id))
@@ -609,8 +629,7 @@ class Session:
         leaves_view = decimate_view(build_view(variable, leaves=leaves), budget)
         full = dict(leaves_view.full_samples)
         full.update(base.full_samples)
-        with_leaves = replace(base, leaves=leaves_view.leaves, full_samples=full)
-        return variable_figure(with_leaves, None, editable=True)
+        return replace(base, leaves=leaves_view.leaves, full_samples=full)
 
     def tree_view(self, model_id: str) -> dict | None:
         """The read-only tree the report shows for this test, built by the
@@ -1151,8 +1170,10 @@ class SessionView:
     def view(self, model_id: str, variable: str) -> VariableView:
         return self._session.view(model_id, variable)
 
-    def figure(self, model_id: str, variable: str) -> dict:
-        return self._session.figure(model_id, variable)
+    def figure(
+        self, model_id: str, variable: str, *, editing: Collection[str] | None = None
+    ) -> dict:
+        return self._session.figure(model_id, variable, editing=editing)
 
     def variable_names(self, model_id: str) -> list[str]:
         return self._session.variable_names(model_id)
@@ -1160,8 +1181,10 @@ class SessionView:
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
         return self._session.plots(model_id)
 
-    def plot_figure(self, model_id: str, index: int) -> dict:
-        return self._session.plot_figure(model_id, index)
+    def plot_figure(
+        self, model_id: str, index: int, *, editing: Collection[str] | None = None
+    ) -> dict:
+        return self._session.plot_figure(model_id, index, editing=editing)
 
     def tree_view(self, model_id: str) -> dict | None:
         return self._session.tree_view(model_id)

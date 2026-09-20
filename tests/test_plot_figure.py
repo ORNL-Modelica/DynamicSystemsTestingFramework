@@ -207,6 +207,35 @@ def test_every_leaf_of_every_series_keeps_its_geometry_and_editable_rings():
     )
 
 
+def test_rings_for_reaches_every_view_of_a_multi_series_plot():
+    from test_figures import _ring_names, _two_ring_view
+
+    views = [
+        _two_ring_view("x"),
+        _two_ring_view("y", ("/metrics/children/2", "/metrics/children/3")),
+    ]
+    every = _ring_names(plot_figure(views, None, editable=True))
+    assert len(every) == 4
+    for path in ("/metrics/children/0", "/metrics/children/3"):
+        only = _ring_names(plot_figure(views, None, editable=True, rings_for=(path,)))
+        assert only and only < every
+        assert all(n.startswith(path + "/") for n in only)
+    full = plot_figure(views, None, editable=True)
+    none = plot_figure(views, None, editable=True, rings_for=())
+    assert _ring_names(none) == set()
+    assert none["data"] == full["data"] and none["config"] == full["config"]
+
+
+def test_rings_for_reaches_the_single_view_branch():
+    from test_figures import _ring_names, _two_ring_view
+
+    view = _two_ring_view()
+    assert plot_figure([view], None, editable=True, rings_for=()) == variable_figure(
+        view, None, editable=True, rings_for=()
+    )
+    assert _ring_names(plot_figure([view], None, editable=True, rings_for=())) == set()
+
+
 def test_a_family_keeps_its_legend_entry_when_its_first_member_has_no_result():
     ghost = build_view("p.T[1]")  # no trajectory: the index is tracked, the run lost it
     fig = plot_figure([ghost, _view("p.T[2]"), _view("p.T[3]")])
@@ -245,9 +274,9 @@ def test_a_spectrum_leaf_on_any_series_opens_the_second_panel_for_all(monkeypatc
     seen = []
     real = plotly._leaf_traces
 
-    def spy(view, ctx, *, editable):
+    def spy(view, ctx, **kwargs):
         seen.append((view.name, ctx))
-        return real(view, ctx, editable=editable)
+        return real(view, ctx, **kwargs)
 
     monkeypatch.setattr(plotly, "_leaf_traces", spy)
     plain = _tube_view()  # named "x", 0..1 s, no spectrum

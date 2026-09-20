@@ -479,6 +479,51 @@ class TestEditableFigure:
         assert plain == variable_figure(view, editable=False)
 
 
+def _two_ring_view(name="x", paths=("/metrics/children/0", "/metrics/children/1")):
+    """Two leaves, EACH with a handle Marker: what `rings_for` tells apart."""
+    t = np.linspace(0.0, 1.0, 11)
+    leaves = []
+    for k, path in enumerate(paths):
+        vc = _compare_range(t, t, min_value=None, max_value=None)
+        vc.name = name
+        vc.geometry = (
+            Marker(id=f"tube/upper/{k}", kind="handle", x=0.2 + 0.3 * k, y=0.6),
+            HLine(id="range/max", kind="handle", value=0.9),
+        )
+        leaves.append(_stamped(vc, path))
+    return build_view(
+        name, act_time=t, act_values=t, ref_time=t, ref_values=t, leaves=leaves
+    )
+
+
+def _ring_names(fig: dict) -> set[str]:
+    return {s["name"] for s in fig["layout"]["shapes"] if s.get("type") == "circle"}
+
+
+def test_rings_for_limits_the_rings_to_the_named_leaves():
+    view = _two_ring_view()
+    every = _ring_names(variable_figure(view, None, editable=True))
+    first = next(
+        lv.path for lv in view.leaves if any(n.startswith(lv.path + "/") for n in every)
+    )
+    only = _ring_names(variable_figure(view, None, editable=True, rings_for=(first,)))
+    assert only and only < every
+    assert all(name.startswith(first + "/") for name in only)
+    assert (
+        _ring_names(variable_figure(view, None, editable=True, rings_for=())) == set()
+    )
+
+
+def test_rings_for_changes_nothing_but_the_rings():
+    view = _two_ring_view()
+    full = variable_figure(view, None, editable=True)
+    none = variable_figure(view, None, editable=True, rings_for=())
+    assert none["data"] == full["data"] and none["config"] == full["config"]
+    assert [s for s in none["layout"]["shapes"]] == [
+        s for s in full["layout"]["shapes"] if s.get("type") != "circle"
+    ]
+
+
 def test_view_from_trajectory_reads_the_report_shape():
     from dstf.figures.assemble import view_from_trajectory
 
