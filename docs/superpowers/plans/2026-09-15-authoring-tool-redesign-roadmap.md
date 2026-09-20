@@ -28,7 +28,7 @@ queue. Between those, the visible work follows the brief's own sequence
 |---|---|---|---|---|
 | 1 | The foundations | `2026-09-15-the-foundations.md` | — | report page's two error axes; warm open and first click timed |
 | 2 | The Suite page and the new shell | to write | 1 | 331 rows fill in progressively; batch actions unlock; nothing written |
-| 3 | The Test page, inline criteria, the drawer, modular plots | to write | 2 | every variable of a test stacked; one tube edit on the plot; a `plots` key round-trips |
+| 3 | The Test page, inline criteria, the drawer, modular plots | 3a `2026-09-20-plots-key-and-plot-figure.md` (built); 3b, 3c to write | 2 | every variable of a test stacked; one tube edit on the plot; a `plots` key round-trips |
 | 4 | Editing returns (brief §3.5, in its order) | to write | 3 | Shift+click adds a point on a real trace; brush sets a window |
 | 5 | The simulation queue | to write | 2 (3 for the row → Test page link) | an OpenModelica run from the tool completes or fails visibly |
 | 6 | Live results | to write | 5 | a Dymola run's growing trace on `/mnt/d`; 331 stored results read back byte-identical |
@@ -71,6 +71,7 @@ queue. Between those, the visible work follows the brief's own sequence
 - **`test_spec.json` gains an optional `plots` key per test** (ruling §3.10,
   sub-project 3). Additive; absent means one plot per tracked variable; the
   writer never omits it once set. The reference-JSON layout does not change.
+  Landed in 3a (D130): `/plots` is patchable through `dstf spec-update`.
 - **`testing.json` gains `theme`** (ruling §3.10, sub-project 7) and the queue's
   worker count reads the existing `parallel` (sub-project 5). Both optional.
 - **The `dstf author` CLI** keeps `--config`, `--work-dir`, `--port`,
@@ -228,6 +229,43 @@ checkbox = on the selected plot; "new plot" on hover); arrays folded by index
 with a slice field and drawn as one hue ramp; save-time glob expansion into
 literal leaves (ruling §3.10); the `plots` key in `test_spec.json` read by
 both tiers (the report draws the same plots); "focus one variable". Re-hosts what went with the old shell (sub-project 2): the plot redrawn in place after a drag through the figure hook, a refused drag shown in the editor's slot and snapped back (the two `tests/test_edit_on_plot.py` hook tests), and the figure hook's per-owner clearing on a rebuilt panel.
+
+**Status (2026-09-20).** Planned as three plans, built in order, each written
+against the tree the previous one left: **3a** the `plots` key, result-file
+reads and the plot figure on both tiers
+(`2026-09-20-plots-key-and-plot-figure.md`, BUILT); **3b** the Test page
+(sticky header, the tree closed to one line, stacked plots rendered on scroll,
+criteria rows, the inline editor below its row, Focus per plot); **3c** the
+40 px rail, the Tests and Variables drawers, array folding and save-time
+expansion. Three facts found in the tree forced the split: a loaded
+`TestResult` holds only the tracked variables; spec patches were whitelisted
+to `/comparison` and `/metrics`; the report page was one section per variable.
+The owner ruled the five layout questions of this block on a rendered board
+the same day (tree closed; editor below its row; a labelled rail; ONE folded
+criteria row per array family; Focus as a button per plot).
+
+**3a's gate over a COPY of the TRANSFORM work dir and of its spec**
+(D130). What stayed the same: `compare --report` at the pre-plan commit and
+at HEAD gave the same verdicts (330 pass, 1 timed out, of 331), the same 341
+report pages, and identical plot / criteria-tree element ids on the first,
+middle and last page. What the feature did: a `plots` key written to the
+COPY's spec for `…Demonstrations.Examples.BatemanEquations_Test` (4 tracked
+variables; its `dsres.mat` lists 52 names) — plot 0 two tracked series, plot 1
+one tracked series plus the UNTRACKED family `batemanEquations.der(Ns[1..4])`
+and a name the file lacks — rendered exactly two sections: plot 0 in the
+accent ramp's first and last stops, plot 1's family in the green ramp
+(`#a5d6a7` `#66bb6a` `#388e3c` `#1b5e20`) under one legend entry
+`batemanEquations.der(Ns[1:4])`, "Not in this result: no.such.variable", one
+"is plot only" line for the family, each PASS badge beside its own variable,
+no error-overlay select, no page error; the screenshot was READ. The owner's
+spec md5 and the TRANSFORM repo's status were unchanged. The Session over the
+copy: open 33.9 s; `variable_names` of a 6,093-name result 51 ms cold, 0 ms
+cached; `view` of an untracked variable 37 ms; `plot_figure` of a five-series
+plot 39 ms cold. Found for 3c: a layout on a test that is tracked only by its
+`.mo` annotation creates that test's first `test_spec.json` entry (`model` +
+`plots`), and TRANSFORM baseline names carry newlines inside brackets
+(`massPorts[\n  4, 1].C[1]`) — the drawer's filter and the family rule meet
+both.
 
 **Settles.** The `plots` schema and its validation; the series model
 (`{"var": ...}` now, expression and unit later); how the report renders a
