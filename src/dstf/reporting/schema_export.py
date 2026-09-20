@@ -277,10 +277,16 @@ def build_schema() -> dict:
                         "series": {
                             "type": "array",
                             "minItems": 1,
+                            "uniqueItems": True,
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "var": {"type": "string", "minLength": 1}
+                                    # One variable, not blank, not a
+                                    # pattern — what `parse_plots` accepts.
+                                    "var": {
+                                        "type": "string",
+                                        "pattern": "^[^*?]*[^*?\\s][^*?]*$",
+                                    }
                                 },
                                 "required": ["var"],
                                 "additionalProperties": False,

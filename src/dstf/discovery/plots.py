@@ -79,7 +79,7 @@ def parse_plots(raw: object, *, path: str = "plots") -> tuple[PlotSpec, ...]:
                 raise PlotsSpecError(f"{s_at}: must be an object")
             _unknown(one, {"var"}, s_at)
             var = one.get("var")
-            if not isinstance(var, str) or not var:
+            if not isinstance(var, str) or not var.strip():
                 raise PlotsSpecError(f"{s_at}.var: must be a non-empty string")
             if is_glob_pattern(var):
                 raise PlotsSpecError(

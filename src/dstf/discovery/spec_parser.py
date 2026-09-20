@@ -292,12 +292,13 @@ def spec_models_from_document(
                 # than a traceback out of the parser.
                 raise ConfigError(f"{label}: {e}") from e
 
-        plots_raw = entry.get("plots")
-        if plots_raw is not None:
+        if "plots" in entry:  # null is refused: absent is the only default
             from .plots import PlotsSpecError, parse_plots
 
             try:
-                test.plots = parse_plots(plots_raw, path=f"tests[{model_id}].plots")
+                test.plots = parse_plots(
+                    entry["plots"], path=f"tests[{model_id}].plots"
+                )
             except PlotsSpecError as e:
                 raise ConfigError(f"{label}: {e}") from e
 

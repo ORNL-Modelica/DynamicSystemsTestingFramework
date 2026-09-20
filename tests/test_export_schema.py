@@ -348,3 +348,9 @@ def test_the_entry_schema_describes_plots():
     assert series["minItems"] == 1
     assert series["items"]["required"] == ["var"]
     assert series["items"]["additionalProperties"] is False
+
+
+def test_the_plots_schema_refuses_what_the_parser_refuses():
+    series = _entry_schema()["properties"]["plots"]["items"]["properties"]["series"]
+    assert series["uniqueItems"] is True
+    assert series["items"]["properties"]["var"]["pattern"] == "^[^*?]*[^*?\\s][^*?]*$"

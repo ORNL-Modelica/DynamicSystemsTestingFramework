@@ -168,3 +168,27 @@ def test_the_example_specs_parse(tmp_path):
     for spec in specs:
         data = json.loads(spec.read_text(encoding="utf-8"))
         spec_models_from_document(data, base_dir=spec.parent, label=str(spec))
+
+
+def test_an_empty_layout_survives_the_parser_and_the_merge(tmp_path):
+    """`[]` is "no plots", not falsy-therefore-default (a guard: its
+    mutations are `if plots_raw:` in the parser and `if spec_test.plots:`
+    in the merge)."""
+    spec = spec_models_from_document(_doc([]), base_dir=tmp_path, label="mem")
+    assert spec[0].plots == ()
+    (merged,) = merge_tests(
+        {"Lib.T": make_test_model("Lib.T")}, spec_tests_by_model(spec)
+    )
+    assert merged.plots == ()
+
+
+def test_a_null_plots_key_is_refused_like_any_other_non_list(tmp_path):
+    """Absent is the only spelling of "the default": a `null` the parser let
+    through would make every later patch of the entry fail its validation."""
+    with pytest.raises(ConfigError, match=r"tests\[Lib\.T\]\.plots: must be a list"):
+        spec_models_from_document(_doc(None), base_dir=tmp_path, label="mem")
+
+
+def test_a_blank_var_is_refused():
+    with pytest.raises(PlotsSpecError, match=r"series\[0\]\.var: must be a non-empty"):
+        parse_plots([{"series": [{"var": "  "}]}])
