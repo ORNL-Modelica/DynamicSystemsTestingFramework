@@ -76,6 +76,7 @@ src/dstf/
 │   ├── mo_parser.py          # Scans .mo files for UnitTests components
 │   ├── json_recognizer.py    # Declarative recognizers from testing.json
 │   ├── spec_parser.py        # Parses test_spec.json (external test definitions)
+│   ├── plots.py              # The optional per-test `plots` layout: parse, write, resolve against a result
 │   ├── patch_apply.py        # RFC 6902 JSON-Patch round-trip (powers `dstf spec-update`)
 │   ├── patch_envelope.py     # ModelPatch + parse/build for the patch envelope (both forms)
 │   ├── spec_update.py        # Read-modify-write of the spec: entry lookup, implicit-tree
@@ -86,7 +87,8 @@ src/dstf/
 │   ├── __init__.py           # Backend registry: @register decorator, get_backend() factory
 │   ├── base.py               # Backend ABC + RunSetup/_prepare_run (types/persistent/batch_manifest split out, D116)
 │   ├── progress.py           # Backend-agnostic ProgressReporter (status.json + auto-refresh dashboard.html)
-│   ├── common/               # Shared: mat_reader, process tree-kill, result variables, JSON-driver base
+│   ├── common/               # Shared: mat_reader, process tree-kill, result variables, JSON-driver base,
+│   │                         #   result_files (any variable of a result file, by name: .mat / result.json / .npz)
 │   ├── cross_backend.py      # EXPERIMENTAL Dymola → FMU → FMPy baseline chain
 │   ├── dymola/               # DymolaBackend (.mos batch) + PersistentDymolaBackend (Python interface)
 │   ├── fmpy/                 # FmpyBackend (in-process; per-test thread)
@@ -144,6 +146,9 @@ src/dstf/figures/
 ├── view.py                   # VariableView — the library-neutral picture of one variable
 ├── plotly.py                 # VariableView → a plotly figure dict (traces + shapes); editable=True
 │                             #   (the tool's, never the report's) adds a draggable ring per handle
+│                             #   plot_figure: several views on one plot (families in a hue ramp);
+│                             #   one view is variable_figure, unchanged
+├── families.py               # Array families: the last integer index, slice text, the hue ramp
 ├── assemble.py               # Trajectories + evaluated leaves → a VariableView
 └── decimate.py               # LTTB decimation on the view, before any trace exists
 ```

@@ -4196,3 +4196,40 @@ and named in the roadmap's sub-project 3 and 4 blocks rather than carried as
 text: their shape depends on the page sub-project 3 designs. `Session.close`
 stays as the library's counterpart to `open` — the Session is also driven
 without a page — although no page calls it since Close project went.
+
+## D130 — A test's plot layout is spec data; a result file is read by its backend class (2026-09-20)
+
+**Context.** The redesigned Test page draws any number of plots per test, any
+series per plot, tracked or not, and the report must draw the same plots
+(brief §3.9, §3.10). Three things stood in the way: a loaded `TestResult`
+holds only the tracked variables; spec patches were whitelisted to
+`/comparison` and `/metrics`; the report page was one section per variable.
+
+**Decision.** `plots` is an optional key per `test_spec.json` entry —
+`[{"kind": "time", "series": [{"var": ...}]}]` — strict inside (unknown keys,
+kinds, patterns, duplicates, blank names and empty series are refused by
+name; `null` is refused), ignored by scoring, carried on `TestModel.plots`
+(`None` = absent = one plot per tracked variable; `()` = no plots), patchable
+under `/plots`, described in the exported schema. Any variable of a result
+file is listed and read through two classmethods,
+`Backend.result_names(test_dir)` and `Backend.result_series(test_dir, names)`,
+default "none": a classmethod because the report reads a test's files without
+instantiating a backend. Neither raises on a missing, half-written or
+malformed file — a run killed mid-write leaves exactly that, and one test's
+file must not break a whole report. `plot_figure(views)` draws a plot: one
+view is `variable_figure` unchanged; several draw families (the last integer
+index) in a hue ramp with a folded legend, every leaf's geometry laid out
+against the union of the series' time spans and the panels any series opens,
+and no overlays or error traces. Both tiers resolve a layout through
+`resolved_plots`; the report page is sections per plot, numbered by position.
+
+**Consequences.** Dymola, Julia and Python result files hold every variable,
+so any of them can be plotted; OpenModelica's variable filter and FMPy's
+requested outputs keep only the tracked ones, and the tool says so rather
+than widening the run. A layout that names a variable a rerun dropped keeps
+its plot and names the series as missing. The Session never opens the work
+dir of a model a job holds — it serves what it read before the lock — and a
+failed job, which no reload follows, drops what was read of its models. A
+test with no `plots` key costs the report nothing: its result file is not
+opened again. `/variables` stays outside the patch whitelist until tracking
+from the Variables drawer needs it.

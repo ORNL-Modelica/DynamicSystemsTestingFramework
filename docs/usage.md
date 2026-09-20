@@ -143,6 +143,40 @@ Use case for the two layers: a model author can write `experiment(StopTime=100)`
 
 **Known gap**: `StartTime` from the annotation is not honored — every backend assumes `t=0`. Authoring `StartTime=5.0` in the annotation will be silently ignored. If you need a non-zero start, file an issue with the use case.
 
+#### Plot layout (`plots`)
+
+An entry may carry an optional `plots` key: the plots the per-test report and
+the authoring tool draw for that test. Scoring ignores it.
+
+```json
+{
+  "model": "MyLib.Examples.PipeTest",
+  "variables": ["pipe.m_flow", "pipe.T[1]"],
+  "plots": [
+    {"kind": "time", "series": [{"var": "pipe.m_flow"}, {"var": "pump.N"}]},
+    {"kind": "time", "series": [{"var": "pipe.T[1]"}, {"var": "pipe.T[6]"}, {"var": "pipe.T[11]"}]}
+  ]
+}
+```
+
+- **Absent** means one plot per tracked variable. `"plots": []` means no
+  plots. `null` is refused.
+- A series names **one variable of the result**, tracked or not (`pump.N`
+  above is plot only: it has no reference and no criteria). A pattern (`*`,
+  `?`) is refused; square brackets are part of a name. A variable may be on
+  several plots, once per plot.
+- `kind` is `"time"`, the only kind today, and is always written. Unknown keys
+  inside a plot or a series are refused, so a typo is loud.
+- Indexed names that differ in their last integer index (`pipe.T[1]`,
+  `pipe.T[6]`, …) draw as one family: one hue ramped light to dark by index,
+  one legend entry (`pipe.T[1:5:11]`).
+- A plot of several series shows no overlays and no error traces; both belong
+  to a plot of one variable.
+- A series the result does not hold draws nothing and the plot says
+  "Not in this result: …". Which untracked variables a result holds depends on
+  the backend: Dymola, Julia and Python result files hold every variable;
+  OpenModelica's and FMPy's hold only the tracked ones.
+
 **Components.UnitTests** (the in-source `n=N, x={...}` block) is a **discovery marker** carrying the variable list only. It deliberately does not carry simulation parameters — those live in the annotation (model-author-facing, editor-honored) or in `test_spec.json` (test-author-facing, override-only). Keeping the third layer out is what makes the contract teachable.
 
 ### Scalar leaves — comparing one number
@@ -378,9 +412,9 @@ multi-model form carries any number of models:
 The single-model form — `{"model": ..., "patch": [...]}` — is read too, because
 files in that shape exist. The authoring tool writes only the multi-model form.
 Paths in each `patch` are relative to that model's entry in `test_spec.json`
-and may only touch `/comparison` and `/metrics`; anything else — `/variables`,
-`/simulation` — is refused, so a patch cannot change what a test tracks or how
-it runs.
+and may only touch `/comparison`, `/metrics` and `/plots`; anything else —
+`/variables`, `/simulation` — is refused, so a patch cannot change what a test
+tracks or how it runs. A patch that leaves `plots` invalid writes nothing.
 
 #### Report layout and offline use
 

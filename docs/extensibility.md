@@ -158,6 +158,23 @@ A Backend must:
 5. Use `ProgressReporter` (backend-agnostic, already exists) for live-dashboard status.
 6. Put all tool-specific code under `backends/<name>/`. No tool-specific imports in framework core.
 
+Optionally, two **classmethods** let both tiers plot a variable the test does
+not track (the `plots` key, `docs/usage.md`):
+
+- `result_names(test_dir) -> list[str] | None` — every variable name in the
+  result file under `test_dir` (`work_dir/<test_key>`), without `time`;
+  `None` when the backend keeps no file it can list.
+- `result_series(test_dir, names) -> dict[str, tuple[time, values]]` — the
+  named series the file has, as 1-D float arrays on one time base; a name it
+  lacks is left out.
+
+They are classmethods because the report reads a test's files without
+instantiating a backend. The base class answers `None` / `{}`, so a backend
+without them stays valid and its tests plot tracked variables only. Neither
+may raise on a missing, half-written or malformed file: one test's file must
+not break a whole report. `backends/common/result_files.py` holds the three
+bundled formats (`.mat`, `result.json`, `.npz`) as name/series pairs.
+
 ### Persistent-worker contract
 
 If your backend can hold a loaded model in memory across tests (declares `Capability.PERSISTENT_WORKERS`), inherit from `PersistentBackendBase` (in `backends/persistent.py`) and supply a `Worker` subclass — you do **not** re-implement the dispatch loop. The template owns the orchestration; you fill in backend-specific construction and lifecycle hooks.

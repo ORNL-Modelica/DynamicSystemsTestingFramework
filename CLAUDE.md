@@ -19,11 +19,11 @@ DynamicSystemsTestingFramework/
 │   │                             #      companion, soft-check, import-baseline, export-schema
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect backend
 │   ├── pipeline.py               # run_pipeline — the run as a library callable; cmd_run is its CLI wrapper
-│   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse, RFC 6902 patch_apply,
+│   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse, plots (the per-test layout key), RFC 6902 patch_apply,
 │   │                             #      patch_envelope (both envelope forms), spec_update (the shared read-modify-write),
 │   │                             #      scan_cache (the tool's scan cache under $XDG_CACHE_HOME/dstf/scan/)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
-│   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base
+│   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base, result_files (any variable of a result file)
 │   │   └── cross_backend.py      # EXPERIMENTAL Dymola→FMU→FMPy baseline chain
 │   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers,
 │   │                             #      mode_schema (derive_schema — JSON-Schema export + the tool's forms),
@@ -32,7 +32,7 @@ DynamicSystemsTestingFramework/
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
 │   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages, the header,
 │   │                             #      capabilities by placement), forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
-│   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly) + LTTB decimate; both tiers draw from it
+│   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py classifier + console/junit + context_builder + report_suite + dashboard_render + theme.py (the token table both tiers render)
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + vendor/plotly.min.js (offline-capable reports)
 ├── examples/
@@ -177,7 +177,7 @@ Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-ch
 
 ### test_spec.json format
 
-Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`. Minimal entries need only `model` and `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. Full contract details in `docs/usage.md`.
+Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`, optional plot layout under `plots` (`[{"kind": "time", "series": [{"var": ...}]}]` — read by the report and the tool, ignored by scoring; absent means one plot per tracked variable; a series may name any variable of the result file, tracked or not). Minimal entries need only `model` and `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. Full contract details in `docs/usage.md`.
 
 ```json
 {

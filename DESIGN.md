@@ -177,8 +177,14 @@ indices field in Modelica slice syntax (`1:5:20`) or a list.
 
 **Array families on a plot.** Series from one array share a hue and ramp in
 lightness by index, low to high (`#90caf9` `#42a5f5` `#1976D2` `#0d47a1` for
-the accent hue); the legend folds to one entry with a small ramp; hover names
-the index. A second array on the same plot takes another hue.
+the accent hue); the legend folds to one entry; hover names the index. A
+second array on the same plot takes another hue, and so does a series that
+belongs to no array: green `#a5d6a7` `#66bb6a` `#388e3c` `#1b5e20`, then
+purple `#ce93d8` `#ab47bc` `#7b1fa2` `#4a148c` (Material 200 / 400 / 700 /
+900, as the accent ramp is), then the list cycles. A lone series takes its
+hue's third stop. A family is the names that differ in their last integer
+index (`pipe.T[3]`, `pipe.medium[3].T`). On a plot of several series a
+reference is dashed in its series' colour and stays out of the legend.
 
 **Plots are modular.** A test page is a list of plots; a plot is a list of
 series; a series is a variable name from the result plus an optional
@@ -190,7 +196,9 @@ whichever plot shows it; a plot-only series has no criteria until it is
 tracked. Each plot has its own toolbar: series chips, the overlay picker
 (role chips), the error overlay select, "Set window", and Remove plot. Legend
 at top-left inside the plot, as today. Secondary axes appear only while a
-series on them is visible; a second unit family on one plot gets one.
+series on them is visible; a second unit family on one plot gets one. A plot
+of several series shows no overlays and no error traces — both belong to a
+plot of one variable — and says so where it greys them.
 
 **Icons.** Material Icons in the tool (Quasar ships them). In mockups, inline
 stroke SVG on a 16px grid. Never emoji.
