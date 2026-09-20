@@ -554,24 +554,15 @@ def _secondary_axis(title: str) -> dict:
     }
 
 
-def variable_figure(
-    view: VariableView, max_samples: int | None = None, *, editable: bool = False
-) -> dict:
-    """The one figure both tiers draw. ``max_samples`` decimates the view first.
+def _leaf_traces(
+    view: VariableView, ctx: _Ctx, *, editable: bool
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Every leaf of one view, drawn: ``(traces, shapes, rings)``.
 
-    ``editable`` adds a draggable ring per handle marker and
-    ``config.edits.shapePosition``; the report's figure never passes it.
+    The one loop both figure builders run — so a new primitive type, or a
+    change to what a handle ring is, lands in a single place.
     """
-    if max_samples:
-        view = decimate_view(view, max_samples)
-    x_min, x_max = _time_span(view)
-    ctx = _Ctx(
-        x_min=x_min,
-        x_max=x_max,
-        has_spectrum=view.has_spectrum,
-        full_samples=view.full_samples,
-    )
-    data: list[dict] = _base_traces(view)
+    data: list[dict] = []
     shapes: list[dict] = []
     rings: list[dict] = []
     for leaf in view.leaves:
@@ -593,6 +584,29 @@ def variable_figure(
         data.extend(_marker_traces(markers, leaf))
         if editable:
             rings.extend(_handle_rings(markers))
+    return data, shapes, rings
+
+
+def variable_figure(
+    view: VariableView, max_samples: int | None = None, *, editable: bool = False
+) -> dict:
+    """The one figure both tiers draw. ``max_samples`` decimates the view first.
+
+    ``editable`` adds a draggable ring per handle marker and
+    ``config.edits.shapePosition``; the report's figure never passes it.
+    """
+    if max_samples:
+        view = decimate_view(view, max_samples)
+    x_min, x_max = _time_span(view)
+    ctx = _Ctx(
+        x_min=x_min,
+        x_max=x_max,
+        has_spectrum=view.has_spectrum,
+        full_samples=view.full_samples,
+    )
+    data: list[dict] = _base_traces(view)
+    leaf_data, shapes, rings = _leaf_traces(view, ctx, editable=editable)
+    data.extend(leaf_data)
     for s in view.errors:
         data.append(_error_trace(s, ctx))
     config: dict = dict(PLOT_CONFIG)
@@ -647,25 +661,10 @@ def plot_figure(
             has_spectrum=has_spectrum,
             full_samples=view.full_samples,
         )
-        for leaf in view.leaves:
-            window = next((p for p in leaf.geometry if isinstance(p, Window)), None)
-            markers: list[Marker] = []
-            for prim in leaf.geometry:
-                if isinstance(prim, Marker):
-                    markers.append(prim)
-                    continue
-                builder = TRACE_BUILDERS.get(type(prim))
-                if builder is None:
-                    raise TypeError(
-                        f"no figure builder for {type(prim).__name__} "
-                        f"(id {prim.id!r}); add one to TRACE_BUILDERS"
-                    )
-                traces, new_shapes = builder(prim, leaf, window, ctx)
-                data.extend(traces)
-                shapes.extend(new_shapes)
-            data.extend(_marker_traces(markers, leaf))
-            if editable:
-                rings.extend(_handle_rings(markers))
+        leaf_data, leaf_shapes, leaf_rings = _leaf_traces(view, ctx, editable=editable)
+        data.extend(leaf_data)
+        shapes.extend(leaf_shapes)
+        rings.extend(leaf_rings)
     config: dict = dict(PLOT_CONFIG)
     if editable:
         config["edits"] = {"shapePosition": True}
