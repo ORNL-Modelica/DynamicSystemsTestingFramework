@@ -496,9 +496,10 @@ class Session:
         key = last_test_keys(work_dir).get(model_id) if work_dir is not None else None
         return work_dir / key if key is not None and work_dir is not None else None
 
-    def _tracked(self, model_id: str) -> list[str]:
+    def tracked(self, model_id: str) -> list[str]:
         """The names the page plots by default, in its order: the scored
-        variables, else — nothing scored (no baseline) — the result's."""
+        variables, else — nothing scored (no baseline) — the result's. It is
+        also what tells a plot's scored series from its plot-only ones."""
         comp = self.comparisons.get(model_id)
         names = (
             [vc.name for vc in comp.variables if vc.name] if comp is not None else []
@@ -524,7 +525,7 @@ class Session:
             )
             reads.names = None if listed is None else tuple(listed)
             reads.names_read = True
-        tracked = self._tracked(model_id)
+        tracked = self.tracked(model_id)
         have = set(tracked)
         return tracked + [n for n in reads.names or () if n not in have]
 
@@ -561,7 +562,7 @@ class Session:
             raise KeyError(model_id)
         self.variable_names(model_id)  # reads the file's names, once
         return resolved_plots(
-            test, self._tracked(model_id), available=self._reads_for(model_id).names
+            test, self.tracked(model_id), available=self._reads_for(model_id).names
         )
 
     def plot_figure(

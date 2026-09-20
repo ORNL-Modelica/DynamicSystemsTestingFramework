@@ -2058,6 +2058,14 @@ class TestPlots:
         s.open(cfg, work_dir=work)
         return s
 
+    def test_tracked_is_what_was_scored_else_the_results_names(self, tmp_path):
+        """The page's default plots: the scored names in their order, never
+        the file's — `a0` sits before `x` in A's result file."""
+        s = self._open(tmp_path)
+        assert s.tracked(A) == ["x", "y"]
+        assert s.tracked(B) == ["x", "y"]  # nothing scored: the result's names
+        assert s.tracked(C) == []
+
     def test_variable_names_lists_the_file_tracked_first(self, tmp_path):
         s = self._open(tmp_path)
         assert s.variable_names(A) == ["x", "y", "a0", "z"]

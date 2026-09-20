@@ -84,13 +84,16 @@ def leaf_name(leaf: dict) -> str:
 
 
 def leaf_readout(leaf: dict) -> str:
-    """The CLI's words for the score: its display and the criterion it was
-    held to, or the sentinel's reason."""
+    """The CLI's own words for the score: the sentinel's reason, else the
+    criterion it was held to — which ALREADY carries the score ("NRMSE
+    1.531e-01 vs tolerance 1.000e-02 → FAIL"), so the display beside it said
+    the number twice (the first screenshot) — else the display alone. The
+    trailing verdict is not stripped: `tube` and `range` do not end with
+    it ("… → FAIL (requires 0)"), so a strip would read the string wrong for
+    half the modes."""
     if leaf.get("error"):
         return str(leaf["error"])
-    return " · ".join(
-        str(part) for part in (leaf.get("score_display"), leaf.get("criterion")) if part
-    )
+    return str(leaf.get("criterion") or leaf.get("score_display") or "")
 
 
 def node_text(node: dict) -> str:
@@ -152,17 +155,21 @@ class TreeCard:
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
             self.rows = ui.column().classes("w-full gap-0").mark("tree:rows")
         self.rows.set_visibility(False)
-        self.refresh()
+        self.refresh(self._view())
+
+    def _view(self) -> dict | None:
+        return self.page.shell.session.tree_view(self.page.model_id)
 
     def toggle(self) -> None:
         self.is_open = not self.is_open
-        self.refresh()
+        self.refresh(self._view())
 
-    def refresh(self) -> None:
+    def refresh(self, view: dict | None) -> None:
         """Follow the Session: the line every time (it is five elements and
         the toggle's own text is one of them), the rows in place unless
-        their shape moved. Open or closed is the card's and survives this."""
-        view = self.page.shell.session.tree_view(self.page.model_id)
+        their shape moved. Open or closed is the card's and survives this.
+        ``view`` is the page's ONE `tree_view` read of this sync — the cards
+        draw their criteria rows from the same dict."""
         if view is None:
             self.is_open = False
         self._line(view)

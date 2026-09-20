@@ -666,3 +666,208 @@ async def test_an_unknown_model_keeps_the_stub_message(shell):
         await _open(user, "/test/FakeLib.Nope")
         await user.should_see("FakeLib.Nope is not a test of this project")
         assert _none(user, "subheader") and _none(user, "tree")
+
+
+def test_the_readout_says_the_criterion_once():
+    """The first screenshot's defect: `criterion` already carries the score,
+    so printing the display beside it said the number twice. The verdict is
+    not stripped off the end — `tube` and `range` do not end with it."""
+    from dstf.authoring.shell.tree_card import leaf_readout
+
+    leaf = {
+        "score_display": "NRMSE 1.531e-01",
+        "criterion": "NRMSE 1.531e-01 vs tolerance 1.000e-02 → FAIL",
+    }
+    assert leaf_readout(leaf) == leaf["criterion"]
+    assert leaf_readout({"score_display": "not scored"}) == "not scored"
+    assert leaf_readout({"score_display": "s", "criterion": "c", "error": "e"}) == "e"
+    assert leaf_readout({}) == ""
+
+
+# -- the plot cards ----------------------------------------------------------
+
+from test_session import LAYOUT, _plots_project  # noqa: E402
+
+T0, T1 = "/metrics/children/0", "/metrics/children/1"
+
+
+@pytest.fixture
+def plots_shell(tmp_path):
+    """`_plots_project`: A's result carries an UNTRACKED `z`, so a layout can
+    draw a plot-only series beside a scored one."""
+    cfg, work = _plots_project(tmp_path)
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.load.phase = "done"
+    return s
+
+
+def _plotlys(page) -> list:
+    return [e for e in page.client.elements.values() if isinstance(e, ui.plotly)]
+
+
+async def test_a_test_shows_one_card_per_tracked_variable(shell):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert _one(user, "plot-title:0").text == "x"
+        assert _one(user, "plot-title:1").text == "y"
+        assert _one(user, "plots:count").text == "2 plots · one per tracked variable"
+        # Nothing is drawn until the browser says a slot is near the viewport.
+        assert [c.plot for c in page.cards] == [None, None]
+        assert _plotlys(page) == []
+        slot = _one(user, "plot-slot:0")
+        assert "dstf-plot-slot" in slot.classes and slot.props["data-plot"] == "0"
+
+
+async def test_show_builds_the_plot_once_with_no_rings(shell):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.cards[0].show()
+            plot = page.cards[0].plot
+            assert plot.figure == shell.session.plot_figure(A, 0, editing=())
+            page.cards[0].show()
+        assert page.cards[0].plot is plot and page.cards[1].plot is None
+        assert plot.parent_slot.parent is _one(user, "plot-slot:0")
+
+
+async def test_a_shown_plot_has_no_rings_until_a_criterion_opens(shell):
+    """Over A (nrmse only) `editing=()` and `editing=None` are the same
+    figure; TREE on D has ring-bearing leaves, so the two differ there."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        with page.client:
+            page.cards[0].show()
+        figure = page.cards[0].plot.figure
+        assert figure == shell.session.plot_figure(D, 0, editing=())
+        assert figure != shell.session.plot_figure(D, 0)
+        assert not [s for s in figure["layout"]["shapes"] if s.get("type") == "circle"]
+
+
+async def test_the_browser_event_shows_the_named_card(shell):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.on_visible("1")
+            assert page.cards[1].plot is not None and page.cards[0].plot is None
+            for junk in ("7", "x", "-1", None, 1.5, {"a": 1}):
+                page.on_visible(junk)
+        assert page.cards[0].plot is None
+
+
+async def test_a_layout_draws_its_plots(plots_shell):
+    shell = plots_shell
+    shell.session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert len(page.cards) == 1 and _one(user, "plot-title:0").text == "x, z"
+        assert _one(user, "plots:count").text == "1 plot · from this test's plots key"
+        assert _one(user, "plot-only:0").text == "z is plot only: it has no criteria."
+        assert list(page.cards[0].rows) == [T0]  # x's leaf only
+        assert _none(user, "plot-missing:0")
+        shell.session.discard()
+        shell.session.stage(
+            [
+                PatchOp(
+                    A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "no.such"}]}]
+                )
+            ]
+        )
+        await _test_page(shell, user)
+        assert _one(user, "plot-missing:0").text == "Not in this result: no.such"
+
+
+async def test_criteria_rows_follow_the_tree(shell):
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        criteria = _one(user, "criteria:0")
+        rows = [
+            m
+            for child in criteria.default_slot.children
+            for m in child._markers
+            if m.startswith("criterion:")
+        ]
+        assert rows == [f"criterion:0:/metrics/children/{i}" for i in range(6)]
+        assert page.cards[0].rows[T1].name.text == "range · x"
+        assert "dstf-pill-pass" in _one(user, f"criterion-pill:0:{T1}").classes
+        from dstf.authoring.shell.tree_card import leaf_readout
+
+        node = shell.session.tree_view(D)["children"][1]
+        assert leaf_readout(node)
+        assert _one(user, f"criterion-readout:0:{T1}").text == leaf_readout(node)
+        host = _one(user, f"node:0:{T1}")
+        (wrap,) = user.find(marker=f"wrap:{T1}").elements  # the tree is closed
+        assert host in list(_ancestors(wrap))
+
+
+async def test_a_rows_node_selection_carries_its_variable(shell):
+    """Through Edit tree this is unobservable (its add form falls back to the
+    leaf's own variable); a probe at NODE sees the selection itself."""
+    seen: list[Selection] = []
+
+    class _Sees(_Probe):
+        def panel(self, s, ui_panel):
+            seen.append(s.selection)
+
+    _only(_Sees("sees", {Placement.NODE}))
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        assert {(s.variable, s.node_path) for s in seen} == {("x", T0), ("y", T1)}
+
+
+async def test_the_card_pill_is_the_worst_of_its_variables_criteria(shell):
+    tree = {
+        "combinator": "and",
+        "children": [_range(-1), {"metric": "nrmse", "variable": "x"}],
+    }
+    _stage_tree(shell, A, tree)  # the first leaf passes, the second fails
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[0]
+        assert "dstf-pill-fail" in _one(user, "plot-pill:0:x").classes
+        shell.session.stage([PatchOp(A, "add", f"{T1}/tolerance", 0.5)])
+        await _settled(lambda: "dstf-pill-pass" in _one(user, "plot-pill:0:x").classes)
+        assert page.cards[0] is card  # painted in place, not rebuilt
+
+
+async def test_the_footer_adds_a_criterion_for_the_variable(shell):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        footer = _one(user, "variable-actions:0:x")
+        (button,) = [
+            e
+            for e in user.find(marker="action:edit-tree").elements
+            if footer in list(_ancestors(e))
+        ]
+        assert button.text == "Add a criterion for x"
+        _click_in(user, "action:edit-tree", within="variable-actions:0:x")
+        # A dialog hangs off the client's layout, not off the bar that opened
+        # it: the marker carries the variable, so a plain find is unique.
+        await user.should_see(marker="apply-add:x")
+        user.find(marker="apply-add:x").click()
+        await _settled(lambda: len(_page(shell, user).cards[0].rows) == 2)
+
+
+async def test_a_test_with_no_result_has_no_cards(shell):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, C)
+        assert _one(user, "plots:count").text == "no plots: this test has no result"
+        assert page.cards == []
+
+
+async def test_a_no_baseline_test_draws_its_result(shell):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, B)
+        assert len(page.cards) == 2 and all(not c.rows for c in page.cards)
+        footer = _one(user, "variable-actions:0:x")
+        (why,) = [
+            e
+            for e in user.find(marker="action:edit-tree:why").elements
+            if footer in list(_ancestors(e))
+        ]
+        assert why.text == "no tree to edit (nothing scored)"
+        with page.client:
+            page.cards[0].show()
+        assert page.cards[0].plot is not None

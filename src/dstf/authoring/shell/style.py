@@ -46,6 +46,13 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   letter-spacing: .03em; padding: 1px 6px; border-radius: 3px; border: 1px solid;
 }
 .dstf-tree-line { min-height: 32px; }
+.dstf-plot-slot { min-height: 320px; }
+.dstf-crit {
+  min-height: 36px; padding: 4px 8px; cursor: pointer;
+  border-top: 1px solid var(--dstf-border-hairline);
+}
+.dstf-crit:hover { background: var(--dstf-surface-hover); }
+.dstf-crit-open { background: var(--dstf-selection); }
 .dstf-wordmark { font-size: 20px; font-weight: 700; }
 .dstf-mono { font-family: var(--dstf-mono); }
 .dstf-why { color: var(--dstf-text-muted); font-size: 12px; }
