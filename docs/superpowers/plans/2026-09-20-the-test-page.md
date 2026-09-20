@@ -24,7 +24,17 @@
 
 **Not built here, named so nobody looks for it:** the key-stats row (artboard `key_stats`; its numbers come from the run's statistics files, which the Session does not read yet — logged for the owner after the build); the rail, the Tests and Variables drawers, array folding, the folded criteria row, Add plot / Add series / Separate / Remove plot, the 2 px ring on the selected plot (3c); Set window, Reset, Seed / Snapshot from reference, live per-row readouts, Shift+click gestures, the remove confirmation, Esc, a panel following an edit staged elsewhere beyond what Task 7 states, the leaf's config error above its editor (sub-project 4); the running state (sub-projects 5, 6); the "when to use it" tooltips on capability buttons (no contract text for them yet).
 
-**Review provenance.** To be filled by the executing review (Task "review" in the build loop, before Task 1): the reviewer applies Tasks 1–7 in a `git archive` copy, runs every red state and every named mutation, and the findings are folded here.
+**Review provenance.** The plan text had a fresh-context EXECUTING review on 2026-09-20 (ACCEPT-WITH-FIXES: 3 HIGH, 9 MED, 9 LOW): Tasks 1–7 and Task 8's browser test were applied in a `git archive` copy of d9bb328, every red state run, every named mutation applied; with its fixes the archive stood at 2263 passed / 18 skipped (not playwright; an archive skips 18 where the tree skips 3), 30 passed (playwright), ruff / format / bare mypy clean. Every finding is folded below, in place where a task's text was wrong and in the block "Corrections from the executing review" where it adds to a task. The three HIGHs: a `column` class does not stack NiceGUI's header (found only by READING the screenshot); a mode switch changed the page's shape and closed the editor mid-edit; a test's implicit tree is ALWAYS `and[...]`, never a root leaf. Task 8's conformance tests and Tasks 9–10 were read, not executed.
+
+## Corrections from the executing review (binding on every task; where a task's text disagrees, this block wins)
+
+1. **Fixtures as they are.** Every scored test's tree — `session.tree(m)` and `tree_view(m)` — is `{"combinator": "and", "children": [...]}`, never a root leaf; a root leaf exists only after staging one (`PatchOp(A, "add", "/metrics", {"metric": "nrmse", "variable": "x"})`, as `tests/test_edit_on_plot.py::_root_leaf_on_a`). Over `_two_var_project`, A is `and[nrmse x, nrmse y]` with BOTH failing; D is `and[nrmse x]`, passing; B has `tree()` and `tree_view()` None and two plots; C has `plots() == ()`. `warn` takes exactly one child. Only `nrmse` has neither a handle nor a table (scalar HAS `edit_handle`; event-timing has a table) — so every TRANSFORM criterion's editor shows `why:edit-on-plot` "nrmse has no on-plot handles".
+2. **Simulation rules.** ONE `user_simulation` per test: `Shell.mount()` is once per Shell, so a test over two models reopens inside the same simulation (`await _test_page(shell, user, B)`). `User.find(...).click()` clicks only the lowest-id match, and a tree row and a criteria row host the SAME cluster (markers `wrap:{path}` … exist twice once the tree is open): tests click through `_click_in(user, marker, within=<host marker>)` — find by marker, keep the element with an ancestor carrying the host's marker, `UserInteraction(user, {el}, None).click()`. If the tree line is rebuilt on toggle, re-find `tree:toggle` before reading it. `shell.tick()` is not needed in tests: the app timer runs. `forms.py` marks no field and is NOT changed: tests find a form field by `props["label"]` (range's lower bound is "Lower bound (optional)", the mode select "mode"). Every `ui.run_javascript` under the simulation logs one `'AppConfig' object has no attribute 'reconnect_timeout'` error line: noise, not a failure.
+3. **mypy and ruff.** `lambda p=path: Selection(...)` fails bare mypy ("Cannot infer type of lambda"): use `functools.partial(Selection, tests=..., node_path=path)`. Walk to the header with `with ui.header() as bar:`, not `parent_slot.parent`. Nested `with icon: with ui.menu():` is ruff SIM117: one parenthesised `with`.
+4. **Existing tests that move** (each updated in the task that moves it, saying why): `tests/test_author_suite_playwright.py` reads `.dstf-test` for "FakeLib.A" and `.dstf-test .dstf-badge` — both are now under `.dstf-subheader` (Task 4); `tests/test_suite_page.py::test_a_click_opens_the_test_page…` asserts the stub's sentence → `should_see(marker="tree")` (Task 4); `tests/test_plot_figure.py`'s `spy(view, ctx, *, editable)` → `**kwargs` (Task 1). `SessionView` gains NO `tracked` mirror (its public names are pinned by `TestSessionView::test_exposes_readers_and_no_writer`): the page reads `Session.tracked`.
+5. **Cost.** An Edit tree cluster is ~28 elements (three menus with selects); 40 leaves made a 1233-element page, 2387 with the tree open, and every sync with the tree open re-sent ~1150 elements. So: a cluster builds each menu's CONTENT lazily on the menu's first open (Task 2), and `TreeCard.refresh` rebuilds its rows only when the tree's shape moved, else repaints pills and readouts in place (Task 4).
+6. **Review harness.** `export PYTHONDONTWRITEBYTECODE=1`; after restoring a mutated file `touch` it (a same-size mutant kept running from a stale `.pyc`); the full suite creates `<archive>/.venv` — exclude it from diffs.
+7. **A working reference exists:** `<scratchpad>/review-a.diff` (the reviewer's archive against d9bb328). An implementer may read its hunks for the task in hand; the plan, not the diff, is the specification, and every task still gets its own mutation-running review.
 
 ---
 
@@ -92,7 +102,7 @@ Decision 7, and the first bullet of the 3a reviews' follow-ups (a multi-series `
 
 - [ ] **Step 1: Write the failing tests.**
 
-In `tests/test_figures.py`, beside the existing ring tests (locate `"xsizemode"`), using that module's own view fixture for a view with at least two handle-bearing leaves (the fixture the existing ring test builds its `expected` from); name the two leaf paths `first` and `second` from `view.leaves[i].path`:
+In `tests/test_figures.py`, beside the existing ring tests (locate `"xsizemode"`). No fixture there has two ring-bearing leaves (`_handle_view()` has one leaf; the two-leaf test rings only its first), so add `_two_ring_view(name="x", paths=("/metrics/children/0", "/metrics/children/1"))` — two leaves, each with one handle `Marker` and one `HLine`, built the way `_handle_view` builds its one — and use it in both files:
 
 ```python
 def _ring_names(fig: dict) -> set[str]:
@@ -198,6 +208,8 @@ returning `with_leaves`. Then
 
 - [ ] **Step 5: Gates, commit** (`figures: rings for the named leaves only; session: a multi-series plot over the cached bases`).
 
+The single-view branch gets its own assertion: `plot_figure([v], None, editable=True, rings_for=()) == variable_figure(v, None, editable=True, rings_for=())`, with no circles.
+
 **Named mutations:** (a) `leaf.path in rings_for` → `True`; (b) drop `rings_for=` in `plot_figure`'s multi-view call to `_leaf_traces`; (c) drop it in the single-view branch of `plot_figure`; (d) `Session.plot_figure` multi branch back to `self.view(...)` with the budget; (e) `Session.figure` ignoring `editing`; (f) `editable=bool(editing)` in `Session.figure` (the config test).
 
 **Done when:** the new tests pass, the goldens are untouched, and a multi-series `plot_figure` called twice calls `build_trajectories` zero times the second time.
@@ -214,7 +226,7 @@ Decisions 1–6.
 
 - [ ] **Step 1: Write the failing tests.**
 
-`tests/test_builtin_capabilities.py` — replace the placements table's rows for the two capabilities (locate `assert EditTree.placements == {T}`): Edit tree is `{Placement.NODE, Placement.VARIABLE}`, Edit on plot `{Placement.CRITERION}`; delete the Edit tree PANEL tests that drive the old rows (`wrap:{path}` buttons in a TEST-scoped panel) and keep every `act` test. Add (the module's `session` fixture and `host` import are there; `N = "/metrics/children/0"`):
+`tests/test_builtin_capabilities.py` — replace the placements table's rows for the two capabilities (locate `assert EditTree.placements == {T}`): Edit tree is `{Placement.NODE, Placement.VARIABLE}`, Edit on plot `{Placement.CRITERION}`; keep every `act` test (no test there drives the old rows panel). Add (the module's `session` fixture and `host` import are there; `N = "/metrics/children/0"`):
 
 ```python
 ROOT = "/metrics"
@@ -239,7 +251,8 @@ def test_the_caption_at_a_variable_names_it(session):
 
 
 def test_add_beside_a_root_leaf_wraps_the_root_in_and(session):
-    # A's implicit tree is one nrmse leaf at the root.
+    # An implicit tree is always and[...]: a root leaf has to be staged.
+    session.stage([PatchOp(A, "add", "/metrics", {"metric": "nrmse", "variable": "x"})])
     view = SessionView(session, _node(A, ROOT))
     assert "combinator" not in session.tree(A)
     outcome = EditTree().act(view, action="add", model_id=A, path=ROOT, variable="x", metric="range")
@@ -296,8 +309,9 @@ async def test_remove_stages_at_once(session):
 async def test_the_variable_panel_adds_a_criterion_for_it(session):
     sel = Selection(tests=frozenset({A}), variable="x")
     async with host(session, EditTree(), sel) as (user, errors, _figure):
+        n = len(session.tree(A)["children"])
         user.find(marker="apply-add:x").click()
-        await _settled(lambda: "combinator" in (session.tree(A) or {}))
+        await _settled(lambda: len(session.tree(A)["children"]) == n + 1)
         assert errors == {}
 ```
 
@@ -312,8 +326,9 @@ def test_available_needs_one_open_criterion_with_handles(session):
     one = frozenset({D})
     assert cap.available(SessionView(session, Selection(tests=one, variable="x"))) == "open one criterion"
     assert cap.available(SessionView(session, Selection(tests=one, variable="x", leaf_path="/metrics/children/0"))) is True
-    # children/3 is the scalar leaf: no handles, no table.
-    assert cap.available(SessionView(session, Selection(tests=one, variable="x", leaf_path="/metrics/children/3"))) == "scalar has no on-plot handles"
+    # Only nrmse has neither a handle nor a table: A's untouched leaf.
+    on_a = Selection(tests=frozenset({A}), variable="x", leaf_path="/metrics/children/0")
+    assert cap.available(SessionView(session, on_a)) == "nrmse has no on-plot handles"
 
 
 def test_a_drag_on_another_leafs_handle_is_refused_by_name(session):
@@ -347,7 +362,7 @@ and adapt `test_the_panel_draws_a_table_per_list_field_and_stages_edits` to open
 - `available`: one test, else `"select exactly one test"`; then the lock sentence; then `s.tree(model_id) is None` → the existing sentence; then neither `node_path` nor `variable` → `"select a tree node or a variable"`.
 - `caption`: `f"Add a criterion for {sel.variable}"` when `sel.node_path is None and sel.variable`, else `self.label`.
 - `panel`: with `node_path` → `_cluster(...)`; else → `_add_form(ui, s, ui_panel, model_id, under=ROOT, variable=sel.variable, mark=f"apply-add:{sel.variable}")` drawn open (the dialog is its frame).
-- `_cluster`: `node = _node_at(tree, path)`; a `ui.row().classes("dstf-node-controls items-center no-wrap gap-0")` of flat dense ROUND icon buttons, each `.props("flat dense round size=sm")` with `.tooltip(...)` and `.mark(...)`: `add` (icon `add`, tooltip "Add a criterion under this node" on a combinator, "Add a criterion beside this one" on a leaf, marker `add:{path}`) whose `ui.menu` holds the add form (variable select defaulting to the leaf's variable, metric select, a button marked `apply-add:{path}`); `wrap` (icon `data_array`, tooltip "Wrap in a combinator (and / or / k-of-n / warn / weighted)", marker `wrap:{path}`) whose menu holds `combinator_controls(None)` and a button marked `apply-wrap:{path}`; on a combinator `edit` (icon `tune`, "Change this combinator", `edit:{path}`, menu with `combinator_controls(node)` and `apply-edit:{path}`) and, with exactly one child, `unwrap` (icon `unfold_less`, `unwrap:{path}`, acts at once); unless `path == ROOT`, `remove` (icon `remove`, "Remove this criterion" / "Remove this node and everything under it", `remove:{path}`, acts at once). Each form's apply button calls `ui_panel.submit(model_id=..., action=..., path=..., **values)` and closes its menu.
+- `_cluster`: `node = _node_at(tree, path)`; a `ui.row().classes("dstf-node-controls items-center no-wrap gap-0")` of flat dense ROUND icon buttons, each `.props("flat dense round size=sm")` with `.tooltip(...)` and `.mark(...)`: `add` (icon `add`, tooltip "Add a criterion under this node" on a combinator, "Add a criterion beside this one" on a leaf, marker `add:{path}`) whose `ui.menu` holds the add form (variable select defaulting to the leaf's variable, metric select, a button marked `apply-add:{path}`); `wrap` (icon `data_array`, tooltip "Wrap in a combinator (and / or / k-of-n / warn / weighted)", marker `wrap:{path}`) whose menu holds `combinator_controls(None)` and a button marked `apply-wrap:{path}`; on a combinator `edit` (icon `tune`, "Change this combinator", `edit:{path}`, menu with `combinator_controls(node)` and `apply-edit:{path}`) and, with exactly one child, `unwrap` (icon `unfold_less`, `unwrap:{path}`, acts at once); unless `path == ROOT`, `remove` (icon `remove`, "Remove this criterion" / "Remove this node and everything under it", `remove:{path}`, acts at once). Each menu's CONTENT is built on the menu's first open (`menu.on("show", build_once)` — read NiceGUI 3.16's `ui.menu` for the event's name; under the simulation the content must still be reachable: if an unopened menu's lazy content cannot be found, the tests open the menu first by clicking its icon button, which is what a user does). Each form's apply button calls `ui_panel.submit(model_id=..., action=..., path=..., **values)` and closes its menu.
 - `act(action="add")`: `node = _node_at(tree, path)`; a combinator → as today; a leaf at `ROOT` → `Patch(ops=[PatchOp(model_id, "add", ROOT, {"combinator": "and", "children": [node, leaf]})])`; any other leaf → `parent = path.rsplit("/children/", 1)[0]`, op `add` at `f"{parent}/children/-"`. `tree is None` raises the existing `ValueError`.
 - Delete `node_rows`, `draw`, `open_*_form`'s old shapes and `_row_text`; the module docstring is rewritten (it names `Shell.act` and "the tab" — the 2026-09-16 follow-ups asked for this sweep; sweep the same words at `capabilities.py`'s `Panel.submit` and in `tests/test_capabilities.py`).
 
@@ -452,7 +467,8 @@ class InlineHost:
 - `owner = f"{marker}:{cap.name}"`; a panel gets `ShellPanel(submit, figure.owned(owner) if figure is not None else _NoFigure())`; `clear()` and the start of `build()` call `figure.clear(owner)` for every owner this host registered.
 - Per capability: `error = ui.label("").classes("text-negative text-xs").mark(f"error:{cap.name}")`, hidden; then `available` (through `shell.placed`) — not True → `ui.label(sentence).classes("dstf-why").mark(f"why:{cap.name}")`; True → `ui.column().classes("w-full gap-2").mark(f"panel:{cap.name}")` with `cap.panel(view, panel)` inside a `try` that draws `f"{type(e).__name__}: {e}"` in `text-negative`.
 - `submit`: `shell.session.apply(cap.act(view, **inputs))` in a `try`; on error set and show the label; on success hide it and call `on_applied(cap.name)`.
-- The host's column: `ui.column().classes("w-full gap-2").mark(marker)`.
+- The host's column: `ui.column().classes("w-full gap-2").mark(marker)`, holding ONE CELL per capability (a `ui.column().classes("w-full gap-1")` with that capability's error label and its why-line or panel). `build(skip: str | None = None)` rebuilds every cell but `skip`'s, which is left untouched — Task 6 needs it, and it lands here so the structure is not rebuilt there. Tests assert order by markers in document order (`error:one` before `panel:one` before `error:two`), never by `default_slot.children`; test 3 gains: after `host.build(skip="one")` the `go:one` element is the same object and `go:two` is a new one.
+- The column stops a click inside it from reaching what hosts it: `self.column.on("click", js_handler="(e) => e.stopPropagation()")` — the spelling that works in NiceGUI 3.16 (the review, in Chromium: without it a click on a row's wrap icon also opened the row's editor).
 
 `ActionBar.__init__` gains `figure: FigureHook | None = None`; `open()` builds `ShellPanel(submit, self.figure.owned(f"{self.marker}:{cap.name}") if self.figure is not None else _NoFigure())` after `self.figure.clear(that owner)`; the dialog's Close also clears it. (`FigureHook` here is the shell's class from `.figure_hook`; the protocol import keeps its alias.)
 
@@ -490,11 +506,11 @@ async def _test_page(shell, user, model=A) -> TestPage:
 ```
 
 1. `test_the_test_header_is_a_second_row_of_the_shared_header`: the elements marked `back`, `model`, `status`, `test-actions` all have an ancestor marked `subheader`, and `subheader`'s parent is the `ui.header` element that also holds `wordmark` (walk `element.parent_slot.parent`). `status` reads `FAIL` for A. `meta` reads `"Python · ref_0001"` (the backend's name, the primary reference's id; `"Python · no baseline"` for B).
-2. `test_the_tree_loads_closed_to_one_line_naming_what_failed`: for A (one failing nrmse leaf at the root): `tree:root` reads `"nrmse"`… — precisely: for a single-leaf root the line's node text is `"1 criterion"`; for a combinator root `"and · 6 criteria"`. `tree:summary` reads `"0 pass · 1 fail: nrmse · x"`. `tree:rows` is NOT visible (`_page(...).tree.rows.visible is False`). For D (PASS): `"1 pass"`, and no element marked `tree:jump`.
-3. `test_the_summary_names_the_first_failures_and_counts_the_rest`: stage on D a tree of four failing range leaves (`min_value: 5`) and one passing; summary `"1 pass · 4 fail: range · x, range · x, +2 more"` (at most two named); an advisory failure (a `warn` over a failing leaf, staged beside a passing primary) reads `"1 pass · 1 advisory: range · x"` and the root pill's class is the PASS one.
+2. `test_the_tree_loads_closed_to_one_line_naming_what_failed`: for A (`and[nrmse x, nrmse y]`, both failing): `tree:root` reads `"and · 2 criteria"` (a staged root leaf reads `"1 criterion"`), `tree:summary` reads `"0 pass · 2 fail: nrmse · x, nrmse · y"`. `tree:rows` is NOT visible (`_page(...).tree.rows.visible is False`). For D (PASS, reopened in the same simulation): `"and · 1 criterion"`, `"1 pass"`, and no element marked `tree:jump`.
+3. `test_the_summary_names_the_first_failures_and_counts_the_rest`: stage on D a tree of four failing range leaves (`min_value: 5`) and one passing; summary `"1 pass · 4 fail: range · x, range · x, +2 more"` (at most two named); an advisory failure (a `warn` over ONE failing leaf, staged beside a passing primary) reads `"1 pass · 1 advisory: range · x"` and the root pill's class is the PASS one; and — the ordering mutant's killer — `and[warn[range min 5], warn[range min 6], range max -9]` reads `"0 pass · 1 fail · 2 advisory: range · x, range · x, +1 more"` with the FIRST jump's path the hard failure's.
 4. `test_show_tree_opens_the_rows_with_controls_on_every_node`: click `tree:toggle`; `tree:rows` visible; for TREE staged on D there is a `tree-row:` for `/metrics` and each child; each row has a NODE host (`node:{path}`) in which `wrap:{path}` is found; the root's has no `remove:/metrics`. The toggle's text flips `"Show tree"` → `"Hide tree"`.
 5. `test_a_wrap_from_the_tree_restages_the_rows`: click `apply-wrap:/metrics/children/1`; `_settled` on a `tree-row:/metrics/children/1/children/0` existing; the tree stays OPEN.
-6. `test_the_jump_opens_the_failing_criterion` — lands in Task 6 (it needs the editor); here only: `tree:jump` exists for A and is a button whose text is `"nrmse · x"`.
+6. `test_the_jump_opens_the_failing_criterion` — lands in Task 6 (it needs the editor); here only: A has two `tree:jump` buttons, reading `"nrmse · x"` and `"nrmse · y"`.
 7. `test_a_test_with_nothing_scored_says_so`: B (no baseline) → `tree:summary` reads `"nothing scored: no baseline"`; C (no result) → `"nothing scored: no result"`; no `tree:toggle`.
 8. `test_an_unknown_model_keeps_the_stub_message` (the existing behaviour, moved here if `tests/test_suite_page.py` holds it).
 
@@ -504,7 +520,7 @@ In `tests/test_shell.py`: the header's first row still holds `wordmark`…`stop`
 
 - [ ] **Step 3: Implement.**
 
-`header.py`: `Header(shell, below: Callable[[], None] | None = None)`. `ui.header().classes("dstf-header column no-wrap gap-0")`; inside, `ui.row().classes("dstf-header-row items-center no-wrap gap-3 w-full")` holding everything the header holds today, unchanged and in order; then, when `below` is given, `ui.row().classes("dstf-subheader items-center no-wrap gap-3 w-full").mark("subheader")` with `below()` called inside it. `style.py`: move the row's padding/min-height to `.dstf-header-row`; `.dstf-subheader { border-top: 1px solid var(--dstf-border); padding: 4px 0; min-height: 40px; }`.
+`header.py`: `Header(shell, below: Callable[[], None] | None = None)`. `ui.header().classes("dstf-header column no-wrap gap-0")`; inside, `ui.row().classes("dstf-header-row items-center no-wrap gap-3 w-full")` holding everything the header holds today, unchanged and in order; then, when `below` is given, `ui.row().classes("dstf-subheader items-center no-wrap gap-3 w-full").mark("subheader")` with `below()` called inside it. `style.py`: **`.dstf-header.q-header { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }` — NiceGUI's own `.nicegui-header { flex-direction: row }` beats Quasar's `.column` class, and without this rule the second row renders to the RIGHT of the first with Rerun / Accept clipped off-screen, while every simulation test passes;** move the row's padding/min-height to `.dstf-header-row`; `.dstf-subheader { border-top: 1px solid var(--dstf-border); padding: 4px 0; min-height: 40px; }`.
 
 `tree_card.py`:
 
@@ -572,7 +588,7 @@ Markers: `plots` (the column), `plots:count`, `plot:{i}` (the card), `plot-title
 
 - [ ] **Step 4: Green. Step 5: Gates, commit** (`shell: plot cards drawn on scroll, criteria rows under their plot`).
 
-**Named mutations:** (a) every card shown at build; (b) `show()` rebuilding on a second call; (c) rows for an untracked series; (d) the card pill taking the FIRST leaf's status; (e) `on_visible` raising on junk; (f) the NODE host on a row without `variable` in its selection (Edit tree's add form then defaults to the wrong variable — assert the add form's variable select value in test 5); (g) the figure built with `editing=None` (rings for every leaf).
+**Named mutations:** (a) every card shown at build; (b) `show()` rebuilding on a second call; (d) the card pill taking the FIRST leaf's status — test 6 also stages `and[range(min -1) pass, nrmse fail]` on x: pill `fail`, then loosened → `pass`, same card object; (e) `on_visible` raising on junk; (f) the NODE host on a row without `variable` in its selection — seen through a PROBE capability at NODE recording `s.selection`: `{("x", T0), ("y", T1)}` (Edit tree's own form defaults to the leaf's variable and hides it); (g) the figure built with `editing=None` — test 2 runs over D with TREE staged (A's nrmse has no rings): the figure equals `plot_figure(D, 0, editing=())` and differs from `plot_figure(D, 0)`. (An untracked series can have no leaves — `Session.tracked` IS the scored names — so "rows for an untracked series" is not a mutant.)
 
 **Done when:** the nine tests pass.
 
@@ -596,24 +612,24 @@ Markers: `editor:{i}:{path}` (the InlineHost's), `editor-done:{i}:{path}`.
 4. `test_opening_a_criterion_shows_its_plot`: open a row on a card never shown → `cards[0].plot is not None`.
 5. `test_a_drag_stages_one_replace_and_the_plot_follows`: open T0, `show()`; `cards[0].hook._dispatch("plotly_relayout", {"shapes[N].xanchor": 0.5, "shapes[N].yanchor": 0.8})` with `N` the index in `cards[0].plot.figure["layout"]["shapes"]` of the shape named `T0 + "/tube/upper/0"` → one pending `replace` at T0 whose `tube_points[0]["upper"] == pytest.approx(0.3)`; the plot's figure now equals a fresh `plot_figure(D, 0, editing=(T0,))`; the table cell `{T0}:tube_points:0:upper` reads 0.3 (`_settled`) — the editor's panels were rebuilt after a drag.
 6. `test_a_refused_drag_is_said_in_the_editor_and_the_plot_snaps_back`: open T1 (the range leaf); dispatch a move of T0's ring (its rings are not drawn, so dispatch by a shape index that resolves to a name under T0: build the payload against a figure with `editing=(T0,)` is NOT what the plot holds — instead drag T1's OWN line to a refused position: `{"shapes[N].y0": float("nan"), "shapes[N].y1": float("nan")}` for the shape named `T1 + "/range/min"`; read `tests/test_edit_on_plot.py::test_ids_that_name_no_movable_handle_are_refused` for an id and payload the editor refuses and use that) → nothing pending beyond the staged tree; `host.errors["edit-on-plot"]` is visible and names the leaf; `cards[0].plot.figure` was re-sent (wrap `update_figure` with a counter: exactly one call).
-7. `test_typing_in_a_form_keeps_the_field`: open T1; set the `min value` number (find by the form's own marker — read `forms.py::render_form` for how fields are marked; if they are not, mark them `field:{name}` there and say so in the commit) to `-1.0` → pending `replace` with `min_value == -1.0`, and the SAME input element is still in the page (`is`): a panel-originated submit does not rebuild its own panel. `panel:edit-on-plot`'s children WERE rebuilt (the other panel follows).
+7. `test_typing_in_a_form_keeps_the_field`: open T1; set the number whose `props["label"]` is `"Lower bound (optional)"` to `-1.0` → pending `replace` with `min_value == -1.0`, and the SAME input element is still in the page (`is`): a panel-originated submit does not rebuild its own panel. `panel:edit-on-plot`'s children WERE rebuilt (the other panel follows).
 8. `test_closing_the_editor_drops_its_handlers`: open T0, close; a shape dispatch on the hook stages nothing and raises nothing; `cards[0].hook._handlers` holds no entry whose owner starts with `editor:`.
-9. `test_the_jump_opens_the_failing_criterion`: on A click `tree:jump` → `page.open == (0, "/metrics")`, the card was shown.
+9. `test_the_jump_opens_the_failing_criterion`: on A click the jump reading `"nrmse · y"` → `page.open == (1, "/metrics/children/1")`, card 1 was shown.
 10. `test_a_shape_change_closes_the_editor`: open T1; click `remove:{T0}` in the ROW's node controls → the rows are rebuilt (one fewer), `page.open is None`.
 
 - [ ] **Step 2: Run red.**
 
 - [ ] **Step 3: Implement.**
 
-`TestPage.open: tuple[int, str] | None`; `editing_for(i)` → `(path,)` when `open[0] == i` else `()`. `open_criterion(path, index=None)`: `index` defaults to the first card with a row for `path`; closes the current one; `card.show()`; `card.open_editor(path)`; redraws the card(s) whose `editing_for` changed. `close_editor()`.
+`TestPage.open: tuple[int, str] | None`; `editing_for(i)` → `(path,)` when `open[0] == i` else `()`. `open_criterion(path, index=None)`: `index` defaults to the first card with a row for `path`; closes the current one; `card.show()`; `card.open_editor(path)`; then `card.redraw_if_moved()` on every shown card — the SIGNATURE (which holds `editing_for`) is the one thing that decides a redraw, here and in `close_editor` and in `sync`; a direct `redraw()` here made the signature's editing term dead code (the review's surviving mutant). `PlotCard.signature()` and `redraw_if_moved()` therefore land in THIS task; Task 7 adds `sync` on top. `close_editor()`.
 
 `PlotCard.open_editor(path)`: the row gets `dstf-crit-open`; in the row's slot: `ui.column().classes("dstf-editor w-full")` holding a header row — `ui.label("Drag a ring on the plot, or edit the fields. Edits are staged as you make them; Save writes them.").classes("dstf-why")`, `ui.space()`, a flat dense "Done" button marked `editor-done:{i}:{path}` — and `self.editor = InlineHost(shell, Placement.CRITERION, lambda: Selection(tests=frozenset({model}), variable=var, leaf_path=path), figure=self.hook, marker=f"editor:{i}:{path}", on_applied=self._applied)`. `close_editor()`: `self.editor.clear()`, the slot cleared, the class removed.
 
-`_applied(name)`: what a successful submit leaves to do — the Session has already emitted `results`, which reach the page on the next tick and redraw (Task 7); HERE: if `self.hook.dispatching` (the submit came from a drag) rebuild the whole editor (`self.editor.build()`), else rebuild every panel but `name`'s. For that `InlineHost.build(skip: str | None = None)` leaves capability `skip`'s slot and error label untouched (Task 3's class gains the parameter here, with its test: 7 above).
+`_applied(name)`: what a successful submit leaves to do — the Session has already emitted `results`, which reach the page on the next tick and redraw (Task 7); HERE: if `self.hook.dispatching` (the submit came from a drag) rebuild the whole editor (`self.editor.build()`), else rebuild every panel but `name`'s. That is `InlineHost.build(skip=name)` (Task 3).
 
 `redraw()` (also the hook's `on_shape_moved`): `if self.plot is not None: self.plot.update_figure(self._figure()); self._drawn = self.signature()`. A drag's order is therefore: handler → submit → stage → (`_applied` rebuilds the editor) → `finally` → `redraw()`.
 
-Row click: `row.on("click", lambda: page.toggle_criterion(i, path))`; the NODE cluster inside the row must not toggle it: wrap the cluster in an element with `.on("click.stop", lambda: None)`… — NiceGUI spells it `.on("click", js_handler="(e) => e.stopPropagation()")`; under the user simulation `click()` on a child does not bubble, so test 10 cannot see this: the browser test (Task 8) asserts that clicking `wrap` opens its menu and NOT the editor.
+Row click: `row.on("click", lambda: page.toggle_criterion(i, path))`; the NODE cluster inside the row does not toggle it because `InlineHost`'s column stops the click (Task 3). Under the user simulation a child's `click()` does not bubble, so no test here can see that: the browser test (Task 8) asserts that clicking `wrap` opens its menu and NOT the editor.
 
 `style.py`: `.dstf-editor { margin: 0 0 8px 16px; padding: 12px; border-left: 3px solid var(--dstf-accent); border-top: 1px solid var(--dstf-border-hairline); border-bottom: 1px solid var(--dstf-border-hairline); }`, `.dstf-table-scroll { max-height: 336px; overflow-y: auto; }` (8 rows of 42 px).
 
@@ -621,7 +637,7 @@ The jump: `TreeCard`'s button calls `page.open_criterion(path)` and then `ui.run
 
 - [ ] **Step 4: Green. Step 5: Gates, commit** (`shell: the criterion editor below its row; the plot is its editing surface`).
 
-**Named mutations:** (a) opening a second editor without closing the first; (b) `close_editor` without `editor.clear()` (test 8); (c) `_applied` always rebuilding everything (test 7's `is`); (d) `_applied` never rebuilding after a drag (test 5's cell); (e) `redraw` building a new `ui.plotly`; (f) `editing_for` returning the path for every card; (g) no redraw on close (rings stay); (h) the refused drag not shown.
+**Named mutations:** (a) opening a second editor without closing the first; (b) `close_editor` without `editor.clear()` (test 8); (c) `_applied` always rebuilding everything (test 7's `is`); (d) `_applied` never rebuilding after a drag (test 5's cell); (e) `redraw` building a new `ui.plotly`; (f) `editing_for` returning the path for every card — invisible in a figure (a path names one leaf), visible as a spurious redraw: open x's row, `page.sync()`, y's card's `update_figure` count is 0; (g) no redraw on close (rings stay); (h) the refused drag not shown.
 
 **Done when:** the ten tests pass.
 
@@ -645,12 +661,13 @@ Markers: `focus-bar`, `focus-bar:text`, `focus-bar:all`.
 6. `test_a_discard_follows`: loosen A, open nothing, `session.discard()`, tick → card 0's pill back to `fail`, redrawn once.
 7. `test_focus_hides_the_other_cards_and_the_bar_brings_them_back`: click `focus:0` on A → `cards[1].card.visible is False`, `focus-bar:text` reads `"Showing 1 of 2 plots: x"`, `focus:0` reads `"Focused"`; click `focus-bar:all` (text `"Show all 2 plots"`) → both visible, the bar hidden, `focus:0` reads `"Focus"`; clicking `focus:0` while focused also ends it. Focus survives an edit's redraw and ENDS on a rebuild (the indices may name other plots).
 8. `test_focus_on_a_hidden_cards_criterion_shows_it`: focused on card 0, `page.open_criterion(<y's path>)` → focus ends (the editor must be visible).
+9. `test_a_mode_switch_keeps_the_editor_open`: open T1 on D, set the `mode` select to `"tube"` → `page.open` is unchanged, the row's name reads `"tube · x"`, and the other panel followed (`{T1}:tube_points:add` is found).
 
 - [ ] **Step 2: Run red.**
 
 - [ ] **Step 3: Implement.**
 
-`PlotCard.signature()`: `json.dumps([self.page.editing_for(i), [[leaf["path"], leaf.get("metric"), leaf.get("params"), leaf.get("window"), leaf.get("against"), leaf.get("passed"), leaf.get("score_display"), leaf.get("criterion"), leaf.get("error")] for leaf in <the tree_view leaves on this plot's series>]], sort_keys=True, default=str)`. `TestPage.shape()`: `(tuple((leaf["path"], leaf["variable"], leaf["metric"]) for leaf in leaves_of(tree_view)), tuple((p.series, p.missing) for p in session.plots(model)), verdict-less)`.
+`PlotCard.signature()`: `json.dumps([self.page.editing_for(i), [[leaf["path"], leaf.get("metric"), leaf.get("params"), leaf.get("window"), leaf.get("against"), leaf.get("passed"), leaf.get("score_display"), leaf.get("criterion"), leaf.get("error")] for leaf in <the tree_view leaves on this plot's series>]], sort_keys=True, default=str)`. `TestPage.shape()`: `(tuple((leaf["path"], leaf["variable"]) for leaf in leaves_of(tree_view)), tuple((p.series, p.missing) for p in session.plots(model)))` — **NOT the metric: a mode switch in a criterion's own editor must not rebuild the page and close that editor (the review's probe: mode → tube closed it); the metric rides in the signature and `CriterionRow.paint` repaints the name in place.**
 
 `TestPage.sync(force=False)`: one `tree_view` read per sync, handed to the tree card and the cards; badge; `tree.refresh(view)`; if `shape()` moved → `rebuild()`: remember which indices were shown, close the editor, end focus, clear and rebuild the cards column, `show()` the remembered indices that still exist, `_observe()`; else per card: `paint(view)` (pills, rows in place) and, when shown and (`force` or `signature() != _drawn`), `redraw()`. `handle`: `job` → `sync(force=True)`; `results` / `spec` whose `models` (when the event carries them) do not include this model → nothing; else `sync()`. Exceptions inside one card's paint are logged and do not stop the others.
 
@@ -660,7 +677,7 @@ Focus: `TestPage.focused: int | None`; `focus(i)` toggles; the bar is a `ui.row(
 
 **Named mutations:** (a) `sync` redrawing every shown card; (b) the signature without `params` (a drag that keeps the verdict and the readout draws nothing — add to test 1 a second edit that changes only a parameter whose readout text is unchanged, e.g. a tube point far from the trace); (c) the signature without `editing_for`; (d) `rebuild` not re-showing; (e) `rebuild` keeping focus; (f) `job` not forcing; (g) an event for another model syncing this page (count `tree_view` calls).
 
-**Done when:** the eight tests pass.
+**Done when:** the nine tests pass.
 
 ---
 
@@ -670,13 +687,13 @@ Focus: `TestPage.focused: int | None`; `focus(i)` toggles; the bar is a `ui.row(
 - Modify: `tests/test_capability_conformance.py`
 - Create: `tests/test_author_test_page_playwright.py`
 
-- [ ] **Step 1: Conformance tests** (the module's `_Dummy` and `only`): a capability the shell has never heard of, registered ALONE at each of NODE, VARIABLE and CRITERION, attaches: at NODE its panel is found in every tree row and every criteria row of the Test page for D-with-TREE; at VARIABLE its caption is a button in the card's footer and its dialog panel receives a figure whose `on` does not raise; at CRITERION its panel is the whole editor. And `test_the_shell_names_no_capability`: no file under `src/dstf/authoring/shell/` contains any registered built-in's `name` or class name as a string or identifier (read each file's text; the built-ins' names come from `register_builtins()` + `registered_capabilities()`, so a new built-in is covered).
+- [ ] **Step 1: Conformance tests** (the module's `_Dummy` and `only`): a capability the shell has never heard of, registered ALONE at each of NODE, VARIABLE and CRITERION, attaches: at NODE its panel is found in every tree row and every criteria row of the Test page for D-with-TREE; at VARIABLE its caption is a button in the card's footer and its dialog panel receives a figure whose `on` does not raise; at CRITERION its panel is the whole editor. And `test_the_shell_names_no_capability`: no file under `src/dstf/authoring/shell/` holds any registered built-in's `name` or class name as an AST string constant or identifier — parsed with `ast`, never the raw text: prose may say "Rerun" (shell.py's comments do). The built-ins' names come from `register_builtins()` + `registered_capabilities()`, so a new built-in is covered.
 - [ ] **Step 2: Run red where red is possible** (the name scan is a guard: prove it by adding `"edit-tree"` to a scratch copy in an archive, not by editing the tree).
 - [ ] **Step 3: The browser test**, shaped like `tests/test_author_suite_playwright.py` (reuse its `_start`, `_wait_until_serving` by import). The project: `_two_var_project` with a `test_spec.json` whose A entry carries `metrics` = an `and` of a tube on x (two control points inside the trace's span), a range on x and a range on y, and EIGHT more entries' worth of plots is not needed — instead a `plots` key on A listing `[x]`, `[y]`, and then `[x, y]` five times, so the page is taller than the viewport (seven plots). One test, in this order, each an assertion:
-  1. `/test/FakeLib.A` loads; the sub-header's box is inside the header's box and still on screen after `window.scrollTo(0, 2000)`; `document.documentElement.scrollWidth <= clientWidth`.
+  1. `/test/FakeLib.A` loads; the sub-header STACKS under the first row — `sub.y >= row.y + row.height - 1`, `abs(sub.x - row.x) <= 1`, and the right edge of `.dstf-subheader .dstf-actions` is `<= 1280` (red without Task 4's `flex-direction` rule: prove it in the archive) — and is still on screen after `window.scrollTo(0, 2000)`; `document.documentElement.scrollWidth <= clientWidth`.
   2. At load fewer `.js-plotly-plot` elements exist than `.dstf-plot-slot` elements, and at least one; after scrolling to the bottom in 600 px wheel steps every slot holds a plot.
   3. The tree line's text matches `r"\d+ pass · \d+ fail: "`; "Show tree" reveals rows; clicking the tree's first wrap icon opens a menu holding "apply wrap" and opens NO `.dstf-editor`.
-  4. Click the `tube · x` row of plot 0: a `.dstf-editor` appears whose top is below that row's bottom and whose left edge is 16 px (±2) right of the row's; the plot now has circle shapes, all named under that leaf (`gd._fullLayout.shapes`); zoom state: set `xaxis.range` by `Plotly.relayout`, then
+  4. Click the `tube · x` row of plot 0: a `.dstf-editor` appears whose top is below that row's bottom and whose left edge is 16 px (±2) right of the row's; the plot now has circle shapes, all named under that leaf (`gd._fullLayout.shapes`). **BEFORE clicking the row, set `xaxis.range` by `Plotly.relayout` and stamp a JS property on the graph div; assert both right AFTER the editor opens** (the config can only change at open / close, so a zoom set after the open cannot see mutation (c)); then
   5. drag the first ring's CENTRE 40 px up (coordinates from `xaxis.l2p` / `yaxis.l2p` as in the spike): the header's pending button's text changes to one naming 1 edit (read `header.py` for its wording); the ring's `yanchor` in `_fullLayout` is larger than before; `xaxis.range` is still the zoomed one; the graph div is the same node (a JS property stamped before survives).
   6. Click "Focus" on plot 0: exactly one `.dstf-plot` is visible and the bar reads "Showing 1 of 7 plots: x"; "Show all 7 plots" restores them.
   7. No `pageerror` and no console error was recorded; the spec file's bytes are unchanged (nothing was saved).
@@ -696,6 +713,7 @@ Focus: `TestPage.focused: int | None`; `focus(i)` toggles; the bar is a `ui.row(
 - [ ] **Step 1:** D131, in the log's own format (read D129 and D130): the Test page hosts capabilities three ways by placement — a captioned button with a dialog (SUITE, TEST, VARIABLE), an inline editor (CRITERION), a node's controls (NODE); `Selection.node_path`; Edit tree re-placed at NODE + VARIABLE, Edit on plot at CRITERION and scoped to the open leaf; one `FigureHook` per plot; the tool's figure always editable with rings for the open leaf only, so the Plotly config is constant and every redraw is a `react`; render on scroll by `IntersectionObserver` + one global event; follow by signature. Alternatives considered, each in a sentence: a `controls()` method on the contract; rings for every leaf; a CSS-sticky sub-header; redraw-all on every event.
 - [ ] **Step 2:** `docs/extensibility.md`: the placement table gains NODE and says what each placement hands a panel (`selection` fields set, `figure` real or raising) and that a CRITERION panel must not draw a heading. `docs/architecture.md` and `CLAUDE.md`: the `shell/` line names `tree_card.py`, `plot_card.py` and "the Suite and Test pages" stays true; the CLAUDE.md "Running the Tool" comment for `dstf author` is rewritten for the page as built ("Open a test: the criteria tree, its plots, a criterion's editor under its row; drag its handles on the plot"). `DESIGN.md` "Criteria rows": the editor's hint line and "Done"; "Plots are modular": the toolbar as built (Focus; the legend toggles overlays and error traces) with the rest named as 3c / sub-project 4. Spec §4.6: "Amended in the redesign's sub-project 3b".
 - [ ] **Step 3:** The roadmap §3 Status paragraph: 3b BUILT, with the gate's numbers (Task 10 fills them), and the acceptance predicates this plan met: "a test with N tracked variables shows N plots by default"; "the tree's +/−/wrap stage the same ops Edit tree staged"; "a criterion row opens its editor inline and the plot's handles follow". Sub-project 4's block keeps what is still its own.
+- [ ] **Step 3b:** `builtin/edit_criteria.py` draws `ui.label(f"{variable} · {path}")` at the top of its panel — a heading inside the one editor: delete it (the row above names the criterion) with its test's assertion, if any. `edit_on_plot._table`'s docstring ("a refused submit makes the shell rebuild the slot") and `shell/figure_hook.py`'s module and class docstrings ("the centre plot", "the whole tabs region") are rewritten for the page as built.
 - [ ] **Step 4:** Read every touched paragraph for a stale referent ("the centre plot", "the tab", "VARIABLE placement" for Edit on plot, "Edit tree's panel"). Gates (docs do not change them, run ruff for `CLAUDE.md`-adjacent nothing; the suite once), commit (`docs: the Test page; D131`).
 
 **Done when:** `grep -rn "centre plot" src/dstf/authoring docs/extensibility.md` shows only sentences that are still true, each read.
