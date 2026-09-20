@@ -196,8 +196,9 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
         for t in context.get("nobaseline_trajectories") or []
         if t.get("name")
     }
-    # The no-baseline reads win: they are the test's own tracked curves,
-    # at the resolution the context carries.
+    # Disjoint by construction: no-baseline trajectories exist only when
+    # nothing was scored, and then `plot_inputs` takes the result's own list
+    # as tracked and reads only what is NOT in it.
     arrays = {**(extra_series or {}), **nobaseline}
     if plots is None:
         plots = tuple(
@@ -504,7 +505,7 @@ def _page_context(context: dict) -> dict:
     COPY, after the sidecar write — ``comparison_data.json`` is the
     documented downstream artifact and keeps its trajectory shape.
 
-    ``variables_by_name`` goes out whole: the page is laid out per PLOT
+    ``variables_by_name`` is dropped whole: the page is laid out per PLOT
     now, and each section already carries its variables' trees, verdicts
     and overlay rows (:func:`plot_page_keys`). What survives per
     no-baseline trajectory is its name and each overlay's name / role for

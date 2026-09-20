@@ -108,7 +108,7 @@ details summary:hover { color: var(--dstf-text); }
 .plot-note { font-size: 0.85em; color: var(--dstf-text-secondary); margin-bottom: 0.5em; }
 /* The untracked names in a multi-series heading — no badge before them,
    because nothing scored them. */
-.plot-only-names { color: var(--dstf-text-secondary); }
+.plot-only-names { color: var(--dstf-text-secondary); font-weight: 400; }
 /* Decimation disclosure — which traces the page draws at reduced
    resolution, and where the full-resolution data lives. */
 #decimation-banner { background: var(--dstf-warn-tint); border: 1px solid var(--dstf-warn-border); border-radius: 4px; color: var(--dstf-warn-dark); padding: 8px 12px; margin: 0 0 12px 0; font-size: 0.85em; }
@@ -345,10 +345,11 @@ details summary:hover { color: var(--dstf-text); }
     {% endfor %}
   </div>
   {% endif %}
-  {% elif plot.series | length > 1 %}
-  {# Only a plot of SEVERAL series is missing controls it could have had:
-     a lone plot-only series has no criteria to overlay, and a plot whose
-     every series is missing draws nothing at all. #}
+  {% elif plot.variables and plot.series | length > 1 %}
+  {# Only a plot of SEVERAL series, at least one of them SCORED, is missing
+     controls it could have had: a plot-only series has no reference to
+     overlay or take an error against — alone or among others — and a plot
+     whose every series is missing draws nothing at all. #}
   <div class="plot-note">Overlays and error traces show on a plot with one series.</div>
   {% endif %}
   {% if plot.missing %}<div class="plot-note">Not in this result: {{ plot.missing | join(", ") }}</div>{% endif %}
@@ -361,7 +362,7 @@ details summary:hover { color: var(--dstf-text); }
   <div class="plot-note">{{ v.name }}: criteria are under its first plot.</div>
   {% endif %}{% endfor %}
   {% for label in plot.plot_only_lines %}
-  <div class="plot-note">{{ label }} is plot only: it has no reference and no criteria.</div>
+  <div class="plot-note">{{ label }} is plot only: no criterion scores it.</div>
   {% endfor %}
 </div>
 {% endfor %}

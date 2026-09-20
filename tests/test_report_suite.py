@@ -1517,7 +1517,7 @@ class TestPlotSections:
         (fig,) = _page_data(page, "PLOT_FIGURES")
         z = next(tr for tr in fig["data"] if tr["meta"]["id"] == "actual/z")
         assert z["y"] == [7.0] * 5
-        assert "z is plot only: it has no reference and no criteria." in page
+        assert "z is plot only: no criterion scores it." in page
         assert "Not in this result: gone" in page
 
     def test_a_tracked_variable_on_no_plot_still_has_its_tree_at_the_top(
@@ -1564,6 +1564,9 @@ class TestPlotSections:
         assert _page_data(page, "PLOT_SERIES") == [["x"]]
         assert "Not in this result" not in page
         assert sidecar["plots"][0]["missing"] == []
+        (fig,) = _page_data(page, "PLOT_FIGURES")
+        (trace,) = [tr for tr in fig["data"] if tr["meta"]["kind"] == "act"]
+        assert len(trace["y"]) > 2 and len(trace["x"]) == len(trace["y"])
         # It has no criteria because it has no baseline — the no-baseline
         # block below says so; the section must not claim a second reason.
         assert "is plot only" not in page
@@ -1587,6 +1590,16 @@ class TestPlotSections:
             ResolvedPlot(index=0, kind="time", series=("ghost",), missing=()),
         )
         page, _ = self._render(tmp_path / "b", plots=none_drawn)
+        assert needle not in page
+        # Several series, none of them scored: on plots of their own they
+        # would have no overlay or error controls either, so the sentence
+        # would be false.
+        family = tuple(f"pipe.T[{i}]" for i in (1, 2, 3))
+        unscored = (ResolvedPlot(index=0, kind="time", series=family, missing=()),)
+        page, _ = self._render(
+            tmp_path / "c", plots=unscored, extra_series={n: (t, t) for n in family}
+        )
+        assert _page_data(page, "PLOT_SERIES") == [list(family)]
         assert needle not in page
 
     def test_sections_are_numbered_by_position_not_by_the_layouts_index(self, tmp_path):
@@ -1652,8 +1665,8 @@ class TestPlotSections:
         page, _ = self._render(
             tmp_path, plots=plots, extra_series={n: (t, t) for n in members}
         )
-        assert page.count("is plot only: it has no reference and no criteria.") == 1
-        assert "pipe.T[1:4] is plot only: it has no reference and no criteria." in page
+        assert page.count("is plot only: no criterion scores it.") == 1
+        assert "pipe.T[1:4] is plot only: no criterion scores it." in page
 
 
 class TestReviewPlotsPath:
@@ -1702,6 +1715,41 @@ class TestReviewPlotsPath:
         (plot,) = seen["plots"]
         assert plot.series == ("x", "z")
         assert list(seen["extra_series"]) == ["z"]
+
+
+def test_a_tracked_variable_the_tree_does_not_score_is_read_from_the_file(tmp_path):
+    """An explicit tree scoring only x, a result tracking x and y, a layout
+    naming both: the tracked list is what was SCORED, so y is a plot-only
+    read. Taking the result's list whenever there is a result would leave y
+    in neither source — "Not in this result: y" beside a file that has it."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from dstf.discovery.plots import parse_plots
+    from dstf.reporting.report_suite import plot_inputs
+
+    t = np.linspace(0, 1, 3)
+
+    class Files:
+        @classmethod
+        def result_names(cls, test_dir):
+            return ["x", "y"]
+
+        @classmethod
+        def result_series(cls, test_dir, names):
+            return {n: (t, t) for n in names}
+
+    test = SimpleNamespace(
+        plots=parse_plots([{"series": [{"var": "x"}, {"var": "y"}]}])
+    )
+    scored = [SimpleNamespace(name="x")]
+    result = SimpleNamespace(
+        variables=[SimpleNamespace(name="x"), SimpleNamespace(name="y")]
+    )
+    plots, extra = plot_inputs(test, scored, result, Files, tmp_path)
+    assert plots[0].series == ("x", "y") and plots[0].missing == ()
+    assert list(extra) == ["y"]
 
 
 class TestPerTestArgsReadTheLayout:

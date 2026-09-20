@@ -162,7 +162,7 @@ the authoring tool draw for that test. Scoring ignores it.
 - **Absent** means one plot per tracked variable. `"plots": []` means no
   plots. `null` is refused.
 - A series names **one variable of the result**, tracked or not (`pump.N`
-  above is plot only: it has no reference and no criteria). A pattern (`*`,
+  above is plot only: no criterion scores it). A pattern (`*`,
   `?`) is refused; square brackets are part of a name. A variable may be on
   several plots, once per plot.
 - `kind` is `"time"`, the only kind today, and is always written. Unknown keys
