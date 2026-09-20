@@ -528,6 +528,10 @@ def test_rings_for_refuses_a_str():
     view = _two_ring_view()
     with pytest.raises(TypeError, match="not a str"):
         variable_figure(view, None, editable=True, rings_for="/metrics/children/0")
+    # The refusal is the argument's, not the drawing's: it fires where
+    # nothing would have been ringed anyway.
+    with pytest.raises(TypeError, match="not a str"):
+        variable_figure(build_view("x"), None, editable=False, rings_for="/x")
 
 
 def test_rings_for_changes_nothing_but_the_rings():

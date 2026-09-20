@@ -6,7 +6,9 @@ bar's dialog hosting the capability's `panel`, whose `submit` runs `act`
 and hands the outcome to the Session. The bar knows no capability by name.
 The dialog is not rebuilt while open (decision 4): a confirm list belongs
 to the moment of the click; a successful act closes it, a raising one
-shows the error in it and changes nothing.
+shows the error in it and changes nothing. A bar built with `figure=`
+lends that hook to the open panel alone, and takes it back however the
+dialog closes.
 
 `InlineHost` hosts the same contract the other way (brief §3.2): no button
 and no dialog — every capability placed here has its panel built straight
@@ -56,6 +58,12 @@ class ShellPanel:
 
 
 class ActionBar:
+    """The bar and its one dialog. A `figure=` hook is lent to the panel a
+    click opens, under that capability's owner key, and `_release` takes it
+    back on every way the dialog can close — Close, a successful submit, a
+    dismissal (Esc, the backdrop), and the next open, whichever capability's.
+    An invisible panel must not go on staging edits from drags."""
+
     def __init__(
         self,
         shell: Shell,
@@ -71,7 +79,10 @@ class ActionBar:
             str, str
         ] = {}  # capability name -> the error its dialog shows
         self.actions: dict[str, Action] = {}
+        self._owner: str | None = None  # the open panel's key on the hook
         self.dialog = ui.dialog()  # one element, rebuilt per open
+        # Esc and a backdrop click close the dialog without reaching `close`.
+        self.dialog.on_value_change(lambda e: None if e.value else self._release())
         self.container = (
             ui.row().classes("dstf-actions items-center gap-3 wrap").mark(marker)
         )
@@ -107,19 +118,27 @@ class ActionBar:
                 self.shell.report_once(cap.name, "caption", e)
             self.actions[cap.name].set(caption, reason)
 
+    def _release(self) -> None:
+        """Take the figure back from the panel that had it: its handlers go
+        with it, so a dialog that is no longer shown delivers nothing."""
+        if self.figure is not None and self._owner is not None:
+            self.figure.clear(self._owner)
+        self._owner = None
+
     def open(self, cap: Capability) -> None:
         """The capability's panel, in the dialog, over the selection as it is
-        at this click."""
+        at this click. The panel that had the figure — this capability's on a
+        second open, another's on a switch — gives it back first."""
+        self._release()
         view = self.shell.view_for(self.selection_of())
         owner = f"{self.marker}:{cap.name}"
         figure: FigureHookProtocol = _NoFigure()
         if self.figure is not None:
-            self.figure.clear(owner)  # a second open never doubles a delivery
             figure = self.figure.owned(owner)
+        self._owner = owner
 
         def close() -> None:
-            if self.figure is not None:
-                self.figure.clear(owner)
+            self._release()
             self.dialog.close()
 
         self.dialog.clear()
@@ -161,7 +180,10 @@ class InlineHost:
     the column and drops this host's figure handlers. A raising act shows
     above that capability's panel and changes nothing; the next success
     hides it in place — the panel is not rebuilt, so a field being typed in
-    survives."""
+    survives. `on_applied` is called with that capability's name when its
+    act returned an outcome, and only then: an act returning ``None``
+    changed nothing, and the rebuild it would trigger discards a half-typed
+    row for nothing."""
 
     def __init__(
         self,
@@ -197,7 +219,9 @@ class InlineHost:
         """Rebuild every capability's place — but ``skip``'s, left untouched
         (the panel whose own submit this follows: rebuilding it would destroy
         the control being typed in). A changed set of capabilities rebuilds
-        them all."""
+        them all. ``skip`` misleads in one state: a skipped capability that
+        has become UNAVAILABLE keeps its stale panel and gets no why-line
+        until the next full ``build()``."""
         view = self.shell.view_for(self.selection_of())
         placed = self.shell.placed(self.placement, view)
         if skip is None or [cap.name for cap, _ in placed] != list(self.cells):
@@ -227,13 +251,14 @@ class InlineHost:
 
         def submit(**inputs: Any) -> None:
             try:
-                self.shell.session.apply(cap.act(view, **inputs))
+                outcome = cap.act(view, **inputs)
+                self.shell.session.apply(outcome)
             except Exception as e:  # shown above the panel; changes nothing
                 error.set_text(f"{type(e).__name__}: {e}")
                 error.set_visibility(True)
                 return
             error.set_visibility(False)
-            if self.on_applied is not None:
+            if outcome is not None and self.on_applied is not None:
                 self.on_applied(cap.name)
 
         figure: FigureHookProtocol = _NoFigure()

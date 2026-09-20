@@ -16,7 +16,7 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
 from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from dstf.authoring.capabilities import Placement  # noqa: E402
+from dstf.authoring.capabilities import Artifact, Placement  # noqa: E402
 from dstf.authoring.session import Selection  # noqa: E402
 from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
 from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
@@ -107,11 +107,19 @@ class _Probe:
     label = "Probe"
 
     def __init__(
-        self, name, placements, *, answer=True, raises=None, subscribe=False, boom=None
+        self,
+        name,
+        placements,
+        *,
+        answer=True,
+        raises=None,
+        subscribe=False,
+        boom=None,
+        outcome=None,
     ):
         self.name, self.placements = name, frozenset(placements)
         self.answer, self.raises, self.subscribe = answer, raises, subscribe
-        self.boom = boom
+        self.boom, self.outcome = boom, outcome
         self.seen: list[tuple[str, dict]] = []
 
     def available(self, s):
@@ -133,7 +141,7 @@ class _Probe:
     def act(self, s, **inputs):
         if self.raises:
             raise ValueError(self.raises)
-        return None
+        return self.outcome
 
 
 def _only(*caps):
@@ -143,6 +151,10 @@ def _only(*caps):
 
 
 LEAF = Selection(tests=frozenset({A}), variable="x", leaf_path="/metrics/children/0")
+#: Something the Session applies without touching the spec or the store —
+#: what a probe's act returns when the point is that it DID apply something.
+OUTCOME = Artifact(paths=[], label="probe")
+RELAYOUT = {"shapes[0].y0": 1}
 
 
 def _hosted(shell, placement=Placement.CRITERION, figure=None):
@@ -156,6 +168,45 @@ def _hosted(shell, placement=Placement.CRITERION, figure=None):
         box[0].build()
 
     return box, root
+
+
+def _applying(shell, on_applied):
+    """`_hosted` with an `on_applied` to record."""
+    box: list[InlineHost] = []
+
+    def root() -> None:
+        box.append(
+            InlineHost(
+                shell,
+                Placement.CRITERION,
+                lambda: LEAF,
+                figure=None,
+                marker="editor",
+                on_applied=on_applied,
+            )
+        )
+        box[0].build()
+
+    return box, root
+
+
+def _barred(shell, figure):
+    """A bare page holding one ActionBar over a variable; `bars[0]` once
+    built."""
+    bars: list[ActionBar] = []
+
+    def root() -> None:
+        bars.append(
+            ActionBar(
+                shell,
+                Placement.VARIABLE,
+                lambda: Selection(tests=frozenset({A}), variable="x"),
+                marker="variable-actions",
+                figure=figure,
+            )
+        )
+
+    return bars, root
 
 
 async def test_an_inline_host_builds_every_placed_panel_without_a_button(shell):
@@ -242,6 +293,109 @@ async def test_clear_removes_the_hosts_handlers_from_the_hook(shell):
         assert len(probe.seen) == 2  # once per dispatch: no accumulation
 
 
+async def test_a_skipping_rebuild_drops_the_rebuilt_panels_handlers(shell):
+    """The path a submit takes: `build(skip=<the submitter>)` rebuilds every
+    OTHER panel, and a subscriber among them must not accumulate."""
+    two = _Probe("two", {Placement.CRITERION}, subscribe=True)
+    _only(_Probe("one", {Placement.CRITERION}), two)
+    hook = FigureHook()
+    box, root = _hosted(shell, figure=hook)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        await user.should_see(marker="probe:two")
+        box[0].build(skip="one")
+        box[0].build(skip="one")
+        hook._dispatch("plotly_relayout", RELAYOUT)
+        assert len(two.seen) == 1
+
+
+async def test_a_build_after_clear_places_the_panels_in_the_column_again(shell):
+    """`clear()` empties the column AND forgets its cells: the next build
+    puts live ones back, not writes into the removed ones."""
+    _only(_Probe("one", {Placement.CRITERION}))
+    box, root = _hosted(shell)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        box[0].clear()
+        box[0].build()
+        panel = _one(user, "probe:one")
+        assert not panel.is_deleted and box[0].column in list(_ancestors(panel))
+
+
+async def test_the_first_build_draws_the_skipped_capability_too(shell):
+    """There is no cell to leave untouched yet, so `skip` names nothing."""
+    _only(_Probe("one", {Placement.CRITERION}), _Probe("two", {Placement.CRITERION}))
+    box: list[InlineHost] = []
+
+    def root() -> None:
+        box.append(
+            InlineHost(
+                shell, Placement.CRITERION, lambda: LEAF, figure=None, marker="editor"
+            )
+        )
+        box[0].build(skip="one")
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        assert not _none(user, "probe:one")
+
+
+async def test_an_error_label_starts_hidden(shell):
+    _only(_Probe("one", {Placement.CRITERION}))
+    box, root = _hosted(shell)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        await user.should_see(marker="probe:one")
+        assert not box[0].errors["one"].visible
+
+
+async def test_a_capability_that_answers_false_says_not_available(shell):
+    """`available` may answer with a sentence or with a bare False; the bare
+    one gets the page's own sentence, and no panel either way."""
+    _only(_Probe("off", {Placement.CRITERION}, answer=False))
+    box, root = _hosted(shell)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        assert _one(user, "why:off").text == "not available"
+        assert _none(user, "probe:off")
+
+
+async def test_on_applied_names_the_capability_whose_act_applied_something(shell):
+    one = _Probe("one", {Placement.CRITERION}, raises="no", outcome=OUTCOME)
+    _only(one, _Probe("two", {Placement.CRITERION}, outcome=OUTCOME))
+    applied: list[str] = []
+    box, root = _applying(shell, applied.append)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        user.find(marker="go:one").click()
+        await _settled(lambda: box[0].errors["one"].visible)
+        assert applied == []  # a raising act applied nothing
+        user.find(marker="go:two").click()
+        await _settled(lambda: len(applied) == 1)
+        assert applied == ["two"]
+        one.raises = None
+        user.find(marker="go:one").click()
+        await _settled(lambda: len(applied) == 2)
+        assert applied == ["two", "one"]
+
+
+async def test_an_act_that_returned_nothing_leaves_on_applied_alone(shell):
+    """An act returning None changed nothing, so nothing needs redrawing —
+    and a rebuild would take the row being typed in with it."""
+    _only(
+        _Probe("one", {Placement.CRITERION}),  # its act returns None
+        _Probe("two", {Placement.CRITERION}, outcome=OUTCOME),
+    )
+    applied: list[str] = []
+    box, root = _applying(shell, applied.append)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        user.find(marker="go:one").click()
+        user.find(marker="go:two").click()  # the fence: this one DID apply
+        await _settled(lambda: "two" in applied)
+        assert applied == ["two"]
+
+
 async def test_an_action_bar_hands_its_figure_to_the_dialog_panel(shell):
     probe = _Probe("one", {Placement.VARIABLE}, subscribe=True)
     _only(probe)
@@ -270,3 +424,41 @@ async def test_an_action_bar_hands_its_figure_to_the_dialog_panel(shell):
         await asyncio.sleep(0.1)
         hook._dispatch("plotly_relayout", {"shapes[0].y0": 1})
         assert len(probe.seen) == 2  # opened twice, delivered once
+
+
+async def test_a_dismissed_dialog_drops_its_handlers(shell):
+    """Esc and a click on the backdrop close the dialog without going
+    through Close: a panel nobody can see must not stage an edit from a
+    drag."""
+    probe = _Probe("one", {Placement.VARIABLE}, subscribe=True)
+    _only(probe)
+    hook = FigureHook()
+    bars, root = _barred(shell, hook)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        user.find(marker="action:one").click()
+        await user.should_see(marker="probe:one")
+        hook._dispatch("plotly_relayout", RELAYOUT)
+        assert len(probe.seen) == 1
+        bars[0].dialog.close()  # what a dismissal amounts to: no Close click
+        await _settled(lambda: not bars[0].dialog.value)
+        hook._dispatch("plotly_relayout", RELAYOUT)
+        assert len(probe.seen) == 1
+
+
+async def test_opening_another_capability_takes_the_figure_from_the_first(shell):
+    one = _Probe("one", {Placement.VARIABLE}, subscribe=True)
+    two = _Probe("two", {Placement.VARIABLE}, subscribe=True)
+    _only(one, two)
+    hook = FigureHook()
+    bars, root = _barred(shell, hook)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        user.find(marker="action:one").click()
+        await user.should_see(marker="probe:one")
+        user.find(marker="action:two").click()
+        await user.should_see(marker="probe:two")
+        hook._dispatch("plotly_relayout", RELAYOUT)
+        assert one.seen == [] and len(two.seen) == 1
+        owners = {o for entries in hook._handlers.values() for o, _ in entries}
+        assert owners == {"variable-actions:two"}

@@ -100,10 +100,10 @@ class Selection:
 class _ModelReads:
     """What one click re-read from disk before this cache (brief §2.2): the
     primary reference and the overlays; plus the decimated base view per
-    variable — trajectories, overlays and error series, no leaves — built and
-    shared by `_editable_view`, so an edit re-decimates only the criterion's
-    geometry and a plot's several series draw over the bases `figure` holds
-    for them one at a time."""
+    variable — trajectories, overlays and error series, no leaves — held
+    here and shared by `figure` and `plot_figure` through `_editable_view`,
+    so an edit re-decimates only the criterion's geometry and a plot's
+    several series draw over the bases held here, one at a time."""
 
     ref: dict | None
     overlays: list
@@ -607,7 +607,9 @@ class Session:
         their own — what both figure reads draw, WITHOUT a budget.
         The base traces are decimated once per model and variable and
         cached until the model's scored list moves (`_ModelReads.scored`);
-        only the leaves' geometry is decimated per call."""
+        only the leaves' geometry is decimated per call. The exception is a
+        model a job holds: nothing is cached for it, so every call there
+        re-decimates the base."""
         from ..figures.view import build_view, decimate_view
 
         project = self._require_project()
