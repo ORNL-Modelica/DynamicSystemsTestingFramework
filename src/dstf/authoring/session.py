@@ -109,11 +109,17 @@ class _ModelReads:
     #: base of the model stale; the key does not say which, so `figure`
     #: drops them all when it moves (one extra decimation per variable).
     scored: tuple[tuple[str | None, int], ...] = ()
-    #: Every name in the result file (`Backend.result_names`); `None` until
-    #: read, `()` when the backend cannot list it.
+    #: Every name in the result file (`Backend.result_names`), once
+    #: `names_read`: `None` when the backend cannot list the file, `()` when
+    #: the file lists nothing.
     names: tuple[str, ...] | None = None
-    #: Untracked series read from the result file, by name.
-    series: dict[str, tuple[np.ndarray, np.ndarray]] = field(default_factory=dict)
+    names_read: bool = False
+    #: Untracked series read from the result file, by name; `None` is a miss
+    #: (the file lacks the name, or holds nothing drawable under it), cached
+    #: so a redraw does not re-open the file for it.
+    series: dict[str, tuple[np.ndarray, np.ndarray] | None] = field(
+        default_factory=dict
+    )
 
 
 def _scored_key(comp: TestComparison | None) -> tuple[tuple[str | None, int], ...]:
@@ -121,8 +127,9 @@ def _scored_key(comp: TestComparison | None) -> tuple[tuple[str | None, int], ..
     traces depend on: the (name, index) of every scored variable, in order;
     empty when the test was not evaluated. The WHOLE list, not "is this
     variable in it": with no baseline, an empty scored list draws a variable
-    through the no-baseline path and a non-empty one (a baseline-free leaf
-    on ANOTHER variable) draws it as the empty state."""
+    through the no-baseline path (overlays attached) and a non-empty one (a
+    baseline-free leaf on ANOTHER variable) draws it from the result file,
+    with none — or as the empty state when the file cannot be read."""
     # `evaluated` is `metric_tree is not None or bool(variables)`
     # (comparison/types.py), so an unevaluated comparison has no variables
     # and the tuple is empty by construction — no separate check.
@@ -502,22 +509,32 @@ class Session:
         if project.test(model_id) is None:
             raise KeyError(model_id)
         reads = self._reads_for(model_id)
-        if reads.names is None:
+        if not reads.names_read and not self._is_locked(model_id):
             test_dir = self._test_dir(model_id)
             listed = (
                 type(project.backend).result_names(test_dir)
                 if test_dir is not None
                 else None
             )
-            reads.names = tuple(listed or ())
+            reads.names = None if listed is None else tuple(listed)
+            reads.names_read = True
         tracked = self._tracked(model_id)
-        return tracked + [n for n in reads.names if n not in set(tracked)]
+        have = set(tracked)
+        return tracked + [n for n in reads.names or () if n not in have]
+
+    def _is_locked(self, model_id: str) -> bool:
+        """A job holds this model: its work dir is being rewritten, so the
+        file reads serve what they already hold and open nothing — as `view`
+        and `figure` always have, from memory."""
+        return self.running is not None and model_id in self.running.models
 
     def _file_series(
         self, model_id: str, variable: str
     ) -> tuple[np.ndarray, np.ndarray] | None:
         reads = self._reads_for(model_id)
         if variable not in reads.series:
+            if self._is_locked(model_id):
+                return None  # not cached: the job's reload answers it
             test_dir = self._test_dir(model_id)
             got = (
                 type(self._require_project().backend).result_series(
@@ -526,9 +543,7 @@ class Session:
                 if test_dir is not None
                 else {}
             )
-            if variable not in got:
-                return None
-            reads.series[variable] = got[variable]
+            reads.series[variable] = got.get(variable)
         return reads.series[variable]
 
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
@@ -538,10 +553,9 @@ class Session:
         test = project.test(model_id)
         if test is None:
             raise KeyError(model_id)
-        names = self.variable_names(model_id)
-        reads = self._reads_for(model_id)
+        self.variable_names(model_id)  # reads the file's names, once
         return resolved_plots(
-            test, self._tracked(model_id), available=names if reads.names else None
+            test, self._tracked(model_id), available=self._reads_for(model_id).names
         )
 
     def plot_figure(self, model_id: str, index: int) -> dict:
@@ -549,6 +563,8 @@ class Session:
         One series is :meth:`figure` — cached base and all."""
         from ..figures.plotly import plot_figure
 
+        if index < 0:
+            raise IndexError(index)
         plot = self.plots(model_id)[index]
         if len(plot.series) == 1:
             return self.figure(model_id, plot.series[0])
@@ -785,6 +801,11 @@ class Session:
         sees a job that neither finished nor failed."""
         self.running = None
         self.last_job = job
+        if job.error is not None:
+            # No reload follows a failed job, and its half-run rewrote its
+            # models' work dirs: what was read of them is no longer the file.
+            for model_id in job.models:
+                self._reads.pop(model_id, None)
         try:
             if reloads_results and job.error is None and self.project is not None:
                 self._reload_results()

@@ -2175,3 +2175,117 @@ class TestPlots:
         assert v.variable_names(A) == s.variable_names(A)
         assert v.plots(A) == s.plots(A)
         assert v.plot_figure(A, 0) == s.plot_figure(A, 0)
+
+
+class TestPlotsUnderALock:
+    """The file reads behave as `view` and `figure` always have for a model a
+    job holds: from memory, never from the directory the job is rewriting."""
+
+    def _locked(self, tmp_path):
+        from dstf.authoring.session import RunningJob
+
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.running = RunningJob(label="rerun", models=frozenset({A}))
+        return s, work
+
+    def test_a_locked_models_result_file_is_not_opened_and_nothing_is_cached(
+        self, tmp_path, monkeypatch
+    ):
+        from dstf.backends.python.backend import PythonBackend
+
+        s, _ = self._locked(tmp_path)
+
+        def boom(cls, *a):
+            raise AssertionError("a locked model's work dir was read")
+
+        monkeypatch.setattr(PythonBackend, "result_names", classmethod(boom))
+        monkeypatch.setattr(PythonBackend, "result_series", classmethod(boom))
+        assert s.variable_names(A) == ["x", "y"]
+        assert s.view(A, "z").act_time is None
+        assert s._reads[A].names is None and s._reads[A].series == {}
+        s.running = None
+        monkeypatch.undo()
+        assert s.variable_names(A) == ["x", "y", "a0", "z"]
+        assert s.view(A, "z").act_values.tolist() == [7.0] * 5
+
+    def test_what_was_read_before_the_lock_is_still_served(self, tmp_path):
+        from dstf.authoring.session import RunningJob
+
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.view(A, "z").act_values.tolist() == [7.0] * 5
+        assert s.variable_names(A) == ["x", "y", "a0", "z"]
+        s.running = RunningJob(label="rerun", models=frozenset({A}))
+        (work / "test_0001" / "result.json").write_text("{half", encoding="utf-8")
+        assert s.view(A, "z").act_values.tolist() == [7.0] * 5
+        assert s.variable_names(A) == ["x", "y", "a0", "z"]
+
+    def test_a_failed_job_drops_what_was_read_of_its_models(self, tmp_path):
+        """No reload follows a failed job, and its half-run rewrote the files."""
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.view(A, "z")
+        s.view(D, "x")
+        gate = _Gate()
+        jobs = _started(s)
+
+        def run(ctx):
+            gate(ctx)
+            raise RuntimeError("the run died")
+
+        s.apply(Job(run=run, label="rerun", models=frozenset({A})))
+        gate.release.set()
+        assert jobs[0].done.wait(5)
+        assert jobs[0].error is not None
+        assert A not in s._reads and D in s._reads
+
+
+class TestPlotsMisses:
+    def _open(self, tmp_path) -> Session:
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        return s
+
+    def test_a_miss_is_read_once(self, tmp_path, monkeypatch):
+        from dstf.backends.python.backend import PythonBackend
+
+        s = self._open(tmp_path)
+        calls = []
+        real = PythonBackend.result_series.__func__
+
+        def counting(cls, test_dir, names):
+            calls.append(tuple(names))
+            return real(cls, test_dir, names)
+
+        monkeypatch.setattr(PythonBackend, "result_series", classmethod(counting))
+        assert s.view(A, "nowhere").act_time is None
+        assert s.view(A, "nowhere").act_time is None
+        assert calls == [("nowhere",)]
+        s._reload_results()
+        s.view(A, "nowhere")
+        assert calls == [("nowhere",), ("nowhere",)]
+
+    def test_an_empty_but_listable_file_still_names_a_series_missing(
+        self, tmp_path, monkeypatch
+    ):
+        """`[]` is "the file lists nothing"; only `None` is "cannot list"."""
+        from dstf.backends.python.backend import PythonBackend
+
+        s = self._open(tmp_path)
+        monkeypatch.setattr(PythonBackend, "result_names", classmethod(lambda c, d: []))
+        s._reload_results()
+        s.stage(
+            [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "gone"}]}])]
+        )
+        (plot,) = s.plots(A)
+        assert plot.series == ("x",) and plot.missing == ("gone",)
+
+    def test_a_negative_plot_index_is_an_index_error(self, tmp_path):
+        s = self._open(tmp_path)
+        with pytest.raises(IndexError):
+            s.plot_figure(A, -1)
