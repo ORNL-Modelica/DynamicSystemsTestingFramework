@@ -1540,3 +1540,34 @@ planning.
   complex criteria against real results; decide what of this a CI runner
   can carry. The OpenModelica rerun hang (sub-project 5's acceptance, still
   unrun) belongs in the same pass.
+- **Follow-ups from the `plots` key / plot figure build reviews (2026-09-20)**
+  — residuals the reviews found and the build did not take on:
+  - For the Test page plan: `Session.plot_figure` of SEVERAL series
+    re-assembles on every call — one `build_trajectories` (every scored
+    variable to lists) and one decimation per series, no disk — while the
+    single-series path serves a cached decimated base. The page's in-place
+    redraw per plot wants `figure`'s base-plus-leaves view extracted into a
+    helper and `plot_figure(views, None, editable=True)` over cached bases.
+    Leaf geometry on a multi-series plot carries no series attribution
+    ("Tube" appears once per series, in the fixed actual / reference colours,
+    outside the family's legend group). `Session._test_dir` re-reads
+    `batch_manifest.json` per call (one load per cold `plots()`).
+  - For the drawers plan: a layout staged on a test that is tracked only by
+    its `.mo` annotation creates that test's FIRST `test_spec.json` entry
+    (`model` + `plots`, no `variables`); it scored the same in the TRANSFORM
+    gate, but the drawer should say it is creating an entry. TRANSFORM
+    baseline names carry newlines inside brackets
+    (`massPorts[\n        4, 1].C[1]`): the Variables filter and the family
+    rule meet them. `family_of` refuses a name with a comma index anywhere
+    (`x[1,2].y[3]` has a single last index and does not fold); `[007]` parses
+    to 7. `discovery/scan_cache._to_json` guards `metric_tree_spec` but not
+    `plots` (unreachable today: a scanned test has no layout).
+  - The family's legend swatch is one line in the ramp's lightest stop;
+    DESIGN.md once asked for "a small ramp" (the sentence was dropped with
+    D130). A plot whose every series is missing renders an empty heading.
+    A no-baseline plot of a tracked and a plot-only series prints the "plot
+    only" line for the second and says nothing of the first.
+  - Process: a plan task that was only READ before the build needed the most
+    repair (the report page: a guard order that broke an existing test, then
+    twelve review fixes); the four tasks a reviewer EXECUTED in an archive
+    first needed almost none.
