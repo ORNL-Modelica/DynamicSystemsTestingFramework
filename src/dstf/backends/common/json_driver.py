@@ -32,6 +32,7 @@ from ..types import (
     resolve_variable_patterns,
     timeout_message,
 )
+from . import result_files
 from .proc_output import decode_output
 
 logger = logging.getLogger(__name__)
@@ -312,6 +313,14 @@ class JsonDriverBackend(Backend):
             diagnostics=[],
             statistics=stats,
         )
+
+    @classmethod
+    def result_names(cls, test_dir: Path) -> list[str] | None:
+        return result_files.json_names(test_dir / cls.result_filename)
+
+    @classmethod
+    def result_series(cls, test_dir, names):
+        return result_files.json_series(test_dir / cls.result_filename, names)
 
     # ------------------------------------------------------------------
     # Helpers

@@ -48,6 +48,7 @@ from ...config import Config
 from ...discovery.test_registry import TestModel
 from .. import register
 from ..base import Backend
+from ..common import result_files
 from ..types import (
     Capability,
     DatasetType,
@@ -315,6 +316,14 @@ class FmpyBackend(Backend):
             diagnostics=[],  # FMPy doesn't surface CPUtime/EventCounter equivalents today
             statistics=run_result.statistics if run_result else None,
         )
+
+    @classmethod
+    def result_names(cls, test_dir: Path) -> list[str] | None:
+        return result_files.npz_names(test_dir / cls.RESULT_FILENAME)
+
+    @classmethod
+    def result_series(cls, test_dir, names):
+        return result_files.npz_series(test_dir / cls.RESULT_FILENAME, names)
 
 
 # ---------------------------------------------------------------------------

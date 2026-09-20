@@ -23,11 +23,13 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from ...config import Config
 from ...discovery.test_registry import TestModel
 from .. import register
 from ..base import Backend
+from ..common import result_files
 from ..common.mat_reader import mat_reaches_time, read_result_mat
 from ..common.proc_output import decode_output
 from ..common.result_variables import (
@@ -362,3 +364,11 @@ class OpenModelicaBackend(Backend):
             diagnostics=diagnostics,
             statistics=stats,
         )
+
+    @classmethod
+    def result_names(cls, test_dir: Path) -> list[str] | None:
+        return result_files.mat_names(test_dir / cls.RESULT_MAT_FILENAME)
+
+    @classmethod
+    def result_series(cls, test_dir, names):
+        return result_files.mat_series(test_dir / cls.RESULT_MAT_FILENAME, names)

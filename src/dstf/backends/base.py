@@ -13,12 +13,14 @@ import logging
 import sys
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING
+
+import numpy as np
 
 from ..config import Config
 from ..discovery.test_registry import TestModel
@@ -70,6 +72,16 @@ def assign_test_keys(
         test_items.append((test, test_key))
 
     return existing, test_items
+
+
+def last_test_keys(work_dir: Path) -> dict[str, str]:
+    """``{model_id: test_key}`` from the work dir's manifest; ``{}`` when
+    there is none."""
+    manifest_path = work_dir / "batch_manifest.json"
+    if not manifest_path.exists():
+        return {}
+    manifest = BatchManifest.load(manifest_path).manifest
+    return {entry["model_id"]: key for key, entry in manifest.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +413,21 @@ class Backend(ABC):
     ) -> TestResult:
         """Read simulation output for a completed test."""
         ...
+
+    @classmethod
+    def result_names(cls, test_dir: Path) -> list[str] | None:
+        """Every variable name in the result file under ``test_dir``
+        (``work_dir/<test_key>``), tracked or not; ``None`` when this backend
+        keeps no file it can list. A classmethod: the report reads a test's
+        files without instantiating a backend."""
+        return None
+
+    @classmethod
+    def result_series(
+        cls, test_dir: Path, names: Collection[str]
+    ) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        """``{name: (time, values)}`` for the ``names`` the file has."""
+        return {}
 
     def _prepare_run(self, tests: list[TestModel]) -> RunSetup:
         """Shared ``run_tests`` prologue: work dir, provenance, progress

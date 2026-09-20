@@ -108,14 +108,9 @@ def wipe_stale_state_for_scope(
     """
     work_dir = config.work_dir
     assert work_dir is not None  # resolved in Config.__post_init__
-    manifest_path = work_dir / "batch_manifest.json"
-    if manifest_path.exists():
-        from .storage.batch_manifest import BatchManifest
+    from .backends.base import last_test_keys
 
-        manifest = BatchManifest.load(manifest_path).manifest
-        model_to_key = {entry["model_id"]: tk for tk, entry in manifest.items()}
-    else:
-        model_to_key = {}
+    model_to_key = last_test_keys(work_dir)
 
     reports_root = work_dir / "reports"
     for test in tests:

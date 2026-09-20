@@ -12,6 +12,7 @@ from ...discovery.test_registry import TestModel
 from ...storage.batch_manifest import BatchManifest
 from .. import register
 from ..base import Backend, _print_run_header
+from ..common import result_files
 from ..common.mat_reader import read_result_mat
 from ..common.proc_kill import kill_process_tree
 from ..common.result_variables import (
@@ -598,6 +599,14 @@ class DymolaBackend(Backend):
             diagnostics=diagnostics,
             statistics=stats,
         )
+
+    @classmethod
+    def result_names(cls, test_dir: Path) -> list[str] | None:
+        return result_files.mat_names(test_dir / "dsres.mat")
+
+    @classmethod
+    def result_series(cls, test_dir, names):
+        return result_files.mat_series(test_dir / "dsres.mat", names)
 
 
 # ---------------------------------------------------------------------------
