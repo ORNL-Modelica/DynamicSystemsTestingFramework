@@ -42,6 +42,9 @@
    - A base read while a job holds the model is not cached (`_editable_view`): under a lock every redraw re-decimates. Task 7's forced redraw after a job is what draws the reloaded data.
    - `EditTree.available` answers `"{node_path} names no node of {model}"` for a path that names none: a NODE host built from a stale tree view shows that sentence, never a traceback.
    - `+` beside a criterion under a `warn` (one child only) or a `weighted` (weights per child) is always refused by the validator, by name, in the host's error label. Not designed around here.
+   - A host drawn INSIDE a row (every NODE host, Tasks 4 and 5) drops the column's full width, or it takes the rest of the row and the cluster sits left of where it belongs: `host.column.classes(remove="w-full", add="dstf-node-host")` right after constructing it. Read the screenshot for it.
+   - `_click_in` cannot scope a DIALOG's content: `ui.dialog` hangs off the client's layout, not off the bar that opened it. Task 5 test 7 finds `apply-add:x` with a plain `user.find` (the marker carries the variable, so it is unique). A `ui.menu`'s content IS inside its host.
+   - `InlineHost` calls `on_applied(name)` only when `act` returned an outcome (a `None` — an off-centre ring grab is a pixel resize — changed nothing, and rebuilding the editor then would discard a half-typed row). An `ActionBar` with a figure releases its owner whenever its dialog closes, however it closes.
 7. **A working reference exists:** `<scratchpad>/review-a.diff` (the reviewer's archive against d9bb328). An implementer may read its hunks for the task in hand; the plan, not the diff, is the specification, and every task still gets its own mutation-running review.
 
 ---
