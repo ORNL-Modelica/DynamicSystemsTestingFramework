@@ -797,3 +797,25 @@ def test_a_no_browser_parent_starts_no_browser_children_without_a_work_dir(
     assert "--no-browser" in cmd and "--work-dir" not in cmd
     assert cmd[cmd.index("--filter") + 1] == "FakeLib.A*"
     assert cmd[cmd.index("--package") + 1] == "FakeLib"
+
+
+async def test_the_header_is_one_row_unless_a_page_asks_for_a_second(shell):
+    """The Test page's sticky header is a second row INSIDE `ui.header`
+    (decision 8); the first row keeps its order, and the Suite page asks for
+    no second one."""
+    from nicegui import ui
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        row = _one(user, "wordmark").parent_slot.parent
+        assert "dstf-header-row" in row.classes
+        assert isinstance(row.parent_slot.parent, ui.header)
+        marks = [next(iter(c._markers), None) for c in row.default_slot.children]
+        order = [
+            m
+            for m in marks
+            if m in ("wordmark", "project", "backend", "runs", "pending", "stop")
+        ]
+        assert order == ["wordmark", "project", "backend", "runs", "pending", "stop"]
+        with pytest.raises(AssertionError):
+            user.find(marker="subheader")

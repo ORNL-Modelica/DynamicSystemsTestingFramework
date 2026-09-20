@@ -113,7 +113,8 @@ async def test_a_click_opens_the_test_page_and_checks_nothing(shell):
         await _open(user)
         page = _suite(shell, user)
         user.find(marker=A).click()
-        await user.should_see("Plots, criteria and the Variables drawer", retries=20)
+        # The stub's sentence is gone: the Test page's own body is the tree.
+        await user.should_see(marker="tree", retries=20)
         assert _one(user, "model").text == A
         assert _one(user, "status").text == "FAIL"
         assert page.state.checked == set()

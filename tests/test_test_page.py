@@ -6,6 +6,7 @@ Session plot by plot. In NiceGUI's user simulation."""
 from __future__ import annotations
 
 import asyncio
+import copy
 
 import pytest
 
@@ -21,7 +22,10 @@ from dstf.authoring.session import Selection  # noqa: E402
 from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
 from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
-from test_session import A, _two_var_project  # noqa: E402
+from dstf.authoring.shell.test_page import TestPage  # noqa: E402
+from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from test_handles import TREE  # noqa: E402
+from test_session import LOOSEN, A, B, C, D, _two_var_project  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -462,3 +466,203 @@ async def test_opening_another_capability_takes_the_figure_from_the_first(shell)
         assert one.seen == [] and len(two.seen) == 1
         owners = {o for entries in hook._handlers.values() for o, _ in entries}
         assert owners == {"variable-actions:two"}
+
+
+# -- the page's frame: the sticky test header and the criteria tree ---------
+
+
+def _page(shell, user) -> TestPage:
+    (page,) = [
+        p for p in shell.pages if isinstance(p, TestPage) and p.client is user.client
+    ]
+    return page
+
+
+async def _test_page(shell, user, model=A) -> TestPage:
+    """Open the Test page for ``model`` in the simulation already running:
+    `Shell.mount()` is once per Shell, so a test over two models reopens
+    inside the same simulation."""
+    shell.mount()
+    await _open(user, f"/test/{model}")
+    return _page(shell, user)
+
+
+def _stage_tree(shell, model=D, tree=None):
+    shell.session.stage(
+        [PatchOp(model, "add", "/metrics", copy.deepcopy(tree if tree else TREE))]
+    )
+
+
+def _range(lo):
+    return {"metric": "range", "variable": "x", "min_value": lo}
+
+
+async def _menu(user, marker: str, within: str) -> None:
+    """Open the cluster's menu marked ``marker`` and wait for its content:
+    an Edit tree menu is built on the icon's click, not before it."""
+    _click_in(user, marker, within=within)
+    kind, path = marker.split(":", 1)
+    await _settled(lambda: not _none(user, f"apply-{kind}:{path}"))
+
+
+async def test_the_test_header_is_a_second_row_of_the_shared_header(shell):
+    """Decision 8: a second row INSIDE `ui.header`, so it is sticky with no
+    offset arithmetic and no dependence on the first row's height."""
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        sub = _one(user, "subheader")
+        for marker in ("back", "model", "status", "test-actions"):
+            assert sub in list(_ancestors(_one(user, marker))), marker
+        header = sub.parent_slot.parent
+        assert isinstance(header, ui.header)
+        assert header in list(_ancestors(_one(user, "wordmark")))
+        assert _one(user, "status").text == "FAIL"
+        assert _one(user, "meta").text == "Python · ref_0001"
+        await _test_page(shell, user, B)
+        assert _one(user, "meta").text == "Python · no baseline"
+
+
+async def test_the_tree_loads_closed_to_one_line_naming_what_failed(shell):
+    """Board 1A: closed to one line that names what failed."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        # The implicit tree is ALWAYS an `and`; A tracks x and y, both failing.
+        assert _one(user, "tree:root").text == "and · 2 criteria"
+        assert _one(user, "tree:summary").text == (
+            "0 pass · 2 fail: nrmse · x, nrmse · y"
+        )
+        assert page.tree.rows.visible is False
+        assert "dstf-pill-fail" in page.tree.root_pill.label.classes
+        page = await _test_page(shell, user, D)
+        assert _one(user, "tree:root").text == "and · 1 criterion"
+        assert _one(user, "tree:summary").text == "1 pass"
+        assert _none(user, "tree:jump")
+
+
+async def test_the_summary_names_the_first_failures_and_counts_the_rest(shell):
+    four = {"combinator": "and", "children": [_range(-1)] + [_range(5)] * 4}
+    advisory = {
+        "combinator": "and",
+        "children": [{"combinator": "warn", "children": [_range(5)]}, _range(-1)],
+    }
+    # Hard failures are named before advisory ones, whatever the tree order.
+    mixed = {
+        "combinator": "and",
+        "children": [
+            {"combinator": "warn", "children": [_range(5)]},
+            {"combinator": "warn", "children": [_range(6)]},
+            {"metric": "range", "variable": "x", "max_value": -9},
+        ],
+    }
+    async with user_simulation(root=shell.index) as user:
+        _stage_tree(shell, D, four)
+        page = await _test_page(shell, user, D)
+        assert _one(user, "tree:summary").text == (
+            "1 pass · 4 fail: range · x, range · x, +2 more"
+        )
+        assert len(user.find(marker="tree:jump").elements) == 2
+        shell.session.discard()
+        _stage_tree(shell, D, advisory)
+        page = await _test_page(shell, user, D)
+        assert _one(user, "tree:summary").text == "1 pass · 1 advisory: range · x"
+        assert "dstf-pill-pass" in page.tree.root_pill.label.classes
+        shell.session.discard()
+        _stage_tree(shell, D, mixed)
+        page = await _test_page(shell, user, D)
+        assert _one(user, "tree:summary").text == (
+            "0 pass · 1 fail · 2 advisory: range · x, range · x, +1 more"
+        )
+        assert page.tree.named[0]["path"] == "/metrics/children/2"
+        assert "dstf-pill-fail" in page.tree.root_pill.label.classes
+
+
+async def test_show_tree_opens_the_rows_with_controls_on_every_node(shell):
+    """Board 1B: open, a row per node with that node's controls — which are
+    whatever attaches at NODE, never Edit tree by name."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        assert _one(user, "tree:toggle").text == "Show tree"
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        # The line is rebuilt on toggle: re-find the button before reading it.
+        assert _one(user, "tree:toggle").text == "Hide tree"
+        for path in ["/metrics"] + [f"/metrics/children/{i}" for i in range(6)]:
+            row = _one(user, f"tree-row:{path}")
+            node = _one(user, f"node:{path}")
+            assert row in list(_ancestors(node)), path
+            assert not _none(user, f"tree-pill:{path}"), path
+            (wrap,) = [
+                e
+                for e in user.find(marker=f"wrap:{path}").elements
+                if node in list(_ancestors(e))
+            ]
+            del wrap
+        assert _none(user, "remove:/metrics")  # the root is removed from nothing
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: not page.tree.rows.visible)
+
+
+async def test_a_wrap_from_the_tree_restages_the_rows(shell):
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        host = "node:/metrics/children/1"
+        await _menu(user, "wrap:/metrics/children/1", within=host)
+        _click_in(user, "apply-wrap:/metrics/children/1", within=host)
+        await _settled(
+            lambda: not _none(user, "tree-row:/metrics/children/1/children/0")
+        )
+        assert page.tree.rows.visible  # the tree stays OPEN
+
+
+async def test_the_rows_are_rebuilt_only_when_the_tree_s_shape_moved(shell):
+    """A verdict that flips repaints the row that is already there; a wrap
+    moves the shape (paths, kinds, variables) and rebuilds the rows."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        row = _one(user, "tree-row:/metrics/children/0")
+        pill = _one(user, "tree-pill:/metrics/children/0")
+        assert "dstf-pill-fail" in pill.classes
+        shell.session.stage([LOOSEN])  # x passes now; the shape did not move
+        await _settled(lambda: "dstf-pill-pass" in pill.classes)
+        assert _one(user, "tree-row:/metrics/children/0") is row
+        assert _one(user, "tree-pill:/metrics/children/0") is pill
+        host = "node:/metrics/children/1"
+        await _menu(user, "wrap:/metrics/children/1", within=host)
+        _click_in(user, "apply-wrap:/metrics/children/1", within=host)
+        await _settled(
+            lambda: not _none(user, "tree-row:/metrics/children/1/children/0")
+        )
+        assert _one(user, "tree-row:/metrics/children/0") is not row
+
+
+async def test_the_jump_names_the_failing_criterion(shell):
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        jumps = user.find(marker="tree:jump").elements
+        assert sorted(j.text for j in jumps) == ["nrmse · x", "nrmse · y"]
+        assert all(isinstance(j, ui.button) for j in jumps)
+
+
+async def test_a_test_with_nothing_scored_says_so(shell):
+    async with user_simulation(root=shell.index) as user:
+        for model, text in (
+            (B, "nothing scored: no baseline"),
+            (C, "nothing scored: no result"),
+        ):
+            await _test_page(shell, user, model)
+            assert _one(user, "tree:summary").text == text
+            assert _none(user, "tree:toggle")
+
+
+async def test_an_unknown_model_keeps_the_stub_message(shell):
+    async with user_simulation(root=shell.index) as user:
+        shell.mount()
+        await _open(user, "/test/FakeLib.Nope")
+        await user.should_see("FakeLib.Nope is not a test of this project")
+        assert _none(user, "subheader") and _none(user, "tree")

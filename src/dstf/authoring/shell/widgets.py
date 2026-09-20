@@ -37,3 +37,22 @@ class Action:
         if self.why is not None:
             self.why.set_text(reason or "")
             self.why.set_visibility(reason is not None)
+
+
+class Pill:
+    """The tinted status pill of a criterion or a tree node (DESIGN.md
+    "Status badges": tinted inside a page, filled only in the header). It
+    repaints in place — a verdict that flips must not cost the row it sits
+    in."""
+
+    def __init__(self, status: str, marker: str) -> None:
+        self.label = ui.label().classes("dstf-pill").mark(marker)
+        self.status = ""
+        self.set(status)
+
+    def set(self, status: str, text: str | None = None) -> None:
+        if self.status:
+            self.label.classes(remove=f"dstf-pill-{self.status}")
+        self.status = status
+        self.label.classes(add=f"dstf-pill-{status}")
+        self.label.set_text(text if text is not None else status)

@@ -4,11 +4,16 @@ pending count with Save / Discard / Export, the dashboard link and Stop
 server on the right. Every button's label says its object, effect and
 count; a disabled one carries the sentence that says why (DESIGN.md
 "Disabled states explain themselves"). Off-white with a hairline below,
-never an accent bar."""
+never an accent bar.
+
+A page may ask for a second row of its own (``below``): it is drawn INSIDE
+this fixed header, which is what makes it sticky without offset arithmetic
+(decision 8). The Test page's header is the one."""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
@@ -23,11 +28,13 @@ if TYPE_CHECKING:
 
 
 class Header:
-    def __init__(self, shell: Shell) -> None:
+    def __init__(self, shell: Shell, below: Callable[[], None] | None = None) -> None:
         self.shell = shell
         self.drawer = PendingDrawer(shell)
         self.dialog = ui.dialog()  # the header's dialogs, one element rebuilt per use
-        with ui.header().classes("dstf-header items-center no-wrap gap-3"):
+        with ui.header().classes("dstf-header column no-wrap gap-0") as bar:
+            row = ui.row().classes("dstf-header-row items-center no-wrap gap-3 w-full")
+        with row:
             ui.label("DSTF").classes("dstf-wordmark").mark("wordmark")
             self.library = ui.label().classes("text-secondary").mark("project")
             self.backend = (
@@ -66,6 +73,16 @@ class Header:
                 .props("outline dense no-caps color=negative")
                 .mark("stop")
             )
+        if below is not None:
+            # A second row INSIDE the fixed header (decision 8): sticky with
+            # no offset arithmetic and no dependence on the first row's
+            # height. The Test page's own header is what `below` draws.
+            with bar:
+                sub = ui.row().classes(
+                    "dstf-subheader items-center no-wrap gap-3 w-full"
+                )
+            with sub.mark("subheader"):
+                below()
         self.refresh()
 
     def handle(self, event: dict[str, Any]) -> None:

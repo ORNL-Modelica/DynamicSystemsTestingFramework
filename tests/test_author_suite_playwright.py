@@ -167,10 +167,12 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
         expect(page).to_have_url(
             re.compile(r"/test/FakeLib\.A$"), timeout=EXPECT_TIMEOUT
         )
-        expect(page.locator(".dstf-test")).to_contain_text(
+        # The model and its verdict moved into the sticky test header, which
+        # is a second row of the shared one (decision 8), not the page body.
+        expect(page.locator(".dstf-subheader")).to_contain_text(
             "FakeLib.A", timeout=EXPECT_TIMEOUT
         )
-        expect(page.locator(".dstf-test .dstf-badge")).to_have_text(
+        expect(page.locator(".dstf-subheader .dstf-badge")).to_have_text(
             "FAIL", timeout=EXPECT_TIMEOUT
         )
         # Its TEST-placement buttons speak of this one test.

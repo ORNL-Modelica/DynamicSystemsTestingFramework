@@ -10,6 +10,12 @@ from __future__ import annotations
 
 from ...reporting.theme import STATUS
 
+_PILLS = "".join(
+    f".dstf-pill-{status} {{ background: var(--dstf-{status}-pill); "
+    f"color: var(--dstf-{status}-dark); border-color: var(--dstf-{status}-border); }}\n"
+    for status in ("pass", "fail", "warn", "queued")
+)
+
 _TINTS = "".join(
     f".dstf-tint-{status} {{ background: var(--dstf-{status}-tint); }}\n"
     for status in STATUS
@@ -24,8 +30,22 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-header.q-header {
   background: var(--dstf-page) !important; color: var(--dstf-text) !important;
   border-bottom: 1px solid var(--dstf-border); box-shadow: none;
-  padding: 4px 24px; min-height: 40px;
+  padding: 0 24px;
+  /* NiceGUI's own `.nicegui-header { flex-direction: row }` outranks
+     Quasar's `.column`: without this the Test page's second row renders to
+     the RIGHT of the first with Rerun / Accept clipped off-screen, and
+     every simulation test still passes. */
+  flex-direction: column; flex-wrap: nowrap; align-items: stretch;
 }
+.dstf-header-row { padding: 4px 0; min-height: 40px; }
+.dstf-subheader {
+  border-top: 1px solid var(--dstf-border); padding: 4px 0; min-height: 40px;
+}
+.dstf-pill {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .03em; padding: 1px 6px; border-radius: 3px; border: 1px solid;
+}
+.dstf-tree-line { min-height: 32px; }
 .dstf-wordmark { font-size: 20px; font-weight: 700; }
 .dstf-mono { font-family: var(--dstf-mono); }
 .dstf-why { color: var(--dstf-text-muted); font-size: 12px; }
@@ -50,4 +70,5 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 """
     + _TINTS
+    + _PILLS
 )
