@@ -166,6 +166,10 @@ class PlotCard:
             row = self.rows.get(str(leaf["path"]))
             if row is not None:
                 row.paint(leaf)
+        for row in self.rows.values():
+            # The row stands; what its node's controls MAY do does not (a
+            # job's lock comes and goes without the shape moving).
+            row.host.follow()
         for bar in self.bars:
             bar.refresh()
 

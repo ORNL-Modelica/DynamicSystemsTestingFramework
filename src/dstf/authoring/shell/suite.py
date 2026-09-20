@@ -181,7 +181,11 @@ class SuitePage:
                         .classes("dstf-name")
                         .mark(model_id)
                     )
-                    badge = ui.badge("").classes("dstf-badge")
+                    # `color=None`: a Quasar badge otherwise carries
+                    # `bg-primary`, whose `!important` beats the inline
+                    # status fill and paints every verdict blue (the Task 4
+                    # review, in Chromium).
+                    badge = ui.badge("", color=None).classes("dstf-badge")
                 self.rows[model_id] = Row(
                     model_id, group, container, checkbox, name, badge
                 )

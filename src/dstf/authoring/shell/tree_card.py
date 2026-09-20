@@ -48,9 +48,12 @@ def nodes_of(view: dict | None) -> list[dict]:
 
 
 def shape_of(view: dict | None) -> tuple[tuple[str, str, str], ...]:
-    """What a row is drawn from and cannot be repainted through: a node's
-    path, its kind and, for a leaf, the variable it scores. The metric is
-    NOT in it — a mode switch repaints the row's name in place."""
+    """What a row is drawn from and cannot be repainted through. The paths
+    are what decides the rows — one per node, painted by its path — and the
+    kind and the leaf's variable ride along harmlessly: a row is built for
+    that node's selection and controls, so a row whose kind or variable
+    moved is one worth rebuilding anyway. The metric is NOT in it: a mode
+    switch repaints the row's name in place."""
     return tuple(
         (str(node.get("path")), str(node.get("kind")), str(node.get("variable")))
         for node in nodes_of(view)
@@ -84,16 +87,23 @@ def leaf_name(leaf: dict) -> str:
 
 
 def leaf_readout(leaf: dict) -> str:
-    """The CLI's own words for the score: the sentinel's reason, else the
-    criterion it was held to — which ALREADY carries the score ("NRMSE
-    1.531e-01 vs tolerance 1.000e-02 → FAIL"), so the display beside it said
-    the number twice (the first screenshot) — else the display alone. The
-    trailing verdict is not stripped: `tube` and `range` do not end with
-    it ("… → FAIL (requires 0)"), so a strip would read the string wrong for
-    half the modes."""
-    if leaf.get("error"):
-        return str(leaf["error"])
+    """The CLI's own words for the score: the criterion the leaf was held
+    to — which ALREADY carries the score ("NRMSE 1.531e-01 vs tolerance
+    1.000e-02 → FAIL"), so the display beside it said the number twice (the
+    first screenshot) — else the display alone. A sentinel's criterion says
+    the reason itself ("scalar leaf not scored — …"), so the error is not a
+    branch of its own. The trailing verdict is not stripped: `tube` and
+    `range` do not end with it ("… → FAIL (requires 0)"), so a strip would
+    read the string wrong for half the modes."""
     return str(leaf.get("criterion") or leaf.get("score_display") or "")
+
+
+def root_text(node: dict) -> str:
+    """What the root IS, in the closed line. A staged root leaf is the
+    test's one criterion — its metric and variable are already the line's
+    only jump — and a combinator names itself and counts the LEAVES under
+    it, however deep: `and[k-of-n[l, l], l]` is 3 criteria, not 2."""
+    return "1 criterion" if node.get("kind") == "leaf" else node_text(node)
 
 
 def node_text(node: dict) -> str:
@@ -106,10 +116,13 @@ def node_text(node: dict) -> str:
     return text
 
 
-def summary_text(view: dict) -> tuple[str, list[dict]]:
-    """The closed line's tally, and the failing leaves it names (board 1A:
-    it "names what failed and jumps to it") — hard failures before advisory
-    ones, at most `NAMED` of them, the rest counted."""
+def summary_text(view: dict) -> tuple[str, list[dict], int]:
+    """The closed line's three parts: the tally ("0 pass · 2 fail", plus an
+    advisory and an unscored count when either is non-zero), the failing
+    leaves the line NAMES — hard failures before advisory ones, at most
+    `NAMED` of them — and how many failures are left over for "+k more".
+    Board 1A draws each failure's name once, and it is the thing that
+    jumps, so the tally does not repeat the names."""
     leaves = leaves_of(view)
     statuses = [leaf_status(leaf) for leaf in leaves]
     hard = [leaf for leaf, st in zip(leaves, statuses) if st == "fail"]
@@ -119,14 +132,10 @@ def summary_text(view: dict) -> tuple[str, list[dict]]:
         parts.append(f"{len(hard)} fail")
     if advisory:
         parts.append(f"{len(advisory)} advisory")
-    text = " · ".join(parts)
+    if statuses.count("queued"):
+        parts.append(f"{statuses.count('queued')} unscored")
     failed = hard + advisory
-    named = failed[:NAMED]
-    if named:
-        text += ": " + ", ".join(leaf_name(leaf) for leaf in named)
-        if len(failed) > NAMED:
-            text += f", +{len(failed) - NAMED} more"
-    return text, named
+    return " · ".join(parts), failed[:NAMED], max(len(failed) - NAMED, 0)
 
 
 class _Row:
@@ -183,6 +192,10 @@ class TreeCard:
             return
         for node in nodes_of(view):
             self.painters[str(node.get("path"))].paint(node)
+        for host in self.hosts:
+            # The rows stand; what a node's controls MAY do does not (a
+            # job's lock comes and goes without the shape moving).
+            host.follow()
 
     # -- the closed line -----------------------------------------------------------
 
@@ -201,14 +214,20 @@ class TreeCard:
                 on_click=self.toggle,
             ).props("flat dense no-caps").mark("tree:toggle")
             self.root_pill = Pill(root_status(view), "tree:root-pill")
-            ui.label(node_text(view)).classes("text-weight-medium").mark("tree:root")
-            text, self.named = summary_text(view)
+            ui.label(root_text(view)).classes("text-weight-medium").mark("tree:root")
+            text, self.named, more = summary_text(view)
             ui.label(text).classes("text-secondary").mark("tree:summary")
             for leaf in self.named:
-                ui.button(
+                button = ui.button(
                     leaf_name(leaf),
                     on_click=partial(self.page.open_criterion, str(leaf["path"])),
-                ).props("flat dense no-caps").mark("tree:jump")
+                ).props("flat dense no-caps")
+                with button.mark("tree:jump"):
+                    # Two criteria on one variable read identically ("range ·
+                    # x, range · x"): the path is what tells them apart.
+                    ui.tooltip(str(leaf["path"]))
+            if more:
+                ui.label(f"+{more} more").classes("text-secondary").mark("tree:more")
 
     # -- the rows ------------------------------------------------------------------
 

@@ -98,7 +98,10 @@ class TestPage:
         model_id = self.model_id
         ui.link("← Suite", "/").mark("back")
         ui.label(model_id).classes("text-subtitle1 dstf-mono").mark("model")
-        self.badge = ui.badge("").classes("dstf-badge").mark("status")
+        # `color=None`: a Quasar badge otherwise carries `bg-primary`, whose
+        # `!important` beats the inline status fill and paints every verdict
+        # blue (the Task 4 review, in Chromium).
+        self.badge = ui.badge("", color=None).classes("dstf-badge").mark("status")
         self.meta = ui.label().classes("text-secondary text-xs").mark("meta")
         ui.space()
         self.actions = ActionBar(
@@ -109,12 +112,18 @@ class TestPage:
         )
 
     def unscored_reason(self) -> str:
-        """Why this test has no tree: it never ran, or it has no baseline to
-        be scored against."""
-        project = self.shell.session.project
+        """Why this test has no tree: it never ran, its scoring raised, or
+        it has no baseline to be scored against. A model whose scoring
+        raised keeps its result and has no comparison at all — the Suite
+        row says `scoring failed` for the same state — so "no baseline"
+        would name the wrong cause."""
+        session = self.shell.session
+        project = session.project
         result = project.results.get(self.model_id) if project is not None else None
         if result is None or not result.success:
             return "no result"
+        if session.comparisons.get(self.model_id) is None:
+            return "scoring failed"
         return "no baseline"
 
     def open_criterion(self, path: str) -> None:
@@ -192,10 +201,12 @@ class TestPage:
         project = session.project
         if project is None:
             return
+        # The index's id alone: `get_reference` reads the whole baseline off
+        # disk, and this runs on every Session event to print one file name.
         ref_id = project.store.index.get_id(self.model_id)
-        ref = None
-        if ref_id is not None and project.store.get_reference(self.model_id):
-            ref = RefIndex.ref_filename(ref_id).rsplit(".", 1)[0]
+        ref = (
+            None if ref_id is None else RefIndex.ref_filename(ref_id).rsplit(".", 1)[0]
+        )
         self.meta.set_text(f"{project.config.backend_name} · {ref or 'no baseline'}")
 
     def sync(self) -> None:

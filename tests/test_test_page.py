@@ -15,9 +15,10 @@ pytest.importorskip("nicegui")
 from nicegui import ui  # noqa: E402
 from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
+from capability_host import open_menu  # noqa: E402
 from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from dstf.authoring.capabilities import Artifact, Placement  # noqa: E402
+from dstf.authoring.capabilities import Artifact, Job, Placement  # noqa: E402
 from dstf.authoring.session import Selection  # noqa: E402
 from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
 from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
@@ -25,7 +26,7 @@ from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from test_handles import TREE  # noqa: E402
-from test_session import LOOSEN, A, B, C, D, _two_var_project  # noqa: E402
+from test_session import LOOSEN, A, B, C, D, _Gate, _two_var_project  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -89,6 +90,16 @@ def _ancestors(element):
     while element.parent_slot is not None:
         element = element.parent_slot.parent
         yield element
+
+
+def _inside(user, marker: str, within: str) -> list:
+    """Every element marked ``marker`` inside the host marked ``within``,
+    empty when there is none: the same node's controls are drawn in a tree
+    row and in a criteria row, so a bare find cannot say which is gone."""
+    if _none(user, marker):
+        return []
+    host = _one(user, within)
+    return [e for e in user.find(marker=marker).elements if host in list(_ancestors(e))]
 
 
 def _click_in(user, marker: str, within: str) -> None:
@@ -400,6 +411,47 @@ async def test_an_act_that_returned_nothing_leaves_on_applied_alone(shell):
         assert applied == ["two"]
 
 
+async def test_follow_rebuilds_a_host_only_when_an_available_answer_moved(shell):
+    """A host that is never rebuilt — a tree row's, a criteria row's —
+    would keep the answer of the moment it was drawn. `follow` re-reads
+    them and rebuilds when one moved, and leaves the host alone when none
+    did: a rebuild on every Session event is what the row exists to avoid."""
+    probe = _Probe("one", {Placement.CRITERION})
+    _only(probe)
+    box, root = _hosted(shell)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        panel = _one(user, "probe:one")
+        box[0].follow()
+        assert _one(user, "probe:one") is panel  # nothing moved, nothing rebuilt
+        probe.answer = "rerun is running on FakeLib.A"
+        box[0].follow()
+        assert _none(user, "probe:one")
+        assert _one(user, "why:one").text == "rerun is running on FakeLib.A"
+        probe.answer = True
+        box[0].follow()
+        assert _none(user, "why:one") and _one(user, "probe:one") is not panel
+
+
+async def test_an_action_bars_dialog_closes_only_for_an_act_that_applied(shell):
+    """Like `InlineHost.on_applied`: every plot sends `{"autosize": true}`
+    at mount, and a panel that answers such a relayout with None changed
+    nothing — the dialog it sits in must stay open."""
+    probe = _Probe("one", {Placement.VARIABLE})  # its act returns None
+    _only(probe)
+    bars, root = _barred(shell, None)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        user.find(marker="action:one").click()
+        await user.should_see(marker="probe:one")
+        user.find(marker="go:one").click()
+        await asyncio.sleep(0.1)
+        assert bars[0].dialog.value is True  # nothing applied, nothing to close over
+        probe.outcome = OUTCOME
+        user.find(marker="go:one").click()
+        await _settled(lambda: bars[0].dialog.value is False)
+
+
 async def test_an_action_bar_hands_its_figure_to_the_dialog_panel(shell):
     probe = _Probe("one", {Placement.VARIABLE}, subscribe=True)
     _only(probe)
@@ -499,8 +551,9 @@ def _range(lo):
 
 async def _menu(user, marker: str, within: str) -> None:
     """Open the cluster's menu marked ``marker`` and wait for its content:
-    an Edit tree menu is built on the icon's click, not before it."""
-    _click_in(user, marker, within=within)
+    an Edit tree menu is built when the menu opens, which under the user
+    simulation is `menu.open()` — a click moves no menu's value."""
+    open_menu(user, marker, within=within)
     kind, path = marker.split(":", 1)
     await _settled(lambda: not _none(user, f"apply-{kind}:{path}"))
 
@@ -523,20 +576,49 @@ async def test_the_test_header_is_a_second_row_of_the_shared_header(shell):
 
 
 async def test_the_tree_loads_closed_to_one_line_naming_what_failed(shell):
-    """Board 1A: closed to one line that names what failed."""
+    """Board 1A: closed to one line whose tally stops at the counts — each
+    failure's name is drawn ONCE, as the button that jumps to it."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         # The implicit tree is ALWAYS an `and`; A tracks x and y, both failing.
         assert _one(user, "tree:root").text == "and · 2 criteria"
-        assert _one(user, "tree:summary").text == (
-            "0 pass · 2 fail: nrmse · x, nrmse · y"
-        )
+        assert _one(user, "tree:summary").text == "0 pass · 2 fail"
+        assert sorted(j.text for j in user.find(marker="tree:jump").elements) == [
+            "nrmse · x",
+            "nrmse · y",
+        ]
+        assert _none(user, "tree:more")
         assert page.tree.rows.visible is False
         assert "dstf-pill-fail" in page.tree.root_pill.label.classes
         page = await _test_page(shell, user, D)
         assert _one(user, "tree:root").text == "and · 1 criterion"
         assert _one(user, "tree:summary").text == "1 pass"
-        assert _none(user, "tree:jump")
+        assert _none(user, "tree:jump") and _none(user, "tree:more")
+
+
+async def test_the_root_line_says_what_the_root_is_and_counts_the_leaves(shell):
+    """A staged root leaf IS the test's one criterion (its name is already
+    the line's jump); a combinator counts the leaves under it, however deep
+    — `and[k-of-n[l, l], l]` is three criteria, not two children."""
+    nested = {
+        "combinator": "and",
+        "children": [
+            {"combinator": "k-of-n", "k": 1, "children": [_range(-1), _range(-2)]},
+            _range(-3),
+        ],
+    }
+    async with user_simulation(root=shell.index) as user:
+        _stage_tree(shell, D, nested)
+        await _test_page(shell, user, D)
+        assert _one(user, "tree:root").text == "and · 3 criteria"
+        shell.session.discard()
+        shell.session.stage(
+            [PatchOp(A, "add", "/metrics", {"metric": "nrmse", "variable": "x"})]
+        )
+        await _test_page(shell, user, A)
+        assert _one(user, "tree:root").text == "1 criterion"
+        assert _one(user, "tree:summary").text == "0 pass · 1 fail"
+        assert [j.text for j in user.find(marker="tree:jump").elements] == ["nrmse · x"]
 
 
 async def test_the_summary_names_the_first_failures_and_counts_the_rest(shell):
@@ -557,21 +639,21 @@ async def test_the_summary_names_the_first_failures_and_counts_the_rest(shell):
     async with user_simulation(root=shell.index) as user:
         _stage_tree(shell, D, four)
         page = await _test_page(shell, user, D)
-        assert _one(user, "tree:summary").text == (
-            "1 pass · 4 fail: range · x, range · x, +2 more"
-        )
+        assert _one(user, "tree:summary").text == "1 pass · 4 fail"
         assert len(user.find(marker="tree:jump").elements) == 2
+        assert _one(user, "tree:more").text == "+2 more"
         shell.session.discard()
         _stage_tree(shell, D, advisory)
         page = await _test_page(shell, user, D)
-        assert _one(user, "tree:summary").text == "1 pass · 1 advisory: range · x"
+        assert _one(user, "tree:summary").text == "1 pass · 1 advisory"
+        assert [j.text for j in user.find(marker="tree:jump").elements] == ["range · x"]
+        assert _none(user, "tree:more")
         assert "dstf-pill-pass" in page.tree.root_pill.label.classes
         shell.session.discard()
         _stage_tree(shell, D, mixed)
         page = await _test_page(shell, user, D)
-        assert _one(user, "tree:summary").text == (
-            "0 pass · 1 fail · 2 advisory: range · x, range · x, +1 more"
-        )
+        assert _one(user, "tree:summary").text == "0 pass · 1 fail · 2 advisory"
+        assert _one(user, "tree:more").text == "+1 more"
         assert page.tree.named[0]["path"] == "/metrics/children/2"
         assert "dstf-pill-fail" in page.tree.root_pill.label.classes
 
@@ -603,6 +685,43 @@ async def test_show_tree_opens_the_rows_with_controls_on_every_node(shell):
         await _settled(lambda: not page.tree.rows.visible)
 
 
+async def test_a_tree_rows_controls_follow_the_job_that_locked_the_test(shell):
+    """A tree opened DURING a rerun drew its rows on "rerun is running on
+    …"; the rows are not rebuilt when the job ends, so without `follow`
+    that sentence stood for the rest of the page's life."""
+    _stage_tree(shell)
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({D})))
+        await _settled(lambda: shell.session.running is not None)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        host = "node:/metrics"
+        assert _inside(user, "wrap:/metrics", host) == []
+        (why,) = _inside(user, "why:edit-tree", host)
+        assert why.text == f"rerun is running on {D}"
+        gate.release.set()
+        await _settled(lambda: bool(_inside(user, "wrap:/metrics", host)))
+        assert _inside(user, "why:edit-tree", host) == []
+
+
+async def test_a_criteria_rows_controls_follow_the_lock_the_other_way(shell):
+    """The reverse: a row drawn before the job kept clickable controls
+    under the lock, and the error a click earned then stayed on the row."""
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        host = f"node:0:{T0}"
+        assert _inside(user, f"wrap:{T0}", host)
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await _settled(lambda: _inside(user, f"wrap:{T0}", host) == [])
+        (why,) = _inside(user, "why:edit-tree", host)
+        assert why.text == f"rerun is running on {A}"
+        gate.release.set()
+        await _settled(lambda: bool(_inside(user, f"wrap:{T0}", host)))
+
+
 async def test_a_wrap_from_the_tree_restages_the_rows(shell):
     _stage_tree(shell)
     async with user_simulation(root=shell.index) as user:
@@ -630,6 +749,9 @@ async def test_the_rows_are_rebuilt_only_when_the_tree_s_shape_moved(shell):
         assert "dstf-pill-fail" in pill.classes
         shell.session.stage([LOOSEN])  # x passes now; the shape did not move
         await _settled(lambda: "dstf-pill-pass" in pill.classes)
+        # The status it had is GONE: `.dstf-pill-fail` is declared after
+        # `-pass`, so a pill carrying both reads PASS in red.
+        assert "dstf-pill-fail" not in pill.classes
         assert _one(user, "tree-row:/metrics/children/0") is row
         assert _one(user, "tree-pill:/metrics/children/0") is pill
         host = "node:/metrics/children/1"
@@ -641,12 +763,114 @@ async def test_the_rows_are_rebuilt_only_when_the_tree_s_shape_moved(shell):
         assert _one(user, "tree-row:/metrics/children/0") is not row
 
 
+async def test_a_repainted_row_says_the_new_readout_the_new_text_and_the_new_k(shell):
+    """A row that is not rebuilt must have everything it says written into
+    it: the CLI's readout, the node's text, and a k-of-n's own k among it."""
+    nested = {
+        "combinator": "and",
+        "children": [
+            {"combinator": "k-of-n", "k": 1, "children": [_range(-1), _range(5)]},
+            {"metric": "nrmse", "variable": "x"},
+        ],
+    }
+    _stage_tree(shell, A, nested)
+    leaf, combinator = "/metrics/children/1", "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        row = _one(user, f"tree-row:{leaf}")
+        readout = page.tree.painters[leaf].readout
+        assert "tolerance 1.000e-02" in readout.text
+        shell.session.stage([PatchOp(A, "add", f"{leaf}/tolerance", 0.5)])
+        await _settled(lambda: "tolerance 5.000e-01" in readout.text)
+        assert _one(user, f"tree-row:{leaf}") is row  # painted, not rebuilt
+        text = page.tree.painters[combinator].text
+        assert text.text == "k-of-n · 2 criteria · k=1"
+        krow = _one(user, f"tree-row:{combinator}")
+        shell.session.stage([PatchOp(A, "replace", f"{combinator}/k", 2)])
+        await _settled(lambda: text.text == "k-of-n · 2 criteria · k=2")
+        assert _one(user, f"tree-row:{combinator}") is krow
+
+
+async def test_a_rows_indent_is_its_depth_in_the_tree(shell):
+    """The rows are one flat column: the indent is the only thing that says
+    what is under what."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        root = _one(user, "tree-row:/metrics")
+        child = _one(user, "tree-row:/metrics/children/0")
+        assert dict(root.style).get("padding-left") == "0px"
+        assert dict(child.style).get("padding-left") == "16px"
+
+
+async def test_the_closed_line_follows_the_session_with_the_tree_hidden(shell):
+    """The line is five elements and is rebuilt on every sync, open or
+    closed: a tree hidden again must not freeze on the verdict it had."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: not page.tree.rows.visible)
+        assert _one(user, "tree:summary").text == "0 pass · 2 fail"
+        shell.session.stage([LOOSEN])  # x passes now
+        await _settled(lambda: _one(user, "tree:summary").text == "1 pass · 1 fail")
+        assert [j.text for j in user.find(marker="tree:jump").elements] == ["nrmse · y"]
+
+
 async def test_the_jump_names_the_failing_criterion(shell):
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user)
         jumps = user.find(marker="tree:jump").elements
         assert sorted(j.text for j in jumps) == ["nrmse · x", "nrmse · y"]
         assert all(isinstance(j, ui.button) for j in jumps)
+        # Two criteria on one variable read identically: the tooltip is the
+        # tree path, which is what tells them apart.
+        tips = sorted(
+            t.text for j in jumps for t in j.descendants() if isinstance(t, ui.tooltip)
+        )
+        assert tips == ["/metrics/children/0", "/metrics/children/1"]
+
+
+def test_the_closed_lines_tally_counts_each_kind_of_leaf():
+    """The tally alone (board 1A): pass always, then the kinds that are
+    non-zero — an unscored leaf is one whose `passed` is None, and the
+    failures over the two the line names are left to `+k more`."""
+    from dstf.authoring.shell.tree_card import summary_text
+
+    def leaf(passed, advisory=False, path="/p"):
+        return {
+            "kind": "leaf",
+            "path": path,
+            "metric": "range",
+            "variable": "x",
+            "passed": passed,
+            "advisory": advisory,
+        }
+
+    def tree(*children):
+        return {"kind": "combinator", "path": "/metrics", "children": list(children)}
+
+    assert summary_text(tree(leaf(True), leaf(True))) == ("2 pass", [], 0)
+    text, named, more = summary_text(
+        tree(leaf(True), leaf(False), leaf(False, True), leaf(None))
+    )
+    assert text == "1 pass · 1 fail · 1 advisory · 1 unscored"
+    assert [n["passed"] for n in named] == [False, False]  # hard, then advisory
+    assert more == 0
+    text, named, more = summary_text(
+        tree(*[leaf(False, path=f"/{i}") for i in range(5)])
+    )
+    assert (text, [n["path"] for n in named], more) == (
+        "0 pass · 5 fail",
+        ["/0", "/1"],
+        3,
+    )
+    assert summary_text(tree(leaf(None))) == ("0 pass · 1 unscored", [], 0)
 
 
 async def test_a_test_with_nothing_scored_says_so(shell):
@@ -658,6 +882,31 @@ async def test_a_test_with_nothing_scored_says_so(shell):
             await _test_page(shell, user, model)
             assert _one(user, "tree:summary").text == text
             assert _none(user, "tree:toggle")
+
+
+async def test_a_test_whose_scoring_raised_does_not_say_no_baseline(shell, monkeypatch):
+    """A model whose scoring raised keeps its result and has no comparison
+    at all (the Suite row says `scoring failed` for the same state); D has
+    a baseline, so "no baseline" would name the wrong cause."""
+    import dstf.authoring.session as session_mod
+
+    real = session_mod.compare_one
+
+    def failing(test, *args, **kwargs):
+        if test.model_id == D:
+            raise ValueError("boom")
+        return real(test, *args, **kwargs)
+
+    monkeypatch.setattr(session_mod, "compare_one", failing)
+    with pytest.raises(RuntimeError):
+        shell.session._reload_results()
+    assert D not in shell.session.comparisons
+    assert shell.session.project.store.index.get_id(D) is not None
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        assert _one(user, "tree:summary").text == "nothing scored: scoring failed"
+        # The baseline is right there — the id comes from the index alone.
+        assert _one(user, "meta").text.startswith("Python · ref_")
 
 
 async def test_an_unknown_model_keeps_the_stub_message(shell):
@@ -680,8 +929,36 @@ def test_the_readout_says_the_criterion_once():
     }
     assert leaf_readout(leaf) == leaf["criterion"]
     assert leaf_readout({"score_display": "not scored"}) == "not scored"
-    assert leaf_readout({"score_display": "s", "criterion": "c", "error": "e"}) == "e"
     assert leaf_readout({}) == ""
+
+
+async def test_a_sentinel_leafs_readout_is_the_criterion_that_says_the_reason(shell):
+    """A leaf the scorer could not score carries its reason IN the
+    criterion ("scalar leaf not scored — …"), so the error is not a branch
+    of its own: reading it there said the reason without the mode."""
+    sentinel = {
+        "combinator": "and",
+        "children": [
+            _range(-1),
+            {
+                "metric": "scalar",
+                "variable": "x",
+                "quantity": "no.such.path",
+                "min_value": 0,
+            },
+        ],
+    }
+    _stage_tree(shell, D, sentinel)
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        from dstf.authoring.shell.tree_card import leaf_readout, leaves_of
+
+        scored, unscorable = leaves_of(shell.session.tree_view(D))
+        assert leaf_readout(unscorable).startswith("scalar leaf not scored — ")
+        assert unscorable["error"] not in ("", None)
+        assert leaf_readout(unscorable) == unscorable["criterion"]
+        assert _one(user, f"criterion-readout:0:{T1}").text == leaf_readout(unscorable)
+        assert leaf_readout(scored) == scored["criterion"]
 
 
 # -- the plot cards ----------------------------------------------------------

@@ -30,22 +30,30 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-header.q-header {
   background: var(--dstf-page) !important; color: var(--dstf-text) !important;
   border-bottom: 1px solid var(--dstf-border); box-shadow: none;
-  padding: 0 24px;
+  /* No padding of its own — NiceGUI's `.nicegui-header` brings 16 px on
+     every side — because each ROW carries the side padding instead: on the
+     header it inset the sub-header's border-top, which then stopped short
+     of both edges while the header's own border-bottom ran to them. */
+  padding: 0;
   /* NiceGUI's own `.nicegui-header { flex-direction: row }` outranks
      Quasar's `.column`: without this the Test page's second row renders to
      the RIGHT of the first with Rerun / Accept clipped off-screen, and
      every simulation test still passes. */
   flex-direction: column; flex-wrap: nowrap; align-items: stretch;
 }
-.dstf-header-row { padding: 4px 0; min-height: 40px; }
+.dstf-header-row { padding: 4px 24px; min-height: 40px; }
 .dstf-subheader {
-  border-top: 1px solid var(--dstf-border); padding: 4px 0; min-height: 40px;
+  border-top: 1px solid var(--dstf-border); padding: 4px 24px; min-height: 40px;
 }
 .dstf-pill {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .03em; padding: 1px 6px; border-radius: 3px; border: 1px solid;
 }
 .dstf-tree-line { min-height: 32px; }
+.dstf-tree-row {
+  min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
+}
+.dstf-tree-row:hover { background: var(--dstf-surface-hover); }
 .dstf-plot-slot { min-height: 320px; }
 .dstf-crit {
   min-height: 36px; padding: 4px 8px; cursor: pointer;

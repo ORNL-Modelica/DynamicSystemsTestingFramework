@@ -128,6 +128,16 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
             expect(badges.filter(has_text=re.compile(word))).to_have_count(
                 n, timeout=EXPECT_TIMEOUT
             )
+        # Each badge carries its verdict's fill (`theme.STATUS`: fail
+        # #f44336, pass #4CAF50). A Quasar badge is `bg-primary` unless it
+        # is built with `color=None`, and that `!important` beats the inline
+        # background: every verdict came out Quasar blue (the Task 4 review).
+        fill = "e => getComputedStyle(e).backgroundColor"
+        assert (
+            badges.filter(has_text=re.compile("^FAIL$")).first.evaluate(fill)
+            == "rgb(244, 67, 54)"
+        )
+        assert badges.filter(has_text="PASS").first.evaluate(fill) == "rgb(76, 175, 80)"
         # The chips carry the classifier's counts.
         chips = page.locator(".dstf-chip")
         expect(chips.filter(has_text="PASS 2")).to_have_count(1, timeout=EXPECT_TIMEOUT)
@@ -174,6 +184,10 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
         )
         expect(page.locator(".dstf-subheader .dstf-badge")).to_have_text(
             "FAIL", timeout=EXPECT_TIMEOUT
+        )
+        assert (
+            page.locator(".dstf-subheader .dstf-badge").evaluate(fill)
+            == "rgb(244, 67, 54)"
         )
         # Its TEST-placement buttons speak of this one test.
         expect(

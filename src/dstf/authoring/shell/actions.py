@@ -5,8 +5,9 @@ disabled with the sentence `available` gave beside it; a click opens the
 bar's dialog hosting the capability's `panel`, whose `submit` runs `act`
 and hands the outcome to the Session. The bar knows no capability by name.
 The dialog is not rebuilt while open (decision 4): a confirm list belongs
-to the moment of the click; a successful act closes it, a raising one
-shows the error in it and changes nothing. A bar built with `figure=`
+to the moment of the click; an act that applied something closes it, a
+raising one shows the error in it and changes nothing, and one that
+returned nothing leaves it open — it changed nothing to close over. A bar built with `figure=`
 lends that hook to the open panel alone, and takes it back however the
 dialog closes.
 
@@ -151,14 +152,20 @@ class ActionBar:
 
             def submit(**inputs: Any) -> None:
                 try:
-                    self.shell.session.apply(cap.act(view, **inputs))
+                    outcome = cap.act(view, **inputs)
+                    self.shell.session.apply(outcome)
                 except Exception as e:  # shown here; a raising act changes nothing
                     self.errors[cap.name] = f"{type(e).__name__}: {e}"
                     error.set_text(self.errors[cap.name])
                     error.set_visibility(True)
                     return
                 self.errors.pop(cap.name, None)
-                close()
+                if outcome is not None:
+                    # Like `InlineHost.on_applied`: an act returning None
+                    # changed nothing. Every plot sends `{"autosize": true}`
+                    # at mount, and a subscribing panel answering it with
+                    # None must not close the dialog it sits in.
+                    close()
 
             with slot:
                 try:
@@ -183,7 +190,9 @@ class InlineHost:
     survives. `on_applied` is called with that capability's name when its
     act returned an outcome, and only then: an act returning ``None``
     changed nothing, and the rebuild it would trigger discards a half-typed
-    row for nothing."""
+    row for nothing. `follow()` is how a host that is never rebuilt keeps
+    up with `available`: a job's lock comes and goes without the tree's
+    shape moving."""
 
     def __init__(
         self,
@@ -199,6 +208,8 @@ class InlineHost:
         self.figure, self.marker, self.on_applied = figure, marker, on_applied
         self.errors: dict[str, ui.label] = {}
         self.cells: dict[str, ui.column] = {}  # capability name -> its place
+        #: capability name -> the `available` answer its place was built on
+        self.answers: dict[str, bool | str] = {}
         self.column = ui.column().classes("w-full gap-2").mark(marker)
         # A click inside the editor is the editor's: without this, a click on
         # a node's wrap icon also reached the row that hosts it and opened its
@@ -213,7 +224,7 @@ class InlineHost:
             for name in self.cells:
                 self.figure.clear(self._owner(name))
         self.column.clear()
-        self.errors, self.cells = {}, {}
+        self.errors, self.cells, self.answers = {}, {}, {}
 
     def build(self, skip: str | None = None) -> None:
         """Rebuild every capability's place — but ``skip``'s, left untouched
@@ -239,6 +250,24 @@ class InlineHost:
             cell.clear()
             with cell:
                 self._build_one(cap, avail, view)
+            # Not the skipped capability's: its place still shows the answer
+            # it was built on, and `follow` is what brings it back in line.
+            self.answers[cap.name] = avail
+
+    def follow(self) -> None:
+        """Rebuild when an `available` answer has moved since this host was
+        built, and only then (the Task 4 review): a row that is repainted
+        rather than rebuilt otherwise keeps the answer of the moment it was
+        drawn — a tree opened during a rerun kept "rerun is running on …"
+        after the job ended, and one opened before the job kept controls
+        that a lock refuses. A full build resets the error labels, which is
+        why hiding a stale one is not this method's job."""
+        view = self.shell.view_for(self.selection_of())
+        answers = {
+            cap.name: avail for cap, avail in self.shell.placed(self.placement, view)
+        }
+        if answers != self.answers:
+            self.build()
 
     def _build_one(self, cap: Capability, avail: bool | str, view: Any) -> None:
         error = ui.label("").classes("text-negative text-xs").mark(f"error:{cap.name}")
