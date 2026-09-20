@@ -4,6 +4,8 @@ simulation through `capability_host` — no shell, no browser."""
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 pytest.importorskip("nicegui")
@@ -18,6 +20,8 @@ from dstf.authoring.builtin.edit_criteria import EditCriteria  # noqa: E402
 from dstf.authoring.builtin.edit_tree import EditTree  # noqa: E402
 from dstf.authoring.builtin.rerun import Rerun  # noqa: E402
 from dstf.authoring.session import Selection, Session, SessionView  # noqa: E402
+from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from test_handles import TREE  # noqa: E402
 from test_session import LOOSEN, A, B, C, D, _Gate, _project  # noqa: E402
 
 
@@ -211,6 +215,157 @@ async def test_against_keeps_a_value_the_store_no_longer_knows(tmp_path):
     async with host(s, EditCriteria(), UNDER_WARN) as (user, errors, _):
         against = await _against_select(user)
         assert "ghost" in against.options and against.value == "ghost"
+
+
+#  -- Edit tree, as a node's controls and a variable's add form ------------
+
+ROOT = "/metrics"
+
+
+def _node(model, path):
+    return Selection(tests=frozenset({model}), node_path=path)
+
+
+async def _settled(predicate, tries: int = 40) -> None:
+    """Refreshes are deferred; wait for a staged op to land."""
+    import asyncio
+
+    for _ in range(tries):
+        if predicate():
+            return
+        await asyncio.sleep(0.05)
+    assert predicate()
+
+
+def test_edit_tree_needs_one_test_and_a_node_or_a_variable(session):
+    cap = EditTree()
+    assert cap.available(SessionView(session, Selection(tests=frozenset({A})))) == (
+        "select a tree node or a variable"
+    )
+    assert cap.available(SessionView(session, _node(A, ROOT))) is True
+    assert (
+        cap.available(
+            SessionView(session, Selection(tests=frozenset({A}), variable="x"))
+        )
+        is True
+    )
+
+
+def test_the_caption_at_a_variable_names_it(session):
+    view = SessionView(session, Selection(tests=frozenset({A}), variable="x"))
+    assert EditTree().caption(view) == "Add a criterion for x"
+    assert EditTree().caption(SessionView(session, _node(A, ROOT))) == "Edit tree"
+
+
+def test_add_beside_a_root_leaf_wraps_the_root_in_and(session):
+    # A's implicit tree is `and[nrmse x]`, never a root leaf: a root leaf has
+    # to be staged.
+    session.stage([PatchOp(A, "add", "/metrics", {"metric": "nrmse", "variable": "x"})])
+    view = SessionView(session, _node(A, ROOT))
+    assert "combinator" not in session.tree(A)
+    outcome = EditTree().act(
+        view, action="add", model_id=A, path=ROOT, variable="x", metric="range"
+    )
+    (op,) = outcome.ops
+    assert (op.op, op.path) == ("add", ROOT)
+    assert op.value["combinator"] == "and"
+    assert [c.get("metric", "nrmse") for c in op.value["children"]] == [
+        "nrmse",
+        "range",
+    ]
+    session.apply(outcome)
+    assert len(session.tree(A)["children"]) == 2
+
+
+def test_add_beside_a_leaf_appends_to_its_parent(session):
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    view = SessionView(session, _node(D, "/metrics/children/1"))
+    outcome = EditTree().act(
+        view,
+        action="add",
+        model_id=D,
+        path="/metrics/children/1",
+        variable="x",
+        metric="nrmse",
+    )
+    (op,) = outcome.ops
+    assert (op.op, op.path) == ("add", "/metrics/children/-")
+
+
+def test_add_under_a_combinator_is_unchanged(session):
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    outcome = EditTree().act(
+        SessionView(session, _node(D, ROOT)),
+        action="add",
+        model_id=D,
+        path=ROOT,
+        variable="x",
+        metric="nrmse",
+    )
+    (op,) = outcome.ops
+    assert (op.op, op.path) == ("add", "/metrics/children/-")
+
+
+async def test_the_node_panel_is_the_cluster_and_its_forms_stage(session):
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    leaf = "/metrics/children/1"
+    async with host(session, EditTree(), _node(D, leaf)) as (user, errors, _figure):
+        for marker in (f"add:{leaf}", f"wrap:{leaf}", f"remove:{leaf}"):
+            await user.should_see(marker=marker)
+        await user.should_not_see(marker=f"edit:{leaf}")  # a leaf has no combinator
+        user.find(marker=f"wrap:{leaf}").click()  # the menu's content is lazy
+        user.find(marker=f"apply-wrap:{leaf}").click()
+        await _settled(lambda: "combinator" in session.tree(D)["children"][1])
+        assert errors == {}
+
+
+async def test_a_cluster_builds_a_menus_content_on_its_first_open(session):
+    """Cost (the executing review): a cluster whose three forms are built
+    with it is ~28 elements, and a tree row holds one per node — 40 leaves
+    made a 2387-element page with the tree open. Nothing inside a menu
+    exists until that menu is opened, which is the anchor button's click."""
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    leaf = "/metrics/children/1"
+    async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
+        await user.should_see(marker=f"add:{leaf}")
+        await user.should_not_see(kind=ui.select)  # no form is built yet
+        await user.should_not_see(marker=f"apply-add:{leaf}")
+        user.find(marker=f"add:{leaf}").click()
+        await user.should_see(marker=f"apply-add:{leaf}")
+        await user.should_see(kind=ui.select)  # the add form's two selects
+        # A second open does not build the form again.
+        user.find(marker=f"add:{leaf}").click()
+        assert len(user.find(marker=f"apply-add:{leaf}").elements) == 1
+
+
+async def test_the_root_has_no_remove_and_a_combinator_has_edit(session):
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    async with host(session, EditTree(), _node(D, ROOT)) as (user, _errors, _figure):
+        await user.should_see(marker=f"edit:{ROOT}")
+        await user.should_not_see(marker=f"remove:{ROOT}")
+
+
+async def test_remove_stages_at_once(session):
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    n = len(session.tree(D)["children"])
+    async with host(session, EditTree(), _node(D, "/metrics/children/1")) as (
+        user,
+        _e,
+        _f,
+    ):
+        user.find(marker="remove:/metrics/children/1").click()
+        await _settled(lambda: len(session.tree(D)["children"]) == n - 1)
+
+
+async def test_the_variable_panel_adds_a_criterion_for_it(session):
+    sel = Selection(tests=frozenset({A}), variable="x")
+    n = len(session.tree(A)["children"])
+    async with host(session, EditTree(), sel) as (user, errors, _figure):
+        # The VARIABLE panel is the add form itself, drawn open: no menu.
+        user.find(marker="apply-add:x").click()
+        await _settled(lambda: len(session.tree(A)["children"]) == n + 1)
+        assert errors == {}
+        assert session.tree(A)["children"][-1]["variable"] == "x"
 
 
 def test_edit_tree_needs_exactly_one_test(session):
@@ -537,10 +692,10 @@ async def test_rerun_names_the_backend_and_is_greyed_while_a_job_runs(session):
 
 
 def test_the_builtins_declare_their_placements():
-    """Brief §3.2: Accept and Rerun at suite and test; Edit tree on the Test
-    page's tree; Edit on plot at a variable; Edit criteria at a criterion.
-    The placements the Test page (sub-project 3) and the editing merge
-    (sub-project 4) build on."""
+    """Brief §3.2: Accept and Rerun at suite and test; Edit tree as a tree
+    node's controls and a variable's "Add a criterion for x"; Edit on plot
+    and Edit criteria at the open criterion — the two that read as ONE
+    editor. Nothing built-in is left at TEST but Accept and Rerun."""
     from dstf.authoring.builtin.edit_on_plot import EditOnPlot
     from dstf.authoring.capabilities import Placement
 
@@ -551,9 +706,11 @@ def test_the_builtins_declare_their_placements():
         Placement.CRITERION,
     )
     assert Accept.placements == {S, T} and Rerun.placements == {S, T}
-    assert EditTree.placements == {T}
-    assert EditOnPlot.placements == {V}
+    assert EditTree.placements == {Placement.NODE, V}
+    assert EditOnPlot.placements == {C_}
     assert EditCriteria.placements == {C_}
+    at_test = {c.name for c in caps.registered_capabilities() if T in c.placements}
+    assert at_test == {"accept", "rerun"}
 
 
 def test_accept_caption_counts_what_it_will_store_and_needs_a_selection(session):

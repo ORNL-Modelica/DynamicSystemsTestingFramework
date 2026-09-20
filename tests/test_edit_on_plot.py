@@ -47,9 +47,24 @@ def session(tmp_path):
     return s
 
 
-#: The page's selection each test's staging is read under (D129).
-ON_D = Selection(tests=frozenset({D}), variable="x")
-ON_A = Selection(tests=frozenset({A}), variable="x")
+#: The page's selection each test's staging is read under (D129): the
+#: criterion open in the editor, whose handles are the ones that drag.
+ON_D = Selection(tests=frozenset({D}), variable="x", leaf_path="/metrics/children/0")
+ON_A = Selection(tests=frozenset({A}), variable="x", leaf_path="/metrics")
+
+
+def _on(session, model_id: str, handle: str) -> Selection:
+    """The selection a page would hold for a drag of ``handle``: the open
+    criterion is the leaf the handle belongs to (None when it names none)."""
+    from dstf.authoring.builtin.edit_on_plot import _leaf_path_of, _leaf_paths
+
+    view = SessionView(session, Selection(tests=frozenset({model_id}), variable="x"))
+    paths = [p for p, _ in _leaf_paths(view, model_id, "x")]
+    return Selection(
+        tests=frozenset({model_id}),
+        variable="x",
+        leaf_path=_leaf_path_of(handle, paths),
+    )
 
 
 async def _settled(predicate, tries: int = 40) -> None:
@@ -73,7 +88,7 @@ def _root_leaf_on_a(session, leaf: dict) -> None:
 
 def _drag(session, handle: str, shape: dict, model_id: str = D):
     return EditOnPlot().act(
-        SessionView(session, ON_A if model_id == A else ON_D),
+        SessionView(session, _on(session, model_id, handle)),
         kind="handle",
         model_id=model_id,
         variable="x",
@@ -316,18 +331,60 @@ def test_a_rows_edit_of_a_field_without_columns_is_refused(session):
 # -- available --------------------------------------------------------------
 
 
-def test_available_needs_one_test_and_a_handle_bearing_leaf(session):
-    cap = EditOnPlot()
-    empty = Selection(tests=frozenset(), variable="x")
-    assert cap.available(SessionView(session, empty)) == "select one test"
-    both = Selection(tests=frozenset({A, D}), variable="x")
-    assert cap.available(SessionView(session, both)) == "select one test"
-    assert (
-        cap.available(SessionView(session, ON_A))
-        == "no criterion on x has on-plot handles"
-    )
+def test_available_needs_one_open_criterion_with_handles(session):
     _tree_on_d(session)
-    assert cap.available(SessionView(session, ON_D)) is True
+    cap = EditOnPlot()
+    one = frozenset({D})
+
+    def at(path):
+        return SessionView(session, Selection(tests=one, variable="x", leaf_path=path))
+
+    assert (
+        cap.available(SessionView(session, Selection(tests=one, variable="x")))
+        == "open one criterion"
+    )
+    both = Selection(tests=frozenset({A, D}), variable="x", leaf_path="/metrics")
+    assert cap.available(SessionView(session, both)) == "open one criterion"
+    assert cap.available(at("/metrics/children/0")) is True
+    # scalar HAS an edit_handle; only nrmse has neither a handle nor a
+    # table — A's untouched implicit leaf.
+    on_a = Selection(
+        tests=frozenset({A}), variable="x", leaf_path="/metrics/children/0"
+    )
+    assert cap.available(SessionView(session, on_a)) == "nrmse has no on-plot handles"
+    assert cap.available(at("/metrics/children/9")) == (
+        "/metrics/children/9 is not a criterion on x"
+    )
+
+
+def test_a_drag_on_another_leafs_handle_is_refused_by_name(session):
+    """The editor is the open criterion's: another leaf's ring is still on
+    the plot, and dragging it must not edit a criterion nobody opened."""
+    _tree_on_d(session)
+    view = SessionView(
+        session,
+        Selection(tests=frozenset({D}), variable="x", leaf_path="/metrics/children/1"),
+    )
+    with pytest.raises(
+        HandleEditError,
+        match="/metrics/children/0/tube/upper/0 is not a handle of /metrics/children/1",
+    ):
+        EditOnPlot().act(
+            view,
+            kind="handle",
+            model_id=D,
+            variable="x",
+            handle="/metrics/children/0/tube/upper/0",
+            shape={"xanchor": 0.5, "yanchor": 0.8},
+        )
+
+
+async def test_the_panel_draws_only_the_open_leafs_tables(session):
+    _tree_on_d(session)
+    sel = Selection(tests=frozenset({D}), variable="x", leaf_path="/metrics/children/0")
+    async with host(session, EditOnPlot(), sel) as (user, _errors, _figure):
+        await user.should_see(marker="/metrics/children/0:tube_points:0:time")
+        await user.should_not_see(marker="/metrics/children/2:points:0:time")
 
 
 def test_a_leaf_with_a_table_but_no_drag_editor_is_available(session):
@@ -366,22 +423,23 @@ def _cell(user, marker: str):
 
 async def test_the_panel_draws_a_table_per_list_field_and_stages_edits(session):
     _tree_on_d(session)
-    async with host(session, EditOnPlot(), ON_D) as (user, errors, _figure):
-        for path, name, field in (
-            ("/metrics/children/0", "tube", "tube_points"),
-            ("/metrics/children/2", "points", "points"),
-            ("/metrics/children/4", "tube", "tube_points"),
-            ("/metrics/children/5", "tube", "tube_points"),
-        ):
-            await user.should_see(f"{path} · {name} · {field}")
-        t0 = "/metrics/children/0:tube_points"
-        assert isinstance(_cell(user, f"{t0}:1:lower"), ui.number)
-        with pytest.raises(AssertionError):
-            user.find(marker=f"{t0}:2:time")  # two rows, no third
+    on_points = Selection(
+        tests=frozenset({D}), variable="x", leaf_path="/metrics/children/2"
+    )
+    # One criterion is open at a time, so its tables are drawn one panel at
+    # a time; `Shell.mount` is once per Shell, so both open in one simulation.
+    async with host(session, EditOnPlot(), on_points) as (user, errors, _figure):
+        await user.should_see("/metrics/children/2 · points · points")
         p2 = "/metrics/children/2:points"
         assert isinstance(_cell(user, f"{p2}:0:tolerance_mode"), ui.select)
         assert isinstance(_cell(user, f"{p2}:1:value"), ui.number)
         assert _cell(user, f"{p2}:1:value").value == 0.75
+    async with host(session, EditOnPlot(), ON_D) as (user, errors, _figure):
+        await user.should_see("/metrics/children/0 · tube · tube_points")
+        t0 = "/metrics/children/0:tube_points"
+        assert isinstance(_cell(user, f"{t0}:1:lower"), ui.number)
+        with pytest.raises(AssertionError):
+            user.find(marker=f"{t0}:2:time")  # two rows, no third
 
         _cell(user, f"{t0}:0:upper").set_value(0.25)
         await _settled(

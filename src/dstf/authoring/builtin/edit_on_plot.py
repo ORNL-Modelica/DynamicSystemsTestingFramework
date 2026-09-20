@@ -1,8 +1,9 @@
-"""Edit on plot (§4.6 table, §4.7): the VARIABLE placement — any handle on
-the centre plot drags, and the op targets the leaf the handle's id names.
-Below the plot's hook, a table per handle-bearing list field (the Config
-fields that declare ``columns``: ``tube_points``, ``points``, ``events``,
-``peaks``) with add and remove rows.
+"""Edit on plot (§4.6 table, §4.7): the CRITERION placement — the open
+criterion's handles drag on the plot its row sits under, and the op targets
+that leaf; a handle of any other leaf is refused by name. In the editor, a
+table per handle-bearing list field of that leaf (the Config fields that
+declare ``columns``: ``tube_points``, ``points``, ``events``, ``peaks``)
+with add and remove rows.
 
 Every staged edit is one ``replace`` of the whole leaf — the op Edit
 criteria stages — so consecutive drags on one leaf collapse into one
@@ -34,13 +35,14 @@ if TYPE_CHECKING:
 Columns = tuple[tuple[str, Any], ...]
 
 
-def _selected(s: SessionView) -> tuple[str, str] | None:
-    """``(model_id, variable)`` for exactly one test and a variable."""
+def _selected(s: SessionView) -> tuple[str, str, str] | None:
+    """``(model_id, variable, leaf_path)`` for exactly one test, a variable
+    and the open criterion."""
     sel = s.selection
-    if len(sel.tests) != 1 or sel.variable is None:
+    if len(sel.tests) != 1 or sel.variable is None or sel.leaf_path is None:
         return None
     (model_id,) = tuple(sel.tests)
-    return model_id, sel.variable
+    return model_id, sel.variable, sel.leaf_path
 
 
 def _leaf_paths(s: SessionView, model_id: str, variable: str) -> list[tuple[str, str]]:
@@ -186,7 +188,7 @@ class EditOnPlot:
 
     name = "edit-on-plot"
     label = "Edit on plot"
-    placements = frozenset({Placement.VARIABLE})
+    placements = frozenset({Placement.CRITERION})
 
     def caption(self, s: SessionView) -> str:
         return self.label
@@ -194,13 +196,16 @@ class EditOnPlot:
     def available(self, s: SessionView) -> bool | str:
         selected = _selected(s)
         if selected is None:
-            return "select one test"
-        model_id, variable = selected
+            return "open one criterion"
+        model_id, variable, leaf_path = selected
         running = s.running
         if running is not None and s.is_locked(model_id):
             return f"{running.label} is running on {model_id}"
-        if not any(_has_handles(m) for _, m in _leaf_paths(s, model_id, variable)):
-            return f"no criterion on {variable} has on-plot handles"
+        metric_name = dict(_leaf_paths(s, model_id, variable)).get(leaf_path)
+        if metric_name is None:
+            return f"{leaf_path} is not a criterion on {variable}"
+        if not _has_handles(metric_name):
+            return f"{metric_name} has no on-plot handles"
         return True
 
     def panel(self, s: SessionView, ui_panel: Panel) -> None:
@@ -208,7 +213,7 @@ class EditOnPlot:
 
         selected = _selected(s)
         assert selected is not None  # `available` said so
-        model_id, variable = selected
+        model_id, variable, leaf_path = selected
 
         def on_relayout(handle: str, payload: dict) -> None:
             if handle:
@@ -221,7 +226,7 @@ class EditOnPlot:
                 )
 
         ui_panel.figure.on("plotly_relayout", on_relayout)
-        ui.label("drag a handle on the plot, or edit a table").classes("text-xs")
+        ui.label("drag a ring on the plot, or edit the table").classes("text-xs")
         tree = s.tree(model_id)
         if tree is None:
             return
@@ -233,6 +238,8 @@ class EditOnPlot:
             return float(view.ref_time[0]), float(view.ref_time[-1])
 
         for path, _mode in _leaf_paths(s, model_id, variable):
+            if path != leaf_path:  # the editor is the open criterion's
+                continue
             raw = _node_at(tree, path)
             name = raw.get("metric", DEFAULT_METRIC)
             for field, columns in _list_fields(name):
@@ -264,6 +271,10 @@ class EditOnPlot:
         path = _leaf_path_of(handle, paths)
         if path is None:
             raise ValueError(f"{handle} names no leaf on {variable} of {model_id}")
+        open_leaf = s.selection.leaf_path
+        if open_leaf is not None and path != open_leaf:
+            # Every leaf's handles are on the plot; only the open one's drag.
+            raise HandleEditError(f"{handle} is not a handle of {open_leaf}")
         tree = s.tree(model_id)
         if tree is None:
             raise ValueError(f"{model_id} has no tree to edit")
@@ -369,7 +380,7 @@ def _table(
     is blank the table keeps its rows here, marks the blank cells and
     submits nothing — the keystroke that fills the last one submits the
     whole list. (``act`` still refuses a blank, for a direct call.)"""
-    container = ui.column().classes("w-full")
+    container = ui.column().classes("w-full dstf-table-scroll")
     mark = f"{path}:{field}"
     required = [key for key, kind in columns if kind == "float"]
     cells: dict[tuple[int, str], Any] = {}  # the required cells, as rendered

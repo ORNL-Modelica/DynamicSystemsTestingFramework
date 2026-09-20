@@ -30,12 +30,20 @@ class Placement(Enum):
     at; the shell draws a button carrying its ``caption`` at each and knows
     no capability by name. The tab strip this replaces listed one tab per
     ``Scope``; the scopes' selection rules (TESTS needs a selection, LEAF a
-    leaf) are now what ``available`` answers for the page's selection."""
+    leaf) are now what ``available`` answers for the page's selection.
+
+    SUITE, TEST and VARIABLE are a button carrying the capability's
+    ``caption``, its panel in a dialog; CRITERION and NODE are inline — the
+    panel is built straight into the criterion's editor, or beside a tree
+    node as that node's controls, with no button and no heading. At VARIABLE
+    and CRITERION ``Panel.figure`` is the plot's hook; elsewhere a
+    subscription raises."""
 
     SUITE = "suite"
     TEST = "test"
     VARIABLE = "variable"
     CRITERION = "criterion"
+    NODE = "node"
 
 
 def plural(count: int, noun: str) -> str:
@@ -146,7 +154,8 @@ class Panel(Protocol):
 
     def submit(self, **inputs: Any) -> None:
         """Hand the capability's inputs to the shell, which calls ``act`` and
-        applies the outcome; an exception shows in the tab."""
+        applies the outcome; an exception shows with the panel — above an
+        inline one, in the dialog of a placement that is a button."""
         ...
 
 

@@ -86,11 +86,14 @@ class Selection:
     """What a page has selected, handed to a capability through its
     SessionView (D129): the checked tests, the variable and the criterion's
     tree path. A page builds a new view when it changes; two browser tabs
-    keep two. Not the Session's — that was the old shell's one-tab shape."""
+    keep two. Not the Session's — that was the old shell's one-tab shape.
+    ``node_path``: the tree node whose controls are being drawn (NODE) — a
+    leaf or a combinator; ``leaf_path`` only ever names a criterion."""
 
     tests: frozenset[str] = frozenset()
     variable: str | None = None
     leaf_path: str | None = None
+    node_path: str | None = None
 
 
 @dataclass

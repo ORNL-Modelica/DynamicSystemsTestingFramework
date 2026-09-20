@@ -68,7 +68,7 @@ def test_the_protocol_is_checkable():
 
 def test_registering_a_non_capability_is_loud_at_registration():
     """plugins.py's rule: fail at startup naming what is wrong, not when
-    the user clicks the tab."""
+    the user reaches the page that would draw the capability."""
 
     class _Half:
         name, label = "half", "Half"
@@ -103,6 +103,16 @@ def test_a_capability_declares_a_non_empty_frozenset_of_placements():
     with pytest.raises(TypeError, match="non-empty frozenset of Placement"):
         register_capability(_Loose())
     assert registered_capabilities() == ()
+
+
+def test_node_is_a_placement_a_capability_may_name():
+    """A tree node's controls are a capability's panel drawn at that node
+    (D129 + the Test page's decision 1): nothing else lets the shell draw
+    `+` / wrap / `−` without knowing Edit tree by name."""
+    assert Placement.NODE.value == "node"
+    cap = _Dummy("at-node", frozenset({Placement.NODE}))
+    register_capability(cap)
+    assert cap in registered_capabilities()
 
 
 def test_a_capability_may_attach_at_several_placements():
