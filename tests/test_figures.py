@@ -512,6 +512,22 @@ def test_rings_for_limits_the_rings_to_the_named_leaves():
     assert (
         _ring_names(variable_figure(view, None, editable=True, rings_for=())) == set()
     )
+    # Exact membership, never a prefix: "/metrics" is an ancestor of both
+    # leaf paths and names neither leaf.
+    assert (
+        _ring_names(variable_figure(view, None, editable=True, rings_for=("/metrics",)))
+        == set()
+    )
+
+
+def test_rings_for_refuses_a_str():
+    """A str IS a Collection, and its membership is by substring — a caller
+    handing one path instead of a one-tuple would ring every leaf whose path
+    is a substring of it, silently. `_leaf_traces` is the one place every
+    figure builder reaches, so the refusal lands there."""
+    view = _two_ring_view()
+    with pytest.raises(TypeError, match="not a str"):
+        variable_figure(view, None, editable=True, rings_for="/metrics/children/0")
 
 
 def test_rings_for_changes_nothing_but_the_rings():

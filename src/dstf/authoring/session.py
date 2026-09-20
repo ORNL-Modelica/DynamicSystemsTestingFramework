@@ -100,8 +100,10 @@ class Selection:
 class _ModelReads:
     """What one click re-read from disk before this cache (brief §2.2): the
     primary reference and the overlays; plus the decimated base view per
-    variable — trajectories, overlays and error series, no leaves — so an
-    edit re-decimates only the criterion's geometry."""
+    variable — trajectories, overlays and error series, no leaves — built and
+    shared by `_editable_view`, so an edit re-decimates only the criterion's
+    geometry and a plot's several series draw over the bases `figure` holds
+    for them one at a time."""
 
     ref: dict | None
     overlays: list
@@ -109,8 +111,9 @@ class _ModelReads:
     #: The scored list the bases were built from (`_scored_key`). A rescore
     #: that changes it — a staged edit that starts or stops scoring a
     #: variable, a discard, a save, the background rescan — may leave any
-    #: base of the model stale; the key does not say which, so `figure`
-    #: drops them all when it moves (one extra decimation per variable).
+    #: base of the model stale; the key does not say which, so
+    #: `_editable_view` drops them all when it moves — for both figure reads
+    #: (one extra decimation per variable).
     scored: tuple[tuple[str | None, int], ...] = ()
     #: Every name in the result file (`Backend.result_names`), once
     #: `names_read`: `None` when the backend cannot list the file, `()` when
@@ -619,7 +622,12 @@ class Session:
             base = decimate_view(
                 replace(self.view(model_id, variable), leaves=()), budget
             )
-            reads.bases[variable] = base
+            # Not cached under a lock, for `_file_series`' reason: it answers
+            # None there and caches nothing, so an untracked series' base is
+            # EMPTY — and a job that ends without dropping `_reads` (a
+            # successful `Job(reloads_results=False)`) would leave it behind.
+            if not self._is_locked(model_id):
+                reads.bases[variable] = base
         comp = self.comparisons.get(model_id)
         leaves = leaves_by_variable(comp.metric_tree if comp is not None else None).get(
             variable, []

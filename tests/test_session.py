@@ -1262,6 +1262,17 @@ class TestView:
             none["config"] == session.figure(D, "x")["config"]
         )  # react, never newPlot
 
+    def test_editing_refuses_a_str(self, session):
+        """One path, not a one-tuple: a str's membership is by substring, so
+        it must not reach the ring test. The refusal is the figure layer's."""
+        import copy
+
+        from test_handles import TREE
+
+        session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+        with pytest.raises(TypeError, match="not a str"):
+            session.figure(D, "x", editing="/metrics/children/0")
+
     def test_no_baseline_is_the_empty_state_with_the_trajectory(self, session):
         view = session.view(B, "x")
         assert view.act_time is not None and view.ref_time is None and view.leaves == ()
@@ -2095,6 +2106,36 @@ class TestPlots:
         assert again == first
         assert calls == []  # the second draw assembles nothing
 
+    def test_a_second_multi_series_figure_decimates_only_the_leaves(
+        self, tmp_path, monkeypatch
+    ):
+        """`TestReadCache.test_a_second_figure_decimates_only_the_leaves`,
+        over a plot: the base of EVERY series is decimated on the first draw
+        only, and the multi branch draws WITHOUT a budget — or `plot_figure`
+        would decimate each cached base a second time."""
+        from dstf.comparison.geometry import Series
+        from dstf.figures import view as view_mod
+
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        s.plot_figure(A, 0)
+        # As in the single-series test, the bundled metrics emit no Series
+        # (A's materialized leaf is an nrmse, z has no leaves), so this is 0
+        # here; it is the per-call leaf decimation the assertion allows.
+        leaf_series = sum(
+            isinstance(p, Series)
+            for name in LAYOUT[0]["series"]
+            for leaf in s.view(A, name["var"]).leaves
+            for p in leaf.geometry
+        )
+        calls = []
+        real = view_mod.lttb
+        monkeypatch.setattr(
+            view_mod, "lttb", lambda t, v, n: calls.append(len(t)) or real(t, v, n)
+        )
+        s.plot_figure(A, 0)
+        assert len(calls) == leaf_series
+
     def test_a_multi_series_plot_takes_editing(self, tmp_path):
         import copy
 
@@ -2107,6 +2148,38 @@ class TestPlots:
         assert [s for s in every["layout"]["shapes"] if s.get("type") == "circle"]
         fig = session.plot_figure(A, 0, editing=())
         assert not [s for s in fig["layout"]["shapes"] if s.get("type") == "circle"]
+        # `editing` moves the rings and NOTHING else: same traces, and the
+        # same config (react, never newPlot) — as on the single figure.
+        assert fig["config"] == every["config"] and fig["data"] == every["data"]
+
+    def test_editing_survives_every_forward_to_the_figure(self, tmp_path):
+        """`editing` is handed on through three hops that could silently drop
+        it: `SessionView.figure`, `SessionView.plot_figure`, and the
+        single-series branch of `Session.plot_figure` (which IS `figure`)."""
+        import copy
+
+        from dstf.authoring.session import Selection, SessionView
+        from test_handles import TREE
+
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/metrics", copy.deepcopy(TREE))])
+        view = SessionView(s, Selection())
+
+        def rings(fig):
+            return [sh for sh in fig["layout"]["shapes"] if sh.get("type") == "circle"]
+
+        assert s.plots(A)[0].series == ("x",)  # the default layout: one series
+        assert rings(view.figure(A, "x"))
+        assert rings(view.plot_figure(A, 0))
+        assert rings(s.plot_figure(A, 0))
+        assert not rings(view.figure(A, "x", editing=()))
+        assert not rings(view.plot_figure(A, 0, editing=()))
+        assert not rings(s.plot_figure(A, 0, editing=()))
+
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert len(s.plots(A)[0].series) == 2  # and the multi-series branch
+        assert rings(view.plot_figure(A, 0))
+        assert not rings(view.plot_figure(A, 0, editing=()))
 
     def test_a_staged_layout_is_what_plots_answers(self, tmp_path):
         s = self._open(tmp_path)
@@ -2272,6 +2345,39 @@ class TestPlotsUnderALock:
         (work / "test_0001" / "result.json").write_text("{half", encoding="utf-8")
         assert s.view(A, "z").act_values.tolist() == [7.0] * 5
         assert s.variable_names(A) == ["x", "y", "a0", "z"]
+
+    def _locked_with_layout(self, tmp_path):
+        """A staged multi-series layout BEFORE the lock (a staged edit
+        rescores, which a locked model refuses), then the lock."""
+        from dstf.authoring.session import RunningJob
+
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        s.running = RunningJob(label="rerun", models=frozenset({A}))
+        return s
+
+    def test_a_multi_series_base_read_under_the_lock_is_not_cached(self, tmp_path):
+        """`_file_series` answers None under a lock and caches nothing — "the
+        job's reload answers it". The base built from that None must not be
+        cached either: a job that ends without dropping `_reads` (a successful
+        `Job(reloads_results=False)`) would leave z's EMPTY base behind."""
+        s = self._locked_with_layout(tmp_path)
+        s.plot_figure(A, 0)
+        s.running = None  # the job ended without dropping `_reads`
+        fig = s.plot_figure(A, 0)
+        acts = [tr["meta"]["id"] for tr in fig["data"] if tr["meta"]["kind"] == "act"]
+        assert acts == ["actual/x", "actual/z"]
+
+    def test_a_single_series_base_read_under_the_lock_is_not_cached(self, tmp_path):
+        s = self._locked_with_layout(tmp_path)
+        s.figure(A, "z")
+        s.running = None
+        fig = s.figure(A, "z")
+        assert [
+            tr["meta"]["id"] for tr in fig["data"] if tr["meta"]["kind"] == "act"
+        ] == ["actual"]
 
     def test_a_failed_job_drops_what_was_read_of_its_models(self, tmp_path):
         """No reload follows a failed job, and its half-run rewrote the files."""

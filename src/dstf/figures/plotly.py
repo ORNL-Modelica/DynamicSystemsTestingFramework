@@ -566,6 +566,11 @@ def _leaf_traces(
     The one loop both figure builders run — so a new primitive type, or a
     change to what a handle ring is, lands in a single place.
     """
+    if isinstance(rings_for, str):
+        raise TypeError(
+            "rings_for takes a collection of leaf paths, not a str "
+            "(a str matches by substring)"
+        )
     data: list[dict] = []
     shapes: list[dict] = []
     rings: list[dict] = []
@@ -604,7 +609,9 @@ def variable_figure(
     ``config.edits.shapePosition``; the report's figure never passes it.
     ``rings_for``: the leaf paths whose handles get a draggable ring; ``None``
     rings every leaf. The Test page names the open criterion, so two leaves'
-    rings never overlap; ``config`` does not depend on it.
+    rings never overlap; ``config`` does not depend on it. A path is matched
+    whole, and a bare ``str`` is a ``TypeError`` — its membership test is by
+    substring, which would ring leaves nobody named.
     """
     if max_samples:
         view = decimate_view(view, max_samples)
