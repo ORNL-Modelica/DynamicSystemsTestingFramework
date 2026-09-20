@@ -20,8 +20,8 @@ since Plotly drags shapes, not trace points.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 
 from ..comparison.geometry import (
     Band,
@@ -33,6 +33,7 @@ from ..comparison.geometry import (
     VLine,
     Window,
 )
+from .families import HUES, family_label, group_families, ramp
 from .view import LeafView, VariableView, decimate_view
 
 PLOT_CONFIG = {"responsive": True, "displaylogo": False, "scrollZoom": True}
@@ -602,3 +603,130 @@ def variable_figure(
         "layout": _layout(view, shapes + rings, bool(view.errors)),
         "config": config,
     }
+
+
+def plot_figure(
+    views: Sequence[VariableView],
+    max_samples: int | None = None,
+    *,
+    editable: bool = False,
+    labels: Mapping[str, str] | None = None,
+) -> dict:
+    """The figure for one plot of a test (DESIGN.md "Plots are modular").
+
+    One view is :func:`variable_figure`, unchanged. Several draw every
+    series in its family's hue (:mod:`.families`) — actual solid, reference
+    dashed in the same colour and out of the legend, a family folded to one
+    legend entry — with the geometry of every leaf of every series, and NO
+    overlays or error traces: both are per-variable pickers keyed by trace
+    name. ``labels`` overrides a family's legend text by family key.
+    """
+    if len(views) == 1:
+        return variable_figure(views[0], max_samples, editable=editable)
+    if max_samples:
+        views = [decimate_view(v, max_samples) for v in views]
+    by_name = {v.name: v for v in views}
+    spans = [
+        _time_span(v) for v in views if v.act_time is not None or v.ref_time is not None
+    ]
+    x_min = min((s[0] for s in spans), default=0.0)
+    x_max = max((s[1] for s in spans), default=1.0)
+    data: list[dict] = []
+    shapes: list[dict] = []
+    rings: list[dict] = []
+    has_spectrum = any(v.has_spectrum for v in views)
+    for h, (key, members) in enumerate(group_families([v.name for v in views])):
+        colors = ramp(HUES[h % len(HUES)], len(members))
+        label = (labels or {}).get(key) or family_label(key, members)
+        for i, (name, color) in enumerate(zip(members, colors)):
+            data.extend(_series_traces(by_name[name], color, key, label, first=i == 0))
+    for view in views:
+        ctx = _Ctx(
+            x_min=x_min,
+            x_max=x_max,
+            has_spectrum=has_spectrum,
+            full_samples=view.full_samples,
+        )
+        for leaf in view.leaves:
+            window = next((p for p in leaf.geometry if isinstance(p, Window)), None)
+            markers: list[Marker] = []
+            for prim in leaf.geometry:
+                if isinstance(prim, Marker):
+                    markers.append(prim)
+                    continue
+                builder = TRACE_BUILDERS.get(type(prim))
+                if builder is None:
+                    raise TypeError(
+                        f"no figure builder for {type(prim).__name__} "
+                        f"(id {prim.id!r}); add one to TRACE_BUILDERS"
+                    )
+                traces, new_shapes = builder(prim, leaf, window, ctx)
+                data.extend(traces)
+                shapes.extend(new_shapes)
+            data.extend(_marker_traces(markers, leaf))
+            if editable:
+                rings.extend(_handle_rings(markers))
+    config: dict = dict(PLOT_CONFIG)
+    if editable:
+        config["edits"] = {"shapePosition": True}
+    # One view stands in for the layout, carrying EVERY view's leaves, so
+    # `_layout` sees the spectrum panel wherever it comes from.
+    if views:
+        all_leaves = tuple(leaf for v in views for leaf in v.leaves)
+        layout_view = replace(views[0], leaves=all_leaves)
+    else:
+        layout_view = VariableView(name="")
+    return {
+        "data": data,
+        "layout": _layout(layout_view, shapes + rings, False),
+        "config": config,
+    }
+
+
+def _series_traces(
+    view: VariableView, color: str, group: str, label: str, *, first: bool
+) -> list[dict]:
+    traces = []
+    hover = f"{view.name}: %{{y:.4g}}<extra></extra>"
+    if view.act_time is not None and view.act_values is not None:
+        traces.append(
+            {
+                "type": "scatter",
+                "mode": "lines",
+                "name": label if first else view.name,
+                "legendgroup": group,
+                "showlegend": first,
+                "hovertemplate": hover,
+                "x": view.act_time.tolist(),
+                "y": view.act_values.tolist(),
+                "line": {"color": color, "width": 1.5},
+                "meta": {
+                    "id": f"actual/{view.name}",
+                    "kind": "act",
+                    "samples": len(view.act_time),
+                    "full_samples": view.full_samples.get("act", len(view.act_time)),
+                },
+            }
+        )
+    if view.ref_time is not None and view.ref_values is not None:
+        traces.append(
+            {
+                "type": "scatter",
+                "mode": "lines",
+                "name": f"{view.name} (reference)",
+                "legendgroup": group,
+                "showlegend": False,
+                "hovertemplate": f"{view.name} (reference): %{{y:.4g}}<extra></extra>",
+                "x": view.ref_time.tolist(),
+                "y": view.ref_values.tolist(),
+                "line": {"color": color, "width": 1.2, "dash": "dash"},
+                "opacity": 0.7,
+                "meta": {
+                    "id": f"reference/{view.name}",
+                    "kind": "ref",
+                    "samples": len(view.ref_time),
+                    "full_samples": view.full_samples.get("ref", len(view.ref_time)),
+                },
+            }
+        )
+    return traces
