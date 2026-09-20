@@ -205,3 +205,62 @@ def test_every_leaf_of_every_series_keeps_its_geometry_and_editable_rings():
         (s.get("name") or "").startswith("/metrics/") and s.get("xsizemode") == "pixel"
         for s in plain["layout"]["shapes"]
     )
+
+
+def test_a_family_keeps_its_legend_entry_when_its_first_member_has_no_result():
+    ghost = build_view("p.T[1]")  # no trajectory: the index is tracked, the run lost it
+    fig = plot_figure([ghost, _view("p.T[2]"), _view("p.T[3]")])
+    acts = _acts(fig)
+    assert [tr["meta"]["id"] for tr in acts] == ["actual/p.T[2]", "actual/p.T[3]"]
+    assert [tr["showlegend"] for tr in acts] == [True, False]
+    assert acts[0]["name"] == "p.T[1:3]"
+
+
+def _spectrum_view(name="s"):
+    from test_figures import _compare_dominant_frequency, _stamped
+
+    t = np.linspace(0.0, 10.0, 1001)
+    sig = np.sin(2 * np.pi * 2.0 * t)
+    vc = _compare_dominant_frequency(
+        t, sig, t, sig, peaks=[{"freq": 2.0, "tolerance": 0.05}]
+    )
+    vc.name = name
+    return build_view(
+        name,
+        act_time=t,
+        act_values=sig,
+        ref_time=t,
+        ref_values=sig,
+        leaves=[_stamped(vc, "/metrics/children/1")],
+    )
+
+
+def test_a_spectrum_leaf_on_any_series_opens_the_second_panel_for_all(monkeypatch):
+    """The plot is one figure: every leaf is laid out against the UNION of the
+    series' time spans and against the panels ANY series opens — a time-panel
+    shape of a plain series must not span the spectrum panel's half."""
+    from dstf.figures import plotly
+    from test_figures import _tube_view
+
+    seen = []
+    real = plotly._leaf_traces
+
+    def spy(view, ctx, *, editable):
+        seen.append((view.name, ctx))
+        return real(view, ctx, editable=editable)
+
+    monkeypatch.setattr(plotly, "_leaf_traces", spy)
+    plain = _tube_view()  # named "x", 0..1 s, no spectrum
+    fig = plot_figure([plain, _spectrum_view()])
+    assert fig["layout"]["xaxis2"]["title"]["text"] == "Frequency [Hz]"
+    assert fig["layout"]["yaxis"]["domain"] != [0, 1]
+    spectrum = next(
+        tr
+        for tr in fig["data"]
+        if tr["meta"].get("id") == "/metrics/children/1/spectrum/act"
+    )
+    assert spectrum["xaxis"] == "x2" and spectrum["yaxis"] == "y2"
+    assert [name for name, _ in seen] == ["x", "s"]
+    for _, ctx in seen:
+        assert ctx.has_spectrum is True
+        assert (ctx.x_min, ctx.x_max) == (0.0, 10.0)

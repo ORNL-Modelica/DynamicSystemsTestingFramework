@@ -652,8 +652,13 @@ def plot_figure(
     for h, (key, members) in enumerate(group_families([v.name for v in views])):
         colors = ramp(HUES[h % len(HUES)], len(members))
         label = (labels or {}).get(key) or family_label(key, members)
-        for i, (name, color) in enumerate(zip(members, colors)):
-            data.extend(_series_traces(by_name[name], color, key, label, first=i == 0))
+        # The legend entry rides on the first member that DRAWS: a family whose
+        # lowest index has no result would otherwise have none.
+        lead = next((n for n in members if _draws_actual(by_name[n])), None)
+        for name, color in zip(members, colors):
+            data.extend(
+                _series_traces(by_name[name], color, key, label, first=name == lead)
+            )
     for view in views:
         ctx = _Ctx(
             x_min=x_min,
@@ -682,11 +687,16 @@ def plot_figure(
     }
 
 
+def _draws_actual(view: VariableView) -> bool:
+    return view.act_time is not None and view.act_values is not None
+
+
 def _series_traces(
     view: VariableView, color: str, group: str, label: str, *, first: bool
 ) -> list[dict]:
     traces = []
     hover = f"{view.name}: %{{y:.4g}}<extra></extra>"
+    # Spelled out, not `_draws_actual(view)`: mypy narrows the arrays here.
     if view.act_time is not None and view.act_values is not None:
         traces.append(
             {
