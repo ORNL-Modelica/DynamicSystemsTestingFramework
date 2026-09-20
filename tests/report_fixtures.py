@@ -10,9 +10,11 @@ from pathlib import Path
 
 import numpy as np
 
+from dstf.reporting.report_suite import plot_page_keys
+
 
 def _fixture_context() -> dict:
-    """A minimal render context: one variable, one tube leaf, no figures yet.
+    """A minimal render context: one variable, one tube leaf, an empty figure.
 
     Every key the template dereferences is here — the template renders the
     tree, the summary line and the variable pill server-side, so a missing
@@ -49,7 +51,7 @@ def _fixture_context() -> dict:
         "label": "and[1]",
         "children": [leaf],
     }
-    return {
+    ctx = {
         "model_id": "Fixture.Figures",
         "n_passed": 1,
         "sim_failed": False,
@@ -92,11 +94,14 @@ def _fixture_context() -> dict:
             }
         },
         "decimated": [],
-        "figures": {},
         "diag_figures": [],
         "nb_figures": [],
         "run_metadata": None,
     }
+    # The page's plot keys come from the ONE producer, never hand-rolled:
+    # the default layout is one plot per key of ``variables_by_name``.
+    ctx.update(plot_page_keys(ctx, None, {}, None, None))
+    return ctx
 
 
 def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
@@ -138,5 +143,7 @@ def _context_with_figure():
             leaves=[("/metrics/children/0", vc)],
         )
     )
-    ctx["figures"] = {var: fig}
+    # The section and the series `_fixture_context` built already name this
+    # one variable; only the figure it paints is replaced.
+    ctx["plot_figures"] = [fig]
     return ctx, fig

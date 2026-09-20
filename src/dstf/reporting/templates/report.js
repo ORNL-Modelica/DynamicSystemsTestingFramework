@@ -14,13 +14,13 @@
 // <script> block), then loads this file via <script src>. Keeps the JS
 // pure-static and the template responsible for data marshalling.
 const MT_REPORT = (typeof window !== 'undefined' && window.MT_REPORT) || {};
-const FIGURES = MT_REPORT.FIGURES || {};
+// One figure per PLOT SECTION, in the template's own order — the page is
+// laid out per plot, not per variable, and a plot may draw several series.
+const PLOT_FIGURES = MT_REPORT.PLOT_FIGURES || [];
+// Each plot's series names, in order (the browser tests read it).
+const PLOT_SERIES = MT_REPORT.PLOT_SERIES || [];
 const DIAG_FIGURES = MT_REPORT.DIAG_FIGURES || [];
 const NB_FIGURES = MT_REPORT.NB_FIGURES || [];
-// review 2026-07-06 finding 76h: the template emits the ordered key list
-// explicitly — JS Object.keys() reorders integer-like keys numerically,
-// which desyncs plot element IDs from the Jinja loop.index0 numbering.
-const VARIABLE_ORDER = MT_REPORT.VARIABLE_ORDER || Object.keys(FIGURES);
 
 // ---- Plotly rendering ----
 const PLOT_CFG = {
@@ -39,8 +39,8 @@ function paintFigure(el, fig) {
 }
 
 function renderAllPlots() {
-  VARIABLE_ORDER.forEach((varname, idx) => {
-    paintFigure(document.getElementById(`plot-${idx}`), FIGURES[varname]);
+  PLOT_FIGURES.forEach((fig, idx) => {
+    paintFigure(document.getElementById(`plot-${idx}`), fig);
   });
   DIAG_FIGURES.forEach((fig, idx) => {
     paintFigure(document.getElementById(`diag-plot-${idx}`), fig);
@@ -90,15 +90,18 @@ function setOverlayVisible(plotId, role, name, visible) {
 function wireErrorOverlays() {
   document.querySelectorAll('.error-overlay-select').forEach(sel => {
     sel.addEventListener('change', (e) => {
-      const vidx = parseInt(e.target.dataset.vidx);
-      if (isNaN(vidx)) return;
-      setErrorOverlay(vidx, e.target.value);
+      // `data-plot`, not `data-vidx`: the select belongs to a PLOT. On this
+      // page `data-vidx` means a variable's index (var-status, nodes-N),
+      // and on a one-series plot the two only happen to coincide.
+      const plotIdx = parseInt(e.target.dataset.plot);
+      if (isNaN(plotIdx)) return;
+      setErrorOverlay(plotIdx, e.target.value);
     });
   });
 }
 
-function setErrorOverlay(vidx, mode) {
-  const el = document.getElementById(`plot-${vidx}`);
+function setErrorOverlay(plotIdx, mode) {
+  const el = document.getElementById(`plot-${plotIdx}`);
   if (!el || !el.data) return;
   const idx = [];
   const vis = [];

@@ -12,6 +12,7 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
 
+from dstf.reporting.report_suite import plot_page_keys  # noqa: E402
 from report_fixtures import (  # noqa: E402
     _context_with_figure,
     _render_with_context,
@@ -71,7 +72,11 @@ def test_overlay_picker_toggles_a_python_painted_overlay(tmp_path, playwright_br
         "values": [v * 1.01 for v in traj["ref_values"]],
     }
     ctx["variables_by_name"][var]["overlays"] = [overlay]
-    ctx["figures"][var] = variable_figure(
+    # The overlay joined the context AFTER the sections were built, so the
+    # picker's rows only exist once they are rebuilt — before the figure is
+    # replaced, which the rebuild would otherwise overwrite.
+    ctx.update(plot_page_keys(ctx, None, {}, None, None))
+    ctx["plot_figures"][0] = variable_figure(
         build_view(
             var,
             act_time=traj["act_time"],

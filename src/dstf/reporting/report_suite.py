@@ -141,24 +141,110 @@ def _sanitize_filename(name: str) -> str:
     return name
 
 
-def _build_figures(context: dict, metric_tree, max_samples: int | None) -> dict:
-    """Figure dicts for the page: one per tracked variable, plus diagnostic
-    and no-baseline plots. Built from the FULL-resolution context — the view
-    decimates under ``max_samples`` — and after the sidecar write, so
-    ``comparison_data.json`` keeps its trajectory shape and no figure."""
+def plot_inputs(test, tracked, backend_cls, test_dir):
+    """``(plots, extra_series)`` for one test's page. A test with no
+    ``plots`` key — or no backend class or test dir to read a result file
+    through — gets ``(None, {})``: the default layout, and the result file
+    is not opened (331 TRANSFORM reports pay nothing). Otherwise the
+    resolved plots and every plot-only series the file has."""
+    from ..discovery.plots import resolved_plots
+
+    if test is None or backend_cls is None or test_dir is None or test.plots is None:
+        return None, {}
+    available = backend_cls.result_names(test_dir)
+    plots = resolved_plots(test, tracked, available=available)
+    wanted = sorted({n for p in plots for n in p.series} - set(tracked))
+    return plots, backend_cls.result_series(test_dir, wanted)
+
+
+def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> dict:
+    """``plots`` (the sidecar's record), ``plot_figures``, ``plot_series``
+    and ``plot_sections`` from a render context. ``plots=None`` is one plot
+    per key of ``variables_by_name``, in its order. A series found neither
+    there nor in ``extra_series`` draws nothing and joins ``missing``.
+
+    The ONE producer of the page's plot keys: the template loops over plot
+    sections, so a caller or a fixture that hand-rolled them would be a
+    second layout nobody renders through.
+    """
+    from ..discovery.plots import ResolvedPlot
     from ..figures.assemble import leaves_by_variable, view_from_trajectory
+    from ..figures.families import family_label, group_families
+    from ..figures.plotly import plot_figure
+    from ..figures.view import build_view
+
+    by_name = context.get("variables_by_name") or {}
+    extra = extra_series or {}
+    if plots is None:
+        plots = tuple(
+            ResolvedPlot(index=i, kind="time", series=(n,), missing=())
+            for i, n in enumerate(by_name)
+        )
+    vidx = {n: i for i, n in enumerate(by_name)}
+    leaves_by_var = leaves_by_variable(metric_tree)
+    budget = max_samples if max_samples and max_samples > 0 else None
+
+    records: list[dict] = []
+    figures: list[dict] = []
+    series: list[list[str]] = []
+    sections: list[dict] = []
+    for plot in plots:
+        drawn = [n for n in plot.series if n in by_name or n in extra]
+        missing = [*plot.missing, *(n for n in plot.series if n not in drawn)]
+        views = [
+            view_from_trajectory(
+                n, by_name[n].get("trajectory") or {}, leaves_by_var.get(n, [])
+            )
+            if n in by_name
+            else build_view(n, act_time=extra[n][0], act_values=extra[n][1])
+            for n in drawn
+        ]
+        records.append({"kind": plot.kind, "series": drawn, "missing": missing})
+        figures.append(plot_figure(views, budget))
+        series.append(drawn)
+        sections.append(
+            {
+                "index": plot.index,
+                "title": ", ".join(
+                    family_label(key, members) for key, members in group_families(drawn)
+                ),
+                "series": drawn,
+                "missing": missing,
+                "single": len(drawn) == 1,
+                "variables": [
+                    {
+                        "name": n,
+                        "vidx": vidx[n],
+                        **{k: v for k, v in by_name[n].items() if k != "trajectory"},
+                        "overlays": [
+                            _overlay_row(ov) for ov in by_name[n].get("overlays") or []
+                        ],
+                    }
+                    for n in drawn
+                    if n in by_name
+                ],
+                "plot_only": [n for n in drawn if n not in by_name],
+            }
+        )
+    return {
+        "plots": records,
+        "plot_figures": figures,
+        "plot_series": series,
+        "plot_sections": sections,
+    }
+
+
+def _build_figures(context: dict, metric_tree, max_samples: int | None) -> dict:
+    """The page's diagnostic and no-baseline figures. The plots a test
+    declares — one per tracked variable by default — are
+    :func:`plot_page_keys`'. Built from the FULL-resolution context — the
+    view decimates under ``max_samples`` — and after the sidecar write, so
+    ``comparison_data.json`` keeps its trajectory shape and no figure."""
     from ..figures.plotly import variable_figure
     from ..figures.view import build_view
 
     budget = max_samples if max_samples and max_samples > 0 else None
-    leaves_by_var = leaves_by_variable(metric_tree)
 
-    figures = {}
-    for name, var in (context.get("variables_by_name") or {}).items():
-        view = view_from_trajectory(
-            name, var.get("trajectory") or {}, leaves_by_var.get(name, [])
-        )
-        figures[name] = variable_figure(view, budget)
     diag = [
         variable_figure(
             build_view(
@@ -184,7 +270,7 @@ def _build_figures(context: dict, metric_tree, max_samples: int | None) -> dict:
         )
         for t in context.get("nobaseline_trajectories") or []
     ]
-    return {"figures": figures, "diag_figures": diag, "nb_figures": nb}
+    return {"diag_figures": diag, "nb_figures": nb}
 
 
 def generate_comparison_plots(
@@ -208,6 +294,8 @@ def generate_comparison_plots(
     status_class: str | None = None,
     ref_id: str | None = None,
     run_metadata: dict | None = None,
+    plots=None,
+    extra_series=None,
 ) -> Path | None:
     """Render this test's interactive.html (Plotly) + comparison_data.json sidecar.
 
@@ -234,6 +322,14 @@ def generate_comparison_plots(
         overlays=overlays,
         run_metadata=run_metadata,
     )
+
+    # The page's plot keys, from the full-resolution context. Only the
+    # LAYOUT — names, no arrays — joins the sidecar; the figures are popped
+    # out and put back after the dump, where _build_figures is called.
+    page_keys = plot_page_keys(
+        context, plots, extra_series, metric_tree, max_embedded_samples
+    )
+    context["plots"] = page_keys.pop("plots")
 
     # Write comparison_data.json alongside the HTML. This is the
     # full-resolution data artifact for downstream tooling (notebooks,
@@ -306,6 +402,7 @@ def generate_comparison_plots(
     # Figures come from the full-resolution context and decimate themselves;
     # they are added AFTER the sidecar write so the sidecar's shape (the
     # handoff artifact dashboard_render reads) does not change.
+    context.update(page_keys)
     context.update(_build_figures(context, metric_tree, max_embedded_samples))
 
     # ORDER CONSTRAINT: the page context is built LAST — after the sidecar
@@ -389,7 +486,9 @@ def _decimated_traces(context: dict) -> list[dict]:
     embedded side reads ``meta.samples`` and falls back to the x length
     only for a trace the figure layer does not decimate. The template
     renders this list as the banner, so the reader sees WHICH curves were
-    thinned rather than a page-wide total.
+    thinned rather than a page-wide total. A comparison trace is named by
+    its PLOT's title — the variable's own name on a one-series plot, the
+    family label on a plot of several.
     """
     out: list[dict] = []
 
@@ -409,8 +508,10 @@ def _decimated_traces(context: dict) -> list[dict]:
                 }
             )
 
-    for name, fig in (context.get("figures") or {}).items():
-        scan(name, fig)
+    for section, fig in zip(
+        context.get("plot_sections") or [], context.get("plot_figures") or []
+    ):
+        scan(section.get("title"), fig)
     for traj, fig in zip(
         context.get("diag_trajectories") or [], context.get("diag_figures") or []
     ):
@@ -443,7 +544,14 @@ def _render_template(template_name: str, context: dict, output_path: Path) -> No
 
 
 def _build_per_test_args(
-    comp, results, test_lookup, store, config, manifest_meta_by_model, artifact_files=()
+    comp,
+    results,
+    test_lookup,
+    store,
+    config,
+    manifest_meta_by_model,
+    artifact_files=(),
+    backend_cls=None,
 ):
     """Resolve all per-test inputs needed to render that test's report."""
     from .overlay_loader import load_overlays
@@ -473,6 +581,13 @@ def _build_per_test_args(
     worst_nrmse, n_unscored = worst_finite_score(comp.variables)
 
     test_dir = config.work_dir / test_key if test_key else None
+
+    # The page's layout. ``tracked`` is what the page HAS a section for:
+    # the scored variables, or the result's own list when nothing scored.
+    tracked = list(dict.fromkeys(v.name for v in (comp.variables or []) if v.name))
+    if not tracked and result is not None:
+        tracked = [v.name for v in result.variables if v.name]
+    plots, extra_series = plot_inputs(test, tracked, backend_cls, test_dir)
 
     ref_file = None
     test_id = store.index.get_id(model_id)
@@ -521,6 +636,8 @@ def _build_per_test_args(
         "artifact_files": artifact_files,
         "max_embedded_samples": config.max_embedded_samples,
         "overlays": overlays,
+        "plots": plots,
+        "extra_series": extra_series,
     }
 
 
@@ -549,6 +666,8 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         status_class=args.get("status_class"),
         ref_id=args.get("ref_id"),
         run_metadata=args.get("run_metadata"),
+        plots=args.get("plots"),
+        extra_series=args.get("extra_series"),
     )
     render_elapsed = _time.monotonic() - t0
     return {
@@ -610,14 +729,18 @@ def generate_report_suite(
 
     test_lookup = {t.model_id: t for t in tests}
 
-    # Resolve the backend's artifact file list once up front — class attribute,
-    # no backend instantiation needed (avoids triggering the fmpy import if the
-    # extra isn't installed).
+    # Resolve the backend CLASS once up front — its artifact file list and
+    # the result-file readers a declared plot layout needs are both class
+    # attributes, so no backend is instantiated (which would trigger the
+    # fmpy import if the extra isn't installed). An unregistered backend
+    # leaves both at their empty defaults rather than raising per test.
     from ..backends import get_backend_class
 
     try:
-        artifact_files = tuple(get_backend_class(config).artifact_files)
+        backend_cls = get_backend_class(config)
+        artifact_files = tuple(backend_cls.artifact_files)
     except ValueError:
+        backend_cls = None
         artifact_files = ()
 
     # Cache test_key + last_run_at lookup once instead of scanning manifests per test
@@ -653,6 +776,7 @@ def generate_report_suite(
             config,
             manifest_meta_by_model,
             artifact_files,
+            backend_cls,
         )
         for comp in comparisons
     ]

@@ -16,8 +16,6 @@ passed at 4 MB.
 
 from __future__ import annotations
 
-import json
-
 import numpy as np
 
 BUDGET_BYTES = 25 * 1024 * 1024  # regression ceiling, see the module docstring
@@ -110,7 +108,7 @@ def test_real_interactive_html_stays_under_the_ceiling(tmp_path):
     page = html.read_text(encoding="utf-8")
     size = len(page.encode("utf-8"))
     # The guard must be looking at a page with figures in it.
-    assert "FIGURES:" in page and 'tube/band"' in page
+    assert "PLOT_FIGURES:" in page and 'tube/band"' in page
     assert size < BUDGET_BYTES, (
         f"interactive.html = {size / 1024 / 1024:.2f} MB exceeds the "
         f"{BUDGET_BYTES / 1024 / 1024:.0f} MB ceiling at "
@@ -121,14 +119,13 @@ def test_real_interactive_html_stays_under_the_ceiling(tmp_path):
 def test_figures_are_decimated_to_the_cap(tmp_path):
     """The cap must reach the figures, or the ceiling is doing the
     decimation's job."""
-    import re
+    from test_report_suite import _page_data
 
     html, _ = _render_real_page(tmp_path, 2, N_SAMPLES, MAX_EMBEDDED)
     page = html.read_text(encoding="utf-8")
-    start = page.index("FIGURES:")
-    block = page[start : page.index("DIAG_FIGURES:", start)]
-    figures = json.loads(re.search(r"FIGURES:\s*(\{.*?\}),\s*$", block, re.S).group(1))
-    for name, fig in figures.items():
+    figures = _page_data(page, "PLOT_FIGURES")
+    sections = _page_data(page, "PLOT_SERIES")
+    for (name,), fig in zip(sections, figures):
         for tr in fig["data"]:
             n = len(tr.get("x") or [])
             assert n <= 2 * MAX_EMBEDDED + 2, (name, tr.get("name"), n)

@@ -236,7 +236,11 @@ def _interactive_review(
 
 def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -> None:
     """Generate comparison plots and open in browser."""
-    from ..reporting.report_suite import generate_comparison_plots, open_in_browser
+    from ..reporting.report_suite import (
+        generate_comparison_plots,
+        open_in_browser,
+        plot_inputs,
+    )
 
     test_key = _find_test_key(model_id, config)
     if test_key:
@@ -259,9 +263,17 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
     from ..backends import get_backend_class
 
     try:
-        artifact_files = tuple(get_backend_class(config).artifact_files)
+        backend_cls = get_backend_class(config)
+        artifact_files = tuple(backend_cls.artifact_files)
     except ValueError:
+        backend_cls = None
         artifact_files = ()
+
+    # The page's layout, through the one helper the suite path uses.
+    tracked = list(dict.fromkeys(v.name for v in (comp.variables or []) if v.name))
+    if not tracked and result is not None:
+        tracked = [v.name for v in result.variables if v.name]
+    plots, extra_series = plot_inputs(test, tracked, backend_cls, test_dir)
 
     html_path = generate_comparison_plots(
         model_id=model_id,
@@ -276,6 +288,8 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         metric_tree=comp.metric_tree,
         artifact_files=artifact_files,
         max_embedded_samples=config.max_embedded_samples,
+        plots=plots,
+        extra_series=extra_series,
     )
 
     if html_path:

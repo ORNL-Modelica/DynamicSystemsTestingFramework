@@ -13,7 +13,6 @@ computes a verdict. They were ``xfail(strict=True)`` while it was pending.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -22,6 +21,8 @@ import pytest
 
 pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
+
+from test_report_suite import _page_data  # noqa: E402
 
 N_FULL = 3001  # over the cap -> decimated
 N_SMALL = 101  # under the cap -> untouched
@@ -129,7 +130,7 @@ def _signal(name: str, t: np.ndarray) -> np.ndarray:
     raise KeyError(name)
 
 
-def _generate_compared(out_dir: Path):
+def _generate_compared(out_dir: Path, plots=None):
     """One real test through the real path. Returns ``(html, comparison)``."""
     from dstf.backends.types import TestResult, VariableResult
     from dstf.comparison.comparator import compare_test
@@ -237,6 +238,7 @@ def _generate_compared(out_dir: Path):
         artifact_files=(("dslog.txt", "Simulation log"),),
         max_embedded_samples=MAX_EMBEDDED,
         overlays=overlays,
+        plots=plots,
     )
     assert html is not None
     return html, comp
@@ -359,6 +361,19 @@ def compared(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def two_series(tmp_path_factory):
+    """The same test, laid out as ONE plot of its first two tracked
+    variables — ``x`` and ``y``, named literally off ``_generate_compared``."""
+    from dstf.discovery.plots import ResolvedPlot
+
+    html, _comp = _generate_compared(
+        tmp_path_factory.mktemp("two_series"),
+        plots=(ResolvedPlot(0, "time", ("x", "y"), ()),),
+    )
+    return html
+
+
+@pytest.fixture(scope="module")
 def no_baseline(tmp_path_factory):
     return _generate_no_baseline(tmp_path_factory.mktemp("no_baseline"))
 
@@ -378,9 +393,10 @@ def _open(browser, html_path: Path):
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     page.goto(Path(html_path).as_uri())
-    # Wait for Plotly to have painted every chart. ``FIGURES`` / ``VARIABLE_ORDER``
-    # are top-level ``const``s — global lexical bindings, NOT properties of
-    # ``window`` — so polling ``window.FIGURES`` would wait forever.
+    # Wait for Plotly to have painted every chart. ``PLOT_FIGURES`` /
+    # ``PLOT_SERIES`` are top-level ``const``s — global lexical bindings, NOT
+    # properties of ``window`` — so polling ``window.PLOT_FIGURES`` would
+    # wait forever.
     page.wait_for_function(
         "() => { const els = document.querySelectorAll('.plotly-chart');"
         " return els.length > 0 && Array.from(els).every(el => !!el.data); }"
@@ -389,11 +405,14 @@ def _open(browser, html_path: Path):
 
 
 def _embedded_figures(html_path: Path) -> dict:
-    """The FIGURES dict as it was written into the page."""
+    """``{variable: figure}`` as the page was written: ``PLOT_FIGURES``
+    keyed by ``PLOT_SERIES``. Every fixture in this module draws one series
+    per plot, so the first name of each plot names its figure."""
     page = Path(html_path).read_text(encoding="utf-8")
-    start = page.index("FIGURES:")
-    block = page[start : page.index("DIAG_FIGURES:", start)]
-    return json.loads(re.search(r"FIGURES:\s*(\{.*?\}),\s*$", block, re.S).group(1))
+    series = _page_data(page, "PLOT_SERIES")
+    figures = _page_data(page, "PLOT_FIGURES")
+    assert all(len(s) == 1 for s in series), series
+    return {s[0]: fig for s, fig in zip(series, figures)}
 
 
 def _leaf_verdicts(comp) -> dict[str, bool]:
@@ -424,9 +443,9 @@ def test_every_variable_plot_paints_from_its_figure_dict(compared, playwright_br
     page, errors = _open(playwright_browser, html)
     painted = page.evaluate("""() => {
         const out = {};
-        VARIABLE_ORDER.forEach((name, i) => {
+        PLOT_SERIES.forEach((series, i) => {
           const el = document.getElementById('plot-' + i);
-          out[name] = {
+          out[series[0]] = {
             python: !!el._mt_python,
             n: el.data.length,
             ids: el.data.map(t => (t.meta || {}).id || null),
@@ -475,6 +494,25 @@ def test_every_variable_plot_paints_from_its_figure_dict(compared, playwright_br
     } <= set(painted["s"]["shapes"])
 
 
+@pytest.mark.playwright
+def test_a_two_series_plot_paints_both_traces(two_series, playwright_browser):
+    """A declared plot of two variables paints both actual traces, names
+    both in the legend, and offers no error-overlay select (the picker is
+    per-variable and a plot of several series has no one variable)."""
+    page, errors = _open(playwright_browser, two_series)
+    try:
+        ids = page.evaluate(
+            "() => document.getElementById('plot-0').data"
+            ".filter(t => t.meta && t.meta.kind === 'act').map(t => t.meta.id)"
+        )
+        assert len(ids) == 2 and all(i.startswith("actual/") for i in ids)
+        assert page.locator("#plot-0 .legend .traces").count() >= 2
+        assert page.locator(".error-overlay-select").count() == 0
+    finally:
+        page.close()
+    assert errors == []
+
+
 # ---------------------------------------------------------------------------
 # Kept: zoom, hover, legend
 # ---------------------------------------------------------------------------
@@ -485,7 +523,7 @@ def test_zoom_hover_and_legend_are_live(compared, playwright_browser):
     legend. All three are Plotly's, and all three must survive the cut."""
     html, _ = compared
     page, errors = _open(playwright_browser, html)
-    idx = page.evaluate("() => VARIABLE_ORDER.indexOf('x')")
+    idx = page.evaluate("() => PLOT_SERIES.findIndex(s => s.includes('x'))")
     assert idx >= 0
 
     zoomed = page.evaluate(f"""async () => {{
@@ -544,7 +582,7 @@ def test_overlay_picker_toggles_soft_check_and_companion(compared, playwright_br
     the one whose box was ticked."""
     html, _ = compared
     page, errors = _open(playwright_browser, html)
-    idx = page.evaluate("() => VARIABLE_ORDER.indexOf('x')")
+    idx = page.evaluate("() => PLOT_SERIES.findIndex(s => s.includes('x'))")
     probe = f"""() => {{
         const el = document.getElementById('plot-{idx}');
         return Object.fromEntries(el._fullData
@@ -613,7 +651,7 @@ def test_error_overlay_toggle_shows_exactly_one_error_trace(
     is hidden while no series on it is shown."""
     html, _ = compared
     page, errors = _open(playwright_browser, html)
-    idx = page.evaluate("() => VARIABLE_ORDER.indexOf('x')")
+    idx = page.evaluate("() => PLOT_SERIES.findIndex(s => s.includes('x'))")
     probe = f"""() => {{
         const el = document.getElementById('plot-{idx}');
         return {{
@@ -623,7 +661,7 @@ def test_error_overlay_toggle_shows_exactly_one_error_trace(
           axes: [el._fullLayout.yaxis3.visible, el._fullLayout.yaxis4.visible],
         }};
     }}"""
-    select = page.locator(f'select.error-overlay-select[data-vidx="{idx}"]')
+    select = page.locator(f'select.error-overlay-select[data-plot="{idx}"]')
     seen = {}
     for mode in ("signed", "abs", "nrmse", "none"):
         select.select_option(mode)
@@ -785,7 +823,7 @@ def test_window_band_is_open_ended_when_one_end_is_none(
 ):
     html, _ = compared
     page, errors = _open(playwright_browser, html)
-    idx = page.evaluate("() => VARIABLE_ORDER.indexOf('x')")
+    idx = page.evaluate("() => PLOT_SERIES.findIndex(s => s.includes('x'))")
     closed = page.evaluate(f"""() => {{
         const el = document.getElementById('plot-{idx}');
         const s = (el.layout.shapes || [])

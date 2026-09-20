@@ -103,6 +103,9 @@ details summary:hover { color: var(--dstf-text); }
 .plot-controls { display: flex; gap: 1em; align-items: center; margin-bottom: 0.5em; font-size: 0.85em; color: var(--dstf-text-secondary); }
 .plot-controls label { display: inline-flex; align-items: center; gap: 0.4em; }
 .error-overlay-select { padding: 0.15em 0.3em; border: 1px solid var(--dstf-border); border-radius: 3px; font-family: inherit; font-size: 0.85em; }
+/* A line the plot itself cannot say: a missing series, a plot-only series,
+   or why a multi-series plot has no overlay controls. */
+.plot-note { font-size: 0.85em; color: var(--dstf-text-secondary); margin-bottom: 0.5em; }
 /* Decimation disclosure — which traces the page draws at reduced
    resolution, and where the full-resolution data lives. */
 #decimation-banner { background: var(--dstf-warn-tint); border: 1px solid var(--dstf-warn-border); border-radius: 4px; color: var(--dstf-warn-dark); padding: 8px 12px; margin: 0 0 12px 0; font-size: 0.85em; }
@@ -294,19 +297,25 @@ details summary:hover { color: var(--dstf-text); }
 </details>
 {% endif %}
 
-{# === VARIABLE SECTIONS — Stage 2 per-variable layout === #}
-{# One plot per unique variable, with the leaves scoring it below. #}
-{% if variables_by_name %}
-{% for varname, vardata in variables_by_name.items() %}
-<div class="variable-section" data-variable="{{ varname }}" data-vidx="{{ loop.index0 }}" id="variable-section-{{ loop.index0 }}">
+{# === PLOT SECTIONS — one section per plot the test declares === #}
+{# With no ``plots`` key that is one plot per tracked variable, in order,
+   with the element ids the page has always used. A plot of several series
+   draws no overlays and no error traces (both are per-variable pickers
+   keyed by trace name), and says so. #}
+{% if plot_sections %}
+{% for plot in plot_sections %}
+<div class="variable-section plot-section-block" data-plot="{{ plot.index }}" id="variable-section-{{ plot.index }}">
   <h2>
-    <span class="var-status {{ 'pass' if vardata.passed else 'fail' }}" data-vidx="{{ loop.index0 }}">{{ 'PASS' if vardata.passed else 'FAIL' }}</span>{% if vardata.n_advisory_failed %}{{ advisory_chip(vardata.n_advisory_failed, loop.index0) }}{% endif %}
-    {{ varname }}
+    {%- for v in plot.variables -%}
+    <span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %}
+    {%- endfor %}
+    {{ plot.title }}
   </h2>
+  {% if plot.single and plot.variables %}
   <div class="plot-controls">
     <label class="error-overlay-control" title="Overlay an error trace on the secondary y-axis">
       Error overlay
-      <select class="error-overlay-select" data-vidx="{{ loop.index0 }}">
+      <select class="error-overlay-select" data-plot="{{ plot.index }}">
         <option value="none">none</option>
         <option value="signed">signed error (act - ref)</option>
         <option value="abs">abs error</option>
@@ -314,16 +323,25 @@ details summary:hover { color: var(--dstf-text); }
       </select>
     </label>
   </div>
-  {% if vardata.overlays %}
-  <div class="overlay-picker" data-plot-id="plot-{{ loop.index0 }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
+  {% if plot.variables[0].overlays %}
+  <div class="overlay-picker" data-plot-id="plot-{{ plot.index }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
     <span class="ov-label">Overlays:</span>
-    {% for ov in vardata.overlays %}
+    {% for ov in plot.variables[0].overlays %}
     <label class="ov-item"><input type="checkbox" class="overlay-toggle" data-ov-name="{{ ov.name }}" data-ov-role="{{ ov.role }}"> <span class="ov-role ov-{{ ov.role }}">{{ ov.role }}</span> {{ ov.name }}</label>
     {% endfor %}
   </div>
   {% endif %}
-  <div class="plotly-chart plot-main" id="plot-{{ loop.index0 }}" style="height:300px"></div>
-  <div class="node-tree" id="nodes-{{ loop.index0 }}" data-variable="{{ varname }}">{% if vardata.tree %}{{ node(vardata.tree) }}{% endif %}</div>
+  {% else %}
+  <div class="plot-note">Overlays and error traces show on a plot with one series.</div>
+  {% endif %}
+  {% if plot.missing %}<div class="plot-note">Not in this result: {{ plot.missing | join(", ") }}</div>{% endif %}
+  <div class="plotly-chart plot-main" id="plot-{{ plot.index }}" style="height:300px"></div>
+  {% for v in plot.variables %}
+  <div class="node-tree" id="nodes-{{ v.vidx }}" data-variable="{{ v.name }}">{% if v.tree %}{{ node(v.tree) }}{% endif %}</div>
+  {% endfor %}
+  {% for name in plot.plot_only %}
+  <div class="plot-note">{{ name }} is plot only: it has no reference and no criteria.</div>
+  {% endfor %}
 </div>
 {% endfor %}
 {% endif %}
@@ -351,12 +369,12 @@ details summary:hover { color: var(--dstf-text); }
 // Data marshalling only — the figure dicts and the order the plot elements
 // were numbered in. Everything else on this page is server-rendered markup.
 window.MT_REPORT = {
-  {# review 2026-07-06 finding 76h: emit the key order explicitly — JS
-     Object.keys() reorders integer-like keys numerically, desyncing plot
-     element IDs from this template's loop.index0 numbering. #}
-  VARIABLE_ORDER: {{ variables_by_name | list | tojson }},
-  {# Figure dicts from dstf.figures — every plot on the page, verbatim. #}
-  FIGURES: {{ (figures or {}) | tojson }},
+  {# review 2026-07-06 finding 76h: a LIST, one entry per plot section, in
+     the template's own order — JS Object.keys() reorders integer-like keys
+     numerically, which desynced plot element IDs from that order. #}
+  PLOT_SERIES: {{ plot_series | tojson }},
+  {# Figure dicts from dstf.figures — one per plot section, verbatim. #}
+  PLOT_FIGURES: {{ (plot_figures or []) | tojson }},
   DIAG_FIGURES: {{ (diag_figures or []) | tojson }},
   NB_FIGURES: {{ (nb_figures or []) | tojson }},
 };

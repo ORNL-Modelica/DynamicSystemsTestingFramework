@@ -37,7 +37,7 @@ def _stamped_root_leaf(vc):
 #
 # * Finding 68 — ``comparison_data.json`` and the embedded interactive.html
 #   context are strict JSON (non-finite floats sanitized to null).
-# * Finding 76h (support) — the template emits ``VARIABLE_ORDER`` as an
+# * Finding 76h (support) — the template emits ``PLOT_SERIES`` as an
 #   explicit JSON array so integer-like variable names can't desync plot IDs.
 # =========================================================================
 
@@ -269,13 +269,13 @@ class TestViewAndLookupDrift:
 
 
 # ---------------------------------------------------------------------------
-# Finding 76h (support) — explicit VARIABLE_ORDER emission
+# Finding 76h (support) — explicit plot order emission
 # ---------------------------------------------------------------------------
 
 
-def test_template_emits_variable_order(tmp_path):
+def test_template_emits_plot_order(tmp_path):
     """Integer-like variable names must keep template order in JS — the
-    template emits VARIABLE_ORDER explicitly (Object.keys() would sort
+    template emits PLOT_SERIES as a LIST (Object.keys() would sort
     '123' ahead of 'alpha')."""
     plot_dir = tmp_path / "report"
     comparisons = [
@@ -291,9 +291,7 @@ def test_template_emits_variable_order(tmp_path):
         plot_dir=plot_dir,
     )
     html = (plot_dir / "interactive.html").read_text(encoding="utf-8")
-    m = re.search(r"VARIABLE_ORDER:\s*(\[[^\]]*\])", html)
-    assert m, "window.MT_REPORT must carry VARIABLE_ORDER"
-    assert json.loads(m.group(1)) == ["zeta", "123"]
+    assert _page_data(html, "PLOT_SERIES") == [["zeta"], ["123"]]
 
 
 class TestVendoredPlotly:
@@ -499,11 +497,14 @@ class TestEmbeddedFigures:
         self, tmp_path
     ):
         page, sidecar = self._render(tmp_path)
-        assert "FIGURES:" in page and '"/metrics/children/0/tube/band"' in page
-        assert "figures" not in sidecar and "diag_figures" not in sidecar
+        assert "PLOT_FIGURES:" in page and '"/metrics/children/0/tube/band"' in page
+        assert "figures" not in sidecar and "plot_figures" not in sidecar
+        assert "diag_figures" not in sidecar
         assert len(sidecar["trajectories"][0]["act_time"]) == 3001
-        start = page.index("FIGURES:")
-        assert '"full_samples": 3001' in page[start:]
+        (fig,) = _page_data(page, "PLOT_FIGURES")
+        assert any(
+            (tr.get("meta") or {}).get("full_samples") == 3001 for tr in fig["data"]
+        )
 
     def test_the_page_carries_no_trajectory_arrays_but_the_sidecar_does(self, tmp_path):
         """The page draws figures. Anything else the arrays could do there
@@ -568,6 +569,18 @@ class TestEmbeddedFigures:
             built.append(out)
             return out
 
+        # The per-variable figures moved to ``plot_page_keys``; the
+        # diagnostic and no-baseline ones stayed in ``_build_figures``, so
+        # both producers are watched.
+        page_built: list[dict] = []
+        real_keys = report_suite.plot_page_keys
+
+        def keys_spy(*args, **kwargs):
+            out = real_keys(*args, **kwargs)
+            page_built.append(out)
+            return out
+
+        monkeypatch.setattr(report_suite, "plot_page_keys", keys_spy)
         monkeypatch.setattr(report_suite, "_build_figures", spy)
         report_suite.generate_comparison_plots(
             "M",
@@ -582,20 +595,19 @@ class TestEmbeddedFigures:
         report_suite.generate_comparison_plots(
             "M", None, result, [], tmp_path / "nb_plots", test_model=test
         )
-        assert len(built) == 2
+        assert len(built) == 2 and len(page_built) == 2
         figures, diag, nb = (
-            built[0]["figures"],
+            page_built[0]["plot_figures"],
             built[0]["diag_figures"],
             built[1]["nb_figures"],
         )
         # Every list the loop checks is non-empty, and the per-variable
         # figure really carries a handle — else the loop is vacuous.
-        assert "x" in figures and diag and nb
+        assert page_built[0]["plot_series"] == [["x"]] and diag and nb
         assert any(
-            (tr.get("meta") or {}).get("kind") == "handle"
-            for tr in figures["x"]["data"]
+            (tr.get("meta") or {}).get("kind") == "handle" for tr in figures[0]["data"]
         )
-        for fig in [*figures.values(), *diag, *nb]:
+        for fig in [*figures, *diag, *nb]:
             assert "edits" not in fig["config"]
             assert not any(
                 s.get("type") == "circle" for s in fig["layout"].get("shapes") or []
@@ -617,8 +629,9 @@ class TestEmbeddedFigures:
         # embedded side is ``meta.samples`` where the figure layer stamped
         # one, and the x length only where it did not.
         ctx = {
-            "figures": {
-                "x": {
+            "plot_sections": [{"index": 0, "title": "x"}],
+            "plot_figures": [
+                {
                     "data": [
                         {
                             "name": "Actual",
@@ -638,7 +651,7 @@ class TestEmbeddedFigures:
                         {"name": "Unstamped", "x": [0, 1], "meta": {"full_samples": 9}},
                     ]
                 }
-            }
+            ],
         }
         assert _decimated_traces(ctx) == [
             {"variable": "x", "trace": "Actual", "full": 9, "embedded": 2},
@@ -707,9 +720,7 @@ class TestEmbeddedFigures:
             max_embedded_samples=500,
         )
         page = html.read_text(encoding="utf-8")
-        figures = json.loads(
-            re.search(r"FIGURES:\s*(\{.*?\}),\n\s*DIAG_FIGURES", page, re.S).group(1)
-        )
+        figures = _page_data(page, "PLOT_FIGURES")
         sidecar = json.loads(
             (plot_dir / "comparison_data.json").read_text(encoding="utf-8")
         )
@@ -720,7 +731,10 @@ class TestEmbeddedFigures:
         self, tmp_path, sentinel_first
     ):
         page, figures, _sidecar = self._render_two_leaves(tmp_path, sentinel_first)
-        traces = figures["x"]["data"]
+        # One plot, one series: x's. Pinned, so an indexed read cannot
+        # silently start asserting on some other variable's figure.
+        assert _page_data(page, "PLOT_SERIES") == [["x"]]
+        traces = figures[0]["data"]
         names = [tr.get("name") for tr in traces]
         assert "Actual" in names and "Reference" in names
         # Actual/Reference carry the real samples, not the sentinel's empty
@@ -734,7 +748,7 @@ class TestEmbeddedFigures:
         assert not any("tube/band" in i for i in ids)
         assert not any(
             "tube/band" in (sh.get("name") or "")
-            for sh in figures["x"]["layout"].get("shapes", [])
+            for sh in figures[0]["layout"].get("shapes", [])
         )
 
     @pytest.mark.parametrize("sentinel_first", [True, False])
@@ -813,10 +827,9 @@ class TestEmbeddedFigures:
             max_embedded_samples=500,
         )
         page = html.read_text(encoding="utf-8")
-        figures = json.loads(
-            re.search(r"FIGURES:\s*(\{.*?\}),\n\s*DIAG_FIGURES", page, re.S).group(1)
-        )
-        traces = {tr.get("name"): tr for tr in figures["x"]["data"]}
+        figures = _page_data(page, "PLOT_FIGURES")
+        assert _page_data(page, "PLOT_SERIES") == [["x"]]
+        traces = {tr.get("name"): tr for tr in figures[0]["data"]}
         assert "Actual" in traces and "Reference" in traces
         assert len(traces["Actual"]["x"]) == 201
         assert len(traces["Reference"]["x"]) == 201
@@ -1293,3 +1306,224 @@ class TestRestoredViewingChecks:
         banner = _parse(page).by_id("decimation-banner")
         traces = [el.text() for el in banner.by_class("dec-trace")]
         assert "x Overlay: soft_check/prev 3001→500" in traces
+
+
+# ---------------------------------------------------------------------------
+# The page's plot sections (Task 5)
+# ---------------------------------------------------------------------------
+
+
+def _page_data(page: str, key: str):
+    """One key of `window.MT_REPORT`, parsed. Keys are written one per line
+    as `KEY: <json>,`."""
+    import json
+    import re
+
+    m = re.search(rf"^\s*{key}:\s*(.*),\s*$", page, re.M)
+    assert m, f"window.MT_REPORT must carry {key}"
+    return json.loads(m.group(1))
+
+
+class TestPlotSections:
+    def _render(self, tmp_path, **kw):
+        """Two tracked variables, x (passes) and y (passes), nrmse leaves."""
+        import json
+        from pathlib import Path
+
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_test
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        t = np.linspace(0.0, 1.0, 51)
+        ref = {
+            "test_id": "ref_0001",
+            "time": t.tolist(),
+            "variables": [
+                {"index": 1, "name": "x", "values": np.sin(t).tolist()},
+                {"index": 2, "name": "y", "values": np.cos(t).tolist()},
+            ],
+        }
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[
+                VariableResult(index=1, name="x", time=t, values=np.sin(t)),
+                VariableResult(index=2, name="y", time=t, values=np.cos(t)),
+            ],
+        )
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=2,
+        )
+        comp = compare_test(test, result, ref)
+        plot_dir = tmp_path / "plots"
+        html = generate_comparison_plots(
+            "M",
+            ref,
+            result,
+            comp.variables,
+            plot_dir,
+            test_model=test,
+            metric_tree=comp.metric_tree,
+            **kw,
+        )
+        page = html.read_text(encoding="utf-8")
+        sidecar = json.loads(
+            (plot_dir / "comparison_data.json").read_text(encoding="utf-8")
+        )
+        return page, sidecar
+
+    def test_with_no_layout_the_page_has_one_section_per_tracked_variable(
+        self, tmp_path
+    ):
+        page, sidecar = self._render(tmp_path)
+        assert _page_data(page, "PLOT_SERIES") == [["x"], ["y"]]
+        assert len(_page_data(page, "PLOT_FIGURES")) == 2
+        assert "VARIABLE_ORDER" not in page and "  FIGURES:" not in page
+        assert 'id="plot-0"' in page and 'id="plot-1"' in page
+        assert page.count('class="error-overlay-select"') == 2
+        assert sidecar["plots"] == [
+            {"kind": "time", "series": ["x"], "missing": []},
+            {"kind": "time", "series": ["y"], "missing": []},
+        ]
+
+    def test_a_two_series_plot_draws_both_and_says_why_it_has_no_overlays(
+        self, tmp_path
+    ):
+        from dstf.discovery.plots import ResolvedPlot
+
+        plots = (ResolvedPlot(index=0, kind="time", series=("x", "y"), missing=()),)
+        page, sidecar = self._render(tmp_path, plots=plots)
+        (fig,) = _page_data(page, "PLOT_FIGURES")
+        acts = [t["meta"]["id"] for t in fig["data"] if t["meta"]["kind"] == "act"]
+        assert acts == ["actual/x", "actual/y"]
+        assert "Overlays and error traces show on a plot with one series." in page
+        assert 'class="error-overlay-select"' not in page
+        assert 'id="nodes-0"' in page and 'id="nodes-1"' in page
+        assert sidecar["plots"] == [
+            {"kind": "time", "series": ["x", "y"], "missing": []}
+        ]
+
+    def test_a_plot_only_series_comes_from_extra_series_and_is_named(self, tmp_path):
+        import numpy as np
+
+        from dstf.discovery.plots import ResolvedPlot
+
+        t = np.linspace(0, 1, 5)
+        plots = (
+            ResolvedPlot(index=0, kind="time", series=("x", "z"), missing=("gone",)),
+        )
+        page, _ = self._render(
+            tmp_path, plots=plots, extra_series={"z": (t, t * 0 + 7)}
+        )
+        (fig,) = _page_data(page, "PLOT_FIGURES")
+        z = next(tr for tr in fig["data"] if tr["meta"]["id"] == "actual/z")
+        assert z["y"] == [7.0] * 5
+        assert "z is plot only: it has no reference and no criteria." in page
+        assert "Not in this result: gone" in page
+
+    def test_a_tracked_variable_on_no_plot_still_has_its_tree_at_the_top(
+        self, tmp_path
+    ):
+        from dstf.discovery.plots import ResolvedPlot
+
+        plots = (ResolvedPlot(index=0, kind="time", series=("x",), missing=()),)
+        page, _ = self._render(tmp_path, plots=plots)
+        assert _page_data(page, "PLOT_SERIES") == [["x"]]
+        assert 'id="nodes-full"' in page  # the whole tree, y's leaf included
+        assert 'id="nodes-1"' not in page
+
+    def test_the_figures_stay_uneditable(self, tmp_path):
+        from dstf.discovery.plots import ResolvedPlot
+
+        plots = (ResolvedPlot(index=0, kind="time", series=("x", "y"), missing=()),)
+        page, _ = self._render(tmp_path, plots=plots)
+        (fig,) = _page_data(page, "PLOT_FIGURES")
+        assert "edits" not in fig["config"]
+
+    def test_a_series_in_neither_source_is_named_missing_not_drawn(self, tmp_path):
+        """A caller that resolved the layout without a name list (or a
+        result file that lost the variable between the list and the read)."""
+        from dstf.discovery.plots import ResolvedPlot
+
+        plots = (ResolvedPlot(index=0, kind="time", series=("x", "ghost"), missing=()),)
+        page, sidecar = self._render(tmp_path, plots=plots)
+        assert _page_data(page, "PLOT_SERIES") == [["x"]]
+        assert "Not in this result: ghost" in page
+        assert sidecar["plots"][0]["missing"] == ["ghost"]
+
+
+class TestPerTestArgsReadTheLayout:
+    """`_build_per_test_args` over a real work dir (the Session fixture's)."""
+
+    def _args(self, tmp_path, layout, **kw):
+        import json
+
+        from dstf.authoring.session import Session
+        from dstf.reporting.report_suite import _build_per_test_args
+        from test_session import A, _two_var_project
+
+        cfg, work = _two_var_project(tmp_path)
+        path = work / "test_0001" / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["variables"]["z"] = [7.0 for _ in payload["time"]]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        if layout is not None:
+            spec_path = cfg.parent / "test_spec.json"
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+            next(e for e in spec["tests"] if e["model"] == A)["plots"] = layout
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        project = s.project
+        kw.setdefault("backend_cls", type(project.backend))
+        return _build_per_test_args(
+            s.comparisons[A],
+            project.results,
+            {t.model_id: t for t in project.tests},
+            project.store,
+            project.config,
+            {A: {"test_key": "test_0001", "last_run_at": None}},
+            **kw,
+        )
+
+    def test_a_layout_naming_an_untracked_variable_reads_it_from_the_file(
+        self, tmp_path
+    ):
+        args = self._args(
+            tmp_path, [{"series": [{"var": "x"}, {"var": "z"}, {"var": "gone"}]}]
+        )
+        (plot,) = args["plots"]
+        assert plot.series == ("x", "z") and plot.missing == ("gone",)
+        assert list(args["extra_series"]) == ["z"]
+        assert args["extra_series"]["z"][1].tolist() == [7.0] * 5
+
+    def test_without_a_layout_the_result_file_is_not_opened(
+        self, tmp_path, monkeypatch
+    ):
+        from dstf.backends.python.backend import PythonBackend
+
+        def boom(cls, *a):
+            raise AssertionError("the default layout must not touch the result file")
+
+        monkeypatch.setattr(PythonBackend, "result_names", classmethod(boom))
+        monkeypatch.setattr(PythonBackend, "result_series", classmethod(boom))
+        args = self._args(tmp_path, None)
+        assert args["plots"] is None and args["extra_series"] == {}
+
+    def test_with_no_backend_class_a_layout_is_not_resolved(self, tmp_path):
+        """M5.9 — the backend class is resolved ONCE per suite, wrapped; an
+        unregistered backend leaves it ``None`` and every page falls back to
+        the default layout instead of raising."""
+        args = self._args(
+            tmp_path,
+            [{"series": [{"var": "x"}, {"var": "z"}]}],
+            backend_cls=None,
+        )
+        assert args["plots"] is None and args["extra_series"] == {}
