@@ -192,3 +192,69 @@ def test_last_test_keys_maps_model_to_key(tmp_path):
     )
     assert last_test_keys(tmp_path) == {"L.A": "test_0001", "L.B": "test_0007"}
     assert last_test_keys(tmp_path / "nowhere") == {}
+
+
+@pytest.mark.parametrize("content", [b"", b"PK\x03\x04 truncated"])
+def test_a_half_written_npz_is_none_and_empty(tmp_path, content):
+    """`np.savez_compressed` is not atomic: a run killed mid-write leaves
+    exactly this, and one test's file must not break a whole report."""
+    (tmp_path / "result.npz").write_bytes(content)
+    assert npz_names(tmp_path / "result.npz") is None
+    assert npz_series(tmp_path / "result.npz", ["h"]) == {}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"\xff\xfe not utf-8",
+        json.dumps({"time": 5, "variables": {"x": [1]}}).encode(),
+        json.dumps({"time": ["a", "b"], "variables": {"x": [1, 2]}}).encode(),
+        json.dumps({"time": [[0, 1], [2, 3]], "variables": {"x": [1, 2]}}).encode(),
+        json.dumps({"time": [0, 1], "variables": ["x"]}).encode(),
+    ],
+)
+def test_a_malformed_json_result_never_raises(tmp_path, payload):
+    (tmp_path / "result.json").write_bytes(payload)
+    json_names(tmp_path / "result.json")  # None or a list; never raises
+    assert json_series(tmp_path / "result.json", ["x"]) == {}
+
+
+def test_json_series_skips_a_series_it_cannot_draw(tmp_path):
+    _json_result(tmp_path, x=[0, 1, 2], words=["a", "b", "c"], nested=[[0, 1]] * 3)
+    got = json_series(tmp_path / "result.json", ["x", "words", "nested"])
+    assert list(got) == ["x"]
+
+
+def test_time_is_neither_listed_nor_read_from_a_json_result(tmp_path):
+    _json_result(tmp_path, time=[0, 1, 2], x=[0, 1, 2])
+    assert json_names(tmp_path / "result.json") == ["x"]
+    assert json_series(tmp_path / "result.json", ["time"]) == {}
+
+
+def test_the_json_driver_reads_the_file_its_class_names(tmp_path):
+    class Other(JsonDriverBackend):
+        result_filename = "other.json"
+
+    tmp_path.mkdir(exist_ok=True)
+    (tmp_path / "other.json").write_text(
+        json.dumps({"time": T, "variables": {"q": [1, 2, 3]}}), encoding="utf-8"
+    )
+    assert Other.result_names.__func__(Other, tmp_path) == ["q"]
+
+
+def test_the_mat_pair_over_a_real_dymola_result():
+    from dstf.backends.common import result_files
+
+    path = Path(__file__).parent / "fixtures" / "results" / "Dymola" / "dsres.mat"
+    names = result_files.mat_names(path)
+    assert names and "Time" not in names and "time" not in names
+    got = result_files.mat_series(path, [names[0], "no.such.variable"])
+    assert list(got) == [names[0]]
+    time, values = got[names[0]]
+    assert time.ndim == 1 and time.shape == values.shape and len(time) > 2
+
+
+def test_an_npz_with_no_time_column_has_no_series(tmp_path):
+    arr = np.zeros(3, dtype=[("h", "f8")])
+    np.savez_compressed(tmp_path / "result.npz", result=arr)
+    assert npz_series(tmp_path / "result.npz", ["h"]) == {}
