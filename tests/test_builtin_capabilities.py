@@ -12,7 +12,7 @@ pytest.importorskip("nicegui")
 
 from nicegui import ui  # noqa: E402
 
-from capability_host import host  # noqa: E402
+from capability_host import host, open_menu  # noqa: E402
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.builtin.accept import Accept  # noqa: E402
@@ -399,28 +399,26 @@ async def test_the_node_panel_is_the_cluster_and_its_forms_stage(session):
         for marker in (f"add:{leaf}", f"wrap:{leaf}", f"remove:{leaf}"):
             await user.should_see(marker=marker)
         await user.should_not_see(marker=f"edit:{leaf}")  # a leaf has no combinator
-        user.find(marker=f"wrap:{leaf}").click()  # the menu's content is lazy
+        open_menu(user, f"wrap:{leaf}")  # the menu's content is lazy
         user.find(marker=f"apply-wrap:{leaf}").click()
         await _settled(lambda: "combinator" in session.tree(D)["children"][1])
         assert errors == {}
 
 
-async def test_a_cluster_builds_a_menus_content_on_its_first_open(session):
+async def test_a_cluster_builds_a_menus_content_when_it_opens(session):
     """Cost (the executing review): a cluster whose three forms are built
     with it is ~28 elements, and a tree row holds one per node — 40 leaves
     made a 2387-element page with the tree open. Nothing inside a menu
-    exists until that menu is opened, which is the anchor button's click."""
+    exists until that menu opens, which is its value going True."""
     session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
     leaf = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
         await user.should_see(marker=f"add:{leaf}")
         await user.should_not_see(kind=ui.select)  # no form is built yet
         await user.should_not_see(marker=f"apply-add:{leaf}")
-        user.find(marker=f"add:{leaf}").click()
+        open_menu(user, f"add:{leaf}")
         await user.should_see(marker=f"apply-add:{leaf}")
         await user.should_see(kind=ui.select)  # the add form's two selects
-        # A second click with no close between is one open, built once.
-        user.find(marker=f"add:{leaf}").click()
         assert len(user.find(marker=f"apply-add:{leaf}").elements) == 1
 
 
@@ -470,7 +468,7 @@ async def test_the_edit_form_is_prefilled_and_stages_an_edit(session):
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
-        user.find(marker=f"edit:{k_of_n}").click()
+        open_menu(user, f"edit:{k_of_n}")
         await user.should_see(marker=f"apply-edit:{k_of_n}")
         (kind,) = [
             e
@@ -498,7 +496,7 @@ async def test_the_cluster_add_form_starts_from_the_leafs_own_variable(
     leaf = "/metrics/children/1"
     assert session.tree(A)["children"][1]["variable"] == "y"
     async with host(session, EditTree(), _node(A, leaf)) as (user, errors, _figure):
-        user.find(marker=f"add:{leaf}").click()
+        open_menu(user, f"add:{leaf}")
         (var,) = user.find(marker=f"apply-add:{leaf}:variable").elements
         assert var.value == "y"
         user.find(marker=f"apply-add:{leaf}").click()
@@ -513,24 +511,67 @@ async def test_the_cluster_add_form_on_a_nested_leaf_lands_under_its_parent(sess
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     leaf = "/metrics/children/1/children/0"
     async with host(session, EditTree(), _node(D, leaf)) as (user, errors, _figure):
-        user.find(marker=f"add:{leaf}").click()
+        open_menu(user, f"add:{leaf}")
         user.find(marker=f"apply-add:{leaf}").click()
         await _settled(lambda: len(session.tree(D)["children"][1]["children"]) == 3)
         assert len(session.tree(D)["children"]) == 3  # the root is untouched
         assert errors == {}
 
 
-async def test_an_open_that_is_not_the_buttons_click_builds_the_form(session):
-    """A menu opened from anywhere else (`menu.open()`, a keyboard) reaches
-    the server as its own value change, and that builds the content too."""
+async def test_the_form_is_built_by_the_menu_opening_not_the_anchors_click(session):
+    """The menu's value is the one hook: whatever opens a QMenu — a click
+    on the anchor in a browser, a keyboard, `menu.open()` — reaches the
+    server as that change. The anchor's click builds nothing, so no flag
+    can be left standing by a close the simulation never sends."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(TREE))])
     leaf = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
-        (button,) = user.find(marker=f"add:{leaf}").elements
-        menu = next(e for e in button.descendants() if isinstance(e, ui.menu))
+        user.find(marker=f"add:{leaf}").click()
         await user.should_not_see(marker=f"apply-add:{leaf}")
-        menu.open()
+        open_menu(user, f"add:{leaf}")
         await user.should_see(marker=f"apply-add:{leaf}")
+
+
+async def test_a_menu_opened_after_the_session_moved_shows_the_node_as_it_is(session):
+    """The cluster stands while the Session moves under it (the Task 4
+    review's probe): a form built on the anchor's click showed the k the
+    node had then, and an apply from it staged that k back over the one
+    already staged."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    k_of_n = "/metrics/children/1"
+    assert session.tree(D)["children"][1]["k"] == 2
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
+        # A browser's open sends both the anchor's click and the value
+        # change; the content comes from the second.
+        user.find(marker=f"edit:{k_of_n}").click()
+        session.stage([PatchOp(D, "replace", f"{k_of_n}/k", 1)])
+        open_menu(user, f"edit:{k_of_n}")
+        await user.should_see(marker=f"apply-edit:{k_of_n}")
+        (k,) = [
+            e for e in user.find(kind=ui.number).elements if e.props.get("label") == "k"
+        ]
+        assert k.value == 1  # the node as it is now
+        staged = len(session.spec.pending)
+        user.find(marker=f"apply-edit:{k_of_n}").click()
+        await _settled(lambda: len(session.spec.pending) > staged)
+        assert session.tree(D)["children"][1]["k"] == 1  # not the k of the first open
+        assert errors == {}
+
+
+async def test_a_menu_opened_on_a_node_that_is_gone_says_so_and_offers_no_form(session):
+    """The node was removed under a cluster that is still drawn: the menu
+    reads the tree at THIS open, so it carries the sentence `available`
+    would give rather than a form staging against a path that names
+    nothing."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(TREE))])
+    # The LAST child: removing any other only shifts the rest up, and the
+    # path would still name a node — a different one.
+    leaf = f"/metrics/children/{len(TREE['children']) - 1}"
+    async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
+        session.stage([PatchOp(D, "remove", leaf)])
+        open_menu(user, f"wrap:{leaf}")
+        await user.should_see(f"{leaf} names no node of {D}")
+        await user.should_not_see(marker=f"apply-wrap:{leaf}")
 
 
 async def test_a_menus_form_has_a_width_and_its_controls_fill_it(session):
@@ -540,7 +581,7 @@ async def test_a_menus_form_has_a_width_and_its_controls_fill_it(session):
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(TREE))])
     leaf = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
-        user.find(marker=f"add:{leaf}").click()
+        open_menu(user, f"add:{leaf}")
         (apply,) = user.find(marker=f"apply-add:{leaf}").elements
         column = next(a for a in apply.ancestors() if isinstance(a, ui.column))
         assert dict(column.style).get("min-width") == "220px"
@@ -620,7 +661,7 @@ async def test_applying_a_form_closes_its_menu(session):
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(TREE))])
     leaf = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
-        user.find(marker=f"wrap:{leaf}").click()
+        open_menu(user, f"wrap:{leaf}")
         (apply,) = user.find(marker=f"apply-wrap:{leaf}").elements
         menu = next(a for a in apply.ancestors() if isinstance(a, ui.menu))
         menu.open()

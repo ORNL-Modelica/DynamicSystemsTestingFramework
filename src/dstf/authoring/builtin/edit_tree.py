@@ -278,45 +278,38 @@ def _add_form(
 
 
 def _lazy_menu(ui: Any, button: Any, build: Callable[[Any], None]) -> None:
-    """The menu anchored to ``button``, its CONTENT built on EVERY open.
+    """The menu anchored to ``button``, its CONTENT built when the menu
+    OPENS — its value going True — and cleared when it closes.
 
-    Nothing but an empty column exists inside a menu before its first open:
-    a cluster whose three forms are built with it is ~28 elements, and a
-    tree row holds one per node — 40 leaves made a 2387-element page with
-    the tree open, and every sync re-sent them. Each later open clears that
-    column and builds it again, so a form never shows a value the node no
-    longer has (a combinator edited and then Discarded reopened on its old
-    ``k``); the builder reads the node from the Session at that moment.
+    Nothing but an empty column exists inside a menu that is not open: a
+    cluster whose three forms are built with it is ~28 elements, and a tree
+    row holds one per node — 40 leaves made a 2387-element page with the
+    tree open, and every sync re-sent them. Each open builds the column
+    again, from the tree as it is at that moment, so a form never shows a
+    value the node no longer has (a combinator edited and then Discarded
+    reopened on its old ``k``).
 
-    What opens a QMenu in a browser is a click on the element it sits in,
-    and that reaches the server twice: as the button's click and as the
-    menu's own value change. The value change is also how an open from
-    anywhere else arrives (``menu.open()``, a keyboard); the click is the
-    only one the user simulation sends, having no browser to move the value.
-    So both hooks build, and a flag holds the build to once per open, the
-    menu's close clearing it. The column carries the menu's width: with
-    none, Quasar takes the anchor's, and an icon button's is 88 px with
-    every select label cropped.
+    The menu's value is the ONE hook: whatever opens it in a browser — a
+    click on the anchor, a keyboard — reaches the server as that change,
+    and so does ``menu.open()``. The anchor's click is not a second hook;
+    building there needed a once-per-open flag that the user simulation
+    never cleared (a click moves no value), which is how a form went stale
+    and an apply from it staged the node's old value back (the Task 4
+    review's probe). The column carries the menu's width: with none, Quasar
+    takes the anchor's, and an icon button's is 88 px with every select
+    label cropped.
     """
     with button:
         menu = ui.menu()
     with menu:
         column = ui.column().classes("q-pa-sm gap-1").style("min-width: 220px")
-    state = {"open": False}
 
-    def opened() -> None:
-        if state["open"]:
-            return
-        state["open"] = True
+    def rebuild() -> None:
         column.clear()
         with column:
             build(menu)
 
-    def closed() -> None:
-        state["open"] = False
-
-    button.on_click(opened)
-    menu.on_value_change(lambda e: opened() if e.value else closed())
+    menu.on_value_change(lambda e: rebuild() if e.value else column.clear())
 
 
 def _cluster(

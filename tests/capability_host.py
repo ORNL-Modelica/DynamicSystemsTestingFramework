@@ -67,3 +67,25 @@ async def host(
     async with user_simulation(root=root) as user:
         await user.open("/")
         yield user, errors, figure
+
+
+def _ancestors(element: Any) -> Any:
+    while element.parent_slot is not None:
+        element = element.parent_slot.parent
+        yield element
+
+
+def open_menu(user: User, marker: str, within: str | None = None) -> None:
+    """Open the menu anchored to the icon button marked ``marker``, the way
+    a browser does: whatever opens a QMenu reaches the server as the menu's
+    own value change, and that is what builds its content. A click under
+    the user simulation moves no value, so it opens nothing. ``within``
+    scopes the search to the host carrying that marker, as `_click_in`
+    does: a tree row and a criteria row carry the same node's controls."""
+    elements = user.find(marker=marker).elements
+    if within is not None:
+        (host,) = user.find(marker=within).elements
+        elements = {e for e in elements if host in list(_ancestors(e))}
+    (button,) = elements
+    menu = next(e for e in button.descendants() if isinstance(e, ui.menu))
+    menu.open()
