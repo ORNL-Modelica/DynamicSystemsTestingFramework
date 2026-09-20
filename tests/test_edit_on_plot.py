@@ -358,25 +358,43 @@ def test_available_needs_one_open_criterion_with_handles(session):
 
 
 def test_a_drag_on_another_leafs_handle_is_refused_by_name(session):
-    """The editor is the open criterion's: another leaf's ring is still on
-    the plot, and dragging it must not edit a criterion nobody opened."""
+    """The editor is the open criterion's. Another leaf gets no rings while
+    this one is open, but its bound LINES are still drawn and draggable —
+    dragging one must not edit a criterion nobody opened."""
     _tree_on_d(session)
     view = SessionView(
         session,
-        Selection(tests=frozenset({D}), variable="x", leaf_path="/metrics/children/1"),
+        Selection(tests=frozenset({D}), variable="x", leaf_path="/metrics/children/0"),
     )
     with pytest.raises(
         HandleEditError,
-        match="/metrics/children/0/tube/upper/0 is not a handle of /metrics/children/1",
+        match="/metrics/children/1/range/max is not a handle of /metrics/children/0",
     ):
         EditOnPlot().act(
             view,
             kind="handle",
             model_id=D,
             variable="x",
-            handle="/metrics/children/0/tube/upper/0",
-            shape={"xanchor": 0.5, "yanchor": 0.8},
+            handle="/metrics/children/1/range/max",
+            shape={"y0": 1.5, "y1": 1.5},
         )
+
+
+def test_a_drag_with_no_open_criterion_still_stages(session):
+    """The refusal is "another leaf's", so it needs an open one to be
+    another THAN: with none open (a drag reaching the capability outside the
+    editor) the handle's own leaf is edited."""
+    _tree_on_d(session)
+    view = SessionView(session, Selection(tests=frozenset({D}), variable="x"))
+    outcome = EditOnPlot().act(
+        view,
+        kind="handle",
+        model_id=D,
+        variable="x",
+        handle="/metrics/children/1/range/max",
+        shape={"y0": 1.2, "y1": 1.2},
+    )
+    assert _only_op(outcome).path == "/metrics/children/1"
 
 
 async def test_the_panel_draws_only_the_open_leafs_tables(session):
@@ -427,7 +445,7 @@ async def test_the_panel_draws_a_table_per_list_field_and_stages_edits(session):
         tests=frozenset({D}), variable="x", leaf_path="/metrics/children/2"
     )
     # One criterion is open at a time, so its tables are drawn one panel at
-    # a time; `Shell.mount` is once per Shell, so both open in one simulation.
+    # a time: two hosts, each its own simulation, run here in sequence.
     async with host(session, EditOnPlot(), on_points) as (user, errors, _figure):
         await user.should_see("/metrics/children/2 · points · points")
         p2 = "/metrics/children/2:points"
@@ -479,10 +497,23 @@ async def test_the_panel_draws_a_table_per_list_field_and_stages_edits(session):
         ]
 
 
+async def test_the_rows_scroll_and_add_row_does_not(session):
+    """A long table would push the editor off the card, so the rows sit in a
+    scrolling container — `Add row` sits after it, where a table of twenty
+    rows cannot scroll it out of reach."""
+    _tree_on_d(session)
+    async with host(session, EditOnPlot(), ON_D) as (user, _errors, _figure):
+        (cell,) = user.find(marker="/metrics/children/0:tube_points:0:time").elements
+        assert any("dstf-table-scroll" in a.classes for a in cell.ancestors())
+        (add,) = user.find(marker="/metrics/children/0:tube_points:add").elements
+        assert not any("dstf-table-scroll" in a.classes for a in add.ancestors())
+
+
 async def test_a_blank_required_cell_is_marked_and_held_until_it_is_filled(session):
-    """Clearing a required cell to retype it: nothing is submitted (a refusal
-    would rebuild the slot and lose the field being typed in), the cell is
-    marked, and the keystroke that fills it submits the whole list."""
+    """Clearing a required cell to retype it: nothing is submitted (a blank
+    would be refused, standing as an error above a table whose cell says
+    nothing), the cell is marked, and the keystroke that fills it submits
+    the whole list."""
     _tree_on_d(session)
     async with host(session, EditOnPlot(), ON_D) as (user, errors, _figure):
         marker = "/metrics/children/0:tube_points:0:time"

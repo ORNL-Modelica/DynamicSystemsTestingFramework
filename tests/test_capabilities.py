@@ -86,9 +86,10 @@ def test_registering_a_non_capability_is_loud_at_registration():
 
 
 def test_a_capability_declares_a_non_empty_frozenset_of_placements():
-    """The shell draws a button per placement named; a capability naming
-    none would register and never appear, and a plain set would let a
-    caller mutate a registered capability's placements."""
+    """The shell draws a capability at every placement it names — a button
+    at SUITE, TEST and VARIABLE, the panel itself at CRITERION and NODE; a
+    capability naming none would register and never appear, and a plain set
+    would let a caller mutate a registered capability's placements."""
 
     class _Nowhere(_Dummy):
         def __init__(self):

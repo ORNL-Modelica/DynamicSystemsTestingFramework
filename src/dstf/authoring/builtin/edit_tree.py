@@ -45,6 +45,19 @@ def _node_at(tree: dict, path: str) -> dict:
     return node
 
 
+def _node_or_none(tree: dict | None, path: str) -> dict | None:
+    """The node at ``path``, or ``None`` when the pointer names none of
+    ``tree`` — a stale selection, or one naming a raw key (``/metrics/
+    combinator`` resolves to a word, which is no node)."""
+    if tree is None:
+        return None
+    try:
+        node = _node_at(tree, path)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    return node if isinstance(node, dict) else None
+
+
 def _kind_fields(kind: str, inputs: dict[str, Any]) -> dict[str, Any]:
     """The raw fields ``kind`` takes, from the panel's controls."""
     if kind == "k-of-n":
@@ -83,8 +96,13 @@ class EditTree:
         running = s.running
         if running is not None and s.is_locked(model_id):
             return f"{running.label} is running on {model_id}"
-        if s.tree(model_id) is None:
+        tree = s.tree(model_id)
+        if tree is None:
             return "no tree to edit (nothing scored)"
+        if sel.node_path is not None and _node_or_none(tree, sel.node_path) is None:
+            # A selection the tree moved under: the panel would index a list
+            # that is shorter now.
+            return f"{sel.node_path} names no node of {model_id}"
         if sel.node_path is None and not sel.variable:
             return "select a tree node or a variable"
         return True
@@ -116,7 +134,9 @@ class EditTree:
         tree = s.tree(model_id)
         if tree is None:
             raise ValueError(f"{model_id} has no tree to edit")
-        node = _node_at(tree, path)
+        node = _node_or_none(tree, path)
+        if node is None:
+            raise ValueError(f"{path} names no node of {model_id}")
         if action == "add":
             leaf = {"metric": inputs["metric"], "variable": inputs["variable"]}
             if "combinator" in node:
@@ -176,17 +196,31 @@ def _combinator_controls(ui: Any, node: dict | None) -> Callable[[], dict[str, A
     callable reads them at apply time."""
     names = [c.name for c in combinators()]
     current = (node or {}).get("combinator")
-    kind = ui.select(
-        names, label="combinator", value=current if current in names else names[0]
-    ).props("dense")
-    k = ui.number(label="k", value=(node or {}).get("k") or 1).props("dense")
-    weights = ui.input(
-        label="weights",
-        value=", ".join(str(w) for w in (node or {}).get("weights") or []),
-    ).props("dense")
-    threshold = ui.number(
-        label="threshold", value=(node or {}).get("threshold") or 0.0
-    ).props("dense")
+    kind = (
+        ui.select(
+            names, label="combinator", value=current if current in names else names[0]
+        )
+        .props("dense")
+        .classes("w-full")
+    )
+    k = (
+        ui.number(label="k", value=(node or {}).get("k") or 1)
+        .props("dense")
+        .classes("w-full")
+    )
+    weights = (
+        ui.input(
+            label="weights",
+            value=", ".join(str(w) for w in (node or {}).get("weights") or []),
+        )
+        .props("dense")
+        .classes("w-full")
+    )
+    threshold = (
+        ui.number(label="threshold", value=(node or {}).get("threshold") or 0.0)
+        .props("dense")
+        .classes("w-full")
+    )
     return lambda: {
         "kind": kind.value,
         "k": k.value,
@@ -218,11 +252,16 @@ def _add_form(
             value=variable if variable else (names[0] if names else ""),
         )
         .props("dense")
+        .classes("w-full")
         .mark(f"{mark}:variable")
     )
-    met = ui.select(
-        [d.name for d in metrics()], label="leaf metric", value=DEFAULT_METRIC
-    ).props("dense")
+    met = (
+        ui.select(
+            [d.name for d in metrics()], label="leaf metric", value=DEFAULT_METRIC
+        )
+        .props("dense")
+        .classes("w-full")
+    )
 
     def apply() -> None:
         if done is not None:
@@ -239,29 +278,45 @@ def _add_form(
 
 
 def _lazy_menu(ui: Any, button: Any, build: Callable[[Any], None]) -> None:
-    """The menu anchored to ``button``, its CONTENT built on the first open.
+    """The menu anchored to ``button``, its CONTENT built on EVERY open.
 
-    A cluster whose three forms are built with it is ~28 elements, and a
-    tree row holds one per node: 40 leaves made a 2387-element page with the
-    tree open, and every sync re-sent them. What opens a QMenu is a click on
-    the element it sits in, which reaches the server as that button's click
-    — and is the only open the user simulation performs, having no browser.
-    The menu's own value change builds it too, for an open from anywhere
-    else (``menu.open()``, a keyboard).
+    Nothing but an empty column exists inside a menu before its first open:
+    a cluster whose three forms are built with it is ~28 elements, and a
+    tree row holds one per node — 40 leaves made a 2387-element page with
+    the tree open, and every sync re-sent them. Each later open clears that
+    column and builds it again, so a form never shows a value the node no
+    longer has (a combinator edited and then Discarded reopened on its old
+    ``k``); the builder reads the node from the Session at that moment.
+
+    What opens a QMenu in a browser is a click on the element it sits in,
+    and that reaches the server twice: as the button's click and as the
+    menu's own value change. The value change is also how an open from
+    anywhere else arrives (``menu.open()``, a keyboard); the click is the
+    only one the user simulation sends, having no browser to move the value.
+    So both hooks build, and a flag holds the build to once per open, the
+    menu's close clearing it. The column carries the menu's width: with
+    none, Quasar takes the anchor's, and an icon button's is 88 px with
+    every select label cropped.
     """
     with button:
         menu = ui.menu()
-    state = {"built": False}
+    with menu:
+        column = ui.column().classes("q-pa-sm gap-1").style("min-width: 220px")
+    state = {"open": False}
 
-    def build_once() -> None:
-        if state["built"]:
+    def opened() -> None:
+        if state["open"]:
             return
-        state["built"] = True
-        with menu, ui.column().classes("q-pa-sm gap-1"):
+        state["open"] = True
+        column.clear()
+        with column:
             build(menu)
 
-    button.on_click(build_once)
-    menu.on_value_change(lambda e: build_once() if e.value else None)
+    def closed() -> None:
+        state["open"] = False
+
+    button.on_click(opened)
+    menu.on_value_change(lambda e: opened() if e.value else closed())
 
 
 def _cluster(
@@ -269,33 +324,49 @@ def _cluster(
 ) -> None:
     """One node's controls: flat round icon buttons, each form in its
     menu."""
-    tree = s.tree(model_id)
-    if tree is None:  # `available` already says so; a job may race
+    node = _node_or_none(s.tree(model_id), path)
+    if node is None:  # `available` already says so; a job may race
         return
-    node = _node_at(tree, path)
     is_combinator = "combinator" in node
 
     def icon(name: str, tip: str, mark: str, on_click: Any = None) -> Any:
         button = ui.button(icon=name, on_click=on_click)
-        button.props("flat dense round size=sm").tooltip(tip)
+        button.props("flat dense round size=sm")
+        with button:
+            # Above the icon: below it (Quasar's default) the tooltip covers
+            # the first control of the menu the same click opens.
+            ui.tooltip(tip).props('anchor="top middle" self="bottom middle"')
         return button.mark(mark)
 
     def act_now(action: str) -> None:
         ui_panel.submit(model_id=model_id, action=action, path=path)
 
+    def fresh() -> dict | None:
+        """The node as it is at THIS open; the sentence in the menu when the
+        tree has moved out from under the path since the cluster was drawn."""
+        at_open = _node_or_none(s.tree(model_id), path)
+        if at_open is None:
+            ui.label(f"{path} names no node of {model_id}").classes("text-negative")
+        return at_open
+
     def build_add(menu: Any) -> None:
+        at_open = fresh()
+        if at_open is None:
+            return
         _add_form(
             ui,
             s,
             ui_panel,
             model_id,
             under=path,
-            variable=s.selection.variable or node.get("variable"),
+            variable=s.selection.variable or at_open.get("variable"),
             mark=f"apply-add:{path}",
             done=menu.close,
         )
 
     def build_wrap(menu: Any) -> None:
+        if fresh() is None:
+            return
         values = _combinator_controls(ui, None)
 
         def apply() -> None:
@@ -307,7 +378,10 @@ def _cluster(
         )
 
     def build_edit(menu: Any) -> None:
-        values = _combinator_controls(ui, node)
+        at_open = fresh()
+        if at_open is None:
+            return
+        values = _combinator_controls(ui, at_open)
 
         def apply() -> None:
             menu.close()

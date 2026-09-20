@@ -273,7 +273,10 @@ class EditOnPlot:
             raise ValueError(f"{handle} names no leaf on {variable} of {model_id}")
         open_leaf = s.selection.leaf_path
         if open_leaf is not None and path != open_leaf:
-            # Every leaf's handles are on the plot; only the open one's drag.
+            # Only the open leaf's rings are drawn (`Session.figure`'s
+            # `editing`), but every leaf's bound LINES are on the plot and
+            # Plotly lets them be dragged: one of those is not this
+            # editor's.
             raise HandleEditError(f"{handle} is not a handle of {open_leaf}")
         tree = s.tree(model_id)
         if tree is None:
@@ -368,19 +371,20 @@ def _table(
     model_id: str,
 ) -> None:
     """One list field's rows, a control per column, ``Remove row`` per row
-    and ``Add row``. The rows live here: the shell does not rebuild the
-    acting capability's slot during its own panel-originated act, so the
-    table re-renders its own container after adding or removing; a refused
-    submit makes the shell rebuild the slot with the error, which re-reads
-    the rows from the Session.
+    and ``Add row``. The rows live here: neither a refused submit nor a
+    successful one rebuilds this panel — ``InlineHost`` shows a refusal above
+    it and leaves it alone, so that a control being typed in survives — so
+    the table re-renders its own container after adding or removing a row.
+    Only the ROWS scroll: ``Add row`` sits after their container, where a
+    long table cannot scroll it out of reach.
 
     A number cell reports every keystroke, so clearing a REQUIRED cell to
     retype it passes through blank. Submitted, that blank is refused and the
-    rebuilt slot loses the field being typed in; so while any required cell
-    is blank the table keeps its rows here, marks the blank cells and
+    error stands above a table whose cell says nothing; so while any required
+    cell is blank the table keeps its rows here, marks the blank cells and
     submits nothing — the keystroke that fills the last one submits the
     whole list. (``act`` still refuses a blank, for a direct call.)"""
-    container = ui.column().classes("w-full dstf-table-scroll")
+    container = ui.column().classes("w-full")
     mark = f"{path}:{field}"
     required = [key for key, kind in columns if kind == "float"]
     cells: dict[tuple[int, str], Any] = {}  # the required cells, as rendered
@@ -425,8 +429,10 @@ def _table(
         container.clear()
         cells.clear()
         with container:
+            # The rows alone scroll; `Add row` follows their container.
+            scroll = ui.column().classes("w-full dstf-table-scroll")
             for i, row in enumerate(rows):
-                with ui.row().classes("items-center no-wrap"):
+                with scroll, ui.row().classes("items-center no-wrap"):
                     for key, kind in columns:
                         if isinstance(kind, tuple):
                             value = row.get(key, kind[0])

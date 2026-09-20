@@ -25,9 +25,9 @@ if TYPE_CHECKING:
 
 class Placement(Enum):
     """Where a capability attaches (brief §3.2; D129): the Suite page's
-    batch bar, the Test page's header, a variable section's toolbar, the
-    inline criterion editor. A capability names the frozenset it attaches
-    at; the shell draws a button carrying its ``caption`` at each and knows
+    batch bar, the Test page's header, a plot card's variable footer, the
+    open criterion's editor, a tree node's place in the tree. A capability
+    names the frozenset it attaches at; the shell draws it at each and knows
     no capability by name. The tab strip this replaces listed one tab per
     ``Scope``; the scopes' selection rules (TESTS needs a selection, LEAF a
     leaf) are now what ``available`` answers for the page's selection.
@@ -147,8 +147,8 @@ class FigureHook(Protocol):
 
 class Panel(Protocol):
     """A container the capability owns entirely (the shell's
-    ``ShellPanel``). ``figure`` is the hook on-plot editing will use
-    first."""
+    ``ShellPanel``). ``figure`` is the plot the panel is drawn beside, as a
+    capability subscribes to it — what Edit on plot reads its drags from."""
 
     figure: FigureHook
 
@@ -166,15 +166,18 @@ class Capability(Protocol):
     placements: frozenset[Placement]
 
     def available(self, s: SessionView) -> bool | str:
-        """``True``, or ``False`` / the sentence the greyed button carries —
-        why it is unavailable and what would enable it ("Accept needs a
-        selection", "rerun is running on FakeLib.A")."""
+        """``True``, or ``False`` / the sentence saying why it is unavailable
+        and what would enable it ("Accept needs a selection", "rerun is
+        running on FakeLib.A"). The greyed button carries it where the
+        placement draws one; at CRITERION and NODE it is shown in the
+        panel's place."""
         ...
 
     def caption(self, s: SessionView) -> str:
         """The button's label: its object, its effect and a count
         ("Rerun 2 selected tests (Dymola)"). At zero it still says what it
-        would do; ``available`` then carries the sentence."""
+        would do; ``available`` then carries the sentence. The inline
+        placements (CRITERION, NODE) draw no button and never read it."""
         ...
 
     def panel(self, s: SessionView, ui: Panel) -> None: ...
