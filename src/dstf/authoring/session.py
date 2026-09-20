@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
@@ -26,6 +26,7 @@ from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
 from ..discovery.patch_apply import PatchError
+from ..discovery.plots import ResolvedPlot, resolved_plots
 from ..discovery.scan_cache import load_scan, store_scan
 from ..discovery.spec_parser import spec_models_from_document
 from ..discovery.spec_update import (
@@ -56,6 +57,9 @@ from .capabilities import (
     StoreWrite,
 )
 from .spec_document import PatchOp, SpecDocument
+
+if TYPE_CHECKING:
+    import numpy as np
 
 Event = Literal["spec", "results", "job", "loading"]
 Listener = Callable[[dict[str, Any]], None]
@@ -105,6 +109,11 @@ class _ModelReads:
     #: base of the model stale; the key does not say which, so `figure`
     #: drops them all when it moves (one extra decimation per variable).
     scored: tuple[tuple[str | None, int], ...] = ()
+    #: Every name in the result file (`Backend.result_names`); `None` until
+    #: read, `()` when the backend cannot list it.
+    names: tuple[str, ...] | None = None
+    #: Untracked series read from the result file, by name.
+    series: dict[str, tuple[np.ndarray, np.ndarray]] = field(default_factory=dict)
 
 
 def _scored_key(comp: TestComparison | None) -> tuple[tuple[str | None, int], ...]:
@@ -435,15 +444,19 @@ class Session:
         traj = next((t for t in trajectories if t["name"] == variable), None)
         if traj is None:
             nb = next((t for t in nobaseline if t["name"] == variable), None)
-            traj = (
-                {
+            if nb is not None:
+                traj = {
                     "act_time": nb["time"],
                     "act_values": nb["values"],
                     "overlays": nb["overlays"],
                 }
-                if nb is not None
-                else {}
-            )
+            else:
+                series = self._file_series(model_id, variable)
+                traj = (
+                    {"act_time": series[0], "act_values": series[1]}
+                    if series is not None
+                    else {}
+                )
         leaves = leaves_by_variable(comp.metric_tree if comp is not None else None).get(
             variable, []
         )
@@ -461,6 +474,88 @@ class Session:
             )
             self._reads[model_id] = reads
         return reads
+
+    def _test_dir(self, model_id: str) -> Path | None:
+        from ..backends.base import last_test_keys
+
+        project = self._require_project()
+        work_dir = project.config.work_dir
+        key = last_test_keys(work_dir).get(model_id) if work_dir is not None else None
+        return work_dir / key if key is not None and work_dir is not None else None
+
+    def _tracked(self, model_id: str) -> list[str]:
+        """The names the page plots by default, in its order: the scored
+        variables, else — nothing scored (no baseline) — the result's."""
+        comp = self.comparisons.get(model_id)
+        names = (
+            [vc.name for vc in comp.variables if vc.name] if comp is not None else []
+        )
+        if not names:
+            result = self._require_project().results.get(model_id)
+            names = [v.name for v in (result.variables if result else []) if v.name]
+        return list(dict.fromkeys(names))
+
+    def variable_names(self, model_id: str) -> list[str]:
+        """Every variable the last result holds: the tracked ones first, in
+        the page's order, then the rest of the result file in its order."""
+        project = self._require_project()
+        if project.test(model_id) is None:
+            raise KeyError(model_id)
+        reads = self._reads_for(model_id)
+        if reads.names is None:
+            test_dir = self._test_dir(model_id)
+            listed = (
+                type(project.backend).result_names(test_dir)
+                if test_dir is not None
+                else None
+            )
+            reads.names = tuple(listed or ())
+        tracked = self._tracked(model_id)
+        return tracked + [n for n in reads.names if n not in set(tracked)]
+
+    def _file_series(
+        self, model_id: str, variable: str
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        reads = self._reads_for(model_id)
+        if variable not in reads.series:
+            test_dir = self._test_dir(model_id)
+            got = (
+                type(self._require_project().backend).result_series(
+                    test_dir, [variable]
+                )
+                if test_dir is not None
+                else {}
+            )
+            if variable not in got:
+                return None
+            reads.series[variable] = got[variable]
+        return reads.series[variable]
+
+    def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
+        """The test's plots as the page draws them: the entry's ``plots``
+        with pending ops applied, else one per tracked variable."""
+        project = self._require_project()
+        test = project.test(model_id)
+        if test is None:
+            raise KeyError(model_id)
+        names = self.variable_names(model_id)
+        reads = self._reads_for(model_id)
+        return resolved_plots(
+            test, self._tracked(model_id), available=names if reads.names else None
+        )
+
+    def plot_figure(self, model_id: str, index: int) -> dict:
+        """The editable figure of plot ``index`` (IndexError past the end).
+        One series is :meth:`figure` — cached base and all."""
+        from ..figures.plotly import plot_figure
+
+        plot = self.plots(model_id)[index]
+        if len(plot.series) == 1:
+            return self.figure(model_id, plot.series[0])
+        budget = self._require_project().config.max_embedded_samples
+        return plot_figure(
+            [self.view(model_id, name) for name in plot.series], budget, editable=True
+        )
 
     def figure(self, model_id: str, variable: str) -> dict:
         """The tool's figure is the editable one — handle rings a user can
@@ -1037,6 +1132,15 @@ class SessionView:
 
     def figure(self, model_id: str, variable: str) -> dict:
         return self._session.figure(model_id, variable)
+
+    def variable_names(self, model_id: str) -> list[str]:
+        return self._session.variable_names(model_id)
+
+    def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
+        return self._session.plots(model_id)
+
+    def plot_figure(self, model_id: str, index: int) -> dict:
+        return self._session.plot_figure(model_id, index)
 
     def tree_view(self, model_id: str) -> dict | None:
         return self._session.tree_view(model_id)

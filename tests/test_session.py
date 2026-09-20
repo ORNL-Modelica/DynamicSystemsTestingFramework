@@ -1948,6 +1948,9 @@ class TestSessionView:
             "rescore",
             "view",
             "figure",
+            "plot_figure",
+            "plots",
+            "variable_names",
             "tree_view",
             "tree",
             "is_locked",
@@ -2000,3 +2003,175 @@ class TestSessionView:
         assert view.notices == ()
         session.apply(StoreWrite(run=lambda store: "stored 1", models=frozenset({B})))
         assert view.notices == ("stored 1",)
+
+
+def _plots_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with an UNTRACKED variable `z` in A's result file."""
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    flat = [7.0 for _ in payload["time"]]
+    # `a0` sits BEFORE x in the file: file order is not tracked-first order.
+    payload["variables"] = {"a0": flat, **payload["variables"], "z": flat}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return cfg, work
+
+
+LAYOUT = [{"kind": "time", "series": [{"var": "x"}, {"var": "z"}]}]
+
+
+class TestPlots:
+    def _open(self, tmp_path) -> Session:
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        return s
+
+    def test_variable_names_lists_the_file_tracked_first(self, tmp_path):
+        s = self._open(tmp_path)
+        assert s.variable_names(A) == ["x", "y", "a0", "z"]
+
+    def test_variable_names_of_a_test_with_no_result_is_empty(self, tmp_path):
+        s = self._open(tmp_path)
+        assert s.variable_names(C) == []
+
+    def test_variable_names_of_an_unknown_model_is_a_key_error(self, tmp_path):
+        s = self._open(tmp_path)
+        with pytest.raises(KeyError):
+            s.variable_names("FakeLib.Nope")
+
+    def test_the_default_layout_is_one_plot_per_scored_variable(self, tmp_path):
+        s = self._open(tmp_path)
+        assert [(p.index, p.series, p.missing) for p in s.plots(A)] == [
+            (0, ("x",), ()),
+            (1, ("y",), ()),
+        ]
+
+    def test_view_of_an_untracked_variable_reads_the_result_file(self, tmp_path):
+        s = self._open(tmp_path)
+        view = s.view(A, "z")
+        assert view.act_values.tolist() == [7.0] * 5
+        assert view.ref_time is None and view.leaves == ()
+
+    def test_view_of_a_name_the_file_lacks_is_the_empty_state(self, tmp_path):
+        s = self._open(tmp_path)
+        view = s.view(A, "nowhere")
+        assert view.act_time is None and view.leaves == ()
+
+    def test_a_staged_layout_is_what_plots_answers(self, tmp_path):
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert [(p.series, p.missing) for p in s.plots(A)] == [(("x", "z"), ())]
+        s.discard()
+        assert len(s.plots(A)) == 2
+
+    def test_a_series_the_result_lacks_is_named_missing(self, tmp_path):
+        s = self._open(tmp_path)
+        s.stage(
+            [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "gone"}]}])]
+        )
+        (plot,) = s.plots(A)
+        assert plot.series == ("x",) and plot.missing == ("gone",)
+
+    def test_staging_an_invalid_layout_changes_nothing(self, tmp_path):
+        from dstf.config import ConfigError
+        from dstf.discovery.patch_apply import PatchError
+
+        s = self._open(tmp_path)
+        with pytest.raises((PatchError, ConfigError), match=r"plots\[0\]\.series"):
+            s.stage([PatchOp(A, "add", "/plots", [{"series": []}])])
+        assert s.spec.pending == [] or tuple(s.spec.pending) == ()
+        assert len(s.plots(A)) == 2
+
+    def test_a_layout_edit_does_not_materialize_a_metrics_tree(self, tmp_path):
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert [op.path for op in s.spec.pending] == ["/plots"]
+
+    def test_saving_writes_the_key_and_a_reopen_reads_it(self, tmp_path):
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        s.save()
+        entry = next(
+            e
+            for e in json.loads((cfg.parent / "test_spec.json").read_text())["tests"]
+            if e["model"] == A
+        )
+        assert entry["plots"] == LAYOUT
+        again = Session()
+        again.open(cfg, work_dir=work)
+        assert [p.series for p in again.plots(A)] == [("x", "z")]
+
+    def test_plot_figure_of_one_series_is_the_variables_figure(self, tmp_path):
+        s = self._open(tmp_path)
+        assert s.plot_figure(A, 0) == s.figure(A, "x")
+
+    def test_plot_figure_of_two_series_draws_both(self, tmp_path):
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        fig = s.plot_figure(A, 0)
+        ids = [tr["meta"]["id"] for tr in fig["data"] if tr["meta"]["kind"] == "act"]
+        assert ids == ["actual/x", "actual/z"]
+        assert fig["config"]["edits"] == {"shapePosition": True}
+
+    def test_plot_figure_keeps_the_leaves_of_a_tracked_series(self, tmp_path):
+        s = self._open(tmp_path)
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        single = s.figure(A, "x")
+        multi = s.plot_figure(A, 0)
+        leafy = lambda fig: sorted(  # noqa: E731
+            tr["meta"].get("id") or tr["meta"]["family"]
+            for tr in fig["data"]
+            if tr["meta"]["kind"] not in ("act", "ref", "error", "overlay")
+        )
+        assert leafy(multi) == leafy(single)
+
+    def test_plot_figure_out_of_range_is_an_index_error(self, tmp_path):
+        s = self._open(tmp_path)
+        with pytest.raises(IndexError):
+            s.plot_figure(A, 5)
+
+    def test_the_file_read_is_cached_and_dropped_with_the_results(
+        self, tmp_path, monkeypatch
+    ):
+        from dstf.backends.python.backend import PythonBackend
+
+        s = self._open(tmp_path)
+        calls = []
+        real = PythonBackend.result_series.__func__
+
+        def counting(cls, test_dir, names):
+            calls.append(tuple(names))
+            return real(cls, test_dir, names)
+
+        monkeypatch.setattr(PythonBackend, "result_series", classmethod(counting))
+        s.view(A, "z")
+        s.view(A, "z")
+        assert calls == [("z",)]
+        s._reload_results()  # what TestReadCache's reload test calls
+        s.view(A, "z")
+        assert calls == [("z",), ("z",)]
+
+    def test_a_backend_that_cannot_list_calls_nothing_missing(
+        self, tmp_path, monkeypatch
+    ):
+        from dstf.backends.python.backend import PythonBackend
+
+        s = self._open(tmp_path)
+        monkeypatch.setattr(
+            PythonBackend, "result_names", classmethod(lambda cls, d: None)
+        )
+        s._reload_results()
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert s.plots(A)[0].missing == ()
+
+    def test_the_session_view_mirrors_the_three_reads(self, tmp_path):
+        from dstf.authoring.session import Selection, SessionView
+
+        s = self._open(tmp_path)
+        v = SessionView(s, Selection())
+        assert v.variable_names(A) == s.variable_names(A)
+        assert v.plots(A) == s.plots(A)
+        assert v.plot_figure(A, 0) == s.plot_figure(A, 0)
