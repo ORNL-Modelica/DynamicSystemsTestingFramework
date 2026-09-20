@@ -157,6 +157,19 @@ def validate_entry_metric_tree(
         raise PatchError(f"validator rejected the patched tree: {msg}")
 
 
+def validate_entry_plots(data: dict, model_id: str) -> None:
+    """The patched entry's ``plots`` key, when it has one, parses."""
+    from .plots import PlotsSpecError, parse_plots
+
+    entry = spec_entry(data, model_id)
+    if entry is None or "plots" not in entry:
+        return
+    try:
+        parse_plots(entry["plots"], path=f"tests[{model_id}].plots")
+    except PlotsSpecError as e:
+        raise PatchError(f"patched plots are invalid: {e}") from e
+
+
 def apply_validated_patches(
     spec_path: Path,
     groups: Sequence[tuple[str, Sequence[dict]]],
@@ -177,6 +190,7 @@ def apply_validated_patches(
         full = materialize_implicit_metrics(spec_entry(data, model_id), ops)
         apply_patch_to_document(data, model_id, full)
         validate_entry_metric_tree(data, model_id, config, store)
+        validate_entry_plots(data, model_id)
         applied.append((model_id, full))
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(spec_path, json.dumps(data, indent=2) + "\n")

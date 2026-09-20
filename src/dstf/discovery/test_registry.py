@@ -17,6 +17,7 @@ from .recognizer import RecognizerResult, get_recognizers
 
 if TYPE_CHECKING:
     from ..comparison.tree_spec import SpecNode
+    from .plots import PlotSpec
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,10 @@ class TestModel:
     # under the "metrics" key. When set, Phase 3.3+ will use this in place
     # of the implicit flat-AND. Parse-only today — no behavior gated on it.
     metric_tree_spec: Optional["SpecNode"] = None
+
+    # The entry's optional ``plots`` layout (brief §3.10): None when the key
+    # is absent — both tiers then draw one plot per tracked variable.
+    plots: tuple["PlotSpec", ...] | None = None
 
     # PTA.4 — richer-contract fields settable via recognizers. Additive;
     # defaults preserve pre-PTA behavior.
@@ -282,6 +287,8 @@ def merge_tests(
                 existing.timeout = spec_test.timeout
             if spec_test.metric_tree_spec is not None:
                 existing.metric_tree_spec = spec_test.metric_tree_spec
+            if spec_test.plots is not None:
+                existing.plots = spec_test.plots
         else:
             # Provenance for spec-set fields was stamped by parse_test_spec;
             # unset fields get "default" in finalize_defaults — review

@@ -756,3 +756,39 @@ class TestFinding49ArrayAdd:
             )
         # Nothing was written — the spec is not corrupted.
         assert json.loads(spec_path.read_text(encoding="utf-8")) == original
+
+
+def test_plots_is_a_whitelisted_subtree():
+    from dstf.discovery.patch_apply import apply_patch_to_document
+
+    data = {"tests": [{"model": "M", "variables": ["x"]}]}
+    layout = [{"kind": "time", "series": [{"var": "x"}]}]
+    apply_patch_to_document(
+        data, "M", [{"op": "add", "path": "/plots", "value": layout}]
+    )
+    apply_patch_to_document(
+        data, "M", [{"op": "add", "path": "/plots/0/series/-", "value": {"var": "y"}}]
+    )
+    assert data["tests"][0]["plots"] == [
+        {"kind": "time", "series": [{"var": "x"}, {"var": "y"}]}
+    ]
+
+
+def test_variables_is_still_outside_the_whitelist(tmp_path):
+    """A guard (passes before the change): through BOTH entry points."""
+    from dstf.discovery.patch_apply import (
+        DEFAULT_WHITELIST,
+        PatchError,
+        apply_patch,
+        apply_patch_to_document,
+    )
+
+    assert DEFAULT_WHITELIST == ("/comparison", "/metrics", "/plots")
+    op = [{"op": "add", "path": "/variables/-", "value": "y"}]
+    data = {"tests": [{"model": "M", "variables": ["x"]}]}
+    with pytest.raises(PatchError, match="whitelist"):
+        apply_patch_to_document(data, "M", op)
+    spec = tmp_path / "test_spec.json"
+    spec.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(PatchError, match="whitelist"):
+        apply_patch(spec, "M", op)

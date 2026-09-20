@@ -264,6 +264,33 @@ def build_schema() -> dict:
                 "additionalProperties": True,
             },
             "metrics": {"$ref": "#/$defs/tree_node"},
+            "plots": {
+                "type": "array",
+                "description": (
+                    "The test's plot layout, read by the report and the authoring "
+                    "tool and ignored by scoring. Absent: one plot per tracked variable."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"enum": ["time"]},
+                        "series": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "var": {"type": "string", "minLength": 1}
+                                },
+                                "required": ["var"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    "required": ["series"],
+                    "additionalProperties": False,
+                },
+            },
             "description": {"type": "string"},
             "info": {"type": "string"},
             "metadata": {"type": "object"},

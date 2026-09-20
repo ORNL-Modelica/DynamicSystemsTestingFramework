@@ -181,3 +181,23 @@ class TestApplyValidatedPatches:
         )
         apply_validated_patches(spec, [("M", [LEAF_OP])], _config(tmp_path))
         assert json.loads(spec.read_text(encoding="utf-8")) == expected
+
+
+def test_a_patch_that_leaves_plots_invalid_writes_nothing(tmp_path):
+    config = _config(tmp_path)
+    spec_path = _spec(tmp_path, {"model": "M", "variables": ["x"]})
+    before = spec_path.read_bytes()
+    bad = [{"op": "add", "path": "/plots", "value": [{"series": []}]}]
+    with pytest.raises(PatchError, match=r"plots\[0\]\.series"):
+        apply_validated_patches(spec_path, [("M", bad)], config)
+    assert spec_path.read_bytes() == before
+
+
+def test_a_valid_plots_patch_is_written(tmp_path):
+    config = _config(tmp_path)
+    spec_path = _spec(tmp_path, {"model": "M", "variables": ["x"]})
+    layout = [{"kind": "time", "series": [{"var": "x"}, {"var": "z"}]}]
+    apply_validated_patches(
+        spec_path, [("M", [{"op": "add", "path": "/plots", "value": layout}])], config
+    )
+    assert json.loads(spec_path.read_text())["tests"][0]["plots"] == layout

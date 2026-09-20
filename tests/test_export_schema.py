@@ -324,3 +324,27 @@ class TestSchemaModeRefs:
         }
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(bad, schema)
+
+
+def _entry_schema() -> dict:
+    """The schema of one `tests[]` entry, inline or behind a `$ref`."""
+    from dstf.reporting.schema_export import build_schema
+
+    schema = build_schema()
+    entry = schema["properties"]["tests"]["items"]
+    if "$ref" in entry:
+        entry = schema["$defs"][entry["$ref"].rsplit("/", 1)[-1]]
+    return entry
+
+
+def test_the_entry_schema_describes_plots():
+    plots = _entry_schema()["properties"]["plots"]
+    assert plots["type"] == "array"
+    plot = plots["items"]
+    assert plot["required"] == ["series"]
+    assert plot["additionalProperties"] is False
+    assert plot["properties"]["kind"] == {"enum": ["time"]}
+    series = plot["properties"]["series"]
+    assert series["minItems"] == 1
+    assert series["items"]["required"] == ["var"]
+    assert series["items"]["additionalProperties"] is False

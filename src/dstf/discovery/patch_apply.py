@@ -12,7 +12,7 @@ clobbering hand-authored fields. The ops arrive in the envelope
     ]
 
 Paths are RFC 6901 JSON-Pointers **relative to the matched test entry**
-(so `/comparison/...` and `/metrics/...`, not `/tests/3/...`). A path
+(so `/comparison/...`, `/metrics/...` and `/plots/...`, not `/tests/3/...`). A path
 whitelist constrains which subtrees the applier will touch — an editor
 is not allowed to mutate arbitrary structure.
 
@@ -43,13 +43,17 @@ class PatchError(Exception):
 
 _SUPPORTED_OPS = {"replace", "add", "remove"}
 
+#: The subtrees of a test entry an editor may touch. One constant, shared by
+#: both entry points below, so the two cannot drift.
+DEFAULT_WHITELIST: tuple[str, ...] = ("/comparison", "/metrics", "/plots")
+
 
 def apply_patch_to_document(
     data: dict,
     model_id: str,
     patch_ops: list[dict],
     *,
-    whitelist: tuple[str, ...] = ("/comparison", "/metrics"),
+    whitelist: tuple[str, ...] = DEFAULT_WHITELIST,
 ) -> dict:
     """Apply ``patch_ops`` to the entry in the parsed document ``data`` that
     matches ``model_id`` (created if absent), in place. Returns ``data``.
@@ -73,7 +77,7 @@ def apply_patch(
     model_id: str,
     patch_ops: list[dict],
     *,
-    whitelist: tuple[str, ...] = ("/comparison", "/metrics"),
+    whitelist: tuple[str, ...] = DEFAULT_WHITELIST,
     write: bool = True,
 ) -> dict:
     """Apply ``patch_ops`` to the entry in ``spec_path`` matching ``model_id``.
