@@ -16,7 +16,7 @@ from dstf.comparison.algorithms import (
 from dstf.comparison.geometry import Band, Box, HLine, Marker, Window
 from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
 from dstf.figures.decimate import decimate_band
-from dstf.figures.plotly import variable_figure
+from dstf.figures.plotly import PLOT_CONFIG, variable_figure
 from dstf.figures.view import OverlayView, build_view, decimate_view
 
 
@@ -409,6 +409,16 @@ class TestEditableFigure:
     def test_editable_turns_on_shape_dragging(self):
         fig = variable_figure(_handle_view(), editable=True)
         assert fig["config"]["edits"] == {"shapePosition": True}
+
+    def test_the_tools_figure_leaves_the_wheel_to_the_page(self):
+        """The Test page is a full-width stack of plots: with `scrollZoom` on,
+        one wheel notch puts a plot under the cursor and the page never
+        scrolls again, so the cards below are never drawn (measured in
+        Chromium). The report's page keeps today's config."""
+        view = _handle_view()
+        assert variable_figure(view, editable=True)["config"]["scrollZoom"] is False
+        assert variable_figure(view)["config"]["scrollZoom"] is True
+        assert variable_figure(view, editable=False)["config"] == PLOT_CONFIG
 
     def test_one_ring_per_handle_marker_and_everything_else_unchanged(self):
         view = _handle_view()

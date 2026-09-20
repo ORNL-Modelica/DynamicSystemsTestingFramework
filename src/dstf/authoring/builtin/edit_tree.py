@@ -428,15 +428,13 @@ def _cluster(
 
 
 def _variable_names(s: SessionView, model_id: str) -> list[str]:
-    """What a new leaf may score: the scored names, else the result's."""
+    """What a new leaf may score: the scored names, then the rest of the
+    result's — `Session.tracked`'s union, for the same reason. A variable
+    whose last criterion was just removed is still the test's, and the add
+    forms are the way back to it."""
     comp = s.comparisons.get(model_id)
-    names = (
-        list(dict.fromkeys(vc.name for vc in comp.variables if vc.name))
-        if comp is not None
-        else []
-    )
-    if names:
-        return names
+    names = [vc.name for vc in comp.variables if vc.name] if comp is not None else []
     project = s.project
     result = project.results.get(model_id) if project is not None else None
-    return [v.name for v in result.variables if v.name] if result is not None else []
+    names += [v.name for v in result.variables if v.name] if result is not None else []
+    return list(dict.fromkeys(names))

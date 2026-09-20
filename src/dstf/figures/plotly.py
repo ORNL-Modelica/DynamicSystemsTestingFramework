@@ -11,8 +11,8 @@ carry the ids in ``customdata`` and the family in ``meta``); every shape
 carries it as ``name``. Those are the handles on-plot editing attaches to.
 
 The editable figure (``editable=True``, the tool's; never the report's) adds
-one pixel-sized ring shape per ``kind="handle"`` marker and turns on
-``config.edits.shapePosition``. That makes every shape draggable — plotly.js
+one pixel-sized ring shape per ``kind="handle"`` marker, turns on
+``config.edits.shapePosition`` and turns OFF ``scrollZoom`` (:func:`_config`). That makes every shape draggable — plotly.js
 offers no per-shape switch that works (measured on plotly.js 3.8.2, the
 build NiceGUI 3.16 bundles) — and the rings are what an editor attaches to,
 since Plotly drags shapes, not trace points.
@@ -596,6 +596,20 @@ def _leaf_traces(
     return data, shapes, rings
 
 
+def _config(editable: bool) -> dict:
+    """The figure's ``config``, the same for both builders. The tool's plots
+    are stacked full-width down the Test page, where ``scrollZoom`` costs the
+    page its wheel: one notch puts a plot under the cursor and the page never
+    scrolls again, so the cards below are never drawn (measured in Chromium).
+    The report draws one figure per page and keeps it. It does not depend on
+    ``rings_for`` (decision 7): opening a criterion stays a `Plotly.react`."""
+    config: dict = dict(PLOT_CONFIG)
+    if editable:
+        config["edits"] = {"shapePosition": True}
+        config["scrollZoom"] = False
+    return config
+
+
 def variable_figure(
     view: VariableView,
     max_samples: int | None = None,
@@ -629,9 +643,7 @@ def variable_figure(
     data.extend(leaf_data)
     for s in view.errors:
         data.append(_error_trace(s, ctx))
-    config: dict = dict(PLOT_CONFIG)
-    if editable:
-        config["edits"] = {"shapePosition": True}
+    config: dict = _config(editable)
     return {
         "data": data,
         "layout": _layout(view, shapes + rings, bool(view.errors)),
@@ -696,9 +708,7 @@ def plot_figure(
         data.extend(leaf_data)
         shapes.extend(leaf_shapes)
         rings.extend(leaf_rings)
-    config: dict = dict(PLOT_CONFIG)
-    if editable:
-        config["edits"] = {"shapePosition": True}
+    config: dict = _config(editable)
     # One view stands in for the layout, carrying EVERY view's leaves, so
     # `_layout` sees the spectrum panel wherever it comes from.
     if views:

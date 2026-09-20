@@ -2058,13 +2058,32 @@ class TestPlots:
         s.open(cfg, work_dir=work)
         return s
 
-    def test_tracked_is_what_was_scored_else_the_results_names(self, tmp_path):
-        """The page's default plots: the scored names in their order, never
-        the file's — `a0` sits before `x` in A's result file."""
+    def test_tracked_is_what_was_scored_then_the_rest_of_the_result(self, tmp_path):
+        """The page's default plots: the scored names in their order, then
+        the rest of the result's — never the file's, where `a0` sits before
+        `x`. The result's names are the union's second half because a test
+        keeps its variables while an edit is staged: a tree scoring x alone
+        must not take y's card, its footer and every way back to it."""
         s = self._open(tmp_path)
         assert s.tracked(A) == ["x", "y"]
         assert s.tracked(B) == ["x", "y"]  # nothing scored: the result's names
         assert s.tracked(C) == []
+        s.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/metrics",
+                    {
+                        "combinator": "and",
+                        "children": [{"metric": "nrmse", "variable": "x"}],
+                    },
+                )
+            ]
+        )
+        assert [vc.name for vc in s.comparisons[A].variables] == ["x"]
+        assert s.tracked(A) == ["x", "y"]
+        assert [p.series for p in s.plots(A)] == [("x",), ("y",)]
 
     def test_variable_names_lists_the_file_tracked_first(self, tmp_path):
         s = self._open(tmp_path)

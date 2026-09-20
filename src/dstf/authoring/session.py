@@ -498,15 +498,20 @@ class Session:
 
     def tracked(self, model_id: str) -> list[str]:
         """The names the page plots by default, in its order: the scored
-        variables, else — nothing scored (no baseline) — the result's. It is
-        also what tells a plot's scored series from its plot-only ones."""
+        variables first, then the rest of the loaded result's (which holds
+        exactly the spec's tracked variables). It is also what tells a
+        plot's scored series from its plot-only ones.
+
+        The union, not the scored names alone: removing a variable's LAST
+        criterion would otherwise take its card, its "Add a criterion for
+        it" footer and every way to add one back — a one-way door out of
+        which only Discard leads (the Task 5-6 review)."""
         comp = self.comparisons.get(model_id)
         names = (
             [vc.name for vc in comp.variables if vc.name] if comp is not None else []
         )
-        if not names:
-            result = self._require_project().results.get(model_id)
-            names = [v.name for v in (result.variables if result else []) if v.name]
+        result = self._require_project().results.get(model_id)
+        names += [v.name for v in (result.variables if result else []) if v.name]
         return list(dict.fromkeys(names))
 
     def variable_names(self, model_id: str) -> list[str]:

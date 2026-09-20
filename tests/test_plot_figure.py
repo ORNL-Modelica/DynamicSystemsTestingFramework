@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from dstf.figures.families import HUES, family_of, group_families, ramp, slice_text
-from dstf.figures.plotly import plot_figure, variable_figure
+from dstf.figures.plotly import PLOT_CONFIG, plot_figure, variable_figure
 from dstf.figures.view import build_view
 
 T = np.linspace(0.0, 1.0, 5)
@@ -201,6 +201,10 @@ def test_every_leaf_of_every_series_keeps_its_geometry_and_editable_rings():
     assert multi["config"]["edits"] == {"shapePosition": True}
     plain = plot_figure([x, _view("y")])
     assert "edits" not in plain["config"]
+    # The tool's plots are stacked down the Test page: the wheel scrolls the
+    # page, and only the report's one figure per page zooms with it.
+    assert multi["config"]["scrollZoom"] is False
+    assert plain["config"] == PLOT_CONFIG and PLOT_CONFIG["scrollZoom"] is True
     assert not any(
         (s.get("name") or "").startswith("/metrics/") and s.get("xsizemode") == "pixel"
         for s in plain["layout"]["shapes"]

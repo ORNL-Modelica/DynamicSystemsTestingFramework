@@ -505,6 +505,23 @@ async def test_the_cluster_add_form_starts_from_the_leafs_own_variable(
         assert errors == {}
 
 
+async def test_the_add_form_offers_a_variable_whose_criterion_was_removed(
+    two_var_session,
+):
+    """A one-way door (the Task 5-6 review): the add forms read what was
+    SCORED, so removing y's last criterion left no way to add one back
+    until Discard. A test's variables are the result's, staged edit or not
+    — `Session.tracked`'s union, for the same reason."""
+    session = two_var_session
+    session.stage([PatchOp(A, "remove", "/metrics/children/1")])
+    assert [c["variable"] for c in session.tree(A)["children"]] == ["x"]
+    leaf = "/metrics/children/0"
+    async with host(session, EditTree(), _node(A, leaf)) as (user, _errors, _figure):
+        open_menu(user, f"add:{leaf}")
+        (var,) = user.find(marker=f"apply-add:{leaf}:variable").elements
+        assert var.options == ["x", "y"]
+
+
 async def test_the_cluster_add_form_on_a_nested_leaf_lands_under_its_parent(session):
     """The form's `under` is the node the cluster was drawn for, not the
     root: the new leaf joins the k-of-n."""
