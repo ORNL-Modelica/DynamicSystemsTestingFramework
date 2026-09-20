@@ -376,7 +376,12 @@ class TestSimulateOnlyClassification:
         comp = _simulate_only_comparison()
         with_model = _build_per_test_args(
             comp,
-            test_lookup={comp.model_id: SimpleNamespace(simulate_only=True)},
+            # ``plots=None`` (no layout) as a real TestModel carries it:
+            # the row only needs ``simulate_only``, but the args builder
+            # resolves the page's layout off the same object.
+            test_lookup={
+                comp.model_id: SimpleNamespace(simulate_only=True, plots=None)
+            },
             **common,
         )
         without_model = _build_per_test_args(comp, test_lookup={}, **common)

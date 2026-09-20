@@ -659,6 +659,59 @@ class TestEmbeddedFigures:
             {"variable": "x", "trace": "Unstamped", "full": 9, "embedded": 2},
         ]
 
+    def test_a_multi_series_traces_name_comes_from_its_meta_id(self):
+        """A family's LEAD member carries the family's legend label, so
+        naming a thinned trace by ``name`` printed the slice text where the
+        member belonged (and ``other other`` for a singleton). On a plot of
+        several series the name comes from ``meta.id``; the banner's
+        ``variable`` stays the plot's title."""
+        from dstf.reporting.report_suite import _decimated_traces
+
+        meta = {"samples": 2, "full_samples": 9}
+        ctx = {
+            "plot_sections": [
+                {
+                    "index": 0,
+                    "title": "pipe.T[1:2], other",
+                    "series": ["pipe.T[1]", "pipe.T[2]", "other"],
+                }
+            ],
+            "plot_figures": [
+                {
+                    "data": [
+                        {
+                            "name": "pipe.T[1:2]",
+                            "x": [0, 1],
+                            "meta": {"id": "actual/pipe.T[1]", **meta},
+                        },
+                        {
+                            "name": "pipe.T[1] (reference)",
+                            "x": [0, 1],
+                            "meta": {"id": "reference/pipe.T[1]", **meta},
+                        },
+                        {
+                            "name": "other",
+                            "x": [0, 1],
+                            "meta": {"id": "actual/other", **meta},
+                        },
+                        {
+                            "name": "Tube",
+                            "x": [0, 1],
+                            "meta": {"id": "tube/band", **meta},
+                        },
+                    ]
+                }
+            ],
+        }
+        rows = _decimated_traces(ctx)
+        assert [r["trace"] for r in rows] == [
+            "pipe.T[1]",
+            "pipe.T[1] (reference)",
+            "other",
+            "Tube",
+        ]
+        assert {r["variable"] for r in rows} == {"pipe.T[1:2], other"}
+
     def _render_two_leaves(self, tmp_path, sentinel_first: bool):
         """One misconfigured tube leaf + one healthy nrmse leaf, both on x.
 
@@ -1379,6 +1432,45 @@ class TestPlotSections:
         )
         return page, sidecar
 
+    def _render_no_baseline(self, tmp_path, **kw):
+        """No reference and no comparisons: the page's no-baseline path,
+        where ``variables_by_name`` is empty and every tracked series lives
+        in ``nobaseline_trajectories``."""
+        import json
+        from pathlib import Path
+
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        t = np.linspace(0.0, 1.0, 51)
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[
+                VariableResult(index=1, name="x", time=t, values=np.sin(t)),
+                VariableResult(index=2, name="y", time=t, values=np.cos(t)),
+            ],
+        )
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=2,
+        )
+        plot_dir = tmp_path / "plots"
+        html = generate_comparison_plots(
+            "M", None, result, [], plot_dir, test_model=test, **kw
+        )
+        page = html.read_text(encoding="utf-8")
+        sidecar = json.loads(
+            (plot_dir / "comparison_data.json").read_text(encoding="utf-8")
+        )
+        return page, sidecar
+
     def test_with_no_layout_the_page_has_one_section_per_tracked_variable(
         self, tmp_path
     ):
@@ -1457,6 +1549,159 @@ class TestPlotSections:
         assert _page_data(page, "PLOT_SERIES") == [["x"]]
         assert "Not in this result: ghost" in page
         assert sidecar["plots"][0]["missing"] == ["ghost"]
+
+    def test_a_no_baseline_test_draws_a_declared_plot_from_its_trajectories(
+        self, tmp_path
+    ):
+        """Nothing was scored, so ``variables_by_name`` is empty and the
+        tracked names are NOT in ``extra_series`` either (``plot_inputs``
+        subtracts them). Reading only those two sources called every series
+        of the layout missing while the same curve painted below."""
+        from dstf.discovery.plots import ResolvedPlot
+
+        plots = (ResolvedPlot(index=0, kind="time", series=("x",), missing=()),)
+        page, sidecar = self._render_no_baseline(tmp_path, plots=plots)
+        assert _page_data(page, "PLOT_SERIES") == [["x"]]
+        assert "Not in this result" not in page
+        assert sidecar["plots"][0]["missing"] == []
+        # It has no criteria because it has no baseline — the no-baseline
+        # block below says so; the section must not claim a second reason.
+        assert "is plot only" not in page
+
+    def test_a_plot_with_one_or_no_drawn_series_is_not_told_about_overlays(
+        self, tmp_path
+    ):
+        """The sentence explains a MULTI-series plot's missing controls. It
+        also printed on a lone plot-only series and on a plot whose every
+        series is missing, where it explains nothing."""
+        import numpy as np
+
+        from dstf.discovery.plots import ResolvedPlot
+
+        needle = "Overlays and error traces show on a plot with one series."
+        t = np.linspace(0, 1, 5)
+        lone = (ResolvedPlot(index=0, kind="time", series=("z",), missing=()),)
+        page, _ = self._render(tmp_path / "a", plots=lone, extra_series={"z": (t, t)})
+        assert needle not in page
+        none_drawn = (
+            ResolvedPlot(index=0, kind="time", series=("ghost",), missing=()),
+        )
+        page, _ = self._render(tmp_path / "b", plots=none_drawn)
+        assert needle not in page
+
+    def test_sections_are_numbered_by_position_not_by_the_layouts_index(self, tmp_path):
+        """``report.js`` paints ``PLOT_FIGURES[idx]`` into ``plot-${idx}``,
+        so a section numbered by anything but its position renders blank."""
+        from dstf.discovery.plots import ResolvedPlot
+
+        plots = (ResolvedPlot(index=3, kind="time", series=("x",), missing=()),)
+        page, _ = self._render(tmp_path, plots=plots)
+        assert 'id="plot-0"' in page and 'id="plot-3"' not in page
+        assert '<select class="error-overlay-select" data-plot="0">' in page
+
+    def test_a_variable_on_two_plots_renders_its_criteria_once(self, tmp_path):
+        """A variable may sit on several plots; two ``nodes-N`` divs with
+        the same id are one document with a duplicate id."""
+        from dstf.discovery.plots import ResolvedPlot
+
+        plots = (
+            ResolvedPlot(index=0, kind="time", series=("x",), missing=()),
+            ResolvedPlot(index=1, kind="time", series=("x", "y"), missing=()),
+        )
+        page, _ = self._render(tmp_path, plots=plots)
+        assert page.count('id="nodes-0"') == 1
+        assert page.count("x: criteria are under its first plot.") == 1
+
+    def test_a_multi_series_heading_pairs_each_badge_with_its_own_name(self, tmp_path):
+        """``[PASS] x, y`` reads as one verdict for the plot; each badge
+        belongs to the variable it scores."""
+        from dstf.discovery.plots import ResolvedPlot
+
+        plots = (ResolvedPlot(index=0, kind="time", series=("x", "y"), missing=()),)
+        page, _ = self._render(tmp_path, plots=plots)
+        section = _parse(page).by_id("variable-section-0")
+        (h2,) = [el for el in section.walk() if el.tag == "h2"]
+        assert " ".join(h2.text().split()) == "PASS x PASS y"
+
+    def test_a_multi_series_heading_sets_the_plot_only_names_apart(self, tmp_path):
+        import numpy as np
+
+        from dstf.discovery.plots import ResolvedPlot
+
+        t = np.linspace(0, 1, 5)
+        plots = (ResolvedPlot(index=0, kind="time", series=("x", "v"), missing=()),)
+        page, _ = self._render(tmp_path, plots=plots, extra_series={"v": (t, t)})
+        section = _parse(page).by_id("variable-section-0")
+        (h2,) = [el for el in section.walk() if el.tag == "h2"]
+        assert " ".join(h2.text().split()) == "PASS x v"
+        (names,) = h2.by_class("plot-only-names")
+        assert names.text().strip() == "v"
+
+    def test_an_array_family_gets_one_plot_only_line(self, tmp_path):
+        """One line per FAMILY, not per member: four members printed four
+        near-identical sentences."""
+        import numpy as np
+
+        from dstf.discovery.plots import ResolvedPlot
+
+        t = np.linspace(0, 1, 5)
+        members = tuple(f"pipe.T[{i}]" for i in range(1, 5))
+        plots = (
+            ResolvedPlot(index=0, kind="time", series=("x", *members), missing=()),
+        )
+        page, _ = self._render(
+            tmp_path, plots=plots, extra_series={n: (t, t) for n in members}
+        )
+        assert page.count("is plot only: it has no reference and no criteria.") == 1
+        assert "pipe.T[1:4] is plot only: it has no reference and no criteria." in page
+
+
+class TestReviewPlotsPath:
+    """``cli/review.py``'s per-test plot goes through the same helper."""
+
+    def test_review_resolves_the_layout_it_hands_the_renderer(
+        self, tmp_path, monkeypatch
+    ):
+        import json
+
+        from dstf.authoring.session import Session
+        from dstf.cli import review as review_cli
+        from dstf.reporting import report_suite
+        from test_session import A, _two_var_project
+
+        cfg, work = _two_var_project(tmp_path)
+        path = work / "test_0001" / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["variables"]["z"] = [7.0 for _ in payload["time"]]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        next(e for e in spec["tests"] if e["model"] == A)["plots"] = [
+            {"series": [{"var": "x"}, {"var": "z"}]}
+        ]
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        project = s.project
+
+        seen: dict = {}
+
+        def fake(**kwargs):
+            seen.update(kwargs)
+            return None  # no page written, so nothing opens a browser
+
+        monkeypatch.setattr(report_suite, "generate_comparison_plots", fake)
+        review_cli._generate_and_open_plots(
+            A,
+            s.comparisons[A],
+            project.results.get(A),
+            project.store,
+            project.config,
+            test=next(t for t in project.tests if t.model_id == A),
+        )
+        (plot,) = seen["plots"]
+        assert plot.series == ("x", "z")
+        assert list(seen["extra_series"]) == ["z"]
 
 
 class TestPerTestArgsReadTheLayout:

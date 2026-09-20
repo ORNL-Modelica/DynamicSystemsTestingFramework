@@ -106,6 +106,9 @@ details summary:hover { color: var(--dstf-text); }
 /* A line the plot itself cannot say: a missing series, a plot-only series,
    or why a multi-series plot has no overlay controls. */
 .plot-note { font-size: 0.85em; color: var(--dstf-text-secondary); margin-bottom: 0.5em; }
+/* The untracked names in a multi-series heading — no badge before them,
+   because nothing scored them. */
+.plot-only-names { color: var(--dstf-text-secondary); }
 /* Decimation disclosure — which traces the page draws at reduced
    resolution, and where the full-resolution data lives. */
 #decimation-banner { background: var(--dstf-warn-tint); border: 1px solid var(--dstf-warn-border); border-radius: 4px; color: var(--dstf-warn-dark); padding: 8px 12px; margin: 0 0 12px 0; font-size: 0.85em; }
@@ -305,12 +308,23 @@ details summary:hover { color: var(--dstf-text); }
 {% if plot_sections %}
 {% for plot in plot_sections %}
 <div class="variable-section plot-section-block" data-plot="{{ plot.index }}" id="variable-section-{{ plot.index }}">
+  {%- if plot.single %}
   <h2>
     {%- for v in plot.variables -%}
     <span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %}
     {%- endfor %}
     {{ plot.title }}
   </h2>
+  {%- else %}
+  {# Several series: one badge before the plot's whole title read as the
+     PLOT's verdict, and two badges read as neither variable's. Each badge
+     sits immediately before the variable it scores; the untracked names
+     follow, folded by family, with no badge at all. #}
+  <h2>
+    {%- for v in plot.variables %}<span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %} {{ v.name }} {% endfor %}
+    {%- if plot.plot_only_label %}<span class="plot-only-names">{{ plot.plot_only_label }}</span>{% endif %}
+  </h2>
+  {%- endif %}
   {% if plot.single and plot.variables %}
   <div class="plot-controls">
     <label class="error-overlay-control" title="Overlay an error trace on the secondary y-axis">
@@ -331,16 +345,23 @@ details summary:hover { color: var(--dstf-text); }
     {% endfor %}
   </div>
   {% endif %}
-  {% else %}
+  {% elif plot.series | length > 1 %}
+  {# Only a plot of SEVERAL series is missing controls it could have had:
+     a lone plot-only series has no criteria to overlay, and a plot whose
+     every series is missing draws nothing at all. #}
   <div class="plot-note">Overlays and error traces show on a plot with one series.</div>
   {% endif %}
   {% if plot.missing %}<div class="plot-note">Not in this result: {{ plot.missing | join(", ") }}</div>{% endif %}
   <div class="plotly-chart plot-main" id="plot-{{ plot.index }}" style="height:300px"></div>
-  {% for v in plot.variables %}
+  {#- A variable may sit on several plots (a legal layout): its tree is
+     rendered under the FIRST, or the page carries `nodes-N` twice. #}
+  {% for v in plot.variables %}{% if v.tree_here %}
   <div class="node-tree" id="nodes-{{ v.vidx }}" data-variable="{{ v.name }}">{% if v.tree %}{{ node(v.tree) }}{% endif %}</div>
-  {% endfor %}
-  {% for name in plot.plot_only %}
-  <div class="plot-note">{{ name }} is plot only: it has no reference and no criteria.</div>
+  {% else %}
+  <div class="plot-note">{{ v.name }}: criteria are under its first plot.</div>
+  {% endif %}{% endfor %}
+  {% for label in plot.plot_only_lines %}
+  <div class="plot-note">{{ label }} is plot only: it has no reference and no criteria.</div>
   {% endfor %}
 </div>
 {% endfor %}

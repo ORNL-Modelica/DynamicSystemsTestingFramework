@@ -270,10 +270,9 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         artifact_files = ()
 
     # The page's layout, through the one helper the suite path uses.
-    tracked = list(dict.fromkeys(v.name for v in (comp.variables or []) if v.name))
-    if not tracked and result is not None:
-        tracked = [v.name for v in result.variables if v.name]
-    plots, extra_series = plot_inputs(test, tracked, backend_cls, test_dir)
+    plots, extra_series = plot_inputs(
+        test, comp.variables, result, backend_cls, test_dir
+    )
 
     html_path = generate_comparison_plots(
         model_id=model_id,

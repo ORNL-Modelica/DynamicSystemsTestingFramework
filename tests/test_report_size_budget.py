@@ -125,6 +125,9 @@ def test_figures_are_decimated_to_the_cap(tmp_path):
     page = html.read_text(encoding="utf-8")
     figures = _page_data(page, "PLOT_FIGURES")
     sections = _page_data(page, "PLOT_SERIES")
+    # Or the loop below is vacuous on an empty list and the cap goes
+    # unchecked.
+    assert len(sections) == len(figures) == 2
     for (name,), fig in zip(sections, figures):
         for tr in fig["data"]:
             n = len(tr.get("x") or [])
