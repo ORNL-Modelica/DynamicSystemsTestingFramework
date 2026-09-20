@@ -220,7 +220,7 @@ class TreeCard:
             for leaf in self.named:
                 button = ui.button(
                     leaf_name(leaf),
-                    on_click=partial(self.page.open_criterion, str(leaf["path"])),
+                    on_click=partial(self.page.jump_to, str(leaf["path"])),
                 ).props("flat dense no-caps")
                 with button.mark("tree:jump"):
                     # Two criteria on one variable read identically ("range ·

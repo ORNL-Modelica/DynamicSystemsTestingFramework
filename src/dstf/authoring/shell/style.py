@@ -61,6 +61,17 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 .dstf-crit:hover { background: var(--dstf-surface-hover); }
 .dstf-crit-open { background: var(--dstf-selection); }
+/* The editor belongs to the row above it: indented under it, with the
+   accent rule down its left saying how far it reaches. */
+.dstf-editor {
+  margin: 0 0 8px 16px; padding: 12px;
+  border-left: 3px solid var(--dstf-accent);
+  border-top: 1px solid var(--dstf-border-hairline);
+  border-bottom: 1px solid var(--dstf-border-hairline);
+}
+/* Eight rows of 42 px, and then the rows scroll (board 2A) — the
+   container this sits on holds the rows alone, never `Add row`. */
+.dstf-table-scroll { max-height: 336px; overflow-y: auto; }
 .dstf-wordmark { font-size: 20px; font-weight: 700; }
 .dstf-mono { font-family: var(--dstf-mono); }
 .dstf-why { color: var(--dstf-text-muted); font-size: 12px; }

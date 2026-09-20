@@ -1,17 +1,19 @@
 """One plot of the Test page (brief §3.2; DESIGN.md "Plots are modular",
 "Criteria rows"): its title and status pills, the slot the plot is drawn
 into when it scrolls into view, the criteria rows of its tracked series
-with each row's node controls, and what attaches at the VARIABLE placement
-below. A card owns its `ui.plotly`, its `FigureHook` and its snap-back; the
-card knows no capability by name.
+with each row's node controls, the one open criterion's editor below its
+row, and what attaches at the VARIABLE placement below. A card owns its
+`ui.plotly`, its `FigureHook` and its snap-back; the card knows no
+capability by name.
 
 A card is a 320 px slot until `show()` is called — by the browser's
-`dstf_plot_visible`, or by a test. Nothing on the page draws a figure
-before that: a test with a dozen variables would otherwise assemble a
-dozen figures nobody has scrolled to."""
+`dstf_plot_visible`, by an opening editor, or by a test. Nothing on the
+page draws a figure before that: a test with a dozen variables would
+otherwise assemble a dozen figures nobody has scrolled to."""
 
 from __future__ import annotations
 
+import json
 import logging
 from functools import partial
 from typing import TYPE_CHECKING
@@ -35,6 +37,22 @@ logger = logging.getLogger(__name__)
 #: the first one's (a passing leaf above a failing one must not read PASS).
 _WORST = ("fail", "warn", "pass", "queued")
 
+#: What a leaf contributes to a plot's signature: everything a staged edit
+#: can move in what the plot DRAWS — its geometry (the metric and its
+#: parameters, the window it is scored over, the baseline it is scored
+#: against) and its verdict, which the row beside the plot reads out. Not
+#: the trajectories: no leaf sees a rerun, which forces its own redraw.
+_SIGNED = (
+    "metric",
+    "params",
+    "window",
+    "against",
+    "passed",
+    "score_display",
+    "criterion",
+    "error",
+)
+
 
 def worst(statuses: list[str]) -> str:
     return next((status for status in _WORST if status in statuses), "queued")
@@ -51,6 +69,10 @@ class CriterionRow:
         self.path, self.variable = path, str(leaf.get("variable"))
         model, variable = card.page.model_id, self.variable
         self.row = ui.row().classes("dstf-crit items-center no-wrap gap-3 w-full")
+        # The row IS the way in: its editor opens below it, and a second
+        # click closes it. A click on the node's controls inside the row is
+        # not a click on the row — `InlineHost`'s column stops it.
+        self.row.on("click", partial(card.page.toggle_criterion, index, path))
         with self.row.mark(f"criterion:{index}:{path}"):
             self.pill = Pill(leaf_status(leaf), f"criterion-pill:{index}:{path}")
             self.name = ui.label().classes("text-body2 text-weight-medium")
@@ -93,6 +115,9 @@ class PlotCard:
         self.rows: dict[str, CriterionRow] = {}
         self.pills: dict[str, Pill] = {}
         self.bars: list[ActionBar] = []
+        self.editor: InlineHost | None = None  # the open criterion's, if it is here
+        self.open_path: str | None = None
+        self._drawn: str | None = None  # the signature of what the plot shows
         session, model = page.shell.session, page.model_id
         tracked = set(session.tracked(model))
         #: This plot's scored series; the rest are drawn but have no criteria.
@@ -170,6 +195,10 @@ class PlotCard:
             # The row stands; what its node's controls MAY do does not (a
             # job's lock comes and goes without the shape moving).
             row.host.follow()
+        if self.editor is not None:
+            # The same for the open editor: it is not rebuilt while it is
+            # open, so a lock that greys its panels has to reach them here.
+            self.editor.follow()
         for bar in self.bars:
             bar.refresh()
 
@@ -194,17 +223,108 @@ class PlotCard:
                 return
             self.plot = ui.plotly(figure).classes("w-full").style("height: 320px")
         self.hook.attach(self.plot)
+        self._drawn = self.signature()
 
     def redraw(self) -> None:
         """`Plotly.react` on the same node — the figure's `config` never
         depends on what is being edited, so the zoom survives. Also the
-        hook's snap-back after every drag."""
+        hook's snap-back after every drag, which is the ONE redraw that is
+        not decided by the signature: a refused drag moved nothing, and the
+        picture still has to go back."""
         if self.plot is not None:
             self.plot.update_figure(self._figure())
+            self._drawn = self.signature()
+
+    def signature(self, view: dict | None = None) -> str:
+        """What this plot draws that an edit can move: which criterion is
+        open — its rings, and only its — and every leaf on this plot's
+        series. Comparing it to what was last sent is the ONE thing that
+        decides a redraw."""
+        if view is None:
+            view = self.page.shell.session.tree_view(self.page.model_id)
+        leaves = [
+            [leaf.get("path"), *(leaf.get(key) for key in _SIGNED)]
+            for leaf in leaves_of(view)
+            if leaf.get("variable") in self.resolved.series
+        ]
+        return json.dumps(
+            [list(self.page.editing_for(self.index)), leaves],
+            sort_keys=True,
+            default=str,
+        )
+
+    def redraw_if_moved(self, view: dict | None = None) -> None:
+        """Re-send the figure when what it draws has moved, and only then: a
+        plot nobody's edit touched must not be re-sent (the cost the 3b
+        review measured is elements on the wire, not a figure assembled)."""
+        if self.plot is not None and self.signature(view) != self._drawn:
+            self.redraw()
+
+    # -- the one open criterion's editor -------------------------------------------
+
+    def open_editor(self, path: str) -> None:
+        """The editor, below its row and at the plot's width (board 2A):
+        one hint line and Done, then every capability placed at CRITERION,
+        stacked without headings — the row above already names the
+        criterion, so the editor reads as one thing (brief §3.2)."""
+        row, index = self.rows[path], self.index
+        model, variable = self.page.model_id, row.variable
+        self.open_path = path
+        row.row.classes(add="dstf-crit-open")
+        with row.slot, ui.column().classes("dstf-editor w-full gap-2"):
+            with ui.row().classes("items-center no-wrap gap-3 w-full"):
+                ui.label(
+                    "Drag a ring on the plot, or edit the fields. Edits are "
+                    "staged as you make them; Save writes them."
+                ).classes("dstf-why")
+                ui.space()
+                ui.button("Done", on_click=self.page.close_editor).props(
+                    "flat dense no-caps"
+                ).mark(f"editor-done:{index}:{path}")
+            self.editor = InlineHost(
+                self.page.shell,
+                Placement.CRITERION,
+                partial(
+                    Selection,
+                    tests=frozenset({model}),
+                    variable=variable,
+                    leaf_path=path,
+                ),
+                figure=self.hook,
+                marker=f"editor:{index}:{path}",
+                on_applied=self._applied,
+            )
+            self.editor.build()
+
+    def close_editor(self) -> None:
+        """The editor goes, and its subscriptions with it: a panel nobody
+        can see must not go on staging edits from drags."""
+        if self.editor is not None:
+            self.editor.clear()
+        row = self.rows.get(self.open_path or "")
+        if row is not None:
+            row.slot.clear()
+            row.row.classes(remove="dstf-crit-open")
+        self.editor, self.open_path = None, None
+
+    def _applied(self, name: str) -> None:
+        """What a successful submit from the editor leaves to do. A drag
+        rebuilds the WHOLE editor — no field is being typed during one, and
+        the table has to follow the ring. A panel's own submit rebuilds
+        every OTHER panel and leaves that one alone, so the control being
+        typed in survives."""
+        if self.editor is None:
+            return
+        if self.hook.dispatching:
+            self.editor.build()
+        else:
+            self.editor.build(skip=name)
 
     def dispose(self) -> None:
         """Give up this card's handlers before it is dropped: a rebuilt page
         must not leave a removed row's panel subscribed to the hook."""
+        if self.editor is not None:
+            self.editor.clear()
         for row in self.rows.values():
             row.host.clear()
         self.hook.clear()

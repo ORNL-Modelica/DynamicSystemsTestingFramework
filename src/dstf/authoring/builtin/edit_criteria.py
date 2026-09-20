@@ -77,7 +77,9 @@ class EditCriteria:
             "against": leaf.get("against") or "primary",
             "window": dict(leaf.get("window") or {}),
         }
-        ui.label(f"{leaf['variable']} · {path}").classes("text-sm")
+        # No heading: the criterion's own row sits directly above this panel
+        # and names it, and a second name there made the editor read as two
+        # panels rather than one (brief §3.2).
         # The leaf's config error is drawn by the shell directly above this
         # panel and refreshed on every rescore (§4.7 "inline on its form").
 

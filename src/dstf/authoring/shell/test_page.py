@@ -1,10 +1,11 @@
 """The Test page (brief §3.2; roadmap §3): one test — its own header as a
 second row of the shared one, its criteria tree closed to a line, and its
 plots stacked, each drawn when it scrolls into view with that variable's
-criteria rows under it. The editor arrives with the task after this one.
-One object per browser tab, like the Suite page. The page knows no
-capability by name: what edits a tree node or a variable is whatever
-attaches at that placement."""
+criteria rows under it and, under the row that was clicked, that
+criterion's editor — one at a time, page-wide, with the plot above it as
+its editing surface. One object per browser tab, like the Suite page. The
+page knows no capability by name: what edits a criterion, a tree node or a
+variable is whatever attaches at that placement."""
 
 from __future__ import annotations
 
@@ -61,6 +62,7 @@ class TestPage:
         self.count: ui.label | None = None
         self.column: ui.column | None = None
         self._shape: Any = None
+        self.open: tuple[int, str] | None = None  # (plot index, leaf path)
 
     async def build(self, model_id: str) -> None:
         self.client = ui.context.client
@@ -126,23 +128,73 @@ class TestPage:
             return "scoring failed"
         return "no baseline"
 
-    def open_criterion(self, path: str) -> None:
-        """Open the criterion at ``path`` — the editor below its row, which
-        arrives with the next task. The tree line's jumps call it."""
-
-    # -- the cards -------------------------------------------------------------
+    # -- the one open editor ---------------------------------------------------
 
     def editing_for(self, index: int) -> tuple[str, ...]:
         """The leaf paths whose rings plot ``index`` draws — the open
-        criterion's, once there is an editor to open one. A tuple, never a
+        criterion's, and only on the card its row is on. A tuple, never a
         bare string: `rings_for` refuses one."""
+        if self.open is not None and self.open[0] == index:
+            return (self.open[1],)
         return ()
+
+    def toggle_criterion(self, index: int, path: str) -> None:
+        """A criteria row's own click: its editor opens, or closes if that
+        row was the open one."""
+        if self.open == (index, path):
+            self.close_editor()
+        else:
+            self.open_criterion(path, index)
+
+    def open_criterion(self, path: str, index: int | None = None) -> None:
+        """One editor at a time, page-wide (board 2A). The plot above it is
+        its editing surface, so it is drawn if it was not."""
+        if index is None:
+            index = next((card.index for card in self.cards if path in card.rows), None)
+        if index is None or not 0 <= index < len(self.cards):
+            return
+        card = self.cards[index]
+        if path not in card.rows:
+            return
+        self.close_editor()
+        self.open = (index, path)
+        card.show()
+        card.open_editor(path)
+        self._redraw_moved()
+
+    def close_editor(self) -> None:
+        if self.open is None:
+            return
+        card = self.cards[self.open[0]]
+        self.open = None
+        card.close_editor()
+        self._redraw_moved()
+
+    def _redraw_moved(self) -> None:
+        """The signature is the one thing that decides a redraw: only the
+        card whose rings came or went is re-sent."""
+        for card in self.cards:
+            card.redraw_if_moved()
+
+    def jump_to(self, path: str) -> None:
+        """The closed tree line's jump (board 1A): open that criterion and
+        bring the row it opened under into view."""
+        self.open_criterion(path)
+        ui.run_javascript(
+            'document.querySelector(".dstf-crit-open")'
+            '?.scrollIntoView({block: "center"})'
+        )
+
+    # -- the cards -------------------------------------------------------------
 
     def rebuild(self) -> None:
         """The cards, from the plots as they are now: one per plot of the
         test's ``plots`` key, else one per tracked variable."""
         assert self.column is not None and self.count is not None
         session = self.shell.session
+        # The rows the editor hangs under go with the cards: the criterion
+        # it was open on may not even exist after this.
+        self.close_editor()
         for card in self.cards:
             card.dispose()
         self.column.clear()

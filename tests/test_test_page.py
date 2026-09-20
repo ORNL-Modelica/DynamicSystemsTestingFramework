@@ -1148,3 +1148,293 @@ async def test_a_no_baseline_test_draws_its_result(shell):
         with page.client:
             page.cards[0].show()
         assert page.cards[0].plot is not None
+
+
+# -- the editor: below its row, one at a time, the plot as its surface ------
+
+
+def _pending(shell, path: str):
+    ops = [op for op in shell.session.spec.pending if op.path == path]
+    return ops[-1].value if ops else None
+
+
+def _counted(card) -> list[int]:
+    """Count what a card RE-SENDS: `update_figure` is the one call that
+    reaches the browser, as `Plotly.react` on the node already there."""
+    calls = [0]
+    real = card.plot.update_figure
+
+    def counting(figure):
+        calls[0] += 1
+        real(figure)
+
+    card.plot.update_figure = counting
+    return calls
+
+
+def _shape_index(card, name: str) -> int:
+    """The index the hook's payload names a shape by — the figure the plot
+    currently holds, which is what `FigureHook._shape_name` resolves against."""
+    return next(
+        i
+        for i, shape in enumerate(card.plot.figure["layout"]["shapes"])
+        if shape.get("name") == name
+    )
+
+
+def _numbers(page, label: str) -> list:
+    return [
+        e
+        for e in page.client.elements.values()
+        if isinstance(e, ui.number) and e.props.get("label") == label
+    ]
+
+
+def _click(user, element) -> None:
+    from nicegui.testing.user_interaction import UserInteraction
+
+    UserInteraction(user, {element}, None).click()
+
+
+#: A criterion on each of A's two tracked variables: one row per card.
+TWO_RANGES = {
+    "combinator": "and",
+    "children": [
+        {"metric": "range", "variable": "x", "min_value": -1},
+        {"metric": "range", "variable": "y", "min_value": -1},
+    ],
+}
+
+
+async def test_a_click_on_a_row_opens_its_editor_below_it(shell):
+    """Brief §3.2: the editor is whatever attaches at CRITERION, stacked
+    without headings — Edit criteria and Edit on plot read as ONE editor,
+    so there are no tabs and no panel of the shell's own."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        row = page.cards[0].rows[T0]
+        assert len(row.slot.default_slot.children) == 0
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: not _none(user, f"editor:0:{T0}"))
+        editor = _one(user, f"editor:0:{T0}")
+        ancestors = list(_ancestors(editor))
+        assert row.slot in ancestors
+        siblings = row.row.parent_slot.children
+        assert siblings.index(row.slot) == siblings.index(row.row) + 1
+        assert any("dstf-editor" in e.classes for e in ancestors)
+        panels = [m for m in _marks(editor) if m.startswith("panel:")]
+        assert panels == ["panel:edit-criteria", "panel:edit-on-plot"]
+        assert not [e for e in page.client.elements.values() if isinstance(e, ui.tabs)]
+        assert "dstf-crit-open" in row.row.classes
+
+
+async def test_one_editor_at_a_time_page_wide(shell):
+    """One open criterion, whatever card its row is on — and only the plot
+    whose rings it moved is re-sent."""
+    _stage_tree(shell, A, TWO_RANGES)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.cards[0].show()
+            page.cards[1].show()
+        on_x, on_y = _counted(page.cards[0]), _counted(page.cards[1])
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        # `editing_for` names ONE card: y's plot draws nothing new.
+        assert (on_x[0], on_y[0]) == (1, 0)
+        user.find(marker=f"criterion:1:{T1}").click()
+        await _settled(lambda: page.open == (1, T1))
+        row = page.cards[0].rows[T0]
+        assert len(row.slot.default_slot.children) == 0
+        assert "dstf-crit-open" not in row.row.classes
+        assert _none(user, f"editor:0:{T0}") and not _none(user, f"editor:1:{T1}")
+        user.find(marker=f"criterion:1:{T1}").click()  # the open row closes it
+        await _settled(lambda: page.open is None)
+        assert _none(user, f"editor:1:{T1}")
+        user.find(marker=f"criterion:1:{T1}").click()
+        await _settled(lambda: page.open == (1, T1))
+        user.find(marker=f"editor-done:1:{T1}").click()
+        await _settled(lambda: page.open is None)
+
+
+async def test_the_open_criterion_is_the_only_one_with_rings(shell):
+    """Decision 7: the figure is always `editable=True` and carries the
+    rings of the open leaf alone, so opening one is a `Plotly.react` on the
+    node already there and the zoom survives."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        plot = card.plot
+        config = copy.deepcopy(card.plot.figure["config"])
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        assert card.plot.figure == shell.session.plot_figure(D, 0, editing=(T0,))
+        rings = {
+            s["name"]
+            for s in card.plot.figure["layout"]["shapes"]
+            if s.get("type") == "circle"
+        }
+        assert rings and all(name.startswith(T0 + "/") for name in rings)
+        user.find(marker=f"editor-done:0:{T0}").click()
+        await _settled(lambda: page.open is None)
+        assert card.plot.figure == shell.session.plot_figure(D, 0, editing=())
+        assert card.plot is plot  # the same node throughout
+        assert card.plot.figure["config"] == config
+
+
+async def test_opening_a_criterion_shows_its_plot(shell):
+    """The plot above the editor is its editing surface: a row on a card
+    nobody has scrolled to draws it."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        assert page.cards[0].plot is None
+        user.find(marker=f"criterion:0:{T1}").click()
+        await _settled(lambda: page.open == (0, T1))
+        assert page.cards[0].plot is not None
+
+
+async def test_a_drag_stages_one_replace_and_the_plot_follows(shell):
+    """The drag's whole order: the hook dispatches, the panel submits, the
+    Session stages, the editor's OTHER panels follow the ring, and the
+    `finally` redraws the plot."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        n = _shape_index(card, f"{T0}/tube/upper/0")
+        with page.client:
+            card.hook._dispatch(
+                "plotly_relayout",
+                {f"shapes[{n}].xanchor": 0.5, f"shapes[{n}].yanchor": 0.8},
+            )
+        ops = [op for op in shell.session.spec.pending if op.path == T0]
+        assert [op.op for op in ops] == ["replace"]
+        assert ops[0].value["tube_points"][0]["upper"] == pytest.approx(0.3)
+        assert card.plot.figure == shell.session.plot_figure(D, 0, editing=(T0,))
+        # The table followed the ring: the editor was rebuilt whole.
+        await _settled(
+            lambda: _one(user, f"{T0}:tube_points:0:upper").value == pytest.approx(0.3)
+        )
+
+
+async def test_a_refused_drag_is_said_in_the_editor_and_the_plot_snaps_back(shell):
+    """Only the open criterion gets rings, but every leaf's bound LINES are
+    on the plot and Plotly lets them be dragged: one of those is refused by
+    name, stages nothing, and the plot is re-sent so the line goes back."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        user.find(marker=f"criterion:0:{T1}").click()
+        await _settled(lambda: page.open == (0, T1))
+        other = "/metrics/children/3/scalar/min"  # the scalar leaf's lower bound
+        n = _shape_index(card, other)
+        sent = _counted(card)
+        pending = list(shell.session.spec.pending)
+        with page.client:
+            card.hook._dispatch(
+                "plotly_relayout", {f"shapes[{n}].y0": 1.0, f"shapes[{n}].y1": 1.0}
+            )
+        assert shell.session.spec.pending == pending
+        error = card.editor.errors["edit-on-plot"]
+        assert error.visible
+        assert error.text == f"HandleEditError: {other} is not a handle of {T1}"
+        assert sent[0] == 1  # the snap-back, once
+
+
+async def test_typing_in_a_form_keeps_the_field(shell):
+    """A panel's own submit rebuilds every panel BUT its own: the control
+    being typed in survives, and the other panel follows the edit."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        user.find(marker=f"criterion:0:{T1}").click()
+        await _settled(lambda: page.open == (0, T1))
+        (cell,) = _numbers(page, "Lower bound (optional)")
+        on_plot = _one(user, "panel:edit-on-plot")
+        with page.client:
+            cell.set_value(-1.0)
+        await _settled(lambda: (_pending(shell, T1) or {}).get("min_value") == -1.0)
+        assert _numbers(page, "Lower bound (optional)") == [cell]
+        assert _one(user, "panel:edit-on-plot") is not on_plot
+
+
+async def test_closing_the_editor_drops_its_handlers(shell):
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        owners = {o for entries in card.hook._handlers.values() for o, _ in entries}
+        assert any(o.startswith("editor:") for o in owners)
+        user.find(marker=f"editor-done:0:{T0}").click()
+        await _settled(lambda: page.open is None)
+        owners = {o for entries in card.hook._handlers.values() for o, _ in entries}
+        assert not [o for o in owners if o.startswith("editor:")]
+        pending = list(shell.session.spec.pending)
+        with page.client:
+            card.hook._dispatch("plotly_relayout", {"shapes[0].y0": 1.0})
+        assert shell.session.spec.pending == pending
+
+
+async def test_the_jump_opens_the_failing_criterion(shell):
+    """Board 1A: the closed line names the failure, and the name is what
+    jumps to it — on whatever card its row sits."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        (jump,) = [
+            j for j in user.find(marker="tree:jump").elements if j.text == "nrmse · y"
+        ]
+        _click(user, jump)
+        await _settled(lambda: page.open == (1, T1))
+        assert page.cards[1].plot is not None
+        assert "dstf-crit-open" in page.cards[1].rows[T1].row.classes
+
+
+async def test_a_shape_change_closes_the_editor(shell):
+    """A removed criterion rebuilds the rows the editor hangs under: it
+    closes rather than hang off an element that is gone."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        user.find(marker=f"criterion:0:{T1}").click()
+        await _settled(lambda: page.open == (0, T1))
+        n = len(page.cards[0].rows)
+        _click_in(user, f"remove:{T0}", within=f"node:0:{T0}")
+        await _settled(lambda: len(page.cards[0].rows) == n - 1)
+        assert page.open is None
+        assert _none(user, f"editor:0:{T1}")
+
+
+async def test_an_open_editors_panels_follow_the_job_that_locked_the_test(shell):
+    """The editor is not rebuilt while it is open, so what its capabilities
+    MAY do has to be re-read: a rerun greys them and says so, and the end of
+    the job brings them back."""
+    _stage_tree(shell)
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        editor = f"editor:0:{T0}"
+        assert _inside(user, "panel:edit-criteria", editor)
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({D})))
+        await _settled(lambda: _inside(user, "panel:edit-criteria", editor) == [])
+        (why,) = _inside(user, "why:edit-criteria", editor)
+        assert why.text == f"rerun is running on {D}"
+        gate.release.set()
+        await _settled(lambda: bool(_inside(user, "panel:edit-criteria", editor)))
