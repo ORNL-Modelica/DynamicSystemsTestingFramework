@@ -129,6 +129,10 @@ class PlotCard:
         self.editor: InlineHost | None = None  # the open criterion's, if it is here
         self.open_path: str | None = None
         self._drawn: str | None = None  # the signature of what the plot shows
+        #: Stamped on every figure this card sends; see `_figure`.
+        self._revision = 0
+        #: The Session's pending ops as of this editor's last build (`paint`).
+        self._staged: tuple = ()
         model = page.model_id
         scored = set(tracked)
         #: This plot's scored series; the rest are drawn but have no criteria.
@@ -157,8 +161,8 @@ class PlotCard:
                             pill.label.classes(add="dstf-pill-named")
                         self.pills[variable] = pill
                 ui.space()
-                # Focus is wired to the page in the task that hides the other
-                # cards; the button is the toolbar (decision 9).
+                # The plot's whole toolbar (decision 9): the legend already
+                # toggles the overlays and the error traces.
                 self.focus = ui.button("Focus").props("flat dense no-caps")
                 self.focus.mark(f"focus:{index}")
             if resolved.missing:
@@ -222,18 +226,43 @@ class PlotCard:
             # job's lock comes and goes without the shape moving).
             row.host.follow()
         if self.editor is not None:
-            # The same for the open editor: it is not rebuilt while it is
-            # open, so a lock that greys its panels has to reach them here.
-            self.editor.follow()
+            if self._staged != self._pending_now():
+                # The leaf under the open editor moved by an edit staged
+                # ELSEWHERE — a Discard, a Save, another node's controls.
+                # The fields kept showing the value that edit undid, and the
+                # next keystroke staged it straight back (the Task 6 review).
+                self.editor.build()
+                self._staged = self._pending_now()
+            else:
+                # The editor is not rebuilt while it is open, so a lock that
+                # greys its panels has to reach them here.
+                self.editor.follow()
         for bar in self.bars:
             bar.refresh()
 
     # -- the plot ------------------------------------------------------------------
 
     def _figure(self) -> dict:
-        return self.page.shell.session.plot_figure(
+        """The Session's figure with this card's own `editrevision` on it.
+        Plotly's `editrevision` DEFAULTS to `uirevision`, which the tool's
+        figure pins to "keep" so a zoom survives a redraw — and with it
+        pinned, `Plotly.react` keeps a shape the user dragged whenever the
+        value the server sends equals the one it sent before, which is
+        exactly the snap-back after a refused drag (measured in Chromium).
+        An incrementing revision says the shapes are new. The layout is
+        COPIED: a Session figure is deterministic, and nothing here writes
+        into what it was handed."""
+        figure = self.page.shell.session.plot_figure(
             self.page.model_id, self.index, editing=self.page.editing_for(self.index)
         )
+        self._revision += 1
+        return {
+            **figure,
+            "layout": {**figure["layout"], "editrevision": self._revision},
+        }
+
+    def _pending_now(self) -> tuple:
+        return tuple(self.page.shell.session.spec.pending)
 
     def show(self) -> None:
         """Draw the plot, once: the browser said this slot is near the
@@ -255,15 +284,16 @@ class PlotCard:
         self.hook.attach(self.plot)
         self._drawn = self.signature()
 
-    def redraw(self) -> None:
+    def redraw(self, view: dict | None = None) -> None:
         """`Plotly.react` on the same node — the figure's `config` never
         depends on what is being edited, so the zoom survives. Also the
         hook's snap-back after every drag, which is the ONE redraw that is
         not decided by the signature: a refused drag moved nothing, and the
-        picture still has to go back."""
+        picture still has to go back. ``view`` is the page's read of this
+        sync, so a forced redraw costs no read of its own."""
         if self.plot is not None:
             self.plot.update_figure(self._figure())
-            self._drawn = self.signature()
+            self._drawn = self.signature(view)
 
     def signature(self, view: dict | None = None) -> str:
         """What this plot draws that an edit can move: which criterion is
@@ -288,7 +318,7 @@ class PlotCard:
         plot nobody's edit touched must not be re-sent (the cost the 3b
         review measured is elements on the wire, not a figure assembled)."""
         if self.plot is not None and self.signature(view) != self._drawn:
-            self.redraw()
+            self.redraw(view)
 
     # -- the one open criterion's editor -------------------------------------------
 
@@ -325,6 +355,7 @@ class PlotCard:
                 on_applied=self._applied,
             )
             self.editor.build()
+        self._staged = self._pending_now()
 
     def close_editor(self) -> None:
         """The editor goes, and its subscriptions with it: a panel nobody
@@ -349,6 +380,9 @@ class PlotCard:
             self.editor.build()
         else:
             self.editor.build(skip=name)
+        # Recorded AFTER this apply and before its events reach the page, so
+        # a panel's own edit is not read as one staged elsewhere.
+        self._staged = self._pending_now()
 
     def dispose(self) -> None:
         """Give up this card's handlers before it is dropped: a rebuilt page

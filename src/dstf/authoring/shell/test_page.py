@@ -22,7 +22,7 @@ from .actions import ActionBar
 from .header import Header
 from .plot_card import PlotCard
 from .tabstate import tab_state
-from .tree_card import TreeCard, leaves_of
+from .tree_card import TreeCard, leaves_of, nodes_of
 
 if TYPE_CHECKING:
     from .shell import Shell
@@ -172,19 +172,28 @@ class TestPage:
         card = self.cards[index]
         if path not in card.rows:
             return
-        self.close_editor()
+        self._close()
         self.open = (index, path)
         card.show()
         card.open_editor(path)
         self._redraw_moved()
 
     def close_editor(self) -> None:
+        self._close()
+        self._redraw_moved()
+
+    def _close(self) -> None:
+        """Close the open editor and redraw NOTHING: what is re-sent is the
+        caller's to decide, once. A close that redrew on its own re-sent the
+        same card twice for a swap between two of its rows — and, in
+        `rebuild`, asked the Session for a plot the staged layout had just
+        taken away, which ended the rebuild half-done with the new shape
+        already recorded (the Task 6 review)."""
         if self.open is None:
             return
         card = self.cards[self.open[0]]
         self.open = None
         card.close_editor()
-        self._redraw_moved()
 
     def _redraw_moved(self) -> None:
         """The signature is the one thing that decides a redraw: only the
@@ -194,12 +203,26 @@ class TestPage:
 
     def jump_to(self, path: str) -> None:
         """The closed tree line's jump (board 1A): open that criterion and
-        bring the row it opened under into view."""
+        bring the row it opened under into view. A criterion whose variable
+        is on no plot of this test has no row to open — the jump said
+        nothing at all, and with another editor open it scrolled to THAT
+        row instead."""
         self.open_criterion(path)
-        ui.run_javascript(
-            'document.querySelector(".dstf-crit-open")'
-            '?.scrollIntoView({block: "center"})'
+        if self.open is not None and self.open[1] == path:
+            ui.run_javascript(
+                'document.querySelector(".dstf-crit-open")'
+                '?.scrollIntoView({block: "center"})'
+            )
+            return
+        ui.notify(
+            f"{self._variable_of(path)} is on no plot of this test", type="warning"
         )
+
+    def _variable_of(self, path: str) -> str:
+        """The variable a tree node scores, for a sentence about it."""
+        view = self.shell.session.tree_view(self.model_id)
+        node = next((n for n in nodes_of(view) if n.get("path") == path), None)
+        return str(node.get("variable")) if node is not None else path
 
     # -- the cards -------------------------------------------------------------
 
@@ -212,8 +235,10 @@ class TestPage:
         assert self.column is not None and self.count is not None
         session = self.shell.session
         # The rows the editor hangs under go with the cards: the criterion
-        # it was open on may not even exist after this.
-        self.close_editor()
+        # it was open on may not even exist after this. Closed WITHOUT a
+        # redraw — these cards are about to be dropped, and one of them may
+        # be a plot the staged layout no longer has.
+        self._close()
         for card in self.cards:
             card.dispose()
         self.column.clear()
@@ -283,10 +308,13 @@ class TestPage:
         )
         self.meta.set_text(f"{project.config.backend_name} · {ref or 'no baseline'}")
 
-    def sync(self) -> None:
+    def sync(self, force: bool = False) -> None:
         """Follow the Session: ONE `tree_view` read, handed to the tree card
         and to every plot card. A moved shape rebuilds the cards; otherwise
-        each card is painted in place."""
+        each card is painted in place and re-sent only when what it DRAWS
+        moved — ``force`` re-sends every drawn plot whether it moved or not,
+        which is what a finished job needs (decision 10: a rerun changes the
+        trajectories, and no leaf's signature sees that)."""
         self._paint()
         view = self.shell.session.tree_view(self.model_id)
         if self.tree is not None:
@@ -311,3 +339,16 @@ class TestPage:
             self.actions.refresh()
         if event["event"] in ("results", "spec", "loading", "opened", "job"):
             self.sync()
+
+    def _mine(self, event: dict[str, Any]) -> bool:
+        """Whether an event says anything about THIS test. `results` and
+        `spec` name the models they moved, a per-model `loading` step names
+        the one it read; an event that names neither — the scan's steps,
+        `opened` — is the whole project's and is this test's too. A page
+        that synced on every model's event re-read the tree and repainted
+        every row for a test it says nothing about."""
+        models = event.get("models")
+        if models is not None:
+            return self.model_id in models
+        model = event.get("model")
+        return model is None or model == self.model_id

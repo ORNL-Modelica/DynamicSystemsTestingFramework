@@ -983,6 +983,15 @@ def _plotlys(page) -> list:
     return [e for e in page.client.elements.values() if isinstance(e, ui.plotly)]
 
 
+def _sans_rev(figure: dict) -> dict:
+    """A card's figure without the `editrevision` the card stamps on it: the
+    Session's figure is what the rest of it has to equal."""
+    return {
+        **figure,
+        "layout": {k: v for k, v in figure["layout"].items() if k != "editrevision"},
+    }
+
+
 async def test_a_test_shows_one_card_per_tracked_variable(shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
@@ -1002,7 +1011,7 @@ async def test_show_builds_the_plot_once_with_no_rings(shell):
         with page.client:
             page.cards[0].show()
             plot = page.cards[0].plot
-            assert plot.figure == shell.session.plot_figure(A, 0, editing=())
+            assert _sans_rev(plot.figure) == shell.session.plot_figure(A, 0, editing=())
             page.cards[0].show()
         assert page.cards[0].plot is plot and page.cards[1].plot is None
         assert plot.parent_slot.parent is _one(user, "plot-slot:0")
@@ -1017,8 +1026,8 @@ async def test_a_shown_plot_has_no_rings_until_a_criterion_opens(shell):
         with page.client:
             page.cards[0].show()
         figure = page.cards[0].plot.figure
-        assert figure == shell.session.plot_figure(D, 0, editing=())
-        assert figure != shell.session.plot_figure(D, 0)
+        assert _sans_rev(figure) == shell.session.plot_figure(D, 0, editing=())
+        assert _sans_rev(figure) != shell.session.plot_figure(D, 0)
         assert not [s for s in figure["layout"]["shapes"] if s.get("type") == "circle"]
 
 
@@ -1610,7 +1619,9 @@ async def test_the_open_criterion_is_the_only_one_with_rings(shell):
         config = copy.deepcopy(card.plot.figure["config"])
         user.find(marker=f"criterion:0:{T0}").click()
         await _settled(lambda: page.open == (0, T0))
-        assert card.plot.figure == shell.session.plot_figure(D, 0, editing=(T0,))
+        assert _sans_rev(card.plot.figure) == shell.session.plot_figure(
+            D, 0, editing=(T0,)
+        )
         rings = {
             s["name"]
             for s in card.plot.figure["layout"]["shapes"]
@@ -1619,7 +1630,9 @@ async def test_the_open_criterion_is_the_only_one_with_rings(shell):
         assert rings and all(name.startswith(T0 + "/") for name in rings)
         user.find(marker=f"editor-done:0:{T0}").click()
         await _settled(lambda: page.open is None)
-        assert card.plot.figure == shell.session.plot_figure(D, 0, editing=())
+        assert _sans_rev(card.plot.figure) == shell.session.plot_figure(
+            D, 0, editing=()
+        )
         assert card.plot is plot  # the same node throughout
         assert card.plot.figure["config"] == config
 
@@ -1657,7 +1670,9 @@ async def test_a_drag_stages_one_replace_and_the_plot_follows(shell):
         ops = [op for op in shell.session.spec.pending if op.path == T0]
         assert [op.op for op in ops] == ["replace"]
         assert ops[0].value["tube_points"][0]["upper"] == pytest.approx(0.3)
-        assert card.plot.figure == shell.session.plot_figure(D, 0, editing=(T0,))
+        assert _sans_rev(card.plot.figure) == shell.session.plot_figure(
+            D, 0, editing=(T0,)
+        )
         # The table followed the ring: the editor was rebuilt whole.
         await _settled(
             lambda: _one(user, f"{T0}:tube_points:0:upper").value == pytest.approx(0.3)
@@ -1776,3 +1791,207 @@ async def test_an_open_editors_panels_follow_the_job_that_locked_the_test(shell)
         assert why.text == f"rerun is running on {D}"
         gate.release.set()
         await _settled(lambda: bool(_inside(user, "panel:edit-criteria", editor)))
+
+
+# -- the snap-back, the rebuild, and an editor whose edit came from elsewhere
+
+
+@pytest.fixture
+def scored_shell(tmp_path):
+    """A shell whose D entry carries its tree IN THE SPEC, so a staged edit
+    can be discarded or saved without taking the tree with it."""
+    import json
+
+    cfg, work = _two_var_project(tmp_path)
+    path = cfg.parent / "test_spec.json"
+    spec = json.loads(path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == D:
+            entry["metrics"] = {"combinator": "and", "children": [_range(-1)]}
+    path.write_text(json.dumps(spec), encoding="utf-8")
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.load.phase = "done"
+    return s
+
+
+async def test_every_figure_a_card_sends_carries_a_new_editrevision(shell):
+    """The snap-back's own condition, in Chromium: the figure carries
+    `uirevision: "keep"`, Plotly's `editrevision` DEFAULTS to it, and a
+    shape whose server value equals its pre-drag value keeps the dragged
+    position through `Plotly.react`. A refused drag then never went back.
+    Every figure a card sends says its shapes are new."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+            first = card.plot.figure["layout"]["editrevision"]
+            card.redraw()
+            second = card.plot.figure["layout"]["editrevision"]
+            card.redraw()
+            third = card.plot.figure["layout"]["editrevision"]
+        assert len({first, second, third}) == 3
+        # The zoom is the other revision, and it must NOT move with it.
+        assert card.plot.figure["layout"]["uirevision"] == "keep"
+
+
+async def test_the_cards_revision_stays_out_of_the_sessions_figure(shell):
+    """The revision is the card's, not the figure layer's: a Session figure
+    is deterministic, and the card COPIES the layout rather than writing
+    into the dict it was handed — which is the Session's to cache."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        handed: list[dict] = []
+        real = shell.session.plot_figure
+
+        def spy(*a, **k):
+            figure = real(*a, **k)
+            handed.append(figure)
+            return figure
+
+        shell.session.plot_figure = spy
+        with page.client:
+            page.cards[0].show()
+            page.cards[0].redraw()
+        assert len(handed) == 2
+        assert all("editrevision" not in figure["layout"] for figure in handed)
+        assert "editrevision" in page.cards[0].plot.figure["layout"]
+
+
+async def test_swapping_two_rows_on_one_card_sends_its_figure_once(shell):
+    """A close that redraws before the open that follows it re-sent the same
+    card twice for one swap. The editor closes WITHOUT redrawing; the
+    signature decides the one redraw."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        sent = _counted(card)
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        assert sent[0] == 1
+        user.find(marker=f"criterion:0:{T1}").click()
+        await _settled(lambda: page.open == (0, T1))
+        assert sent[0] == 2
+
+
+async def test_a_layout_that_drops_the_open_editors_card_rebuilds_the_page(
+    plots_shell, caplog
+):
+    """The rebuild closed the editor, which redrew the card it was about to
+    drop: with the editor open on the last card and a `/plots` that leaves
+    ONE plot, that redraw asked the Session for a plot that no longer
+    exists, the rebuild died half-done with the shape already recorded, and
+    the page never rebuilt again."""
+    import logging
+
+    shell = plots_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker=f"criterion:1:{T1}").click()
+        await _settled(lambda: page.open == (1, T1))
+        with caplog.at_level(logging.ERROR, logger="dstf"):
+            shell.session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+            await _settled(lambda: len(page.cards) == 1)
+        assert page.open is None
+        assert _one(user, "plot-title:0").text == "x, z"
+        assert [
+            r.getMessage() for r in caplog.records if r.name.startswith("dstf")
+        ] == []
+
+
+async def test_a_discard_elsewhere_leaves_the_open_editor_showing_it(scored_shell):
+    """The editor is built from the tree as it was when it opened: an edit
+    undone elsewhere left its fields showing the undone value, and the next
+    keystroke staged that value back."""
+    shell = scored_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        (upper,) = _numbers(page, "Upper bound (optional)")
+        with page.client:
+            upper.set_value(5.0)
+        await _settled(lambda: (_pending(shell, T0) or {}).get("max_value") == 5.0)
+        shell.session.discard()
+        await _settled(
+            lambda: _numbers(page, "Upper bound (optional)")[0].value is None
+        )
+        (lower,) = _numbers(page, "Lower bound (optional)")
+        with page.client:
+            lower.set_value(-3.0)
+        await _settled(lambda: (_pending(shell, T0) or {}).get("min_value") == -3.0)
+        # The discarded edit does not come back with the next keystroke.
+        assert _pending(shell, T0).get("max_value") is None
+
+
+async def test_a_save_leaves_a_fresh_editor(scored_shell):
+    """A Save moves the document under the open editor the same way: the
+    pending op it was built on is gone, so the editor is built again."""
+    shell = scored_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        (upper,) = _numbers(page, "Upper bound (optional)")
+        with page.client:
+            upper.set_value(5.0)
+        await _settled(lambda: (_pending(shell, T0) or {}).get("max_value") == 5.0)
+        shell.session.save()
+        await _settled(lambda: _numbers(page, "Upper bound (optional)")[0] is not upper)
+        assert _numbers(page, "Upper bound (optional)")[0].value == 5.0
+        assert page.open == (0, T0)
+
+
+async def test_a_jump_to_a_criterion_on_no_plot_says_so(shell, monkeypatch):
+    """A criterion whose variable is on no plot of this test has no row to
+    open: the jump said nothing and — with another editor open — scrolled to
+    THAT row instead."""
+    from dstf.authoring.shell import test_page as page_mod
+
+    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}])])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert len(page.cards) == 1
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        scrolled: list[str] = []
+        monkeypatch.setattr(page_mod.ui, "run_javascript", scrolled.append)
+        (jump,) = [
+            j for j in user.find(marker="tree:jump").elements if j.text == "nrmse · y"
+        ]
+        _click(user, jump)
+        await _settled(lambda: user.notify.messages != [])
+        assert user.notify.messages == ["y is on no plot of this test"]
+        assert scrolled == []  # never the OTHER editor's row
+        assert page.open == (0, T0)
+
+
+async def test_the_same_criterion_on_two_cards_swaps_the_editor(shell):
+    """The open editor is (card, path), never the path alone: one variable
+    drawn on two plots has the same criterion row on both."""
+    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * 2)])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [list(c.rows) for c in page.cards] == [[T0], [T0]]
+        user.find(marker=f"criterion:1:{T0}").click()
+        await _settled(lambda: page.open == (1, T0))
+        _click(user, page.cards[0].rows[T0].row)
+        await _settled(lambda: page.open == (0, T0))
+        assert _none(user, f"editor:1:{T0}")
+
+
+async def test_a_jump_opens_the_first_card_holding_the_row(shell):
+    """With no card named, the jump takes the first plot that draws it."""
+    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * 2)])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        (jump,) = [
+            j for j in user.find(marker="tree:jump").elements if j.text == "nrmse · x"
+        ]
+        _click(user, jump)
+        await _settled(lambda: page.open is not None)
+        assert page.open == (0, T0)
