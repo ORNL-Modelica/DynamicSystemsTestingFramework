@@ -109,7 +109,9 @@ def test_demo_spec_exercises_every_metric_and_combinator():
 
 def test_demo_simple_test_carries_the_scalar_leaf():
     """SimpleTest's tree is and[k-of-n(...), scalar] — the k-of-n coverage
-    stays, and the scalar leaf reduces the tracked ``x`` series."""
+    stays, and the scalar leaf reduces the first tracked series, which the
+    result file names ``unitTests.x[1]`` (the model writes ``x`` for it, and
+    that is the label, not the key)."""
     spec = json.loads(TEST_SPEC_JSON.read_text(encoding="utf-8"))
     entry = next(t for t in spec["tests"] if t["model"].endswith("Examples.SimpleTest"))
     root = entry["metrics"]
@@ -117,5 +119,5 @@ def test_demo_simple_test_carries_the_scalar_leaf():
     kinds = [c.get("combinator") or c.get("metric") for c in root["children"]]
     assert kinds == ["k-of-n", "scalar"]
     scalar = root["children"][1]
-    assert scalar["variable"] == "x"
+    assert scalar["variable"] == "unitTests.x[1]"
     assert scalar["quantity"] == {"reduce": "final"}

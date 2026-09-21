@@ -13,7 +13,7 @@
   },
   "comparison": {
     "variable_overrides": {
-      "x": {
+      "unitTests.x[1]": {
         "mode": "dominant-frequency",
         "peaks": [
           {
@@ -587,7 +587,8 @@
   "variables": [
     {
       "index": 1,
-      "name": "x",
+      "name": "unitTests.x[1]",
+      "expression": "x",
       "values": [
         0.0,
         0.06279052,

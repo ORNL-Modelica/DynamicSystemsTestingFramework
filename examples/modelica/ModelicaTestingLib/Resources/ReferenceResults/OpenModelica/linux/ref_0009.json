@@ -13,7 +13,7 @@
   },
   "comparison": {
     "variable_overrides": {
-      "x": {
+      "unitTests.x[1]": {
         "mode": "tube",
         "tube_width_mode": "rel",
         "tube_rel": 0.05
@@ -543,7 +543,8 @@
   "variables": [
     {
       "index": 1,
-      "name": "x",
+      "name": "unitTests.x[1]",
+      "expression": "x",
       "values": [
         0.0,
         0.0198015631787697,
