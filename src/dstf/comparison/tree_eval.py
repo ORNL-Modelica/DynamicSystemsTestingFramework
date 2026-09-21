@@ -13,13 +13,14 @@ nodes look ``spec.combinator`` up in :mod:`registry` to get the concrete
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from ..backends import VariableResult
 from ..backends.types import DatasetType
-from .comparator import VariableComparison
+from .comparator import VariableComparison, migration_hint
 from .geometry import Window
 from .metric_tree import (
     Combinator,
@@ -32,6 +33,8 @@ from .registry import DEFAULT_METRIC, MetricDescriptor
 from .registry import combinator as registry_combinator
 from .registry import metric as registry_metric
 from .tree_spec import CombinatorSpec, LeafSpec, SpecNode
+
+logger = logging.getLogger(__name__)
 
 PRIMARY_BASELINE = "primary"
 
@@ -286,6 +289,26 @@ def _evaluate_leaf(
             _incompatible_dataset_comparison(leaf, desc, dataset_kind)
         )
 
+    quantity = leaf.params.get("quantity")
+    # A stored-scalar leaf reads its numbers from the run's statistics or
+    # diagnostics, so it resolves no variable of the result and has no
+    # expression to carry. Every other leaf names one, and carries its
+    # expression onto whatever comparison it returns — a leaf that fails
+    # before it ever scores (a lost baseline, a misconfigured metric) is
+    # exactly the one a person reads, so it must not fall back to the bare
+    # name (the Task 3 review).
+    scores_stored_scalar = (
+        desc is not None and desc.accepts_quantity and isinstance(quantity, str)
+    )
+    var_result = (
+        None if scores_stored_scalar else var_results_by_name.get(leaf.variable)
+    )
+    expression = var_result.expression if var_result is not None else ""
+
+    def _leaf(vc: VariableComparison) -> MetricResult:
+        vc.expression = expression
+        return leaf_from_variable(vc)
+
     override = _leaf_override_dict(leaf)
     tolerance = float(leaf.params.get("tolerance", base_tolerance))
     try:
@@ -294,7 +317,7 @@ def _evaluate_leaf(
         # A misconfigured leaf fails that leaf, like the flat
         # variable_overrides path — one bad spec entry must not abort the
         # whole run with an anonymous traceback (D107).
-        return leaf_from_variable(_leaf_config_error_comparison(leaf, exc))
+        return _leaf(_leaf_config_error_comparison(leaf, exc))
 
     # leaf.against picks the named baseline. Missing name →
     # hard fail with a clear label (loud on user-facing reports). Unless
@@ -302,14 +325,10 @@ def _evaluate_leaf(
     # — then we don't need any baseline at all (idea #59 / D83).
     baseline = baselines.get(leaf.against)
     if baseline is None and not mode.is_baseline_free():
-        return leaf_from_variable(_missing_baseline_comparison(leaf))
+        return _leaf(_missing_baseline_comparison(leaf))
 
-    quantity = leaf.params.get("quantity")
     windowed = False
-    # A stored-scalar leaf scores no variable of the result, so it has no
-    # expression to carry.
-    expression = ""
-    if desc is not None and desc.accepts_quantity and isinstance(quantity, str):
+    if scores_stored_scalar and isinstance(quantity, str):
         # A string ``quantity`` reads a stored scalar instead of a tracked
         # series — where the data comes from is the evaluator's call, the
         # same seam the window below occupies (a future ``{"expr": ...}``
@@ -324,26 +343,37 @@ def _evaluate_leaf(
             leaf, quantity, mode, baseline, scalars or ScalarSources()
         )
         if isinstance(resolved, VariableComparison):
-            return leaf_from_variable(resolved)
+            return _leaf(resolved)
         ref_time, ref_values, act_time, act_values = resolved
         index = 0
     else:
-        var_result = var_results_by_name.get(leaf.variable)
         ref_var = baseline.ref_vars_by_name.get(leaf.variable) if baseline else None
-        if var_result is not None:
-            expression = var_result.expression
 
         if var_result is None:
             # Missing actual result is always a hard fail — no mode can score
             # without the actual trajectory.
-            return leaf_from_variable(
-                _missing_variable_comparison(leaf.variable, var_result)
-            )
+            return _leaf(_missing_variable_comparison(leaf.variable, var_result))
 
         if ref_var is None:
             if not mode.is_baseline_free():
-                return leaf_from_variable(
-                    _missing_variable_comparison(leaf.variable, var_result)
+                # A baseline that stores this variable under its EXPRESSION
+                # is un-migrated, not missing: the same clause the flat path
+                # logs, from the same helper, on the leaf's own reason as
+                # well — the tree path shows no log line to the person
+                # reading the report. Logged only when it applies; a
+                # variable simply new to the baseline is re-accepted.
+                hint = migration_hint(
+                    baseline.ref_vars_by_name if baseline else (), expression
+                )
+                if hint:
+                    logger.warning(
+                        "baseline %r holds no variable named %r%s",
+                        leaf.against,
+                        leaf.variable,
+                        hint,
+                    )
+                return _leaf(
+                    _missing_variable_comparison(leaf.variable, var_result, hint=hint)
                 )
             ref_time = np.array([])
             ref_values = np.array([])
@@ -384,17 +414,16 @@ def _evaluate_leaf(
         # Config errors a mode can only detect at compare time (a tube
         # control point with no widths, an unknown width mode) — same
         # leaf-scoped failure as the resolve_mode guard above (D107).
-        return leaf_from_variable(_leaf_config_error_comparison(leaf, exc))
+        return _leaf(_leaf_config_error_comparison(leaf, exc))
     vc.index = index
     vc.name = leaf.variable
-    vc.expression = expression
     vc.tolerance_used = tolerance
     if windowed:
         # The window is a leaf property, not a mode's: the evaluator owns it.
         vc.geometry = vc.geometry + (
             Window(id="window", start=leaf.window_start, end=leaf.window_end),
         )
-    leaf_result = leaf_from_variable(vc)
+    leaf_result = _leaf(vc)
     # Record which baseline this leaf scored against, so the reporter can
     # show "against=experiment" on non-primary leaves.
     leaf_result.diagnostics["against"] = leaf.against
@@ -676,6 +705,7 @@ def _missing_scalar_path_comparison(
 def _missing_variable_comparison(
     name: str,
     var_result: VariableResult | None,
+    hint: str = "",
 ) -> VariableComparison:
     actual_final = float("nan")
     index = 0
@@ -694,12 +724,14 @@ def _missing_variable_comparison(
         reference_final=float("nan"),
         actual_final=actual_final,
         # The two call sites are told apart by what they had: no result for
-        # the variable at all, or a result the baseline does not carry.
+        # the variable at all, or a result the baseline does not carry. The
+        # second one carries the migration hint when the baseline holds the
+        # variable under its expression (``hint`` is "" otherwise).
         diagnostics={
             "error": (
                 f"variable {name!r} not found in the result"
                 if var_result is None
-                else f"variable {name!r} not found in the baseline"
+                else f"variable {name!r} not found in the baseline{hint}"
             )
         },
     )

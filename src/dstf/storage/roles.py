@@ -94,6 +94,27 @@ def _frozen_data_basename(name: str, fmt: str) -> str:
     return f"{name}{_COMPANION_FORMAT_EXT[fmt]}"
 
 
+def _with_expression(variable: dict) -> dict:
+    """A variable entry as this store writes one: ``expression`` present.
+
+    ``add_soft_check`` is handed entries someone else produced —
+    ``import-baseline`` reads a file that may predate the key, and a
+    cross-backend chain builds its own. A writer never leaves the field
+    out (an entry without it is one no writer of this version made), so
+    the missing key becomes the empty text, in ``accept``'s key order:
+    index, name, expression, values.
+    """
+    if "expression" in variable:
+        return dict(variable)
+    out: dict = {}
+    for key, value in variable.items():
+        out[key] = value
+        if key == "name":
+            out["expression"] = ""
+    out.setdefault("expression", "")
+    return out
+
+
 @dataclass(frozen=True)
 class Companion:
     """External or frozen reference data used as a plot-only overlay.
@@ -219,7 +240,7 @@ class _RolesMixin:
 
         entry: dict[str, Any] = {
             "time": list(time),
-            "variables": list(variables),
+            "variables": [_with_expression(v) for v in variables],
         }
         if diagnostics:
             entry["diagnostics"] = list(diagnostics)

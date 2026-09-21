@@ -590,18 +590,24 @@ async def test_the_add_form_offers_a_variable_whose_criterion_was_removed(
         assert var.options == ["x", "y"]
 
 
-async def test_the_add_form_offers_a_relabelled_variable_under_its_label(tmp_path):
-    """TRANSFORM has ~70 tests whose result carries a `cat(...)` name. The
-    add forms read `Session.tracked`'s list, so they offer the name the
-    result file gives the variable — listing it under two spellings offered
-    the same trajectory twice, the second time under a name no leaf can be
-    written against. An AUTHORED tree, because such a test had no implicit
-    one to edit: its spec names the variable as the file spells it."""
+async def test_the_add_form_offers_a_variable_with_an_awkward_expression(tmp_path):
+    """TRANSFORM has ~70 tests whose UnitTests variables carry a `cat(...)`
+    expression. The add forms read `Session.tracked`'s list, so they offer
+    the name the result file gives the variable — listing it under two
+    spellings offered the same trajectory twice, the second time under a
+    name no leaf can be written against. An AUTHORED tree, because such a
+    test had no implicit one to edit: its spec names the variable as the
+    file spells it."""
     import json
 
-    from test_session import _relabelled_project
+    from test_session import (
+        AWKWARD_EXPRESSION,
+        UT1,
+        _awkward_expression_project,
+        with_expressions,
+    )
 
-    cfg, work = _relabelled_project(tmp_path)
+    cfg, work = _awkward_expression_project(tmp_path)
     spec_path = cfg.parent / "test_spec.json"
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     for entry in spec["tests"]:
@@ -613,12 +619,13 @@ async def test_the_add_form_offers_a_relabelled_variable_under_its_label(tmp_pat
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
     session = Session()
     session.open(cfg, work_dir=work)
-    assert session.tracked(A) == ["y", "cat(1, a, b)"]
+    with_expressions(session, A, {UT1: AWKWARD_EXPRESSION})
+    assert session.tracked(A) == ["y", UT1]
     sel = Selection(tests=frozenset({A}), variable="y")
     async with host(session, EditTree(), sel) as (user, _errors, _figure):
         # The VARIABLE panel is the add form itself, drawn open.
         (var,) = user.find(marker="apply-add:y:variable").elements
-        assert var.options == ["y", "cat(1, a, b)"]
+        assert var.options == ["y", UT1]
 
 
 async def test_the_cluster_add_form_on_a_nested_leaf_lands_under_its_parent(session):

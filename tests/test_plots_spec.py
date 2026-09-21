@@ -232,16 +232,21 @@ def test_a_result_variable_is_listed_under_its_own_name_once():
 
 
 def test_an_awkward_name_is_no_longer_special():
-    """A `cat(` name or one carrying a newline was relabelled `x[N]` here."""
+    """Text this function used to special-case — a `cat(` expression, a name
+    a wrapped `.mo` line left a newline in — reached it as a variable's NAME
+    while the comparison relabelled the same variable `x[N]`. Whatever a
+    result calls a variable is what is listed."""
     assert tracked_names([], _Result(_Var("cat(1, a, b)", 1))) == ["cat(1, a, b)"]
     assert tracked_names([], _Result(_Var("a\nb", 4))) == ["a\nb"]
 
 
-def test_a_nameless_result_variable_is_left_to_the_comparison():
-    """It has no name to plot by; the comparison's own label for it arrives
-    through ``scored`` when there is one."""
+def test_a_nameless_result_variable_has_nothing_to_plot_by():
+    """A backend that builds one is a bug; it is skipped rather than drawn
+    under a name this function made up. Nothing puts a made-up name into
+    ``scored`` either: the comparison of a nameless variable carries the
+    same empty name, and an empty name is no name here."""
     assert tracked_names([], _Result(_Var("", 1), _Var("y", 2))) == ["y"]
-    assert tracked_names(["x[1]"], _Result(_Var("", 1))) == ["x[1]"]
+    assert tracked_names([""], _Result(_Var("", 1))) == []
 
 
 def test_a_repeated_scored_name_is_listed_once():

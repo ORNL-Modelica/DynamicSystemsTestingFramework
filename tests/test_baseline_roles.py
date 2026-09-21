@@ -82,6 +82,35 @@ class TestSoftCheckStorage:
         assert data["time"] == [0.0, 1.0, 2.0]
         assert data["provenance"] == {"source": "rig-A"}
 
+    def test_the_written_entries_carry_an_expression(self, store_with_primary):
+        """`import-baseline` hands this writer the entries of a file someone
+        else produced — an older one has no ``expression`` key at all. A
+        writer never leaves the field out: the imported entry is written
+        with the empty text, in the same key order ``accept`` produces, so
+        an entry WITHOUT the key is one no writer of this version made."""
+        store, test = store_with_primary
+        store.add_soft_check(
+            test.model_id,
+            "imported",
+            time=[0.0, 1.0],
+            variables=[
+                {"index": 1, "name": "x", "values": [0.0, 1.0]},
+                {
+                    "index": 2,
+                    "name": "unitTests.x[1]",
+                    "expression": "pipe.T[1]",
+                    "values": [0.0, 2.0],
+                },
+            ],
+        )
+        sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "imported.json"
+        written = json.loads(sc_file.read_text())["variables"]
+        assert [list(entry) for entry in written] == [
+            ["index", "name", "expression", "values"],
+            ["index", "name", "expression", "values"],
+        ]
+        assert [entry["expression"] for entry in written] == ["", "pipe.T[1]"]
+
     def test_get_roundtrip(self, store_with_primary):
         store, test = store_with_primary
         store.add_soft_check(

@@ -2294,3 +2294,268 @@ class TestVariableIdentity:
         import dstf.comparison.comparator as comparator
 
         assert not hasattr(comparator, "variable_label")
+
+
+#: A second UnitTests variable of the same test, with its own expression.
+VI_NAME2, VI_EXPR2 = "unitTests.x[2]", "cat(1, a, b)[2]"
+
+
+def _vi_two_result(expressions=(VI_EXPR, VI_EXPR2)) -> TestResult:
+    """Two UnitTests variables, each with its OWN expression."""
+    return TestResult(
+        model_id="MyLib.Test",
+        success=True,
+        variables=[
+            VariableResult(
+                index=i + 1,
+                time=_VI_T,
+                values=_VI_T * (i + 1),
+                name=name,
+                expression=expressions[i],
+            )
+            for i, name in enumerate((VI_NAME, VI_NAME2))
+        ],
+    )
+
+
+def _vi_two_reference(order=(0, 1), expressions=(VI_EXPR, VI_EXPR2)) -> dict:
+    """The baseline for `_vi_two_result`, its entries in ``order``."""
+    entries = [
+        {
+            "index": i + 1,
+            "name": name,
+            "expression": expressions[i],
+            "values": list(_VI_T * (i + 1)),
+        }
+        for i, name in enumerate((VI_NAME, VI_NAME2))
+    ]
+    return {
+        "test_id": "0001",
+        "time": list(_VI_T),
+        "variables": [entries[i] for i in order],
+    }
+
+
+class TestTheExpressionRidesOnEveryComparison:
+    """A comparison carries the expression of the variable it names —
+    including the ones that never reach a scorer. The failing leaves are
+    exactly the ones a person reads, so those are the ones that must not
+    fall back to the bare name."""
+
+    def _leaf(self, comp):
+        (vc,) = comp.variables
+        return vc
+
+    def test_a_leaf_whose_variable_the_baseline_lost_keeps_the_expression(self):
+        spec = parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+        comp = compare_test(
+            _vi_test(metric_tree_spec=spec),
+            _vi_result(),
+            {"test_id": "0001", "time": list(_VI_T), "variables": []},
+        )
+        vc = self._leaf(comp)
+        assert not vc.passed
+        assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
+
+    def test_a_leaf_naming_a_baseline_that_is_not_there_keeps_the_expression(self):
+        spec = parse_metric_tree(
+            {"metric": "nrmse", "variable": VI_NAME, "against": "nope"}
+        )
+        comp = compare_test(
+            _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
+        )
+        vc = self._leaf(comp)
+        assert not vc.passed and "baseline not found" in vc.diagnostics["error"]
+        assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
+
+    def test_a_misconfigured_leaf_keeps_the_expression(self):
+        spec = parse_metric_tree(
+            {
+                "metric": "tube",
+                "variable": VI_NAME,
+                "tube_width_mode": "bogus",
+                "tube_rel": 0.1,
+            }
+        )
+        comp = compare_test(
+            _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
+        )
+        vc = self._leaf(comp)
+        assert not vc.passed and vc.diagnostics.get("config_error")
+        assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
+
+    def test_a_leaf_whose_variable_the_result_lost_has_no_expression(self):
+        """Nothing resolved a result variable, so there is no expression to
+        carry — the bare name is all the leaf has."""
+        spec = parse_metric_tree({"metric": "nrmse", "variable": "not.there"})
+        comp = compare_test(
+            _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
+        )
+        vc = self._leaf(comp)
+        assert not vc.passed and (vc.name, vc.expression) == ("not.there", "")
+
+    def test_each_flat_comparison_carries_its_own_variables_expression(self):
+        """Guards the post-loop stamping: the flat path appends one
+        comparison per result variable and pairs them by position, so a
+        rotation there puts every expression on the wrong variable."""
+        comp = compare_test(_vi_test(n_vars=2), _vi_two_result(), _vi_two_reference())
+        assert comp.passed
+        assert [(vc.name, vc.expression) for vc in comp.variables] == [
+            (VI_NAME, VI_EXPR),
+            (VI_NAME2, VI_EXPR2),
+        ]
+
+
+class TestTheExpressionCheckPairsByName:
+    def test_a_reordered_baseline_is_paired_by_name(self):
+        """The stored entries are in the order they were accepted in; a
+        re-accept after an `x={...}` edit can reorder them. Pairing the
+        check by position then reports every variable as changed."""
+        comp = compare_test(
+            _vi_test(n_vars=2), _vi_two_result(), _vi_two_reference(order=(1, 0))
+        )
+        assert comp.passed and comp.warnings == []
+
+    def test_a_duplicate_name_is_read_from_the_first_entry(self):
+        """Pairing reads the FIRST entry under a name; the check must read
+        the same one, or a stale duplicate further down the file reports a
+        change the scoring never saw."""
+        reference = _vi_reference()
+        reference["variables"].append(
+            {"index": 2, "name": VI_NAME, "expression": "STALE", "values": list(_VI_T)}
+        )
+        comp = compare_test(_vi_test(), _vi_result(), reference)
+        assert comp.warnings == []
+
+    def test_a_named_baselines_expression_is_checked_once_per_variable(self):
+        """`against: fmpy` scores a leaf on another baseline — with its own
+        recorded expression, which the primary's check never reads. Two
+        leaves on the same variable and baseline still say it once."""
+        from dstf.storage.baseline import Baseline
+
+        class _Store:
+            def get_soft_checks(self, model_id):
+                return {
+                    "fmpy": Baseline(
+                        name="fmpy",
+                        time=list(_VI_T),
+                        variables=[
+                            {
+                                "index": 1,
+                                "name": VI_NAME,
+                                "expression": "OTHER.Q",
+                                "values": list(_VI_T),
+                            }
+                        ],
+                    )
+                }
+
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": VI_NAME},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {
+                                "combinator": "and",
+                                "children": [
+                                    {
+                                        "metric": "nrmse",
+                                        "variable": VI_NAME,
+                                        "against": "fmpy",
+                                    },
+                                    {
+                                        "metric": "tube",
+                                        "variable": VI_NAME,
+                                        "against": "fmpy",
+                                        "tube_rel": 0.5,
+                                    },
+                                ],
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+        comp = compare_test(
+            _vi_test(metric_tree_spec=spec),
+            _vi_result(),
+            _vi_reference(),
+            store=_Store(),
+        )
+        assert comp.passed
+        assert [
+            (w.field, w.reference_value, w.current_value) for w in comp.warnings
+        ] == [(f"Expression of {VI_NAME} (against fmpy)", "OTHER.Q", VI_EXPR)]
+
+
+class TestPairingIsByNameOnly:
+    def test_a_nameless_result_variable_is_not_paired_by_index(self):
+        """No backend builds a nameless variable; one that arrives anyway is
+        a bug, not an invitation to score it against whatever entry sits at
+        its index."""
+        result = TestResult(
+            model_id="MyLib.Test",
+            success=True,
+            variables=[VariableResult(index=1, time=_VI_T, values=_VI_T, name="")],
+        )
+        comp = compare_test(_vi_test(), result, _vi_reference())
+        assert not comp.passed
+        (vc,) = comp.variables
+        assert vc.name == "" and vc.nrmse == float("inf")
+
+    def test_a_baseline_holding_the_name_at_another_index_still_scores(self):
+        """Pairing is by name, so a reordered baseline scores as it did
+        before the reorder."""
+        comp = compare_test(
+            _vi_test(n_vars=2), _vi_two_result(), _vi_two_reference(order=(1, 0))
+        )
+        assert comp.passed
+        assert [vc.nrmse for vc in comp.variables] == [0.0, 0.0]
+
+
+class TestTheMigrationHintIsSharedByBothPaths:
+    def _un_migrated(self, **kw):
+        """A result whose variable is `unitTests.x[1]` against a baseline
+        that still stores it under its expression."""
+        return compare_test(
+            _vi_test(x_expressions=["pipe.T[1]"], **kw),
+            _vi_result(expression="pipe.T[1]"),
+            _vi_reference(name="pipe.T[1]", with_expression=False),
+        )
+
+    def test_the_tree_path_names_the_command(self, caplog):
+        spec = parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+        with caplog.at_level(logging.WARNING):
+            comp = self._un_migrated(metric_tree_spec=spec)
+        assert not comp.passed
+        (vc,) = comp.variables
+        assert "dstf migrate-variable-names" in vc.diagnostics["error"]
+        assert any(
+            "dstf migrate-variable-names" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.parametrize("tree", [False, True])
+    def test_a_baseline_that_never_held_the_variable_gets_no_hint(self, tree, caplog):
+        """The hint is for a baseline stored under the expression, not for
+        every missing one: a variable new to the baseline is re-accepted,
+        not migrated."""
+        spec = (
+            parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+            if tree
+            else None
+        )
+        with caplog.at_level(logging.WARNING):
+            comp = compare_test(
+                _vi_test(metric_tree_spec=spec),
+                _vi_result(),
+                _vi_reference(name="somewhere.else"),
+            )
+        assert not comp.passed
+        messages = [record.getMessage() for record in caplog.records] + [
+            comp.variables[0].diagnostics.get("error", "")
+        ]
+        assert not any("migrate-variable-names" in message for message in messages)

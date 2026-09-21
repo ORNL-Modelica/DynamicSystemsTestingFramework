@@ -1987,19 +1987,26 @@ class TestBothTiersDrawTheSamePlots:
         assert self._report(s, B) == []
         assert self._nobaseline(s, B) == ["x", "y"]
 
-    def test_a_relabelled_variable_is_drawn_once_on_both_tiers(self, tmp_path):
-        """`cat(1, a, b)` is the name its result file gives the variable, and
-        both tiers draw it under that name — once. It used to be scored under
-        a second spelling, and reading the RAW name as well drew the same
-        trajectory twice on the tool."""
-        from test_session import RELABELLED, A, _relabelled_project
+    def test_an_awkward_expression_is_drawn_once_on_both_tiers(self, tmp_path):
+        """A UnitTests variable is drawn under the name its result file gives
+        it — once — whatever its expression says. It used to be scored under
+        a second spelling (`cat(1, a, b)[1]` relabelled `x[1]`), and reading
+        the RAW name as well drew the same trajectory twice on the tool."""
+        from test_session import (
+            AWKWARD_EXPRESSION,
+            UT1,
+            A,
+            _awkward_expression_project,
+            with_expressions,
+        )
 
-        cfg, work = _relabelled_project(tmp_path)
+        cfg, work = _awkward_expression_project(tmp_path)
         s = self._session(cfg, work)
-        assert self._tool(s, A) == [(RELABELLED,), ("y",)]
-        assert self._report(s, A) == [(RELABELLED,), ("y",)]
+        with_expressions(s, A, {UT1: AWKWARD_EXPRESSION})
+        assert self._tool(s, A) == [(UT1,), ("y",)]
+        assert self._report(s, A) == [(UT1,), ("y",)]
 
-    def test_a_relabelled_variable_whose_baseline_lost_it_is_drawn_once(self, tmp_path):
+    def test_an_awkward_expression_whose_baseline_lost_it_is_drawn_once(self, tmp_path):
         """`with_baseline=False` does NOT reach the no-baseline regime: the
         fixture's one-variable baseline for A is stored before it, so A is
         scored against a reference that has none of its variables — the
@@ -2008,18 +2015,25 @@ class TestBothTiersDrawTheSamePlots:
         could not resolve it drew an empty plot under a card the same list
         had just asked for."""
         from dstf.reporting.status import classify
-        from test_session import RELABELLED, A, _relabelled_project
+        from test_session import (
+            AWKWARD_EXPRESSION,
+            UT1,
+            A,
+            _awkward_expression_project,
+            with_expressions,
+        )
 
-        cfg, work = _relabelled_project(tmp_path, with_baseline=False)
+        cfg, work = _awkward_expression_project(tmp_path, with_baseline=False)
         s = self._session(cfg, work)
+        with_expressions(s, A, {UT1: AWKWARD_EXPRESSION})
         assert s.project.store.get_reference(A) is not None
         assert classify(s.comparisons[A]) == "FAIL"
-        assert self._tool(s, A) == [(RELABELLED,), ("y",)]
-        assert self._report(s, A) == [(RELABELLED,), ("y",)]
-        view = s.view(A, RELABELLED)
+        assert self._tool(s, A) == [(UT1,), ("y",)]
+        assert self._report(s, A) == [(UT1,), ("y",)]
+        view = s.view(A, UT1)
         assert len(view.act_values) == 5
 
-    def test_a_relabelled_tracked_variable_no_criterion_scores_draws_its_trace(
+    def test_an_awkward_expression_on_an_unscored_variable_draws_its_trace(
         self, tmp_path
     ):
         """A tracked variable no leaf scores rides in ``extra_series``, from
@@ -2031,9 +2045,15 @@ class TestBothTiersDrawTheSamePlots:
 
         from dstf.reporting.context_builder import _build_template_context
         from dstf.reporting.report_suite import plot_inputs, plot_page_keys
-        from test_session import RELABELLED, A, _relabelled_project
+        from test_session import (
+            AWKWARD_EXPRESSION,
+            UT1,
+            A,
+            _awkward_expression_project,
+            with_expressions,
+        )
 
-        cfg, work = _relabelled_project(tmp_path)
+        cfg, work = _awkward_expression_project(tmp_path)
         spec_path = cfg.parent / "test_spec.json"
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
         for entry in spec["tests"]:
@@ -2044,14 +2064,15 @@ class TestBothTiersDrawTheSamePlots:
                 }
         spec_path.write_text(json.dumps(spec), encoding="utf-8")
         s = self._session(cfg, work)
+        with_expressions(s, A, {UT1: AWKWARD_EXPRESSION})
         project = s.project
         comp = s.comparisons[A]
         result = project.results.get(A)
         plots, extra = plot_inputs(
             project.test(A), comp.variables, result, type(project.backend), None
         )
-        assert [plot.series for plot in plots] == [("y",), (RELABELLED,)]
-        assert list(extra) == [RELABELLED] and len(extra[RELABELLED][1]) == 5
+        assert [plot.series for plot in plots] == [("y",), (UT1,)]
+        assert list(extra) == [UT1] and len(extra[UT1][1]) == 5
         ctx = _build_template_context(
             A,
             list(comp.variables),
@@ -2063,12 +2084,12 @@ class TestBothTiersDrawTheSamePlots:
             metric_tree=comp.metric_tree,
         )
         ctx.update(plot_page_keys(ctx, plots, extra, comp.metric_tree, None))
-        section = next(s for s in ctx["plot_sections"] if s["series"] == [RELABELLED])
+        section = next(s for s in ctx["plot_sections"] if s["series"] == [UT1])
         figure = ctx["plot_figures"][section["index"]]
         (trace,) = [tr for tr in figure["data"] if tr["meta"]["kind"] == "act"]
         assert len(trace["y"]) == 5
 
-    def test_a_relabelled_variable_with_really_no_baseline_draws_its_trace(
+    def test_an_awkward_expression_with_really_no_baseline_draws_its_trace(
         self, tmp_path
     ):
         """B has a result and no baseline at all, so nothing is scored and
@@ -2077,7 +2098,13 @@ class TestBothTiersDrawTheSamePlots:
         import json
 
         from dstf.reporting.status import NO_REF, classify
-        from test_session import RELABELLED, B, _two_var_project
+        from test_session import (
+            AWKWARD_EXPRESSION,
+            UT1,
+            B,
+            _two_var_project,
+            with_expressions,
+        )
 
         cfg, work = _two_var_project(tmp_path)
         t = [i / 4 for i in range(5)]
@@ -2086,7 +2113,7 @@ class TestBothTiersDrawTheSamePlots:
                 {
                     "success": True,
                     "time": t,
-                    "variables": {RELABELLED: t, "y": [2 * v for v in t]},
+                    "variables": {UT1: t, "y": [2 * v for v in t]},
                 }
             ),
             encoding="utf-8",
@@ -2095,10 +2122,90 @@ class TestBothTiersDrawTheSamePlots:
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
         for entry in spec["tests"]:
             if entry["model"] == B:
-                entry["variables"] = [RELABELLED, "y"]
+                entry["variables"] = [UT1, "y"]
         spec_path.write_text(json.dumps(spec), encoding="utf-8")
         s = self._session(cfg, work)
+        with_expressions(s, B, {UT1: AWKWARD_EXPRESSION})
         assert classify(s.comparisons[B]) == NO_REF  # the regime it is named for
         assert s.project.store.get_reference(B) is None
-        assert self._tool(s, B) == [(RELABELLED,), ("y",)]
-        assert len(s.view(B, RELABELLED).act_values) == 5
+        assert self._tool(s, B) == [(UT1,), ("y",)]
+        assert len(s.view(B, UT1).act_values) == 5
+
+
+class TestTheTrajectoriesCarryTheExpression:
+    """``build_trajectories`` is where the page and the sidecar learn a
+    variable's expression: the label the report draws beside its name, and
+    the text an overlay's own source may spell the quantity with. An entry
+    without it reads as a variable whose model wrote none."""
+
+    def _result(self, expression: str):
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+
+        t = np.linspace(0.0, 1.0, 5)
+        return TestResult(
+            model_id="M",
+            success=True,
+            variables=[
+                VariableResult(
+                    index=1,
+                    name="unitTests.x[1]",
+                    time=t,
+                    values=t,
+                    expression=expression,
+                )
+            ],
+        )
+
+    def test_a_scored_variables_entry_carries_it(self):
+        from dstf.reporting.context_builder import build_trajectories
+
+        result = self._result("pipe.T[1]")
+        ref = {
+            "time": [0.0, 0.25, 0.5, 0.75, 1.0],
+            "variables": [
+                {
+                    "index": 1,
+                    "name": "unitTests.x[1]",
+                    "expression": "pipe.T[1]",
+                    "values": [0.0, 0.25, 0.5, 0.75, 1.0],
+                }
+            ],
+        }
+        comparisons = [
+            VariableComparison(
+                index=1,
+                name="unitTests.x[1]",
+                passed=True,
+                nrmse=0.0,
+                rmse=0.0,
+                signal_range=1.0,
+                max_abs_error=0.0,
+                max_abs_error_time=0.0,
+                reference_final=1.0,
+                actual_final=1.0,
+            )
+        ]
+        trajectories, _diag, nobaseline = build_trajectories(comparisons, result, ref)
+        assert [(t["name"], t["expression"]) for t in trajectories] == [
+            ("unitTests.x[1]", "pipe.T[1]")
+        ]
+        assert nobaseline == []
+
+    def test_a_no_baseline_entry_carries_it(self):
+        from dstf.reporting.context_builder import build_trajectories
+
+        trajectories, _diag, nobaseline = build_trajectories(
+            [], self._result("pipe.T[1]"), None
+        )
+        assert trajectories == []
+        assert [(t["name"], t["expression"]) for t in nobaseline] == [
+            ("unitTests.x[1]", "pipe.T[1]")
+        ]
+
+    def test_a_variable_whose_model_wrote_none_carries_the_empty_text(self):
+        from dstf.reporting.context_builder import build_trajectories
+
+        _traj, _diag, nobaseline = build_trajectories([], self._result(""), None)
+        assert nobaseline[0]["expression"] == ""

@@ -209,14 +209,16 @@ def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
     return cfg, work
 
 
-#: A result-file name no tool can carry — what a Modelica ``x={cat(1, a, b)}``
-#: used to be stored under, and what the comparison used to relabel ``x[1]``.
-#: Nothing relabels it now: it is scored and drawn under this name.
-RELABELLED = "cat(1, a, b)"
+#: The expression that used to cost its variable its identity: the text a
+#: Modelica ``x={cat(1, a, b)}`` writes beside ``unitTests.x[1]``. No result
+#: file ever carried it as a NAME — the comparison relabelled the variable
+#: ``x[1]`` for scoring and display, which is what left ~70 TRANSFORM tests
+#: with no editable tree. It is a label now; the name is the result file's.
+AWKWARD_EXPRESSION = "cat(1, a, b)[1]"
 
 #: A UnitTests variable's result-file name, and the expression beside it.
 UT1, UT2 = "unitTests.x[1]", "unitTests.x[2]"
-UT1_EXPR, UT2_EXPR = "cat(1, a, b)[1]", "cat(1, a, b)[2]"
+UT1_EXPR, UT2_EXPR = AWKWARD_EXPRESSION, "cat(1, a, b)[2]"
 
 
 def with_expressions(session: Session, model_id: str, expressions: dict[str, str]):
@@ -267,10 +269,14 @@ def _unit_tests_project(tmp_path: Path) -> tuple[Path, Path]:
     return cfg, work
 
 
-def _relabelled_project(tmp_path: Path, *, with_baseline: bool = True):
-    """`_two_var_project` with A tracking a variable whose recorded name no
-    tool can carry — TRANSFORM has ~70 such tests. Without a baseline, A
-    scores nothing and the result's names are all there is."""
+def _awkward_expression_project(tmp_path: Path, *, with_baseline: bool = True):
+    """`_two_var_project` with A's first variable named the way a UnitTests
+    result file names it, `AWKWARD_EXPRESSION` the text the model wrote for
+    it — the shape of the ~70 TRANSFORM tests this plan is for. The
+    expression is stamped with `with_expressions` once a Session is open (a
+    Python backend carries none). Without a baseline for A, the fixture's
+    one-variable baseline is all there is and the result's names are what
+    the page has to go on."""
     cfg, work = _two_var_project(tmp_path, ref_models=(A,) if with_baseline else ())
     t = [i / 4 for i in range(5)]
     (work / "test_0001" / "result.json").write_text(
@@ -278,7 +284,7 @@ def _relabelled_project(tmp_path: Path, *, with_baseline: bool = True):
             {
                 "success": True,
                 "time": t,
-                "variables": {RELABELLED: t, "y": [2 * v for v in t]},
+                "variables": {UT1: t, "y": [2 * v for v in t]},
             }
         ),
         encoding="utf-8",
@@ -287,17 +293,17 @@ def _relabelled_project(tmp_path: Path, *, with_baseline: bool = True):
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     for entry in spec["tests"]:
         if entry["model"] == A:
-            entry["variables"] = [RELABELLED, "y"]
+            entry["variables"] = [UT1, "y"]
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
     if with_baseline:
         tt = np.asarray(t)
         ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
-            make_test_model(A, variable_patterns=[RELABELLED, "y"]),
+            make_test_model(A, variable_patterns=[UT1, "y"]),
             TestResult(
                 model_id=A,
                 success=True,
                 variables=[
-                    VariableResult(index=1, time=tt, values=tt, name=RELABELLED),
+                    VariableResult(index=1, time=tt, values=tt, name=UT1),
                     VariableResult(index=2, time=tt, values=2 * tt, name="y"),
                 ],
             ),
@@ -1078,7 +1084,11 @@ class TestRescoreAndStage:
         session = Session()
         session.open(cfg, work_dir=work)
         with_expressions(session, A, {UT1: UT1_EXPR, UT2: UT2_EXPR})
-        flat = session.comparisons[A]
+        # Score the flat path AFTER the expressions are on the result: the
+        # comparisons `open` built were made without them, so reading those
+        # asserted "rides on either" on the tree alone (the Task 3 review).
+        flat = session._score(A)
+        assert [vc.expression for vc in flat.variables] == [UT1_EXPR, UT2_EXPR]
 
         def numbers(comp):
             keep = (

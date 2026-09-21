@@ -23,6 +23,7 @@ should import them from :mod:`.types` and :mod:`.algorithms` directly.
 """
 
 import logging
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -126,19 +127,51 @@ def _check_structural_changes(
     return warnings
 
 
-def _check_expressions(reference: dict, result: TestResult) -> list[StructuralWarning]:
+def migration_hint(baseline_names: Iterable[str], expression: str) -> str:
+    """The clause that names the migration command, or ``""``.
+
+    A variable whose baseline entry is missing is un-migrated exactly when
+    the baseline holds an entry under the text the variable's EXPRESSION
+    spells — the name every UnitTests baseline was stored under before the
+    identity change. Both scoring paths say it, from here: a hint on every
+    missing baseline would point a whole suite of brand-new variables at a
+    command that would rewrite nothing (the Task 3 review).
+    """
+    if not expression or expression not in set(baseline_names):
+        return ""
+    return (
+        f" — the baseline stores it under its expression {expression!r}; "
+        "`dstf migrate-variable-names` renames it"
+    )
+
+
+def _check_expressions(
+    variables: list[dict],
+    result: TestResult,
+    *,
+    against: str = "",
+) -> list[StructuralWarning]:
     """A UnitTests variable is keyed by its position (``unitTests.x[2]``), so
     an edit to the model's ``x={...}`` can put a different quantity under the
     same name. The baseline records the expression it was accepted with; a
     run measuring another one says so. A warning, never a failure — and
     silent when either side recorded nothing (a pattern-tracked variable, a
-    backend that writes no expression)."""
-    recorded = {
-        v.get("name"): v.get("expression") or "" for v in reference.get("variables", [])
-    }
+    backend that writes no expression).
+
+    ``variables`` is the entry list of ONE baseline and ``against`` its name
+    (empty for the primary, which needs no saying). Pairing is by name, and
+    a name stored twice is read from the FIRST entry — the one the scoring
+    pairs with; reading the last reported a change no leaf ever scored.
+    """
+    recorded: dict[str, str] = {}
+    for entry in variables:
+        name = entry.get("name") or ""
+        if name and name not in recorded:
+            recorded[name] = entry.get("expression") or ""
+    where = f" (against {against})" if against else ""
     return [
         StructuralWarning(
-            field=f"Expression of {var.name}",
+            field=f"Expression of {var.name}{where}",
             reference_value=recorded[var.name],
             current_value=var.expression,
         )
@@ -147,6 +180,33 @@ def _check_expressions(reference: dict, result: TestResult) -> list[StructuralWa
         and recorded.get(var.name)
         and recorded[var.name] != var.expression
     ]
+
+
+def _named_baseline_expression_warnings(
+    spec,
+    baselines: dict,
+    result: TestResult,
+) -> list[StructuralWarning]:
+    """The expression check on every NON-primary baseline the tree scores
+    against (an ``against: fmpy`` leaf, a soft_check import).
+
+    A named baseline records its own expressions, and the primary's check
+    never reads them — a soft_check accepted against ``a.Q`` while the model
+    now measures ``b.Q`` compares two different quantities in silence. The
+    check runs once per baseline the tree names, not once per leaf naming
+    it, so two leaves on one variable say it once.
+    """
+    from ..storage.baseline import PRIMARY_BASELINE
+    from .tree_spec import collect_baselines
+
+    out: list[StructuralWarning] = []
+    for name in collect_baselines(spec):
+        if name == PRIMARY_BASELINE:
+            continue
+        baseline = baselines.get(name)
+        if baseline is not None:
+            out += _check_expressions(baseline.variables, result, against=name)
+    return out
 
 
 def _warn_about_overrides_that_name_nothing(
@@ -277,12 +337,12 @@ def compare_test(
 
     structural_warnings = _check_structural_changes(
         reference, result
-    ) + _check_expressions(reference, result)
+    ) + _check_expressions(reference.get("variables", []), result)
 
-    ref_vars = {v["index"]: v for v in reference.get("variables", [])}
-    # Name-keyed view for the primary pairing path. Pairing purely by
-    # numeric index silently scored variables against the wrong baseline
-    # trajectory after any spec reorder (review 2026-07-06, finding 8).
+    # Pairing is by name. Pairing by numeric index silently scored variables
+    # against the wrong baseline trajectory after any spec reorder (review
+    # 2026-07-06, finding 8); a first-entry-wins map is also what the
+    # expression check reads.
     ref_vars_by_name = {}
     for v in reference.get("variables", []):
         rn = v.get("name", "")
@@ -337,6 +397,9 @@ def compare_test(
                 statistics=bl.statistics,
                 diagnostics=bl.diagnostics,
             )
+        structural_warnings += _named_baseline_expression_warnings(
+            test.metric_tree_spec, all_baselines, result
+        )
         tree = evaluate_spec(
             test.metric_tree_spec,
             var_results_by_name,
@@ -366,30 +429,22 @@ def compare_test(
     _warn_about_overrides_that_name_nothing(test.model_id, merged_overrides, result)
 
     for var_result in result.variables:
-        # Pair by name first; fall back to index only when the result
-        # variable carries no name. An index-paired ref whose stored name
-        # disagrees with the result's name is a stale/reordered baseline —
-        # or one stored before the variable was named by its result file —
-        # so warn and treat as missing rather than score against the wrong
-        # trajectory.
-        if var_result.name and var_result.name in ref_vars_by_name:
-            ref_var = ref_vars_by_name[var_result.name]
-        else:
-            ref_var = ref_vars.get(var_result.index)
-            if ref_var is not None and var_result.name:
-                stored_name = ref_var.get("name", "")
-                if stored_name and stored_name != var_result.name:
-                    logger.warning(
-                        "%s: reference index %d holds %r but result is %r — "
-                        "treating as missing baseline (re-accept to refresh; a "
-                        "baseline stored under an expression is renamed by "
-                        "`dstf migrate-variable-names`)",
-                        test.model_id,
-                        var_result.index,
-                        stored_name,
-                        var_result.name,
-                    )
-                    ref_var = None
+        # A variable is paired with the baseline entry carrying its name.
+        # There is no index fallback: a result variable always has the name
+        # its result file gives it (a nameless one is a backend bug), and an
+        # entry that merely sits at the same index is a different quantity
+        # after any reorder. A baseline that has none says so once per
+        # variable, with the migration clause when it is the un-migrated
+        # shape rather than a variable the baseline never held.
+        ref_var = ref_vars_by_name.get(var_result.name)
+        if ref_var is None and reference.get("variables"):
+            logger.warning(
+                "%s: the baseline holds no variable named %r — treating as "
+                "missing baseline (re-accept to refresh)%s",
+                test.model_id,
+                var_result.name,
+                migration_hint(ref_vars_by_name, var_result.expression),
+            )
 
         # A variable is scored and overridden under the name its result file
         # gives it; the expression beside it is a label and no key of any

@@ -115,8 +115,9 @@ def tracked_names(scored: Sequence[str], result: object) -> list[str]:
     ``<instance>.x[i]``) and nothing relabels it, so a variable the tree
     scores and the result carries is one name and is listed once — listing
     the same trajectory under two spellings drew it twice (the 3b review). A
-    variable the result file left nameless has nothing to plot by; the
-    comparison's own name for it arrives through ``scored``.
+    result variable with no name has nothing to plot by and is skipped; a
+    tree leaf's variable, on the other hand, is listed whether or not the
+    result carries it, because ``scored`` is what the test's author wrote.
 
     A result of a simulation that FAILED contributes nothing: what a backend
     wrote before it stopped is a partial file, not the test's plots, and the

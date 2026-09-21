@@ -1021,31 +1021,38 @@ async def test_a_test_shows_one_card_per_tracked_variable(shell):
 
 
 @pytest.fixture
-def relabelled_shell(tmp_path):
-    """A's result carries `cat(1, a, b)` as a variable's name — TRANSFORM has
-    ~70 tests whose result file names a variable something no tool can
-    carry. It is scored and drawn under that name."""
-    from test_session import _relabelled_project
+def awkward_expression_shell(tmp_path):
+    """A's first variable is a UnitTests one — named `unitTests.x[1]` by its
+    result file, with `cat(1, a, b)[1]` as the expression the model wrote
+    for it. TRANSFORM has ~70 tests of that shape. The variable is scored
+    and drawn under its name; the expression is a label."""
+    from test_session import (
+        AWKWARD_EXPRESSION,
+        UT1,
+        _awkward_expression_project,
+        with_expressions,
+    )
 
-    cfg, work = _relabelled_project(tmp_path)
+    cfg, work = _awkward_expression_project(tmp_path)
     s = Shell(cfg, work_dir=work)
     s.session.open(cfg, work_dir=work)
+    with_expressions(s.session, A, {UT1: AWKWARD_EXPRESSION})
     s.load.phase = "done"
     return s
 
 
-async def test_a_relabelled_variable_gets_one_card_not_two(relabelled_shell):
+async def test_an_awkward_expression_gets_one_card_not_two(awkward_expression_shell):
     """The tracked list read the scored names and the result's names under
-    two spellings: `cat(1, a, b)` appeared under both, so the page drew a
-    third card with no criteria row and its own "Add a criterion for
-    cat(1, a, b)" footer, over a trajectory already on the card above it
-    (the 3b review). One name, one card."""
-    shell = relabelled_shell
+    two spellings: the variable appeared under both, so the page drew a
+    third card with no criteria row and its own "Add a criterion for …"
+    footer, over a trajectory already on the card above it (the 3b review).
+    One name, one card."""
+    shell = awkward_expression_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert [c.resolved.series for c in page.cards] == [("cat(1, a, b)",), ("y",)]
+        assert [c.resolved.series for c in page.cards] == [("unitTests.x[1]",), ("y",)]
         assert _one(user, "plots:count").text == "2 plots · one per tracked variable"
-        assert _none(user, "variable-actions:2:cat(1, a, b)")
+        assert _none(user, "variable-actions:2:unitTests.x[1]")
         with page.client:
             page.cards[0].show()
         kinds = [tr["meta"]["kind"] for tr in page.cards[0].plot.figure["data"]]
