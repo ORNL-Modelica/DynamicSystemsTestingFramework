@@ -173,6 +173,22 @@ class TreeCard:
         self.is_open = not self.is_open
         self.refresh(self._view())
 
+    def forget(self) -> None:
+        """The page's test is gone (another project was opened under it):
+        the card says nothing rather than the last project's verdicts, and
+        `refresh` is not the way there — its "nothing scored" line asks the
+        page WHY, which for a test this project does not have is a sentence
+        about a baseline that was never the reason."""
+        for host in self.hosts:
+            host.clear()
+        self.hosts, self.painters, self.named = [], {}, []
+        self.root_pill = None
+        self.is_open = False
+        self._shape = ()
+        self.rows.clear()
+        self.rows.set_visibility(False)
+        self.line.clear()
+
     def refresh(self, view: dict | None) -> None:
         """Follow the Session: the line every time (it is five elements and
         the toggle's own text is one of them), the rows in place unless

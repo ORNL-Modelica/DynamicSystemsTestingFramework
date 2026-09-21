@@ -20,7 +20,7 @@ from ..capabilities import Placement, plural
 from ..session import Selection
 from .actions import ActionBar
 from .header import Header
-from .plot_card import PlotCard
+from .plot_card import UNREAD, PlotCard
 from .tabstate import tab_state
 from .tree_card import TreeCard, leaves_of, nodes_of
 
@@ -48,6 +48,10 @@ OBSERVE = """
 })();
 """
 
+#: Said in two places and they must agree: the page built for a model this
+#: project never had, and the page whose project was swapped under it.
+NOT_A_TEST = "{} is not a test of this project"
+
 
 class TestPage:
     def __init__(self, shell: Shell) -> None:
@@ -62,6 +66,9 @@ class TestPage:
         self.count: ui.label | None = None
         self.column: ui.column | None = None
         self._shape: Any = None
+        #: Whether the page is showing "… is not a test of this project"
+        #: instead of a test (`_gone`).
+        self.gone = False
         self.open: tuple[int, str] | None = None  # (plot index, leaf path)
         self.focused: int | None = None  # the one plot Focus is showing
         self.focus_bar: ui.row | None = None
@@ -75,15 +82,15 @@ class TestPage:
         self.shell.page_setup()
         self.model_id = model_id
         ui.page_title(f"DSTF — {model_id.rsplit('.', 1)[-1]}")
-        project = self.shell.session.project
-        known = project is not None and project.test(model_id) is not None
+        known = self._known()
         self.header = Header(self.shell, below=self._subheader if known else None)
         with ui.column().classes("dstf-test w-full q-pa-md gap-3"):
             if not known:
                 ui.link("← Suite", "/").mark("back")
-                ui.label(f"{model_id} is not a test of this project").classes(
-                    "text-negative"
+                ui.label(NOT_A_TEST.format(model_id)).classes("text-negative").mark(
+                    "gone"
                 )
+                self.gone = True
                 self.shell.register(self)
                 return
             self.tree = TreeCard(self)
@@ -104,11 +111,21 @@ class TestPage:
             self.focus_bar.set_visibility(False)
             self.column = ui.column().classes("dstf-plots w-full gap-3").mark("plots")
         ui.on("dstf_plot_visible", lambda e: self.on_visible(e.args))
-        view = self.shell.session.tree_view(model_id)
+        view = self._view()
         self.rebuild(view)
         self._shape = self.shape(view)
         self.shell.register(self)
         self.sync()
+
+    def _known(self) -> bool:
+        """Whether this page's test is a test of the OPEN project. It can
+        stop being one while the page is open: an `OpenProject` outcome
+        swaps the library, `Session.close()` takes it away."""
+        project = self.shell.session.project
+        return project is not None and project.test(self.model_id) is not None
+
+    def _view(self) -> dict | None:
+        return self.shell.session.tree_view(self.model_id)
 
     def _subheader(self) -> None:
         """The test's own header, drawn inside the shared one (decision 8):
@@ -180,7 +197,10 @@ class TestPage:
 
     def open_criterion(self, path: str, index: int | None = None) -> None:
         """One editor at a time, page-wide (board 2A). The plot above it is
-        its editing surface, so it is drawn if it was not."""
+        its editing surface, so it is drawn if it was not. ONE `tree_view`
+        read, handed to every card this touches: reading it per shown card
+        cost fourteen reads for one row click on a twelve-plot page (the 3b
+        review)."""
         if index is None:
             index = next((card.index for card in self.cards if path in card.rows), None)
         if index is None or not 0 <= index < len(self.cards):
@@ -188,20 +208,22 @@ class TestPage:
         card = self.cards[index]
         if path not in card.rows:
             return
+        view = self._view()
         if self.focused is not None and self.focused != index:
             # The editor has to be on screen: the row it opens under is on a
             # card Focus is hiding (board 5A shows ONE plot).
             self.focused = None
-            self._paint_focus()
+            self._paint_focus(view)
         self._close()
         self.open = (index, path)
-        card.show()
-        card.open_editor(path)
-        self._redraw_moved()
+        card.show(view)
+        card.open_editor(path, view)
+        self._redraw_moved(view)
 
     def close_editor(self) -> None:
+        view = self._view()
         self._close()
-        self._redraw_moved()
+        self._redraw_moved(view)
 
     def _close(self) -> None:
         """Close the open editor and redraw NOTHING: what is re-sent is the
@@ -216,11 +238,11 @@ class TestPage:
         self.open = None
         card.close_editor()
 
-    def _redraw_moved(self) -> None:
+    def _redraw_moved(self, view: Any) -> None:
         """The signature is the one thing that decides a redraw: only the
         card whose rings came or went is re-sent."""
         for card in self.cards:
-            card.redraw_if_moved()
+            card.redraw_if_moved(view)
 
     def jump_to(self, path: str) -> None:
         """The closed tree line's jump (board 1A): open that criterion and
@@ -241,8 +263,7 @@ class TestPage:
 
     def _variable_of(self, path: str) -> str:
         """The variable a tree node scores, for a sentence about it."""
-        view = self.shell.session.tree_view(self.model_id)
-        node = next((n for n in nodes_of(view) if n.get("path") == path), None)
+        node = next((n for n in nodes_of(self._view()) if n.get("path") == path), None)
         return str(node.get("variable")) if node is not None else path
 
     # -- the cards -------------------------------------------------------------
@@ -255,6 +276,7 @@ class TestPage:
         review)."""
         assert self.column is not None and self.count is not None
         session = self.shell.session
+        self.gone = False
         # The rows the editor hangs under go with the cards: the criterion
         # it was open on may not even exist after this. Closed WITHOUT a
         # redraw — these cards are about to be dropped, and one of them may
@@ -278,8 +300,8 @@ class TestPage:
             # browser's observer has already fired for those slots and will
             # not fire again.
             if card.index in shown:
-                card.show()
-        self._paint_focus()
+                card.show(view)
+        self._paint_focus(view)
         project = session.project
         test = project.test(self.model_id) if project is not None else None
         if not plots:
@@ -313,13 +335,22 @@ class TestPage:
         """Board 5A: Focus is a button on each plot, and the focused plot's
         button reads "Focused" and is the way out of it, like the bar's."""
         self.focused = None if self.focused == index else index
+        if (
+            self.focused is not None
+            and self.open is not None
+            and self.open[0] != self.focused
+        ):
+            # An editor nobody can see is no editor, and it goes on staging
+            # edits from drags on a plot that is not on screen. The other
+            # direction of `open_criterion`'s, which ends the focus instead.
+            self.close_editor()
         self._paint_focus()
 
     def show_all(self) -> None:
         self.focused = None
         self._paint_focus()
 
-    def _paint_focus(self) -> None:
+    def _paint_focus(self, view: Any = UNREAD) -> None:
         """The bar and every card's visibility, from `focused` as it is now
         — the one place either is written, so a rebuild resets both by
         calling it."""
@@ -338,7 +369,7 @@ class TestPage:
         name = ", ".join(self.cards[focused].resolved.series)
         self.focus_text.set_text(f"Showing 1 of {plots}: {name}")
         self.focus_all.set_text(f"Show all {plots}")
-        self.cards[focused].show()
+        self.cards[focused].show(view)
 
     def shape(self, view: dict | None) -> Any:
         """What the cards are BUILT from and cannot be repainted through:
@@ -380,17 +411,23 @@ class TestPage:
         moved — ``force`` re-sends every drawn plot whether it moved or not,
         which is what a finished job needs (decision 10: a rerun changes the
         trajectories, and no leaf's signature sees that)."""
+        if not self._known():
+            self._gone()
+            return
         self._paint()
-        view = self.shell.session.tree_view(self.model_id)
+        view = self._view()
         if self.tree is not None:
             self.tree.refresh(view)
         if self.column is None:
             return
         shape = self.shape(view)
         if shape != self._shape:
-            self._shape = shape
             with self.column:
                 self.rebuild(view)
+            # Recorded AFTER the rebuild ran: a raise inside it left the
+            # page with the NEW shape already recorded and half the cards
+            # built, and no later sync ever rebuilt it (the 3b review).
+            self._shape = shape
             return
         for card in self.cards:
             try:
@@ -402,12 +439,46 @@ class TestPage:
             except Exception:  # one card's failure is not another's
                 logger.exception("plot %s of %s", card.index, self.model_id)
 
+    def _gone(self) -> None:
+        """This page's test is no longer a test of the open project — an
+        `OpenProject` outcome swapped the library, or the Session was
+        closed. Every read below `sync` raises for it, so the page went on
+        showing the last project's cards while every event logged a
+        traceback. It says what a page BUILT for an unknown model says, and
+        a later event that finds the test again rebuilds (`_shape`)."""
+        if self.gone or self.column is None:
+            return
+        self.gone = True
+        self._close()
+        for card in self.cards:
+            card.dispose()
+        self.cards = []
+        self.focused = None
+        self._shape = None
+        self.column.clear()
+        if self.tree is not None:
+            self.tree.forget()
+        if self.count is not None:
+            self.count.set_text("")
+        if self.focus_bar is not None:
+            self.focus_bar.set_visibility(False)
+        with self.column:
+            ui.label(NOT_A_TEST.format(self.model_id)).classes("text-negative").mark(
+                "gone"
+            )
+
     def handle(self, event: dict[str, Any]) -> None:
         self.header.handle(event)
-        if self.actions is not None:
+        known = self._known()
+        if self.actions is not None and known:
             self.actions.refresh()
         if event["event"] == "job":
-            self.sync(force=True)
+            # A finished job reloaded the trajectories under every plot and
+            # no leaf's signature sees that (decision 10). The other states
+            # move no data: they still sync — a lock has to reach the
+            # panels — but they re-send no figure. Five job events per
+            # Rerun re-sent every drawn plot five times (the 3b review).
+            self.sync(force=event.get("state") in ("finished", "failed", "written"))
         elif event["event"] in ("results", "spec", "loading", "opened") and self._mine(
             event
         ):
@@ -419,9 +490,13 @@ class TestPage:
         the one it read; an event that names neither — the scan's steps,
         `opened` — is the whole project's and is this test's too. A page
         that synced on every model's event re-read the tree and repainted
-        every row for a test it says nothing about."""
+        every row for a test it says nothing about.
+
+        An EMPTY ``models`` names no model and is the whole project's:
+        `Session.close()` emits one, and it is how a page whose test has
+        gone hears about it."""
         models = event.get("models")
-        if models is not None:
+        if models:
             return self.model_id in models
         model = event.get("model")
         return model is None or model == self.model_id

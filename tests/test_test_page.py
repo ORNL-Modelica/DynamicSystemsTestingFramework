@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
+import logging
 
 import pytest
 
@@ -24,6 +26,7 @@ from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
 from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
+from dstf.authoring.shell.tree_card import leaves_of  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from test_handles import TREE  # noqa: E402
 from test_session import LOOSEN, A, B, C, D, _Gate, _two_var_project  # noqa: E402
@@ -547,6 +550,10 @@ def _stage_tree(shell, model=D, tree=None):
 
 def _range(lo):
     return {"metric": "range", "variable": "x", "min_value": lo}
+
+
+def _plot(*names):
+    return {"series": [{"var": n} for n in names]}
 
 
 async def _menu(user, marker: str, within: str) -> None:
@@ -1830,14 +1837,26 @@ async def test_an_open_editors_panels_follow_the_job_that_locked_the_test(shell)
 def scored_shell(tmp_path):
     """A shell whose D entry carries its tree IN THE SPEC, so a staged edit
     can be discarded or saved without taking the tree with it."""
-    import json
+    return _spec_tree_shell(tmp_path, {"combinator": "and", "children": [_range(-1)]})
 
+
+@pytest.fixture
+def tubed_shell(tmp_path):
+    """`scored_shell` with a TUBE on D's x — the criterion whose editor owns
+    a table, so an edit staged elsewhere has rows to follow."""
+    return _spec_tree_shell(
+        tmp_path,
+        {"combinator": "and", "children": [copy.deepcopy(TREE["children"][0])]},
+    )
+
+
+def _spec_tree_shell(tmp_path, tree):
     cfg, work = _two_var_project(tmp_path)
     path = cfg.parent / "test_spec.json"
     spec = json.loads(path.read_text(encoding="utf-8"))
     for entry in spec["tests"]:
         if entry["model"] == D:
-            entry["metrics"] = {"combinator": "and", "children": [_range(-1)]}
+            entry["metrics"] = tree
     path.write_text(json.dumps(spec), encoding="utf-8")
     s = Shell(cfg, work_dir=work)
     s.session.open(cfg, work_dir=work)
@@ -1950,6 +1969,12 @@ async def test_a_discard_elsewhere_leaves_the_open_editor_showing_it(scored_shel
         await _settled(
             lambda: _numbers(page, "Upper bound (optional)")[0].value is None
         )
+        # ONCE: the rebuild re-records what the editor now shows, or every
+        # later sync rebuilds it again and no field can be typed in.
+        rebuilt = _numbers(page, "Upper bound (optional)")[0]
+        with page.client:
+            page.sync()
+        assert _numbers(page, "Upper bound (optional)") == [rebuilt]
         (lower,) = _numbers(page, "Lower bound (optional)")
         with page.client:
             lower.set_value(-3.0)
@@ -1958,9 +1983,12 @@ async def test_a_discard_elsewhere_leaves_the_open_editor_showing_it(scored_shel
         assert _pending(shell, T0).get("max_value") is None
 
 
-async def test_a_save_leaves_a_fresh_editor(scored_shell):
-    """A Save moves the document under the open editor the same way: the
-    pending op it was built on is gone, so the editor is built again."""
+async def test_a_save_leaves_the_editor_alone(scored_shell):
+    """A Save empties the pending list, but the LEAF under the editor is
+    where the edit left it — the value is on disk now. What the editor
+    shows is still true, so it is not rebuilt: the field is the same
+    element and the next keystroke keeps it. (Comparing the whole
+    document's pending ops rebuilt it here for nothing.)"""
     shell = scored_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
@@ -1971,9 +1999,320 @@ async def test_a_save_leaves_a_fresh_editor(scored_shell):
             upper.set_value(5.0)
         await _settled(lambda: (_pending(shell, T0) or {}).get("max_value") == 5.0)
         shell.session.save()
-        await _settled(lambda: _numbers(page, "Upper bound (optional)")[0] is not upper)
-        assert _numbers(page, "Upper bound (optional)")[0].value == 5.0
+        await _settled(lambda: shell.session.spec.pending == [])
+        await asyncio.sleep(0.4)  # the spec / results events reach the page
+        assert _numbers(page, "Upper bound (optional)") == [upper]
+        assert upper.value == 5.0
         assert page.open == (0, T0)
+        (lower,) = _numbers(page, "Lower bound (optional)")
+        with page.client:
+            lower.set_value(-3.0)
+        await _settled(lambda: (_pending(shell, T0) or {}).get("min_value") == -3.0)
+        # The saved bound is not staged back on top of the file's own.
+        assert _pending(shell, T0).get("max_value") == 5.0
+
+
+async def test_the_first_edit_of_a_flat_test_keeps_the_field(shell):
+    """A's tree is implicit: the first form edit stages the materialization
+    (`add /metrics`) AND the replace. An editor that recorded what it was
+    built from before both ops landed read the materialization as an edit
+    staged elsewhere and rebuilt the control being typed in — the whole
+    point of skipping the submitting panel."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        assert shell.session.spec.pending == []
+        with page.client:
+            page.open_criterion(T0)
+        (field,) = _numbers(page, "Tolerance")
+        with page.client:
+            field.set_value(0.5)
+        await _settled(lambda: len(shell.session.spec.pending) == 2)
+        await asyncio.sleep(0.4)  # the spec / results events reach the page
+        assert _numbers(page, "Tolerance") == [field]
+        assert page.open == (0, T0)
+
+
+async def test_another_models_edit_leaves_a_half_typed_row_alone(shell):
+    """`pending` is the WHOLE document's: an edit to another model moved it
+    and the next event that was D's — any `job` — rebuilt D's editor, which
+    threw away a cleared table cell nobody had retyped yet. The editor
+    follows its OWN leaf."""
+    _stage_tree(shell)  # D: TREE (tube on T0, range on T1)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        with page.client:
+            page.open_criterion(T0)
+        cell = _one(user, f"{T0}:tube_points:0:time")
+        assert cell.value is not None
+        with page.client:
+            cell.set_value(None)  # cleared to retype: kept locally, not staged
+        await asyncio.sleep(0.3)
+        shell.session.stage([LOOSEN])  # ANOTHER model (A), e.g. from another tab
+        await asyncio.sleep(0.3)
+        with page.client:
+            page.handle({"event": "job", "state": "finished"})
+        await asyncio.sleep(0.3)
+        assert _one(user, f"{T0}:tube_points:0:time") is cell
+        assert cell.value is None
+
+
+async def test_a_combinator_edit_that_moves_no_leaf_leaves_the_editor_alone(shell):
+    """`and` -> `or` on the root: the shape stands, no leaf moved, and the
+    open editor's fields say exactly what they said."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        with page.client:
+            page.open_criterion(T1)
+        (lower,) = _numbers(page, "Lower bound (optional)")
+        shell.session.stage([PatchOp(D, "replace", "/metrics/combinator", "or")])
+        await _settled(lambda: "or" in _one(user, "tree:root").text)
+        await asyncio.sleep(0.3)
+        assert _numbers(page, "Lower bound (optional)") == [lower]
+        assert page.open == (0, T1)
+
+
+async def test_a_job_event_leaves_the_editors_own_control_alone(shell):
+    """A job that staged nothing and locked nothing: the editor was opened
+    on the leaf it still shows, so nothing is rebuilt."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        with page.client:
+            page.open_criterion(T1)
+        (lower,) = _numbers(page, "Lower bound (optional)")
+        with page.client:
+            page.handle({"event": "job", "state": "finished"})
+        assert _numbers(page, "Lower bound (optional)") == [lower]
+
+
+async def test_an_open_tube_editor_follows_a_point_staged_elsewhere(tubed_shell):
+    """The rebuild an edit from elsewhere DOES need, on the panel that owns
+    the tables: Edit on plot's rows must show the staged point, and go back
+    to the loaded one on a Discard."""
+    shell = tubed_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        with page.client:
+            page.open_criterion(T0)
+        cell = _one(user, f"{T0}:tube_points:0:time")
+        loaded = cell.value
+        moved = copy.deepcopy(TREE["children"][0])
+        moved["tube_points"][0]["time"] = 0.6
+        shell.session.stage([PatchOp(D, "replace", T0, moved)])
+        await _settled(lambda: _one(user, f"{T0}:tube_points:0:time").value == 0.6)
+        shell.session.discard()
+        await _settled(lambda: _one(user, f"{T0}:tube_points:0:time").value == loaded)
+        assert loaded != 0.6
+
+
+async def test_a_card_redraws_for_a_window_or_a_baseline_that_moved(shell):
+    """Both ride in the figure — a window shades the plot, a baseline is the
+    reference the leaf is drawn against — and neither is in `params`."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        loaded = shell.session.tree_view(D)
+        for key, value in (("window", {"start": 0.2, "end": 0.8}), ("against", "peer")):
+            moved = copy.deepcopy(loaded)
+            leaf = next(n for n in leaves_of(moved) if str(n["path"]) == T0)
+            leaf[key] = value
+            assert card.signature(moved) != card.signature(loaded), key
+
+
+async def test_focus_closes_an_editor_on_a_card_it_hides(shell):
+    """An editor nobody can see is no editor — and it would go on staging
+    edits from drags on a plot that is not on screen."""
+    _stage_tree(shell, A, TWO_RANGES)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        with page.client:
+            page.open_criterion(T1)  # y's, on card 1
+        assert page.open == (1, T1)
+        with page.client:
+            page.focus(0)
+        assert page.open is None
+        assert page.cards[1].editor is None
+        assert page.cards[1].card.visible is False
+
+
+async def test_focus_draws_a_card_that_was_never_shown(shell):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.cards[1].plot is None
+        with page.client:
+            page.focus(1)
+        assert page.cards[1].plot is not None
+
+
+async def test_a_plot_that_could_not_draw_is_retried_by_the_next_sync(
+    shell, monkeypatch
+):
+    """Only a row opening or Focus asked a failed card again: a result file
+    being rewritten under `show()` left the error sitting there through
+    every later event. The card remembers it was asked to draw."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        real = shell.session.plot_figure
+        boom = {"on": True}
+
+        def flaky(*a, **k):
+            if boom["on"]:
+                raise RuntimeError("result file is being rewritten")
+            return real(*a, **k)
+
+        monkeypatch.setattr(shell.session, "plot_figure", flaky)
+        with page.client:
+            page.cards[0].show()
+        assert page.cards[0].plot is None
+        with page.client:  # still failing: ONE label, never a stack of them
+            page.handle({"event": "job", "state": "started"})
+        slot = page.cards[0].slot.default_slot.children
+        assert [c.text for c in slot] == [
+            "RuntimeError: result file is being rewritten"
+        ]
+        boom["on"] = False
+        with page.client:
+            page.handle({"event": "job", "state": "finished"})
+        assert page.cards[0].plot is not None
+        assert page.cards[1].plot is None  # a card nobody asked for stays a slot
+
+
+async def test_only_a_job_that_moved_the_data_re_sends_the_plots(shell):
+    """Decision 10 is a FINISHED job; the rest of a Rerun's states move no
+    trajectory. Forcing on every one of them re-sent every drawn plot five
+    times per Rerun (the 3b review)."""
+    from dstf.authoring.session import RunningJob
+
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.cards[0].show()
+        sent = _counted(page.cards[0])
+        job = RunningJob(label="rerun", models=frozenset({A}))
+        for state in ("started", "artifact"):
+            with page.client:
+                page.handle({"event": "job", "state": state, "job": job})
+        assert sent[0] == 0
+        for state in ("written", "finished", "failed"):
+            with page.client:
+                page.handle({"event": "job", "state": state, "job": job})
+        assert sent[0] == 3
+
+
+async def test_a_row_click_reads_the_tree_once_however_many_plots_are_drawn(shell):
+    """`_redraw_moved`, `show` and the signature each read `tree_view` for
+    themselves: one row click on a twelve-plot page cost fourteen reads."""
+    shell.session.stage([PatchOp(A, "add", "/plots", [_plot("x")] * 12)])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        with page.client:
+            for card in page.cards:
+                card.show()
+        calls = [0]
+        real = shell.session.tree_view
+
+        def counting(model_id):
+            calls[0] += 1
+            return real(model_id)
+
+        shell.session.tree_view = counting
+        with page.client:
+            page.open_criterion(T0, 0)
+        opened = calls[0]
+        with page.client:
+            page.close_editor()
+        assert opened <= 2, opened
+        assert calls[0] - opened <= 2, calls[0] - opened
+
+
+async def test_a_page_whose_test_is_gone_says_so_instead_of_raising(
+    shell, tmp_path, caplog
+):
+    """An `OpenProject` outcome swaps the library under an open page: every
+    read below `sync` raised, the page kept showing the old test's cards,
+    and every event logged a traceback."""
+    from test_session import _two_var_project
+
+    other = tmp_path / "other"
+    other.mkdir()
+    cfg2, work2 = _two_var_project(other)
+    spec_path = cfg2.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    spec["tests"] = [t for t in spec["tests"] if t["model"] != A]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        with page.client:
+            page.cards[0].show()
+        with caplog.at_level(logging.ERROR, logger="dstf"):
+            shell.session.open(cfg2, work_dir=work2)
+            await _settled(lambda: page.gone)
+            shell.session.apply(Artifact(paths=[], label="probe"))
+            await asyncio.sleep(0.3)
+        assert [r for r in caplog.records if "a page failed" in r.getMessage()] == []
+        assert page.cards == [] and _none(user, "plot-slot:0")
+        assert _one(user, "gone").text == f"{A} is not a test of this project"
+        assert _none(user, "tree:summary")
+
+
+async def test_a_closed_session_leaves_the_page_saying_so(shell, caplog):
+    """`Session.close()` emits a `spec` naming NO model: a page that read an
+    empty `models` as "not mine" never heard, and the next job event raised
+    "no project is open"."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with caplog.at_level(logging.ERROR, logger="dstf"):
+            shell.session.close()
+            await _settled(lambda: page.gone)
+            with page.client:
+                page.handle({"event": "job", "state": "finished"})
+        assert [r for r in caplog.records if "a page failed" in r.getMessage()] == []
+        assert _one(user, "gone").text == f"{A} is not a test of this project"
+
+
+async def test_a_test_that_comes_back_is_drawn_again(shell, tmp_path):
+    """The page is not dead: reopening a project that HAS the test rebuilds
+    it from the sentence."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        shell.session.close()
+        await _settled(lambda: page.gone)
+        cfg, work = _two_var_project(tmp_path / "again")
+        shell.session.open(cfg, work_dir=work)
+        await _settled(lambda: not page.gone)
+        assert [c.resolved.series for c in page.cards] == [("x",), ("y",)]
+        assert _none(user, "gone")
+
+
+async def test_a_raising_rebuild_is_tried_again_by_the_next_sync(
+    shell, monkeypatch, caplog
+):
+    """The new shape was recorded BEFORE the rebuild ran: a raise inside it
+    left the page showing the old cards with the NEW shape on record, and
+    no later sync ever rebuilt it."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        real = page.rebuild
+        boom = {"on": True}
+
+        def flaky(view):
+            if boom["on"]:
+                raise RuntimeError("the layout moved under the rebuild")
+            real(view)
+
+        monkeypatch.setattr(page, "rebuild", flaky)
+        with caplog.at_level(logging.ERROR, logger="dstf"):
+            shell.session.stage([PatchOp(A, "add", "/plots", [_plot("x")])])
+            await asyncio.sleep(0.4)
+        assert len(page.cards) == 2  # every try raised; the old cards stand
+        boom["on"] = False
+        with page.client:
+            page.sync()
+        assert [c.resolved.series for c in page.cards] == [("x",)]
 
 
 async def test_a_jump_to_a_criterion_on_no_plot_says_so(shell, monkeypatch):

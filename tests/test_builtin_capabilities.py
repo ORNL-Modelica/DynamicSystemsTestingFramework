@@ -171,6 +171,13 @@ async def test_a_list_field_takes_its_own_line_of_the_editors_row(session):
             if isinstance(e, ui.textarea) and e.props.get("label") == "Control points"
         ]
         assert "dstf-field-wide" in points.classes
+        # In SOURCE order it sits between two numbers ("Min width" before,
+        # "Interpolation" after), which broke the row into three lines. The
+        # stylesheet is what puts it last of the row.
+        assert _labels(row).index("Control points") < len(_labels(row)) - 1
+        from dstf.authoring.shell.style import STYLE
+
+        assert ".dstf-fields .dstf-field-wide { order: 1; }" in STYLE
 
 
 def test_edit_criteria_is_greyed_while_the_test_is_locked(session):

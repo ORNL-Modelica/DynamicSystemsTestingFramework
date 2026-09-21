@@ -84,6 +84,10 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-fields { row-gap: 8px; }
 .dstf-form { display: contents; }
 .dstf-field { min-width: 140px; }
+/* `order`, not source order: a tube's "Control points" is declared in the
+   MIDDLE of its mode form, and a full-width box there broke the row into
+   three lines with two single-line fields stranded below it. */
+.dstf-fields .dstf-field-wide { order: 1; }
 .dstf-field-wide { width: 100%; }
 /* Focus (board 5A): "Showing 1 of N plots: <name>" and the way back to all
    of them, on the accent tint so the page says at a glance that what is

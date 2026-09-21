@@ -558,6 +558,40 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         idle = page.evaluate(READ_LINE, MAX_LINE)
         assert idle["drawn"] is not None and abs(idle["drawn"] - 2.0) < 0.02, idle
 
+        # 5d. Adding a criterion from a variable's footer changes the tree's
+        #     SHAPE, which rebuilds every card. The slots are NEW elements,
+        #     so the page's IntersectionObserver has to be told about them
+        #     or nothing below the fold ever draws again — and the rebuild
+        #     must not throw the page back to the top.
+        page.evaluate("() => window.scrollTo(0, 500)")
+        page.wait_for_timeout(400)
+        drawn = page.locator(".js-plotly-plot").count()
+        assert drawn < 7, drawn  # something below is still a slot
+        rows = page.locator(".dstf-crit").count()
+        before_scroll = page.evaluate("() => window.scrollY")
+        assert before_scroll > 0, before_scroll
+        page.locator(".dstf-plot").nth(1).get_by_role(
+            "button", name="Add a criterion for y"
+        ).click()
+        apply_add = page.get_by_role("button", name="apply add")
+        expect(apply_add).to_be_visible(timeout=EXPECT_TIMEOUT)
+        apply_add.click()
+        expect(page.locator(".dstf-crit")).not_to_have_count(
+            rows, timeout=EXPECT_TIMEOUT
+        )
+        page.wait_for_timeout(400)
+        assert page.evaluate("() => window.scrollY") > 0, "the rebuild scrolled to top"
+        for _ in range(40):
+            if page.evaluate(
+                "() => window.scrollY + window.innerHeight"
+                " >= document.documentElement.scrollHeight - 2"
+            ):
+                break
+            page.mouse.move(VIEWPORT["width"] / 2, VIEWPORT["height"] / 2)
+            page.mouse.wheel(0, 600)
+            page.wait_for_timeout(200)
+        expect(page.locator(".js-plotly-plot")).to_have_count(7, timeout=EXPECT_TIMEOUT)
+
         # 6. Focus shows one plot of seven, and the bar is the way back.
         page.evaluate("() => window.scrollTo(0, 0)")
         page.locator(".dstf-plot").first.get_by_role("button", name="Focus").click()

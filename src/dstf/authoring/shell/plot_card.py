@@ -17,7 +17,7 @@ import json
 import logging
 from collections.abc import Sequence
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
@@ -53,6 +53,20 @@ _SIGNED = (
     "criterion",
     "error",
 )
+
+#: What the OPEN editor's fields were built from: the leaf at the open path,
+#: as the page's tree view showed it. Its verdict is not in it — a rerun
+#: changes no field — and nothing else in the document is either: comparing
+#: the whole document's pending ops meant an edit to ANOTHER model, followed
+#: by any `job` event, rebuilt this editor and threw away a half-typed table
+#: row; and a combinator edit that moved no leaf rebuilt it for nothing (the
+#: 3b review).
+_EDITED = ("metric", "variable", "params", "window", "against", "advisory")
+
+#: "Not read yet" — `None` cannot mean it: a test with nothing scored has a
+#: `tree_view` of None, and a card that read it for itself cost one read per
+#: shown card on every row click (the 3b review).
+UNREAD: Any = object()
 
 
 def worst(statuses: list[str]) -> str:
@@ -129,10 +143,13 @@ class PlotCard:
         self.editor: InlineHost | None = None  # the open criterion's, if it is here
         self.open_path: str | None = None
         self._drawn: str | None = None  # the signature of what the plot shows
+        #: Whether this card has been asked to draw. A plot that raised is
+        #: retried on the next sync, and only on a card somebody wanted.
+        self.wanted = False
         #: Stamped on every figure this card sends; see `_figure`.
         self._revision = 0
-        #: The Session's pending ops as of this editor's last build (`paint`).
-        self._staged: tuple = ()
+        #: The leaf the open editor was built from (`_EDITED`).
+        self._edited: tuple | None = None
         model = page.model_id
         known = set(tracked)
         #: This plot's TRACKED series — the ones that carry criteria rows and
@@ -213,6 +230,29 @@ class PlotCard:
     def _leaves(view: dict | None, variable: str) -> list[dict]:
         return [leaf for leaf in leaves_of(view) if leaf.get("variable") == variable]
 
+    def _view(self, view: Any = UNREAD) -> dict | None:
+        """The page's read of this sync, or one of this card's own when it
+        was not given one."""
+        if view is UNREAD:
+            return self.page.shell.session.tree_view(self.page.model_id)
+        return view
+
+    def _edited_now(self, view: dict | None) -> tuple | None:
+        """The leaf under the open editor, as ``view`` shows it — what the
+        editor's fields say. ``None`` when no editor is open, or when the
+        leaf it was opened on is no longer in the tree (a shape change,
+        which rebuilds the cards anyway)."""
+        if self.open_path is None:
+            return None
+        leaf = next(
+            (n for n in leaves_of(view) if str(n["path"]) == self.open_path), None
+        )
+        if leaf is None:
+            return None
+        return tuple(
+            json.dumps(leaf.get(key), sort_keys=True, default=str) for key in _EDITED
+        )
+
     def paint(self, view: dict | None) -> None:
         """Pills, rows and footers in place, from the page's one `tree_view`
         read: a verdict that flips must not cost the card it sits in."""
@@ -229,13 +269,14 @@ class PlotCard:
             # job's lock comes and goes without the shape moving).
             row.host.follow()
         if self.editor is not None:
-            if self._staged != self._pending_now():
+            edited = self._edited_now(view)
+            if edited != self._edited:
                 # The leaf under the open editor moved by an edit staged
                 # ELSEWHERE — a Discard, a Save, another node's controls.
                 # The fields kept showing the value that edit undid, and the
                 # next keystroke staged it straight back (the Task 6 review).
                 self.editor.build()
-                self._staged = self._pending_now()
+                self._edited = edited
             else:
                 # The editor is not rebuilt while it is open, so a lock that
                 # greys its panels has to reach them here.
@@ -264,12 +305,11 @@ class PlotCard:
             "layout": {**figure["layout"], "editrevision": self._revision},
         }
 
-    def _pending_now(self) -> tuple:
-        return tuple(self.page.shell.session.spec.pending)
-
-    def show(self) -> None:
+    def show(self, view: Any = UNREAD) -> None:
         """Draw the plot, once: the browser said this slot is near the
-        viewport (or a test did)."""
+        viewport (or a test did). The card remembers it was asked, so a try
+        that raised is retried by the next sync."""
+        self.wanted = True
         if self.plot is not None:
             return
         # Whatever a previous try left: `show()` is called again on every
@@ -285,26 +325,38 @@ class PlotCard:
                 return
             self.plot = ui.plotly(figure).classes("w-full").style("height: 320px")
         self.hook.attach(self.plot)
-        self._drawn = self.signature()
+        self._drawn = self.signature(view)
 
-    def redraw(self, view: dict | None = None) -> None:
+    def _retried(self, view: Any) -> bool:
+        """A card with no plot: retry the draw if somebody asked for one.
+        Nothing else asked again — a result file being rewritten under a
+        `show()` left the card showing its error until a row opened or
+        Focus landed on it (the 3b review)."""
+        if self.plot is not None:
+            return False
+        if self.wanted:
+            self.show(view)
+        return True
+
+    def redraw(self, view: Any = UNREAD) -> None:
         """`Plotly.react` on the same node — the figure's `config` never
         depends on what is being edited, so the zoom survives. Also the
         hook's snap-back after every drag, which is the ONE redraw that is
         not decided by the signature: a refused drag moved nothing, and the
         picture still has to go back. ``view`` is the page's read of this
         sync, so a forced redraw costs no read of its own."""
-        if self.plot is not None:
-            self.plot.update_figure(self._figure())
-            self._drawn = self.signature(view)
+        if self._retried(view):
+            return
+        assert self.plot is not None
+        self.plot.update_figure(self._figure())
+        self._drawn = self.signature(view)
 
-    def signature(self, view: dict | None = None) -> str:
+    def signature(self, view: Any = UNREAD) -> str:
         """What this plot draws that an edit can move: which criterion is
         open — its rings, and only its — and every leaf on this plot's
         series. Comparing it to what was last sent is the ONE thing that
         decides a redraw."""
-        if view is None:
-            view = self.page.shell.session.tree_view(self.page.model_id)
+        view = self._view(view)
         leaves = [
             [leaf.get("path"), *(leaf.get(key) for key in _SIGNED)]
             for leaf in leaves_of(view)
@@ -316,16 +368,18 @@ class PlotCard:
             default=str,
         )
 
-    def redraw_if_moved(self, view: dict | None = None) -> None:
+    def redraw_if_moved(self, view: Any = UNREAD) -> None:
         """Re-send the figure when what it draws has moved, and only then: a
         plot nobody's edit touched must not be re-sent (the cost the 3b
         review measured is elements on the wire, not a figure assembled)."""
-        if self.plot is not None and self.signature(view) != self._drawn:
+        if self._retried(view):
+            return
+        if self.signature(view) != self._drawn:
             self.redraw(view)
 
     # -- the one open criterion's editor -------------------------------------------
 
-    def open_editor(self, path: str) -> None:
+    def open_editor(self, path: str, view: Any = UNREAD) -> None:
         """The editor, below its row and at the plot's width (board 2A):
         one hint line and Done, then every capability placed at CRITERION,
         stacked without headings — the row above already names the
@@ -358,7 +412,7 @@ class PlotCard:
                 on_applied=self._applied,
             )
             self.editor.build()
-        self._staged = self._pending_now()
+        self._edited = self._edited_now(self._view(view))
 
     def close_editor(self) -> None:
         """The editor goes, and its subscriptions with it: a panel nobody
@@ -369,7 +423,7 @@ class PlotCard:
         if row is not None:
             row.slot.clear()
             row.row.classes(remove="dstf-crit-open")
-        self.editor, self.open_path = None, None
+        self.editor, self.open_path, self._edited = None, None, None
 
     def _applied(self, name: str) -> None:
         """What a successful submit from the editor leaves to do. A drag
@@ -383,9 +437,12 @@ class PlotCard:
             self.editor.build()
         else:
             self.editor.build(skip=name)
-        # Recorded AFTER this apply and before its events reach the page, so
-        # a panel's own edit is not read as one staged elsewhere.
-        self._staged = self._pending_now()
+        # Recorded AFTER this apply and before its events reach the page,
+        # from a FRESH tree view, so a panel's own edit is not read as one
+        # staged elsewhere — and a first edit of an unmaterialized tree,
+        # which stages the materialization AND the replace, is one edit
+        # here rather than two.
+        self._edited = self._edited_now(self._view())
 
     def dispose(self) -> None:
         """Give up this card's handlers before it is dropped: a rebuilt page
