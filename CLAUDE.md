@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -16,11 +16,13 @@
 DynamicSystemsTestingFramework/
 ├── src/dstf/                     # Python package (src layout)
 │   ├── cli/                      # CLI package: run, compare, discover, manifest, spec-update,
-│   │                             #      companion, soft-check, import-baseline, export-schema
+│   │                             #      companion, soft-check, import-baseline, export-schema,
+│   │                             #      migrate-variable-names (one-shot; deleted at the v1.0 tag)
 │   ├── config.py                 # Config dataclass, path resolution, testing.json loading, auto-detect backend
 │   ├── pipeline.py               # run_pipeline — the run as a library callable; cmd_run is its CLI wrapper
 │   ├── discovery/                # Recognizer registry, JSON recognizer, test_spec parse, plots (the per-test layout key), RFC 6902 patch_apply,
 │   │                             #      patch_envelope (both envelope forms), spec_update (the shared read-modify-write),
+│   │                             #      unit_tests.py (the ONE place a UnitTests variable is named: <instance>.x[i] + its expression),
 │   │                             #      scan_cache (the tool's scan cache under $XDG_CACHE_HOME/dstf/scan/)
 │   ├── backends/                 # Backend ABC + Dymola / FMPy / OpenModelica / Julia / Python backends
 │   │   ├── common/               # Shared: mat_reader, tree-kill, result variables, JSON-driver base, result_files (any variable of a result file)
@@ -28,7 +30,8 @@ DynamicSystemsTestingFramework/
 │   ├── comparison/               # ComparisonMode registry, MetricTree spec/eval, validator, tree_spec helpers,
 │   │                             #      mode_schema (derive_schema — JSON-Schema export + the tool's forms),
 │   │                             #      handles.py (edit_handle — a dragged handle back to a raw leaf)
-│   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path)
+│   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path),
+│   │                             #      migrate_names.py (the `migrate-variable-names` rewrite; deleted at the v1.0 tag)
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
 │   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages, tree_card + plot_card,
 │   │                             #      the header, actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
@@ -107,6 +110,12 @@ uv run dstf --config testing.json companion add <model> <name> <path>
 uv run dstf --config testing.json soft-check list <model>
 uv run dstf --config testing.json import-baseline <model> <name> <source>   # soft_checks only; companions via companion add
 
+# One-shot migration (D132): stored baselines and test_spec.json keys move from a
+# UnitTests variable's expression text to its result-file name (`unitTests.x[i]`).
+# Dry-run by default; DELETED AT THE v1.0 TAG.
+uv run dstf --config testing.json migrate-variable-names            # report only
+uv run dstf --config testing.json migrate-variable-names --apply
+
 # Manifest / schema
 uv run dstf --config testing.json manifest dump
 uv run dstf --config testing.json manifest cleanup [--orphans] [--apply]   # dry-run by default
@@ -182,6 +191,8 @@ Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-ch
 
 Simulation parameters live under `simulation`, comparison settings under `comparison`, optional explicit scoring tree under `metrics`, optional plot layout under `plots` (`[{"kind": "time", "series": [{"var": ...}]}]` — read by the report and the tool, ignored by scoring; absent means one plot per tracked variable; a series may name any variable of the result file, tracked or not). Minimal entries need only `model` and `variables`. **Two-layer contract**: the model's `experiment(...)` annotation provides defaults; any field set in `simulation.*` overrides it. Recognized annotation fields: `StopTime`, `Tolerance`, `__Dymola_Algorithm` (→ `method`), `NumberOfIntervals`, `Interval` (→ `output_interval`). `StartTime` is **not** honored — every backend assumes `t=0`. Full contract details in `docs/usage.md`.
 
+**A variable is named by its RESULT FILE** (D132). A `comparison.variable_overrides` key, a `metrics` leaf's `variable` and a `plots` series' `var` all name that: for a variable of the Modelica `UnitTests` component it is `<instance>.x[i]` — `unitTests.x[1]` — not the text the model wrote in `x={...}`. That text is the variable's **expression**: recorded beside the name in the reference JSON, shown as the display label on the report and in `dstf author`, soft-checked on compare, and a key of nothing. A spec written before this names expressions; `dstf migrate-variable-names` rewrites those keys.
+
 ```json
 {
   "tests": [
@@ -222,6 +233,8 @@ Per-variable override (spec) > per-variable override (reference JSON) > per-test
 - **`Config`** (`config.py`) — resolves all paths from CLI args + `testing.json` + defaults; passed to backends and reporters but not to comparison functions.
 - **`TestModel`** (`discovery/test_registry.py`) — fully resolved test: model ID, simulation params, tracked variables, source, `simulate_only`, `requested_baselines`, `requested_fmu_export`.
 - **`Recognizer`** (`discovery/recognizer.py`) — registry of source-scan rules; bundled + user-declared JSON recognizers merged by `model_id`.
+- **`unit_test_variables`** (`discovery/unit_tests.py`) — the ONE place a `UnitTests` variable is named: `<instance>.x[i]` (`TestModel.unit_tests_instance`, default `unitTests`) with the expression from `x_expressions` beside it. Every backend and the OpenModelica variable filter ask it; nothing spells `unitTests.x[` itself (D132).
+- **`display_label`** / **`distinct_labels`** (`backends/types.py`) — the one label rule: what a person reads for a variable is `expression or name`, with the name beside it (`a.Q (unitTests.x[1])`) when two variables shown together share an expression. `VariableResult.expression` and `VariableComparison.expression` carry it; nothing is keyed by it.
 - **`Backend`** (`backends/base.py`) — abstract interface; backends self-register via `@register` and declare `Capability` flags (`BATCH_FALLBACK`, `FMU_EXPORT`, ...). Concrete backends: `DymolaBackend` / `PersistentDymolaBackend`, `FmpyBackend`, `OpenModelicaBackend` / `PersistentOpenModelicaBackend`, `JuliaBackend` / `PersistentJuliaBackend`, `PythonBackend`.
 - **`Worker`** + **`PersistentBackendBase`** (`backends/persistent.py`) — `Worker` ABC declares the long-lived-process contract every persistent backend must satisfy. It is itself a template-method class: `run_test_with_timeout` / `close` / `_kill_tracked_pids` (watchdog thread, timeout kill, process-tree kill incl. orphan snapshot, disk rescue, restart-accounting flags) are implemented once in the base. A backend supplies abstract `start` / `is_alive`, the `run_test` hook, and optionally `_evaluate_from_disk` / `_detach_interface` + `_shutdown_interface` / `_quiet` / the `kill_name_hint`, `timeout_kill_grace`, `exec_thread_prefix` class attrs. `PersistentBackendBase` is a template-method class owning the worker-pool orchestration (parallel startup, shared queue + sentinel dispatch, per-worker restart on death). New persistent backends supply a `Worker` subclass + a small set of hooks (`worker_cls`, `backend_label`, `make_worker`, `setup_before_workers`, `preflight`) — see [docs/extensibility.md](docs/extensibility.md) §3 "Persistent-worker contract".
 - **`ReferenceStore`** (`storage/reference_store.py`; role CRUD in `storage/roles.py`) — primary refs + soft_checks + companions; `RefIndex` (`storage/ref_index.py`) built in-memory from scanning.

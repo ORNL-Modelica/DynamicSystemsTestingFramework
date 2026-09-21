@@ -82,7 +82,10 @@ src/dstf/
 │   ├── patch_envelope.py     # ModelPatch + parse/build for the patch envelope (both forms)
 │   ├── spec_update.py        # Read-modify-write of the spec: entry lookup, implicit-tree
 │   │                         #   materialization, tree validation, apply_validated_patches
-│   ├── scan_cache.py         # The source scan cached under $XDG_CACHE_HOME/dstf/scan/ (the authoring tool)
+│   ├── unit_tests.py         # unit_test_variables — the ONE place a UnitTests variable is named
+│   │                         #   (<instance>.x[i]) and paired with the expression the model wrote (D132)
+│   ├── scan_cache.py         # The source scan cached under $XDG_CACHE_HOME/dstf/scan/ (the authoring tool);
+│   │                         #   keyed by a DIGEST of the discovery modules' source, not a hand-bumped constant
 │   └── test_registry.py      # TestModel dataclass, discover_tests() merges all sources
 ├── backends/
 │   ├── __init__.py           # Backend registry: @register decorator, get_backend() factory
@@ -111,6 +114,8 @@ src/dstf/
 │   ├── ref_index.py          # RefIndex + atomic text writes
 │   ├── roles.py              # soft_check/companion CRUD mixin
 │   ├── accept.py             # accept_run_results — the one accept path, with the aborted-run refusal
+│   ├── migrate_names.py      # `dstf migrate-variable-names` — baselines and spec keys move from a
+│   │                         #   UnitTests expression to its result-file name (D132; deleted at the v1.0 tag)
 │   └── reference_store.py    # ReferenceStore: primary CRUD + accept path
 ├── authoring/
 │   ├── session.py            # Session: open / rescore / view / stage / save / discard / export / apply
@@ -240,7 +245,7 @@ reporters render TestComparison → console / JUnit / HTML / plots
 | `Config` | `config.py` | All resolved paths, backend settings, tolerances |
 | `TestModel` | `discovery/test_registry.py` | One test: model ID, sim params, tracked variables, source |
 | `TestResult` | `backends/types.py` | Simulation output: success flag, variables, diagnostics, statistics |
-| `VariableResult` | `backends/types.py` | One variable's time series (time + values arrays) |
+| `VariableResult` | `backends/types.py` | One variable's time series (time + values arrays), its result-file `name` and its optional `expression` label (D132) |
 | `TestComparison` | `comparison/comparator.py` | Comparison result: pass/fail, per-variable NRMSE, warnings |
 | `ReferenceStore` | `storage/reference_store.py` | CRUD for reference JSON files via RefIndex |
 | `RefIndex` | `storage/ref_index.py` | In-memory index mapping model IDs ↔ numeric IDs (built by scanning ref files) |
@@ -271,9 +276,18 @@ reporters render TestComparison → console / JUnit / HTML / plots
   ],
   "n_vars": 3,
   "time": [0.0, 0.1, ...],
-  "variables": [{"index": 1, "name": "pipe.T[1]", "values": [...]}]
+  "variables": [{"index": 1, "name": "pipe.T[1]", "expression": "", "values": [...]}]
 }
 ```
+
+A variable entry is `{"index", "name", "expression", "values"}` in that order
+(D132). `name` is the name the RESULT FILE gives the variable —
+`unitTests.x[1]` for a variable of the Modelica `UnitTests` component — and is
+what every key addresses. `expression` is the text the model wrote for it in
+`x={...}`, a display label and never a key; it is always written, `""`
+included, so an entry without the field is one no writer of this version made.
+A compare where both sides record an expression and they differ raises a
+structural warning, not a failure.
 
 The `comparison` section is optional. When present, it stores the comparison tolerances that were active when the baseline was accepted, so tolerances travel with the reference data. `variable_overrides` maps variable names to per-variable settings including `tolerance` and optional tube comparison parameters (`mode`, `tube_width_mode`, `tube_abs`/`tube_rel`, `tube_points`, `tube_interpolation`).
 

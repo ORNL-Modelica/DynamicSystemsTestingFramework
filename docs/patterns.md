@@ -83,12 +83,23 @@
 - Built-in backends are lazy-imported on first use via `_import_builtin_backend()` — avoids loading all backends at startup
 - `DymolaBackend` extracts Dymola-specific settings into an immutable `DymolaConfig` dataclass at init
 
-### Variable naming from UnitTests expressions
-- Simple case (`x={a, b, c}`): parsed into individual expression names `["a", "b", "c"]`
-- Complex case (`x=cat(1, eta, lambda)`): can't decompose without knowing array sizes at parse time
-- When `len(x_expressions) != n_vars`, all variables fall back to `x[1]`...`x[n]` — avoids misleading names where first var gets the raw expression and the rest get generic names
-- Comparator sanitizes names from reference JSON: any name containing newlines or starting with `cat(` is replaced with `x[index]`
-- The raw expression is preserved in `TestModel.x_raw` for reference
+### Variable naming from UnitTests expressions (D132)
+- A variable's NAME is the one its result file gives it. For the `UnitTests`
+  component that is positional: `<instance>.x[i]` — `unitTests.x[1]`,
+  `unitTests.x[2]`, … Everything keys off it.
+- `discovery/unit_tests.py::unit_test_variables(test)` is the ONE place those
+  names are built. Nothing else spells `unitTests.x[`.
+- The text the model wrote is the variable's EXPRESSION, a display label:
+  `x={a, b, c}` gives `["a", "b", "c"]`, one per index; a single expression
+  covering several (`x=cat(1, eta, lambda)`, `x=x`) gives `expr[i]` per index;
+  a count that matches neither gives `""`.
+- Expressions are normalized on parse (`mo_parser.normalize_expression`), so a
+  `.mo` source that wrapped a line does not read as a changed expression.
+- The expression rides beside the name on `VariableResult`, in the reference
+  JSON entry and on `VariableComparison`. It is soft-checked on compare — a
+  changed expression under the same name is a warning, never a failure — and
+  it is a key of nothing, except overlay matching (name first, then
+  expression: another source names the quantity its own way).
 
 ### Config resolution order
 - CLI args > `testing.json` file > defaults

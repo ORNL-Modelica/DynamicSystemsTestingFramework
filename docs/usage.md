@@ -162,14 +162,20 @@ the authoring tool draw for that test. Scoring ignores it.
 - **Absent** means one plot per tracked variable. `"plots": []` means no
   plots. `null` is refused.
 - A series names **one variable of the result**, tracked or not (`pump.N`
-  above is plot only: no criterion scores it). A pattern (`*`,
+  above is plot only: no criterion scores it) — the name its result file
+  gives it, so a variable of the `UnitTests` component is `unitTests.x[i]`
+  and not the text the model wrote for it (see "A variable's name, and its
+  expression" below). A pattern (`*`,
   `?`) is refused; square brackets are part of a name. A variable may be on
   several plots, once per plot.
 - `kind` is `"time"`, the only kind today, and is always written. Unknown keys
   inside a plot or a series are refused, so a typo is loud.
-- Indexed names that differ in their last integer index (`pipe.T[1]`,
+- Indexed LABELS that differ in their last integer index (`pipe.T[1]`,
   `pipe.T[6]`, …) draw as one family: one hue ramped light to dark by index,
-  one legend entry (`pipe.T[1:5:11]`).
+  one legend entry (`pipe.T[1:5:11]`). The fold is over what a person reads
+  and only over plain indexed names, negated aliases and `der(...)` of one:
+  a reduction over an array (`sum(core.Qs[6, :])`) is a quantity of its own,
+  so two of them are two families.
 - A plot of several series shows no overlays and no error traces; both belong
   to a plot of one variable.
 - A series the result does not hold draws nothing and the plot says
@@ -178,6 +184,60 @@ the authoring tool draw for that test. Scoring ignores it.
   OpenModelica's and FMPy's hold only the tracked ones.
 
 **Components.UnitTests** (the in-source `n=N, x={...}` block) is a **discovery marker** carrying the variable list only. It deliberately does not carry simulation parameters — those live in the annotation (model-author-facing, editor-honored) or in `test_spec.json` (test-author-facing, override-only). Keeping the third layer out is what makes the contract teachable.
+
+#### A variable's name, and its expression
+
+A tracked variable is named by the **result file**, and everything that
+addresses one — a `comparison.variable_overrides` key, a `metrics` leaf's
+`variable`, a `plots` series' `var`, a baseline entry, the element ids on the
+report page — uses that name.
+
+For a variable of the `UnitTests` component the result file names it by its
+POSITION in the component's array: `unitTests.x[1]`, `unitTests.x[2]`, … (the
+instance name is whatever the model called the component). The text the model
+wrote inside `x={...}` — `pipe.T[1]`, `cat(1, eta, lambda)[2]` — is the
+variable's **expression**. It is a label:
+
+- stored beside the name in the reference JSON (`{"index", "name",
+  "expression", "values"}`, always written, `""` included);
+- what the console, JUnit, the report page and `dstf author` READ for that
+  variable. The report and the tool put the name beside it, muted, where the
+  two differ; the console, JUnit and the interactive review print
+  `expression (name)` instead, because a line of CI output is read with no
+  plot beside it. Where two variables of one test carry the SAME expression
+  — `x={a.Q, a.Q}` is legal — every surface reads `expression (name)` so
+  they stay tellable apart;
+- soft-checked on every compare: if the baseline recorded one expression and
+  this run measures another, the test gains a structural warning naming both
+  — never a failure. That is what makes the positional name safe.
+
+It is a key of nothing. The one exception is overlay matching: a companion or
+soft-check overlay is matched by name and only then by expression, because
+another tool's result file cannot be expected to spell a positional name (see
+`docs/decisions.md` D132).
+
+A `test_spec.json` written before this change names expressions where it now
+needs names, and a baseline accepted before it is stored under the expression
+too. `dstf migrate-variable-names` rewrites both:
+
+```bash
+# Report what would change — nothing is written
+uv run dstf --config testing.json migrate-variable-names
+
+# Write it
+uv run dstf --config testing.json migrate-variable-names --apply
+```
+
+It walks every `<reference_root>/<Backend>/<os>/` partition (primary refs and
+`soft_checks/`), rewrites each UnitTests entry whose stored name matches that
+index's expression, gives every other entry the `expression` field, and
+renames the matching override keys, leaf variables and plot series in
+`test_spec.json`. A file it cannot match entirely is reported by file, index,
+stored and expected text and left untouched; the command exits 1 if anything
+was skipped, and a second `--apply` rewrites nothing. It is a one-shot
+utility, **deleted at the v1.0 tag**. Until a baseline is migrated, its
+variables read as missing baselines, and the log line says so and names this
+command.
 
 ### Scalar leaves — comparing one number
 
@@ -375,7 +435,9 @@ markup the server rendered. It shows
   the metrics emitted (a tube's band, a range's bounds, a points leaf's
   tolerance boxes, event windows, the FFT spectrum on its own axis pair, a
   scoped leaf's window as a shaded band). Zoom, hover and legend toggles are
-  live, which is how you read values off a plot;
+  live, which is how you read values off a plot. A section's heading reads
+  its variables' labels, with their result-file names muted beside it when
+  the two differ, and `data-variable` on the markup is always the name;
 - an **overlay picker** above any plot whose variable a soft_check or companion
   carries data for — the overlay traces are already in the figure, and the
   checkbox toggles their visibility;
@@ -387,7 +449,8 @@ markup the server rendered. It shows
 - the **metric tree**, with the CLI's verdict per node, a one-line criterion
   under each leaf, and the leaf's detail pairs (what was measured against what)
   — plus a summary line counting leaves passed and flagging advisory failures
-  under a `warn` wrapper;
+  under a `warn` wrapper. A leaf reads `metric · <label>`: the expression its
+  model wrote where there is one, the name otherwise;
 - statistics, diagnostics and artifact sections, and plots for diagnostic and
   no-baseline variables;
 - a **decimation banner** naming every trace the page thinned, with its full and
@@ -495,6 +558,18 @@ uv run dstf --config testing.json manifest dump
 (The reference index is rebuilt automatically on every command — there's
 no separate "rebuild" subcommand because there's nothing to rebuild.)
 
+### `migrate-variable-names` — Move stored names off expression text
+
+One-shot (D132): rewrites reference-JSON variable names and `test_spec.json`
+keys from a UnitTests variable's expression text to its result-file name.
+Dry-run by default. Full description under "A variable's name, and its
+expression" above. **Deleted at the v1.0 tag.**
+
+```bash
+uv run dstf --config testing.json migrate-variable-names
+uv run dstf --config testing.json migrate-variable-names --apply
+```
+
 ### `add` — Add test to spec
 
 Adds a model to `test_spec.json` without manually editing the file.
@@ -560,8 +635,8 @@ the first failures by name, each a button that jumps to its criterion — and
 "Show tree" opens it to a row per node. Then come the test's plots, one per
 tracked variable unless the entry's `plots` key says otherwise, each drawn as
 it scrolls into view. Under each plot are the criteria rows of the variables it
-draws: a verdict pill, `metric · variable`, the CLI's criterion line, and that
-node's `+` / wrap / `−`. Clicking a row opens that criterion's editor below it,
+draws: a verdict pill, `metric · <the variable's label>`, the CLI's criterion
+line, and that node's `+` / wrap / `−`. Clicking a row opens that criterion's editor below it,
 one at a time, with the plot above as its editing surface — drag a ring to move
 a handle, or edit the fields; every change is staged, and Save writes them.
 Under the plot sits "Add a criterion for x" per tracked series, and Focus on
@@ -771,7 +846,7 @@ ReferenceResults/
 
 References are partitioned by backend and OS because different solvers and platforms produce numerically different results. No manifest file is needed — each ref file contains its own `model_id`, `test_id`, `status`, `date_added`, and `last_updated`. The index is rebuilt in memory by scanning ref files at startup.
 
-Each ref file also contains simulation params, statistics, diagnostic trajectories (`CPUtime`, `EventCounter` when `OutputCPUtime := true;`), and the time/variable data.
+Each ref file also contains simulation params, statistics, diagnostic trajectories (`CPUtime`, `EventCounter` when `OutputCPUtime := true;`), and the time/variable data. A variable entry is `{"index", "name", "expression", "values"}`: the name is the result file's, the expression is the label beside it (`""` when the source wrote none), and `expression` is always written — an entry without the key was produced by a version older than that rule, which `dstf migrate-variable-names` brings forward.
 
 **Status field:** Each ref file has a `status` field:
 - `active` — normal, included in test runs

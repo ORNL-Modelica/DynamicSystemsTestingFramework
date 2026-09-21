@@ -175,6 +175,41 @@ may raise on a missing, half-written or malformed file: one test's file must
 not break a whole report. `backends/common/result_files.py` holds the three
 bundled formats (`.mat`, `result.json`, `.npz`) as name/series pairs.
 
+### The `VariableResult` contract: name vs expression
+
+Each `VariableResult` a backend produces carries two texts (D132):
+
+- **`name`** — the name the RESULT FILE gives the variable. This is the
+  identity: overrides, metric-tree leaves, `plots` series, baseline entries,
+  figure `meta.id`s, `data-variable` attributes and test markers are all
+  keyed by it. A backend never invents one and never renames a variable to
+  something more readable; a nameless `VariableResult` is a bug, and no
+  consumer falls back to the index.
+- **`expression`** (optional, `""` by default) — the text the model wrote for
+  that variable, when the source has such a text and the result file's name
+  does not carry it. Only the Modelica `UnitTests` path has one today: the
+  result file names those variables positionally (`unitTests.x[3]`), and the
+  expression is what `x={...}` said. FMPy, Julia and Python results carry
+  result-file names already, so their `expression` stays `""`.
+
+`expression` is a LABEL and is never used as a key.
+`backends/types.py::display_label(name, expression)` is the one rule for what a person reads
+(`expression or name`), and `distinct_labels` adds the name beside it
+(`a.Q (unitTests.x[1])`) when two variables shown together share one.
+Producing it is `discovery/unit_tests.py::unit_test_variables` — the one
+place a `UnitTests` variable is named — not each backend's own string
+formatting.
+
+**The one exception** is overlay matching, in
+`reporting/overlay_loader.py::attach_overlays_to_trajectories`: a variable is
+matched against an overlay by name, and only then by expression. An overlay
+is another source's data — a companion is a different library's or a
+different tool's run — and it names the quantity the way ITS result file
+does. A positional `unitTests.x[3]` is a name no other source can be expected
+to use; the expression the model wrote is the only spelling the two have in
+common. The name wins when both match, so an overlay that happens to carry
+both spellings does not get to choose which trajectory its trace belongs to.
+
 ### Persistent-worker contract
 
 If your backend can hold a loaded model in memory across tests (declares `Capability.PERSISTENT_WORKERS`), inherit from `PersistentBackendBase` (in `backends/persistent.py`) and supply a `Worker` subclass — you do **not** re-implement the dispatch loop. The template owns the orchestration; you fill in backend-specific construction and lifecycle hooks.

@@ -159,7 +159,7 @@
 - **Why**: The alternative — interpolating raw values between control points and applying modes after — creates discontinuities at mode boundaries. For example, interpolating a band value of 0.25 toward a relative value of 1.0 produces a smooth raw curve, but applying the mode stepwise causes a jump when the mode switches from band to relative. Resolve-first ensures the tube envelope is always a smooth interpolation between the user's intended bounds.
 - **Trade-offs**: The interpolated bound between two control points is a straight line in y-space, which may not match what you'd get from interpolating in width-space for a single mode. This is acceptable — mixed-mode points are inherently about defining specific bound values at specific times.
 
-## D27: Variable naming fallback for complex expressions
+## D27: Variable naming fallback for complex expressions (superseded by D132)
 
 - **What**: When a UnitTests component uses a complex expression like `cat(1, eta, lambda)` for its tracked variables, all variables fall back to `x[1]`...`x[n]` naming. The comparator also sanitizes names from stored reference JSON (newlines, `cat(` prefix).
 - **Why**: The parser can decompose simple `x={a, b, c}` into individual names, but `cat()` requires knowing array sizes at parse time (which array has how many elements). Guessing is worse than admitting we don't know. Showing `cat(1, eta, lambda)` as the first variable's name and `x[2]`...`x[n]` for the rest is misleading — the expression describes the whole array, not one element.
@@ -4294,10 +4294,12 @@ typed in survives.
 
 Both tiers draw a test's default plots by ONE rule, `discovery.plots
 .tracked_names`: what the comparison scored, in the test author's order, then
-the rest of what the loaded result tracks, each taken under the comparison's own
-`variable_label`. The report drew one section per SCORED variable and the tool
-the union, so a tracked variable no criterion covers had a plot on one tier and
-none on the other; the report page now follows the tool.
+the rest of what the loaded result tracks, each taken under its name. (It took
+the comparison's own `variable_label` when this was written; D132 deleted that
+relabelling, and the rule is unchanged apart from it.) The report drew one
+section per SCORED variable and the tool the union, so a tracked variable no
+criterion covers had a plot on one tier and none on the other; the report page
+now follows the tool.
 
 **Alternatives considered.** A `controls()` method on the capability contract,
 beside `panel()`: it makes "a node's controls" a second thing every capability
@@ -4320,3 +4322,105 @@ figure as `legendonly` traces and the legend toggles them; "Set window"
 (sub-project 4); Add series / Separate / Remove plot / Add plot, the 40 px rail
 with the Tests and Variables drawers, and array folding (3c); the running state
 (sub-projects 5 and 6).
+
+## D132 — A tracked variable has one identity: the name its result file gives it (2026-09-21)
+
+**What.** A tracked variable is keyed everywhere by the name its result file
+gives it, and the text a model wrote for it is a separate, recorded
+*expression* that is only ever a label. For a variable of the Modelica
+`UnitTests` component that name is `<instance>.x[i]` — `unitTests.x[3]` — and
+the text parsed out of `x={...}` (`pipe.T[1]`, `cat(1, y, y1)[2]`) becomes the
+expression: stored beside the name in the reference JSON, shown as the display
+label on both tiers, and soft-checked on every compare. Overrides, tree
+leaves, `plots` series, baseline entries, figure ids, DOM attributes and test
+markers are all the name. `backends/types.py::display_label(name, expression)`
+is the one label rule, and `distinct_labels` is what keeps two variables that
+share an expression tellable apart.
+
+**Why.** Two layers used to rename a variable behind the scoring's back:
+`backends/common/result_variables.py::extract_variables` set the name to the
+expression text (or `expr[i]`, or `x[i]`), and
+`comparison/comparator.py::variable_label` turned a name holding a newline or
+starting `cat(` into `x[N]` for scoring and display. Measured over the owner's library on 2026-09-21 —
+331 baselines, 877 variables, read-only — the stored names were 385 plain, 60
+expression text, 178 `x[i]`, 210 holding a newline (plain names whose `.mo`
+source wrapped the line: `heatTransfer.alphas[\n        1, 1]`, whitespace
+kept by the parser), and 44 starting `cat(`. A variable renamed by either
+layer could not be addressed: about 70 tests had no editable criteria tree in
+`dstf author`, because no leaf could be written against a name that only
+existed inside the comparison. One identity, decided by the source of the
+data, is what makes a criterion, an override and a baseline entry able to name
+the same thing.
+
+**Discovery and extraction.** `discovery/mo_parser.py` captures the component's
+instance name and normalizes every parsed expression
+(`normalize_expression`: whitespace runs collapse, none after an opening
+bracket or before a closing one, one space after each comma — the way a
+Dymola result name reads), so a source reformat is not a changed expression.
+`discovery/unit_tests.py::unit_test_variables(test)` is the ONE place those
+variables are named: `name = f"{instance}.x[{i}]"`, and the expression is the
+i-th when there is one per variable, `f"{the one expression}[{i}]"` when one
+covers several, else `""`. The backends and the OpenModelica variable filter
+ask it instead of spelling `unitTests.x[` themselves.
+`VariableResult.expression` and `VariableComparison.expression` carry it from
+there.
+
+**The expression is a soft check.** When a baseline entry and the run's
+variable both record a non-empty expression and they differ, the test gains a
+`StructuralWarning` — the console prints it as
+`Expression of unitTests.x[2]: a.Q -> b.Q` — through the same channel as the
+structural warnings. It never fails the test. That is
+what makes a positional name safe: the position is the key, and the check says
+when the quantity under it moved. The check runs once per (variable, baseline)
+pair a leaf actually scores, not once per leaf.
+
+**Overlay matching is the one exception.** `reporting/overlay_loader.py`
+matches a companion or a soft-check overlay by NAME and only then by
+EXPRESSION. An overlay is another source's data — the repo's example
+companions are Julia baselines naming the quantity `x` / `y` — and no other
+tool can be expected to spell a positional `unitTests.x[2]`; the expression
+the model wrote is the only spelling the two have in common. The name wins
+when both match, so an overlay carrying both spellings does not get to decide
+which trajectory its trace belongs to.
+
+**The seam, and its coordination.** Reference-JSON variable names and the
+`test_spec.json` keys that named an expression both changed, and stored
+baselines are a surface other trees depend on. There is NO compatibility
+read: an un-migrated baseline meets the existing "the baseline holds no
+variable named … — treating as missing baseline" path, whose message gains a
+clause naming the command. `dstf migrate-variable-names` is the coordination
+— dry-run by default, `--apply` writes; it walks every
+`<reference_root>/<Backend>/<os>/` partition (primary refs and soft_checks),
+rewrites a UnitTests entry whose stored name normalizes to that index's
+expression, gives every other entry `"expression": ""`, and renames the
+matching `variable_overrides` keys, `metrics` leaf variables and `plots`
+series in `test_spec.json`. A file it cannot match entirely is reported and
+left untouched, and it exits 1 if anything was skipped. **It is deleted at the
+v1.0 tag**: nothing reads the old shape, so once the trees that matter have
+been migrated it is a code path nobody exercises.
+
+**Deleted.** `comparator.variable_label`; the seven `name or f"x[{index}]"`
+index fallbacks (a nameless result variable is a backend bug, not an
+invitation to score it against whatever entry sits at its index); the
+`ref_var.get("name") or ref_var.get("expression")` name fallbacks in the
+comparator and the overlay loader — nothing has written `expression`-as-a-name
+since before v1.0, and the key now means something else.
+
+**The scan cache.** `discovery/scan_cache.py` rebuilds `TestModel`s from disk,
+so a change to what a scan MEANS can make a cached entry mean something the
+current code would never have written, with no source file changed for a
+staleness check to see. Its key is no longer a hand-bumped constant alone: it
+carries a digest of the discovery modules' own source bytes
+(`json_recognizer`, `mo_parser`, `recognizer`, `test_registry`,
+`unit_tests`), because the hand-bumped version was forgotten twice — once for
+the instance name and once for expression whitespace.
+
+**Alternatives considered.** A bespoke label→name mapping table, so a baseline
+could keep its expression as a name: it makes the mapping a third thing to
+keep in step with the model and the store, and the model's own `x={...}` is
+already the mapping. Renaming only the variables whose expression is awkward
+(`cat(`, a newline): the identity would then depend on how the source happened
+to be formatted, which is exactly the coupling this removes. Reading an
+un-migrated baseline by falling back to the expression: a compatibility read
+that hides the very drift the soft check exists to report, and one the v1.0
+tag could never remove.
