@@ -65,6 +65,55 @@ def test_a_cache_from_an_older_cache_version_is_ignored(tmp_path, monkeypatch):
     assert scan_cache.load_scan(config) is None
 
 
+def test_a_cache_written_by_other_discovery_code_is_ignored(tmp_path):
+    """The DEFECT a hand-bumped version number keeps producing: the parser's
+    output changes inside one DSTF version — a comma spaced differently, an
+    instance name threaded — and a cache written before it rebuilds
+    ``TestModel``s the current code would never have written. No source file
+    changed, so nothing else can see it. The digest of the discovery code is
+    part of the cache's validity, so nobody has to remember."""
+    config = _write_lib(tmp_path)
+    path = scan_cache.store_scan(config, scan_source_tests(config))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["discovery_digest"] == scan_cache._discovery_digest()
+    data["discovery_digest"] = "0" * 16
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert scan_cache.load_scan(config) is None
+
+
+def test_the_digest_covers_every_module_that_decides_what_a_scan_holds(tmp_path):
+    """Recomputed here from the files themselves: a module dropped from the
+    list stops invalidating the cache, and that is invisible until a user
+    gets a stale scan."""
+    import hashlib
+    from pathlib import Path
+
+    from dstf import discovery
+
+    assert set(scan_cache._DISCOVERY_SOURCES) == {
+        "json_recognizer.py",
+        "mo_parser.py",
+        "recognizer.py",
+        "test_registry.py",
+        "unit_tests.py",
+    }
+    here = Path(discovery.__file__).parent
+    h = hashlib.sha256()
+    for name in scan_cache._DISCOVERY_SOURCES:
+        h.update(name.encode("utf-8"))
+        h.update((here / name).read_bytes())
+    assert scan_cache._discovery_digest() == h.hexdigest()[:16]
+
+
+def test_the_same_discovery_code_is_served(tmp_path):
+    """The other half: the digest must not turn the cache off. Two opens of
+    one build hit."""
+    config = _write_lib(tmp_path)
+    scanned = scan_source_tests(config)
+    scan_cache.store_scan(config, scanned)
+    assert scan_cache.load_scan(config) == scanned
+
+
 def test_a_cache_from_another_dstf_version_is_ignored(tmp_path, monkeypatch):
     config = _write_lib(tmp_path)
     path = scan_cache.store_scan(config, scan_source_tests(config))

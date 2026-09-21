@@ -2255,6 +2255,68 @@ class TestVariableIdentity:
         assert VI_EXPR in message and VI_NAME in message
         assert "dstf migrate-variable-names" in message
 
+    def test_the_warning_says_which_file_holds_each_key(self, caplog):
+        """The two override tiers are merged before anything is scored. Told
+        only the key, a user greps the spec for a key the BASELINE holds (or
+        the other way round) and finds nothing."""
+        reference = _vi_reference()
+        reference["comparison"] = {"variable_overrides": {"in.the.ref": {}}}
+        with caplog.at_level(logging.WARNING):
+            compare_test(
+                _vi_test(variable_overrides={"in.the.spec": {}}),
+                _vi_result(),
+                reference,
+            )
+        (record,) = [
+            r for r in caplog.records if "variable_overrides" in r.getMessage()
+        ]
+        message = record.getMessage()
+        assert "'in.the.spec' in test_spec.json" in message
+        assert "'in.the.ref' in the reference JSON" in message
+
+    def test_a_key_in_both_tiers_is_named_for_both(self, caplog):
+        reference = _vi_reference()
+        reference["comparison"] = {"variable_overrides": {"nowhere": {}}}
+        with caplog.at_level(logging.WARNING):
+            compare_test(
+                _vi_test(variable_overrides={"nowhere": {}}), _vi_result(), reference
+            )
+        (record,) = [
+            r for r in caplog.records if "variable_overrides" in r.getMessage()
+        ]
+        assert (
+            "'nowhere' in test_spec.json and the reference JSON" in record.getMessage()
+        )
+
+    def test_an_expression_two_variables_share_names_both(self, caplog):
+        """``x={a, a}`` writes one expression on two variables. Which one the
+        stale key meant is the user's call; naming only the last is a guess
+        that reads as an answer."""
+        test = _vi_test(n_vars=2, x_expressions=["a", "a"])
+        result = TestResult(
+            model_id="MyLib.Test",
+            success=True,
+            variables=[
+                VariableResult(
+                    index=i,
+                    time=_VI_T,
+                    values=_VI_T,
+                    name=f"unitTests.x[{i}]",
+                    expression="a",
+                )
+                for i in (1, 2)
+            ],
+        )
+        test.variable_overrides = {"a": {"tolerance": 0.5}}
+        with caplog.at_level(logging.WARNING):
+            compare_test(test, result, _vi_reference())
+        (record,) = [
+            r for r in caplog.records if "variable_overrides" in r.getMessage()
+        ]
+        message = record.getMessage()
+        assert "'unitTests.x[1]', 'unitTests.x[2]'" in message
+        assert "dstf migrate-variable-names" in message
+
     def test_an_override_that_names_a_variable_is_silent(self, caplog):
         with caplog.at_level(logging.WARNING):
             comp = compare_test(

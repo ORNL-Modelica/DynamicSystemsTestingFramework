@@ -566,6 +566,7 @@ class JsonRecognizer(Recognizer):
                 return None
         model_id = f"{within}.{model_name}" if within else model_name
         result = RecognizerResult(model_id=model_id, source_file=source_file)
+        from_component: set[str] = set()
         for field_name, field_spec in self._field_specs.items():
             field_fn = _FIELD_INTERPRETERS[field_spec["from"]]
             value = field_fn(content, match_ctx, field_spec)
@@ -576,6 +577,8 @@ class JsonRecognizer(Recognizer):
                 if value is None:
                     continue
             setattr(result, field_name, value)
+            if field_spec["from"] == "parameter":
+                from_component.add(field_name)
         # The instance name is the matched component's, never the spec's: a
         # recognizer that takes the tracked variables out of a component —
         # how MANY of them or WHICH expressions, either is enough — names
@@ -584,7 +587,15 @@ class JsonRecognizer(Recognizer):
         # expressions: a recognizer that reads only ``n_vars`` off the
         # component left the instance unset, and every one of its variables
         # was then looked for under the default ``unitTests.x[i]``.
-        if cm is not None and (result.x_expressions or result.n_vars is not None):
+        #
+        # It is the SOURCE of those two fields that decides, not their
+        # value. A recognizer whose ``n_vars`` is a ``constant`` says
+        # nothing about where the variables live, and the component it
+        # matched on may be any component at all — matching
+        # ``Modelica.Blocks.Sources.Sine sine`` to find tests named the
+        # instance ``sine``, and every variable of every such test went
+        # looking for ``sine.x[i]`` and was missing.
+        if cm is not None and from_component & {"n_vars", "x_expressions"}:
             result.unit_tests_instance = cm.instance_name
         return result
 

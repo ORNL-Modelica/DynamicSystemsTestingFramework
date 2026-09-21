@@ -109,9 +109,11 @@ def _extract_balanced_braces(text: str, start: int) -> str:
 _WS_RUN_RE = re.compile(r"\s+")
 _WS_AFTER_OPEN_RE = re.compile(r"([\[({])\s+")
 _WS_BEFORE_CLOSE_RE = re.compile(r"\s+([\])},])")
-#: A comma that is not the last character before a closing bracket: exactly
-#: one space follows it in the normal form.
-_COMMA_RE = re.compile(r",\s*(?![\])}]|$)")
+#: A comma that is not the expression's last character: exactly one space
+#: follows it in the normal form. A comma directly before a closing bracket
+#: needs no exception here — the space this puts after it is taken back by
+#: ``_WS_BEFORE_CLOSE_RE``, which runs after.
+_COMMA_RE = re.compile(r",\s*(?!$)")
 
 
 def _normalize_expression(text: str) -> str:
@@ -130,8 +132,12 @@ def _normalize_expression(text: str) -> str:
     Normalizing an expression already in normal form changes nothing.
 
     OUT OF SCOPE: a comma inside a string literal within an expression —
-    the rule is textual and would put a space inside the literal. No
-    ``x={...}`` in the libraries this parses contains one.
+    the rule is textual and would put a space inside the literal. On the
+    ``.mo`` UnitTests path no literal can reach here: ``_parse_unit_tests``
+    blanks comments and string literals before it looks for ``x=`` at all.
+    A JSON recognizer's ``parameter`` source slices the ORIGINAL text, so
+    one could reach here that way; no ``x={...}`` in the libraries this
+    parses contains one.
     """
     text = _WS_RUN_RE.sub(" ", text.strip())
     text = _COMMA_RE.sub(", ", text)

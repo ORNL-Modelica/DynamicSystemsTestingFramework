@@ -2,7 +2,7 @@
 
 Under ``$XDG_CACHE_HOME/dstf/scan/`` (default ``~/.cache/dstf/scan/``),
 one JSON file per (library path, recognizer set) — a file another DSTF
-version wrote is ignored and replaced — never in
+version, or other discovery code, wrote is ignored and replaced — never in
 the work dir, which is a run's artifact directory that other tools read,
 and never validated per file: on a 9P mount (``/mnt/d``) a ``stat`` sweep
 over TRANSFORM's 3 269 ``.mo`` files measured 27 s, longer than parsing
@@ -13,6 +13,7 @@ Only ``source_type == "modelica"`` scans anything, so only those cache.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import hashlib
 import json
 import logging
@@ -30,9 +31,42 @@ from .test_registry import TestModel
 
 logger = logging.getLogger(__name__)
 
-# 2: expressions carry no source whitespace and a TestModel names the
-#    UnitTests instance — a version-1 entry would rebuild neither.
+# The FORMAT of a cache file. What a scan MEANS — what the parser extracts
+# and how it spells it — is not versioned by hand: see _discovery_digest.
 CACHE_VERSION = 2
+
+#: The modules that decide what a scan produces. A cache holds parsed
+#: ``TestModel``s, so a change to any of them can make a cached entry mean
+#: something the current code would never have written, and no source file
+#: changed for a staleness check to see. Bumping a constant by hand is a
+#: step people forget — twice already, once for the instance name and once
+#: for expression whitespace — so the code itself is the version.
+_DISCOVERY_SOURCES = (
+    "json_recognizer.py",
+    "mo_parser.py",
+    "recognizer.py",
+    "test_registry.py",
+    "unit_tests.py",
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _discovery_digest() -> str:
+    """A digest of the discovery code's source bytes.
+
+    Read once per process: these files do not change under a running tool,
+    and a warm ``dstf author`` open asks for this before anything else.
+    """
+    here = Path(__file__).parent
+    h = hashlib.sha256()
+    for name in _DISCOVERY_SOURCES:
+        h.update(name.encode("utf-8"))
+        try:
+            h.update((here / name).read_bytes())
+        except OSError as e:  # a zipped / stripped install: fall back
+            logger.warning("cannot digest the discovery source %s: %s", name, e)
+            h.update(b"<unreadable>")
+    return h.hexdigest()[:16]
 
 
 def cache_dir() -> Path:
@@ -72,13 +106,15 @@ def _from_json(data: dict) -> TestModel:
 
 def load_scan(config: Config) -> dict[str, TestModel] | None:
     """The cached scan for ``config``, or None (no cache, another DSTF
-    version, unreadable, or not a Modelica source)."""
+    version, other discovery code, unreadable, or not a Modelica source)."""
     if config.source_type != "modelica":
         return None
     path = _path(config)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("dstf_version") != __version__:
+            return None
+        if data.get("discovery_digest") != _discovery_digest():
             return None
         return {m: _from_json(d) for m, d in data["tests"].items()}
     except FileNotFoundError:
@@ -99,6 +135,7 @@ def store_scan(config: Config, scanned: dict[str, TestModel]) -> Path | None:
     path = _path(config)
     payload = {
         "dstf_version": __version__,
+        "discovery_digest": _discovery_digest(),
         "library_dir": str(config.library_dir.resolve()),
         "tests": {m: _to_json(t) for m, t in scanned.items()},
     }

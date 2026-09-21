@@ -393,6 +393,37 @@ class TestComponentMatching:
         assert result.n_vars == 2
         assert result.unit_tests_instance == "myTest"
 
+    def test_a_count_from_a_constant_names_no_instance(self, tmp_path):
+        """It is where ``n_vars`` came FROM that names the instance, not that
+        it has a value. A recognizer whose count is a ``constant`` may match
+        on any component at all — here a ``Sine`` block, matched because
+        every test in the library has one — and that component's instance
+        says nothing about where the variables live. Threaded anyway, every
+        variable of every such test went looking for ``sine.x[i]``."""
+        mo = _write_mo(
+            tmp_path,
+            "FooTest",
+            """
+            within MyLib.Examples;
+            model FooTest
+              Modelica.Blocks.Sources.Sine sine(freqHz=1);
+            end FooTest;
+        """,
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "Modelica.Blocks.Sources.Sine",
+                },
+                "fields": {"n_vars": {"from": "constant", "value": 2}},
+            }
+        )
+        result = rec.recognize(mo)
+        assert result.n_vars == 2
+        assert result.unit_tests_instance is None
+
     def test_a_recognizer_that_contributes_no_variables_names_no_instance(
         self, tmp_path
     ):

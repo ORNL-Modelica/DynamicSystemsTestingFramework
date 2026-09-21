@@ -218,6 +218,12 @@ class TestMoParser:
             assert info.x_expressions == ["a.b[1, 2]"], source
         info = _parse_unit_tests("UnitTests ut(n=3, x=cat(1,y,y1))")
         assert info.x_expressions == ["cat(1, y, y1)"]
+        # A comma with nothing after it takes no space: the rule separates
+        # two things, and there is no second thing here. (A comma directly
+        # before a closing bracket needs no such exception — the space is
+        # taken back with every other space before a bracket.)
+        assert _normalize_expression("a,") == "a,"
+        assert _normalize_expression("a.b[1,]") == "a.b[1,]"
 
     def test_the_normal_form_is_idempotent(self):
         """Normalizing a normalized expression changes nothing — a stored

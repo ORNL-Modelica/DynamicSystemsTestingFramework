@@ -209,8 +209,18 @@ def _named_baseline_expression_warnings(
     return out
 
 
+#: Where an override key was read from, for the message below. The two
+#: tiers are merged before scoring, so the key alone does not say which
+#: file to open.
+_SPEC_TIER = "test_spec.json"
+_REF_TIER = "the reference JSON"
+
+
 def _warn_about_overrides_that_name_nothing(
-    model_id: str, overrides: dict[str, dict], result: TestResult
+    model_id: str,
+    spec_overrides: dict[str, dict],
+    ref_overrides: dict[str, dict],
+    result: TestResult,
 ) -> None:
     """An override key that names no variable of this result does nothing.
 
@@ -220,22 +230,40 @@ def _warn_about_overrides_that_name_nothing(
     identity change has (``pipe.T[1]`` where the result file says
     ``unitTests.x[1]``): the message says which name it meant and names the
     command that rewrites it. One line per test; no status changes.
+
+    It also says WHICH FILE holds each key. Overrides come from two tiers —
+    the test's entry in ``test_spec.json`` and the ``comparison`` section of
+    the baseline the run scored against — which are merged before anything
+    is scored; told only the key, a user opens the wrong one. A key present
+    in both is named for both.
+
+    When one expression belongs to several variables (``x=cat(1, y, y)``
+    spells every element the same), the message names all of them: which one
+    the key meant is the user's call, not a guess this makes for them.
     """
     names = {v.name for v in result.variables if v.name}
-    unknown = [key for key in overrides if key not in names]
+    unknown = [key for key in {**ref_overrides, **spec_overrides} if key not in names]
     if not unknown:
         return
-    by_expression = {
-        v.expression: v.name
-        for v in result.variables
-        if v.expression and v.name and v.expression not in names
-    }
-    detail = ", ".join(
-        f"{key!r} (the expression of {by_expression[key]!r})"
-        if key in by_expression
-        else repr(key)
-        for key in unknown
-    )
+    by_expression: dict[str, list[str]] = {}
+    for v in result.variables:
+        if v.expression and v.name:
+            by_expression.setdefault(v.expression, []).append(v.name)
+    parts = []
+    for key in unknown:
+        tiers = [
+            tier
+            for tier, keys in ((_SPEC_TIER, spec_overrides), (_REF_TIER, ref_overrides))
+            if key in keys
+        ]
+        where = f" in {' and '.join(tiers)}"
+        owners = by_expression.get(key)
+        of = (
+            f" (the expression of {', '.join(repr(n) for n in owners)})"
+            if owners
+            else ""
+        )
+        parts.append(f"{key!r}{where}{of}")
     hint = (
         " — a key that names an expression is rewritten by "
         "`dstf migrate-variable-names`"
@@ -246,7 +274,7 @@ def _warn_about_overrides_that_name_nothing(
         "%s: variable_overrides key(s) name no variable of this result and "
         "are ignored: %s%s",
         model_id,
-        detail,
+        ", ".join(parts),
         hint,
     )
 
@@ -426,7 +454,9 @@ def compare_test(
     # Merge variable overrides: spec overrides take precedence over reference
     ref_var_overrides = ref_comparison.get("variable_overrides", {})
     merged_overrides = {**ref_var_overrides, **test.variable_overrides}
-    _warn_about_overrides_that_name_nothing(test.model_id, merged_overrides, result)
+    _warn_about_overrides_that_name_nothing(
+        test.model_id, test.variable_overrides, ref_var_overrides, result
+    )
 
     for var_result in result.variables:
         # A variable is paired with the baseline entry carrying its name.
