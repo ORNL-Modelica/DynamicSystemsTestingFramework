@@ -1360,7 +1360,9 @@ async def test_a_variable_keeps_its_card_when_its_last_criterion_goes(shell):
         ]
         assert button.text == "Add a criterion for y"
         await _menu(user, f"add:{T0}", within=f"node:0:{T0}")
-        assert _one(user, f"apply-add:{T0}:variable").options == ["x", "y"]
+        # Dict options: name → what to read it as (neither has an
+        # expression here, so the two agree).
+        assert _one(user, f"apply-add:{T0}:variable").options == {"x": "x", "y": "y"}
 
 
 async def test_a_multi_series_card_names_the_variable_of_each_pill(shell):
@@ -2826,3 +2828,93 @@ async def test_a_mode_switch_keeps_the_editor_open(shell):
         await _settled(lambda: page.cards[0].rows[T1].name.text == "tube · x")
         assert page.open == (0, T1)
         await _settled(lambda: not _none(user, f"{T1}:tube_points:add"))
+
+
+async def test_a_named_pill_the_focus_bar_and_a_jump_all_read_the_label(
+    awkward_expression_shell, monkeypatch
+):
+    """Three sentences about a variable, on the page whose titles already
+    read its expression: the named pill on a multi-series card, the focus
+    bar's "Showing 1 of N plots: …", and the jump's "is on no plot". Each
+    said `unitTests.x[1]`, which names nothing a person recognises."""
+    from dstf.authoring.shell import test_page as page_mod
+    from test_session import AWKWARD_EXPRESSION, UT1
+
+    shell = awkward_expression_shell
+    shell.session.stage(
+        [PatchOp(A, "add", "/plots", [{"series": [{"var": UT1}, {"var": "y"}]}])]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert _one(user, "plot-title:0").text == f"{AWKWARD_EXPRESSION}, y"
+        # The pill's MARKER is the name; its text is the label.
+        assert _one(user, f"plot-pill:0:{UT1}").text == f"{AWKWARD_EXPRESSION} PASS"
+        assert _one(user, "plot-pill:0:y").text == "y PASS"
+        user.find(marker="focus:0").click()
+        await _settled(lambda: page.focused == 0)
+        assert (
+            _one(user, "focus-bar:text").text
+            == f"Showing 1 of 1 plot: {AWKWARD_EXPRESSION}, y"
+        )
+        # A criterion whose variable is on no plot: the same name, read the
+        # same way. The tree line offers a jump for a FAILING leaf, so the
+        # UnitTests variable's criterion is tightened until it fails.
+        shell.session.stage(
+            [
+                PatchOp(A, "add", "/plots", [{"series": [{"var": "y"}]}]),
+                PatchOp(A, "add", f"{T0}/tolerance", 0.0),
+            ]
+        )
+        await _settled(
+            lambda: [c.resolved.series for c in _page(shell, user).cards] == [("y",)]
+        )
+        monkeypatch.setattr(page_mod.ui, "run_javascript", lambda *a, **k: None)
+        (jump,) = [
+            j
+            for j in user.find(marker="tree:jump").elements
+            if j.text == f"nrmse \u00b7 {AWKWARD_EXPRESSION}"
+        ]
+        _click(user, jump)
+        await _settled(lambda: user.notify.messages != [])
+        assert user.notify.messages == [
+            f"{AWKWARD_EXPRESSION} is on no plot of this test"
+        ]
+
+
+async def test_two_variables_sharing_one_expression_stay_tellable_apart(shell):
+    """`x={a.Q, a.Q}` is legal Modelica: one expression, two result-file
+    variables. Read as the label alone, the card's title said "a.Q, a.Q",
+    both pills said "a.Q FAIL", and the figure gave both one legend entry."""
+    from test_session import with_expressions
+
+    with_expressions(shell.session, A, {"x": "a.Q", "y": "a.Q"})
+    shell.session._score(A)
+    shell.session.stage(
+        [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "y"}]}])]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert _one(user, "plot-title:0").text == "a.Q (x), a.Q (y)"
+        assert [_one(user, f"plot-pill:0:{v}").text for v in ("x", "y")] == [
+            "a.Q (x) FAIL",
+            "a.Q (y) FAIL",
+        ]
+        with page.client:
+            page.cards[0].show()
+        names = [
+            tr["name"]
+            for tr in page.cards[0].plot.figure["data"]
+            if tr.get("meta", {}).get("kind") == "act"
+        ]
+        assert names == ["a.Q (x)", "a.Q (y)"]
+        # The criteria rows and the footers too — the disambiguation is
+        # scoped to the TEST, so every surface of its page agrees.
+        assert [r.name.text for r in page.cards[0].rows.values()] == [
+            "nrmse · a.Q (x)",
+            "nrmse · a.Q (y)",
+        ]
+        assert sorted(
+            e.text
+            for e in user.find(marker="action:edit-tree").elements
+            if e.text.startswith("Add a criterion")
+        ) == ["Add a criterion for a.Q (x)", "Add a criterion for a.Q (y)"]

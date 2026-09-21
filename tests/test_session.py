@@ -2246,6 +2246,42 @@ class TestPlots:
         assert s.labels(A) == {UT1: UT1_EXPR, UT2: UT2}
         assert s.labels(C) == {}  # no result
 
+    def test_a_labelled_variable_with_no_baseline_still_reads_the_label(self, tmp_path):
+        """Nothing is scored without a reference, so the variable's view is
+        built from the NO-BASELINE trajectory instead. That is the only
+        place a brand-new test names its variables, and reading it as the
+        bare `unitTests.x[1]` told the reader nothing."""
+        cfg, work = _two_var_project(tmp_path)
+        t = [i / 4 for i in range(5)]
+        (work / "test_0002" / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {UT1: t, "y": [2 * v for v in t]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == B:
+                entry["variables"] = [UT1, "y"]
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        with_expressions(s, B, {UT1: AWKWARD_EXPRESSION})
+        assert s.project.store.get_reference(B) is None  # the regime
+        assert s.comparisons[B].variables == []
+        view = s.view(B, UT1)
+        assert (view.name, view.label) == (UT1, AWKWARD_EXPRESSION)
+        assert s.view(B, "y").label == "y"  # no expression: its name
+        actual = next(
+            tr for tr in s.figure(B, UT1)["data"] if tr["meta"]["id"] == "actual"
+        )
+        assert actual["hovertemplate"].startswith(f"{AWKWARD_EXPRESSION}:")
+
     def test_a_labelled_variables_figure_reads_the_label(self, tmp_path):
         """The figure the tool draws is the report's, so the label reaches
         it the same way: through the trajectory the view is built from."""

@@ -20,9 +20,11 @@ since Plotly drags shapes, not trace points.
 
 from __future__ import annotations
 
+import html
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 
+from ..backends.types import distinct_labels
 from ..comparison.geometry import (
     Band,
     Box,
@@ -119,6 +121,24 @@ def family(prim: Primitive, leaf: LeafView) -> str:
 
 def _label(fam: str) -> str:
     return _LABELS.get(fam, fam)
+
+
+def as_text(label: str) -> str:
+    """A label as Plotly must receive it to PRINT it.
+
+    Trace names, hover templates and axis titles are rendered through
+    plotly.js's small HTML subset (``<b>``, ``<br>``, ``<sub>`` …), so a
+    label holding ``<`` is read as markup: an expression the model wrote as
+    ``a<b`` lost its tail, and one holding ``<br>`` broke the hover over two
+    lines. Escaped here — plotly.js decodes the entities back, so an
+    ordinary label is unchanged on the page.
+
+    Applied to every LABEL that enters a trace name, a hovertemplate or a
+    title, and to nothing that enters ``meta.id``, ``legendgroup`` or a
+    shape name: those carry NAMES, which the page, the picker and every
+    test look traces up by.
+    """
+    return html.escape(label, quote=False)
 
 
 def _axes(prim: Primitive) -> dict:
@@ -409,7 +429,9 @@ def _base_traces(view: VariableView) -> list[dict]:
     def _hover(suffix: str = "") -> dict:
         if view.label == view.name:
             return {}
-        return {"hovertemplate": f"{view.label}{suffix}: %{{y:.4g}}<extra></extra>"}
+        return {
+            "hovertemplate": f"{as_text(view.label)}{suffix}: %{{y:.4g}}<extra></extra>"
+        }
 
     if view.act_time is not None and view.act_values is not None:
         traces.append(
@@ -690,6 +712,7 @@ def plot_figure(
     if max_samples:
         views = [decimate_view(v, max_samples) for v in views]
     by_name = {v.name: v for v in views}
+    texts = series_texts(views)
     spans = [
         _time_span(v) for v in views if v.act_time is not None or v.ref_time is not None
     ]
@@ -699,19 +722,28 @@ def plot_figure(
     shapes: list[dict] = []
     rings: list[dict] = []
     has_spectrum = any(v.has_spectrum for v in views)
-    # Families fold over LABELS: `unitTests.x[1..3]` is a position in a
-    # component, not an array — three unrelated expressions under one legend
-    # entry and one colour ramp said they were one quantity.
-    by_label = {v.name: v.label for v in views}
-    for h, (key, members) in enumerate(group_families(list(by_name), by_label)):
+    # Families fold over what each series READS as: `unitTests.x[1..3]` is a
+    # position in a component, not an array — three unrelated expressions
+    # under one legend entry and one colour ramp said they were one
+    # quantity. Two series sharing one expression read as `label (name)`
+    # (:func:`series_texts`), which belongs to no family either, so they
+    # stay two legend entries and two hues.
+    for h, (key, members) in enumerate(group_families(list(by_name), texts)):
         colors = ramp(HUES[h % len(HUES)], len(members))
-        label = (labels or {}).get(key) or family_label(key, members, by_label)
+        label = (labels or {}).get(key) or family_label(key, members, texts)
         # The legend entry rides on the first member that DRAWS: a family whose
         # lowest index has no result would otherwise have none.
         lead = next((n for n in members if _draws_actual(by_name[n])), None)
         for name, color in zip(members, colors):
             data.extend(
-                _series_traces(by_name[name], color, key, label, first=name == lead)
+                _series_traces(
+                    by_name[name],
+                    color,
+                    key,
+                    label,
+                    texts[name],
+                    first=name == lead,
+                )
             )
     for view in views:
         ctx = _Ctx(
@@ -745,20 +777,39 @@ def _draws_actual(view: VariableView) -> bool:
     return view.act_time is not None and view.act_values is not None
 
 
+def series_texts(views: Sequence[VariableView]) -> dict[str, str]:
+    """``{name: what that series reads as}`` on a plot drawing several.
+
+    :func:`~dstf.backends.types.distinct_labels` over the views: each one's
+    label, with the name beside it when two of the plot's series share one.
+    Undisambiguated, one legend entry, one hover and one colour ramp stood
+    for two different result-file variables.
+    """
+    return distinct_labels({v.name: v.label for v in views})
+
+
 def _series_traces(
-    view: VariableView, color: str, group: str, label: str, *, first: bool
+    view: VariableView,
+    color: str,
+    group: str,
+    label: str,
+    text: str,
+    *,
+    first: bool,
 ) -> list[dict]:
     traces = []
-    # Read as the label, keyed by the name: `meta.id` is what the page, the
-    # picker and every test address a trace by.
-    hover = f"{view.label}: %{{y:.4g}}<extra></extra>"
+    # Read as `text` — the label, with the name beside it when the plot
+    # draws another series carrying the same label — and keyed by the name:
+    # `meta.id` is what the page, the picker and every test address a trace
+    # by.
+    hover = f"{as_text(text)}: %{{y:.4g}}<extra></extra>"
     # Spelled out, not `_draws_actual(view)`: mypy narrows the arrays here.
     if view.act_time is not None and view.act_values is not None:
         traces.append(
             {
                 "type": "scatter",
                 "mode": "lines",
-                "name": label if first else view.label,
+                "name": as_text(label) if first else as_text(text),
                 "legendgroup": group,
                 "showlegend": first,
                 "hovertemplate": hover,
@@ -778,10 +829,12 @@ def _series_traces(
             {
                 "type": "scatter",
                 "mode": "lines",
-                "name": f"{view.label} (reference)",
+                "name": f"{as_text(text)} (reference)",
                 "legendgroup": group,
                 "showlegend": False,
-                "hovertemplate": f"{view.label} (reference): %{{y:.4g}}<extra></extra>",
+                "hovertemplate": (
+                    f"{as_text(text)} (reference): %{{y:.4g}}<extra></extra>"
+                ),
                 "x": view.ref_time.tolist(),
                 "y": view.ref_values.tolist(),
                 "line": {"color": color, "width": 1.2, "dash": "dash"},

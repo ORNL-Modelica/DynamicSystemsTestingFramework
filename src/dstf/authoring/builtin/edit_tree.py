@@ -89,8 +89,13 @@ class EditTree:
             # Read as the variable's label — the expression its model wrote
             # — under a card whose title says the same thing; the form the
             # button opens still writes the leaf against the NAME.
-            model_id = next(iter(sel.tests), None)
-            labels = s.labels(model_id) if model_id is not None else {}
+            #
+            # VARIABLE placement is single-test (`available` refuses any
+            # other selection). With two tests selected there is no one
+            # result to read a label from, so the caption says the name:
+            # picking one of the selected tests would put ANOTHER test's
+            # expression on this button.
+            labels = s.labels(next(iter(sel.tests))) if len(sel.tests) == 1 else {}
             return f"Add a criterion for {labels.get(sel.variable, sel.variable)}"
         return self.label
 
@@ -247,13 +252,19 @@ def _add_form(
     done: Callable[[], None] | None = None,
 ) -> None:
     """Variable and metric selects and the apply button (marked ``mark``);
-    ``done`` runs first when the form sits in a menu that must close."""
+    ``done`` runs first when the form sits in a menu that must close.
+
+    The variable select's VALUES are result-file names — a leaf is written
+    against the name — and its option TEXT reads the label, with the name
+    beside it when two of this test's variables share one. A list of
+    ``unitTests.x[1..12]`` named nothing a person could choose between."""
     names = _variable_names(s, model_id)
     if variable and variable not in names:
         names = [variable, *names]
+    labels = s.labels(model_id)
     var = (
         ui.select(
-            names or [""],
+            {n: labels.get(n, n) for n in names} or {"": ""},
             label="leaf variable",
             value=variable if variable else (names[0] if names else ""),
         )

@@ -94,24 +94,36 @@ def _frozen_data_basename(name: str, fmt: str) -> str:
     return f"{name}{_COMPANION_FORMAT_EXT[fmt]}"
 
 
+#: ``accept``'s key order for a variable entry
+#: (:meth:`ReferenceStore.accept`). Any other key an entry carries follows,
+#: in its own order.
+_ENTRY_KEY_ORDER = ("index", "name", "expression", "values")
+
+
 def _with_expression(variable: dict) -> dict:
-    """A variable entry as this store writes one: ``expression`` present.
+    """A COPY of a variable entry as this store writes one: ``expression``
+    present, and ``accept``'s key order — index, name, expression, values.
 
     ``add_soft_check`` is handed entries someone else produced —
     ``import-baseline`` reads a file that may predate the key, and a
-    cross-backend chain builds its own. A writer never leaves the field
-    out (an entry without it is one no writer of this version made), so
-    the missing key becomes the empty text, in ``accept``'s key order:
-    index, name, expression, values.
+    cross-backend chain builds its own. A writer never leaves the field out
+    (an entry without it is one no writer of this version made), so the
+    missing key becomes the empty text.
+
+    The order is imposed rather than patched in beside whatever ``name``
+    it found: an entry that already carried ``expression``, or one whose
+    ``name`` came after its ``values``, kept its own order and two
+    soft_check files written by the same command read differently. The
+    input is never mutated — the caller's entry may be a live result's.
     """
-    if "expression" in variable:
-        return dict(variable)
-    out: dict = {}
+    out: dict = {
+        key: variable.get(key, "") if key == "expression" else variable[key]
+        for key in _ENTRY_KEY_ORDER
+        if key in variable or key == "expression"
+    }
     for key, value in variable.items():
-        out[key] = value
-        if key == "name":
-            out["expression"] = ""
-    out.setdefault("expression", "")
+        if key not in out:
+            out[key] = value
     return out
 
 

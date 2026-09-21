@@ -14,8 +14,10 @@ import re
 import shutil
 import subprocess
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 
+from ..backends.types import distinct_labels
 from ..comparison.comparator import VariableComparison
 from .context_builder import _build_template_context, worst_finite_score
 from .status import classify_with_class
@@ -208,6 +210,25 @@ def _tracked_series(result, comp_variables, test, tracked):
     return series
 
 
+def _context_labels(context: dict) -> dict[str, str]:
+    """Name → label for every series a render context can draw.
+
+    The scored variables carry theirs, a no-baseline trajectory carries its
+    own, and a plot-only name read out of the result file has none, so it
+    reads as itself. Titles, family folds and the decimation banner are
+    over LABELS; everything else — element ids, ``data-variable``, the
+    series lists, ``meta.id`` — is the name.
+    """
+    labels = {
+        n: v.get("label") or n
+        for n, v in (context.get("variables_by_name") or {}).items()
+    }
+    for t in context.get("nobaseline_trajectories") or []:
+        if t.get("name"):
+            labels.setdefault(t["name"], t.get("label") or t["name"])
+    return labels
+
+
 def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> dict:
     """``plots`` (the sidecar's record), ``plot_figures``, ``plot_series``
     and ``plot_sections`` from a render context. ``plots=None`` is one plot
@@ -249,15 +270,7 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
             for i, n in enumerate(by_name)
         )
     vidx = {n: i for i, n in enumerate(by_name)}
-    # Name → label for every series the page can draw: the scored variables
-    # carry theirs, a no-baseline trajectory carries its own, and a
-    # plot-only name read out of the result file has none, so it reads as
-    # itself. Titles and family folds are over LABELS; everything else —
-    # element ids, `data-variable`, the series lists — is the name.
-    labels = {n: v.get("label") or n for n, v in by_name.items()}
-    for t in context.get("nobaseline_trajectories") or []:
-        if t.get("name"):
-            labels.setdefault(t["name"], t.get("label") or t["name"])
+    labels = _context_labels(context)
     leaves_by_var = leaves_by_variable(metric_tree)
     budget = max_samples if max_samples and max_samples > 0 else None
 
@@ -578,8 +591,10 @@ def _page_context(context: dict) -> dict:
     ``variables_by_name`` is dropped whole: the page is laid out per PLOT
     now, and each section already carries its variables' trees, verdicts
     and overlay rows (:func:`plot_page_keys`). What survives per
-    no-baseline trajectory is its name and each overlay's name / role for
-    the picker checkbox.
+    no-baseline trajectory is its name, its LABEL — the heading above its
+    figure reads it, and cutting it left every NEW heading spelling the
+    name with an empty label beside it — and each overlay's name / role
+    for the picker checkbox.
     """
     page = dict(context)
     page.pop("trajectories", None)
@@ -590,6 +605,7 @@ def _page_context(context: dict) -> dict:
     page["nobaseline_trajectories"] = [
         {
             "name": t.get("name"),
+            "label": t.get("label") or t.get("name"),
             "overlays": [_overlay_row(ov) for ov in t.get("overlays") or []],
         }
         for t in context.get("nobaseline_trajectories") or []
@@ -597,27 +613,30 @@ def _page_context(context: dict) -> dict:
     return page
 
 
-def _trace_label(tr: dict, multi: bool) -> str | None:
+def _trace_label(tr: dict, texts: Mapping[str, str] | None) -> str | None:
     """What the banner calls one trace.
 
     On a one-series plot the trace's own name is right, and the banner has
-    always printed it. On a plot of SEVERAL series it is not: a family's
-    lead member carries the family's LEGEND label, so the banner read
-    ``pipe.T[1:4]`` where one member belonged, and a family of one printed
-    its name twice (once as the plot's title, once as the trace). There
-    the name comes off ``meta.id`` instead. A derived trace — a band, an
-    error series, a spectrum — has no such id and keeps its own name.
+    always printed it; ``texts`` is None there. On a plot of SEVERAL series
+    it is not: a family's lead member carries the family's LEGEND label, so
+    the banner read ``pipe.T[1:4]`` where one member belonged, and a family
+    of one printed its name twice (once as the plot's title, once as the
+    trace). There the series comes off ``meta.id`` — the NAME — and
+    ``texts`` turns it back into what the rest of the page calls it, so one
+    banner line does not pair a title full of expressions with a trace
+    spelled as a result-file name. A derived trace — a band, an error
+    series, a spectrum — has no such id and keeps its own name.
     """
     name = tr.get("name")
-    if not multi:
+    if texts is None:
         return name
     trace_id = (tr.get("meta") or {}).get("id")
     if not isinstance(trace_id, str):
         return name
-    if trace_id.startswith("actual/"):
-        return trace_id[len("actual/") :]
-    if trace_id.startswith("reference/"):
-        return f"{trace_id[len('reference/') :]} (reference)"
+    for prefix, suffix in (("actual/", ""), ("reference/", " (reference)")):
+        if trace_id.startswith(prefix):
+            series = trace_id[len(prefix) :]
+            return f"{texts.get(series, series)}{suffix}"
     return name
 
 
@@ -637,8 +656,9 @@ def _decimated_traces(context: dict) -> list[dict]:
     family label on a plot of several — and named by :func:`_trace_label`.
     """
     out: list[dict] = []
+    labels = _context_labels(context)
 
-    def scan(varname, fig: dict, *, multi: bool = False) -> None:
+    def scan(varname, fig: dict, *, texts: Mapping[str, str] | None = None) -> None:
         for tr in fig.get("data") or []:
             meta = tr.get("meta") or {}
             full = meta.get("full_samples")
@@ -648,7 +668,7 @@ def _decimated_traces(context: dict) -> list[dict]:
             out.append(
                 {
                     "variable": varname,
-                    "trace": _trace_label(tr, multi),
+                    "trace": _trace_label(tr, texts),
                     "full": int(full),
                     "embedded": embedded,
                 }
@@ -657,10 +677,13 @@ def _decimated_traces(context: dict) -> list[dict]:
     for section, fig in zip(
         context.get("plot_sections") or [], context.get("plot_figures") or []
     ):
+        series = section.get("series") or []
         scan(
             section.get("title"),
             fig,
-            multi=len(section.get("series") or []) > 1,
+            texts=distinct_labels({n: labels.get(n, n) for n in series})
+            if len(series) > 1
+            else None,
         )
     for traj, fig in zip(
         context.get("diag_trajectories") or [], context.get("diag_figures") or []

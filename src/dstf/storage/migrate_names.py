@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import Config
-from ..discovery.mo_parser import _normalize_expression
+from ..discovery.mo_parser import normalize_expression
 from ..discovery.patch_apply import load_spec_document
 from ..discovery.test_registry import TestModel, discover_tests
 from ..discovery.unit_tests import unit_test_variables
@@ -127,7 +127,7 @@ def migrate_document(
                 variables.append(_entry(entry, stored, recorded))
             else:
                 variables.append(_entry(entry, stored, recorded or target.expression))
-        elif target.expression and _normalize_expression(stored) == target.expression:
+        elif target.expression and normalize_expression(stored) == target.expression:
             rename[stored] = target.name
             rename[target.expression] = target.name
             variables.append(_entry(entry, target.name, target.expression))
@@ -192,9 +192,7 @@ def _needs_reaccept(test: TestModel) -> list[str]:
     here can invent it: the test is listed, and a re-accept fills it.
     """
     expressions = {v.expression for v in unit_test_variables(test) if v.expression}
-    return [
-        p for p in test.variable_patterns if _normalize_expression(p) in expressions
-    ]
+    return [p for p in test.variable_patterns if normalize_expression(p) in expressions]
 
 
 def migrate(config: Config, *, apply: bool) -> MigrationReport:
@@ -277,7 +275,7 @@ def _migrate_spec(
             """The result-file name ``key`` should become, or None."""
             if key in patterns:
                 return None  # a pattern names a variable of its own
-            names = by_expression.get(_normalize_expression(key))
+            names = by_expression.get(normalize_expression(key))
             if not names:
                 return None
             if len(names) > 1:

@@ -2217,7 +2217,16 @@ class TestAVariableReadsAsItsExpression:
 
     N1, N2 = "unitTests.x[1]", "unitTests.x[2]"
 
-    def _render(self, tmp_path, expressions, metrics=None, name="page"):
+    def _render(
+        self,
+        tmp_path,
+        expressions,
+        metrics=None,
+        name="page",
+        plots=None,
+        samples=500,
+        points=51,
+    ):
         import json
         from pathlib import Path
 
@@ -2226,10 +2235,11 @@ class TestAVariableReadsAsItsExpression:
         from dstf.backends.types import TestResult, VariableResult
         from dstf.comparison.comparator import compare_test
         from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.discovery.plots import parse_plots, resolved_plots
         from dstf.discovery.test_registry import TestModel
         from dstf.reporting.report_suite import generate_comparison_plots
 
-        t = np.linspace(0.0, 1.0, 51)
+        t = np.linspace(0.0, 1.0, points)
         names = list(expressions)
         ref = {
             "test_id": "ref_0001",
@@ -2277,6 +2287,10 @@ class TestAVariableReadsAsItsExpression:
             x_expressions=[expressions[n] for n in names],
             metric_tree_spec=spec,
         )
+        resolved = None
+        if plots is not None:
+            test.plots = parse_plots(plots)
+            resolved = resolved_plots(test, names, available=names)
         comp = compare_test(test, result, ref)
         html = generate_comparison_plots(
             "M",
@@ -2286,7 +2300,8 @@ class TestAVariableReadsAsItsExpression:
             tmp_path / name,
             test_model=test,
             metric_tree=comp.metric_tree,
-            max_embedded_samples=500,
+            max_embedded_samples=samples,
+            plots=resolved,
         )
         return html.read_text(encoding="utf-8"), json.loads(
             (tmp_path / name / "comparison_data.json").read_text(encoding="utf-8")
@@ -2362,3 +2377,130 @@ class TestAVariableReadsAsItsExpression:
         names = [f"unitTests.x[{i}]" for i in (1, 2, 3)]
         labels = dict(zip(names, ["a.Q", "b.Q", "sum(core.Qs[6, :])"]))
         assert len(group_families(names, labels)) == 3
+
+    def _render_no_baseline(self, tmp_path, expressions, name="nobase"):
+        """A test with NO reference: nothing is scored, so every tracked
+        curve lives in ``nobaseline_trajectories`` and renders under a NEW
+        heading with its own figure."""
+        import json
+        from pathlib import Path
+
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        t = np.linspace(0.0, 1.0, 51)
+        names = list(expressions)
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[
+                VariableResult(
+                    index=i + 1,
+                    name=n,
+                    time=t,
+                    values=np.sin(t) * (i + 1),
+                    expression=expressions[n],
+                )
+                for i, n in enumerate(names)
+            ],
+        )
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=len(names),
+            source="unit_tests",
+            x_expressions=[expressions[n] for n in names],
+        )
+        html = generate_comparison_plots(
+            "M", None, result, [], tmp_path / name, test_model=test
+        )
+        return html.read_text(encoding="utf-8"), json.loads(
+            (tmp_path / name / "comparison_data.json").read_text(encoding="utf-8")
+        )
+
+    def test_a_no_baseline_section_reads_the_label_and_shows_the_name(self, tmp_path):
+        """The NEW heading is the only place a test with no reference names
+        its variables. Rendered from the name alone it said
+        `unitTests.x[1]`, with nothing telling the reader which quantity
+        that is."""
+        page, _sidecar = self._render_no_baseline(tmp_path, {self.N1: "pipe.T[1]"})
+        heading = next(
+            el for el in _parse(page).walk() if el.tag == "h3" and "NEW" in el.text()
+        )
+        assert "pipe.T[1]" in heading.text()
+        (muted,) = heading.by_class("dstf-varname")
+        assert muted.text() == self.N1
+        figure = _page_data(page, "NB_FIGURES")[0]
+        actual = next(tr for tr in figure["data"] if tr["meta"]["kind"] == "act")
+        assert actual["hovertemplate"].startswith("pipe.T[1]:")
+
+    def test_a_no_baseline_section_with_no_expression_renders_as_it_did(self, tmp_path):
+        page, _sidecar = self._render_no_baseline(tmp_path, {"y": ""}, name="nb-plain")
+        heading = next(
+            el for el in _parse(page).walk() if el.tag == "h3" and "NEW" in el.text()
+        )
+        assert heading.text().split()[-1] == "y"
+        assert heading.by_class("dstf-varname") == []
+        figure = _page_data(page, "NB_FIGURES")[0]
+        actual = next(tr for tr in figure["data"] if tr["meta"]["kind"] == "act")
+        assert "hovertemplate" not in actual
+
+    def test_a_variable_on_a_second_plot_says_so_by_its_label(self, tmp_path):
+        """The "criteria are under its first plot" note is a sentence about
+        a variable, so it names it the way everything else on the page
+        does."""
+        page, _sidecar = self._render(
+            tmp_path,
+            {self.N1: "pipe.T[1]", self.N2: "a.Q"},
+            name="twice",
+            plots=[
+                {"kind": "time", "series": [{"var": self.N1}, {"var": self.N2}]},
+                {"kind": "time", "series": [{"var": self.N1}]},
+            ],
+        )
+        notes = [el.text() for el in _parse(page).walk() if "plot-note" in el.classes]
+        assert any(n.startswith("pipe.T[1]: criteria are under") for n in notes)
+        assert not any(n.startswith(self.N1) for n in notes)
+
+    def test_the_decimation_banner_names_a_trace_the_way_the_title_does(self, tmp_path):
+        """The banner pairs a plot's TITLE with a trace's name. The title
+        reads labels, and the trace came off `meta.id` — a result-file
+        name — so one line spelled the same plot two ways."""
+        page, _sidecar = self._render(
+            tmp_path,
+            {self.N1: "pipe.T[1]", self.N2: "a.Q"},
+            name="banner",
+            plots=[{"kind": "time", "series": [{"var": self.N1}, {"var": self.N2}]}],
+            samples=8,
+            points=201,
+        )
+        banner = _parse(page).by_id("decimation-banner")
+        traces = [el.text() for el in banner.by_class("dec-trace")]
+        assert any(t.startswith("pipe.T[1], a.Q pipe.T[1] ") for t in traces)
+        assert any(t.startswith("pipe.T[1], a.Q a.Q ") for t in traces)
+        assert not any(self.N1 in t for t in traces)
+
+    def test_two_variables_sharing_one_expression_are_tellable_apart(self, tmp_path):
+        """`x={a.Q, a.Q}` is legal: two result-file variables, one
+        expression. Read as the label alone, both criteria rows said
+        `nrmse · a.Q` with nothing saying which variable each scored."""
+        page, _sidecar = self._render(
+            tmp_path, {self.N1: "a.Q", self.N2: "a.Q"}, name="shared"
+        )
+        labels = [
+            el.text()
+            for el in _parse(page).by_id("nodes-full").walk()
+            if "node-label" in el.classes
+        ]
+        assert labels == [
+            "and",
+            f"nrmse · a.Q ({self.N1})",
+            f"nrmse · a.Q ({self.N2})",
+        ]
+        # The keys are untouched.
+        assert _page_data(page, "PLOT_SERIES") == [[self.N1], [self.N2]]

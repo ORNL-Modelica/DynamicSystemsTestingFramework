@@ -366,7 +366,10 @@ class TestPage:
         if focused is None or self.focus_all is None:
             return
         plots = plural(len(self.cards), "plot")
-        name = ", ".join(self.cards[focused].resolved.series)
+        # The card's own title text, so the bar names the plot the way the
+        # plot names itself — its labels, not the keys underneath them.
+        card = self.cards[focused]
+        name = ", ".join(card.texts.get(n, n) for n in card.resolved.series)
         self.focus_text.set_text(f"Showing 1 of {plots}: {name}")
         self.focus_all.set_text(f"Show all {plots}")
         self.cards[focused].show(view)

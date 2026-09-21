@@ -2358,6 +2358,138 @@ class TestVariableIdentity:
         assert not hasattr(comparator, "variable_label")
 
 
+#: The most common un-migrated shape in the owner's library: a plain name
+#: whose ``.mo`` source wrapped the line, stored with that whitespace in it
+#: (210 of 877 measured variables). The expression beside the result
+#: variable is normalized, so the two texts differ byte for byte.
+WRAPPED_STORED = "heatTransfer.alphas[\n        1, 1]"
+WRAPPED_EXPR = "heatTransfer.alphas[1, 1]"
+
+
+class TestTheMigrationHintSeesAnUnNormalizedName:
+    """`migration_hint` matches a STORED name against an expression, and the
+    two are written by different hands: the store keeps the ``.mo`` file's
+    layout, the expression is normalized. Compared raw, the shape that needs
+    the command most got no hint at all — on either scoring path."""
+
+    def _wrapped_reference(self, stored=WRAPPED_STORED) -> dict:
+        """A baseline as it was written BEFORE the identity change: the
+        expression text as the name, and no ``expression`` key."""
+        return {
+            "test_id": "0001",
+            "time": list(_VI_T),
+            "variables": [{"index": 1, "name": stored, "values": list(_VI_T)}],
+        }
+
+    @pytest.mark.parametrize("tree", [False, True])
+    @pytest.mark.parametrize("stored", [WRAPPED_STORED, "heatTransfer.alphas[1,1]"])
+    def test_a_stored_name_the_source_wrapped_or_packed_gets_the_hint(
+        self, caplog, tree, stored
+    ):
+        spec = (
+            parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+            if tree
+            else None
+        )
+        with caplog.at_level(logging.WARNING):
+            comp = compare_test(
+                _vi_test(metric_tree_spec=spec, x_expressions=[WRAPPED_EXPR]),
+                _vi_result(expression=WRAPPED_EXPR),
+                self._wrapped_reference(stored),
+            )
+        assert not comp.passed
+        assert any(
+            "dstf migrate-variable-names" in r.getMessage() for r in caplog.records
+        )
+
+    @pytest.mark.parametrize("tree", [False, True])
+    def test_a_migrated_baseline_holding_the_expression_as_a_real_name_is_not_hinted(
+        self, caplog, tree
+    ):
+        """A `both` test: the spec tracks `pipe.T[1]` and the component's
+        `x={pipe.T[1]}` measures the same quantity a second time. The
+        baseline legitimately holds `pipe.T[1]` — MIGRATED, so it carries
+        the `expression` key — and simply does not hold the new
+        `unitTests.x[1]` yet. Re-accepting is the answer; renaming that
+        entry would destroy a variable of this test."""
+        result = TestResult(
+            model_id="MyLib.Test",
+            success=True,
+            variables=[
+                VariableResult(
+                    index=1, time=_VI_T, values=_VI_T, name="pipe.T[1]", expression=""
+                ),
+                VariableResult(
+                    index=2,
+                    time=_VI_T,
+                    values=_VI_T,
+                    name=VI_NAME,
+                    expression="pipe.T[1]",
+                ),
+            ],
+        )
+        reference = {
+            "test_id": "0001",
+            "time": list(_VI_T),
+            "variables": [
+                {
+                    "index": 1,
+                    "name": "pipe.T[1]",
+                    "expression": "",
+                    "values": list(_VI_T),
+                }
+            ],
+        }
+        spec = (
+            parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+            if tree
+            else None
+        )
+        with caplog.at_level(logging.WARNING):
+            compare_test(
+                _vi_test(
+                    metric_tree_spec=spec,
+                    source="both",
+                    variable_patterns=["pipe.T[1]"],
+                    x_expressions=["pipe.T[1]"],
+                ),
+                result,
+                reference,
+            )
+        assert not any(
+            "migrate-variable-names" in r.getMessage() for r in caplog.records
+        )
+
+    def test_the_tree_path_says_it_once_per_variable_not_once_per_leaf(self, caplog):
+        """Five criteria on one un-migrated variable is one thing to fix.
+        A TRANSFORM test with five leaves printed the same sentence five
+        times, and the REASON is on every leaf either way."""
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": VI_NAME, "tolerance": t / 100}
+                    for t in range(1, 6)
+                ],
+            }
+        )
+        with caplog.at_level(logging.WARNING):
+            comp = compare_test(
+                _vi_test(metric_tree_spec=spec, x_expressions=[WRAPPED_EXPR]),
+                _vi_result(expression=WRAPPED_EXPR),
+                self._wrapped_reference(),
+            )
+        hinted = [
+            r for r in caplog.records if "migrate-variable-names" in r.getMessage()
+        ]
+        assert len(hinted) == 1
+        assert len(comp.variables) == 5
+        assert all(
+            "migrate-variable-names" in (vc.diagnostics.get("error") or "")
+            for vc in comp.variables
+        )
+
+
 #: A second UnitTests variable of the same test, with its own expression.
 VI_NAME2, VI_EXPR2 = "unitTests.x[2]", "cat(1, a, b)[2]"
 
@@ -2444,6 +2576,34 @@ class TestTheExpressionRidesOnEveryComparison:
         )
         vc = self._leaf(comp)
         assert not vc.passed and vc.diagnostics.get("config_error")
+        assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
+
+    def test_a_leaf_whose_mode_never_resolves_keeps_the_expression(self):
+        """The earliest failure a leaf has: `resolve_mode` refuses the
+        params before any baseline or trajectory is looked at (a `range`
+        leaf declaring neither bound). It returns its own sentinel, which
+        must carry the expression like every other one."""
+        spec = parse_metric_tree({"metric": "range", "variable": VI_NAME})
+        comp = compare_test(
+            _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
+        )
+        vc = self._leaf(comp)
+        assert not vc.passed and vc.diagnostics.get("config_error")
+        assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
+
+    def test_a_leaf_whose_metric_refuses_the_dataset_keeps_the_expression(self):
+        """The dataset gate returns before the leaf resolves anything at
+        all. It is still a sentinel a person reads on the report."""
+        from dstf.backends.types import DatasetType
+        from dstf.comparison.tree_eval import collect_leaf_variables, evaluate_spec
+
+        spec = parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+        (var_result,) = _vi_result().variables
+        tree = evaluate_spec(
+            spec, {VI_NAME: var_result}, {}, 1e-4, DatasetType.SPECTRUM
+        )
+        (vc,) = collect_leaf_variables(tree)
+        assert not tree.passed and "spectrum" in vc.diagnostics["error"]
         assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
 
     def test_a_leaf_whose_variable_the_result_lost_has_no_expression(self):
@@ -2551,6 +2711,51 @@ class TestTheExpressionCheckPairsByName:
         assert [
             (w.field, w.reference_value, w.current_value) for w in comp.warnings
         ] == [(f"Expression of {VI_NAME} (against fmpy)", "OTHER.Q", VI_EXPR)]
+
+    def test_a_named_baseline_is_checked_only_on_what_it_is_scored_against(self):
+        """A soft_check is imported whole — it holds every variable of the
+        run it came from. Nothing compares a variable no leaf scores against
+        it, so a difference between those two expressions is not a finding
+        about this run: it said `unitTests.x[2]` changed while the only leaf
+        naming `fmpy` scored `unitTests.x[1]`."""
+        from dstf.storage.baseline import Baseline
+
+        class _Store:
+            def get_soft_checks(self, model_id):
+                return {
+                    "fmpy": Baseline(
+                        name="fmpy",
+                        time=list(_VI_T),
+                        variables=[
+                            {
+                                "index": i + 1,
+                                "name": name,
+                                "expression": "OTHER.Q",
+                                "values": list(_VI_T * (i + 1)),
+                            }
+                            for i, name in enumerate((VI_NAME, VI_NAME2))
+                        ],
+                    )
+                }
+
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": VI_NAME2},
+                    {"metric": "nrmse", "variable": VI_NAME, "against": "fmpy"},
+                ],
+            }
+        )
+        comp = compare_test(
+            _vi_test(n_vars=2, metric_tree_spec=spec),
+            _vi_two_result(),
+            _vi_two_reference(),
+            store=_Store(),
+        )
+        assert [w.field for w in comp.warnings] == [
+            f"Expression of {VI_NAME} (against fmpy)"
+        ]
 
 
 class TestPairingIsByNameOnly:

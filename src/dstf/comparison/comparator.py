@@ -23,7 +23,7 @@ should import them from :mod:`.types` and :mod:`.algorithms` directly.
 """
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -127,17 +127,39 @@ def _check_structural_changes(
     return warnings
 
 
-def migration_hint(baseline_names: Iterable[str], expression: str) -> str:
+def migration_hint(baseline_entries: Mapping[str, dict], expression: str) -> str:
     """The clause that names the migration command, or ``""``.
 
     A variable whose baseline entry is missing is un-migrated exactly when
-    the baseline holds an entry under the text the variable's EXPRESSION
-    spells — the name every UnitTests baseline was stored under before the
-    identity change. Both scoring paths say it, from here: a hint on every
-    missing baseline would point a whole suite of brand-new variables at a
-    command that would rewrite nothing (the Task 3 review).
+    the baseline holds an UN-MIGRATED entry under the text the variable's
+    EXPRESSION spells — the name every UnitTests baseline was stored under
+    before the identity change. Both scoring paths say it, from here: a
+    hint on every missing baseline would point a whole suite of brand-new
+    variables at a command that would rewrite nothing (the Task 3 review).
+
+    Two things the raw texts do not decide, so this reads the ENTRIES:
+
+    * The stored name is compared NORMALIZED
+      (:func:`~dstf.discovery.mo_parser.normalize_expression`) — the same
+      rule the migration command matches by. A baseline written from a
+      ``.mo`` source that wrapped the line holds
+      ``heatTransfer.alphas[\\n        1, 1]``, and the expression beside
+      the result variable is normalized; compared raw, the most common
+      un-migrated shape in a real library got no hint at all.
+    * An entry that already carries ``"expression"`` was written after the
+      identity change and is not un-migrated. A migrated baseline may hold
+      a spec-tracked ``pipe.T[1]`` beside a NEW ``unitTests.x[1]`` whose
+      expression happens to be ``pipe.T[1]``; pointing that at the command
+      would name a rewrite that must not happen.
     """
-    if not expression or expression not in set(baseline_names):
+    from ..discovery.mo_parser import normalize_expression
+
+    if not expression:
+        return ""
+    if not any(
+        normalize_expression(stored) == expression and "expression" not in entry
+        for stored, entry in baseline_entries.items()
+    ):
         return ""
     return (
         f" — the baseline stores it under its expression {expression!r}; "
@@ -150,6 +172,7 @@ def _check_expressions(
     result: TestResult,
     *,
     against: str = "",
+    only: Iterable[str] | None = None,
 ) -> list[StructuralWarning]:
     """A UnitTests variable is keyed by its position (``unitTests.x[2]``), so
     an edit to the model's ``x={...}`` can put a different quantity under the
@@ -162,7 +185,14 @@ def _check_expressions(
     (empty for the primary, which needs no saying). Pairing is by name, and
     a name stored twice is read from the FIRST entry — the one the scoring
     pairs with; reading the last reported a change no leaf ever scored.
+
+    ``only`` narrows the result variables checked. The primary passes None
+    — every variable is compared against it — while a NAMED baseline is
+    given the variables some leaf actually scores against it: an
+    ``against: fmpy`` soft-check holding the whole result's variables
+    otherwise warned about quantities that baseline is never compared with.
     """
+    scope = None if only is None else set(only)
     recorded: dict[str, str] = {}
     for entry in variables:
         name = entry.get("name") or ""
@@ -177,6 +207,7 @@ def _check_expressions(
         )
         for var in result.variables
         if var.expression
+        and (scope is None or var.name in scope)
         and recorded.get(var.name)
         and recorded[var.name] != var.expression
     ]
@@ -193,19 +224,24 @@ def _named_baseline_expression_warnings(
     A named baseline records its own expressions, and the primary's check
     never reads them — a soft_check accepted against ``a.Q`` while the model
     now measures ``b.Q`` compares two different quantities in silence. The
-    check runs once per baseline the tree names, not once per leaf naming
-    it, so two leaves on one variable say it once.
+    check runs once per (variable, baseline) PAIR the tree scores, not once
+    per leaf naming it: two leaves on one variable say it once, and a
+    variable no leaf scores against this baseline is not checked against it
+    at all — nothing compares those two numbers, so a difference between
+    them is not a finding about this run.
     """
     from ..storage.baseline import PRIMARY_BASELINE
-    from .tree_spec import collect_baselines
+    from .tree_spec import collect_variables_by_baseline
 
     out: list[StructuralWarning] = []
-    for name in collect_baselines(spec):
+    for name, variables in collect_variables_by_baseline(spec).items():
         if name == PRIMARY_BASELINE:
             continue
         baseline = baselines.get(name)
         if baseline is not None:
-            out += _check_expressions(baseline.variables, result, against=name)
+            out += _check_expressions(
+                baseline.variables, result, against=name, only=variables
+            )
     return out
 
 

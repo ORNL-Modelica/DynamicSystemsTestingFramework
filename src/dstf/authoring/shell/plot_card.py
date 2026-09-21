@@ -182,7 +182,12 @@ class PlotCard:
                 # only when one of them differs — a card for `x` would
                 # otherwise say `x x`.
                 labels = page.shell.session.labels(model_id=model)
-                ui.label(", ".join(labels.get(n, n) for n in resolved.series)).classes(
+                #: What each of this card's series READS as. `Session.labels`
+                #: is disambiguated over the whole TEST, so a variable reads
+                #: the same here, in its pill, in the focus bar and in its
+                #: "Add a criterion for x" button.
+                self.texts = {n: labels.get(n, n) for n in resolved.series}
+                ui.label(", ".join(self.texts[n] for n in resolved.series)).classes(
                     "text-subtitle2"
                 ).mark(f"plot-title:{index}")
                 if any(labels.get(n, n) != n for n in resolved.series):
@@ -276,7 +281,13 @@ class PlotCard:
         read: a verdict that flips must not cost the card it sits in."""
         for variable, pill in self.pills.items():
             status = worst([leaf_status(leaf) for leaf in self._leaves(view, variable)])
-            text = f"{variable} {status.upper()}" if self.named_pills else None
+            # The pill READS the label, like the title above it: `x[1] FAIL`
+            # on a TRANSFORM card named nothing a person recognises.
+            text = (
+                f"{self.texts.get(variable, variable)} {status.upper()}"
+                if self.named_pills
+                else None
+            )
             pill.set(status, text)
         for leaf in leaves_of(view):
             row = self.rows.get(str(leaf["path"]))

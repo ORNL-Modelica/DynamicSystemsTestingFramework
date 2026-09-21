@@ -387,6 +387,24 @@ def test_the_caption_at_a_variable_names_it(session):
     assert EditTree().caption(SessionView(session, _node(A, ROOT))) == "Edit tree"
 
 
+def test_the_caption_with_more_than_one_test_selected_says_the_name(two_var_session):
+    """VARIABLE placement is single-test — `available` refuses anything else
+    — and a label belongs to ONE test's result. Reading it off
+    `next(iter(sel.tests))` put an arbitrary test's expression on the
+    button: A and B both track `x` here, each with its own expression, and
+    a frozenset has no order to pick by. With two selected the caption says
+    the name."""
+    from test_session import with_expressions
+
+    with_expressions(two_var_session, A, {"x": "a.Q"})
+    with_expressions(two_var_session, B, {"x": "b.Q"})
+    one = SessionView(two_var_session, Selection(tests=frozenset({A}), variable="x"))
+    assert EditTree().caption(one) == "Add a criterion for a.Q"
+    two = SessionView(two_var_session, Selection(tests=frozenset({A, B}), variable="x"))
+    assert EditTree().available(two) == "select exactly one test"
+    assert EditTree().caption(two) == "Add a criterion for x"
+
+
 def test_the_caption_at_a_node_is_the_label_even_with_a_variable(session):
     """A criteria row's selection carries both: at a node the panel is that
     node's controls, so the caption is the plain label."""
@@ -587,7 +605,10 @@ async def test_the_add_form_offers_a_variable_whose_criterion_was_removed(
     async with host(session, EditTree(), _node(A, leaf)) as (user, _errors, _figure):
         open_menu(user, f"add:{leaf}")
         (var,) = user.find(marker=f"apply-add:{leaf}:variable").elements
-        assert var.options == ["x", "y"]
+        # Dict options: the VALUE a leaf is written against is the name, the
+        # text is what a person reads — here the same, neither has an
+        # expression.
+        assert var.options == {"x": "x", "y": "y"}
 
 
 async def test_the_add_form_offers_a_variable_with_an_awkward_expression(tmp_path):
@@ -625,7 +646,10 @@ async def test_the_add_form_offers_a_variable_with_an_awkward_expression(tmp_pat
     async with host(session, EditTree(), sel) as (user, _errors, _figure):
         # The VARIABLE panel is the add form itself, drawn open.
         (var,) = user.find(marker="apply-add:y:variable").elements
-        assert var.options == ["y", UT1]
+        # The option's VALUE is the result-file name — what the leaf is
+        # written against — and its TEXT is the expression the model wrote,
+        # which is the only way to tell twelve `unitTests.x[i]` apart.
+        assert var.options == {"y": "y", UT1: AWKWARD_EXPRESSION}
 
 
 async def test_the_cluster_add_form_on_a_nested_leaf_lands_under_its_parent(session):

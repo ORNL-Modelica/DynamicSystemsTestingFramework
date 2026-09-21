@@ -8,6 +8,8 @@ backends, and a backend module can import them before the registry in
 """
 
 import logging
+from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -93,6 +95,26 @@ def label_with_name(name: str, expression: str) -> str:
     """
     label = display_label(name, expression)
     return f"{label} ({name})" if label != name else name
+
+
+def distinct_labels(labels: Mapping[str, str]) -> dict[str, str]:
+    """``{name: what to read it as}`` over variables shown TOGETHER.
+
+    Each one's label, unless another in the set carries the same one — then
+    the name rides with it, the same ``label (name)`` pair
+    :func:`label_with_name` prints. ``x={a.Q, a.Q}`` is legal Modelica and
+    happens: two plot legends, two status pills or two select options
+    reading ``a.Q`` name two different variables and give no way to tell
+    which is which.
+
+    ``labels`` maps name → label (``Session.labels``, a view's ``label``);
+    a name it does not carry reads as itself.
+    """
+    counts = Counter(labels.values())
+    return {
+        name: f"{label} ({name})" if label != name and counts[label] > 1 else label
+        for name, label in labels.items()
+    }
 
 
 @dataclass

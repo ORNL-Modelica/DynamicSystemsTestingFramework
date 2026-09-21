@@ -83,6 +83,7 @@ def evaluate_spec(
     dataset_kind: DatasetType = DatasetType.TIME_SERIES,
     scalars: ScalarSources | None = None,
     path: str = "/metrics",
+    _warned: set[tuple[str, str]] | None = None,
 ) -> MetricResult:
     """Walk a spec tree and produce an evaluated :class:`MetricResult` root.
 
@@ -107,9 +108,22 @@ def evaluate_spec(
     flat list.
     """
     sources = scalars if scalars is not None else ScalarSources()
+    # The migrate hint is a fact about a VARIABLE's baseline entry, not
+    # about a leaf: a TRANSFORM test with five criteria on one un-migrated
+    # variable printed the same sentence five times. The set is created by
+    # the outermost call and threaded down, so it spans one test. Keyed by
+    # the baseline too — the same variable missing from the primary AND
+    # from a soft_check is two things to fix, not one repeat.
+    seen = _warned if _warned is not None else set()
     if isinstance(spec, LeafSpec):
         result = _evaluate_leaf(
-            spec, var_results_by_name, baselines, base_tolerance, dataset_kind, sources
+            spec,
+            var_results_by_name,
+            baselines,
+            base_tolerance,
+            dataset_kind,
+            sources,
+            seen,
         )
         stamp_leaf_path(result, path)
         return result
@@ -123,6 +137,7 @@ def evaluate_spec(
             dataset_kind,
             sources,
             path=f"{path}/children/{i}",
+            _warned=seen,
         )
         for i, c in enumerate(spec.children)
     ]
@@ -278,17 +293,11 @@ def _evaluate_leaf(
     base_tolerance: float,
     dataset_kind: DatasetType = DatasetType.TIME_SERIES,
     scalars: ScalarSources | None = None,
+    warned: set[tuple[str, str]] | None = None,
 ) -> MetricResult:
-    # A metric declares which dataset kinds it can score. Unscorable input
-    # is a hard fail with a diagnostic naming both sides, not a crash inside
-    # the mode. Unreachable for the builtins (all accept TIME_SERIES, which
-    # is all any backend produces) — it guards registered metrics.
+    # Own set when called outside a walk: one leaf, one line, never silence.
+    warned = set() if warned is None else warned
     desc = registry_metric(leaf.metric)
-    if desc is not None and dataset_kind not in desc.accepted_datasets:
-        return leaf_from_variable(
-            _incompatible_dataset_comparison(leaf, desc, dataset_kind)
-        )
-
     quantity = leaf.params.get("quantity")
     # A stored-scalar leaf reads its numbers from the run's statistics or
     # diagnostics, so it resolves no variable of the result and has no
@@ -308,6 +317,16 @@ def _evaluate_leaf(
     def _leaf(vc: VariableComparison) -> MetricResult:
         vc.expression = expression
         return leaf_from_variable(vc)
+
+    # A metric declares which dataset kinds it can score. Unscorable input
+    # is a hard fail with a diagnostic naming both sides, not a crash inside
+    # the mode. Unreachable for the builtins (all accept TIME_SERIES, which
+    # is all any backend produces) — it guards registered metrics. After the
+    # expression is resolved, like every other early return: this sentinel
+    # is one a person reads, and it named the variable twice as differently
+    # as the bare name and the label (the Task 4 review).
+    if desc is not None and dataset_kind not in desc.accepted_datasets:
+        return _leaf(_incompatible_dataset_comparison(leaf, desc, dataset_kind))
 
     override = _leaf_override_dict(leaf)
     tolerance = float(leaf.params.get("tolerance", base_tolerance))
@@ -361,11 +380,15 @@ def _evaluate_leaf(
                 # logs, from the same helper, on the leaf's own reason as
                 # well — the tree path shows no log line to the person
                 # reading the report. Logged only when it applies; a
-                # variable simply new to the baseline is re-accepted.
+                # variable simply new to the baseline is re-accepted. The
+                # REASON rides on every leaf; the LOG LINE is said once per
+                # (variable, baseline) — `warned` is the test's set.
                 hint = migration_hint(
-                    baseline.ref_vars_by_name if baseline else (), expression
+                    baseline.ref_vars_by_name if baseline else {}, expression
                 )
-                if hint:
+                key = (leaf.against, leaf.variable)
+                if hint and key not in warned:
+                    warned.add(key)
                     logger.warning(
                         "baseline %r holds no variable named %r%s",
                         leaf.against,

@@ -395,3 +395,114 @@ def test_a_folded_family_of_labels_takes_one_legend_entry():
     )
     legend = [tr["name"] for tr in fig["data"] if tr.get("showlegend")]
     assert legend == ["pipe.T[1:2]"]
+
+
+#: Result-file variable NAMES, of every shape a `.mat` file produces:
+#: plain, negated aliases, quoted identifiers, derivatives, multi-dimension
+#: indices, a non-integer index. `family_of` answers these exactly as it did
+#: before labels existed — only EXPRESSIONS changed (2ac8c8c).
+RESULT_FILE_NAMES = [
+    "pipe.T[1]",
+    "pipe.medium[3].T",
+    "unitTests.x[3]",
+    "a.b[1].c[2]",
+    "a[1, 2]",
+    "a[1,2]",
+    "x[2, 3]",
+    "x[2,3]",
+    "a[1, 2].b[3]",
+    "a.b[3][1, 2]",
+    "-x[1]",
+    "der(pipe.T[3])",
+    "der(der(x[1]))",
+    "der(x[2, 3])",
+    "a.'b c'[2]",
+    "'quoted.name'[2]",
+    "x[end]",
+    "x[ 1 ]",
+    "x",
+    "q",
+]
+
+
+def _family_of_at_2ac8c8c(name: str):
+    """`figures/families.py::family_of` as it stood at 2ac8c8c, before a
+    label could differ from a name. Copied, not imported: the point is that
+    the current one still agrees with it over NAMES."""
+    import re
+
+    if re.search(r"\[[^\]]*,[^\]]*\]", name):
+        return None
+    m = re.compile(r"\[(\d+)\](?!.*\[\d+\])").search(name)
+    if m is None:
+        return None
+    return name[: m.start()] + "[]" + name[m.end() :], int(m.group(1))
+
+
+@pytest.mark.parametrize("name", RESULT_FILE_NAMES)
+def test_family_of_answers_a_name_exactly_as_it_did_before_labels(name):
+    assert family_of(name) == _family_of_at_2ac8c8c(name)
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["sum(pipe.Qs[1])", "sum(pipe.Qs[2])", "abs(x[1])", "max(a.b[2])", "cat(1, y)[1]"],
+)
+def test_a_reduction_over_an_array_is_not_an_element_of_one(label):
+    """`sum(pipe.Qs[1])` and `sum(pipe.Qs[2])` are two quantities. Folded,
+    they took one legend entry, one colour ramp and a label —
+    `sum(pipe.Qs[1:2])` — naming a third thing neither of them is."""
+    assert family_of(label) is None
+
+
+def test_two_reductions_of_one_array_stay_two_families():
+    labels = {N1: "sum(pipe.Qs[1])", N2: "sum(pipe.Qs[2])"}
+    assert group_families([N1, N2], labels) == [(N1, [N1]), (N2, [N2])]
+
+
+def test_two_series_sharing_one_expression_read_label_and_name():
+    """`x={a.Q, a.Q}` is legal: two result-file variables, one expression.
+    Read as the label alone, one legend entry, one hover and one colour
+    stood for both with no way to tell which curve was which."""
+    fig = plot_figure([_labelled(N1, "a.Q", ref=True), _labelled(N2, "a.Q", scale=2.0)])
+    by_id = {tr["meta"]["id"]: tr for tr in fig["data"] if tr.get("meta")}
+    assert by_id[f"actual/{N1}"]["name"] == f"a.Q ({N1})"
+    assert by_id[f"actual/{N2}"]["name"] == f"a.Q ({N2})"
+    assert by_id[f"actual/{N1}"]["hovertemplate"].startswith(f"a.Q ({N1}):")
+    assert by_id[f"reference/{N1}"]["name"] == f"a.Q ({N1}) (reference)"
+    # Two legend entries, two hues: `label (name)` belongs to no family.
+    assert [tr["name"] for tr in fig["data"] if tr.get("showlegend")] == [
+        f"a.Q ({N1})",
+        f"a.Q ({N2})",
+    ]
+    colors = {by_id[f"actual/{n}"]["line"]["color"] for n in (N1, N2)}
+    assert len(colors) == 2
+
+
+def test_two_series_with_their_own_expressions_read_the_label_alone():
+    """The guard on the rule above: the name rides along only where the
+    label is ambiguous."""
+    fig = plot_figure([_labelled(N1, "a.Q"), _labelled(N2, "b.Q")])
+    by_id = {tr["meta"]["id"]: tr for tr in fig["data"] if tr.get("meta")}
+    assert by_id[f"actual/{N1}"]["name"] == "a.Q"
+    assert by_id[f"actual/{N2}"]["name"] == "b.Q"
+
+
+@pytest.mark.parametrize("build", ["single", "multi"])
+def test_a_label_holding_markup_reaches_plotly_escaped(build):
+    """Plotly renders a trace name and a hovertemplate through a small HTML
+    subset, so `a<b>c` would lose its middle. The name is a KEY and is
+    never escaped."""
+    views = [_labelled(N1, "a<b>c", ref=True)]
+    if build == "multi":
+        views.append(_labelled(N2, "d&e"))
+    fig = plot_figure(views) if build == "multi" else variable_figure(views[0])
+    texts = [
+        tr.get("name", "") + tr.get("hovertemplate", "")
+        for tr in fig["data"]
+        if tr.get("meta", {}).get("kind") in ("act", "ref")
+    ]
+    assert any("a&lt;b&gt;c" in t for t in texts)
+    assert not any("a<b>c" in t for t in texts)
+    ids = [tr["meta"]["id"] for tr in fig["data"] if tr.get("meta")]
+    assert not any("&lt;" in i for i in ids)

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..backends.types import display_label
+from ..backends.types import display_label, distinct_labels
 from ..comparison.comparator import VariableComparison
 from ..comparison.registry import summarize
 
@@ -83,6 +83,7 @@ def worst_finite_score(comparisons: list) -> tuple[float | None, int]:
 def _augment_tree_view(
     view: dict,
     comparisons_by_path: dict[str, VariableComparison],
+    texts: dict[str, str] | None = None,
 ) -> None:
     """Walk ``view`` in place, enriching leaf nodes with what the page shows.
 
@@ -91,6 +92,12 @@ def _augment_tree_view(
     mode, the variable's name, ``summarize``'s display / criterion /
     detail pairs, and the reason a sentinel could not be scored. Nothing
     here is an input to a computation — the page performs none.
+
+    ``texts`` is ``{name: what to read it as}`` over the TEST's scored
+    variables (:func:`~dstf.backends.types.distinct_labels`): two variables
+    sharing one expression — ``x={a.Q, a.Q}`` — gave two criteria rows the
+    identical text ``nrmse · a.Q``, with nothing on either row saying which
+    variable it scored.
     """
     if view.get("kind") == "leaf":
         path = view.get("path", "")
@@ -108,7 +115,9 @@ def _augment_tree_view(
                 # tiers: the report's node macro and the tool's `leaf_name`
                 # take it from here, so the two cannot drift. `variable`
                 # stays the key a patch op targets.
-                "label": display_label(var_label, vc.expression),
+                "label": (texts or {}).get(
+                    var_label, display_label(var_label, vc.expression)
+                ),
                 "score_display": summary.display,
                 "criterion": summary.criterion,
                 # The mode's own key/value pairs behind the verdict, as the
@@ -123,7 +132,7 @@ def _augment_tree_view(
         )
         return
     for child in view.get("children", []):
-        _augment_tree_view(child, comparisons_by_path)
+        _augment_tree_view(child, comparisons_by_path, texts)
 
 
 # ---------------------------------------------------------------------------
@@ -724,7 +733,13 @@ def build_tree_view(comparisons: list, test_model, metric_tree) -> dict | None:
             len(missing),
             ", ".join(missing),
         )
-    _augment_tree_view(tree_view, comparisons_by_path)
+    _augment_tree_view(
+        tree_view,
+        comparisons_by_path,
+        distinct_labels(
+            {vc.name: display_label(vc.name, vc.expression) for vc in comparisons}
+        ),
+    )
     # Must run before the per-variable subtrees are cut: they shallow-copy
     # the leaf dicts, so a flag stamped afterwards would reach the full-tree
     # mount only.

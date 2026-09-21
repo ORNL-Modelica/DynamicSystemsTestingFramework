@@ -111,6 +111,32 @@ class TestSoftCheckStorage:
         ]
         assert [entry["expression"] for entry in written] == ["", "pipe.T[1]"]
 
+    def test_an_entry_in_another_key_order_is_written_in_accepts(
+        self, store_with_primary
+    ):
+        """The order is IMPOSED, not patched in beside whatever ``name`` was
+        found: an entry that already carried ``expression``, or one whose
+        ``name`` came after its ``values``, kept its own order, and two
+        files written by one command read differently. Any key this writer
+        does not name follows, in its own order — and the caller's dict is
+        never mutated (it may be a live result's)."""
+        store, test = store_with_primary
+        entry = {
+            "values": [0.0, 1.0],
+            "unit": "K",
+            "expression": "pipe.T[1]",
+            "name": "unitTests.x[1]",
+            "index": 1,
+        }
+        before = list(entry)
+        store.add_soft_check(
+            test.model_id, "odd-order", time=[0.0, 1.0], variables=[entry]
+        )
+        sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "odd-order.json"
+        (written,) = json.loads(sc_file.read_text())["variables"]
+        assert list(written) == ["index", "name", "expression", "values", "unit"]
+        assert list(entry) == before
+
     def test_get_roundtrip(self, store_with_primary):
         store, test = store_with_primary
         store.add_soft_check(

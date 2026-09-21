@@ -15,9 +15,9 @@ from dstf.config import (
 from dstf.discovery.mo_parser import (
     _extract_model_name,
     _extract_within,
-    _normalize_expression,
     _parse_experiment,
     _parse_unit_tests,
+    normalize_expression,
     parse_mo_file,
 )
 from dstf.discovery.patch_apply import apply_patch
@@ -222,8 +222,8 @@ class TestMoParser:
         # two things, and there is no second thing here. (A comma directly
         # before a closing bracket needs no such exception — the space is
         # taken back with every other space before a bracket.)
-        assert _normalize_expression("a,") == "a,"
-        assert _normalize_expression("a.b[1,]") == "a.b[1,]"
+        assert normalize_expression("a,") == "a,"
+        assert normalize_expression("a.b[1,]") == "a.b[1,]"
 
     def test_the_normal_form_is_idempotent(self):
         """Normalizing a normalized expression changes nothing — a stored
@@ -238,8 +238,8 @@ class TestMoParser:
             "a * [1, 2]",
             "a   +\tb",
         ):
-            once = _normalize_expression(source)
-            assert _normalize_expression(once) == once, source
+            once = normalize_expression(source)
+            assert normalize_expression(once) == once, source
 
     def test_a_class_whose_name_merely_ends_in_unit_tests_is_not_the_component(
         self,

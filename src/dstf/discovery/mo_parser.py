@@ -116,7 +116,7 @@ _WS_BEFORE_CLOSE_RE = re.compile(r"\s+([\])},])")
 _COMMA_RE = re.compile(r",\s*(?!$)")
 
 
-def _normalize_expression(text: str) -> str:
+def normalize_expression(text: str) -> str:
     """One expression in its normal form, without its source layout.
 
     A ``.mo`` file wraps a long expression over two lines, or spells an
@@ -150,12 +150,12 @@ def _parse_x_expressions(raw: str) -> list[str]:
 
     Handles simple comma-separated variables but returns raw text for
     complex cases like cat() or array comprehensions. Every expression
-    returned is normalized (:func:`_normalize_expression`).
+    returned is normalized (:func:`normalize_expression`).
     """
     # If it contains cat( or 'for', it's complex — return as single raw entry
     stripped = raw.strip()
     if "cat(" in stripped or " for " in stripped:
-        return [_normalize_expression(stripped)]
+        return [normalize_expression(stripped)]
 
     # Split by commas, respecting nested brackets/parens
     expressions = []
@@ -169,13 +169,13 @@ def _parse_x_expressions(raw: str) -> list[str]:
             depth -= 1
             current.append(ch)
         elif ch == "," and depth == 0:
-            expr = _normalize_expression("".join(current))
+            expr = normalize_expression("".join(current))
             if expr:
                 expressions.append(expr)
             current = []
         else:
             current.append(ch)
-    last = _normalize_expression("".join(current))
+    last = normalize_expression("".join(current))
     if last:
         expressions.append(last)
 
@@ -355,7 +355,7 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
                         break
             raw = param_text[m2.start() + 2 : end2 + 1]  # include "func(...)"
             info.x_raw = raw.strip()
-            info.x_expressions = [_normalize_expression(raw)]
+            info.x_expressions = [normalize_expression(raw)]
     else:
         # x=varName, x=some.qualified.name, x=a.b[1].c, x=a.b[1, :] — a bare
         # expression. It runs to the end of ITS argument; a bracket regex
@@ -366,7 +366,7 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
             raw = _take_argument(param_text, m2.end()).strip()
             if raw:
                 info.x_raw = raw
-                info.x_expressions = [_normalize_expression(raw)]
+                info.x_expressions = [normalize_expression(raw)]
 
     # Extract x_reference={...}
     m = re.search(r"\bx_reference\s*=\s*\{", param_text)

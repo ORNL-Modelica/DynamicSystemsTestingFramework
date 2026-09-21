@@ -21,7 +21,12 @@ from typing import TYPE_CHECKING, Any, Literal
 from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
 from ..backends.progress import recorded_backend
-from ..backends.types import DatasetType, TestResult, display_label
+from ..backends.types import (
+    DatasetType,
+    TestResult,
+    display_label,
+    distinct_labels,
+)
 from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
@@ -521,15 +526,25 @@ class Session:
 
         Only what the result carries: a name with no entry here is its own
         label, and the page reads it that way. Nothing is keyed by a label
-        — titles, rows and captions read it, markers and ops do not."""
+        — titles, rows and captions read it, markers and ops do not.
+
+        The scope of the disambiguation is the TEST
+        (:func:`~dstf.backends.types.distinct_labels`): ``x={a.Q, a.Q}``
+        gives two result-file variables one expression, and every surface
+        of this test's page — the card titles, the named pills, the focus
+        bar, the "Add a criterion for x" buttons, the add form's options —
+        would otherwise show the same text twice with no way to tell which
+        variable each belongs to. One map, so all of them agree."""
         result = self._require_project().results.get(model_id)
         if result is None:
             return {}
-        return {
-            var.name: display_label(var.name, var.expression)
-            for var in result.variables
-            if var.name
-        }
+        return distinct_labels(
+            {
+                var.name: display_label(var.name, var.expression)
+                for var in result.variables
+                if var.name
+            }
+        )
 
     def variable_names(self, model_id: str) -> list[str]:
         """Every variable the last result holds: the tracked ones first, in

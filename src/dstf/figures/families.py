@@ -16,11 +16,17 @@ import re
 from collections.abc import Mapping, Sequence
 
 _LAST_INDEX = re.compile(r"\[(\d+)\](?!.*\[\d+\])")
-#: A Modelica variable name: identifiers, dots, index brackets. An
-#: expression is not one, and `der(x[3])` is grandfathered in by the
-#: leading-call form below.
-_PLAIN_NAME = re.compile(r"^[A-Za-z_][A-Za-z_0-9.\[\]]*$")
-_CALL_OF_NAME = re.compile(r"^[A-Za-z_][A-Za-z_0-9.]*\(([^(),]*)\)$")
+#: A Modelica variable name as a RESULT FILE spells one: identifiers, dots
+#: and index brackets, optionally negated (Dymola stores a negated alias as
+#: ``-x[1]``). A quoted identifier (``a.'b c'[2]``) is collapsed to one
+#: letter first, so its spaces and punctuation do not have to be allowed
+#: everywhere.
+_PLAIN_NAME = re.compile(r"^-?[A-Za-z_][A-Za-z_0-9.\[\]]*$")
+_QUOTED_ID = re.compile(r"'[^']*'")
+#: ``der(...)``, and only that: a derivative IS an element of the array it
+#: differentiates. Any OTHER call is a reduction over the array — ``sum(...)``
+#: of two different slices is two quantities, not two elements of one.
+_DER_CALL = re.compile(r"^der\((.*)\)$")
 
 #: Four stops per hue, light to dark (Material 200 / 400 / 700 / 900). The
 #: first is DESIGN.md's accent ramp; a second family on a plot takes the
@@ -32,19 +38,35 @@ HUES: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
+def _names_an_element(text: str) -> bool:
+    """Does ``text`` spell a variable, rather than compute one?
+
+    A plain name, negated or not, with any number of ``der(...)`` around
+    it. Everything else — ``sum(core.Qs[6, :])``, ``cat(1, a, b)[2]``,
+    ``abs(x[1])`` — is an expression: its value is not an element of the
+    array whose index it happens to end with.
+    """
+    while (inner := _DER_CALL.match(text)) is not None:
+        text = inner.group(1)
+    return bool(_PLAIN_NAME.match(_QUOTED_ID.sub("q", text)))
+
+
 def family_of(text: str) -> tuple[str, int] | None:
     """``(family key, index)`` — the text with its last ``[integer]`` emptied
     — or ``None`` when it names no element of an array.
 
     Only a PLAIN indexed name has a family (``pipe.T[3]``,
-    ``der(pipe.T[3])``, ``pipe.medium[3].T``). An expression the model wrote
-    — ``cat(1, a, b)[2]``, ``sum(core.Qs[6, :])`` — is a label, not an
-    element of an array, and folding three unrelated ones into
-    ``cat(1, a, b)[1:3]`` would give three quantities one legend entry and
-    one colour ramp.
+    ``der(pipe.T[3])``, ``pipe.medium[3].T``, ``a.'b c'[2]``, ``-x[1]``).
+    An expression the model wrote — ``cat(1, a, b)[2]``,
+    ``sum(core.Qs[6, :])``, ``sum(pipe.Qs[1])`` — is a label, not an
+    element of an array: folding two of those into ``sum(pipe.Qs[1:2])``
+    gives two quantities one legend entry, one colour ramp and a label
+    naming a third thing neither of them is.
+
+    Over NAMES — which is every caller's input until a label differs from
+    one — this is exactly what it has always been; only expressions moved.
     """
-    call = _CALL_OF_NAME.match(text)
-    if not _PLAIN_NAME.match(call.group(1) if call else text):
+    if not _names_an_element(text):
         return None
     m = _LAST_INDEX.search(text)
     if m is None:

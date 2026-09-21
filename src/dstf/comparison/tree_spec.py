@@ -142,19 +142,21 @@ def collect_variables(spec: SpecNode) -> list[str]:
     return out
 
 
-def collect_baselines(spec: SpecNode) -> list[str]:
-    """Return the baseline names the tree scores against, in tree order.
+def collect_variables_by_baseline(spec: SpecNode) -> dict[str, list[str]]:
+    """``{baseline name: the variables its leaves score}``, in tree order.
 
-    Unique, and ``"primary"`` is one of them whenever a leaf takes the
-    default. The comparator reads it to run the expression soft-check on
-    every baseline a tree actually uses — once per baseline, not per leaf.
+    Unique on both sides, and ``"primary"`` is a key whenever a leaf takes
+    the default. The comparator reads it to run the expression soft-check
+    on every baseline a tree actually uses — once per PAIR, not per leaf
+    and not over every variable of the result: a baseline records the
+    expressions of the variables it holds, and a variable no leaf scores
+    against it is not being compared with it at all.
     """
-    seen: set[str] = set()
-    out: list[str] = []
+    out: dict[str, list[str]] = {}
     for leaf, _ in _walk_leaves_with_paths(spec, "/metrics"):
-        if leaf.against not in seen:
-            seen.add(leaf.against)
-            out.append(leaf.against)
+        names = out.setdefault(leaf.against, [])
+        if leaf.variable not in names:
+            names.append(leaf.variable)
     return out
 
 
