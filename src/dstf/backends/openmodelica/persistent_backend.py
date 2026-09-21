@@ -385,17 +385,11 @@ class OpenModelicaWorker(Worker):
             shutil.rmtree(test_dir)
         test_dir.mkdir(parents=True, exist_ok=True)
 
-        # UnitTests component auto-names (same convention as the batch backend).
-        extra_filter_names: list[str] = []
-        if test.source in ("unit_tests", "both") and test.n_vars > 0:
-            extra_filter_names = [
-                f"unitTests.x[{i}]" for i in range(1, test.n_vars + 1)
-            ]
-
+        # The variable filter (the UnitTests component's names included) is
+        # build_simulate_args' own business — same call as the batch backend.
         sim_args = build_simulate_args(
             test,
             self.om_config.diagnostic_variables,
-            extra_filter_names=extra_filter_names,
         )
         simulate_expr = f"simulate({test.model_id}, {', '.join(sim_args)})"
 

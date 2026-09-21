@@ -62,7 +62,14 @@ class VariableResult:
     index: int  # 1-based
     time: np.ndarray
     values: np.ndarray
-    name: str = ""  # Variable name (e.g., "pipe.T[1]" or "unitTests.x[1]")
+    # The variable's name in the result file ("pipe.T[1]", "unitTests.x[1]")
+    # — the only key: overrides, tree leaves, plot series and baselines all
+    # name a variable this way.
+    name: str = ""
+    # What the model wrote for a UnitTests variable (``x={pipe.T[1]}``): a
+    # label for people, recorded beside the name in the baseline. Never a key,
+    # and empty for a variable whose name is all there is.
+    expression: str = ""
 
 
 @dataclass

@@ -125,16 +125,6 @@ class OpenModelicaBackend(Backend):
             self.progress.on_start(test_key)
             self.progress.on_phase(test_key, "translating")
 
-        # UnitTests component variable names (unitTests.x[1..n]) — unlike
-        # spec-sourced tests these don't appear in test.variable_patterns, so
-        # we must add them to the variableFilter explicitly or OM's regex
-        # will exclude them from the .mat.
-        extra_filter_names: list[str] = []
-        if test.source in ("unit_tests", "both") and test.n_vars > 0:
-            extra_filter_names = [
-                f"unitTests.x[{i}]" for i in range(1, test.n_vars + 1)
-            ]
-
         # MSL is always required for Modelica simulation. Dymola auto-loads
         # it; OM needs an explicit loadModel(Modelica). Auto-inject if the
         # user didn't already list it, so a single testing.json with an
@@ -154,7 +144,6 @@ class OpenModelicaBackend(Backend):
             backend_setup=list(self.om_config.backend_setup),
             diagnostic_vars=list(self.om_config.diagnostic_variables),
             std_version=self.om_config.std_version,
-            extra_filter_names=extra_filter_names,
         )
         mos_path = test_dir / self.MOS_FILENAME
         mos_path.write_text(mos_text, encoding="utf-8")

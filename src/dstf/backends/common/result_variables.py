@@ -1,7 +1,7 @@
 """Shared result-extraction helpers for DSresult-MAT backends.
 
 Dymola and OpenModelica write the same DSresult MAT layout and follow the
-same ``unitTests.x[i]`` convention, so variable selection, extraction and the
+same ``<instance>.x[i]`` convention, so variable selection, extraction and the
 diagnostics/timing fold into ``statistics`` are one implementation here rather
 than a copy per backend. Backends keep their own MAT reading and their own
 timing computation — only what is genuinely identical lives here.
@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from ...discovery.test_registry import TestModel
+from ...discovery.unit_tests import unit_test_variables
 from ..types import VariableResult, resolve_variable_patterns
 from .mat_reader import list_result_mat_variables
 
@@ -34,10 +35,8 @@ def compute_needed_variables(
     """
     needed: set[str] = set()
 
-    # UnitTests component variables
-    if test.source in ("unit_tests", "both") and test.n_vars > 0:
-        for i in range(1, test.n_vars + 1):
-            needed.add(f"unitTests.x[{i}]")
+    # UnitTests component variables, under their result-file names
+    needed.update(v.name for v in unit_test_variables(test))
 
     # Pattern-based variables — need the full name list to resolve globs
     if test.variable_patterns:
@@ -65,37 +64,33 @@ def extract_variables(
     seen: set[str] = set()
     idx = 1
 
-    # 1. UnitTests variables (source = "unit_tests" or "both")
-    if test.source in ("unit_tests", "both") and test.n_vars > 0:
-        for i in range(1, test.n_vars + 1):
-            var_name = f"unitTests.x[{i}]"
-            if var_name in mat_data:
-                time_arr, values = mat_data[var_name]
-                # Use parsed expressions only when they map 1:1 to variables.
-                # Complex expressions like cat() produce fewer names than
-                # variables, so fall back to x[i] for all to avoid misleading
-                # labels. When a single bare variable maps to multiple vars
-                # (e.g. x=y where y is an array), use varname[i] labels.
-                if len(test.x_expressions) == test.n_vars:
-                    label = test.x_expressions[i - 1]
-                elif len(test.x_expressions) == 1 and test.n_vars > 1:
-                    label = f"{test.x_expressions[0]}[{i}]"
-                else:
-                    label = f"x[{i}]"
-                results.append(
-                    VariableResult(index=idx, time=time_arr, values=values, name=label)
+    # 1. UnitTests variables (source = "unit_tests" or "both"): the name is
+    # the result file's, the model's expression rides beside it as a label.
+    # ``seen`` therefore holds result-file names only — a pattern resolving
+    # to a DIFFERENT variable that an expression happens to spell is that
+    # other variable, and is extracted too.
+    for ut in unit_test_variables(test):
+        if ut.name in mat_data:
+            time_arr, values = mat_data[ut.name]
+            results.append(
+                VariableResult(
+                    index=idx,
+                    time=time_arr,
+                    values=values,
+                    name=ut.name,
+                    expression=ut.expression,
                 )
-                seen.add(var_name)
-                seen.add(label)
-                idx += 1
-            else:
-                # Loud on every backend: a requested variable absent from the
-                # output is a spec/model mismatch, not something to swallow.
-                logger.warning(
-                    "Variable %s not found in simulation output for %s",
-                    var_name,
-                    test.model_id,
-                )
+            )
+            seen.add(ut.name)
+            idx += 1
+        else:
+            # Loud on every backend: a requested variable absent from the
+            # output is a spec/model mismatch, not something to swallow.
+            logger.warning(
+                "Variable %s not found in simulation output for %s",
+                ut.name,
+                test.model_id,
+            )
 
     # 2. Pattern-based variables (source = "spec" or "both")
     if test.variable_patterns:

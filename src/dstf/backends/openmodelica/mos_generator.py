@@ -21,6 +21,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from ...discovery.test_registry import TestModel
+from ...discovery.unit_tests import unit_test_variables
 from ..types import _pattern_to_regex
 
 
@@ -65,8 +66,8 @@ def build_variable_filter(
 
     OM's ``variableFilter`` is a regex over variable names. We escape each
     name literally and join with ``|``. ``time`` is always included; so are
-    the diagnostic variables and any ``extra_names`` the backend passes
-    (e.g. ``unitTests.x[1]``, ..., ``unitTests.x[N]`` for unit_tests-sourced
+    the diagnostic variables and any ``extra_names`` the caller passes (the
+    UnitTests component's ``<instance>.x[1..N]`` for unit_tests-sourced
     tests). Returning a regex (not ``.*``) keeps the .mat small — OM dumps
     all parameters/aliases/derivatives by default.
     """
@@ -80,8 +81,9 @@ def build_variable_filter(
     # the set for the pass/fail comparison).
     for pat in patterns:
         alternatives.append(_pattern_to_regex(pat).pattern)
-    # Extra literal names (no globs). The backend uses this for UnitTests
-    # component variables (``unitTests.x[i]``) that the spec doesn't list.
+    # Extra literal names (no globs). build_simulate_args uses this for the
+    # UnitTests component's variables (``<instance>.x[i]``), which the spec
+    # doesn't list.
     for n in extra_names:
         alternatives.append(re.escape(n))
     # Diagnostic variables (literal names — no globs)
@@ -120,7 +122,6 @@ def _format_sim_kwarg(key: str, value) -> str:
 def build_simulate_args(
     test: TestModel,
     diagnostic_vars: Iterable[str],
-    extra_filter_names: Iterable[str] = (),
 ) -> list[str]:
     """Build the ``key=value`` strings for an OM ``simulate(...)`` call.
 
@@ -150,7 +151,10 @@ def build_simulate_args(
     var_filter = build_variable_filter(
         test.variable_patterns,
         diagnostic_vars,
-        extra_names=extra_filter_names,
+        # The UnitTests component's variables are in no spec pattern: both
+        # OM backends would otherwise filter them out of the .mat. Naming
+        # them here is what keeps the two paths saying the same thing.
+        extra_names=[v.name for v in unit_test_variables(test)],
     )
     args.append(_format_sim_kwarg("variableFilter", var_filter))
     return args
@@ -165,7 +169,6 @@ def build_simulate_mos(
     backend_setup: list[str],
     diagnostic_vars: list[str],
     std_version: str = "latest",
-    extra_filter_names: Iterable[str] = (),
 ) -> str:
     """Assemble the full per-test .mos script.
 
@@ -201,7 +204,7 @@ def build_simulate_mos(
 
     lines.append(f'cd("{fwd(test_dir)}");')
 
-    sim_args = build_simulate_args(test, diagnostic_vars, extra_filter_names)
+    sim_args = build_simulate_args(test, diagnostic_vars)
     # Bare simulate(...) — omc REPL-echoes the SimulationResult record to
     # stdout, which log_parser parses. No ``res := ...`` assignment and no
     # follow-up prints (see module docstring).

@@ -36,8 +36,8 @@ def _spec_test(patterns, model_id="Lib.Examples.PatternTest"):
     )
 
 
-def _unit_tests_test(n_vars, model_id="Lib.Examples.UnitTest"):
-    return TestModel(
+def _unit_tests_test(n_vars, model_id="Lib.Examples.UnitTest", **overrides):
+    defaults = dict(
         model_id=model_id,
         source_file=Path(""),
         source_package="Lib.Examples",
@@ -46,6 +46,8 @@ def _unit_tests_test(n_vars, model_id="Lib.Examples.UnitTest"):
         variable_patterns=[],
         source="unit_tests",
     )
+    defaults.update(overrides)
+    return TestModel(**defaults)
 
 
 def _series(values, dtype=np.float64):
@@ -70,6 +72,15 @@ class TestComputeNeededVariables:
         assert "unitTests.x[1]" in needed
         assert all(n.startswith("unitTests.x") for n in needed)
 
+    def test_the_component_names_the_variables(self, tmp_path):
+        """``UnitTests ut(...)`` writes ``ut.x[i]``, not ``unitTests.x[i]``."""
+        needed = compute_needed_variables(
+            tmp_path / "absent.mat",
+            _unit_tests_test(2, unit_tests_instance="ut"),
+            [],
+        )
+        assert needed == {"ut.x[1]", "ut.x[2]"}
+
     def test_unreadable_mat_falls_back_to_everything(self, tmp_path):
         """Unreadable name matrix => None, meaning 'load everything'."""
         bogus = tmp_path / "bogus.mat"
@@ -93,6 +104,58 @@ class TestExtractVariables:
         ]
         assert any("unitTests.x[2]" in m and "Lib.Examples.Loud" in m for m in messages)
 
+    def test_unit_test_variables_keep_their_result_file_names(self):
+        """The name is the one the .mat carries; the model's expression
+        rides beside it as a label."""
+        test = _unit_tests_test(2, x_expressions=["a.Q", "pipe.T[1]"])
+        mat_data = {
+            "unitTests.x[1]": _series([1.0, 2.0]),
+            "unitTests.x[2]": _series([3.0, 4.0]),
+        }
+        variables, _ = extract_variables(mat_data, test, [])
+        assert [(v.name, v.expression) for v in variables] == [
+            ("unitTests.x[1]", "a.Q"),
+            ("unitTests.x[2]", "pipe.T[1]"),
+        ]
+
+    def test_extraction_reads_the_components_own_instance(self):
+        test = _unit_tests_test(1, x_expressions=["a"], unit_tests_instance="ut")
+        variables, _ = extract_variables({"ut.x[1]": _series([1.0])}, test, [])
+        assert [v.name for v in variables] == ["ut.x[1]"]
+
+    def test_a_pattern_naming_the_component_variable_is_not_a_second_variable(self):
+        """De-dupe is by result-file name: the pattern resolves to the name
+        the UnitTests pass already emitted."""
+        test = _unit_tests_test(
+            1,
+            model_id="Lib.Examples.Both",
+            x_expressions=["pipe.T[1]"],
+            variable_patterns=["unitTests.x[1]"],
+            source="both",
+        )
+        variables, _ = extract_variables({"unitTests.x[1]": _series([1.0])}, test, [])
+        assert [v.name for v in variables] == ["unitTests.x[1]"]
+
+    def test_a_pattern_equal_to_an_expression_is_its_own_variable(self):
+        """Two variables of the result file are two variables: the pattern
+        names ``pipe.T[1]``, which the component only LABELS ``x[1]`` by."""
+        test = _unit_tests_test(
+            1,
+            model_id="Lib.Examples.Both",
+            x_expressions=["pipe.T[1]"],
+            variable_patterns=["pipe.T[1]"],
+            source="both",
+        )
+        mat_data = {
+            "unitTests.x[1]": _series([1.0]),
+            "pipe.T[1]": _series([1.0]),
+        }
+        variables, _ = extract_variables(mat_data, test, [])
+        assert [(v.index, v.name, v.expression) for v in variables] == [
+            (1, "unitTests.x[1]", "pipe.T[1]"),
+            (2, "pipe.T[1]", ""),
+        ]
+
     def test_pattern_resolution_passthrough(self):
         """Pattern variables come back in resolve_variable_patterns order."""
         test = _spec_test(["pipe.T*", "tank.level"])
@@ -108,7 +171,7 @@ class TestExtractVariables:
         assert [v.index for v in variables] == [1, 2, 3]
 
     def test_pattern_variable_already_seen_is_not_duplicated(self):
-        """A unitTests label re-matched by a pattern is emitted once."""
+        """A UnitTests variable's name re-matched by a glob is emitted once."""
         test = TestModel(
             model_id="Lib.Examples.Both",
             source_file=Path(""),

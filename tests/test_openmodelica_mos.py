@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from dstf.backends.openmodelica.mos_generator import (
+    build_simulate_args,
     build_simulate_mos,
     build_variable_filter,
     classify_dependency,
@@ -107,6 +108,51 @@ class TestBuildVariableFilter:
         pat = re.compile(regex)
         assert pat.fullmatch("time")
         assert not pat.fullmatch("anything_else")
+
+
+class TestBuildSimulateArgs:
+    """The UnitTests component's variables are not in the spec's patterns,
+    so the filter has to name them — and it asks the one naming rule, which
+    knows the component's instance."""
+
+    def _filter_arg(self, test) -> str:
+        (arg,) = [
+            a for a in build_simulate_args(test, []) if a.startswith("variableFilter")
+        ]
+        return arg
+
+    def test_the_filter_names_the_components_variables(self):
+        import re
+
+        test = _make_test(n_vars=2, variable_patterns=[], source="unit_tests")
+        regex = self._filter_arg(test).split("=", 1)[1].strip('"').replace("\\\\", "\\")
+        pat = re.compile(regex)
+        assert pat.fullmatch("unitTests.x[1]")
+        assert pat.fullmatch("unitTests.x[2]")
+
+    def test_the_filter_uses_the_components_own_instance(self):
+        import re
+
+        test = _make_test(
+            n_vars=2,
+            variable_patterns=[],
+            source="unit_tests",
+            unit_tests_instance="ut",
+        )
+        regex = self._filter_arg(test).split("=", 1)[1].strip('"').replace("\\\\", "\\")
+        pat = re.compile(regex)
+        assert pat.fullmatch("ut.x[1]")
+        assert pat.fullmatch("ut.x[2]")
+        assert not pat.fullmatch("unitTests.x[1]")
+
+    def test_a_spec_sourced_test_adds_nothing(self):
+        import re
+
+        test = _make_test(n_vars=0, variable_patterns=["x"], source="spec")
+        regex = self._filter_arg(test).split("=", 1)[1].strip('"').replace("\\\\", "\\")
+        pat = re.compile(regex)
+        assert pat.fullmatch("x")
+        assert not pat.fullmatch("unitTests.x[1]")
 
 
 class TestBuildSimulateMos:
