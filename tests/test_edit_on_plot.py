@@ -397,6 +397,22 @@ def test_a_drag_with_no_open_criterion_still_stages(session):
     assert _only_op(outcome).path == "/metrics/children/1"
 
 
+async def test_a_tables_heading_is_the_fields_own_label(session):
+    """The heading said `{path} · {metric} · {field}` — every word of which
+    the open criterion's row says directly above the editor (the Task 6
+    screenshot). It names the field, in the words the Config declared."""
+    _tree_on_d(session)
+    async with host(session, EditOnPlot(), ON_D) as (user, _errors, _figure):
+        await user.should_see("Control points")
+        (heading,) = [
+            e
+            for e in user.find(ui.label).elements
+            if e.text == "Control points"  # TubeConfig.tube_points' label
+        ]
+        assert "text-bold" in heading.classes and "text-xs" in heading.classes
+        assert not [e for e in user.find(ui.label).elements if " · tube · " in e.text]
+
+
 async def test_the_panel_draws_only_the_open_leafs_tables(session):
     _tree_on_d(session)
     sel = Selection(tests=frozenset({D}), variable="x", leaf_path="/metrics/children/0")
@@ -447,13 +463,13 @@ async def test_the_panel_draws_a_table_per_list_field_and_stages_edits(session):
     # One criterion is open at a time, so its tables are drawn one panel at
     # a time: two hosts, each its own simulation, run here in sequence.
     async with host(session, EditOnPlot(), on_points) as (user, errors, _figure):
-        await user.should_see("/metrics/children/2 · points · points")
+        await user.should_see("Declared points")
         p2 = "/metrics/children/2:points"
         assert isinstance(_cell(user, f"{p2}:0:tolerance_mode"), ui.select)
         assert isinstance(_cell(user, f"{p2}:1:value"), ui.number)
         assert _cell(user, f"{p2}:1:value").value == 0.75
     async with host(session, EditOnPlot(), ON_D) as (user, errors, _figure):
-        await user.should_see("/metrics/children/0 · tube · tube_points")
+        await user.should_see("Control points")
         t0 = "/metrics/children/0:tube_points"
         assert isinstance(_cell(user, f"{t0}:1:lower"), ui.number)
         with pytest.raises(AssertionError):
@@ -546,7 +562,7 @@ async def test_a_blank_required_cell_is_marked_and_held_until_it_is_filled(sessi
 async def test_add_row_on_an_empty_points_table(session):
     _root_leaf_on_a(session, {"metric": "points", "variable": "x", "points": []})
     async with host(session, EditOnPlot(), ON_A) as (user, errors, _figure):
-        await user.should_see("/metrics · points · points")
+        await user.should_see("Declared points")
         user.find(marker="/metrics:points:add").click()
         await _settled(
             lambda: (_pending_value(session, "/metrics") or {}).get("points")

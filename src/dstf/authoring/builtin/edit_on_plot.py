@@ -67,6 +67,19 @@ def _list_fields(name: str) -> list[tuple[str, Columns]]:
     ]
 
 
+def _field_label(name: str, field: str) -> str:
+    """One table's heading: the Config field's own label, else its name. It
+    said `{path} · {metric} · {field}` — every word of which the criterion's
+    row says directly above the editor (the Task 6 screenshot)."""
+    desc = metric(name)
+    if desc is None or not dataclasses.is_dataclass(desc.config_cls):
+        return field
+    for f in dataclasses.fields(desc.config_cls):
+        if f.name == field:
+            return str(f.metadata.get("label") or field)
+    return field
+
+
 def _leaf_at(s: SessionView, model_id: str, path: str) -> dict:
     """The raw leaf at ``path`` of ``model_id``'s tree, or a ValueError
     naming what ``path`` or ``model_id`` is instead."""
@@ -243,7 +256,7 @@ class EditOnPlot:
             raw = _node_at(tree, path)
             name = raw.get("metric", DEFAULT_METRIC)
             for field, columns in _list_fields(name):
-                ui.label(f"{path} · {name} · {field}").classes("text-xs text-bold")
+                ui.label(_field_label(name, field)).classes("text-xs text-bold")
                 rows = copy.deepcopy(raw.get(field) or [])
                 _table(ui, path, field, columns, rows, span, ui_panel, model_id)
 

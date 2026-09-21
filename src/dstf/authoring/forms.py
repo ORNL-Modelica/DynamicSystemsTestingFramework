@@ -41,11 +41,17 @@ class Form:
         return out
 
 
-def render_form(schema: Schema, values: dict, on_change: OnChange) -> Form:
+def render_form(
+    schema: Schema, values: dict, on_change: OnChange, *, classes: str = ""
+) -> Form:
     """Build one control per field into the current NiceGUI container.
 
     ``values`` pre-fills (missing keys fall back to the field's default);
     ``on_change`` receives the full values dict after every edit.
+    ``classes`` is added to every control, for a caller laying the fields
+    out itself — the criterion editor puts them in one wrapping row, where
+    each control needs a width of its own. A multi-line control (a list
+    shown as JSON) takes the whole line instead, whatever ``classes`` says.
     """
     form = Form()
     for spec in schema.fields:
@@ -61,6 +67,7 @@ def render_form(schema: Schema, values: dict, on_change: OnChange) -> Form:
                     value=json.dumps(current) if current is not None else "",
                 )
                 .props("readonly outlined dense")
+                .classes("dstf-field-wide")
                 .tooltip(spec.help or "edited on the plot, not here")
             )
             continue
@@ -71,6 +78,8 @@ def render_form(schema: Schema, values: dict, on_change: OnChange) -> Form:
         )
         if current is None and spec.default is not None:
             control.props(f'placeholder="{spec.default}"')
+        if classes:
+            control.classes(classes)
         if spec.help:
             control.tooltip(spec.help)
         form.controls[spec.name] = control

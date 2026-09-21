@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -106,7 +107,17 @@ class CriterionRow:
 
 
 class PlotCard:
-    def __init__(self, page: TestPage, index: int, resolved: ResolvedPlot) -> None:
+    def __init__(
+        self,
+        page: TestPage,
+        index: int,
+        resolved: ResolvedPlot,
+        view: dict | None,
+        tracked: Sequence[str],
+    ) -> None:
+        """``view`` and ``tracked`` are the page's ONE read of each, handed
+        to every card: a card that read them for itself cost one read per
+        plot on every rebuild (the Task 5-6 review)."""
         self.page, self.index, self.resolved = page, index, resolved
         self.plot: ui.plotly | None = None
         # Created here, attached in `show()`: a panel hosted under this card
@@ -118,11 +129,14 @@ class PlotCard:
         self.editor: InlineHost | None = None  # the open criterion's, if it is here
         self.open_path: str | None = None
         self._drawn: str | None = None  # the signature of what the plot shows
-        session, model = page.shell.session, page.model_id
-        tracked = set(session.tracked(model))
+        model = page.model_id
+        scored = set(tracked)
         #: This plot's scored series; the rest are drawn but have no criteria.
-        self.tracked = [name for name in resolved.series if name in tracked]
-        view = session.tree_view(model)
+        self.tracked = [name for name in resolved.series if name in scored]
+        #: A card drawing ONE series has its variable in its title, so its
+        #: pill is the bare status; several pills side by side read "FAIL
+        #: FAIL" and look like the plot's verdict said twice (the board).
+        self.named_pills = len(resolved.series) > 1
         with (
             ui.card()
             .classes("dstf-card dstf-plot w-full")
@@ -135,9 +149,13 @@ class PlotCard:
                 )
                 for variable in self.tracked:
                     if self._leaves(view, variable):
-                        self.pills[variable] = Pill(
-                            "queued", f"plot-pill:{index}:{variable}"
-                        )
+                        pill = Pill("queued", f"plot-pill:{index}:{variable}")
+                        if self.named_pills:
+                            # The name keeps its own case: the pill's text is
+                            # uppercased by the stylesheet, and `X FAIL` names
+                            # no variable of this test.
+                            pill.label.classes(add="dstf-pill-named")
+                        self.pills[variable] = pill
                 ui.space()
                 # Focus is wired to the page in the task that hides the other
                 # cards; the button is the toolbar (decision 9).
@@ -164,16 +182,24 @@ class PlotCard:
                 ui.label(f"{', '.join(only)} {verb} no criteria.").classes(
                     "dstf-why"
                 ).mark(f"plot-only:{index}")
-            for variable in self.tracked:
-                self.bars.append(
-                    ActionBar(
-                        page.shell,
-                        Placement.VARIABLE,
-                        partial(Selection, tests=frozenset({model}), variable=variable),
-                        marker=f"variable-actions:{index}:{variable}",
-                        figure=self.hook,
-                    )
-                )
+            if self.tracked:
+                # ONE wrapping row for every variable's footer: one full-width
+                # row each pushed the next plot off the screen (the board).
+                with ui.row().classes("items-center gap-2 wrap"):
+                    for variable in self.tracked:
+                        self.bars.append(
+                            ActionBar(
+                                page.shell,
+                                Placement.VARIABLE,
+                                partial(
+                                    Selection,
+                                    tests=frozenset({model}),
+                                    variable=variable,
+                                ),
+                                marker=f"variable-actions:{index}:{variable}",
+                                figure=self.hook,
+                            )
+                        )
         self.paint(view)
 
     @staticmethod
@@ -184,9 +210,9 @@ class PlotCard:
         """Pills, rows and footers in place, from the page's one `tree_view`
         read: a verdict that flips must not cost the card it sits in."""
         for variable, pill in self.pills.items():
-            pill.set(
-                worst([leaf_status(leaf) for leaf in self._leaves(view, variable)])
-            )
+            status = worst([leaf_status(leaf) for leaf in self._leaves(view, variable)])
+            text = f"{variable} {status.upper()}" if self.named_pills else None
+            pill.set(status, text)
         for leaf in leaves_of(view):
             row = self.rows.get(str(leaf["path"]))
             if row is not None:
@@ -214,6 +240,10 @@ class PlotCard:
         viewport (or a test did)."""
         if self.plot is not None:
             return
+        # Whatever a previous try left: `show()` is called again on every
+        # opening row, and a slot that kept each failure's label stacked
+        # them — with the recovered plot drawn UNDER them.
+        self.slot.clear()
         with self.slot:
             try:
                 figure = self._figure()

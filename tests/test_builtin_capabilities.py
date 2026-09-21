@@ -112,6 +112,67 @@ async def test_edit_criteria_switches_mode_and_offers_against_and_window(session
         assert leaf["metric"] == "range" and leaf["window"]["start"] == 0.25
 
 
+def _ordered(element):
+    """Every element under ``element``, in document order."""
+    for slot in element.slots.values():
+        for child in slot.children:
+            yield child
+            yield from _ordered(child)
+
+
+def _labels(element) -> list[str]:
+    """The labelled controls under ``element``, in document order."""
+    return [
+        str(e.props["label"])
+        for e in _ordered(element)
+        if isinstance(e, (ui.select, ui.number, ui.input, ui.textarea))
+        and e.props.get("label")
+    ]
+
+
+async def test_the_criterion_editors_fields_are_one_row_with_the_mode_first(session):
+    """The board: the plot and its editor have to fit a screen together, so
+    the fields sit in ONE wrapping row — and the mode select, which decides
+    what the other fields ARE, comes first. It was created after the form's
+    slot, so it rendered below the fields it controls; and each field is
+    wide enough for its label ("Width mode" was clipped to "Wid…")."""
+    async with host(session, EditCriteria(), LEAF0) as (user, _errors, _figure):
+        await user.should_see("Tolerance")
+        (row,) = [e for e in user.find(ui.row).elements if "dstf-fields" in e.classes]
+        assert "wrap" in row.classes
+        labels = _labels(row)
+        assert labels[0] == "mode"
+        assert "Tolerance" in labels
+        assert labels[-3:] == ["window start", "window end", "against"]
+        fields = [
+            e
+            for e in _ordered(row)
+            if isinstance(e, (ui.select, ui.number, ui.input)) and e.props.get("label")
+        ]
+        assert fields and all("dstf-field" in e.classes for e in fields)
+
+
+async def test_a_list_field_takes_its_own_line_of_the_editors_row(session):
+    """A mode with a list field (tube's control points) shows it as JSON: a
+    multi-line control belongs on its own full-width line of the wrapping
+    row, not squeezed between two numbers."""
+    async with host(session, EditCriteria(), LEAF0) as (user, _errors, _figure):
+        await user.should_see("mode")
+        mode = next(
+            c for c in user.find(ui.select).elements if c.props.get("label") == "mode"
+        )
+        mode.set_value("tube")
+        await user.should_see("Width mode")
+        (row,) = [e for e in user.find(ui.row).elements if "dstf-fields" in e.classes]
+        assert _labels(row)[0] == "mode" and "Width mode" in _labels(row)
+        (points,) = [
+            e
+            for e in _ordered(row)
+            if isinstance(e, ui.textarea) and e.props.get("label") == "Control points"
+        ]
+        assert "dstf-field-wide" in points.classes
+
+
 def test_edit_criteria_is_greyed_while_the_test_is_locked(session):
     from dstf.authoring.capabilities import Job
 

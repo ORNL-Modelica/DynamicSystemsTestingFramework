@@ -86,8 +86,6 @@ class EditCriteria:
         def emit() -> None:
             ui_panel.submit(model_id=model_id, path=path, **state)
 
-        form_slot = ui.column()
-
         def build_form() -> None:
             form_slot.clear()
             desc = metric(state["metric"])
@@ -99,6 +97,7 @@ class EditCriteria:
                     derive_schema(desc.config_cls, mode=desc.name),
                     state["params"],
                     on_change=set_params,
+                    classes="dstf-field",
                 )
 
         def set_params(values: dict) -> None:
@@ -122,24 +121,6 @@ class EditCriteria:
             state["against"] = name
             emit()
 
-        ui.select(
-            [d.name for d in metrics()],
-            label="mode",
-            value=state["metric"],
-            on_change=lambda e: set_metric(e.value),
-        ).props("dense")
-        build_form()
-        with ui.row():
-            ui.number(
-                label="window start",
-                value=state["window"].get("start"),
-                on_change=lambda e: set_window("start", e.value),
-            ).props("dense")
-            ui.number(
-                label="window end",
-                value=state["window"].get("end"),
-                on_change=lambda e: set_window("end", e.value),
-            ).props("dense")
         project = s.project
         names = list(project.baseline_names(model_id)) if project is not None else []
         if not leaf.get("advisory"):
@@ -150,12 +131,36 @@ class EditCriteria:
             # A leaf naming a baseline the store no longer has is exactly the
             # leaf one opens this panel to repair: keep its value selectable.
             names.append(state["against"])
-        ui.select(
-            names or ["primary"],
-            label="against",
-            value=state["against"],
-            on_change=lambda e: set_against(e.value),
-        ).props("dense")
+        # ONE wrapping row (the board: the plot and its editor fit a screen
+        # together), the mode FIRST — it decides what the fields after it
+        # are, and drawn below them it read as a footnote to the form it
+        # controls. `dstf-form` hands the mode's own fields straight to this
+        # row rather than stacking them in a column of its own.
+        with ui.row().classes("dstf-fields items-end gap-3 wrap w-full"):
+            ui.select(
+                [d.name for d in metrics()],
+                label="mode",
+                value=state["metric"],
+                on_change=lambda e: set_metric(e.value),
+            ).props("dense").classes("dstf-field")
+            form_slot = ui.column().classes("dstf-form")
+            ui.number(
+                label="window start",
+                value=state["window"].get("start"),
+                on_change=lambda e: set_window("start", e.value),
+            ).props("dense").classes("dstf-field")
+            ui.number(
+                label="window end",
+                value=state["window"].get("end"),
+                on_change=lambda e: set_window("end", e.value),
+            ).props("dense").classes("dstf-field")
+            ui.select(
+                names or ["primary"],
+                label="against",
+                value=state["against"],
+                on_change=lambda e: set_against(e.value),
+            ).props("dense").classes("dstf-field")
+        build_form()
 
     def act(self, s: SessionView, **inputs: Any) -> Patch:
         leaf = LeafSpec(

@@ -49,11 +49,17 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   font-size: 10.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .03em; padding: 1px 6px; border-radius: 3px; border: 1px solid;
 }
+/* A pill that carries its variable's name ("x FAIL", on a card drawing
+   more than one series): the name keeps the case the test wrote it in. */
+.dstf-pill-named { text-transform: none; }
 .dstf-tree-line { min-height: 32px; }
 .dstf-tree-row {
   min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
 }
 .dstf-tree-row:hover { background: var(--dstf-surface-hover); }
+/* A plot card: its title row, its plot, its criteria rows and its footers
+   at the card's own spacing (the brief's "col gap 10px"). */
+.dstf-plot { gap: 10px; }
 .dstf-plot-slot { min-height: 320px; }
 .dstf-crit {
   min-height: 36px; padding: 4px 8px; cursor: pointer;
@@ -69,6 +75,16 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   border-top: 1px solid var(--dstf-border-hairline);
   border-bottom: 1px solid var(--dstf-border-hairline);
 }
+/* The criterion editor's fields in ONE wrapping row (the board: the plot
+   and its editor fit a screen together). `.dstf-form` is the mode form's
+   slot, which hands its controls straight to that row rather than stacking
+   them in a column of its own; `.dstf-field` is one control, wide enough
+   for its label ("Width mode" clipped to "Wid…" in the Task 6 screenshot);
+   `.dstf-field-wide` is a multi-line one (a JSON list), on its own line. */
+.dstf-fields { row-gap: 8px; }
+.dstf-form { display: contents; }
+.dstf-field { min-width: 140px; }
+.dstf-field-wide { width: 100%; }
 /* Eight rows of 42 px, and then the rows scroll (board 2A) — the
    container this sits on holds the rows alone, never `Add row`. */
 .dstf-table-scroll { max-height: 336px; overflow-y: auto; }

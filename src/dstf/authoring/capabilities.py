@@ -182,7 +182,18 @@ class Capability(Protocol):
 
     def panel(self, s: SessionView, ui: Panel) -> None: ...
 
-    def act(self, s: SessionView, **inputs: Any) -> Outcome | Sequence[Outcome]: ...
+    def act(self, s: SessionView, **inputs: Any) -> Outcome | Sequence[Outcome]:
+        """What this capability's inputs DO, as an outcome the Session
+        applies — a Patch, a Job, a StoreWrite, an Artifact, an OpenProject,
+        or a sequence of them.
+
+        Returning ``None`` means nothing happened: the host applies
+        nothing, leaves a dialog open (there is nothing to close over) and
+        rebuilds no panel. It is a real answer — every plot sends
+        ``{"autosize": true}`` at mount, and a subscribing panel answers
+        that with None — but it is a silent one, so a capability that
+        returns None on purpose says why in its own panel."""
+        ...
 
 
 _CAPABILITIES: dict[str, Capability] = {}

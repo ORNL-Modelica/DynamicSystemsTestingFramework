@@ -88,8 +88,9 @@ class TestPage:
             )
             self.column = ui.column().classes("dstf-plots w-full gap-3").mark("plots")
         ui.on("dstf_plot_visible", lambda e: self.on_visible(e.args))
-        self.rebuild()
-        self._shape = self.shape(self.shell.session.tree_view(model_id))
+        view = self.shell.session.tree_view(model_id)
+        self.rebuild(view)
+        self._shape = self.shape(view)
         self.shell.register(self)
         self.sync()
 
@@ -113,20 +114,35 @@ class TestPage:
             marker="test-actions",
         )
 
+    def _result(self) -> Any:
+        project = self.shell.session.project
+        return project.results.get(self.model_id) if project is not None else None
+
     def unscored_reason(self) -> str:
-        """Why this test has no tree: it never ran, its scoring raised, or
-        it has no baseline to be scored against. A model whose scoring
-        raised keeps its result and has no comparison at all — the Suite
-        row says `scoring failed` for the same state — so "no baseline"
-        would name the wrong cause."""
-        session = self.shell.session
-        project = session.project
-        result = project.results.get(self.model_id) if project is not None else None
+        """Why this test has no tree, as a clause the line it is read into
+        completes ("nothing scored: this test has no baseline"): it never
+        ran, its scoring raised, or it has no baseline to be scored
+        against. A model whose scoring raised keeps its result and has no
+        comparison at all — the Suite row says `scoring failed` for the
+        same state — so "no baseline" would name the wrong cause."""
+        result = self._result()
         if result is None or not result.success:
-            return "no result"
-        if session.comparisons.get(self.model_id) is None:
+            return "this test has no result"
+        if self.shell.session.comparisons.get(self.model_id) is None:
             return "scoring failed"
-        return "no baseline"
+        return "this test has no baseline"
+
+    def _no_plots_reason(self, test: Any) -> str:
+        """Why there is no PLOT, which is not why there is no tree: a
+        scored, baselined test whose `plots` key is an empty list asked for
+        none, and reading the tree's reason there blamed a baseline sitting
+        right beside it in the header (the Task 5-6 review)."""
+        if test is not None and test.plots is not None and not test.plots:
+            return "this test's plots key is empty"
+        result = self._result()
+        if result is None or not result.success:
+            return "this test has no result"
+        return "the result has no variables"
 
     # -- the one open editor ---------------------------------------------------
 
@@ -187,9 +203,12 @@ class TestPage:
 
     # -- the cards -------------------------------------------------------------
 
-    def rebuild(self) -> None:
+    def rebuild(self, view: dict | None) -> None:
         """The cards, from the plots as they are now: one per plot of the
-        test's ``plots`` key, else one per tracked variable."""
+        test's ``plots`` key, else one per tracked variable. ``view`` and
+        the tracked names are read ONCE here and handed to every card — a
+        card that read them for itself cost one read per plot (the Task 5-6
+        review)."""
         assert self.column is not None and self.count is not None
         session = self.shell.session
         # The rows the editor hangs under go with the cards: the criterion
@@ -199,12 +218,15 @@ class TestPage:
             card.dispose()
         self.column.clear()
         plots = session.plots(self.model_id)
+        tracked = session.tracked(self.model_id)
         with self.column:
-            self.cards = [PlotCard(self, plot.index, plot) for plot in plots]
+            self.cards = [
+                PlotCard(self, plot.index, plot, view, tracked) for plot in plots
+            ]
         project = session.project
         test = project.test(self.model_id) if project is not None else None
         if not plots:
-            self.count.set_text(f"no plots: this test has {self.unscored_reason()}")
+            self.count.set_text(f"no plots: {self._no_plots_reason(test)}")
         elif test is not None and test.plots is not None:
             self.count.set_text(
                 f"{plural(len(plots), 'plot')} · from this test's plots key"
@@ -275,7 +297,7 @@ class TestPage:
         if shape != self._shape:
             self._shape = shape
             with self.column:
-                self.rebuild()
+                self.rebuild(view)
             return
         for card in self.cards:
             try:

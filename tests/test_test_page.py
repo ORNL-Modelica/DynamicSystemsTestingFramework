@@ -876,8 +876,8 @@ def test_the_closed_lines_tally_counts_each_kind_of_leaf():
 async def test_a_test_with_nothing_scored_says_so(shell):
     async with user_simulation(root=shell.index) as user:
         for model, text in (
-            (B, "nothing scored: no baseline"),
-            (C, "nothing scored: no result"),
+            (B, "nothing scored: this test has no baseline"),
+            (C, "nothing scored: this test has no result"),
         ):
             await _test_page(shell, user, model)
             assert _one(user, "tree:summary").text == text
@@ -1134,6 +1134,45 @@ async def test_a_test_with_no_result_has_no_cards(shell):
         assert page.cards == []
 
 
+async def test_an_empty_plots_key_does_not_blame_the_baseline(shell):
+    """The plots bar says why there is no PLOT, which is not the tree's
+    reason: a scored, baselined test with `"plots": []` asked for none, and
+    reading the tree's reason there said "no baseline" about a test whose
+    baseline is right beside it in the header."""
+    shell.session.stage([PatchOp(A, "add", "/plots", [])])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.cards == []
+        assert (
+            _one(user, "plots:count").text == "no plots: this test's plots key is empty"
+        )
+        assert _one(user, "tree:summary").text == "0 pass · 2 fail"
+
+
+async def test_a_result_with_no_variables_says_that_and_not_no_baseline(tmp_path):
+    """The third reason: a successful result the test tracks nothing of.
+    The tree's line is still the baseline's — the two sentences answer two
+    questions."""
+    import json
+
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0002" / "result.json"  # B's
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["variables"] = {}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, B)
+        assert page.cards == []
+        assert _one(user, "plots:count").text == "no plots: the result has no variables"
+        assert (
+            _one(user, "tree:summary").text
+            == "nothing scored: this test has no baseline"
+        )
+
+
 async def test_a_no_baseline_test_draws_its_result(shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, B)
@@ -1148,6 +1187,305 @@ async def test_a_no_baseline_test_draws_its_result(shell):
         with page.client:
             page.cards[0].show()
         assert page.cards[0].plot is not None
+
+
+async def test_a_plot_that_could_not_draw_says_so_once_and_retries(shell, monkeypatch):
+    """`show()` is called again on every opening row: a slot that kept the
+    label of each failed try stacked them, and the recovered plot was drawn
+    UNDER them. The slot holds one try's answer."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        real = shell.session.plot_figure
+
+        def boom(*a, **k):
+            raise RuntimeError("cannot draw")
+
+        monkeypatch.setattr(shell.session, "plot_figure", boom)
+        with page.client:
+            page.cards[0].show()
+            page.cards[0].show()
+            page.on_visible("0")
+        slot = page.cards[0].slot.default_slot.children
+        assert [c.text for c in slot] == ["RuntimeError: cannot draw"]
+        monkeypatch.setattr(shell.session, "plot_figure", real)
+        with page.client:
+            page.cards[0].show()
+        assert [type(c) for c in page.cards[0].slot.default_slot.children] == [
+            ui.plotly
+        ]
+
+
+async def test_a_variable_keeps_its_card_when_its_last_criterion_goes(shell):
+    """A one-way door (the review): the cards, the footers and the add forms
+    all came from what was SCORED, so removing y's only criterion took y's
+    card, its footer and every way to add a criterion back — until Discard.
+    A tracked variable is the test's, staged edit or not."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        _click_in(user, f"remove:{T1}", within=f"node:1:{T1}")
+        await _settled(lambda: len(page.cards) == 2 and not page.cards[1].rows)
+        card = page.cards[1]
+        assert card.resolved.series == ("y",) and card.rows == {}
+        assert card.pills == {} and _none(user, "plot-pill:1:y")
+        (button,) = [
+            e
+            for e in user.find(marker="action:edit-tree").elements
+            if _one(user, "variable-actions:1:y") in list(_ancestors(e))
+        ]
+        assert button.text == "Add a criterion for y"
+        await _menu(user, f"add:{T0}", within=f"node:0:{T0}")
+        assert _one(user, f"apply-add:{T0}:variable").options == ["x", "y"]
+
+
+async def test_a_multi_series_card_names_the_variable_of_each_pill(shell):
+    """Board: two pills reading "FAIL FAIL" look like the plot's verdict said
+    twice. A card drawing one series keeps the bare status — its title
+    already names the variable."""
+    shell.session.stage(
+        [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "y"}]}])]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert _one(user, "plot-title:0").text == "x, y"
+        assert [_one(user, f"plot-pill:0:{v}").text for v in ("x", "y")] == [
+            "x FAIL",
+            "y FAIL",
+        ]
+        shell.session.stage([PatchOp(A, "add", f"{T0}/tolerance", 0.5)])
+        await _settled(lambda: _one(user, "plot-pill:0:x").text == "x PASS")
+        assert page.cards[0].pills["x"].label.classes.count("dstf-pill-pass") == 1
+        shell.session.discard()
+        await _settled(lambda: len(_page(shell, user).cards) == 2)
+        assert _one(user, "plot-pill:0:x").text == "fail"  # one series: the status
+
+
+async def test_the_variable_footers_share_one_wrapping_row(shell):
+    """Board: one footer per line pushed the next plot off the screen. They
+    sit in ONE row that wraps."""
+    shell.session.stage(
+        [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "y"}]}])]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        bars = page.cards[0].bars
+        assert [b.marker for b in bars] == [
+            "variable-actions:0:x",
+            "variable-actions:0:y",
+        ]
+        parents = {b.container.parent_slot.parent for b in bars}
+        (row,) = parents
+        assert isinstance(row, ui.row) and "wrap" in row.classes
+
+
+def test_worst_is_fail_then_warn_then_pass_then_queued():
+    """The card's pill is the WORST of its variable's criteria, and every
+    pair matters: a warn beside a pass is a warn, and an unscored leaf
+    beside a passing one must not read `queued`."""
+    from dstf.authoring.shell.plot_card import worst
+
+    assert worst(["pass", "warn"]) == "warn"
+    assert worst(["warn", "fail"]) == "fail"
+    assert worst(["queued", "pass"]) == "pass"
+    assert worst(["queued"]) == "queued" and worst([]) == "queued"
+
+
+async def test_every_slot_names_its_own_index(shell):
+    """`data-plot` is what the browser's observer sends back: a slot naming
+    another card's index draws the wrong plot on scroll."""
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        assert _one(user, "plot-slot:1").props["data-plot"] == "1"
+
+
+async def test_two_plot_only_series_say_so_in_the_plural_and_get_no_footer(
+    plots_shell,
+):
+    """A plot-only series has no criteria and no "Add a criterion for it"
+    footer — the footers are the SCORED series'."""
+    shell = plots_shell
+    layout = [{"series": [{"var": "x"}, {"var": "z"}, {"var": "a0"}]}]
+    shell.session.stage([PatchOp(A, "add", "/plots", layout)])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert (
+            _one(user, "plot-only:0").text
+            == "z, a0 are plot only: they have no criteria."
+        )
+        assert [b.marker for b in page.cards[0].bars] == ["variable-actions:0:x"]
+
+
+async def test_a_variable_with_no_criteria_has_no_header_pill(shell):
+    """B is scored by nothing: its cards draw its result and carry no
+    verdict at all — an empty pill would read `queued` forever."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, B)
+        assert page.cards[0].pills == {} and _none(user, "plot-pill:0:x")
+
+
+async def test_a_mode_switch_repaints_the_row_in_place(shell):
+    """A leaf's metric is NOT part of the page's shape: switching it
+    repaints the row's name and its readout where they are, and the card —
+    its plot, its zoom, its editor — stands."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card, row = page.cards[0], page.cards[0].rows[T1]
+        assert row.name.text == "range · x"
+        shell.session.stage(
+            [PatchOp(D, "replace", T1, {"metric": "nrmse", "variable": "x"})]
+        )
+        await _settled(lambda: row.name.text == "nrmse · x")
+        assert page.cards[0] is card and page.cards[0].rows[T1] is row
+        from dstf.authoring.shell.tree_card import leaf_readout
+
+        node = shell.session.tree_view(D)["children"][1]
+        assert row.readout.text == leaf_readout(node) and "NRMSE" in row.readout.text
+
+
+async def test_a_layout_staged_under_the_open_page_rebuilds_the_cards(plots_shell):
+    """The plots ARE part of the shape: a `/plots` op under the open page
+    rebuilds the cards, which repainting could never do."""
+    shell = plots_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert len(page.cards) == 2
+        shell.session.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        await _settled(lambda: len(page.cards) == 1)
+        assert _one(user, "plot-title:0").text == "x, z"
+
+
+async def test_a_leaf_that_changes_variable_moves_to_the_other_card(shell):
+    """A leaf's variable is part of the shape: its row belongs to another
+    card now, and no repaint moves a row between cards."""
+    shell.session.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/plots",
+                [{"series": [{"var": "x"}]}, {"series": [{"var": "y"}]}],
+            )
+        ]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [list(c.rows) for c in page.cards] == [[T0], [T1]]
+        shell.session.stage([PatchOp(A, "replace", f"{T0}/variable", "y")])
+        await _settled(lambda: [list(c.rows) for c in page.cards] == [[], [T0, T1]])
+
+
+async def test_the_variable_footer_follows_the_job_that_locked_the_test(shell):
+    """The footers are painted, never rebuilt, so what they MAY do has to be
+    re-read on every Session event: a rerun greys them and says so, and the
+    end of the job brings them back."""
+    gate = _Gate()
+    footer = "variable-actions:0:x"
+
+    def why(user) -> str:
+        found = _inside(user, "action:edit-tree:why", footer)
+        return found[0].text if found else ""
+
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        assert why(user) == ""
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        await _settled(lambda: why(user) == f"rerun is running on {A}")
+        gate.release.set()
+        await _settled(lambda: why(user) == "")
+
+
+async def test_showing_a_plot_attaches_the_hook_to_it(shell):
+    """The hook exists before the plot does — a panel hosted under the card
+    subscribes to it first — so `show()` has to attach it, or no drag is
+    ever delivered."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        kinds = {li.type for li in card.plot._event_listeners.values()}
+        assert {"plotly_click", "plotly_relayout", "plotly_selected"} <= kinds
+        assert card.hook._plot is card.plot
+
+
+async def test_painting_the_header_never_loads_the_baseline(shell, monkeypatch):
+    """The header prints the baseline's FILE NAME, which the index knows:
+    `get_reference` reads the whole thing off disk, and this runs on every
+    Session event."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+
+        def boom(*a, **k):
+            raise AssertionError("the baseline was read to paint the header")
+
+        monkeypatch.setattr(shell.session.project.store, "get_reference", boom)
+        with page.client:
+            page.sync()
+        assert _one(user, "meta").text == "Python · ref_0001"
+
+
+async def test_a_closed_menus_form_is_gone_from_the_page(shell):
+    """A node's forms are built when their menu opens (Task 6) and dropped
+    when it closes: a page holding a form per node of every row is what that
+    replaced."""
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        await _menu(user, f"wrap:{T0}", within=f"node:0:{T0}")
+        (apply,) = user.find(marker=f"apply-wrap:{T0}").elements
+        menu = next(a for a in apply.ancestors() if isinstance(a, ui.menu))
+        menu.close()
+        await _settled(lambda: _none(user, f"apply-wrap:{T0}"))
+
+
+async def test_a_rebuilt_card_gives_up_its_hook(shell):
+    """A rebuild drops the cards, and a dropped card's hook must not go on
+    delivering drags: the editor's panels give theirs back when it closes,
+    but a footer's OPEN dialog holds the same hook and the rebuild does not
+    reach it. `dispose` is what takes it back."""
+    _only(_Probe("sub", {Placement.VARIABLE}, subscribe=True))
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        old = page.cards[0]
+        _click_in(user, "action:sub", within="variable-actions:0:x")
+        await user.should_see(marker="probe:sub")
+        assert [o for entries in old.hook._handlers.values() for o, _ in entries]
+        shell.session.stage(
+            [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * 3)]
+        )
+        await _settled(lambda: len(page.cards) == 3)
+        assert page.cards[0] is not old
+        assert not [e for entries in old.hook._handlers.values() for e in entries]
+
+
+async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(shell):
+    """The cost the review measured: every card read `tree_view` and
+    `tracked` for itself, so a rebuild cost one read per plot. The page
+    reads and hands both in, so neither grows with the plots."""
+    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * 5)])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert len(page.cards) == 5
+        session = shell.session
+        calls = {"tree_view": 0, "tracked": 0}
+        for name in calls:
+            real = getattr(session, name)
+
+            def counting(*a, _real=real, _name=name, **k):
+                calls[_name] += 1
+                return _real(*a, **k)
+
+            setattr(session, name, counting)
+        view = session.tree_view(A)
+        calls["tree_view"] = 0
+        with page.column:
+            page.rebuild(view)
+        # The page reads no view of its own, and the few `tracked` reads are
+        # `Session.plots`'s own: the count does not follow the card count.
+        assert calls["tree_view"] == 0 and calls["tracked"] < len(page.cards)
+        calls["tracked"] = 0
+        with page.client:
+            page.sync()
+        assert calls["tree_view"] == 1
 
 
 # -- the editor: below its row, one at a time, the plot as its surface ------
