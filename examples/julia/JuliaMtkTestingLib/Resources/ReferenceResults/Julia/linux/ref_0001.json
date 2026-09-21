@@ -22,6 +22,7 @@
     {
       "index": 1,
       "name": "x",
+      "expression": "",
       "values": [
         2.5,
         2.5,

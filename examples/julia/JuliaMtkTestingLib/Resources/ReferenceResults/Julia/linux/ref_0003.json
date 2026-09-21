@@ -34,6 +34,7 @@
     {
       "index": 1,
       "name": "x",
+      "expression": "",
       "values": [
         0.0,
         0.0267590139337362,
@@ -56,6 +57,7 @@
     {
       "index": 2,
       "name": "y",
+      "expression": "",
       "values": [
         1.0,
         0.986709600787833,
