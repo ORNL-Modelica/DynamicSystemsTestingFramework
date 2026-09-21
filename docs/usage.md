@@ -231,13 +231,37 @@ uv run dstf --config testing.json migrate-variable-names --apply
 It walks every `<reference_root>/<Backend>/<os>/` partition (primary refs and
 `soft_checks/`), rewrites each UnitTests entry whose stored name matches that
 index's expression, gives every other entry the `expression` field, and
-renames the matching override keys, leaf variables and plot series in
-`test_spec.json`. A file it cannot match entirely is reported by file, index,
-stored and expected text and left untouched; the command exits 1 if anything
-was skipped, and a second `--apply` rewrites nothing. It is a one-shot
-utility, **deleted at the v1.0 tag**. Until a baseline is migrated, its
-variables read as missing baselines, and the log line says so and names this
-command.
+renames the matching override keys — in the baseline's own `comparison`
+section as well as the spec's — plus the leaf variables and plot series in
+`test_spec.json`. A second `--apply` rewrites nothing.
+
+**Everything is read and decided before anything is written.** A file the
+command cannot read — truncated, empty, not UTF-8, not a JSON object — is
+reported by file and reason rather than raising, and while any such file
+stands **nothing at all is written**: the picture the decisions were made
+from is incomplete, so fix the file and run again. (A UTF-8 BOM is not such
+a reason: a baseline a Windows editor saved is read and migrated like any
+other.)
+
+A **skip** leaves that one file exactly as it was, and there are four kinds:
+an entry whose stored name matches neither the expression nor the migrated
+name (reported by index, stored and expected text); an entry with no integer
+`index`, or two entries claiming one index; an override key that is the
+expression of *two* variables (`x={a, a}` — which one it meant is yours to
+say); and an override map holding both the old key and the new one. The
+command exits 1 when anything was skipped, when a file's model is not a
+discovered test, or when a spec key was left alone — each of those on its
+own.
+
+Also reported, without moving the exit code: files that held CRLF line
+endings and are written LF, as the store writes every baseline (each shows
+as a whole-file diff); `soft_checks/ref_NNNN/` directories with no primary
+beside them; spec entries whose model has no UnitTests variables here, so no
+key of theirs was considered; and variables that need a re-accept.
+
+It is a one-shot utility, **deleted at the v1.0 tag**. Until a baseline is
+migrated, its variables read as missing baselines, and the log line says so
+and names this command.
 
 ### Scalar leaves — comparing one number
 

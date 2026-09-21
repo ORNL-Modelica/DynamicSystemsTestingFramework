@@ -152,6 +152,32 @@ def _status(report, path):
     return [f.status for f in report.files if f.path == path]
 
 
+def _reasons(report, path):
+    return "; ".join(r for f in report.files if f.path == path for r in f.reasons)
+
+
+def _nothing_left_undone(lib):
+    """The fixture with BOTH of its standing reasons removed — the Gone file
+    and the Twice spec key.
+
+    ``clean`` has three independent terms and the fixture trips two of them
+    at once, so ``not clean`` holds however many of the three a mutant
+    deletes. One reason at a time is the only way each term is its own test.
+    """
+    (lib / "refs/Dymola/linux/ref_0003.json").unlink()
+    spec = json.loads((lib / "test_spec.json").read_text())
+    spec["tests"].pop()
+    _write(lib / "test_spec.json", spec)
+
+
+def _exit_code(lib, *flags):
+    from dstf.cli.main import main
+
+    return main(
+        ["--config", str(lib / "testing.json"), "migrate-variable-names", *flags]
+    )
+
+
 # ---------------------------------------------------------------------------
 # Reference files
 # ---------------------------------------------------------------------------
@@ -241,12 +267,24 @@ def test_the_baselines_own_override_keys_move_too(lib):
 
 
 def test_second_apply_rewrites_nothing(lib):
+    """Idempotent, and idempotent the right way round: every file it
+    rewrote reads back as MIGRATED. "Nothing rewritten" alone also holds
+    when the second run cannot recognize its own output and skips it."""
     migrate(_cfg(lib), apply=True)
     before = _snapshot(lib)
     report = migrate(_cfg(lib), apply=True)
     assert _snapshot(lib) == before
-    assert not [f for f in report.files if f.status in (RENAMED, EXPRESSION_ADDED)]
+    assert {f.status for f in report.files} == {MIGRATED, UNKNOWN_MODEL}
     assert report.spec_rewritten == []
+
+
+def test_a_second_run_over_a_non_default_instance_reads_as_migrated(lib):
+    """``MyLib.Cat``'s component is ``ut``, not ``unitTests``. An
+    already-migrated check that spells the default instance calls
+    ``ut.x[1]`` unrecognized and skips the file it wrote itself."""
+    migrate(_cfg(lib), apply=True)
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, lib / "refs/Dymola/linux/ref_0002.json") == [MIGRATED]
 
 
 def test_an_already_named_file_that_only_gains_the_field_is_reported_apart(lib):
@@ -327,7 +365,9 @@ def test_spec_keys_that_name_an_expression_become_the_name(lib):
         "unitTests.x[1]",
         "b[2,2]",
     ]
-    assert ("MyLib.Plain", "a", "unitTests.x[1]") in report.spec_rewritten
+    # 'a' is reached twice — the metrics leaf and the plot series — and is
+    # ONE decision a reader checks, carrying its occurrence count.
+    assert ("MyLib.Plain", "a", "unitTests.x[1]", 2) in report.spec_rewritten
     # An expression two indices share: which one the key meant is the user's
     # call, so it is reported and left.
     assert twice["comparison"]["variable_overrides"] == {"a": {"tolerance": 0.5}}
@@ -398,3 +438,360 @@ def test_cli_exit_codes_and_default_dry_run(lib, capsys):
     assert main([*argv, "--apply"]) == 0
     assert "rewritten" in capsys.readouterr().out
     assert _names(lib / "refs/Dymola/linux/ref_0001.json") == NEW_PLAIN
+
+
+# ---------------------------------------------------------------------------
+# The exit code, one term at a time
+# ---------------------------------------------------------------------------
+
+
+def test_a_tree_with_nothing_left_undone_is_clean(lib):
+    """The state in which every guard below is silent. Without it `not
+    clean` is true for two reasons at once and no single term is tested."""
+    report = migrate(_cfg(lib), apply=False)
+    assert report.clean is False
+    _nothing_left_undone(lib)
+    report = migrate(_cfg(lib), apply=False)
+    assert report.clean is True
+    assert _exit_code(lib) == 0
+
+
+def test_a_skipped_file_alone_moves_the_exit_code(lib):
+    _nothing_left_undone(lib)
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = json.loads(path.read_text())
+    data["variables"][1]["name"] = "something.else"
+    _write(path, data)
+    report = migrate(_cfg(lib), apply=False)
+    assert _status(report, path) == [SKIPPED]
+    assert not report.spec_skipped
+    assert UNKNOWN_MODEL not in {f.status for f in report.files}
+    assert report.clean is False
+    assert _exit_code(lib) == 1
+
+
+def test_an_unknown_model_alone_moves_the_exit_code(lib):
+    _nothing_left_undone(lib)
+    _write(lib / "refs/Dymola/linux/ref_0003.json", _ref("Gone", ["q"], "0003"))
+    report = migrate(_cfg(lib), apply=False)
+    assert UNKNOWN_MODEL in {f.status for f in report.files}
+    assert not report.spec_skipped
+    assert SKIPPED not in {f.status for f in report.files}
+    assert report.clean is False
+    assert _exit_code(lib) == 1
+
+
+def test_a_spec_key_left_alone_moves_the_exit_code(lib):
+    _nothing_left_undone(lib)
+    spec_path = lib / "test_spec.json"
+    spec = json.loads(spec_path.read_text())
+    # MyLib.Twice is x={a, a}: 'a' is the expression of two variables.
+    spec["tests"].append(
+        {"model": "MyLib.Twice", "comparison": {"variable_overrides": {"a": {}}}}
+    )
+    _write(spec_path, spec)
+    report = migrate(_cfg(lib), apply=False)
+    assert report.spec_skipped
+    assert {f.status for f in report.files} <= {RENAMED, EXPRESSION_ADDED, MIGRATED}
+    assert report.clean is False
+    assert _exit_code(lib) == 1
+
+
+# ---------------------------------------------------------------------------
+# Read everything, decide everything, then write
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(b'{"model_id": "MyLib.Plain", "variab', id="truncated"),
+        pytest.param(b"", id="empty"),
+        pytest.param(b"\xff\xfe{}", id="not-utf-8"),
+        pytest.param(b"[1, 2]", id="not-an-object"),
+    ],
+)
+def test_a_file_that_cannot_be_read_is_a_skip_naming_it(lib, payload):
+    """Never a raw traceback: over 900 baselines a bare JSONDecodeError
+    names no file, and it lands AFTER earlier files were written."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    path.write_bytes(payload)
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [SKIPPED]
+    assert path in report.unreadable
+    assert report.clean is False
+    assert path.read_bytes() == payload
+
+
+def test_a_soft_check_whose_primary_cannot_be_read_says_so(lib):
+    """The primary is what names a soft check's model; unreadable, the soft
+    check beside it is undecidable too — and says which file did it."""
+    (lib / "refs/Dymola/linux/ref_0001.json").write_bytes(b"{oops")
+    soft = lib / "refs/Dymola/linux/soft_checks/ref_0001/om.json"
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, soft) == [SKIPPED]
+    assert "ref_0001.json" in _reasons(report, soft)
+    assert soft not in report.unreadable
+
+
+def test_a_bad_file_late_in_the_walk_leaves_the_earlier_ones_unwritten(lib):
+    """Two phases. The walk reaches OpenModelica after Dymola, and the spec
+    after both: a file it cannot read there must leave a tree in which
+    NOTHING moved, not one whose first partition migrated."""
+    (lib / "refs/OpenModelica/linux/ref_0001.json").write_bytes(b'{"model_id": ')
+    before = _snapshot(lib)
+    report = migrate(_cfg(lib), apply=True)
+    assert _snapshot(lib) == before
+    assert report.unreadable
+    assert _exit_code(lib, "--apply") == 1
+    assert _snapshot(lib) == before
+
+
+def test_an_unreadable_spec_writes_no_baseline_either(lib):
+    (lib / "test_spec.json").write_text("{not json")
+    before = _snapshot(lib)
+    report = migrate(_cfg(lib), apply=True)
+    assert _snapshot(lib) == before
+    assert lib / "test_spec.json" in report.unreadable
+    assert report.clean is False
+
+
+def test_a_bom_prefixed_file_is_read_and_migrated(lib):
+    """A baseline a Windows editor saved keeps its BOM. It parses; it is
+    not a reason to refuse the file."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    path.write_bytes(
+        b"\xef\xbb\xbf" + (json.dumps(json.loads(path.read_text()), indent=2)).encode()
+    )
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [RENAMED]
+    assert _names(path) == NEW_PLAIN
+    assert not path.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+# ---------------------------------------------------------------------------
+# An ambiguous key, and a malformed entry
+# ---------------------------------------------------------------------------
+
+
+def _twice_ref(lib, overrides):
+    path = lib / "refs/Dymola/linux/ref_0004.json"
+    _write(
+        path,
+        _ref(
+            "Twice",
+            OLD_NAMES["Twice"],
+            "0004",
+            {"comparison": {"variable_overrides": overrides}},
+        ),
+    )
+    return path
+
+
+def test_an_override_key_two_indices_share_skips_the_ref_file(lib):
+    """``x={a, a}``: 'a' is the expression of BOTH variables. The spec tier
+    already refuses to pick; renaming the key to the last index's name
+    silently moves the override to a different variable."""
+    path = _twice_ref(lib, {"a": {"tolerance": 0.2}})
+    before = path.read_bytes()
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [SKIPPED]
+    reasons = _reasons(report, path)
+    assert "'a'" in reasons
+    assert "unitTests.x[1]" in reasons and "unitTests.x[2]" in reasons
+    assert path.read_bytes() == before
+
+
+def test_an_old_and_a_new_override_key_in_one_ref_map_skips_the_file(lib):
+    """Renaming the old onto the new drops one of the two silently."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = json.loads(path.read_text())
+    data["comparison"] = {
+        "variable_overrides": {
+            "a": {"tolerance": 1},
+            "unitTests.x[1]": {"tolerance": 2},
+        }
+    }
+    _write(path, data)
+    before = path.read_bytes()
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [SKIPPED]
+    assert "'a'" in _reasons(report, path)
+    assert "unitTests.x[1]" in _reasons(report, path)
+    assert path.read_bytes() == before
+
+
+def test_an_old_and_a_new_override_key_in_one_spec_map_is_left_alone(lib):
+    spec_path = lib / "test_spec.json"
+    spec = json.loads(spec_path.read_text())
+    spec["tests"][0]["comparison"]["variable_overrides"] = {
+        "b[1, 1]": {"tolerance": 0.5},
+        "unitTests.x[2]": {"tolerance": 0.9},
+    }
+    _write(spec_path, spec)
+    report = migrate(_cfg(lib), apply=True)
+    assert json.loads(spec_path.read_text())["tests"][0]["comparison"][
+        "variable_overrides"
+    ] == {"b[1, 1]": {"tolerance": 0.5}, "unitTests.x[2]": {"tolerance": 0.9}}
+    assert any("'b[1, 1]'" in line for line in report.spec_skipped)
+    assert report.clean is False
+
+
+@pytest.mark.parametrize("index", [None, "1", 1.0], ids=["missing", "string", "float"])
+def test_an_entry_without_an_integer_index_skips_the_file(lib, index):
+    """It used to fall down the pattern branch: reported 'expression-added',
+    exit 0, 'already migrated' on the next run — with its names never
+    moved."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = json.loads(path.read_text())
+    if index is None:
+        del data["variables"][0]["index"]
+    else:
+        data["variables"][0]["index"] = index
+    _write(path, data)
+    before = path.read_bytes()
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [SKIPPED]
+    assert "index" in _reasons(report, path)
+    assert path.read_bytes() == before
+    assert report.clean is False
+
+
+def test_two_entries_claiming_one_index_skip_the_file(lib):
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = json.loads(path.read_text())
+    data["variables"].append({"index": 1, "name": "a", "values": [9.0, 9.0]})
+    _write(path, data)
+    before = path.read_bytes()
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [SKIPPED]
+    assert "index 1" in _reasons(report, path)
+    assert path.read_bytes() == before
+
+
+def test_an_entry_past_the_components_own_keeps_its_name(lib):
+    """Index 3 of a two-variable component is not the component's, whatever
+    its name spells: it keeps the name and gains the empty field."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = json.loads(path.read_text())
+    data["variables"].append({"index": 3, "name": "a", "values": [9.0, 9.0]})
+    _write(path, data)
+    migrate(_cfg(lib), apply=True)
+    assert _names(path) == [*NEW_PLAIN, ("a", "")]
+
+
+# ---------------------------------------------------------------------------
+# What the walk reaches
+# ---------------------------------------------------------------------------
+
+
+def test_a_soft_check_is_resolved_from_its_own_partitions_primary(lib):
+    """Test ids are per partition: OpenModelica's ref_0001 is a DIFFERENT
+    model from Dymola's, and a soft check under Dymola belongs to Dymola's."""
+    _write(
+        lib / "refs/OpenModelica/linux/ref_0001.json",
+        _ref("Cat", OLD_NAMES["Cat"], "0001"),
+    )
+    migrate(_cfg(lib), apply=True)
+    assert _names(lib / "refs/Dymola/linux/soft_checks/ref_0001/om.json") == NEW_PLAIN
+
+
+@pytest.mark.parametrize("name", ["ref_0001_backup.json", "ref_notes.json"])
+def test_a_file_beside_a_baseline_that_is_not_one_is_not_touched(lib, name):
+    """A baseline is what the STORE calls one. Somebody's copy kept beside
+    it is not read by the store and is not rewritten here."""
+    path = lib / "refs/Dymola/linux" / name
+    _write(path, _ref("Plain", OLD_NAMES["Plain"], "0001"))
+    before = path.read_bytes()
+    report = migrate(_cfg(lib), apply=True)
+    assert path.read_bytes() == before
+    assert _status(report, path) == []
+
+
+def test_an_orphan_soft_check_directory_is_named_not_migrated(lib):
+    """No primary beside it, so nothing says which model it holds. It is
+    mentioned so a reader knows it was left, and it is not a skip."""
+    orphan = lib / "refs/Dymola/linux/soft_checks/ref_0042"
+    orphan.mkdir()
+    soft = _ref("Plain", OLD_NAMES["Plain"], "0042")
+    del soft["model_id"]
+    _write(orphan / "om.json", soft)
+    before = (orphan / "om.json").read_bytes()
+    report = migrate(_cfg(lib), apply=True)
+    assert report.orphan_soft_checks == [orphan]
+    assert _status(report, orphan / "om.json") == []
+    assert (orphan / "om.json").read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# What the report says
+# ---------------------------------------------------------------------------
+
+
+def test_an_already_migrated_file_still_gets_a_stale_override_key_renamed(lib):
+    """Re-accepted under the new code BEFORE migrating: new names, the old
+    expression-keyed override carried over. The rename map is the MODEL's
+    rule, not a by-product of renaming an entry."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = _ref("Plain", [n for n, _ in NEW_PLAIN], "0001")
+    for entry, (_, expression) in zip(data["variables"], NEW_PLAIN):
+        entry["expression"] = expression
+    data["comparison"] = {"variable_overrides": {"b[\n      1, 1]": {"tolerance": 0.5}}}
+    _write(path, data)
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [RENAMED]
+    assert json.loads(path.read_text())["comparison"]["variable_overrides"] == {
+        "unitTests.x[2]": {"tolerance": 0.5}
+    }
+
+
+def test_a_ref_override_key_a_spec_pattern_tracks_is_left_alone(lib):
+    """Same rule as the spec tier: a pattern names a variable of its own in
+    the result file, so the key already names a variable."""
+    spec_path = lib / "test_spec.json"
+    spec = json.loads(spec_path.read_text())
+    spec["tests"][0]["variables"] = ["a"]
+    _write(spec_path, spec)
+    migrate(_cfg(lib), apply=True)
+    ref = json.loads((lib / "refs/Dymola/linux/ref_0001.json").read_text())
+    assert ref["comparison"]["variable_overrides"] == {"a": {"tolerance": 0.2}}
+
+
+def test_a_rewritten_file_that_held_crlf_is_named(lib):
+    """The store writes every baseline LF, so a CRLF file shows as a
+    whole-file diff. Said once, and the files named, before a reviewer
+    reads a one-name change as a rewrite of everything."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    path.write_bytes(path.read_text().replace("\n", "\r\n").encode())
+    other = lib / "refs/OpenModelica/linux/ref_0001.json"
+    report = migrate(_cfg(lib), apply=True)
+    assert report.crlf == [path]
+    assert b"\r" not in path.read_bytes()
+    assert _status(report, other) == [RENAMED] and other not in report.crlf
+
+
+def test_a_spec_entry_nothing_was_considered_for_is_mentioned_not_skipped(lib):
+    """The one place a spec entry silently does nothing: its model has no
+    UnitTests component here — none, or it left the library. Said out loud,
+    and informational: the exit code does not move."""
+    _nothing_left_undone(lib)
+    spec_path = lib / "test_spec.json"
+    spec = json.loads(spec_path.read_text())
+    spec["tests"].append({"model": "MyLib.Nope", "variables": ["q"]})
+    _write(spec_path, spec)
+    report = migrate(_cfg(lib), apply=False)
+    assert report.spec_not_considered == ["MyLib.Nope"]
+    assert report.clean is True
+
+
+def test_a_spec_key_is_counted_once_per_model_and_key(lib):
+    """'a' reached through an override, a leaf and a plot series is ONE
+    decision to check, carrying how many places it moved."""
+    spec_path = lib / "test_spec.json"
+    spec = json.loads(spec_path.read_text())
+    spec["tests"][0]["comparison"]["variable_overrides"]["a"] = {"tolerance": 0.1}
+    _write(spec_path, spec)
+    report = migrate(_cfg(lib), apply=True)
+    moved = [(m, old) for m, old, _, _ in report.spec_rewritten]
+    assert len(moved) == len(set(moved))
+    assert ("MyLib.Plain", "a", "unitTests.x[1]", 3) in report.spec_rewritten
