@@ -221,19 +221,20 @@ def test_the_scored_order_wins_when_it_differs_from_the_results():
     assert tracked_names(["z", "y"], result) == ["z", "y", "x"]
 
 
-def test_a_variable_the_comparison_labels_xn_is_not_listed_twice():
-    """TRANSFORM has ~70 tests whose result carries a `cat(...)` name: the
-    comparison scores it as `x[N]`, and reading the RAW name here put the
-    same trajectory in the list twice — a second card with its own "Add a
-    criterion for cat(1, a, b)" footer."""
-    result = _Result(_Var("cat(1, a, b)", 1), _Var("y", 2))
-    assert tracked_names(["x[1]", "y"], result) == ["x[1]", "y"]
-    # And with nothing scored the label is still what the list carries.
-    assert tracked_names([], result) == ["x[1]", "y"]
+def test_a_result_variable_is_listed_under_its_own_name_once():
+    """Nothing relabels a name: a variable is listed under the name its
+    result file gives it, whether or not the comparison scored it. Listing it
+    under two spellings put the same trajectory in the list twice — a second
+    card with its own "Add a criterion for …" footer (the 3b review)."""
+    result = _Result(_Var("unitTests.x[1]", 1), _Var("y", 2))
+    assert tracked_names(["unitTests.x[1]", "y"], result) == ["unitTests.x[1]", "y"]
+    assert tracked_names([], result) == ["unitTests.x[1]", "y"]
 
 
-def test_a_name_with_a_newline_in_it_takes_the_same_label():
-    assert tracked_names([], _Result(_Var("a\nb", 4))) == ["x[4]"]
+def test_an_awkward_name_is_no_longer_special():
+    """A `cat(` name or one carrying a newline was relabelled `x[N]` here."""
+    assert tracked_names([], _Result(_Var("cat(1, a, b)", 1))) == ["cat(1, a, b)"]
+    assert tracked_names([], _Result(_Var("a\nb", 4))) == ["a\nb"]
 
 
 def test_a_nameless_result_variable_is_left_to_the_comparison():

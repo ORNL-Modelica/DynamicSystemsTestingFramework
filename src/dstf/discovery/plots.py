@@ -111,14 +111,12 @@ def tracked_names(scored: Sequence[str], result: object) -> list[str]:
     layouts (the report one plot per scored variable, the tool the union),
     and the owner's ruling is that both tiers draw the same plots.
 
-    A result variable is taken under :func:`comparison.comparator.variable_label`,
-    the label the comparison scores it by: reading the RAW name here listed a
-    ``cat(...)``-named variable twice, once as ``x[N]`` and once as itself,
-    and the page drew it twice (the 3b review). It is skipped under EITHER
-    spelling — an authored tree may score it by the raw name the result file
-    carries, and adding the label beside it is the same duplicate by the
-    other road (the final review). A variable the result file left nameless
-    is the comparison's to label and is not added from here.
+    Every name here is the result file's (a UnitTests variable's is
+    ``<instance>.x[i]``) and nothing relabels it, so a variable the tree
+    scores and the result carries is one name and is listed once — listing
+    the same trajectory under two spellings drew it twice (the 3b review). A
+    variable the result file left nameless has nothing to plot by; the
+    comparison's own name for it arrives through ``scored``.
 
     A result of a simulation that FAILED contributes nothing: what a backend
     wrote before it stopped is a partial file, not the test's plots, and the
@@ -126,23 +124,16 @@ def tracked_names(scored: Sequence[str], result: object) -> list[str]:
 
     ``scored`` comes first even when the tree's order differs from the
     result file's: it is the order the test's author wrote."""
-    # Deferred: `comparison.comparator` imports `discovery.test_registry`,
-    # which imports this module for `TestModel.plots`.
-    from ..comparison.comparator import variable_label
-
     names = [name for name in scored if name]
     have = set(names)
     out = list(dict.fromkeys(names))
     if not getattr(result, "success", True):
         return out
     for var in getattr(result, "variables", None) or ():
-        if not var.name:
+        if not var.name or var.name in have:
             continue
-        label = variable_label(var.name, var.index)
-        if label in have or var.name in have:
-            continue
-        have.add(label)
-        out.append(label)
+        have.add(var.name)
+        out.append(var.name)
     return out
 
 

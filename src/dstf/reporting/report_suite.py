@@ -190,12 +190,11 @@ def _tracked_series(result, comp_variables, test, tracked):
     them in neither ``variables_by_name`` nor the no-baseline list; without
     them the section says the series is missing while the variable sits in
     the test's spec. Read from ``result``, never from disk."""
-    from ..comparison.comparator import variable_label
     from ..comparison.tree_spec import collect_variables
     from .context_builder import _spec_for
 
     # Nothing scored: the page's no-baseline trajectories already carry
-    # every variable of the result, under the same labels.
+    # every variable of the result, under the same names.
     if result is None or not getattr(result, "variables", None) or not comp_variables:
         return {}
     covered = set(collect_variables(_spec_for(list(comp_variables), test)))
@@ -204,9 +203,8 @@ def _tracked_series(result, comp_variables, test, tracked):
         return {}
     series = {}
     for var in result.variables:
-        label = variable_label(var.name, var.index)
-        if label in wanted:
-            series[label] = (var.time, var.values)
+        if var.name in wanted:
+            series[var.name] = (var.time, var.values)
     return series
 
 

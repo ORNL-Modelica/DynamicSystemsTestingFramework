@@ -1988,47 +1988,50 @@ class TestBothTiersDrawTheSamePlots:
         assert self._nobaseline(s, B) == ["x", "y"]
 
     def test_a_relabelled_variable_is_drawn_once_on_both_tiers(self, tmp_path):
-        """The comparison scores `cat(1, a, b)` as `x[1]`; reading the RAW
-        name as well drew the same trajectory twice on the tool."""
-        from test_session import A, _relabelled_project
+        """`cat(1, a, b)` is the name its result file gives the variable, and
+        both tiers draw it under that name — once. It used to be scored under
+        a second spelling, and reading the RAW name as well drew the same
+        trajectory twice on the tool."""
+        from test_session import RELABELLED, A, _relabelled_project
 
         cfg, work = _relabelled_project(tmp_path)
         s = self._session(cfg, work)
-        assert self._tool(s, A) == [("x[1]",), ("y",)]
-        assert self._report(s, A) == [("x[1]",), ("y",)]
+        assert self._tool(s, A) == [(RELABELLED,), ("y",)]
+        assert self._report(s, A) == [(RELABELLED,), ("y",)]
 
     def test_a_relabelled_variable_whose_baseline_lost_it_is_drawn_once(self, tmp_path):
         """`with_baseline=False` does NOT reach the no-baseline regime: the
         fixture's one-variable baseline for A is stored before it, so A is
         scored against a reference that has none of its variables — the
         comparator's lost-baseline branch (the final review). What this
-        pins is that the label is the page's only handle on the trajectory
-        there too: a view that could not resolve `x[1]` drew an empty plot
-        under a card the same list had just asked for."""
+        pins is that the name carries the trajectory there too: a view that
+        could not resolve it drew an empty plot under a card the same list
+        had just asked for."""
         from dstf.reporting.status import classify
-        from test_session import A, _relabelled_project
+        from test_session import RELABELLED, A, _relabelled_project
 
         cfg, work = _relabelled_project(tmp_path, with_baseline=False)
         s = self._session(cfg, work)
         assert s.project.store.get_reference(A) is not None
         assert classify(s.comparisons[A]) == "FAIL"
-        assert self._tool(s, A) == [("x[1]",), ("y",)]
-        assert self._report(s, A) == [("x[1]",), ("y",)]
-        view = s.view(A, "x[1]")
+        assert self._tool(s, A) == [(RELABELLED,), ("y",)]
+        assert self._report(s, A) == [(RELABELLED,), ("y",)]
+        view = s.view(A, RELABELLED)
         assert len(view.act_values) == 5
 
     def test_a_relabelled_tracked_variable_no_criterion_scores_draws_its_trace(
         self, tmp_path
     ):
         """A tracked variable no leaf scores rides in ``extra_series``, from
-        the result in memory — and it is read there under the LABEL the page
-        plots it by. Reading the RAW name matched none of the tracked names,
-        so the section drew nothing under its own title (the final review)."""
+        the result in memory — and it is read there under the same name the
+        page plots it by. A second spelling matched none of the tracked
+        names, so the section drew nothing under its own title (the final
+        review)."""
         import json
 
         from dstf.reporting.context_builder import _build_template_context
         from dstf.reporting.report_suite import plot_inputs, plot_page_keys
-        from test_session import A, _relabelled_project
+        from test_session import RELABELLED, A, _relabelled_project
 
         cfg, work = _relabelled_project(tmp_path)
         spec_path = cfg.parent / "test_spec.json"
@@ -2047,8 +2050,8 @@ class TestBothTiersDrawTheSamePlots:
         plots, extra = plot_inputs(
             project.test(A), comp.variables, result, type(project.backend), None
         )
-        assert [plot.series for plot in plots] == [("y",), ("x[1]",)]
-        assert list(extra) == ["x[1]"] and len(extra["x[1]"][1]) == 5
+        assert [plot.series for plot in plots] == [("y",), (RELABELLED,)]
+        assert list(extra) == [RELABELLED] and len(extra[RELABELLED][1]) == 5
         ctx = _build_template_context(
             A,
             list(comp.variables),
@@ -2060,7 +2063,7 @@ class TestBothTiersDrawTheSamePlots:
             metric_tree=comp.metric_tree,
         )
         ctx.update(plot_page_keys(ctx, plots, extra, comp.metric_tree, None))
-        section = next(s for s in ctx["plot_sections"] if s["series"] == ["x[1]"])
+        section = next(s for s in ctx["plot_sections"] if s["series"] == [RELABELLED])
         figure = ctx["plot_figures"][section["index"]]
         (trace,) = [tr for tr in figure["data"] if tr["meta"]["kind"] == "act"]
         assert len(trace["y"]) == 5
@@ -2069,7 +2072,7 @@ class TestBothTiersDrawTheSamePlots:
         self, tmp_path
     ):
         """B has a result and no baseline at all, so nothing is scored and
-        the label the comparison WOULD have used is the page's only handle
+        the name its result file gives the variable is the page's only handle
         on the trajectory."""
         import json
 
@@ -2097,5 +2100,5 @@ class TestBothTiersDrawTheSamePlots:
         s = self._session(cfg, work)
         assert classify(s.comparisons[B]) == NO_REF  # the regime it is named for
         assert s.project.store.get_reference(B) is None
-        assert self._tool(s, B) == [("x[1]",), ("y",)]
-        assert len(s.view(B, "x[1]").act_values) == 5
+        assert self._tool(s, B) == [(RELABELLED,), ("y",)]
+        assert len(s.view(B, RELABELLED).act_values) == 5

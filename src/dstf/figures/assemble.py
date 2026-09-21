@@ -21,7 +21,7 @@ def leaves_by_variable(metric_tree) -> dict[str, list[LeafPair]]:
     if metric_tree is None:
         return out
     for path, vc in leaf_comparisons_by_path(metric_tree).items():
-        out.setdefault(vc.name or f"x[{vc.index}]", []).append((path, vc))
+        out.setdefault(vc.name, []).append((path, vc))
     return out
 
 

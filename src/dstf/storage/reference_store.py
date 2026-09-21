@@ -217,6 +217,11 @@ class ReferenceStore(_RolesMixin):
                 {
                     "index": var.index,
                     "name": var.name,
+                    # Always written, "" included: what the model's ``x={...}``
+                    # said when this baseline was accepted, soft-checked on
+                    # every compare. An entry WITHOUT the key is one no
+                    # writer of this version produced.
+                    "expression": var.expression,
                     "values": values_list,
                 }
             )

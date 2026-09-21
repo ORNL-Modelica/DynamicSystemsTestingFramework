@@ -90,7 +90,7 @@ def generate_junit_report(
                 msgs = []
                 for var in comp.variables:
                     if not var.passed:
-                        name = var.name or f"x[{var.index}]"
+                        name = var.name
                         reason = not_scored_reason(var)
                         if reason:
                             # Sentinel leaf: the numbers are all inf/nan, so

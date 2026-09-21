@@ -25,7 +25,9 @@ class Baseline:
     name: str
     #: Shared time vector (all variables in this baseline share one time grid).
     time: list[float]
-    #: Variable entries: ``[{"index", "name", "values"}, ...]``.
+    #: Variable entries: ``[{"index", "name", "expression", "values"}, ...]``.
+    #: ``name`` is the variable's name in the result file and the only key;
+    #: ``expression`` is the label beside it (see ``VariableResult``).
     variables: list[dict]
     #: Diagnostic variable entries (same shape as ``variables``).
     diagnostics: list[dict] = field(default_factory=list)

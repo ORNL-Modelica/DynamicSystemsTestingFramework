@@ -417,6 +417,42 @@ class TestReferenceStore:
         assert keys.index("status") < keys.index("time")
         assert keys.index("date_added") < keys.index("time")
 
+    def test_every_variable_entry_carries_an_expression(
+        self, sample_models_dir, tmp_path
+    ):
+        """The expression a UnitTests variable was accepted with travels with
+        the baseline — that is what makes the positional name safe to compare
+        against. Always written, ``""`` for a variable that has none, so a
+        stored entry without the key is an un-migrated one."""
+        config = Config(
+            source_path=sample_models_dir,
+            reference_root=tmp_path / "refs",
+        )
+        store = ReferenceStore(config)
+        time = np.linspace(0, 1, 11)
+        result = TestResult(
+            model_id="ModelicaTestingLib.Examples.Test1",
+            success=True,
+            variables=[
+                VariableResult(
+                    index=1,
+                    time=time,
+                    values=time,
+                    name="unitTests.x[1]",
+                    expression="cat(1, a, b)[1]",
+                ),
+                VariableResult(index=2, time=time, values=time, name="plain"),
+            ],
+        )
+        store.store_reference(self._make_test_model(), result)
+
+        ref = store.get_reference("ModelicaTestingLib.Examples.Test1")
+        assert [(v["name"], v["expression"]) for v in ref["variables"]] == [
+            ("unitTests.x[1]", "cat(1, a, b)[1]"),
+            ("plain", ""),
+        ]
+        assert list(ref["variables"][0])[:3] == ["index", "name", "expression"]
+
     def test_index_rebuilt_from_files(self, sample_models_dir, tmp_path):
         """A new ReferenceStore instance rebuilds the index from ref files."""
         config = Config(

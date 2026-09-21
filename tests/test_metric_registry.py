@@ -68,6 +68,8 @@ class FinalSlopeMode(ComparisonMode):
         slope = abs(float(act_values[-1] - act_values[-2]) / dt)
         return VariableComparison(
             index=0,
+            # The evaluator stamps the leaf's variable over this; a mode
+            # builds its comparison before it knows which one it scored.
             name="",
             passed=slope <= self.config.max_slope,
             nrmse=slope,

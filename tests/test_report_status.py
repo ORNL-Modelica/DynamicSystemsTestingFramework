@@ -284,7 +284,7 @@ class TestSimulateOnlyClassification:
             TestResult(
                 model_id="Lib.Ex.SimulateOnly",
                 success=True,
-                variables=[VariableResult(index=1, time=t, values=t)],
+                variables=[VariableResult(index=1, time=t, values=t, name="x")],
             ),
             {"test_id": "0007"},
         )

@@ -60,6 +60,10 @@ class VariableComparison:
     # Open-ended structured extras — future metrics attach here instead of
     # growing this dataclass (event-timing, spectral, domain-specific scores).
     diagnostics: dict = field(default_factory=dict)
+    # The scored variable's expression (see ``VariableResult.expression``): a
+    # label, never a key. Stamped by the comparator and the tree evaluator
+    # from the result variable the leaf scored; "" when there is none.
+    expression: str = ""
     # What the mode scored against, as drawable data (see geometry.py).
     # Ids are local until the evaluator prefixes them with the leaf path.
     geometry: tuple[Primitive, ...] = ()

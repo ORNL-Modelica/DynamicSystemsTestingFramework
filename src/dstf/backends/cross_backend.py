@@ -160,7 +160,8 @@ def produce_dymola_via_fmpy_baseline(
     variables_payload = [
         {
             "index": v.index,
-            "name": v.name or "",
+            "name": v.name,
+            "expression": v.expression,
             "values": list(v.values),
         }
         for v in fmpy_result.variables

@@ -303,7 +303,7 @@ def build_trajectories(
         # by index when any leaf on the name resolved one, else by name.
         by_name: dict[str, list] = {}
         for vc in comparisons:
-            by_name.setdefault(vc.name or f"x[{vc.index}]", []).append(vc)
+            by_name.setdefault(vc.name, []).append(vc)
         ref_vars_by_name = {}
         if ref_data:
             for rv in ref_data.get("variables", []):
@@ -322,6 +322,10 @@ def build_trajectories(
                 {
                     "index": index,
                     "name": name,
+                    # The label beside the name — carried so an overlay whose
+                    # own source names the quantity that way still finds it
+                    # (see ``attach_overlays_to_trajectories``).
+                    "expression": act_var.expression if act_var else "",
                     "act_time": act_var.time.tolist() if act_var else [],
                     "act_values": act_var.values.tolist() if act_var else [],
                     "ref_time": ref_time_list,
@@ -350,16 +354,12 @@ def build_trajectories(
 
     nobaseline_trajectories = []
     if not comparisons and result and result.variables:
-        from ..comparison.comparator import variable_label
-
         for var in result.variables:
             nobaseline_trajectories.append(
                 {
                     "index": var.index,
-                    # The label the comparison WOULD score it under, so the
-                    # page's default layout (one plot per tracked name)
-                    # finds it: `x[N]` for a name a tool cannot carry.
-                    "name": variable_label(var.name, var.index),
+                    "name": var.name,
+                    "expression": var.expression,
                     "time": var.time.tolist(),
                     "values": var.values.tolist(),
                 }
@@ -663,7 +663,7 @@ def _spec_for(comparisons: list, test_model):
         and getattr(test_model, "metric_tree_spec", None) is not None
     ):
         return test_model.metric_tree_spec
-    comparison_var_names = [vc.name or f"x[{vc.index}]" for vc in comparisons]
+    comparison_var_names = [vc.name for vc in comparisons]
     return _synthesize_implicit_tree(
         comparison_var_names,
         variable_overrides=(

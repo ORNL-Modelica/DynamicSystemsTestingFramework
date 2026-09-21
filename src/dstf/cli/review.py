@@ -320,7 +320,7 @@ def _print_detail(comp) -> None:
         print(f"  Error: {comp.error_message}")
 
     for var in comp.variables:
-        name = var.name or f"x[{var.index}]"
+        name = var.name
         status = "\033[92mPASS\033[0m" if var.passed else "\033[91mFAIL\033[0m"
         summary = summarize(var)
         # The flat-route unknown-mode sentinel carries mode="" on purpose

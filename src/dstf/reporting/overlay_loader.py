@@ -270,7 +270,7 @@ def _ref_data_to_overlay_vars(ref_data: dict) -> dict[str, OverlayVariable]:
     for entry in ref_data.get("variables") or []:
         if not isinstance(entry, dict):
             continue
-        name = entry.get("name") or entry.get("expression")
+        name = entry.get("name")
         values = entry.get("values")
         if not name or not isinstance(values, list):
             continue
@@ -288,7 +288,7 @@ def _baseline_to_overlay_vars(baseline) -> dict[str, OverlayVariable]:
     time = list(baseline.time or [])
     out: dict[str, OverlayVariable] = {}
     for var in baseline.variables or []:
-        name = var.get("name") or var.get("expression")
+        name = var.get("name")
         if not name:
             continue
         values = var.get("values")
@@ -398,7 +398,7 @@ def _load_json(path: Path) -> dict[str, OverlayVariable]:
     for entry in data.get("variables", []) or []:
         if not isinstance(entry, dict):
             continue
-        name = entry.get("name") or entry.get("expression")
+        name = entry.get("name")
         values = entry.get("values")
         if not name or not isinstance(values, list):
             continue
@@ -452,14 +452,27 @@ def attach_overlays_to_trajectories(
     Missing/invalid overlays surface at the test level (future: summary
     picker); they're dropped from per-trajectory lists since there's
     nothing to render.
+
+    A variable is matched by NAME, and only then by its EXPRESSION — the one
+    place an expression is a key. An overlay is another source's data: a
+    companion is a different library's (or a different tool's) run, and it
+    names the quantity the way ITS result file does. For a variable of the
+    UnitTests component the name is positional (``unitTests.x[2]``), which
+    no other source can be expected to use, and the expression the model
+    wrote is the only spelling the two have in common. The name wins when
+    both match, or an overlay that happens to carry both spellings would
+    decide which trajectory its trace belongs to.
     """
     for traj in trajectories:
         name = traj.get("name", "")
+        expression = traj.get("expression", "")
         attached = []
         for ov in overlays:
             if ov.status != "loaded":
                 continue
             var = ov.variables.get(name)
+            if var is None and expression:
+                var = ov.variables.get(expression)
             if var is None:
                 continue
             attached.append(

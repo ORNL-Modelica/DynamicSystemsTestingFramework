@@ -306,6 +306,9 @@ def _evaluate_leaf(
 
     quantity = leaf.params.get("quantity")
     windowed = False
+    # A stored-scalar leaf scores no variable of the result, so it has no
+    # expression to carry.
+    expression = ""
     if desc is not None and desc.accepts_quantity and isinstance(quantity, str):
         # A string ``quantity`` reads a stored scalar instead of a tracked
         # series — where the data comes from is the evaluator's call, the
@@ -327,6 +330,8 @@ def _evaluate_leaf(
     else:
         var_result = var_results_by_name.get(leaf.variable)
         ref_var = baseline.ref_vars_by_name.get(leaf.variable) if baseline else None
+        if var_result is not None:
+            expression = var_result.expression
 
         if var_result is None:
             # Missing actual result is always a hard fail — no mode can score
@@ -382,6 +387,7 @@ def _evaluate_leaf(
         return leaf_from_variable(_leaf_config_error_comparison(leaf, exc))
     vc.index = index
     vc.name = leaf.variable
+    vc.expression = expression
     vc.tolerance_used = tolerance
     if windowed:
         # The window is a leaf property, not a mode's: the evaluator owns it.

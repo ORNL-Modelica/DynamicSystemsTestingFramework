@@ -415,13 +415,19 @@ from dstf.discovery.test_registry import TestModel
 
 
 def _make_test(comparison_tolerance=None, variable_overrides=None):
-    """Create a minimal TestModel for tolerance tests."""
+    """Create a minimal TestModel for tolerance tests.
+
+    Tracked by its spec: the result file names its one variable ``x`` (a
+    UnitTests test's would be ``unitTests.x[1]``, whatever the model wrote
+    for it)."""
     return TestModel(
         model_id="Test.Model",
         source_file=Path(""),
         source_package="Test",
         short_name="Model",
-        n_vars=1,
+        n_vars=0,
+        source="spec",
+        variable_patterns=["x"],
         comparison_tolerance=comparison_tolerance,
         variable_overrides=variable_overrides or {},
     )
@@ -1834,6 +1840,7 @@ class TestBaselineFreeClassification:
 
     def test_fully_covered_range_test_is_baseline_free(self):
         test = _mk_test(
+            source="spec",
             variable_patterns=["a", "b"],
             variable_overrides={
                 "a": {"mode": "range", "min_value": -10, "max_value": 10},
@@ -1885,27 +1892,6 @@ class TestNameBasedPairing:
                     time=np.array([0.0, 1.0]),
                     values=np.array([10.0, 10.0]),
                     name="b",
-                )
-            ],
-        )
-        comp = compare_test(_mk_test(), result, reference)
-        assert comp.passed
-
-    def test_unnamed_variable_falls_back_to_index(self):
-        reference = {
-            "variables": [
-                {"index": 1, "name": "a", "time": [0.0, 1.0], "values": [1.0, 1.0]},
-            ]
-        }
-        result = TestResult(
-            model_id="MyLib.Test",
-            success=True,
-            variables=[
-                VariableResult(
-                    index=1,
-                    time=np.array([0.0, 1.0]),
-                    values=np.array([1.0, 1.0]),
-                    name="",
                 )
             ],
         )
@@ -2068,3 +2054,198 @@ class TestCompareOne:
             (True, True),
             (False, False),
         ]
+
+
+# ---------------------------------------------------------------------------
+# Variable identity: scored, stored and overridden under the result-file name
+# ---------------------------------------------------------------------------
+
+import logging
+
+from dstf.comparison.tree_spec import parse_metric_tree
+from dstf.reporting.status import PASS, classify
+
+_VI_T = np.linspace(0.0, 1.0, 11)
+#: One UnitTests variable: the name its result file gives it, and the text the
+#: model wrote for it in ``x={...}`` — a label, never a key.
+VI_NAME, VI_EXPR = "unitTests.x[1]", "cat(1, a, b)[1]"
+
+
+def _vi_test(**kw) -> TestModel:
+    """A test whose one variable comes from the UnitTests component."""
+    kw.setdefault("x_expressions", [VI_EXPR])
+    return TestModel(
+        model_id="MyLib.Test",
+        source_file=Path("x.mo"),
+        source_package="MyLib",
+        short_name="Test",
+        n_vars=kw.pop("n_vars", 1),
+        source=kw.pop("source", "unit_tests"),
+        **kw,
+    )
+
+
+def _vi_result(values=None, expression=VI_EXPR, name=VI_NAME) -> TestResult:
+    return TestResult(
+        model_id="MyLib.Test",
+        success=True,
+        variables=[
+            VariableResult(
+                index=1,
+                time=_VI_T,
+                values=_VI_T if values is None else values,
+                name=name,
+                expression=expression,
+            )
+        ],
+    )
+
+
+def _vi_reference(expression=VI_EXPR, name=VI_NAME, with_expression=True) -> dict:
+    entry: dict = {"index": 1, "name": name, "values": list(_VI_T)}
+    if with_expression:
+        entry["expression"] = expression
+    return {"test_id": "0001", "time": list(_VI_T), "variables": [entry]}
+
+
+class TestVariableIdentity:
+    def test_the_flat_path_scores_the_name_and_carries_the_expression(self):
+        comp = compare_test(_vi_test(), _vi_result(), _vi_reference())
+        assert comp.passed
+        (vc,) = comp.variables
+        assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
+        assert vc.nrmse == 0.0
+
+    def test_a_tree_leaf_scores_the_name_and_carries_the_expression(self):
+        spec = parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+        comp = compare_test(
+            _vi_test(metric_tree_spec=spec), _vi_result(), _vi_reference()
+        )
+        assert comp.passed
+        (vc,) = comp.variables
+        assert (vc.name, vc.expression) == (VI_NAME, VI_EXPR)
+
+    def test_an_override_keyed_by_the_name_applies_and_one_by_the_expression_does_not(
+        self,
+    ):
+        """Overrides are keyed by the name the result file gives the variable;
+        the expression is a label and opens no door of its own."""
+        off = _VI_T * 1.05
+        loose = {"tolerance": 0.5}
+        by_name = compare_test(
+            _vi_test(variable_overrides={VI_NAME: loose}),
+            _vi_result(off),
+            _vi_reference(),
+        )
+        assert by_name.passed and by_name.variables[0].tolerance_used == 0.5
+        by_expression = compare_test(
+            _vi_test(variable_overrides={VI_EXPR: loose}),
+            _vi_result(off),
+            _vi_reference(),
+        )
+        assert not by_expression.passed
+        assert by_expression.variables[0].tolerance_used != 0.5
+
+    def test_an_override_keyed_by_a_plain_expression_does_not_apply(self):
+        """The shape a real spec has today: a key that WAS the stored name
+        (`pipe.p`) and is now the expression beside `unitTests.x[1]`. It stops
+        applying — which is what `dstf migrate-variable-names` rewrites."""
+        comp = compare_test(
+            _vi_test(
+                x_expressions=["pipe.p"],
+                variable_overrides={"pipe.p": {"tolerance": 0.5}},
+            ),
+            _vi_result(_VI_T * 1.05, expression="pipe.p"),
+            _vi_reference(expression="pipe.p"),
+        )
+        assert not comp.passed
+
+    @pytest.mark.parametrize("tree", [False, True])
+    def test_an_expression_that_changed_warns_and_the_test_still_passes(self, tree):
+        """A UnitTests variable is keyed by its position, so an edit to the
+        model's `x={...}` can put another quantity under the same name. The
+        baseline's recorded expression says which one it was."""
+        spec = (
+            parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+            if tree
+            else None
+        )
+        comp = compare_test(
+            _vi_test(metric_tree_spec=spec),
+            _vi_result(expression="b.Q"),
+            _vi_reference(expression="a.Q"),
+        )
+        assert comp.passed and classify(comp) == PASS
+        (warning,) = comp.warnings
+        assert VI_NAME in warning.field
+        assert (warning.reference_value, warning.current_value) == ("a.Q", "b.Q")
+
+    @pytest.mark.parametrize("tree", [False, True])
+    @pytest.mark.parametrize(
+        "stored,measured",
+        [("a.Q", "a.Q"), ("", "b.Q"), ("a.Q", ""), (None, "b.Q")],
+    )
+    def test_no_expression_warning_when_they_agree_or_either_side_is_empty(
+        self, tree, stored, measured
+    ):
+        """Silent for a pattern-tracked variable and for a backend that
+        records no expression — both sides must say something to disagree."""
+        spec = (
+            parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+            if tree
+            else None
+        )
+        reference = (
+            _vi_reference(with_expression=False)
+            if stored is None
+            else _vi_reference(expression=stored)
+        )
+        comp = compare_test(
+            _vi_test(metric_tree_spec=spec), _vi_result(expression=measured), reference
+        )
+        assert comp.passed and comp.warnings == []
+
+    def test_a_baseline_stored_under_the_expression_is_missing_and_names_the_command(
+        self, caplog
+    ):
+        with caplog.at_level(logging.WARNING):
+            comp = compare_test(
+                _vi_test(x_expressions=["pipe.T[1]"]),
+                _vi_result(expression="pipe.T[1]"),
+                _vi_reference(name="pipe.T[1]", with_expression=False),
+            )
+        assert not comp.passed
+        assert any(
+            "dstf migrate-variable-names" in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_the_baseline_free_check_reads_the_variables_names(self):
+        bounds = {"mode": "range", "min_value": 0.0, "max_value": 2.0}
+        assert _test_is_baseline_free(
+            _vi_test(variable_overrides={VI_NAME: bounds}), 1e-4
+        )
+        assert not _test_is_baseline_free(
+            _vi_test(variable_overrides={VI_EXPR: bounds}), 1e-4
+        )
+
+    def test_a_both_test_is_not_baseline_free_on_its_patterns_alone(self):
+        """`source == "both"`: the spec's patterns AND the component's
+        variables are tracked, so covering only the patterns leaves the
+        component's variables scoring nrmse against a baseline."""
+        bounds = {"mode": "range", "min_value": 0.0, "max_value": 2.0}
+        assert not _test_is_baseline_free(
+            _vi_test(
+                source="both",
+                variable_patterns=["a"],
+                variable_overrides={"a": bounds},
+            ),
+            1e-4,
+        )
+
+    def test_the_display_relabelling_is_gone(self):
+        """`variable_label` turned a `cat(`/newline name into `x[N]` for
+        scoring and display; nothing relabels a variable now."""
+        import dstf.comparison.comparator as comparator
+
+        assert not hasattr(comparator, "variable_label")

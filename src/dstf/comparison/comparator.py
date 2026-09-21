@@ -30,6 +30,7 @@ import numpy as np
 from ..backends import TestResult
 from ..backends.types import DatasetType
 from ..discovery.test_registry import TestModel
+from ..discovery.unit_tests import unit_test_variables
 from ..storage.reference_store import ReferenceStore
 
 # Re-export facade (see module docstring): modes/tree_eval/metric_tree and the
@@ -68,21 +69,6 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-
-def variable_label(name: str | None, index: int) -> str:
-    """The display label a result variable is scored, plotted and overridden
-    under. A recorded name a tool cannot carry — a Modelica ``cat(...)``
-    expression, or one with a newline in it — becomes ``x[N]``, N the
-    variable's index in the result file.
-
-    Public because it is the ONE rule: the comparison names a variable this
-    way, and so must every list of a test's variables, or the same
-    trajectory appears twice — once under its label, once under the raw
-    name (TRANSFORM has ~70 such tests; the 3b review)."""
-    if not name or "\n" in name or name.startswith("cat("):
-        return f"x[{index}]"
-    return name
 
 
 def _check_structural_changes(
@@ -138,6 +124,29 @@ def _check_structural_changes(
             )
 
     return warnings
+
+
+def _check_expressions(reference: dict, result: TestResult) -> list[StructuralWarning]:
+    """A UnitTests variable is keyed by its position (``unitTests.x[2]``), so
+    an edit to the model's ``x={...}`` can put a different quantity under the
+    same name. The baseline records the expression it was accepted with; a
+    run measuring another one says so. A warning, never a failure — and
+    silent when either side recorded nothing (a pattern-tracked variable, a
+    backend that writes no expression)."""
+    recorded = {
+        v.get("name"): v.get("expression") or "" for v in reference.get("variables", [])
+    }
+    return [
+        StructuralWarning(
+            field=f"Expression of {var.name}",
+            reference_value=recorded[var.name],
+            current_value=var.expression,
+        )
+        for var in result.variables
+        if var.expression
+        and recorded.get(var.name)
+        and recorded[var.name] != var.expression
+    ]
 
 
 def _tracked_but_not_scored(
@@ -224,7 +233,9 @@ def compare_test(
             simulate_only=True,
         )
 
-    structural_warnings = _check_structural_changes(reference, result)
+    structural_warnings = _check_structural_changes(
+        reference, result
+    ) + _check_expressions(reference, result)
 
     ref_vars = {v["index"]: v for v in reference.get("variables", [])}
     # Name-keyed view for the primary pairing path. Pairing purely by
@@ -232,7 +243,7 @@ def compare_test(
     # trajectory after any spec reorder (review 2026-07-06, finding 8).
     ref_vars_by_name = {}
     for v in reference.get("variables", []):
-        rn = v.get("name") or v.get("expression", "")
+        rn = v.get("name", "")
         if rn and rn not in ref_vars_by_name:
             ref_vars_by_name[rn] = v
     shared_ref_time = reference.get("time")
@@ -273,7 +284,7 @@ def compare_test(
         for name, bl in all_baselines.items():
             refs_by_name: dict[str, dict] = {}
             for rv in bl.variables:
-                rn = rv.get("name") or rv.get("expression", "")
+                rn = rv.get("name", "")
                 if rn and rn not in refs_by_name:
                     refs_by_name[rn] = rv
             bl_time = np.array(bl.time) if bl.time else None
@@ -313,20 +324,23 @@ def compare_test(
 
     for var_result in result.variables:
         # Pair by name first; fall back to index only when the result
-        # variable carries no name (legacy x[N] expressions). An
-        # index-paired ref whose stored name disagrees with the result's
-        # name is a stale/reordered baseline — warn and treat as missing
-        # rather than score against the wrong trajectory.
+        # variable carries no name. An index-paired ref whose stored name
+        # disagrees with the result's name is a stale/reordered baseline —
+        # or one stored before the variable was named by its result file —
+        # so warn and treat as missing rather than score against the wrong
+        # trajectory.
         if var_result.name and var_result.name in ref_vars_by_name:
             ref_var = ref_vars_by_name[var_result.name]
         else:
             ref_var = ref_vars.get(var_result.index)
             if ref_var is not None and var_result.name:
-                stored_name = ref_var.get("name") or ref_var.get("expression", "")
+                stored_name = ref_var.get("name", "")
                 if stored_name and stored_name != var_result.name:
                     logger.warning(
                         "%s: reference index %d holds %r but result is %r — "
-                        "treating as missing baseline (re-accept to refresh)",
+                        "treating as missing baseline (re-accept to refresh; a "
+                        "baseline stored under an expression is renamed by "
+                        "`dstf migrate-variable-names`)",
                         test.model_id,
                         var_result.index,
                         stored_name,
@@ -334,11 +348,11 @@ def compare_test(
                     )
                     ref_var = None
 
-        # Resolve the variable's display name BEFORE the ref-missing check
-        # so baseline-free modes can still use overrides keyed by the
-        # actual variable name.
-        ref_name = ref_var.get("name", ref_var.get("expression", "")) if ref_var else ""
-        name = variable_label(var_result.name or ref_name, var_result.index)
+        # A variable is scored and overridden under the name its result file
+        # gives it; the expression beside it is a label and no key of any
+        # kind. Resolved BEFORE the ref-missing check so baseline-free modes
+        # still find their overrides.
+        name = var_result.name
 
         var_override = merged_overrides.get(name, {})
         tolerance = var_override.get("tolerance", base_tolerance)
@@ -421,11 +435,6 @@ def compare_test(
             comparisons.append(
                 VariableComparison(
                     index=var_result.index,
-                    # `name`, not the RAW recorded one: every other branch
-                    # of this loop carries the label, and a variable that
-                    # lost its baseline was the one place a `cat(...)` name
-                    # reached the surfaces — where it drew a second, empty
-                    # plot beside the one labelled `x[N]` (the 3b review).
                     name=name,
                     passed=False,
                     nrmse=float("inf"),
@@ -457,6 +466,12 @@ def compare_test(
     # accumulator. Today the tree is the implicit flat-AND of per-variable
     # leaves — same semantics as before. Phase 3.3+ swaps in user-authored
     # trees from test_spec.json.
+    #
+    # The loop appends exactly one comparison per result variable, in order,
+    # so the expression rides onto each of them here rather than at all five
+    # of the loop's append sites.
+    for vc, var_result in zip(comparisons, result.variables, strict=True):
+        vc.expression = var_result.expression
     tree = implicit_and_tree(comparisons)
 
     return TestComparison(
@@ -528,7 +543,11 @@ def _test_is_baseline_free(
     # whole is not baseline-free (review 2026-07-06, finding 10; matches
     # the docstring's "mixed trees fall back to NO_REF"). Glob patterns
     # can't be proven covered, so they also disqualify.
-    tracked = list(test.variable_patterns) or list(test.x_expressions)
+    #
+    # Both sources are tracked, not one or the other: a ``both`` test whose
+    # spec patterns are all covered still has the component's variables
+    # scoring nrmse against a baseline.
+    tracked = list(test.variable_patterns) + [v.name for v in unit_test_variables(test)]
     if tracked and set(tracked) - set(test.variable_overrides):
         return False
     base_tolerance = (

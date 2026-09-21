@@ -1022,7 +1022,8 @@ class Session:
         already has a tree, when nothing was scored (NO_REF, SIM_FAIL,
         simulate-only), or when a tree would not score what the flat path
         scored: a scored variable whose name is not one the result carries
-        (the flat path's ``x[N]`` display label), a string ``quantity`` in
+        (a comparison from a run the results no longer match), a string
+        ``quantity`` in
         an override (the flat path refuses it, a tree would score it), an
         override naming an
         unregistered mode (the flat path fails it; a tree would score
@@ -1042,10 +1043,8 @@ class Session:
         result = project.results.get(model_id)
         resolved = {v.name for v in result.variables} if result is not None else set()
         if not all(n and n in resolved and is_literal_variable(n) for n in names):
-            # The flat path labels an unnamed comparison ``x[N]`` for display
-            # (a result variable whose recorded name carries a newline or a
-            # ``cat(`` expression — TRANSFORM has 70 such tests); a leaf by
-            # that label resolves to nothing in the tree path.
+            # A leaf must name a variable the loaded result carries, or the
+            # tree path resolves it to nothing.
             return None
         if unknown_override_modes(entry):
             return None

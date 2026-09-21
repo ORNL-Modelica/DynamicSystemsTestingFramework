@@ -250,6 +250,73 @@ class TestCrossBackendSoftCheckValueError:
         assert "cannot store baseline" in caplog.text
 
 
+class TestCrossBackendBaselinePayload:
+    def test_the_written_baseline_carries_name_and_expression(
+        self, tmp_path, monkeypatch
+    ):
+        """The chain writes a baseline like any other writer does: keyed by
+        the result-file name, with the expression recorded beside it (``""``
+        for an FMU variable, which has none)."""
+        from dstf.backends.cross_backend import produce_dymola_via_fmpy_baseline
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.config import Config
+
+        fmu_dir = tmp_path / "fmu_examples"
+        fmu_dir.mkdir()
+        fmu_path = fmu_dir / "Model.fmu"
+        fmu_path.write_bytes(b"fake")
+
+        config = Config(
+            source_path=fmu_dir,
+            reference_root=tmp_path / "refs",
+            source_type="fmu",
+            backend_name="FMPy",
+            work_dir=tmp_path / "work",
+        )
+
+        class _FakeFmpyBackend:
+            def __init__(self, cfg):
+                self.config = cfg
+
+            def run_single_test(self, test, test_key, index, total):
+                return TestRunResult(
+                    model_id=test.model_id, test_key=test_key, success=True
+                )
+
+            def read_result(self, test, test_key, run_result):
+                t = np.array([0.0, 1.0])
+                return TestResult(
+                    model_id=test.model_id,
+                    success=True,
+                    variables=[
+                        VariableResult(
+                            index=1,
+                            name="unitTests.x[1]",
+                            time=t,
+                            values=t,
+                            expression="pipe.T[1]",
+                        ),
+                        VariableResult(index=2, name="h", time=t, values=t),
+                    ],
+                )
+
+        monkeypatch.setattr("dstf.backends.fmpy.backend.FmpyBackend", _FakeFmpyBackend)
+
+        primary = MagicMock()
+        primary.capabilities = frozenset({Capability.FMU_EXPORT})
+        primary.export_fmu.return_value = fmu_path
+
+        store = MagicMock()
+        test = _tm("Model", variable_patterns=["h"])
+        assert produce_dymola_via_fmpy_baseline(test, primary, config, store) is True
+
+        payload = store.add_soft_check.call_args.kwargs["variables"]
+        assert [(v["name"], v["expression"]) for v in payload] == [
+            ("unitTests.x[1]", "pipe.T[1]"),
+            ("h", ""),
+        ]
+
+
 class TestCrossBackendFmpyMissing:
     """Step 3's ``except RuntimeError`` — the chain skips on the
     unavailable-backend signal ``FmpyBackend.__init__`` raises, and writes

@@ -209,14 +209,68 @@ def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
     return cfg, work
 
 
-#: A name no tool can carry: the comparison scores it as ``x[1]``.
+#: A result-file name no tool can carry — what a Modelica ``x={cat(1, a, b)}``
+#: used to be stored under, and what the comparison used to relabel ``x[1]``.
+#: Nothing relabels it now: it is scored and drawn under this name.
 RELABELLED = "cat(1, a, b)"
+
+#: A UnitTests variable's result-file name, and the expression beside it.
+UT1, UT2 = "unitTests.x[1]", "unitTests.x[2]"
+UT1_EXPR, UT2_EXPR = "cat(1, a, b)[1]", "cat(1, a, b)[2]"
+
+
+def with_expressions(session: Session, model_id: str, expressions: dict[str, str]):
+    """Stamp ``expression`` on the loaded result's variables, keyed by name.
+
+    FakeLib is a Python-backend project: its ``result.json`` carries names and
+    values, and the backend has no carrier for an expression — only a Modelica
+    UnitTests component writes one. A test that needs a UnitTests-shaped
+    variable sets it here, after ``open``. Nothing is renamed."""
+    for var in session.project.results[model_id].variables:
+        if var.name in expressions:
+            var.expression = expressions[var.name]
+
+
+def _unit_tests_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project` with A's two variables named the way the result file
+    of a UnitTests test names them — the shape the expressions ride beside."""
+    cfg, work = _two_var_project(tmp_path, ref_models=())
+    t = [i / 4 for i in range(5)]
+    (work / "test_0001" / "result.json").write_text(
+        json.dumps(
+            {
+                "success": True,
+                "time": t,
+                "variables": {UT1: [v * 1.25 for v in t], UT2: [2 * v for v in t]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["variables"] = [UT1, UT2]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    tt = np.asarray(t)
+    ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
+        make_test_model(A, variable_patterns=[UT1, UT2]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name=UT1),
+                VariableResult(index=2, time=tt, values=2.1 * tt, name=UT2),
+            ],
+        ),
+    )
+    return cfg, work
 
 
 def _relabelled_project(tmp_path: Path, *, with_baseline: bool = True):
-    """`_two_var_project` with A tracking a variable whose recorded name the
-    comparison relabels ``x[1]`` — TRANSFORM has ~70 such tests. Without a
-    baseline, A scores nothing and the result's names are all there is."""
+    """`_two_var_project` with A tracking a variable whose recorded name no
+    tool can carry — TRANSFORM has ~70 such tests. Without a baseline, A
+    scores nothing and the result's names are all there is."""
     cfg, work = _two_var_project(tmp_path, ref_models=(A,) if with_baseline else ())
     t = [i / 4 for i in range(5)]
     (work / "test_0001" / "result.json").write_text(
@@ -1003,13 +1057,52 @@ class TestRescoreAndStage:
         assert [leaf["variable"] for leaf in op["value"]["children"]] == [
             vc.name for vc in session.comparisons[D].variables
         ]
-        # The flat path's display label for an unnamed result variable —
-        # TRANSFORM has 70 tests whose recorded names carry a newline — is
-        # not a name the tree path can resolve.
+        # A leaf must name a variable the loaded result carries: a name that
+        # is not one of them — or no name at all — resolves to nothing on the
+        # tree path, so nothing is staged.
         session.comparisons[D].variables[0].name = "x[1]"
         assert session._materialization(D) is None
         session.comparisons[D].variables[0].name = ""
         assert session._materialization(D) is None
+
+    def test_a_unit_tests_test_materializes_and_the_tree_scores_what_the_flat_did(
+        self, tmp_path
+    ):
+        """The ~70 TRANSFORM tests this plan is for: their variables are the
+        UnitTests component's, expressions and all. The names are the result
+        file's on both paths, so the materialized tree scores the same
+        numbers the flat path did — and the expression rides on either."""
+        from dataclasses import asdict
+
+        cfg, work = _unit_tests_project(tmp_path)
+        session = Session()
+        session.open(cfg, work_dir=work)
+        with_expressions(session, A, {UT1: UT1_EXPR, UT2: UT2_EXPR})
+        flat = session.comparisons[A]
+
+        def numbers(comp):
+            keep = (
+                "name",
+                "passed",
+                "nrmse",
+                "rmse",
+                "max_abs_error",
+                "max_abs_error_time",
+                "tolerance_used",
+                "mode",
+            )
+            return [{k: asdict(vc)[k] for k in keep} for vc in comp.variables]
+
+        flat_status, flat_numbers = classify(flat), numbers(flat)
+        op = session._materialization(A)
+        assert op is not None
+        assert [leaf["variable"] for leaf in op["value"]["children"]] == [UT1, UT2]
+
+        tree = session.rescore(A)  # stages the op, scores by the tree
+        assert session.spec.entry(A)["metrics"]["children"][0]["variable"] == UT1
+        assert classify(tree) == flat_status
+        assert numbers(tree) == flat_numbers
+        assert [vc.expression for vc in tree.variables] == [UT1_EXPR, UT2_EXPR]
 
     def test_a_model_with_no_spec_entry_gets_one_from_the_materialization(
         self, session

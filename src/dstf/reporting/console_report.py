@@ -109,7 +109,7 @@ def print_report(comparisons: list[TestComparison]) -> int:
 
 def _print_var_failure(var: VariableComparison):
     """Print details for a failed variable comparison."""
-    name = var.name or f"x[{var.index}]"
+    name = var.name
     print(f"    {name}:")
     reason = not_scored_reason(var)
     if reason:

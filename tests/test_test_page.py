@@ -1022,8 +1022,9 @@ async def test_a_test_shows_one_card_per_tracked_variable(shell):
 
 @pytest.fixture
 def relabelled_shell(tmp_path):
-    """A's result carries `cat(1, a, b)`, which the comparison scores under
-    the label `x[1]` — TRANSFORM has ~70 such tests."""
+    """A's result carries `cat(1, a, b)` as a variable's name — TRANSFORM has
+    ~70 tests whose result file names a variable something no tool can
+    carry. It is scored and drawn under that name."""
     from test_session import _relabelled_project
 
     cfg, work = _relabelled_project(tmp_path)
@@ -1034,20 +1035,21 @@ def relabelled_shell(tmp_path):
 
 
 async def test_a_relabelled_variable_gets_one_card_not_two(relabelled_shell):
-    """The tracked list read the scored LABELS and the result's RAW names:
-    `cat(1, a, b)` appeared under both, so the page drew a third card with
-    no criteria row and its own "Add a criterion for cat(1, a, b)" footer,
-    over a trajectory already on the card above it (the 3b review)."""
+    """The tracked list read the scored names and the result's names under
+    two spellings: `cat(1, a, b)` appeared under both, so the page drew a
+    third card with no criteria row and its own "Add a criterion for
+    cat(1, a, b)" footer, over a trajectory already on the card above it
+    (the 3b review). One name, one card."""
     shell = relabelled_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert [c.resolved.series for c in page.cards] == [("x[1]",), ("y",)]
+        assert [c.resolved.series for c in page.cards] == [("cat(1, a, b)",), ("y",)]
         assert _one(user, "plots:count").text == "2 plots · one per tracked variable"
         assert _none(user, "variable-actions:2:cat(1, a, b)")
         with page.client:
             page.cards[0].show()
         kinds = [tr["meta"]["kind"] for tr in page.cards[0].plot.figure["data"]]
-        assert "act" in kinds and "ref" in kinds  # the label resolves its data
+        assert "act" in kinds and "ref" in kinds  # the name resolves its data
 
 
 async def test_show_builds_the_plot_once_with_no_rings(shell):

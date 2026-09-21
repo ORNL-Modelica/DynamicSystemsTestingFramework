@@ -278,6 +278,48 @@ class TestAttachOverlaysToTrajectories:
         # 'v' didn't match any overlay variable
         assert trajectories[1]["overlays"] == []
 
+    def test_an_overlay_is_matched_by_name_first_and_by_expression_after(self):
+        """An overlay is somebody else's data — a companion names the
+        quantity the way ITS library does, and the expression a UnitTests
+        variable was written with is the only thing the two spellings share.
+        So: the name if the overlay has it, the expression only when it does
+        not. A name match wins, or a companion carrying both names would
+        decide which trajectory a trace belongs to."""
+        trajectories = [
+            {"name": "unitTests.x[1]", "expression": "pipe.T[1]"},
+            {"name": "unitTests.x[2]", "expression": "pipe.T[2]"},
+        ]
+        overlays = [
+            Overlay(
+                name="julia",
+                role="companion",
+                status="loaded",
+                variables={
+                    "unitTests.x[1]": OverlayVariable(time=[0, 1], values=[1, 2]),
+                    "pipe.T[1]": OverlayVariable(time=[0, 1], values=[3, 4]),
+                    "pipe.T[2]": OverlayVariable(time=[0, 1], values=[5, 6]),
+                },
+            ),
+        ]
+        attach_overlays_to_trajectories(trajectories, overlays)
+        # the name is there, so the expression's series is NOT the one taken
+        assert trajectories[0]["overlays"][0]["values"] == [1, 2]
+        # no variable under the name: the expression finds the companion's
+        assert trajectories[1]["overlays"][0]["values"] == [5, 6]
+
+    def test_a_trajectory_without_an_expression_matches_by_name_alone(self):
+        trajectories = [{"name": "h"}]
+        overlays = [
+            Overlay(
+                name="julia",
+                role="companion",
+                status="loaded",
+                variables={"": OverlayVariable(time=[0, 1], values=[1, 2])},
+            ),
+        ]
+        attach_overlays_to_trajectories(trajectories, overlays)
+        assert trajectories[0]["overlays"] == []
+
     def test_skips_non_loaded_overlays(self):
         trajectories = [{"name": "h"}]
         overlays = [
@@ -294,7 +336,7 @@ class TestAttachOverlaysToTrajectories:
     def test_works_on_nobaseline_trajectory_shape(self):
         """NO_REF plots use ``{index, name, time, values}`` instead of the
         compare-path's ``{name, act_time, act_values, ref_time, ref_values}``.
-        The attach pass matches purely on ``name``, so the same helper
+        The attach pass matches on the entry's ``name``, so the same helper
         threads sibling-backend overlays onto no-baseline plots too — this
         is the pre-accept cross-check path for a brand-new backend / OS.
         """
