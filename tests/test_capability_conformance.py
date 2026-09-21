@@ -11,8 +11,11 @@ page from sub-project 3 (owner call 2 of the plan)."""
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import copy
 import importlib.metadata
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -38,9 +41,17 @@ from dstf.authoring.capabilities import (  # noqa: E402
 from dstf.authoring.session import Selection  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.suite import SuitePage  # noqa: E402
-from test_session import LOOSEN, A, B, _Gate, _project, _snapshot  # noqa: E402
+from dstf.authoring.shell.test_page import TestPage  # noqa: E402
+from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from test_handles import TREE  # noqa: E402
+from test_session import LOOSEN, A, B, D, _Gate, _project, _snapshot  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
+SHELL = REPO / "src" / "dstf" / "authoring" / "shell"
+
+#: The paths of `test_handles.TREE`, root first — every node of the tree the
+#: NODE test stages on D, and (its leaves) every criteria row of D's one card.
+TREE_NODES = ["/metrics"] + [f"/metrics/children/{i}" for i in range(6)]
 
 
 # -- the repository is not a test fixture ---------------------------------
@@ -159,6 +170,14 @@ def _one(user, marker: str):
     return element
 
 
+def _none(user, marker: str) -> bool:
+    try:
+        user.find(marker=marker)
+    except AssertionError:  # `find` raises on absence
+        return True
+    return False
+
+
 async def _open(user, path: str = "/") -> None:
     """Open the page AND wait for it to be built: every page awaits its
     client's handshake before drawing, and `user.open` returns as soon as
@@ -166,6 +185,33 @@ async def _open(user, path: str = "/") -> None:
     The header's wordmark is the first element every page draws."""
     await user.open(path)
     await user.should_see(marker="wordmark", retries=20)
+
+
+def _ancestors(element):
+    while element.parent_slot is not None:
+        element = element.parent_slot.parent
+        yield element
+
+
+def _marks(element) -> list[str]:
+    """Every marker under ``element``, in document order."""
+    out: list[str] = []
+    for slot in element.slots.values():
+        for child in slot.children:
+            out.extend(child._markers)
+            out.extend(_marks(child))
+    return out
+
+
+def _inside(user, marker: str, host) -> list:
+    """Every element marked ``marker`` under ``host``: the same node's
+    controls are drawn in a tree row and again in a criteria row, so a bare
+    find cannot say which host holds which."""
+    try:
+        found = user.find(marker=marker).elements
+    except AssertionError:  # `find` raises on absence
+        return []
+    return [e for e in found if host in list(_ancestors(e))]
 
 
 def _suite(shell, user) -> SuitePage:
@@ -492,3 +538,200 @@ async def test_a_capability_registered_through_the_plugin_hook_attaches(
         after = _effects(shell, tmp_path)
     assert _suite(shell, user).actions.errors == {}
     assert _changed(before, after) == ["pending"]
+
+
+# -- the Test page's three placements (D131) ------------------------------
+#
+# NODE, VARIABLE and CRITERION are the placements the Test page draws, each
+# a different way of hosting the same contract: a node's controls inline in
+# every row that names that node, a captioned button with a dialog under the
+# plot, and the criterion's whole editor. One dummy per placement, alone.
+
+
+def _page_of(shell, user) -> TestPage:
+    (page,) = [
+        p for p in shell.pages if isinstance(p, TestPage) and p.client is user.client
+    ]
+    return page
+
+
+async def _test_page(shell, user, model_id: str) -> TestPage:
+    shell.mount()  # the Test page's route, without visiting `/` first
+    await _open(user, f"/test/{model_id}")
+    return _page_of(shell, user)
+
+
+async def test_a_node_capability_is_the_controls_of_every_row_naming_that_node(
+    shell,
+):
+    """Placement.NODE: the panel IS that node's controls, and a node is
+    named in two places — its row in the open tree, and (for a leaf) its
+    criteria row under the plot of the variable it scores."""
+    cap = _Dummy("node", {Placement.NODE})
+    only(cap)
+    shell.session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        for path in TREE_NODES:
+            host = _one(user, f"node:{path}")
+            (panel,) = _inside(user, "panel:node", host)
+            assert [
+                e
+                for e in panel.descendants()
+                if isinstance(e, ui.button) and e.text == "submit node"
+            ], f"tree row {path}"
+        # TREE's six leaves all score `x`, which is D's one plot.
+        for path in TREE_NODES[1:]:
+            host = _one(user, f"node:0:{path}")
+            assert _inside(user, "panel:node", host), f"criteria row {path}"
+        assert _none(user, "action:node")  # inline, never a button with a dialog
+
+
+async def test_a_variable_capability_is_a_captioned_button_under_the_plot(shell):
+    """Placement.VARIABLE: the card's footer row, drawn the way SUITE and
+    TEST are — a caption, a dialog, and a real figure hook behind
+    `panel.figure`, so a panel that subscribes to the plot does not raise."""
+
+    class _Subscribing(_Dummy):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.seen: list[tuple[str, dict]] = []
+
+        def panel(self, s, panel):
+            panel.figure.on("plotly_relayout", lambda h, p: self.seen.append((h, p)))
+            super().panel(s, panel)
+
+    cap = _Subscribing("variable", {Placement.VARIABLE})
+    only(cap)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        footer = _one(user, "variable-actions:0:x")
+        (button,) = _inside(user, "action:variable", footer)
+        assert button.text == "Dummy variable on 1 tests" and button.enabled
+        user.find(marker="action:variable").click()
+        # `_NoFigure.on` raises and `ActionBar` draws a raising panel's
+        # exception in the slot INSTEAD of the panel: the submit button is
+        # there, so `panel.figure` was a real hook, and the card's own — a
+        # dispatch on it reaches this panel's handler.
+        await user.should_see("submit variable", retries=20)
+        page.cards[0].hook._dispatch("plotly_relayout", {"shapes[0].y0": 1.0})
+        assert cap.seen == [("", {"y0": 1.0})]
+
+
+async def test_a_criterion_capability_is_the_whole_editor_with_no_heading(shell):
+    """Placement.CRITERION: the editor below the row is every capability
+    placed there, stacked without headings — the row above already names
+    the criterion (brief §3.2), so a panel drawing its own would make the
+    editor read as two things."""
+    cap = _Dummy("criterion", {Placement.CRITERION})
+    only(cap)
+    shell.session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    path = "/metrics/children/0"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        page.open_criterion(path, 0)
+        await user.should_see("submit criterion", retries=20)
+        editor = _one(user, f"editor:0:{path}")
+        assert [m for m in _marks(editor) if m.startswith("panel:")] == [
+            "panel:criterion"
+        ]
+        assert not [
+            e for e in editor.descendants() if "text-h6" in e.classes
+        ]  # no heading
+        assert _none(user, "action:criterion")
+
+
+# -- the shell names no capability ----------------------------------------
+
+
+def _capability_words() -> set[str]:
+    """Every registered built-in's `name` and class name — so a built-in
+    added later is covered without touching this test."""
+    caps._reset_for_tests()
+    register_builtins()
+    return {c.name for c in caps.registered_capabilities()} | {
+        type(c).__name__ for c in caps.registered_capabilities()
+    }
+
+
+def _docstrings(tree: ast.Module) -> set[int]:
+    """The ``id()`` of every string constant that IS a docstring. Prose in a
+    docstring is exempt — `shell.py` and `actions.py` say "Rerun" and
+    "rerun" about the capability they must not reach for by name — and a
+    docstring is a string constant in the AST, so it has to be excluded by
+    node, not by content."""
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            continue
+        first = node.body[0] if node.body else None
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            out.add(id(first.value))
+    return out
+
+
+#: Prose inside a CSS comment, which `style.py`'s stylesheet carries in a
+#: plain string constant ("with Rerun / Accept clipped off-screen"): the
+#: same exemption a `#` comment gets for free by not being in the AST at all.
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+
+
+def _identifiers(node: ast.AST):
+    if isinstance(node, ast.Name):
+        yield node.id
+    elif isinstance(node, ast.Attribute):
+        yield node.attr
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        yield node.name
+    elif isinstance(node, ast.arg):
+        yield node.arg
+    elif isinstance(node, ast.keyword) and node.arg is not None:
+        yield node.arg
+    elif isinstance(node, ast.alias):
+        yield node.name
+        if node.asname:
+            yield node.asname
+    elif isinstance(node, (ast.Global, ast.Nonlocal)):
+        yield from node.names
+
+
+def test_the_shell_names_no_capability():
+    """§4.6, D129: the shell hosts capabilities BY PLACEMENT and knows none
+    of them by name. Read as an AST, never as text: a comment may say
+    "Rerun" and a docstring may explain what Edit tree does, but no string
+    the page builds with and no identifier it binds may be a capability's
+    `name` or its class."""
+    words = _capability_words()
+    assert {"edit-criteria", "edit-tree", "EditTree"} <= words  # the scan is armed
+    patterns = {w: re.compile(rf"\b{re.escape(w)}\b") for w in words}
+    found: list[str] = []
+    files = sorted(SHELL.glob("*.py"))
+    assert len(files) > 5, files
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        docs = _docstrings(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if id(node) in docs:
+                    continue
+                text = _CSS_COMMENT.sub(" ", node.value)
+                found += [
+                    f"{path.name}:{node.lineno}: string says {word!r}"
+                    for word, pattern in patterns.items()
+                    if pattern.search(text)
+                ]
+                continue
+            found += [
+                f"{path.name}:{getattr(node, 'lineno', 0)}: identifier {name!r}"
+                for name in _identifiers(node)
+                if name in words
+            ]
+    assert found == []
