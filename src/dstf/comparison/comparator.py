@@ -70,6 +70,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def variable_label(name: str | None, index: int) -> str:
+    """The display label a result variable is scored, plotted and overridden
+    under. A recorded name a tool cannot carry — a Modelica ``cat(...)``
+    expression, or one with a newline in it — becomes ``x[N]``, N the
+    variable's index in the result file.
+
+    Public because it is the ONE rule: the comparison names a variable this
+    way, and so must every list of a test's variables, or the same
+    trajectory appears twice — once under its label, once under the raw
+    name (TRANSFORM has ~70 such tests; the 3b review)."""
+    if not name or "\n" in name or name.startswith("cat("):
+        return f"x[{index}]"
+    return name
+
+
 def _check_structural_changes(
     reference: dict,
     result: TestResult,
@@ -323,9 +338,7 @@ def compare_test(
         # so baseline-free modes can still use overrides keyed by the
         # actual variable name.
         ref_name = ref_var.get("name", ref_var.get("expression", "")) if ref_var else ""
-        name = var_result.name or ref_name
-        if not name or "\n" in name or name.startswith("cat("):
-            name = f"x[{var_result.index}]"
+        name = variable_label(var_result.name or ref_name, var_result.index)
 
         var_override = merged_overrides.get(name, {})
         tolerance = var_override.get("tolerance", base_tolerance)
@@ -408,7 +421,12 @@ def compare_test(
             comparisons.append(
                 VariableComparison(
                     index=var_result.index,
-                    name=var_result.name,
+                    # `name`, not the RAW recorded one: every other branch
+                    # of this loop carries the label, and a variable that
+                    # lost its baseline was the one place a `cat(...)` name
+                    # reached the surfaces — where it drew a second, empty
+                    # plot beside the one labelled `x[N]` (the 3b review).
+                    name=name,
                     passed=False,
                     nrmse=float("inf"),
                     rmse=float("inf"),

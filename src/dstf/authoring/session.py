@@ -26,7 +26,7 @@ from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
 from ..discovery.patch_apply import PatchError
-from ..discovery.plots import ResolvedPlot, resolved_plots
+from ..discovery.plots import ResolvedPlot, resolved_plots, tracked_names
 from ..discovery.scan_cache import load_scan, store_scan
 from ..discovery.spec_parser import spec_models_from_document
 from ..discovery.spec_update import (
@@ -505,14 +505,11 @@ class Session:
         The union, not the scored names alone: removing a variable's LAST
         criterion would otherwise take its card, its "Add a criterion for
         it" footer and every way to add one back — a one-way door out of
-        which only Discard leads (the Task 5-6 review)."""
+        which only Discard leads (the Task 5-6 review). The report's
+        default layout is the same list, through the same function."""
         comp = self.comparisons.get(model_id)
-        names = (
-            [vc.name for vc in comp.variables if vc.name] if comp is not None else []
-        )
-        result = self._require_project().results.get(model_id)
-        names += [v.name for v in (result.variables if result else []) if v.name]
-        return list(dict.fromkeys(names))
+        scored = [vc.name for vc in comp.variables] if comp is not None else []
+        return tracked_names(scored, self._require_project().results.get(model_id))
 
     def variable_names(self, model_id: str) -> list[str]:
         """Every variable the last result holds: the tracked ones first, in

@@ -1717,11 +1717,12 @@ class TestReviewPlotsPath:
         assert list(seen["extra_series"]) == ["z"]
 
 
-def test_a_tracked_variable_the_tree_does_not_score_is_read_from_the_file(tmp_path):
+def test_a_tracked_variable_the_tree_does_not_score_carries_its_own_series(tmp_path):
     """An explicit tree scoring only x, a result tracking x and y, a layout
-    naming both: the tracked list is what was SCORED, so y is a plot-only
-    read. Taking the result's list whenever there is a result would leave y
-    in neither source — "Not in this result: y" beside a file that has it."""
+    naming both: y is TRACKED, so it is not read from the file — and it is
+    in no per-variable section either, because no leaf scores it. Leaving it
+    out of both sources printed "Not in this result: y" beside a result that
+    has it, so its trajectory rides in ``extra_series``, from memory."""
     from types import SimpleNamespace
 
     import numpy as np
@@ -1738,18 +1739,25 @@ def test_a_tracked_variable_the_tree_does_not_score_is_read_from_the_file(tmp_pa
 
         @classmethod
         def result_series(cls, test_dir, names):
-            return {n: (t, t) for n in names}
+            assert names == []  # y is tracked: nothing is read from the file
+            return {}
 
     test = SimpleNamespace(
-        plots=parse_plots([{"series": [{"var": "x"}, {"var": "y"}]}])
+        plots=parse_plots([{"series": [{"var": "x"}, {"var": "y"}]}]),
+        metric_tree_spec=None,
+        variable_overrides={},
     )
-    scored = [SimpleNamespace(name="x")]
+    scored = [SimpleNamespace(name="x", index=1)]
     result = SimpleNamespace(
-        variables=[SimpleNamespace(name="x"), SimpleNamespace(name="y")]
+        variables=[
+            SimpleNamespace(name="x", index=1, time=t, values=t),
+            SimpleNamespace(name="y", index=2, time=t, values=2 * t),
+        ]
     )
     plots, extra = plot_inputs(test, scored, result, Files, tmp_path)
     assert plots[0].series == ("x", "y") and plots[0].missing == ()
     assert list(extra) == ["y"]
+    assert extra["y"][1].tolist() == (2 * t).tolist()
 
 
 class TestPerTestArgsReadTheLayout:
@@ -1808,15 +1816,124 @@ class TestPerTestArgsReadTheLayout:
         monkeypatch.setattr(PythonBackend, "result_names", classmethod(boom))
         monkeypatch.setattr(PythonBackend, "result_series", classmethod(boom))
         args = self._args(tmp_path, None)
-        assert args["plots"] is None and args["extra_series"] == {}
+        # Resolved without a name list: one plot per tracked variable, the
+        # tool's rule, and every series answered from the result in memory.
+        assert [p.series for p in args["plots"]] == [("x",), ("y",)]
+        assert all(p.missing == () for p in args["plots"])
+        assert args["extra_series"] == {}
 
-    def test_with_no_backend_class_a_layout_is_not_resolved(self, tmp_path):
+    def test_with_no_backend_class_a_layout_is_resolved_without_a_name_list(
+        self, tmp_path
+    ):
         """M5.9 — the backend class is resolved ONCE per suite, wrapped; an
-        unregistered backend leaves it ``None`` and every page falls back to
-        the default layout instead of raising."""
+        unregistered backend leaves it ``None``, and every page then draws
+        its layout with nothing called missing instead of raising."""
         args = self._args(
             tmp_path,
             [{"series": [{"var": "x"}, {"var": "z"}]}],
             backend_cls=None,
         )
-        assert args["plots"] is None and args["extra_series"] == {}
+        (plot,) = args["plots"]
+        assert plot.series == ("x", "z") and plot.missing == ()
+        assert args["extra_series"] == {}
+
+
+class TestBothTiersDrawTheSamePlots:
+    """The owner's ruling (3b): a test's DEFAULT plots are ONE list —
+    what was scored, then the rest of what is tracked — and both the
+    authoring tool and the report draw it. The report used to draw one plot
+    per variable the TREE scored, so a tracked variable no criterion covers
+    had a plot on one tier and none on the other."""
+
+    @staticmethod
+    def _tool(session, model):
+        return [plot.series for plot in session.plots(model)]
+
+    @staticmethod
+    def _report(session, model):
+        """The page's plot sections — the ONE producer the template loops
+        over — for a test whose layout is the default."""
+        from dstf.reporting.context_builder import _build_template_context
+        from dstf.reporting.report_suite import plot_inputs, plot_page_keys
+
+        project = session.project
+        test = project.test(model)
+        comp = session.comparisons[model]
+        result = project.results.get(model)
+        ctx = _build_template_context(
+            model,
+            list(comp.variables),
+            project.store.get_reference(model),
+            None,
+            None,
+            test_model=test,
+            result=result,
+            metric_tree=comp.metric_tree,
+        )
+        plots, extra = plot_inputs(
+            test, comp.variables, result, type(project.backend), None
+        )
+        ctx.update(plot_page_keys(ctx, plots, extra, comp.metric_tree, None))
+        return [tuple(section["series"]) for section in ctx["plot_sections"]]
+
+    @staticmethod
+    def _session(cfg, work):
+        from dstf.authoring.session import Session
+
+        s = Session()
+        s.open(cfg, work_dir=work)
+        return s
+
+    def test_a_tracked_variable_no_criterion_scores_gets_a_plot_on_both_tiers(
+        self, tmp_path
+    ):
+        """A tracks x and y and its tree scores x alone: the roadmap's
+        predicate is "a test with N tracked variables shows N plots"."""
+        import json
+
+        from test_session import A, _two_var_project
+
+        cfg, work = _two_var_project(tmp_path)
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == A:
+                entry["metrics"] = {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "x"}],
+                }
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        s = self._session(cfg, work)
+        assert self._tool(s, A) == [("x",), ("y",)]
+        assert self._report(s, A) == [("x",), ("y",)]
+
+    def test_every_fixture_model_draws_the_same_plots_on_both_tiers(self, tmp_path):
+        from test_session import A, B, D, G, _two_var_project
+
+        cfg, work = _two_var_project(tmp_path)
+        s = self._session(cfg, work)
+        for model in (A, B, D, G):
+            assert self._tool(s, model) == self._report(s, model), model
+
+    def test_a_relabelled_variable_is_drawn_once_on_both_tiers(self, tmp_path):
+        """The comparison scores `cat(1, a, b)` as `x[1]`; reading the RAW
+        name as well drew the same trajectory twice on the tool."""
+        from test_session import A, _relabelled_project
+
+        cfg, work = _relabelled_project(tmp_path)
+        s = self._session(cfg, work)
+        assert self._tool(s, A) == [("x[1]",), ("y",)]
+        assert self._report(s, A) == [("x[1]",), ("y",)]
+
+    def test_a_relabelled_variable_with_no_baseline_draws_its_trace(self, tmp_path):
+        """Nothing is scored, so the label is the page's only handle on the
+        trajectory: a view that could not resolve `x[1]` drew an empty plot
+        under a card the same list had just asked for."""
+        from test_session import A, _relabelled_project
+
+        cfg, work = _relabelled_project(tmp_path, with_baseline=False)
+        s = self._session(cfg, work)
+        assert self._tool(s, A) == [("x[1]",), ("y",)]
+        assert self._report(s, A) == [("x[1]",), ("y",)]
+        view = s.view(A, "x[1]")
+        assert len(view.act_values) == 5

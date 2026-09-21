@@ -17,6 +17,7 @@ from dstf.discovery.plots import (
     parse_plots,
     plots_to_raw,
     resolved_plots,
+    tracked_names,
 )
 from dstf.discovery.spec_parser import spec_models_from_document
 from dstf.discovery.test_registry import merge_tests, spec_tests_by_model
@@ -192,3 +193,59 @@ def test_a_null_plots_key_is_refused_like_any_other_non_list(tmp_path):
 def test_a_blank_var_is_refused():
     with pytest.raises(PlotsSpecError, match=r"series\[0\]\.var: must be a non-empty"):
         parse_plots([{"series": [{"var": "  "}]}])
+
+
+# -- `tracked_names`: the ONE default-layout rule both tiers draw by --------
+
+
+class _Var:
+    def __init__(self, name, index):
+        self.name, self.index = name, index
+
+
+class _Result:
+    def __init__(self, *variables):
+        self.variables = list(variables)
+
+
+def test_the_scored_names_come_first_then_the_rest_of_the_result():
+    tracked = tracked_names(["x"], _Result(_Var("x", 1), _Var("y", 2)))
+    assert tracked == ["x", "y"]
+
+
+def test_the_scored_order_wins_when_it_differs_from_the_results():
+    """The tree's order is the test author's; the result file's is the
+    backend's. A variable the tree scores is drawn where the tree put it."""
+    result = _Result(_Var("x", 1), _Var("y", 2), _Var("z", 3))
+    assert tracked_names(["z", "y"], result) == ["z", "y", "x"]
+
+
+def test_a_variable_the_comparison_labels_xn_is_not_listed_twice():
+    """TRANSFORM has ~70 tests whose result carries a `cat(...)` name: the
+    comparison scores it as `x[N]`, and reading the RAW name here put the
+    same trajectory in the list twice — a second card with its own "Add a
+    criterion for cat(1, a, b)" footer."""
+    result = _Result(_Var("cat(1, a, b)", 1), _Var("y", 2))
+    assert tracked_names(["x[1]", "y"], result) == ["x[1]", "y"]
+    # And with nothing scored the label is still what the list carries.
+    assert tracked_names([], result) == ["x[1]", "y"]
+
+
+def test_a_name_with_a_newline_in_it_takes_the_same_label():
+    assert tracked_names([], _Result(_Var("a\nb", 4))) == ["x[4]"]
+
+
+def test_a_nameless_result_variable_is_left_to_the_comparison():
+    """It has no name to plot by; the comparison's own label for it arrives
+    through ``scored`` when there is one."""
+    assert tracked_names([], _Result(_Var("", 1), _Var("y", 2))) == ["y"]
+    assert tracked_names(["x[1]"], _Result(_Var("", 1))) == ["x[1]"]
+
+
+def test_a_repeated_scored_name_is_listed_once():
+    """Several leaves may score one variable."""
+    assert tracked_names(["x", "x", "y"], None) == ["x", "y"]
+
+
+def test_no_result_leaves_the_scored_names_alone():
+    assert tracked_names(["x"], None) == ["x"]

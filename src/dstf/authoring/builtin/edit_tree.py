@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ...comparison.registry import DEFAULT_METRIC, combinators, metrics
+from ...discovery.plots import tracked_names
 from ..capabilities import Panel, Patch, Placement
 
 if TYPE_CHECKING:
@@ -429,12 +430,11 @@ def _cluster(
 
 def _variable_names(s: SessionView, model_id: str) -> list[str]:
     """What a new leaf may score: the scored names, then the rest of the
-    result's — `Session.tracked`'s union, for the same reason. A variable
-    whose last criterion was just removed is still the test's, and the add
-    forms are the way back to it."""
+    result's — `Session.tracked`'s list, through the same function and for
+    the same reason. A variable whose last criterion was just removed is
+    still the test's, and the add forms are the way back to it."""
     comp = s.comparisons.get(model_id)
-    names = [vc.name for vc in comp.variables if vc.name] if comp is not None else []
+    scored = [vc.name for vc in comp.variables] if comp is not None else []
     project = s.project
     result = project.results.get(model_id) if project is not None else None
-    names += [v.name for v in result.variables if v.name] if result is not None else []
-    return list(dict.fromkeys(names))
+    return tracked_names(scored, result)

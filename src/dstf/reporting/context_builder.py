@@ -350,11 +350,16 @@ def build_trajectories(
 
     nobaseline_trajectories = []
     if not comparisons and result and result.variables:
+        from ..comparison.comparator import variable_label
+
         for var in result.variables:
             nobaseline_trajectories.append(
                 {
                     "index": var.index,
-                    "name": var.name or f"x[{var.index}]",
+                    # The label the comparison WOULD score it under, so the
+                    # page's default layout (one plot per tracked name)
+                    # finds it: `x[N]` for a name a tool cannot carry.
+                    "name": variable_label(var.name, var.index),
                     "time": var.time.tolist(),
                     "values": var.values.tolist(),
                 }

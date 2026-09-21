@@ -103,6 +103,39 @@ def default_plots(tracked: Sequence[str]) -> tuple[PlotSpec, ...]:
     return tuple(PlotSpec(series=(SeriesSpec(v),)) for v in tracked)
 
 
+def tracked_names(scored: Sequence[str], result: object) -> list[str]:
+    """The variables a test HAS a plot for by default, in the order both
+    tiers draw them: what the comparison scored, then the rest of the loaded
+    result's, de-duplicated. ONE rule, called by the tool's `Session.tracked`
+    and by the report's `plot_inputs` — the two drew different default
+    layouts (the report one plot per scored variable, the tool the union),
+    and the owner's ruling is that both tiers draw the same plots.
+
+    A result variable is taken under :func:`comparison.comparator.variable_label`,
+    the label the comparison scores it by: reading the RAW name here listed a
+    ``cat(...)``-named variable twice, once as ``x[N]`` and once as itself,
+    and the page drew it twice (the 3b review). A variable the result file
+    left nameless is the comparison's to label and is not added from here.
+
+    ``scored`` comes first even when the tree's order differs from the
+    result file's: it is the order the test's author wrote."""
+    # Deferred: `comparison.comparator` imports `discovery.test_registry`,
+    # which imports this module for `TestModel.plots`.
+    from ..comparison.comparator import variable_label
+
+    names = [name for name in scored if name]
+    have = set(names)
+    out = list(dict.fromkeys(names))
+    for var in getattr(result, "variables", None) or ():
+        if not var.name:
+            continue
+        label = variable_label(var.name, var.index)
+        if label not in have:
+            have.add(label)
+            out.append(label)
+    return out
+
+
 def resolved_plots(
     test: TestModel, tracked: Sequence[str], *, available: Sequence[str] | None
 ) -> tuple[ResolvedPlot, ...]:

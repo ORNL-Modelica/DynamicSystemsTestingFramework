@@ -134,9 +134,12 @@ class PlotCard:
         #: The Session's pending ops as of this editor's last build (`paint`).
         self._staged: tuple = ()
         model = page.model_id
-        scored = set(tracked)
-        #: This plot's scored series; the rest are drawn but have no criteria.
-        self.tracked = [name for name in resolved.series if name in scored]
+        known = set(tracked)
+        #: This plot's TRACKED series — the ones that carry criteria rows and
+        #: an "Add a criterion for x" footer. Not "scored": a tracked variable
+        #: no criterion covers is still the test's, and the footer is the way
+        #: back to one. The rest of the series are drawn and nothing more.
+        self.tracked = [name for name in resolved.series if name in known]
         #: A card drawing ONE series has its variable in its title, so its
         #: pill is the bare status; several pills side by side read "FAIL
         #: FAIL" and look like the plot's verdict said twice (the board).
@@ -176,7 +179,7 @@ class PlotCard:
                 for variable in self.tracked:
                     for leaf in self._leaves(view, variable):
                         self.rows[str(leaf["path"])] = CriterionRow(self, leaf)
-            only = [name for name in resolved.series if name not in tracked]
+            only = [name for name in resolved.series if name not in known]
             if only:
                 verb = (
                     "is plot only: it has"

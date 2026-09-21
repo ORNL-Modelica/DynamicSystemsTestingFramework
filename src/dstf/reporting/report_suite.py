@@ -142,28 +142,64 @@ def _sanitize_filename(name: str) -> str:
 
 
 def plot_inputs(test, comp_variables, result, backend_cls, test_dir):
-    """``(plots, extra_series)`` for one test's page. A test with no
-    ``plots`` key — or no backend class or test dir to read a result file
-    through — gets ``(None, {})``: the default layout, and the result file
-    is not opened (331 TRANSFORM reports pay nothing). Otherwise the
-    resolved plots and every plot-only series the file has.
+    """``(plots, extra_series)`` for one test's page: the plots the page
+    draws and every series of theirs the scored variables do not answer.
 
-    The tracked list — what the page HAS a section for by default: the
-    scored variables, or the result's own list when nothing scored — is
-    derived here rather than by each caller, so the suite path and
-    ``cli/review.py`` cannot drift apart.
+    The tracked list — what the page HAS a section for by default — comes
+    from :func:`discovery.plots.tracked_names`, the ONE rule the authoring
+    tool's `Session.tracked` draws by: the scored variables in order, then
+    the rest of the loaded result's. The report drew one plot per variable
+    the TREE scored, so a tracked variable no criterion covers had no plot
+    on this tier and a plot on the other (the owner's ruling: both tiers
+    draw the same plots).
+
+    A test with no ``plots`` key — or no backend class or test dir to read
+    a result file through — still opens no result FILE: the default layout
+    is one plot per tracked name and ``result`` already holds every one of
+    them in memory, so 331 TRANSFORM reports pay nothing.
     """
-    from ..discovery.plots import resolved_plots
+    from ..discovery.plots import resolved_plots, tracked_names
 
-    if test is None or test.plots is None or backend_cls is None or test_dir is None:
+    if test is None:
         return None, {}
-    tracked = list(dict.fromkeys(v.name for v in (comp_variables or []) if v.name))
-    if not tracked and result is not None:
-        tracked = [v.name for v in result.variables if v.name]
+    tracked = tracked_names([v.name for v in (comp_variables or [])], result)
+    if test.plots is None or backend_cls is None or test_dir is None:
+        plots = resolved_plots(test, tracked, available=None)
+        return plots, _tracked_series(result, comp_variables, test, tracked)
     available = backend_cls.result_names(test_dir)
     plots = resolved_plots(test, tracked, available=available)
     wanted = sorted({n for p in plots for n in p.series} - set(tracked))
-    return plots, backend_cls.result_series(test_dir, wanted)
+    return plots, {
+        **_tracked_series(result, comp_variables, test, tracked),
+        **backend_cls.result_series(test_dir, wanted),
+    }
+
+
+def _tracked_series(result, comp_variables, test, tracked):
+    """The trajectories of the tracked variables the page's per-variable
+    sections do NOT carry — the ones no leaf of the tree scores. They have
+    a plot (they are tracked) and no criteria, so `plot_page_keys` finds
+    them in neither ``variables_by_name`` nor the no-baseline list; without
+    them the section says the series is missing while the variable sits in
+    the test's spec. Read from ``result``, never from disk."""
+    from ..comparison.comparator import variable_label
+    from ..comparison.tree_spec import collect_variables
+    from .context_builder import _spec_for
+
+    # Nothing scored: the page's no-baseline trajectories already carry
+    # every variable of the result, under the same labels.
+    if result is None or not getattr(result, "variables", None) or not comp_variables:
+        return {}
+    covered = set(collect_variables(_spec_for(list(comp_variables), test)))
+    wanted = {name for name in tracked if name not in covered}
+    if not wanted:
+        return {}
+    series = {}
+    for var in result.variables:
+        label = variable_label(var.name, var.index)
+        if label in wanted:
+            series[label] = (var.time, var.values)
+    return series
 
 
 def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> dict:

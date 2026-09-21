@@ -1005,6 +1005,36 @@ async def test_a_test_shows_one_card_per_tracked_variable(shell):
         assert "dstf-plot-slot" in slot.classes and slot.props["data-plot"] == "0"
 
 
+@pytest.fixture
+def relabelled_shell(tmp_path):
+    """A's result carries `cat(1, a, b)`, which the comparison scores under
+    the label `x[1]` — TRANSFORM has ~70 such tests."""
+    from test_session import _relabelled_project
+
+    cfg, work = _relabelled_project(tmp_path)
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.load.phase = "done"
+    return s
+
+
+async def test_a_relabelled_variable_gets_one_card_not_two(relabelled_shell):
+    """The tracked list read the scored LABELS and the result's RAW names:
+    `cat(1, a, b)` appeared under both, so the page drew a third card with
+    no criteria row and its own "Add a criterion for cat(1, a, b)" footer,
+    over a trajectory already on the card above it (the 3b review)."""
+    shell = relabelled_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert [c.resolved.series for c in page.cards] == [("x[1]",), ("y",)]
+        assert _one(user, "plots:count").text == "2 plots · one per tracked variable"
+        assert _none(user, "variable-actions:2:cat(1, a, b)")
+        with page.client:
+            page.cards[0].show()
+        kinds = [tr["meta"]["kind"] for tr in page.cards[0].plot.figure["data"]]
+        assert "act" in kinds and "ref" in kinds  # the label resolves its data
+
+
 async def test_show_builds_the_plot_once_with_no_rings(shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)

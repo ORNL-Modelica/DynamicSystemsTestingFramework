@@ -209,6 +209,48 @@ def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
     return cfg, work
 
 
+#: A name no tool can carry: the comparison scores it as ``x[1]``.
+RELABELLED = "cat(1, a, b)"
+
+
+def _relabelled_project(tmp_path: Path, *, with_baseline: bool = True):
+    """`_two_var_project` with A tracking a variable whose recorded name the
+    comparison relabels ``x[1]`` — TRANSFORM has ~70 such tests. Without a
+    baseline, A scores nothing and the result's names are all there is."""
+    cfg, work = _two_var_project(tmp_path, ref_models=(A,) if with_baseline else ())
+    t = [i / 4 for i in range(5)]
+    (work / "test_0001" / "result.json").write_text(
+        json.dumps(
+            {
+                "success": True,
+                "time": t,
+                "variables": {RELABELLED: t, "y": [2 * v for v in t]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["variables"] = [RELABELLED, "y"]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    if with_baseline:
+        tt = np.asarray(t)
+        ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
+            make_test_model(A, variable_patterns=[RELABELLED, "y"]),
+            TestResult(
+                model_id=A,
+                success=True,
+                variables=[
+                    VariableResult(index=1, time=tt, values=tt, name=RELABELLED),
+                    VariableResult(index=2, time=tt, values=2 * tt, name="y"),
+                ],
+            ),
+        )
+    return cfg, work
+
+
 def _base_kinds(fig: dict) -> list[tuple[str, str]]:
     """The act / ref / error traces a figure draws, as sorted (kind, id).
     Leaves are not base traces; overlays are, but no fixture in this module
