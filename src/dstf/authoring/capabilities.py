@@ -113,7 +113,9 @@ Outcome = Patch | StoreWrite | Job | Artifact | OpenProject | None
 
 
 class FigureHook(Protocol):
-    """The shell's centre figure, as a capability may subscribe to it.
+    """ONE plot card's figure, as a capability may subscribe to it. There is
+    a hook per card — the plot a VARIABLE footer's panel or a CRITERION
+    editor sits under — not one figure for the page.
 
     ``on(kind, handler)`` calls ``handler(primitive_id, payload)``:
 

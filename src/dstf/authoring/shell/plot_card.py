@@ -60,7 +60,10 @@ _SIGNED = (
 #: the whole document's pending ops meant an edit to ANOTHER model, followed
 #: by any `job` event, rebuilt this editor and threw away a half-typed table
 #: row; and a combinator edit that moved no leaf rebuilt it for nothing (the
-#: 3b review).
+#: 3b review). ``advisory`` is the one key no test pins: nothing the editor
+#: offers writes it, so a change to it can only arrive from a hand-written
+#: patch — it is here because the field IS the leaf's, not because a path
+#: was found that moves it.
 _EDITED = ("metric", "variable", "params", "window", "against", "advisory")
 
 #: "Not read yet" — `None` cannot mean it: a test with nothing scored has a
@@ -146,6 +149,12 @@ class PlotCard:
         #: Whether this card has been asked to draw. A plot that raised is
         #: retried on the next sync, and only on a card somebody wanted.
         self.wanted = False
+        #: The text of the error the last try raised, or None. The retry is
+        #: free; the traceback is not — a card that cannot draw is tried
+        #: again by every sync, a rescan's progress ticks included, and 50
+        #: of those over two failing cards logged 100 tracebacks for one
+        #: broken result (the final review). A new text is a new line.
+        self._error: str | None = None
         #: Stamped on every figure this card sends; see `_figure`.
         self._revision = 0
         #: The leaf the open editor was built from (`_EDITED`).
@@ -320,9 +329,13 @@ class PlotCard:
             try:
                 figure = self._figure()
             except Exception as e:  # a plot that cannot draw says so in place
-                logger.exception("plot %s of %s", self.index, self.page.model_id)
-                ui.label(f"{type(e).__name__}: {e}").classes("text-negative")
+                text = f"{type(e).__name__}: {e}"
+                if text != self._error:  # the same failure is not news
+                    logger.exception("plot %s of %s", self.index, self.page.model_id)
+                    self._error = text
+                ui.label(text).classes("text-negative")
                 return
+            self._error = None
             self.plot = ui.plotly(figure).classes("w-full").style("height: 320px")
         self.hook.attach(self.plot)
         self._drawn = self.signature(view)

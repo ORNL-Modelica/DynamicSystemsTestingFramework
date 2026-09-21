@@ -163,8 +163,11 @@ class TreeCard:
         with ui.card().classes("dstf-card dstf-tree w-full gap-1").mark("tree"):
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
             self.rows = ui.column().classes("w-full gap-0").mark("tree:rows")
+        # Not refreshed here: the page builds this card before it knows
+        # whether the test is one of the open project's, and `_view` raises
+        # for a model the project has not got. The page's own `sync` fills
+        # it, or `forget` leaves it saying nothing.
         self.rows.set_visibility(False)
-        self.refresh(self._view())
 
     def _view(self) -> dict | None:
         return self.page.shell.session.tree_view(self.page.model_id)

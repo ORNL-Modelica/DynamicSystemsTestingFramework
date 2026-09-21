@@ -735,3 +735,32 @@ def test_the_shell_names_no_capability():
                 if name in words
             ]
     assert found == []
+
+
+def test_the_shell_imports_no_built_in_module():
+    """The scan above reads capability NAMES, and an import binds a MODULE's
+    — `edit_tree` carries an underscore where the capability name carries a
+    hyphen, so `from ..builtin import edit_tree` walked through it clean
+    (the final review). A shell file that imports a built-in has reached for
+    a capability by name whatever it calls it afterwards."""
+    found: list[str] = []
+    for path in sorted(SHELL.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if "builtin" in module.split(".") or any(
+                    alias.name == "builtin" for alias in node.names
+                ):
+                    names = [alias.name for alias in node.names]
+                    found.append(
+                        f"{path.name}:{node.lineno}: "
+                        f"from {'.' * node.level}{module} import {names}"
+                    )
+            elif isinstance(node, ast.Import):
+                found += [
+                    f"{path.name}:{node.lineno}: import {alias.name}"
+                    for alias in node.names
+                    if "builtin" in alias.name.split(".")
+                ]
+    assert found == []

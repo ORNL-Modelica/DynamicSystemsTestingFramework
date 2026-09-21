@@ -48,8 +48,10 @@ OBSERVE = """
 })();
 """
 
-#: Said in two places and they must agree: the page built for a model this
-#: project never had, and the page whose project was swapped under it.
+#: The one sentence for both ways a page ends up with no test: built for a
+#: model this project never had, or its project swapped under it. `_gone`
+#: writes it, and a page built in that state reaches `_gone` through its
+#: first `sync`.
 NOT_A_TEST = "{} is not a test of this project"
 
 
@@ -82,17 +84,14 @@ class TestPage:
         self.shell.page_setup()
         self.model_id = model_id
         ui.page_title(f"DSTF — {model_id.rsplit('.', 1)[-1]}")
-        known = self._known()
-        self.header = Header(self.shell, below=self._subheader if known else None)
+        # The frame is built whatever the Session holds at this moment: a
+        # page opened (or reloaded) while the project is still scanning, or
+        # with another library open, was built in the gone state with no
+        # frame to fill — `sync` returned early for ever and the test never
+        # came back however many events arrived (the final review). `sync`
+        # below fills it, or `_gone` writes the sentence into it.
+        self.header = Header(self.shell, below=self._subheader)
         with ui.column().classes("dstf-test w-full q-pa-md gap-3"):
-            if not known:
-                ui.link("← Suite", "/").mark("back")
-                ui.label(NOT_A_TEST.format(model_id)).classes("text-negative").mark(
-                    "gone"
-                )
-                self.gone = True
-                self.shell.register(self)
-                return
             self.tree = TreeCard(self)
             self.count = (
                 ui.label().classes("text-secondary text-xs").mark("plots:count")
@@ -111,9 +110,6 @@ class TestPage:
             self.focus_bar.set_visibility(False)
             self.column = ui.column().classes("dstf-plots w-full gap-3").mark("plots")
         ui.on("dstf_plot_visible", lambda e: self.on_visible(e.args))
-        view = self._view()
-        self.rebuild(view)
-        self._shape = self.shape(view)
         self.shell.register(self)
         self.sync()
 
@@ -388,6 +384,10 @@ class TestPage:
     def _paint(self) -> None:
         if self.badge is None or self.meta is None:
             return
+        if self.actions is not None:
+            # `_gone` hid the bar; its buttons are rebuilt by `handle`'s
+            # refresh, for the project that is open now.
+            self.actions.container.set_visibility(True)
         session = self.shell.session
         comp = session.comparisons.get(self.model_id)
         verdict, css = classify_with_class(comp) if comp is not None else ("", "queued")
@@ -445,11 +445,26 @@ class TestPage:
         closed. Every read below `sync` raises for it, so the page went on
         showing the last project's cards while every event logged a
         traceback. It says what a page BUILT for an unknown model says, and
-        a later event that finds the test again rebuilds (`_shape`)."""
+        a later event that finds the test again rebuilds (`_shape`).
+
+        The sub-header goes with the cards: it stayed live and stale — the
+        last project's verdict, its baseline's name, and buttons whose
+        Rerun started a job for a model this project does not have (the
+        final review). `_paint` and `handle`'s refresh bring it back."""
         if self.gone or self.column is None:
             return
         self.gone = True
         self._close()
+        if self.actions is not None:
+            self.actions.dialog.close()
+            self.actions.container.clear()
+            self.actions.actions = {}
+            self.actions.container.set_visibility(False)
+        if self.badge is not None:
+            self.badge.set_text("")
+            self.badge.style("background-color: transparent")
+        if self.meta is not None:
+            self.meta.set_text("")
         for card in self.cards:
             card.dispose()
         self.cards = []

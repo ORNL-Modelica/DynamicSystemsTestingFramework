@@ -405,8 +405,11 @@ def test_the_test_page_stacks_its_header_draws_on_scroll_and_jumps(
         wrap.click()
         apply_wrap = page.get_by_role("button", name="apply wrap")
         expect(apply_wrap).to_be_visible(timeout=EXPECT_TIMEOUT)
-        assert page.locator(".dstf-editor").count() == 0
-        assert page.locator(".dstf-crit-open").count() == 0
+        # Retrying reads: an editor the click opened arrives on the NEXT
+        # round trip, and a bare count() the moment the menu appeared would
+        # have said zero either way.
+        expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-crit-open")).to_have_count(0, timeout=EXPECT_TIMEOUT)
         # 8. The top of the page, the tree open, the wrap form showing.
         _shot(page, tmp_path, "tree")
         page.keyboard.press("Escape")
@@ -552,7 +555,15 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         page.wait_for_timeout(300)
         line = page.evaluate(FIND_LINE, MAX_LINE)
         assert line is not None, page.evaluate(READ_PLOT)
-        _drag(page, line["cx"], line["cy"], 30)
+        # Held mid-drag: the line has actually MOVED off its spec value, so
+        # the snap-back below is a return and not a picture that never left
+        # (a drag Plotly refused outright would pass the same assertions).
+        page.mouse.move(line["cx"], line["cy"])
+        page.mouse.down()
+        page.mouse.move(line["cx"], line["cy"] + 30, steps=12)
+        moved = page.evaluate(READ_LINE, MAX_LINE)
+        page.mouse.up()
+        assert moved["drawn"] is not None and abs(moved["drawn"] - 2.0) > 0.05, moved
         page.wait_for_function(SHAPE_IS, arg=[MAX_LINE, 2.0, 1e-9], timeout=2_000)
         assert _pending(page) == "2 pending edits"
         idle = page.evaluate(READ_LINE, MAX_LINE)

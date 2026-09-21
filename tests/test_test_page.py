@@ -22,6 +22,7 @@ from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.capabilities import Artifact, Job, Placement  # noqa: E402
 from dstf.authoring.session import Selection  # noqa: E402
+from dstf.authoring.shell import plot_card  # noqa: E402
 from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
 from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
@@ -921,7 +922,14 @@ async def test_an_unknown_model_keeps_the_stub_message(shell):
         shell.mount()
         await _open(user, "/test/FakeLib.Nope")
         await user.should_see("FakeLib.Nope is not a test of this project")
-        assert _none(user, "subheader") and _none(user, "tree")
+        # The frame is built — that is how a page recovers when the model
+        # turns up — and it says nothing about a test this project has not
+        # got: no tree, no cards, and a blank sub-header.
+        page = _page(shell, user)
+        assert page.gone and page.cards == []
+        assert _none(user, "tree:summary") and _none(user, "plot-slot:0")
+        assert page.badge.text == "" and page.meta.text == ""
+        assert page.actions.actions == {}
 
 
 def test_the_readout_says_the_criterion_once():
@@ -2005,6 +2013,23 @@ async def test_a_discard_elsewhere_leaves_the_open_editor_showing_it(scored_shel
         assert _pending(shell, T0).get("max_value") is None
 
 
+async def test_a_window_staged_elsewhere_reaches_the_open_editor(scored_shell):
+    """The window is one of the leaf's edited fields, so an edit that moves
+    only it must rebuild the editor: the fields went on showing no window
+    while the plot beside them was scored over one."""
+    shell = scored_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        user.find(marker=f"criterion:0:{T0}").click()
+        await _settled(lambda: page.open == (0, T0))
+        assert _numbers(page, "window start")[0].value is None
+        shell.session.stage(
+            [PatchOp(D, "add", f"{T0}/window", {"start": 0.25, "end": 0.75})]
+        )
+        await _settled(lambda: _numbers(page, "window start")[0].value == 0.25)
+        assert _numbers(page, "window end")[0].value == 0.75
+
+
 async def test_a_save_leaves_the_editor_alone(scored_shell):
     """A Save empties the pending list, but the LEAF under the editor is
     where the edit left it — the value is on disk now. What the editor
@@ -2203,6 +2228,46 @@ async def test_a_plot_that_could_not_draw_is_retried_by_the_next_sync(
         assert page.cards[1].plot is None  # a card nobody asked for stays a slot
 
 
+async def test_a_plot_that_keeps_failing_is_logged_once_per_error(shell, monkeypatch):
+    """The retry is free; the traceback is not. A card that cannot draw is
+    tried again by EVERY sync, a rescan's progress ticks included — 50 of
+    them over two failing cards logged 100 tracebacks for one broken result
+    (the final review). The card keeps the last error's text and logs only
+    when it changes."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        real = shell.session.plot_figure
+        raising = {"text": "result file is being rewritten"}
+
+        def boom(*a, **k):
+            raise RuntimeError(raising["text"])
+
+        monkeypatch.setattr(shell.session, "plot_figure", boom)
+        logged = []
+        monkeypatch.setattr(
+            plot_card.logger, "exception", lambda *a, **k: logged.append(a)
+        )
+        with page.client:
+            page.cards[0].show()
+            page.cards[1].show()
+        assert len(logged) == 2  # the first failure of each card
+        with page.client:
+            for i in range(50):
+                page.handle(
+                    {"event": "loading", "phase": "scan", "done": i, "total": 50}
+                )
+        assert len(logged) == 2
+        raising["text"] = "corrupt result"  # a DIFFERENT error is worth a line
+        with page.client:
+            page.handle({"event": "loading", "phase": "scan", "done": 50, "total": 50})
+        assert len(logged) == 4
+        # Still retried: the next sync draws as soon as a figure can be built.
+        monkeypatch.setattr(shell.session, "plot_figure", real)
+        with page.client:
+            page.handle({"event": "loading", "phase": "scan", "done": 50, "total": 50})
+        assert page.cards[0].plot is not None and page.cards[1].plot is not None
+
+
 async def test_only_a_job_that_moved_the_data_re_sends_the_plots(shell):
     """Decision 10 is a FINISHED job; the rest of a Rerun's states move no
     trajectory. Forcing on every one of them re-sent every drawn plot five
@@ -2251,21 +2316,28 @@ async def test_a_row_click_reads_the_tree_once_however_many_plots_are_drawn(shel
         assert calls[0] - opened <= 2, calls[0] - opened
 
 
+def _project_without(tmp_path, model):
+    """A second `_two_var_project` whose spec has no entry for ``model``:
+    opening it under a page swaps the library and takes that test away."""
+    from test_session import _two_var_project
+
+    other = tmp_path / "other"
+    other.mkdir()
+    cfg, work = _two_var_project(other)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    spec["tests"] = [t for t in spec["tests"] if t["model"] != model]
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return cfg, work
+
+
 async def test_a_page_whose_test_is_gone_says_so_instead_of_raising(
     shell, tmp_path, caplog
 ):
     """An `OpenProject` outcome swaps the library under an open page: every
     read below `sync` raised, the page kept showing the old test's cards,
     and every event logged a traceback."""
-    from test_session import _two_var_project
-
-    other = tmp_path / "other"
-    other.mkdir()
-    cfg2, work2 = _two_var_project(other)
-    spec_path = cfg2.parent / "test_spec.json"
-    spec = json.loads(spec_path.read_text(encoding="utf-8"))
-    spec["tests"] = [t for t in spec["tests"] if t["model"] != A]
-    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    cfg2, work2 = _project_without(tmp_path, A)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, A)
         with page.client:
@@ -2279,6 +2351,18 @@ async def test_a_page_whose_test_is_gone_says_so_instead_of_raising(
         assert page.cards == [] and _none(user, "plot-slot:0")
         assert _one(user, "gone").text == f"{A} is not a test of this project"
         assert _none(user, "tree:summary")
+        # The sub-header went with them. It stayed LIVE and STALE: the last
+        # project's verdict, its baseline's name, and buttons whose Rerun
+        # started a job for a model this project does not have (the final
+        # review).
+        assert page.badge.text == "" and page.meta.text == ""
+        assert page.actions.dialog.value is not True
+        assert page.actions.actions == {} and _none(user, "action:rerun")
+        assert page.actions.container.visible is False
+        # And no later event brings them back while the test is gone.
+        shell.session.apply(Artifact(paths=[], label="probe again"))
+        await asyncio.sleep(0.3)
+        assert page.actions.actions == {} and page.badge.text == ""
 
 
 async def test_a_closed_session_leaves_the_page_saying_so(shell, caplog):
@@ -2298,7 +2382,7 @@ async def test_a_closed_session_leaves_the_page_saying_so(shell, caplog):
 
 async def test_a_test_that_comes_back_is_drawn_again(shell, tmp_path):
     """The page is not dead: reopening a project that HAS the test rebuilds
-    it from the sentence."""
+    it from the sentence — its sub-header with it."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         shell.session.close()
@@ -2308,6 +2392,27 @@ async def test_a_test_that_comes_back_is_drawn_again(shell, tmp_path):
         await _settled(lambda: not page.gone)
         assert [c.resolved.series for c in page.cards] == [("x",), ("y",)]
         assert _none(user, "gone")
+        assert page.badge.text == "FAIL" and page.meta.text.startswith("Python · ")
+        assert page.actions.container.visible is True
+        assert "rerun" in page.actions.actions
+
+
+async def test_a_page_built_while_its_test_is_missing_comes_back(shell, tmp_path):
+    """A page opened or reloaded while the project is still scanning, or
+    with another library open, was BUILT in the gone state: it had no frame
+    to fill, so `sync` returned early for ever and the test never came back
+    however many events arrived (the final review)."""
+    cfg2, work2 = _project_without(tmp_path, A)
+    async with user_simulation(root=shell.index) as user:
+        shell.session.open(cfg2, work_dir=work2)  # a project WITHOUT A
+        page = await _test_page(shell, user, A)
+        assert page.gone
+        assert _one(user, "gone").text == f"{A} is not a test of this project"
+        cfg3, work3 = _two_var_project(tmp_path / "again")
+        shell.session.open(cfg3, work_dir=work3)  # A is a test again
+        await _settled(lambda: not page.gone)
+        assert [c.resolved.series for c in page.cards] == [("x",), ("y",)]
+        assert _none(user, "gone") and page.badge.text == "FAIL"
 
 
 async def test_a_raising_rebuild_is_tried_again_by_the_next_sync(
