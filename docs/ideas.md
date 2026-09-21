@@ -1571,3 +1571,45 @@ planning.
     repair (the report page: a guard order that broke an existing test, then
     twelve review fixes); the four tasks a reviewer EXECUTED in an archive
     first needed almost none.
+- **Follow-ups from the Test page build and its gate (2026-09-21)** — residuals
+  the reviews and the TRANSFORM gate found and the build did not take on:
+  - For the owner, each with a picture from the gate: the wrap / add / edit
+    forms open as popovers from their icons (never drawn on a board; an open
+    one covers the neighbouring rows' icons and shows k / weights / threshold
+    for every combinator kind at once); the plot legend sits inside the plot
+    and can cover a criterion's rings near the start of a trace; the tool's
+    plots no longer zoom on the wheel (the page scrolls; the report still
+    zooms); the report draws a section for a tracked variable no criterion
+    scores.
+  - A test whose variables are relabelled `x[N]` (a name starting `cat(` or
+    holding a newline; about 70 in TRANSFORM) has no editable tree: `Session.
+    tree` will not materialize an implicit tree whose names differ from what
+    was scored, so every criterion there is read-only. Mapping a label back
+    to its raw name by index in `_materialization` is the likely fix.
+  - Layout at 1280 px: the shared header's first row wraps to two lines and
+    the sub-header's Accept / Rerun stack; the tube editor (455 px) plus its
+    320 px plot does not fit a 900 px screen, so the control-points table is
+    below the fold; Edit criteria still shows a list field as a raw JSON box
+    beside Edit on plot's table of the same rows.
+  - Switching a criterion's mode passes through a misconfigured leaf (mode →
+    tube before a width mode is chosen): the row reads FAIL with the config
+    error until the second click. A mode switch should stage the new mode's
+    defaults in one op.
+  - `+` beside a criterion under a `warn` (one child only) or a `weighted`
+    (weights per child) is always refused by the validator; the control could
+    grey with that sentence instead.
+  - A non-browser GET of `/` or `/test/…` (curl, a health check) logs a
+    `tab_state()` traceback: `app.storage.tab` needs a connected client.
+  - `follow()` re-reads `available` per node per repaint — one deep copy of
+    the tree each: 6 ms at 40 criteria, quadratic; a spec revision counter and
+    a memoized `Session.tree` when a test reaches ~150 criteria. An Edit tree
+    cluster is ~28 elements per node.
+  - The key-stats row of the artboards is not built: its numbers come from the
+    run's statistics files, which the Session does not read.
+  - Browser-only and unverified: the scroll position across a rebuild of the
+    cards; "Show all" after focusing a far-down plot; a plot that failed to
+    draw being re-observed.
+  - Process: three rounds of correction on one line of reasoning (a tracked
+    variable stays tracked → duplicate `x[N]` cards and diverging tiers → every
+    no-baseline report page doubled) — each caught only by the NEXT fresh
+    review, none by a test written with the fix.
