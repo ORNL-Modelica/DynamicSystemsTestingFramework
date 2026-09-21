@@ -16,6 +16,7 @@ from .diag_cmds import (
     cmd_export,
     cmd_manifest,
 )
+from .migrate_cmds import cmd_migrate_variable_names
 from .run_cmds import cmd_compare, cmd_run
 from .spec_cmds import cmd_add, cmd_export_schema, cmd_spec_update
 
@@ -324,6 +325,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p_export.add_argument("--output", type=str, help="Output file path")
 
+    # migrate-variable-names (deleted at the v1.0 tag)
+    p_migrate = subparsers.add_parser(
+        "migrate-variable-names",
+        parents=[global_parent],
+        help="Move stored baselines and spec keys from UnitTests expression "
+        "text to result-file names (dry run unless --apply)",
+    )
+    p_migrate.add_argument(
+        "--apply", action="store_true", help="write the changes (default: dry run)"
+    )
+
     # manifest
     p_manifest = subparsers.add_parser(
         "manifest", parents=[global_parent], help="Manage the test manifest"
@@ -502,6 +514,7 @@ _COMMANDS = {
     "author": cmd_author,
     "export": cmd_export,
     "manifest": cmd_manifest,
+    "migrate-variable-names": cmd_migrate_variable_names,
     "add": cmd_add,
     "spec-update": cmd_spec_update,
     "companion": cmd_companion,
