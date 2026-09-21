@@ -1037,6 +1037,10 @@ def awkward_expression_shell(tmp_path):
     s = Shell(cfg, work_dir=work)
     s.session.open(cfg, work_dir=work)
     with_expressions(s.session, A, {UT1: AWKWARD_EXPRESSION})
+    # The comparisons `open` built were made before the expression was
+    # stamped, and a leaf's label comes from the comparison it scored.
+    # Scoring again is what a run over a Modelica project produces.
+    s.session._score(A)
     s.load.phase = "done"
     return s
 
@@ -1057,6 +1061,43 @@ async def test_an_awkward_expression_gets_one_card_not_two(awkward_expression_sh
             page.cards[0].show()
         kinds = [tr["meta"]["kind"] for tr in page.cards[0].plot.figure["data"]]
         assert "act" in kinds and "ref" in kinds  # the name resolves its data
+
+
+async def test_a_card_reads_the_label_and_is_keyed_by_the_name(
+    awkward_expression_shell,
+):
+    """The title is the expression the model wrote; the result-file name —
+    what the criterion, the override and the marker are written against —
+    rides beside it, muted. A variable with no expression has no second
+    text at all."""
+    shell = awkward_expression_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert _one(user, "plot-title:0").text == "cat(1, a, b)[1]"
+        assert "dstf-varname" in _one(user, "plot-name:0").classes
+        assert _one(user, "plot-name:0").text == "unitTests.x[1]"
+        assert _one(user, "plot-title:1").text == "y"
+        assert _none(user, "plot-name:1")
+        # Every key is the name: the card's markers, and the footer's.
+        assert _one(user, "plot:0") and _one(user, "plot-slot:0")
+        footer = _one(user, "variable-actions:0:unitTests.x[1]")
+        (button,) = [
+            e
+            for e in user.find(marker="action:edit-tree").elements
+            if footer in list(_ancestors(e))
+        ]
+        assert button.text == "Add a criterion for cat(1, a, b)[1]"
+
+
+async def test_a_criteria_row_reads_the_label(awkward_expression_shell):
+    """`nrmse · cat(1, a, b)[1]` — the same text the closed tree line's jump
+    button carries, from the same function."""
+    shell = awkward_expression_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        (row,) = page.cards[0].rows.values()
+        assert row.name.text == "nrmse · cat(1, a, b)[1]"
+        assert row.variable == "unitTests.x[1]"  # the key the op targets
 
 
 async def test_show_builds_the_plot_once_with_no_rings(shell):

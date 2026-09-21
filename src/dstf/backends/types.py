@@ -72,6 +72,29 @@ class VariableResult:
     expression: str = ""
 
 
+def display_label(name: str, expression: str) -> str:
+    """What a person reads for a variable: the expression the model wrote
+    for it, or its name when it wrote none.
+
+    ONE rule, for both tiers and every text surface. The name remains the
+    key everywhere — element ids, markers, ``meta.id``, ``data-variable``,
+    overrides, leaves, baselines — so nothing is ever looked up by this.
+    """
+    return expression or name
+
+
+def label_with_name(name: str, expression: str) -> str:
+    """``label (name)`` for the text surfaces — the console, JUnit, the
+    interactive review — and the bare name when the two agree.
+
+    A line of CI output is read without a plot beside it: the expression
+    says WHICH quantity, and the name says what to write a criterion, an
+    override or a `--filter` against.
+    """
+    label = display_label(name, expression)
+    return f"{label} ({name})" if label != name else name
+
+
 @dataclass
 class TestResult:
     """Results from a single test simulation."""

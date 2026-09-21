@@ -83,7 +83,11 @@ def node_status(node: dict) -> str:
 
 
 def leaf_name(leaf: dict) -> str:
-    return f"{leaf.get('metric')} · {leaf.get('variable')}"
+    """``metric · label`` — what a criterion's row READS. The label is the
+    expression the model wrote for the variable (`nrmse · pipe.T[1]`), which
+    the tree view carries beside the `variable` a patch op targets; a
+    variable with no expression reads as its name, as it always did."""
+    return f"{leaf.get('metric')} · {leaf.get('label') or leaf.get('variable')}"
 
 
 def leaf_readout(leaf: dict) -> str:

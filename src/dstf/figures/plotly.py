@@ -399,12 +399,25 @@ def _handle_rings(markers: list[Marker]) -> list[dict]:
 
 def _base_traces(view: VariableView) -> list[dict]:
     traces = []
+
+    # A one-variable plot names its traces "Actual" / "Reference" — the
+    # overlay picker and report.js find them by those names, and the title
+    # above says which variable it is. When the label is not the name the
+    # hover says the label too: on a `unitTests.x[3]` card, "Actual" alone
+    # names nothing a person recognises. A variable whose label IS its name
+    # gets no hover it did not have.
+    def _hover(suffix: str = "") -> dict:
+        if view.label == view.name:
+            return {}
+        return {"hovertemplate": f"{view.label}{suffix}: %{{y:.4g}}<extra></extra>"}
+
     if view.act_time is not None and view.act_values is not None:
         traces.append(
             {
                 "type": "scatter",
                 "mode": "lines",
                 "name": "Actual",
+                **_hover(),
                 "x": view.act_time.tolist(),
                 "y": view.act_values.tolist(),
                 "line": {"color": ACTUAL, "width": 1.5},
@@ -422,6 +435,7 @@ def _base_traces(view: VariableView) -> list[dict]:
                 "type": "scatter",
                 "mode": "lines",
                 "name": "Reference",
+                **_hover(" (reference)"),
                 "x": view.ref_time.tolist(),
                 "y": view.ref_values.tolist(),
                 "line": {"color": REFERENCE, "width": 1.5, "dash": "dash"},
@@ -685,9 +699,13 @@ def plot_figure(
     shapes: list[dict] = []
     rings: list[dict] = []
     has_spectrum = any(v.has_spectrum for v in views)
-    for h, (key, members) in enumerate(group_families([v.name for v in views])):
+    # Families fold over LABELS: `unitTests.x[1..3]` is a position in a
+    # component, not an array — three unrelated expressions under one legend
+    # entry and one colour ramp said they were one quantity.
+    by_label = {v.name: v.label for v in views}
+    for h, (key, members) in enumerate(group_families(list(by_name), by_label)):
         colors = ramp(HUES[h % len(HUES)], len(members))
-        label = (labels or {}).get(key) or family_label(key, members)
+        label = (labels or {}).get(key) or family_label(key, members, by_label)
         # The legend entry rides on the first member that DRAWS: a family whose
         # lowest index has no result would otherwise have none.
         lead = next((n for n in members if _draws_actual(by_name[n])), None)
@@ -731,14 +749,16 @@ def _series_traces(
     view: VariableView, color: str, group: str, label: str, *, first: bool
 ) -> list[dict]:
     traces = []
-    hover = f"{view.name}: %{{y:.4g}}<extra></extra>"
+    # Read as the label, keyed by the name: `meta.id` is what the page, the
+    # picker and every test address a trace by.
+    hover = f"{view.label}: %{{y:.4g}}<extra></extra>"
     # Spelled out, not `_draws_actual(view)`: mypy narrows the arrays here.
     if view.act_time is not None and view.act_values is not None:
         traces.append(
             {
                 "type": "scatter",
                 "mode": "lines",
-                "name": label if first else view.name,
+                "name": label if first else view.label,
                 "legendgroup": group,
                 "showlegend": first,
                 "hovertemplate": hover,
@@ -758,10 +778,10 @@ def _series_traces(
             {
                 "type": "scatter",
                 "mode": "lines",
-                "name": f"{view.name} (reference)",
+                "name": f"{view.label} (reference)",
                 "legendgroup": group,
                 "showlegend": False,
-                "hovertemplate": f"{view.name} (reference): %{{y:.4g}}<extra></extra>",
+                "hovertemplate": f"{view.label} (reference): %{{y:.4g}}<extra></extra>",
                 "x": view.ref_time.tolist(),
                 "y": view.ref_values.tolist(),
                 "line": {"color": color, "width": 1.2, "dash": "dash"},

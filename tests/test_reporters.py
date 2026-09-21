@@ -462,3 +462,41 @@ class TestReportClassification:
 
         assert _should_review(_failing_baseline_free_comp(), {"failed"}) is True
         assert _should_review(_no_ref_comp(), {"failed"}) is False
+
+
+# ---------------------------------------------------------------------------
+# The text surfaces read the label and print the name beside it
+# ---------------------------------------------------------------------------
+
+
+def _labelled_failure(model_id="Lib.Examples.U"):
+    """A failing UnitTests variable: named by its result file, labelled by
+    the expression the model wrote."""
+    var = _var(name="unitTests.x[1]", passed=False)
+    var.expression = "pipe.T[1]"
+    return TestComparison(model_id=model_id, passed=False, variables=[var])
+
+
+class TestTheTextSurfacesNameBoth:
+    def test_the_console_prints_the_label_and_the_name(self, capsys):
+        assert print_report([_labelled_failure()]) == 1
+        out = capsys.readouterr().out
+        assert "pipe.T[1] (unitTests.x[1]):" in out
+
+    def test_the_console_prints_the_name_alone_without_an_expression(self, capsys):
+        assert print_report([_failing()]) == 1
+        out = capsys.readouterr().out
+        assert "h:" in out and "h (" not in out
+
+    def test_junit_prints_the_label_and_the_name(self, tmp_path):
+        out = tmp_path / "junit.xml"
+        generate_junit_report([_labelled_failure()], out)
+        failure = ET.parse(out).getroot().find(".//failure")
+        assert failure is not None
+        assert "pipe.T[1] (unitTests.x[1]): NRMSE=" in failure.text
+
+    def test_the_review_detail_prints_the_label_and_the_name(self, capsys):
+        from dstf.cli.review import _print_detail
+
+        _print_detail(_labelled_failure())
+        assert "pipe.T[1] (unitTests.x[1])" in capsys.readouterr().out

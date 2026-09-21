@@ -2127,6 +2127,10 @@ class TestSessionView:
             "plot_figure",
             "plots",
             "variable_names",
+            # `labels` is a reader like the rest: a capability's caption
+            # ("Add a criterion for pipe.T[1]") reads what the page's titles
+            # read, and nothing is keyed by it (Task 4).
+            "labels",
             "tree_view",
             "tree",
             "is_locked",
@@ -2229,6 +2233,32 @@ class TestPlots:
         assert [vc.name for vc in s.comparisons[A].variables] == ["x"]
         assert s.tracked(A) == ["x", "y"]
         assert [p.series for p in s.plots(A)] == [("x",), ("y",)]
+
+    def test_labels_read_the_results_expressions(self, tmp_path):
+        """What the page READS for each variable: the expression the model
+        wrote, else the name. A name with no entry is its own label, and
+        nothing is keyed by any of it."""
+        cfg, work = _unit_tests_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.labels(A) == {UT1: UT1, UT2: UT2}  # no expression: the names
+        with_expressions(s, A, {UT1: UT1_EXPR})
+        assert s.labels(A) == {UT1: UT1_EXPR, UT2: UT2}
+        assert s.labels(C) == {}  # no result
+
+    def test_a_labelled_variables_figure_reads_the_label(self, tmp_path):
+        """The figure the tool draws is the report's, so the label reaches
+        it the same way: through the trajectory the view is built from."""
+        cfg, work = _unit_tests_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        with_expressions(s, A, {UT1: UT1_EXPR})
+        assert s.view(A, UT1).label == UT1_EXPR
+        assert s.view(A, UT2).label == UT2  # no expression: its name
+        figure = s.figure(A, UT1)
+        actual = next(tr for tr in figure["data"] if tr["meta"]["id"] == "actual")
+        assert actual["name"] == "Actual"  # the picker's key, unchanged
+        assert actual["hovertemplate"].startswith(f"{UT1_EXPR}:")
 
     def test_a_failed_simulations_partial_result_is_not_tracked(self, tmp_path):
         """A backend that stopped mid-run leaves what it had in the file.

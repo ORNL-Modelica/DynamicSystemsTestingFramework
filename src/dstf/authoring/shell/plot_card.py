@@ -177,9 +177,18 @@ class PlotCard:
         ):
             self.card = card
             with ui.row().classes("items-center no-wrap gap-3 w-full"):
-                ui.label(", ".join(resolved.series)).classes("text-subtitle2").mark(
-                    f"plot-title:{index}"
-                )
+                # The title READS the labels (the expressions the model
+                # wrote); the names it is keyed by ride beside it, muted, and
+                # only when one of them differs — a card for `x` would
+                # otherwise say `x x`.
+                labels = page.shell.session.labels(model_id=model)
+                ui.label(", ".join(labels.get(n, n) for n in resolved.series)).classes(
+                    "text-subtitle2"
+                ).mark(f"plot-title:{index}")
+                if any(labels.get(n, n) != n for n in resolved.series):
+                    ui.label(", ".join(resolved.series)).classes("dstf-varname").mark(
+                        f"plot-name:{index}"
+                    )
                 for variable in self.tracked:
                     if self._leaves(view, variable):
                         pill = Pill("queued", f"plot-pill:{index}:{variable}")

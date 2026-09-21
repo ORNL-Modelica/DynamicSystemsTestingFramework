@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from ..backends import BackendUnavailableError, dataset_kind_for, select_backend
 from ..backends.base import Backend
 from ..backends.progress import recorded_backend
-from ..backends.types import DatasetType, TestResult
+from ..backends.types import DatasetType, TestResult, display_label
 from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
@@ -459,12 +459,15 @@ class Session:
             nb = next((t for t in nobaseline if t["name"] == variable), None)
             if nb is not None:
                 traj = {
+                    "label": nb.get("label") or variable,
                     "act_time": nb["time"],
                     "act_values": nb["values"],
                     "overlays": nb["overlays"],
                 }
             else:
                 series = self._file_series(model_id, variable)
+                # A series read straight out of the result file carries no
+                # expression — the result in memory is where one lives.
                 traj = (
                     {"act_time": series[0], "act_values": series[1]}
                     if series is not None
@@ -510,6 +513,23 @@ class Session:
         comp = self.comparisons.get(model_id)
         scored = [vc.name for vc in comp.variables] if comp is not None else []
         return tracked_names(scored, self._require_project().results.get(model_id))
+
+    def labels(self, model_id: str) -> dict[str, str]:
+        """``{name: label}`` for the loaded result's variables — what the
+        page READS for each of them (``display_label``: the expression the
+        model wrote, else the name). ``{}`` when there is no result.
+
+        Only what the result carries: a name with no entry here is its own
+        label, and the page reads it that way. Nothing is keyed by a label
+        — titles, rows and captions read it, markers and ops do not."""
+        result = self._require_project().results.get(model_id)
+        if result is None:
+            return {}
+        return {
+            var.name: display_label(var.name, var.expression)
+            for var in result.variables
+            if var.name
+        }
 
     def variable_names(self, model_id: str) -> list[str]:
         """Every variable the last result holds: the tracked ones first, in
@@ -1192,6 +1212,9 @@ class SessionView:
 
     def variable_names(self, model_id: str) -> list[str]:
         return self._session.variable_names(model_id)
+
+    def labels(self, model_id: str) -> dict[str, str]:
+        return self._session.labels(model_id)
 
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
         return self._session.plots(model_id)

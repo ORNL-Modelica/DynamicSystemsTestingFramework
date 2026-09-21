@@ -42,7 +42,12 @@ class LeafView:
 
 @dataclass(frozen=True)
 class VariableView:
+    #: The variable's result-file name — the key everywhere.
     name: str
+    #: What a person reads for it (``display_label``): the expression the
+    #: model wrote, or the name. Defaults to the name, so a view built
+    #: without one draws exactly what it always drew.
+    label: str = ""
     act_time: np.ndarray | None = None
     act_values: np.ndarray | None = None
     ref_time: np.ndarray | None = None
@@ -52,6 +57,13 @@ class VariableView:
     errors: tuple[Series, ...] = ()
     #: Pre-decimation sample counts, stamped by :func:`decimate_view`.
     full_samples: dict[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # "Defaults to the name" as a real value, not a read-time fallback:
+        # every reader (the figure's hover, a family fold, a card title) sees
+        # a label, and `replace` carries it.
+        if not self.label:
+            object.__setattr__(self, "label", self.name)
 
     @property
     def has_spectrum(self) -> bool:
@@ -106,6 +118,7 @@ def error_series(
 def build_view(
     name: str,
     *,
+    label: str = "",
     act_time=None,
     act_values=None,
     ref_time=None,
@@ -115,7 +128,8 @@ def build_view(
 ) -> VariableView:
     """Assemble a view from array-likes (lists or arrays), overlay dicts of
     the report's shape (``name`` / ``role`` / ``kind`` / ``time`` /
-    ``values``), and ``(leaf_path, VariableComparison)`` pairs."""
+    ``values``), and ``(leaf_path, VariableComparison)`` pairs. ``label``
+    is what a person reads for the variable; empty means its name."""
     at, av, rt, rv = (
         _array(act_time),
         _array(act_values),
@@ -124,6 +138,7 @@ def build_view(
     )
     return VariableView(
         name=name,
+        label=label,
         act_time=at,
         act_values=av,
         ref_time=rt,

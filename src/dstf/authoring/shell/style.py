@@ -102,6 +102,10 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-wordmark { font-size: 20px; font-weight: 700; }
 .dstf-mono { font-family: var(--dstf-mono); }
 .dstf-why { color: var(--dstf-text-muted); font-size: 12px; }
+/* A card's title reads the expression its model wrote; the result-file
+   name — what a criterion, an override or a --filter names — rides beside
+   it, muted. Drawn only when the two differ. */
+.dstf-varname { color: var(--dstf-text-muted); font-size: 12px; font-family: var(--dstf-mono); }
 .dstf-progress { font-size: 12px; color: var(--dstf-text-secondary); }
 .dstf-group {
   font-size: 10px; text-transform: uppercase; letter-spacing: .03em;

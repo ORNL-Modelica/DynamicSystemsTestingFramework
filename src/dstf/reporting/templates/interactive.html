@@ -109,6 +109,10 @@ details summary:hover { color: var(--dstf-text); }
 /* The untracked names in a multi-series heading — no badge before them,
    because nothing scored them. */
 .plot-only-names { color: var(--dstf-text-secondary); font-weight: 400; }
+/* A variable reads as the expression its model wrote (`pipe.T[1]`); its
+   result-file name — what a criterion, an override or a --filter is written
+   against — rides beside the title, muted. Absent when the two agree. */
+.dstf-varname { color: var(--dstf-text-muted); font-weight: 400; font-size: 0.8em; font-family: var(--dstf-mono); margin-left: 0.4em; }
 /* Decimation disclosure — which traces the page draws at reduced
    resolution, and where the full-resolution data lives. */
 #decimation-banner { background: var(--dstf-warn-tint); border: 1px solid var(--dstf-warn-border); border-radius: 4px; color: var(--dstf-warn-dark); padding: 8px 12px; margin: 0 0 12px 0; font-size: 0.85em; }
@@ -133,7 +137,7 @@ details summary:hover { color: var(--dstf-text); }
       'weighted': 'Weighted sum of child scores passes a threshold.'} -%}
 {%- if n.kind == 'leaf' -%}
 <div class="node node-leaf" data-path="{{ n.path }}">
-<div class="node-header">{{ status_pill(n.passed) }}<span class="node-label">{{ n.metric }} · {{ n.variable }}{% if n.against and n.against != 'primary' %} [against={{ n.against }}]{% endif %}{% if n.window and (n.window.get('start') is not none or n.window.get('end') is not none) %} [window{% if n.window.get('start') is not none %} start={{ n.window.get('start') }}{% endif %}{% if n.window.get('end') is not none %} end={{ n.window.get('end') }}{% endif %}]{% endif %}</span>{% if n.score_display %}<span class="node-score"{% if n.error %} title="{{ n.error }}"{% endif %}>{{ n.score_display }}</span>{% endif %}</div>
+<div class="node-header">{{ status_pill(n.passed) }}<span class="node-label">{{ n.metric }} · {{ n.label or n.variable }}{% if n.against and n.against != 'primary' %} [against={{ n.against }}]{% endif %}{% if n.window and (n.window.get('start') is not none or n.window.get('end') is not none) %} [window{% if n.window.get('start') is not none %} start={{ n.window.get('start') }}{% endif %}{% if n.window.get('end') is not none %} end={{ n.window.get('end') }}{% endif %}]{% endif %}</span>{% if n.score_display %}<span class="node-score"{% if n.error %} title="{{ n.error }}"{% endif %}>{{ n.score_display }}</span>{% endif %}</div>
 {%- if n.criterion %}<div class="node-criterion">{{ n.criterion }}</div>{% endif %}
 {%- if n.error %}<div class="node-error">{{ n.error }}</div>{% endif %}
 {%- if n.details %}<dl class="node-details">{% for pair in n.details %}<dt>{{ pair[0] }}</dt><dd>{{ pair[1] }}</dd>{% endfor %}</dl>{% endif %}
@@ -313,7 +317,7 @@ details summary:hover { color: var(--dstf-text); }
     {%- for v in plot.variables -%}
     <span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %}
     {%- endfor %}
-    {{ plot.title }}
+    {{ plot.title }}{% if plot.names %}<span class="dstf-varname">{{ plot.names }}</span>{% endif %}
   </h2>
   {%- else %}
   {# Several series: one badge before the plot's whole title read as the
@@ -321,7 +325,7 @@ details summary:hover { color: var(--dstf-text); }
      sits immediately before the variable it scores; the untracked names
      follow, folded by family, with no badge at all. #}
   <h2>
-    {%- for v in plot.variables %}<span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %} {{ v.name }} {% endfor %}
+    {%- for v in plot.variables %}<span class="var-status {{ 'pass' if v.passed else 'fail' }}" data-vidx="{{ v.vidx }}">{{ 'PASS' if v.passed else 'FAIL' }}</span>{% if v.n_advisory_failed %}{{ advisory_chip(v.n_advisory_failed, v.vidx) }}{% endif %} {{ v.label or v.name }}{% if (v.label or v.name) != v.name %}<span class="dstf-varname">{{ v.name }}</span>{% endif %} {% endfor %}
     {%- if plot.plot_only_label %}<span class="plot-only-names">{{ plot.plot_only_label }}</span>{% endif %}
   </h2>
   {%- endif %}
@@ -359,7 +363,7 @@ details summary:hover { color: var(--dstf-text); }
   {% for v in plot.variables %}{% if v.tree_here %}
   <div class="node-tree" id="nodes-{{ v.vidx }}" data-variable="{{ v.name }}">{% if v.tree %}{{ node(v.tree) }}{% endif %}</div>
   {% else %}
-  <div class="plot-note">{{ v.name }}: criteria are under its first plot.</div>
+  <div class="plot-note">{{ v.label or v.name }}: criteria are under its first plot.</div>
   {% endif %}{% endfor %}
   {% for label in plot.plot_only_lines %}
   <div class="plot-note">{{ label }} is plot only: no criterion scores it.</div>
@@ -373,7 +377,7 @@ details summary:hover { color: var(--dstf-text); }
 <h2>Simulated Variables (No Baseline)</h2>
 {% for traj in nobaseline_trajectories %}
 <div class="plot-section">
-  <h3><span class="new">NEW</span> {{ traj.name }}</h3>
+  <h3><span class="new">NEW</span> {{ traj.label or traj.name }}{% if (traj.label or traj.name) != traj.name %}<span class="dstf-varname">{{ traj.name }}</span>{% endif %}</h3>
   {% if traj.overlays %}
   <div class="overlay-picker" data-plot-id="nb-plot-{{ loop.index0 }}" title="Companion + soft_check overlays (view-only; never scored unless declared in a warn-wrapped leaf)">
     <span class="ov-label">Overlays:</span>

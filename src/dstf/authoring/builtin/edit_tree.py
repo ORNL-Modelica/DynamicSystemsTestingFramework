@@ -86,7 +86,12 @@ class EditTree:
     def caption(self, s: SessionView) -> str:
         sel = s.selection
         if sel.node_path is None and sel.variable:
-            return f"Add a criterion for {sel.variable}"
+            # Read as the variable's label — the expression its model wrote
+            # — under a card whose title says the same thing; the form the
+            # button opens still writes the leaf against the NAME.
+            model_id = next(iter(sel.tests), None)
+            labels = s.labels(model_id) if model_id is not None else {}
+            return f"Add a criterion for {labels.get(sel.variable, sel.variable)}"
         return self.label
 
     def available(self, s: SessionView) -> bool | str:

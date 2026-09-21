@@ -258,9 +258,13 @@ class TestPage:
         )
 
     def _variable_of(self, path: str) -> str:
-        """The variable a tree node scores, for a sentence about it."""
+        """What a tree node's variable is CALLED, for a sentence about it —
+        its label, the same text the card titles and the criteria rows read.
+        """
         node = next((n for n in nodes_of(self._view()) if n.get("path") == path), None)
-        return str(node.get("variable")) if node is not None else path
+        if node is None:
+            return path
+        return str(node.get("label") or node.get("variable"))
 
     # -- the cards -------------------------------------------------------------
 

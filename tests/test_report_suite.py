@@ -2209,3 +2209,156 @@ class TestTheTrajectoriesCarryTheExpression:
 
         _traj, _diag, nobaseline = build_trajectories([], self._result(""), None)
         assert nobaseline[0]["expression"] == ""
+
+
+class TestAVariableReadsAsItsExpression:
+    """The rendered page: the title reads the expression, the muted name
+    rides beside it, and every KEY on the page is still the name."""
+
+    N1, N2 = "unitTests.x[1]", "unitTests.x[2]"
+
+    def _render(self, tmp_path, expressions, metrics=None, name="page"):
+        import json
+        from pathlib import Path
+
+        import numpy as np
+
+        from dstf.backends.types import TestResult, VariableResult
+        from dstf.comparison.comparator import compare_test
+        from dstf.comparison.tree_spec import parse_metric_tree
+        from dstf.discovery.test_registry import TestModel
+        from dstf.reporting.report_suite import generate_comparison_plots
+
+        t = np.linspace(0.0, 1.0, 51)
+        names = list(expressions)
+        ref = {
+            "test_id": "ref_0001",
+            "time": t.tolist(),
+            "variables": [
+                {
+                    "index": i + 1,
+                    "name": n,
+                    "expression": expressions[n],
+                    "values": (np.sin(t) * (i + 1)).tolist(),
+                }
+                for i, n in enumerate(names)
+            ],
+        }
+        result = TestResult(
+            model_id="M",
+            success=True,
+            variables=[
+                VariableResult(
+                    index=i + 1,
+                    name=n,
+                    time=t,
+                    values=np.sin(t) * (i + 1) + 0.001,
+                    expression=expressions[n],
+                )
+                for i, n in enumerate(names)
+            ],
+        )
+        spec = parse_metric_tree(
+            metrics
+            or {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": n, "tolerance": 0.5} for n in names
+                ],
+            }
+        )
+        test = TestModel(
+            model_id="M",
+            source_file=Path("fixture.mo"),
+            source_package="Fixture",
+            short_name="M",
+            n_vars=len(names),
+            source="unit_tests",
+            x_expressions=[expressions[n] for n in names],
+            metric_tree_spec=spec,
+        )
+        comp = compare_test(test, result, ref)
+        html = generate_comparison_plots(
+            "M",
+            ref,
+            result,
+            comp.variables,
+            tmp_path / name,
+            test_model=test,
+            metric_tree=comp.metric_tree,
+            max_embedded_samples=500,
+        )
+        return html.read_text(encoding="utf-8"), json.loads(
+            (tmp_path / name / "comparison_data.json").read_text(encoding="utf-8")
+        )
+
+    def test_the_section_reads_the_label_and_is_keyed_by_the_name(self, tmp_path):
+        page, _sidecar = self._render(tmp_path, {self.N1: "pipe.T[1]"})
+        section = _parse(page).by_id("variable-section-0")
+        heading = next(el for el in section.walk() if el.tag == "h2")
+        assert "pipe.T[1]" in heading.text()
+        (muted,) = heading.by_class("dstf-varname")
+        assert muted.text() == self.N1
+        tree = next(
+            el for el in section.walk() if el.attrs.get("data-variable") is not None
+        )
+        assert tree.attrs["data-variable"] == self.N1
+        assert _page_data(page, "PLOT_SERIES") == [[self.N1]]
+        labels = [
+            el.text()
+            for el in _parse(page).by_id("nodes-full").walk()
+            if "node-label" in el.classes
+        ]
+        assert "nrmse · pipe.T[1]" in labels
+        figure = _page_data(page, "PLOT_FIGURES")[0]
+        actual = next(tr for tr in figure["data"] if tr["meta"]["id"] == "actual")
+        assert actual["hovertemplate"].startswith("pipe.T[1]:")
+
+    def test_a_variable_with_no_expression_renders_as_it_always_did(self, tmp_path):
+        """The predicate for every spec-tracked variable in the suite: no
+        muted name, no second spelling, nothing added."""
+        page, _sidecar = self._render(tmp_path, {"x": ""}, name="plain")
+        section = _parse(page).by_id("variable-section-0")
+        heading = next(el for el in section.walk() if el.tag == "h2")
+        assert heading.text().split()[-1] == "x"
+        assert heading.by_class("dstf-varname") == []
+        figure = _page_data(page, "PLOT_FIGURES")[0]
+        for trace in figure["data"]:
+            if trace["meta"]["kind"] in ("act", "ref"):
+                assert "hovertemplate" not in trace
+
+    def test_two_variables_on_one_plot_each_read_their_own_label(self, tmp_path):
+        import json
+
+        page, _sidecar = self._render(
+            tmp_path,
+            {self.N1: "pipe.T[1]", self.N2: "sum(core.Qs[6, :])"},
+            name="two",
+        )
+        section = _parse(page).by_id("variable-section-0")
+        # One plot per variable by default: each section's own title.
+        titles = [
+            next(
+                el
+                for el in _parse(page).by_id(f"variable-section-{i}").walk()
+                if el.tag == "h2"
+            ).text()
+            for i in (0, 1)
+        ]
+        assert "pipe.T[1]" in titles[0] and "sum(core.Qs[6, :])" in titles[1]
+        assert section.attrs["data-plot"] == "0"
+        sidecar = json.loads(json.dumps(_sidecar))
+        assert [t["name"] for t in sidecar["trajectories"]] == [self.N1, self.N2]
+        assert [t["label"] for t in sidecar["trajectories"]] == [
+            "pipe.T[1]",
+            "sum(core.Qs[6, :])",
+        ]
+
+    def test_three_unrelated_expressions_are_three_families_on_one_plot(self):
+        """`unitTests.x[1..3]` is not an array. Folded, the three quantities
+        took one legend entry and one colour ramp."""
+        from dstf.figures.families import group_families
+
+        names = [f"unitTests.x[{i}]" for i in (1, 2, 3)]
+        labels = dict(zip(names, ["a.Q", "b.Q", "sum(core.Qs[6, :])"]))
+        assert len(group_families(names, labels)) == 3

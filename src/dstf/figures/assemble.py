@@ -30,9 +30,10 @@ def view_from_trajectory(
 ) -> VariableView:
     """The view for one variable from a report-shaped trajectory entry
     (``act_time`` / ``act_values`` / ``ref_time`` / ``ref_values`` /
-    ``overlays``, any of them absent)."""
+    ``label`` / ``overlays``, any of them absent)."""
     return build_view(
         name,
+        label=trajectory.get("label") or name,
         act_time=trajectory.get("act_time"),
         act_values=trajectory.get("act_values"),
         ref_time=trajectory.get("ref_time"),

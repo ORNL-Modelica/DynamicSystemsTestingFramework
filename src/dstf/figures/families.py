@@ -3,14 +3,24 @@
 Indexed names fold by their LAST integer index: ``pipe.T[3]`` and
 ``pipe.medium[3].T`` each belong to a family; ``x[2,3]`` does not. One
 function, so the figure's legend, the Variables drawer's folded row and the
-folded criteria row agree on what a family is."""
+folded criteria row agree on what a family is.
+
+A family is a DISPLAY fold, so it folds over what a person reads — the
+label, which for a UnitTests variable is the expression the model wrote.
+Callers pass a ``{name: label}`` mapping; the members stay names, because
+that is what everything else is keyed by."""
 
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 _LAST_INDEX = re.compile(r"\[(\d+)\](?!.*\[\d+\])")
+#: A Modelica variable name: identifiers, dots, index brackets. An
+#: expression is not one, and `der(x[3])` is grandfathered in by the
+#: leading-call form below.
+_PLAIN_NAME = re.compile(r"^[A-Za-z_][A-Za-z_0-9.\[\]]*$")
+_CALL_OF_NAME = re.compile(r"^[A-Za-z_][A-Za-z_0-9.]*\(([^(),]*)\)$")
 
 #: Four stops per hue, light to dark (Material 200 / 400 / 700 / 900). The
 #: first is DESIGN.md's accent ramp; a second family on a plot takes the
@@ -22,23 +32,45 @@ HUES: tuple[tuple[str, str, str, str], ...] = (
 )
 
 
-def family_of(name: str) -> tuple[str, int] | None:
-    """``(family key, index)`` — the name with its last ``[integer]`` emptied
-    — or ``None`` for a name with no single-integer index."""
-    if re.search(r"\[[^\]]*,[^\]]*\]", name):
+def family_of(text: str) -> tuple[str, int] | None:
+    """``(family key, index)`` — the text with its last ``[integer]`` emptied
+    — or ``None`` when it names no element of an array.
+
+    Only a PLAIN indexed name has a family (``pipe.T[3]``,
+    ``der(pipe.T[3])``, ``pipe.medium[3].T``). An expression the model wrote
+    — ``cat(1, a, b)[2]``, ``sum(core.Qs[6, :])`` — is a label, not an
+    element of an array, and folding three unrelated ones into
+    ``cat(1, a, b)[1:3]`` would give three quantities one legend entry and
+    one colour ramp.
+    """
+    call = _CALL_OF_NAME.match(text)
+    if not _PLAIN_NAME.match(call.group(1) if call else text):
         return None
-    m = _LAST_INDEX.search(name)
+    m = _LAST_INDEX.search(text)
     if m is None:
         return None
-    return name[: m.start()] + "[]" + name[m.end() :], int(m.group(1))
+    return text[: m.start()] + "[]" + text[m.end() :], int(m.group(1))
 
 
-def group_families(names: Sequence[str]) -> list[tuple[str, list[str]]]:
-    """``(key, members)`` in order of first appearance; members by index. A
-    name with no family is its own group under its own name."""
+def _labelled(name: str, labels: Mapping[str, str] | None) -> str:
+    return (labels or {}).get(name, name)
+
+
+def group_families(
+    names: Sequence[str],
+    labels: Mapping[str, str] | None = None,
+) -> list[tuple[str, list[str]]]:
+    """``(key, members)`` in order of first appearance; members by index.
+
+    The fold is over each name's LABEL (``labels`` maps name → label;
+    without it a name is its own label), and the members are the NAMES. A
+    label with no family leaves its name its own group under its own name —
+    never under the label, or two variables sharing one expression would
+    become one group.
+    """
     groups: dict[str, list[tuple[int, str]]] = {}
     for name in names:
-        fam = family_of(name)
+        fam = family_of(_labelled(name, labels))
         key, index = fam if fam is not None else (name, 0)
         groups.setdefault(key, []).append((index, name))
     return [(key, [n for _, n in sorted(members)]) for key, members in groups.items()]
@@ -56,11 +88,18 @@ def slice_text(indices: Sequence[int]) -> str:
     return ",".join(str(i) for i in idx)
 
 
-def family_label(key: str, members: Sequence[str]) -> str:
-    """``pipe.T[1:5:16]`` for a family of several; the name itself for one."""
+def family_label(
+    key: str,
+    members: Sequence[str],
+    labels: Mapping[str, str] | None = None,
+) -> str:
+    """``pipe.T[1:5:16]`` for a family of several; the one member's LABEL for
+    a family of one (``labels`` as in :func:`group_families`)."""
     if len(members) == 1:
-        return members[0]
-    indices = [fam[1] for m in members if (fam := family_of(m)) is not None]
+        return _labelled(members[0], labels)
+    indices = [
+        fam[1] for m in members if (fam := family_of(_labelled(m, labels))) is not None
+    ]
     return key.replace("[]", f"[{slice_text(indices)}]", 1) if "[]" in key else key
 
 

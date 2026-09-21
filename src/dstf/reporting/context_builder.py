@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..backends.types import display_label
 from ..comparison.comparator import VariableComparison
 from ..comparison.registry import summarize
 
@@ -103,6 +104,11 @@ def _augment_tree_view(
             {
                 "mode_effective": mode,  # runtime mode (e.g., "points"); not the spec metric
                 "name": var_label,
+                # What the leaf's row READS (`metric · pipe.T[1]`), on both
+                # tiers: the report's node macro and the tool's `leaf_name`
+                # take it from here, so the two cannot drift. `variable`
+                # stays the key a patch op targets.
+                "label": display_label(var_label, vc.expression),
                 "score_display": summary.display,
                 "criterion": summary.criterion,
                 # The mode's own key/value pairs behind the verdict, as the
@@ -322,10 +328,12 @@ def build_trajectories(
                 {
                     "index": index,
                     "name": name,
-                    # The label beside the name — carried so an overlay whose
-                    # own source names the quantity that way still finds it
-                    # (see ``attach_overlays_to_trajectories``).
+                    # The label beside the name — what the page's titles,
+                    # legends and hovers read, and what an overlay whose own
+                    # source names the quantity that way is matched by (see
+                    # ``attach_overlays_to_trajectories``).
                     "expression": act_var.expression if act_var else "",
+                    "label": display_label(name, act_var.expression if act_var else ""),
                     "act_time": act_var.time.tolist() if act_var else [],
                     "act_values": act_var.values.tolist() if act_var else [],
                     "ref_time": ref_time_list,
@@ -360,6 +368,7 @@ def build_trajectories(
                     "index": var.index,
                     "name": var.name,
                     "expression": var.expression,
+                    "label": display_label(var.name, var.expression),
                     "time": var.time.tolist(),
                     "values": var.values.tolist(),
                 }
@@ -769,6 +778,10 @@ def _build_tree_view_and_variables(
         gating = [leaf for leaf in var_leaves if not leaf.get("advisory")]
         variables_by_name[vn] = {
             "name": vn,
+            # The variable's own label, from its trajectory (the result is
+            # what knows the expression); a variable with no trajectory —
+            # every leaf on it a sentinel — reads as its name.
+            "label": (match_traj or {}).get("label") or vn,
             "trajectory": match_traj or {},
             "overlays": (match_traj or {}).get("overlays", []),
             "leaf_paths": [p for _, p in _leaves_for_variable(spec, vn)],

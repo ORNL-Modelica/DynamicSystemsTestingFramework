@@ -297,3 +297,101 @@ def test_a_spectrum_leaf_on_any_series_opens_the_second_panel_for_all(monkeypatc
     for _, ctx in seen:
         assert ctx.has_spectrum is True
         assert (ctx.x_min, ctx.x_max) == (0.0, 10.0)
+
+
+# ---------------------------------------------------------------------------
+# Labels: a variable reads as its expression and is keyed by its name
+# ---------------------------------------------------------------------------
+
+N1, N2, N3 = "unitTests.x[1]", "unitTests.x[2]", "unitTests.x[3]"
+
+
+def _labelled(name, label, scale=1.0, *, ref=False):
+    return build_view(
+        name,
+        act_time=T,
+        act_values=T * scale,
+        ref_time=T if ref else None,
+        ref_values=T if ref else None,
+        label=label,
+    )
+
+
+def test_the_label_rule_is_the_expression_or_the_name():
+    from dstf.backends.types import display_label, label_with_name
+
+    assert display_label(N1, "pipe.T[1]") == "pipe.T[1]"
+    assert display_label("y", "") == "y"
+    # The text slice: label (name) only when they differ.
+    assert label_with_name(N1, "pipe.T[1]") == "pipe.T[1] (unitTests.x[1])"
+    assert label_with_name("y", "") == "y"
+    assert label_with_name("y", "y") == "y"
+
+
+def test_a_view_without_a_label_reads_as_its_name():
+    assert _view("y").label == "y"
+    assert _labelled(N1, "pipe.T[1]").label == "pipe.T[1]"
+
+
+def test_a_multi_series_plot_reads_the_labels_and_is_keyed_by_the_names():
+    fig = plot_figure([_labelled(N1, "pipe.T[1]", ref=True), _labelled(N2, "a.Q")])
+    by_id = {tr["meta"]["id"]: tr for tr in fig["data"] if tr.get("meta")}
+    assert f"actual/{N1}" in by_id and f"reference/{N1}" in by_id
+    assert not any("pipe.T" in i for i in by_id)
+    assert by_id[f"reference/{N1}"]["name"] == "pipe.T[1] (reference)"
+    assert by_id[f"actual/{N2}"]["hovertemplate"].startswith("a.Q:")
+    # The legend entry of a family of one is its label.
+    assert by_id[f"actual/{N2}"]["name"] == "a.Q"
+
+
+def test_a_single_variables_hover_carries_the_label():
+    fig = variable_figure(_labelled(N1, "pipe.T[1]", ref=True))
+    by_id = {tr["meta"]["id"]: tr for tr in fig["data"] if tr.get("meta")}
+    # The trace NAMES stay "Actual" / "Reference" (report.js and the overlay
+    # picker find them by those); the hover says which variable it is.
+    assert by_id["actual"]["name"] == "Actual"
+    assert by_id["actual"]["hovertemplate"].startswith("pipe.T[1]:")
+    assert by_id["reference"]["hovertemplate"].startswith("pipe.T[1] (reference):")
+
+
+def test_a_variable_with_no_expression_draws_exactly_what_it_did():
+    """The byte-for-byte predicate for every spec-tracked variable: a view
+    whose label IS its name gets no hover text it did not have."""
+    fig = variable_figure(_view("y", ref=True))
+    base = [tr for tr in fig["data"] if tr["meta"]["kind"] in ("act", "ref")]
+    assert len(base) == 2
+    for trace in base:
+        assert "hovertemplate" not in trace
+
+
+def test_families_fold_over_labels_not_names():
+    """`unitTests.x[1..3]` is not an array: the three carry unrelated
+    expressions, and folding them into one family gives three quantities one
+    legend entry and one colour ramp."""
+    labels = {N1: "a.Q", N2: "b.Q", N3: "sum(core.Qs[6, :])"}
+    assert group_families([N1, N2, N3], labels) == [(N1, [N1]), (N2, [N2]), (N3, [N3])]
+    # Labels that ARE an array fold, under the label's own key.
+    indexed = {N1: "pipe.T[1]", N2: "pipe.T[2]"}
+    assert group_families([N1, N2], indexed) == [("pipe.T[]", [N1, N2])]
+
+
+def test_a_family_label_reads_the_labels():
+    from dstf.figures.families import family_label
+
+    indexed = {N1: "pipe.T[1]", N2: "pipe.T[2]"}
+    (key, members) = group_families([N1, N2], indexed)[0]
+    assert family_label(key, members, indexed) == "pipe.T[1:2]"
+    assert family_label(*group_families([N1], {N1: "a.Q"})[0], {N1: "a.Q"}) == "a.Q"
+
+
+@pytest.mark.parametrize("label", ["cat(1, a, b)[2]", "sum(core.Qs[6, :])", "a.Q"])
+def test_an_expression_that_is_not_a_plain_indexed_name_has_no_family(label):
+    assert family_of(label) is None
+
+
+def test_a_folded_family_of_labels_takes_one_legend_entry():
+    fig = plot_figure(
+        [_labelled(N1, "pipe.T[1]"), _labelled(N2, "pipe.T[2]", scale=2.0)]
+    )
+    legend = [tr["name"] for tr in fig["data"] if tr.get("showlegend")]
+    assert legend == ["pipe.T[1:2]"]

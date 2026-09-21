@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
+from ..backends.types import label_with_name
 from ..comparison.comparator import TestComparison
 from .status import (
     FAIL,
@@ -90,7 +91,10 @@ def generate_junit_report(
                 msgs = []
                 for var in comp.variables:
                     if not var.passed:
-                        name = var.name
+                        # CI reads this line without a plot beside it: the
+                        # expression names the quantity, the name is what a
+                        # criterion or a --filter is written against.
+                        name = label_with_name(var.name, var.expression)
                         reason = not_scored_reason(var)
                         if reason:
                             # Sentinel leaf: the numbers are all inf/nan, so

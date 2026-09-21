@@ -1,5 +1,6 @@
 """The interactive review loop (`run -i`): accept / skip / detail / plot."""
 
+from ..backends.types import label_with_name
 from ..discovery.test_registry import TestModel
 from ..storage.accept import accept_run_results
 from .common import _parse_review_filter, _should_review
@@ -320,7 +321,7 @@ def _print_detail(comp) -> None:
         print(f"  Error: {comp.error_message}")
 
     for var in comp.variables:
-        name = var.name
+        name = label_with_name(var.name, var.expression)
         status = "\033[92mPASS\033[0m" if var.passed else "\033[91mFAIL\033[0m"
         summary = summarize(var)
         # The flat-route unknown-mode sentinel carries mode="" on purpose

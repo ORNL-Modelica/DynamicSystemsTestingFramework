@@ -2,6 +2,7 @@
 
 import sys
 
+from ..backends.types import label_with_name
 from ..comparison.comparator import TestComparison, VariableComparison
 from .status import FAIL, NO_REF, SIM_FAIL, classify, not_scored_reason
 
@@ -109,7 +110,10 @@ def print_report(comparisons: list[TestComparison]) -> int:
 
 def _print_var_failure(var: VariableComparison):
     """Print details for a failed variable comparison."""
-    name = var.name
+    # `pipe.T[1] (unitTests.x[1])`, the name alone when they agree: the
+    # expression says WHICH quantity, the name what to write a criterion
+    # or an override against.
+    name = label_with_name(var.name, var.expression)
     print(f"    {name}:")
     reason = not_scored_reason(var)
     if reason:

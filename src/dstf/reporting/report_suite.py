@@ -249,6 +249,15 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
             for i, n in enumerate(by_name)
         )
     vidx = {n: i for i, n in enumerate(by_name)}
+    # Name → label for every series the page can draw: the scored variables
+    # carry theirs, a no-baseline trajectory carries its own, and a
+    # plot-only name read out of the result file has none, so it reads as
+    # itself. Titles and family folds are over LABELS; everything else —
+    # element ids, `data-variable`, the series lists — is the name.
+    labels = {n: v.get("label") or n for n, v in by_name.items()}
+    for t in context.get("nobaseline_trajectories") or []:
+        if t.get("name"):
+            labels.setdefault(t["name"], t.get("label") or t["name"])
     leaves_by_var = leaves_by_variable(metric_tree)
     budget = max_samples if max_samples and max_samples > 0 else None
 
@@ -267,7 +276,12 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                 n, by_name[n].get("trajectory") or {}, leaves_by_var.get(n, [])
             )
             if n in by_name
-            else build_view(n, act_time=arrays[n][0], act_values=arrays[n][1])
+            else build_view(
+                n,
+                label=labels.get(n, n),
+                act_time=arrays[n][0],
+                act_values=arrays[n][1],
+            )
             for n in drawn
         ]
         variables: list[dict] = []
@@ -298,7 +312,17 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                 # ``PLOT_FIGURES[idx]`` into ``plot-${idx}``, so a section
                 # numbered by anything else renders a blank chart.
                 "index": position,
+                # The title READS the labels; the names ride muted beside
+                # it, and only when one of them differs from its label —
+                # otherwise every title on every existing report would say
+                # its variable twice.
                 "title": ", ".join(
+                    family_label(key, members, labels)
+                    for key, members in group_families(drawn, labels)
+                ),
+                "names": ""
+                if all(labels.get(n, n) == n for n in drawn)
+                else ", ".join(
                     family_label(key, members) for key, members in group_families(drawn)
                 ),
                 "series": drawn,
@@ -308,17 +332,17 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                 # The heading's tail: every untracked name on the plot,
                 # array families folded to one label.
                 "plot_only_label": ", ".join(
-                    family_label(key, members)
-                    for key, members in group_families(untracked)
+                    family_label(key, members, labels)
+                    for key, members in group_families(untracked, labels)
                 ),
                 # One "…is plot only" line per FAMILY — four members used
                 # to print four sentences. A no-baseline series is left
                 # out: it has no criteria because it has no baseline, and
                 # the no-baseline block below already says so.
                 "plot_only_lines": [
-                    family_label(key, members)
+                    family_label(key, members, labels)
                     for key, members in group_families(
-                        [n for n in untracked if n not in nobaseline]
+                        [n for n in untracked if n not in nobaseline], labels
                     )
                 ],
             }
@@ -359,6 +383,9 @@ def _build_figures(context: dict, metric_tree, max_samples: int | None) -> dict:
         variable_figure(
             build_view(
                 t["name"],
+                # The heading above this figure reads the label; its hover
+                # says the same thing.
+                label=t.get("label") or t["name"],
                 act_time=t.get("time"),
                 act_values=t.get("values"),
                 overlays=t.get("overlays") or [],
