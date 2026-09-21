@@ -1,6 +1,8 @@
-"""The centre plot's event hook (two-tier design §4.6 "Panel", amended in
-sub-project 6): ``panel.figure.on(kind, handler)``. Moved here unchanged from
-the old shell; sub-project 3's Test page attaches it to each plot."""
+"""A plot's event hook (two-tier design §4.6 "Panel", amended in sub-project 6
+and in 3b; D131): ``panel.figure.on(kind, handler)``. One hook per plot card,
+created with the card and attached to its ``ui.plotly`` when the plot is
+drawn; a panel hosted under that card subscribes through ``owned(owner)``, so
+closing or rebuilding it takes back exactly its handlers."""
 
 from __future__ import annotations
 
@@ -18,8 +20,10 @@ _SHAPE_KEY = re.compile(r"^shapes\[([0-9]{1,9})\]\.(.+)\Z")
 
 class FigureHook:
     """``panel.figure.on(kind, handler)``: handlers get a primitive id and a
-    payload. Wired to the centre plot's Plotly events. The payload contract
-    (the spike's, over the payloads plotly.js actually sends):
+    payload. Wired to one plot's Plotly events — the card's, so a drag on one
+    plot of a stacked page reaches that card's subscribers and no other. The
+    payload contract (the spike's, over the payloads plotly.js actually
+    sends):
 
     - ``plotly_click`` / ``plotly_selected``: the id of the first point whose
       trace ``meta.kind`` is ``"handle"``, else of the first point —
@@ -60,9 +64,9 @@ class FigureHook:
         self.dispatching = False  # true while handlers run
 
     def clear(self, owner: str | None = None) -> None:
-        """Remove one owner's handlers, or every handler. The shell rebuilds
-        panels on selection and job events (the whole tabs region) and on
-        results events (slot by slot); a subscriber that re-registers in
+        """Remove one owner's handlers, or every handler. A host rebuilds its
+        panels whenever what they show can have moved, and the card itself is
+        dropped on a rebuild of the page; a subscriber that re-registers in
         `panel()` must not accumulate."""
         if owner is None:
             self._handlers = {}

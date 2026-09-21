@@ -76,7 +76,8 @@ src/dstf/
 │   ├── mo_parser.py          # Scans .mo files for UnitTests components
 │   ├── json_recognizer.py    # Declarative recognizers from testing.json
 │   ├── spec_parser.py        # Parses test_spec.json (external test definitions)
-│   ├── plots.py              # The optional per-test `plots` layout: parse, write, resolve against a result
+│   ├── plots.py              # The optional per-test `plots` layout: parse, write, resolve against a result;
+│   │                         #   tracked_names — the ONE default-layout rule both tiers draw by (D131)
 │   ├── patch_apply.py        # RFC 6902 JSON-Patch round-trip (powers `dstf spec-update`)
 │   ├── patch_envelope.py     # ModelPatch + parse/build for the patch envelope (both forms)
 │   ├── spec_update.py        # Read-modify-write of the spec: entry lookup, implicit-tree
@@ -116,8 +117,11 @@ src/dstf/
 │   ├── capabilities.py       # The capability contract: Capability, Placement, the five outcomes
 │   ├── spec_document.py      # SpecDocument — the spec as loaded, its pending ops and its on-disk hash
 │   ├── shell/                # The NiceGUI tier: shell.py (the process: Session, open thread, event fan-out),
-│   │                         #   suite.py + test_page.py (one object per browser tab), header.py, actions.py
-│   │                         #   (a button per capability at a placement), runs.py, tabstate.py, figure_hook.py
+│   │                         #   suite.py + test_page.py (one object per browser tab), tree_card.py (the
+│   │                         #   criteria tree), plot_card.py (one plot, its criteria rows and its editor),
+│   │                         #   header.py, actions.py (ActionBar — a button per capability at a placement,
+│   │                         #   its panel in a dialog; InlineHost — the same panels drawn inline),
+│   │                         #   runs.py, tabstate.py, figure_hook.py (one hook per plot)
 │   ├── forms.py              # NiceGUI controls from a mode's derived schema
 │   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_tree.py,
 │                             #   accept.py (the shared accept function), rerun.py (run_pipeline),
@@ -166,12 +170,14 @@ the run itself, which `cmd_run` and the tool's Rerun both drive.
 
 On-plot editing crosses the layers without either importing the tool. The
 figure layer draws the editable figure — `variable_figure(view, editable=True)`
-turns on plotly.js shape dragging and adds one ring shape per handle marker,
-named with the handle's id — and `Session.figure` is its one caller. The
+turns on plotly.js shape dragging and adds one ring shape per handle marker of
+the leaves `rings_for` names, each named with the handle's id — and
+`Session.figure` is its one caller. The
 comparison layer owns the inverse of each mode's handles in
 `comparison/handles.py`, reached as `MetricDescriptor.edit_handle`, and each
-list field's `columns` metadata in `modes.py`. The shell's figure hook turns a
-drag into a per-shape payload, and the Edit on plot capability joins the two:
+list field's `columns` metadata in `modes.py`. The shell's figure hook — one per
+plot card — turns a drag into a per-shape payload, and the Edit on plot
+capability joins the two:
 the handle's id names the leaf, `edit_handle` returns the new leaf, and the
 Session stages one `replace` of it.
 

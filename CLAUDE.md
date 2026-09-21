@@ -4,11 +4,11 @@
 
 **Dynamic Systems Testing Framework (DSTF)** — formerly **ModelicaTesting** — is a Python framework for regression and unit testing of time-dependent system behavior across simulated and pre-recorded trajectories.
 
-**Current state**: a multi-backend regression harness. Discovers tests by scanning `.mo`/`.jl` files and/or reading `test_spec.json`; simulates via **Dymola** (Python interface default, batch `.mos` fallback), **FMPy** (prebuilt FMUs), **OpenModelica** (OMPython persistent-worker default, `omc` batch fallback), **Julia/ModelingToolkit** (persistent `julia` worker), or **Python** (subprocess-per-test; any `simulate(stop_time, tolerance) -> dict` — scipy, pandas, CSV, HTTP, etc.); scores via a composable **MetricTree** (leaves: `nrmse` / `tube` / `points` / `range` / `event-timing` / `dominant-frequency` / `scalar`; combinators: `and` / `or` / `k-of-n` / `warn` / `weighted`; multi-baseline via `"against"`; time-windowed leaves via `"window"`). Reports via ONE suite-wide HTML surface — the dashboard (also what `--report-format html --output` writes) — plus per-test **read-only Plotly HTML** (figures built in `dstf.figures` from the geometry each metric emits; server-rendered metric tree with the CLI's verdict, criterion and detail pairs; overlay picker and error overlays toggle traces already in the figure, the error overlays on two labelled error axes — the page computes nothing) + JUnit XML. Criteria authoring is moving to a Python-side tool sharing that figure layer (D125). References partitioned under `<reference_root>/<Backend>/<os>/` with three baseline roles: **primary** (regression anchor, hard-fail), **soft_checks** (warn-wrapped cross-regression imports), **companions** (plot-only overlays, including cross-library).
+**Current state**: a multi-backend regression harness. Discovers tests by scanning `.mo`/`.jl` files and/or reading `test_spec.json`; simulates via **Dymola** (Python interface default, batch `.mos` fallback), **FMPy** (prebuilt FMUs), **OpenModelica** (OMPython persistent-worker default, `omc` batch fallback), **Julia/ModelingToolkit** (persistent `julia` worker), or **Python** (subprocess-per-test; any `simulate(stop_time, tolerance) -> dict` — scipy, pandas, CSV, HTTP, etc.); scores via a composable **MetricTree** (leaves: `nrmse` / `tube` / `points` / `range` / `event-timing` / `dominant-frequency` / `scalar`; combinators: `and` / `or` / `k-of-n` / `warn` / `weighted`; multi-baseline via `"against"`; time-windowed leaves via `"window"`). Reports via ONE suite-wide HTML surface — the dashboard (also what `--report-format html --output` writes) — plus per-test **read-only Plotly HTML** (figures built in `dstf.figures` from the geometry each metric emits; server-rendered metric tree with the CLI's verdict, criterion and detail pairs; overlay picker and error overlays toggle traces already in the figure, the error overlays on two labelled error axes — the page computes nothing) + JUnit XML. Criteria are authored in `dstf author`, the Python-side tool over the same figure layer (D125): a Suite page and a Test page whose criteria are edited inline beside the plot they score (D131). References partitioned under `<reference_root>/<Backend>/<os>/` with three baseline roles: **primary** (regression anchor, hard-fail), **soft_checks** (warn-wrapped cross-regression imports), **companions** (plot-only overlays, including cross-library).
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -30,8 +30,9 @@ DynamicSystemsTestingFramework/
 │   │                             #      handles.py (edit_handle — a dragged handle back to a raw leaf)
 │   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path)
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
-│   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages, the header,
-│   │                             #      capabilities by placement), forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
+│   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages, tree_card + plot_card,
+│   │                             #      the header, actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
+│   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + LTTB decimate; both tiers draw from it
 │   └── reporting/                # status.py classifier + console/junit + context_builder + report_suite + dashboard_render + theme.py (the token table both tiers render)
 │       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + vendor/plotly.min.js (offline-capable reports)
@@ -95,8 +96,10 @@ uv run dstf --config testing.json compare --report-format html --output report.h
 uv run dstf --config testing.json spec-update spec_patch.json
 
 # The authoring tool: a browser shell over the last run (needs the [author] extra).
-# Edit criteria / edit tree; Accept the selection's results as baselines; Rerun the selection;
-# Edit on plot drags a criterion's handles or edits its list tables.
+# The Suite page lists the tests; Accept the selection's results as baselines, Rerun the selection.
+# Open a test: its criteria tree closed to one line naming what failed, its plots stacked and drawn
+# as they scroll into view, a criterion's editor under its row (drag its handles on the plot above),
+# +/wrap/− on every tree node, "Add a criterion for x" under its plot, Focus to show one plot alone.
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs

@@ -549,8 +549,8 @@ mutated, a store is written, or a job is launched.
 
 The contract lives in `dstf.authoring.capabilities`: the `Capability` protocol
 (`name`, `label`, `placements`, and `available` / `caption` / `panel` / `act`),
-the `Placement` enum (`SUITE`, `TEST`, `VARIABLE`, `CRITERION` — where the
-capability's button attaches; a capability names a frozenset of them), and the
+the `Placement` enum (`SUITE`, `TEST`, `VARIABLE`, `CRITERION`, `NODE` — where
+the capability attaches; a capability names a frozenset of them), and the
 five outcomes `act` may return — `Patch` (ops for the Session to stage),
 `StoreWrite`, `Job`, `Artifact`, `OpenProject` — or `None`, or a sequence of
 them. `Job` and `StoreWrite` each carry `models: frozenset[str]`, the models
@@ -560,6 +560,31 @@ cannot silently take a positional argument's place. `caption(view)` is the
 button's label — object, effect and count, `plural()` for the noun — and
 `available` the sentence beside it when it is greyed. The view's `selection`
 is the page's that built it (D129): `SessionView(session, selection)`.
+
+**The placements** (D129, D131). Each one says how the shell draws a capability
+and what the view it hands over carries; a capability chooses the placements,
+never the way it is drawn there.
+
+| Placement | Where | How it is drawn | `selection` carries | `panel.figure` |
+|---|---|---|---|---|
+| `SUITE` | the Suite page's batch bar | a button with the `caption`, panel in a dialog | `tests` (the checked tests, possibly empty) | raises on `on` |
+| `TEST` | the Test page's header row | a button with the `caption`, panel in a dialog | `tests` — exactly the one test of the page | raises on `on` |
+| `VARIABLE` | a plot card's footer, one per tracked series | a button with the `caption`, panel in a dialog | `tests` (one), `variable` | that card's plot |
+| `CRITERION` | the open criterion's editor, below its row | inline: the panel alone, no button, no heading | `tests` (one), `variable`, `leaf_path` | the plot the row sits under |
+| `NODE` | a tree node's row, and a criteria row under a plot | inline: the panel alone, no button, no heading | `tests` (one), `node_path` (a leaf OR a combinator), and `variable` on a criteria row | raises on `on` |
+
+An inline panel (`CRITERION`, `NODE`) draws no heading and no button of its own
+frame: the criterion's row above the editor already names it, and a second name
+there makes one editor read as two panels. Its `caption` is never read. Where a
+button placement greys its button and puts `available`'s sentence beside it, an
+inline placement shows that sentence *in place of the panel*, so the control
+keeps its place in the row and says why it cannot be used.
+
+`act` returning `None` means nothing happened: the host applies nothing, rebuilds
+no panel and leaves an open dialog open — there is nothing to close over. It is a
+real answer, not an oversight (every plot sends one `{"autosize": true}` relayout
+when it mounts, and a subscribing panel answers that with `None`), so a capability
+that returns `None` on purpose says why in its own panel.
 
 `StoreWrite.run` returns `str | None`: the one line the job panel shows, saying
 what the write did — what it stored and what it refused, with the reason. A
@@ -597,29 +622,38 @@ scored). `rescore` is the one reader that writes — it stages that
 materialization — so `available` must not call it.
 
 **Building a panel.** `Panel` is a container the capability owns entirely: it
-builds its controls into the shell's current slot, and may subscribe to the
-shell's centre figure through `panel.figure.on(kind, handler)`, whose handler
-receives the primitive's id and a payload. When a control fires, the capability
-calls `panel.submit(**inputs)`: the shell calls `act(view, **inputs)` and hands
-what comes back to `Session.apply`. A capability never calls `act` or `apply`
-itself, and an exception from either is shown in the capability's tab with the
-Session unchanged. Import the UI framework inside `panel`, not at module level,
-so the module stays importable without the `[author]` extra — the built-ins do.
+builds its controls into the slot its host owns — a dialog's, or an inline
+host's column — and may subscribe to the plot it is drawn beside through
+`panel.figure.on(kind, handler)`, whose handler receives the primitive's id and
+a payload. When a control fires, the capability calls `panel.submit(**inputs)`:
+the shell calls `act(view, **inputs)` and hands what comes back to
+`Session.apply`. A capability never calls `act` or `apply` itself, and an
+exception from either is shown with the panel — above an inline one, in the
+dialog of a button placement — with the Session unchanged; the next successful
+submit hides it in place, without rebuilding the panel, so the field being typed
+in survives. Import the UI framework inside `panel`, not at module level, so the
+module stays importable without the `[author]` extra — the built-ins do.
 
-**Build from the view, every time.** The shell rebuilds every capability's panel
-in place whenever the results change — after every staged edit, Discard, Save,
-Reload or open, once the comparisons are rescored — except the acting
-capability's own panel while an act from its own controls runs, so a field being
-typed in survives; when that act came from the figure hook, the acting panel is
-rebuilt too. When the set of available capabilities changes, the whole tab set
-rebuilds instead. So a panel must read what it shows from the view on each
-build, never from state it kept from an earlier one: a panel that captured its
-leaf when first built would show — and on its next change re-stage — values
-another capability, a Discard or a Reload has since replaced. State a panel does
-keep between its own acts (a table's rows while rows are added) is fine, because
-the next rebuild reads the Session again. A panel's hook handlers go with it:
-each rebuild clears the capability's handlers before `panel` registers them
-again.
+**Build from the view, every time.** An inline host rebuilds every capability's
+panel in its slot whenever what they show can have moved — after a staged edit,
+Discard, Save, Reload or open, once the comparisons are rescored — except the
+acting capability's own panel while an act from its own controls runs, so a
+field being typed in survives; when that act came from the figure hook (a drag,
+during which nothing is being typed) the acting panel is rebuilt too. A dialog's
+panel is not rebuilt while the dialog is open: a confirm list belongs to the
+moment of the click, and an act that applied something closes the dialog. When
+the set of capabilities placed there changes, or an `available` answer moves —
+a job's lock comes and goes without the tree changing shape — the host rebuilds
+them all. So a panel must read what it shows from the view on each build, never
+from state it kept from an earlier one: a panel that captured its leaf when
+first built would show — and on its next change re-stage — values another
+capability, a Discard or a Reload has since replaced. State a panel does keep
+between its own acts (a table's rows while rows are added) is fine, because the
+next rebuild reads the Session again. A panel's hook handlers go with it: its
+host registers them under that capability's own owner key and clears exactly
+those when it rebuilds the panel, when an inline host is emptied, and — for a
+button placement — however its dialog closes, so a panel nobody can see never
+stages an edit from a drag.
 
 **The figure hook's payloads.** `panel.figure.on(kind, handler)` calls
 `handler(primitive_id, payload)` for three kinds:
@@ -644,15 +678,17 @@ again.
 - Any other relayout (a zoom) — once, with id `""` and the raw payload.
 
 In the tool's figure every shape is draggable (plotly.js has no working
-per-shape switch), and each `kind="handle"` Marker gets a ring shape named with
-its id; lines, boxes and windows keep their own names. The handler semantics
-are the hook's own, not the DOM's: each shape is dispatched from a snapshot of
-the handlers taken when its dispatch starts; a handler registered since is not
-called for it, one removed since (its panel rebuilt) is skipped; a handler
-registered twice is called twice; a handler that raises ends the relayout —
-later handlers and shapes are not dispatched — and the snap-back still runs.
-Panel rebuilds an act triggers during a dispatch wait for the next tick, so
-every subscriber hears the event before any handler is replaced.
+per-shape switch), and each `kind="handle"` Marker of a leaf named in
+`rings_for` gets a ring shape named with its id — on the Test page that is the
+open criterion alone (D131); lines, boxes and windows keep their own names. The
+handler semantics are the hook's own, not the DOM's: each shape is dispatched
+from a snapshot of the handlers taken when its dispatch starts; a handler
+registered since is not called for it, one removed since (its panel rebuilt) is
+skipped, checked by identity; a handler registered twice is called twice; a
+handler that raises ends the relayout — later handlers and shapes are not
+dispatched — and the snap-back still runs. A panel rebuilt by an act its own
+drag triggered therefore registers its new handlers immediately and is not
+called again for that event.
 
 **Forms.** A panel over a typed config need not hand-build its controls.
 `derive_schema(config_cls, mode=...)` (`comparison/mode_schema.py`) describes

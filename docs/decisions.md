@@ -4233,3 +4233,90 @@ failed job, which no reload follows, drops what was read of its models. A
 test with no `plots` key costs the report nothing: its result file is not
 opened again. `/variables` stays outside the patch whitelist until tracking
 from the Variables drawer needs it.
+
+## D131 — The Test page: three ways to host a capability, one figure per plot (2026-09-20)
+
+**Context.** The Test page is where an author edits a criterion (brief §3.2;
+the owner's board of 2026-09-20). Its controls are capabilities, and D129's
+placement model draws a capability one way only: an outlined button whose panel
+opens in a dialog. The page needs a tree node's `+` / wrap / `−` cluster and a
+criterion's editor to be capabilities too, or the shell has to know Edit tree
+and Edit criteria by name — which `tests/test_capability_conformance.py
+::test_the_shell_names_no_capability` refuses as an AST scan over `shell/*.py`.
+
+**Decision.** A placement is hosted in one of three ways, and the way is the
+placement's, not the capability's. `SUITE`, `TEST` and `VARIABLE` stay a
+captioned button whose panel opens in a dialog (`ActionBar`) — `VARIABLE`'s
+sits in a plot card's footer, so "Add a criterion for x" is a button under the
+plot that draws x. `CRITERION` is an inline editor (`InlineHost`): every
+capability placed there is built, without a heading and without a button of its
+own, into the slot below the criterion's row, so Edit criteria and Edit on plot
+read as one editor. `NODE` is new and is a node's controls: the same inline
+host, drawn inside a tree row or a criteria row, which is how `+` / wrap / `−`
+appear without the shell naming Edit tree. `Selection` gains `node_path` — the
+node whose controls are being drawn, a leaf or a combinator — while `leaf_path`
+goes on meaning "a criterion". Edit tree moves to `{NODE, VARIABLE}` and its old
+rows-and-forms panel is deleted; each of its forms opens in a `ui.menu` anchored
+to its button, built when that menu opens from the tree as it is then (a cluster
+is ~28 elements, and 40 leaves built eagerly made a 2,387-element page). Edit on
+plot moves from `VARIABLE` to `CRITERION` and is scoped to `selection.leaf_path`:
+a drag on another leaf's handle is refused by name.
+
+Each plot card owns its `ui.plotly`, its `FigureHook` and its snap-back, and a
+panel hosted under that card subscribes through `hook.owned(owner)`; the host
+takes the owner back when the editor closes, when it is rebuilt, and — for a
+dialog — however the dialog closes, so a panel nobody can see stages nothing
+from a drag. The tool's figure is always built `editable=True` and carries rings
+for the OPEN leaf only (`rings_for` in `figures/plotly.py`, `editing=` on
+`Session.figure` / `Session.plot_figure`). The Plotly `config` therefore never
+depends on what is being edited, so opening an editor is a `Plotly.react` on the
+same node and the zoom survives it. `scrollZoom` is off in the tool and stays on
+in the report: the tool stacks plots full-width down a scrolling page, where one
+wheel notch over a plot ends the page's scrolling and the cards below are never
+drawn. Each card stamps an incrementing `layout.editrevision` on every figure it
+sends, because `uirevision: "keep"` alone makes Plotly keep a shape the user
+dragged when the server re-sends the value it sent before — which is exactly the
+snap-back after a refused drag (measured in Chromium).
+
+A card is a 320 px slot until it is drawn: one page-level `IntersectionObserver`
+over `.dstf-plot-slot` fires one global event per slot near the viewport, which
+`ui.on("dstf_plot_visible")` answers by building that plot. The page then follows
+the Session by signature: on each event it re-sends only the figures whose
+signature — the open leaf, and every leaf on that plot's series with its metric,
+parameters, window, baseline and verdict — has moved. A finished, failed or
+written job forces every drawn plot instead, since a rerun moves the
+trajectories and no leaf's signature sees that. A change of the tree's SHAPE
+(paths and variables) or of the plot layout rebuilds the cards, closes the
+editor and re-draws the plots that were on screen. The open editor follows its
+own leaf: it is rebuilt when that leaf moved behind its back (a Discard, a Save,
+an edit staged from another node), and otherwise left alone so a field being
+typed in survives.
+
+Both tiers draw a test's default plots by ONE rule, `discovery.plots
+.tracked_names`: what the comparison scored, in the test author's order, then
+the rest of what the loaded result tracks, each taken under the comparison's own
+`variable_label`. The report drew one section per SCORED variable and the tool
+the union, so a tracked variable no criterion covers had a plot on one tier and
+none on the other; the report page now follows the tool.
+
+**Alternatives considered.** A `controls()` method on the capability contract,
+beside `panel()`: it makes "a node's controls" a second thing every capability
+must implement, where a placement already says how a capability is drawn.
+Rings for every leaf at once: they overlap, and the spike grabbed the wrong
+leaf's ring on FakeLib's tree. A CSS-sticky sub-header below the shared header:
+Quasar's header is `position: fixed`, so a second row INSIDE it is sticky with
+no offset arithmetic and no dependence on the first row's height — at the cost
+of one explicit rule, since NiceGUI's own `.nicegui-header { flex-direction:
+row }` outranks Quasar's `.column` and otherwise renders the second row to the
+right of the first. Redrawing every plot on every Session event: a twelve-plot
+page re-sends twelve figures for an edit that moved one. Keying the open
+editor's follow on the whole document's pending ops: an edit staged on ANOTHER
+test rebuilt this editor and threw away a half-typed table row.
+
+**Not built here**, so nobody looks for it: the key-stats row (its numbers come
+from the run's statistics files, which the Session does not read); a plot
+toolbar beyond Focus — the overlays and the error traces are already in the
+figure as `legendonly` traces and the legend toggles them; "Set window"
+(sub-project 4); Add series / Separate / Remove plot / Add plot, the 40 px rail
+with the Tests and Variables drawers, and array folding (3c); the running state
+(sub-projects 5 and 6).

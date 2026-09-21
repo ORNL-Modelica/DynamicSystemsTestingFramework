@@ -28,7 +28,7 @@ queue. Between those, the visible work follows the brief's own sequence
 |---|---|---|---|---|
 | 1 | The foundations | `2026-09-15-the-foundations.md` | — | report page's two error axes; warm open and first click timed |
 | 2 | The Suite page and the new shell | to write | 1 | 331 rows fill in progressively; batch actions unlock; nothing written |
-| 3 | The Test page, inline criteria, the drawer, modular plots | 3a `2026-09-20-plots-key-and-plot-figure.md` (built); 3b, 3c to write | 2 | every variable of a test stacked; one tube edit on the plot; a `plots` key round-trips |
+| 3 | The Test page, inline criteria, the drawer, modular plots | 3a `2026-09-20-plots-key-and-plot-figure.md` (built); 3b `2026-09-20-the-test-page.md` (built); 3c to write | 2 | every variable of a test stacked; one tube edit on the plot; a `plots` key round-trips |
 | 4 | Editing returns (brief §3.5, in its order) | to write | 3 | Shift+click adds a point on a real trace; brush sets a window |
 | 5 | The simulation queue | to write | 2 (3 for the row → Test page link) | an OpenModelica run from the tool completes or fails visibly |
 | 6 | Live results | to write | 5 | a Dymola run's growing trace on `/mnt/d`; 331 stored results read back byte-identical |
@@ -234,8 +234,9 @@ both tiers (the report draws the same plots); "focus one variable". Re-hosts wha
 against the tree the previous one left: **3a** the `plots` key, result-file
 reads and the plot figure on both tiers
 (`2026-09-20-plots-key-and-plot-figure.md`, BUILT); **3b** the Test page
-(sticky header, the tree closed to one line, stacked plots rendered on scroll,
-criteria rows, the inline editor below its row, Focus per plot); **3c** the
+(`2026-09-20-the-test-page.md`, BUILT: sticky header, the tree closed to one
+line, stacked plots rendered on scroll, criteria rows, the inline editor below
+its row, Focus per plot); **3c** the
 40 px rail, the Tests and Variables drawers, array folding and save-time
 expansion. Three facts found in the tree forced the split: a loaded
 `TestResult` holds only the tracked variables; spec patches were whitelisted
@@ -267,6 +268,40 @@ plot 39 ms cold. Found for 3c: a layout on a test that is tracked only by its
 (`massPorts[\n  4, 1].C[1]`) — the drawer's filter and the family rule meet
 both.
 
+**3b BUILT (2026-09-20)**, task by task on `v1.0-prep`, commits
+`70aaabf..HEAD`, each task's review folded into the tasks after it. What it
+settled is D131: a placement is hosted one of three ways — a captioned button
+with a dialog (SUITE, TEST, VARIABLE, the last in a plot card's footer), an
+inline editor (CRITERION), a node's controls (the new NODE) — and the shell
+still names no capability, which an AST scan over `shell/*.py` pins;
+`Selection.node_path`; Edit tree re-placed at NODE + VARIABLE with its forms in
+menus built when the menu opens, Edit on plot at CRITERION scoped to the open
+leaf; one `FigureHook` per plot card, its owners released on close, rebuild and
+dialog dismissal; the tool's figure always editable with rings for the open
+leaf only, so the Plotly config is constant and every redraw is a `react` that
+keeps the zoom, with `scrollZoom` off so the wheel scrolls the stacked page and
+an incrementing `layout.editrevision` so a refused drag snaps back in a real
+browser; render on scroll by one `IntersectionObserver` and one global event;
+follow by signature, per card, with a finished job forcing what no leaf's
+signature sees; the open editor following its own leaf; and ONE default-plot
+rule for both tiers (`tracked_names`), which the report page now follows.
+
+Three of this block's acceptance predicates are met by 3b: "a test with N
+tracked variables shows N plots by default"; "the tree's +/−/wrap stage the
+same ops Edit tree staged"; "a criterion row opens its editor inline and the
+plot's handles follow". It re-hosted what went with the old shell: the plot
+redrawn in place after a drag, a refused drag shown in the editor and snapped
+back, and the figure hook's per-owner clearing. It pulled two items forward
+from sub-project 4's list, because the inline editor has nowhere else to put
+them: the open editor follows a Discard, a Save or an edit staged elsewhere on
+its leaf, and a capability's error shows above its own panel and is cleared in
+place on the next success, keeping the field being typed in. Not built here,
+and named in D131: the key-stats row, a plot toolbar beyond Focus, Set window,
+the plot-layout controls, the rail and its drawers, array folding, the running
+state.
+
+**3b's gate over a COPY of TRANSFORM:** (filled by the gate)
+
 **Settles.** The `plots` schema and its validation; the series model
 (`{"var": ...}` now, expression and unit later); how the report renders a
 `plots` layout; the in-place redraw per plot.
@@ -291,7 +326,7 @@ reference; points' box-edge drag and value-converting abs/rel switches; tube
 upper/lower sync and auto-seeded control points; reset; the scalar `quantity`
 editor; weighted `direction`, Esc, remove confirmation, clipboard copy. The
 plan may stop at any numbered item and record where; each item lands with
-its own gate. Re-hosts the old shell's editor behaviours deleted with it (sub-project 2): a panel follows an edit another capability, a Discard, a Save or a Reload staged; the criterion's config error shows above its editor; a capability's error shows in its editor and a later success clears it in place, keeping the field being typed in; the editor a selection lands on is the first enabled one; the tree editor's flow through its controls — a wrap the validator refuses shown in place, add, k-of-n, remove — with the tree rows following each edit (the old `test_edit_tree_wrap_add_remove_and_combinator_edits`).
+its own gate. Of the old shell's editor behaviours deleted with it (sub-project 2), one is still to re-host: the criterion's config error above its editor. 3b re-hosted the others — the open editor follows a Discard, a Save or an edit staged elsewhere on its leaf; a capability's error shows above its own panel and a later success clears it in place, keeping the field being typed in; the tree's controls stage the same ops Edit tree staged, a refusal shown in place, with the rows following each edit (the old `test_edit_tree_wrap_add_remove_and_combinator_edits`). "The editor a selection lands on is the first enabled one" has no successor: every capability placed at CRITERION is stacked in the one editor, so there is nothing to choose between.
 
 **Settles.** The gesture contract (plain drag moves; Shift+click adds;
 Shift+right-click deletes; "Set window" starts the brush); which readouts are

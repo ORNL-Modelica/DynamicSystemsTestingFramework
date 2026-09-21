@@ -148,6 +148,18 @@ tinted pill (dark text on the tint, 1px border) is a *variable's* or a
 *criterion's* verdict, inside a test. An advisory (warn-wrapped) failure is
 the amber chip, never red.
 
+A pill says which variable it is about only when the card cannot: a plot of
+one series has that variable in its title, so its pill is the bare status,
+while a plot of several carries one pill per tracked series reading "x FAIL"
+— the name in the case the test wrote it in, not the pill's uppercase.
+
+The criteria tree's closed line says the same thing once each: the root's
+pill, what the root is (`and · 4 criteria`), the tally (`3 pass · 1 fail`,
+plus an advisory and an unscored count when either is non-zero), then each
+failure by name as the button that jumps to its criterion — at most two, with
+"+k more" for the rest. The tally does not repeat the names, and a name
+appears once.
+
 **Tables** for homogeneous rows the user sorts and filters: the test list,
 the queue, criteria points. Sticky header, sortable columns, a filter row,
 status tint on the row. **Key-stat cards** for a handful of named numbers.
@@ -159,9 +171,21 @@ instead of a tab strip. A control that wants a tab needs a stated reason.
 
 **Criteria rows** under each plot follow the old per-test page: a tinted
 pill, `metric · variable` in 14px 600, the readout in mono 12px, then `+`,
-wrap and `−` as flat icon buttons on the right. Clicking the row opens its
-editor inline, indented 16px, with a 3px `accent` left rule, and the plot
-above becomes its editing surface. One criterion open at a time.
+wrap and `−` as flat icon buttons on the right. The readout is the CLI's own
+criterion line, which already carries the score ("NRMSE 1.531e-01 vs
+tolerance 1.000e-02 → FAIL"), so no number is printed twice. Clicking the row
+opens its editor inline, indented 16px, with a 3px `accent` left rule, and the
+plot above becomes its editing surface. One criterion open at a time.
+
+The editor opens with one line saying how to use it — "Drag a ring on the
+plot, or edit the fields. Edits are staged as you make them; Save writes
+them." — and "Done" at the right of that line, the way out. Its fields sit in
+ONE wrapping row with the mode select first, so the plot and its editor fit a
+screen together; a multi-line field (a JSON list) takes a line of its own at
+the end of the row rather than where it was declared. A list table (control
+points, checkpoints, events, peaks) scrolls inside the editor after eight
+rows; only the rows scroll, so "Add row" below them is never scrolled out of
+reach.
 
 **The Variables drawer.** The Test page's left rail holds two drawers, Tests
 and Variables, one open at a time; open, a drawer is 320px and the plots
@@ -193,12 +217,20 @@ is one plot per tracked variable. Users add and remove plots, add series to a
 plot, or separate them. A plot has a `kind`; only the time plot exists now,
 and profile, x-y, heat-map and 3-D kinds are reserved on the same model. A tracked variable's criteria rows follow it onto
 whichever plot shows it; a plot-only series has no criteria until it is
-tracked. Each plot has its own toolbar: series chips, the overlay picker
-(role chips), the error overlay select, "Set window", and Remove plot. Legend
-at top-left inside the plot, as today. Secondary axes appear only while a
-series on them is visible; a second unit family on one plot gets one. A plot
-of several series shows no overlays and no error traces — both belong to a
-plot of one variable — and says so where it greys them.
+tracked. Legend at top-left inside the plot, as today. Secondary axes appear
+only while a series on them is visible; a second unit family on one plot gets
+one. A plot of several series shows no overlays and no error traces — both
+belong to a plot of one variable — and says so where it greys them.
+
+*As built:* a plot's toolbar is **Focus** alone — `Showing 1 of N plots:
+<name> — Show all N plots` on the accent tint above it, the focused plot's
+own button reading "Focused". The overlays and the error traces are already in
+the figure as hidden traces and the legend is what toggles them, so neither
+gets a control of its own. The wheel scrolls the page, never the plot: plots
+are stacked full-width, and a plot that ate the wheel stopped the page dead
+(the report, one figure to a page, keeps wheel zoom). Series chips, "Set
+window" and Remove plot are scheduled — "Set window" with the rest of the
+gesture work, the plot-layout controls with the Variables drawer.
 
 **Icons.** Material Icons in the tool (Quasar ships them). In mockups, inline
 stroke SVG on a 16px grid. Never emoji.

@@ -367,7 +367,11 @@ The **Resolution** column shows where each test's simulation parameters came fro
 computes nothing: every number on it comes from a figure Python built or from
 markup the server rendered. It shows
 
-- one Plotly chart per variable — actual, reference and the criterion geometry
+- one Plotly chart per plot of the test — its `plots` key, else one per tracked
+  variable: the variables a criterion scores, in the test's order, then the rest
+  of what the test tracks, which is the same default layout the authoring tool
+  draws, so a tracked variable no criterion scores now has a section here too.
+  Each chart draws actual, reference and the criterion geometry
   the metrics emitted (a tube's band, a range's bounds, a points leaf's
   tolerance boxes, event windows, the FFT spectrum on its own axis pair, a
   scoped leaf's window as a shaded band). Zoom, hover and legend toggles are
@@ -523,9 +527,9 @@ refused rather than pointing it at a different spec than it shows. `--filter`
 and `--package` narrow the test list; `--work-dir` and `--backend` choose the
 run outputs and the reference partition to read; `--port` moves the server off
 8080; `--no-browser` serves without opening a tab. The server binds `127.0.0.1`
-only, one project per process, and runs until Ctrl-C or Quit. Use it from one
-browser tab: the centre plot and its drag handles follow the tab that last drew
-the plot, so a second tab's plot does not redraw after an edit.
+only, one project per process, and runs until Ctrl-C or Stop server. Each
+browser tab keeps its own selection and its own open pages, so two tabs on one
+server do not move each other's plots.
 
 **Opening a project.** The library scan is cached across restarts under
 `$XDG_CACHE_HOME/dstf/scan/` (`~/.cache/dstf/scan/` when `XDG_CACHE_HOME` is
@@ -536,16 +540,34 @@ and re-merges any test whose scan changed. Only a Modelica source is scanned, so
 only it is cached. The index of sibling-backend overlays is built on its own
 thread as the project opens, so a click normally finds it already built.
 
-**The layout.** The header carries the library, the backend, the pending-op
-count (click it for the drawer of staged ops, grouped by model), Save, Discard,
-Export, a link to the dashboard, Close project and Quit. Left is the test list:
-a filter box, a checkbox per test for multi-select, the name as a button that
-selects that test alone, and its status badge. The centre, with one test
-selected, shows the variable picker, that variable's figure, and the scored
-metric tree read-only — verdict, criterion and score per leaf; clicking a leaf
-selects it. Right is one tab per capability whose scope matches the selection,
-greyed with its reason when it is not available (nothing selected, or a job
-running on the test). The footer is the job panel: while a job runs it reads
+**The layout.** Two pages under one header. The header carries the library, the
+backend, the open's progress, the pending-op count (click it for the drawer of
+staged ops, grouped by model), Save, Discard, Export, a link to the dashboard
+and Stop server.
+
+The **Suite page** is the test list: a filter box, grouped-or-flat and
+short-or-full name toggles, one chip per verdict that filters the list to it, a
+checkbox per test for multi-select, the name as a link to that test's page, and
+its status badge. Below the list are the actions over the checked tests —
+Accept, Rerun — each labelled with its object, effect and count, and greyed
+with the sentence saying what would enable it.
+
+The **Test page** is one test. A second header row carries the way back to the
+Suite, the model id, its verdict, the backend and baseline it was scored
+against, and the actions on that one test. Under it, the criteria tree is
+closed to a single line — the root's verdict, what the root is, the tally, and
+the first failures by name, each a button that jumps to its criterion — and
+"Show tree" opens it to a row per node. Then come the test's plots, one per
+tracked variable unless the entry's `plots` key says otherwise, each drawn as
+it scrolls into view. Under each plot are the criteria rows of the variables it
+draws: a verdict pill, `metric · variable`, the CLI's criterion line, and that
+node's `+` / wrap / `−`. Clicking a row opens that criterion's editor below it,
+one at a time, with the plot above as its editing surface — drag a ring to move
+a handle, or edit the fields; every change is staged, and Save writes them.
+Under the plot sits "Add a criterion for x" per tracked series, and Focus on
+the plot's own toolbar shows that plot alone until "Show all N plots".
+
+Below the Suite page's list is the job panel: while a job runs it reads
 `running: <label>` and one row per test in the job, taken from the `status.json`
 the run itself writes — model, status, phase, elapsed and the backend's detail
 line — refreshed on a timer until the job ends. (A snapshot older than the job
@@ -556,10 +578,11 @@ carrying the backend's failure message where a result failed, or
 come the lines the store writes reported, then links to the artifacts
 capabilities wrote.
 
-**Edit criteria** applies to a selected leaf: the metric, the form derived from
-that metric's config dataclass, the window, and the baseline the leaf scores
-`against` — `primary`, plus the soft_checks when the leaf sits under a `warn`,
-since a soft_check anywhere else is what the validator refuses. A dataclass
+**Edit criteria** is the top of the open criterion's editor: the metric, the
+form derived from that metric's config dataclass, the window, and the baseline
+the leaf scores `against` — `primary`, plus the soft_checks when the leaf sits
+under a `warn`, since a soft_check anywhere else is what the validator
+refuses. A dataclass
 default is shown as a placeholder and never written, so an unset tolerance keeps
 falling back to the test's. Structured fields — tube control points,
 checkpoints, declared events and peaks — are shown read-only here and edited in
@@ -568,11 +591,15 @@ rescores the test, so the figure and the verdicts follow the edit; consecutive
 replaces of one leaf collapse into one pending op, so the drawer reads "leaf →
 new leaf" rather than a keystroke log.
 
-**Edit tree** applies to exactly one selected test and stages one op per
-structural change: wrap a node in a combinator, change a combinator's kind and
-its `k` / weights / threshold, add a leaf under a combinator, remove a node (the
-root has nothing to be removed from). A test the flat path scored gets its
-implicit tree materialized by the same op.
+**Edit tree** is the controls on every node of the tree and on every criteria
+row — `+`, wrap, `−`, and on a combinator edit and unwrap — and the "Add a
+criterion for x" form under each plot. Each stages one op per structural
+change: wrap a node in a combinator, change a combinator's kind and its `k` /
+weights / threshold, add a leaf beside or under a node, remove a node (the root
+has nothing to be removed from). A test the flat path scored gets its implicit
+tree materialized by the same op. Each form opens in a small menu on its own
+button, built from the tree as it is at that moment; a change the validator
+refuses is said in place and stages nothing.
 
 **Accept** applies to the selected tests: their current results become
 baselines through the same accept function `run --accept` and `compare --accept`
@@ -587,10 +614,9 @@ the reason it will not: `no simulation result`, `simulation failed`,
 its result may be whatever the simulator had flushed when the run was aborted),
 `simulate-only: no baseline` (a simulate-only test is neither stored nor
 skipped — it has nothing to compare) or `no tracked variables in result`. The
-tab itself is greyed when no row will be stored, carrying that first row's own
-reason. (With nothing selected there are no rows and no tab at all — Accept is
-TESTS-scope, so an empty selection leaves it off the tab bar entirely.) The
-write reports one line in the footer — how
+button itself is greyed when no row will be stored, carrying that first row's
+own reason — and with nothing checked it reads `Accept needs a selection`. The
+write reports one line in the job panel — how
 many baselines it stored, where, and every test it skipped with its reason —
 and the results reload, so a re-baselined test's verdict flips in place.
 
@@ -612,12 +638,12 @@ shows the tests that reran and no others: one invocation writes one
 `status.json`, so a partial rerun's page is that subset, exactly as a CLI
 `--rerun ... --merge` leaves it.
 
-**Edit on plot** applies to one selected test with a variable plotted, and is
-available when some criterion on that variable has handles or a table: a
+**Edit on plot** is the rest of the open criterion's editor, scoped to that one
+criterion: it is available when that leaf's metric has handles or a table — a
 `tube`, `range`, `scalar`, `points`, `event-timing` or `dominant-frequency`
-leaf. (An `nrmse`-only variable greys it with `no criterion on <variable> has
-on-plot handles`.) While it is available, the handles on the centre plot drag,
-whichever tab is open:
+leaf. (An `nrmse` criterion says `nrmse has no on-plot handles` in the editor's
+place.) The plot above the editor carries rings for the open criterion alone,
+and a handle belonging to another leaf is refused by name. What drags:
 
 - a green ring on each tube control point (upper and lower edge), each
   checkpoint and each declared peak (on the spectrum panel) — grab it at its
@@ -650,8 +676,8 @@ After every drag the plot is redrawn from the staged spec, so anything the drag
 did not change goes back where it was. Everything on the plot is draggable —
 plotly.js offers no per-shape switch — but only the rings and bound lines edit:
 a window, an event line or a checkpoint's tolerance box snaps back. A drag the
-leaf cannot take snaps back too, and the reason shows in the Edit on plot tab,
-prefixed with the leaf's path: an upper edge dragged below the lower one, a
+leaf cannot take snaps back too, and the reason shows above the editor's
+tables, prefixed with the leaf's path: an upper edge dragged below the lower one, a
 negative width, a `rel` width where the reference is zero, a control point moved
 onto another's time, a lower bound above the upper one (a `scalar` leaf also
 refuses equal bounds, which `range` accepts), a peak at zero or negative
@@ -661,8 +687,8 @@ final-value ring of a `points` leaf with no declared points, or any handle of a
 metric with none to move (`event-timing`'s windows). Where two shapes overlap,
 the one drawn on top takes the drag; zoom in to separate them.
 
-Beside the handles, the tab draws a table for each list field of each criterion
-on the variable — `<path> · <metric> · <field>` for `tube_points`, `points`,
+Beside the handles, the editor draws a table for each list field of the open
+criterion — `<path> · <metric> · <field>` for `tube_points`, `points`,
 `events` and `peaks` — one row per entry and a control per key. Every cell
 change stages the whole list as one `replace` of the leaf. A blank optional cell
 leaves its key out (a checkpoint with a blank `value` follows the baseline); a

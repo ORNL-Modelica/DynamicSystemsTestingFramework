@@ -719,6 +719,26 @@ the `selection` event are deleted; a capability's `available`, `caption`,
 at `SUITE` and `TEST`; Edit tree at `TEST`; Edit on plot at `VARIABLE`; Edit
 criteria at `CRITERION` — the last three re-hosted by sub-projects 3 and 4.
 
+**Amended in the redesign's sub-project 3b (2026-09-20; D131).** `Placement`
+gains `NODE`, a tree node's controls, and `Selection` gains `node_path` — the
+node whose controls are being drawn, a leaf OR a combinator, while `leaf_path`
+goes on naming a criterion only. A placement is hosted in one of two ways, and
+the way is the placement's: `SUITE`, `TEST` and `VARIABLE` are a captioned
+button whose panel opens in a dialog; `CRITERION` and `NODE` are inline — the
+panel is built straight into the slot the page owns, with no button, no
+heading and no `caption` read, and `available`'s sentence is shown in the
+panel's place. That is how the criterion editor reads as one editor (Edit
+criteria and Edit on plot stacked) and how a node's `+` / wrap / `−` cluster is
+drawn without the shell naming Edit tree. Edit tree is re-placed at `{NODE,
+VARIABLE}` — at `VARIABLE` it is the "Add a criterion for x" footer under the
+plot that draws x — and Edit on plot at `{CRITERION}`, scoped to
+`selection.leaf_path`. `Panel.figure` is real at `VARIABLE` and `CRITERION`
+and raises elsewhere; there is one hook per PLOT, not one per page, and a
+panel's handlers are registered under its own owner key and released by its
+host when the panel is rebuilt, when an inline host is emptied, and however a
+dialog closes. `act` returning `None` changed nothing: no outcome is applied,
+no panel is rebuilt, and an open dialog stays open.
+
 ### 4.7 The tool's v1 surface
 
 **Launch.** `dstf author --config testing.json [--filter ...] [--port N]`
