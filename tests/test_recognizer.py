@@ -68,6 +68,29 @@ class TestBundledRecognizer:
         assert result.tolerance == 1e-6
         assert result.method == "Dassl"
 
+    def test_bundled_threads_the_instance_name(self, tmp_path):
+        """The UnitTests component's instance name reaches the TestModel —
+        its variables are ``<instance>.x[i]`` in the result file."""
+        from dstf.discovery import mo_parser  # noqa: F401
+        from dstf.discovery.test_registry import (
+            _build_test_model_from_recognizer_results,
+        )
+
+        mo = tmp_path / "M.mo"
+        mo.write_text(
+            "within L;\nmodel M\n  Real x;\n  UnitTests ut(n=1, x={x});\nend M;\n",
+            encoding="utf-8",
+        )
+        rec = [
+            r
+            for r in get_recognizers("modelica")
+            if r.name == "modelica:bundled-unit-tests"
+        ][0]
+        result = rec.recognize(mo)
+        assert result.unit_tests_instance == "ut"
+        merged = _build_test_model_from_recognizer_results("L.M", [result])
+        assert merged.unit_tests_instance == "ut"
+
     def test_bundled_returns_none_for_non_test_file(self):
         from dstf.discovery import mo_parser  # noqa: F401
 
@@ -148,3 +171,5 @@ class TestRegistryMerge:
         # n_vars defaults to 1 when no recognizer sets it
         assert merged.n_vars == 1
         assert merged.x_expressions == []
+        # and the UnitTests component's conventional instance name stands
+        assert merged.unit_tests_instance == "unitTests"

@@ -31,6 +31,10 @@ class TestModel:
     source_package: str
     short_name: str
     n_vars: int
+    # The UnitTests component's instance name: its variables are
+    # ``<instance>.x[i]`` in the result file. A test with no such component
+    # keeps the conventional default and nothing reads it.
+    unit_tests_instance: str = "unitTests"
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""
     x_reference: list[float] | None = None
@@ -146,6 +150,8 @@ def _build_test_model_from_recognizer_results(
             model.source_file = r.source_file
         if r.n_vars is not None:
             model.n_vars = r.n_vars
+        if r.unit_tests_instance:
+            model.unit_tests_instance = r.unit_tests_instance
         if r.x_expressions:
             model.x_expressions = list(r.x_expressions)
         if r.x_raw:

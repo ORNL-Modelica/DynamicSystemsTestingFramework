@@ -86,6 +86,22 @@ class TestSchemaParsing:
                 }
             )
 
+    def test_the_instance_name_is_not_spec_writable(self):
+        """It comes from the matched component, never from the spec: a
+        recognizer naming a component names its instance by matching it."""
+        with pytest.raises(
+            RecognizerSpecError, match="unknown field 'unit_tests_instance'"
+        ):
+            parse_recognizer_spec(
+                {
+                    "name": "x",
+                    "match": {"type": "extends", "class_pattern": "*"},
+                    "fields": {
+                        "unit_tests_instance": {"from": "constant", "value": "ut"}
+                    },
+                }
+            )
+
     def test_unknown_field_name_raises(self):
         with pytest.raises(RecognizerSpecError, match="unknown field 'made_up'"):
             parse_recognizer_spec(
@@ -310,6 +326,70 @@ class TestComponentMatching:
         )
         result = rec.recognize(mo)
         assert result.x_expressions == ["pipe.T", "tank.level"]
+
+    def test_array_parameter_threads_the_instance_and_loses_whitespace(self, tmp_path):
+        """A recognizer that extracts expressions from a component names the
+        component too: the tracked variables are ``<instance>.x[i]``. The
+        source's line wrap is not part of an expression."""
+        mo = _write_mo(
+            tmp_path,
+            "FooTest",
+            """
+            within MyLib.Examples;
+            model FooTest
+              MyLib.Testing.SafetyTest myTest(
+                numTracked=2,
+                trackedVars={pipe.T[
+             1], tank.level});
+            end FooTest;
+        """,
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "MyLib.Testing.SafetyTest",
+                },
+                "fields": {
+                    "x_expressions": {
+                        "from": "parameter",
+                        "name": "trackedVars",
+                        "shape": "array",
+                    },
+                },
+            }
+        )
+        result = rec.recognize(mo)
+        assert result.x_expressions == ["pipe.T[1]", "tank.level"]
+        assert result.unit_tests_instance == "myTest"
+
+    def test_a_recognizer_that_extracts_no_expressions_names_no_instance(
+        self, tmp_path
+    ):
+        """Only a recognizer contributing the component's expressions
+        contributes its instance name; anything else leaves the default."""
+        mo = _write_mo(
+            tmp_path,
+            "FooTest",
+            """
+            within MyLib.Examples;
+            model FooTest
+              MyLib.Testing.SafetyTest myTest(numTracked=2, tEnd=100);
+            end FooTest;
+        """,
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "MyLib.Testing.SafetyTest",
+                },
+                "fields": {"stop_time": {"from": "parameter", "name": "tEnd"}},
+            }
+        )
+        assert rec.recognize(mo).unit_tests_instance is None
 
     def test_constant_field(self, tmp_path):
         mo = _write_mo(

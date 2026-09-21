@@ -51,6 +51,20 @@ def test_the_key_changes_with_the_library_path_and_the_recognizers(tmp_path):
     assert scan_cache.load_scan(config) is None
 
 
+def test_a_cache_from_an_older_cache_version_is_ignored(tmp_path, monkeypatch):
+    """The cache stores parsed ``TestModel``s, so what a scan MEANS is part
+    of the key: an entry written before expressions lost their source
+    whitespace and before a test named its UnitTests instance would serve
+    both, and no file changed for a staleness check to see."""
+    config = _write_lib(tmp_path)
+    scanned = scan_source_tests(config)
+    current = scan_cache.CACHE_VERSION
+    monkeypatch.setattr(scan_cache, "CACHE_VERSION", 1)
+    scan_cache.store_scan(config, scanned)
+    monkeypatch.setattr(scan_cache, "CACHE_VERSION", current)
+    assert scan_cache.load_scan(config) is None
+
+
 def test_a_cache_from_another_dstf_version_is_ignored(tmp_path, monkeypatch):
     config = _write_lib(tmp_path)
     path = scan_cache.store_scan(config, scan_source_tests(config))

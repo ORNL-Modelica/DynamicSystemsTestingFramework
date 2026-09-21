@@ -80,7 +80,9 @@ class RecognizerSpecError(ValueError):
 
 
 # Fields a JSON spec can write into a RecognizerResult. Keep in sync with
-# RecognizerResult dataclass (model_id and source_file are filled implicitly).
+# RecognizerResult dataclass (model_id and source_file are filled implicitly;
+# unit_tests_instance is NOT spec-writable — it comes from the matched
+# component, see JsonRecognizer.recognize).
 _VALID_FIELDS = frozenset(
     {
         "n_vars",
@@ -574,6 +576,11 @@ class JsonRecognizer(Recognizer):
                 if value is None:
                     continue
             setattr(result, field_name, value)
+        # The instance name is the matched component's, never the spec's: a
+        # recognizer that pulls the tracked expressions out of a component
+        # names that component's instance too.
+        if result.x_expressions and cm is not None:
+            result.unit_tests_instance = cm.instance_name
         return result
 
 

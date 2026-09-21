@@ -36,6 +36,10 @@ class RecognizerResult:
     source_file: Path | None = None
     # Variables-to-track contribution (was UnitTestInfo)
     n_vars: int | None = None
+    # Instance name of the component whose ``x[i]`` the variables are: the
+    # result file names them ``<instance>.x[i]``. Contributed only by a
+    # recognizer that also contributes the component's expressions.
+    unit_tests_instance: str | None = None
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""
     x_reference: list[float] | None = None

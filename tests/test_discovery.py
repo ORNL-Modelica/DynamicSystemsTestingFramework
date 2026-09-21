@@ -148,6 +148,45 @@ class TestMoParser:
             assert len(info.x_expressions) == 1
             assert info.x_expressions[0].startswith(f"{func}(")
 
+    def test_a_wrapped_index_loses_its_source_whitespace(self):
+        """An expression the .mo source wrapped over two lines is one line
+        here: the layout is the file's, not the expression's."""
+        info = _parse_unit_tests("UnitTests ut(n=2, x={a.b[\n        1, 1], c})")
+        assert info.x_expressions == ["a.b[1, 1]", "c"]
+
+    def test_the_instance_name_is_kept(self):
+        """The component's instance name — its variables are <instance>.x[i]."""
+        assert _parse_unit_tests("UnitTests ut(n=2, x={a, b})").instance == "ut"
+        assert (
+            _parse_unit_tests(
+                "Utilities.ErrorAnalysis.UnitTests unitTests(n=1, x={a})"
+            ).instance
+            == "unitTests"
+        )
+
+    def test_a_wrapped_cat_without_braces_is_normalized(self):
+        """The non-braced x=cat(...) branch normalizes too."""
+        info = _parse_unit_tests("UnitTests unitTests(n=3, x=cat(1, y,\n   y1))")
+        assert info.x_expressions == ["cat(1, y, y1)"]
+
+    def test_a_wrapped_cat_inside_braces_is_normalized(self):
+        info = _parse_unit_tests("UnitTests unitTests(n=3, x={cat(1, y,\n   y1)[ 2 ]})")
+        assert info.x_expressions == ["cat(1, y, y1)[2]"]
+
+    def test_a_wrapped_bare_name_is_normalized(self):
+        """The bare x=name branch normalizes too."""
+        info = _parse_unit_tests("UnitTests unitTests(n=1, x=a.b[1,\n   2])")
+        assert info.x_expressions == ["a.b[1, 2]"]
+
+    def test_only_the_expression_text_is_normalized(self):
+        """A comment inside x={...} is blanked by the literal stripper before
+        the whitespace run collapses; a string elsewhere in the file is not
+        expression text and normalization never reaches it."""
+        info = _parse_unit_tests(
+            'UnitTests ut(n=2, x={a /* why */ , b}) "two   spaces";'
+        )
+        assert info.x_expressions == ["a", "b"]
+
 
 # ---------------------------------------------------------------------------
 # spec_parser
@@ -168,6 +207,9 @@ class TestSpecParser:
         assert no_ut.variable_patterns == ["x"]
         assert no_ut.stop_time == 5
         assert no_ut.source == "spec"
+        # A spec-only entry names no component; the conventional instance
+        # name stands (nothing reads it for a spec-tracked test).
+        assert no_ut.unit_tests_instance == "unitTests"
 
     def test_add_to_spec(self, tmp_path):
         """add_to_test_spec creates and appends entries."""

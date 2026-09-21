@@ -13,6 +13,9 @@ class UnitTestInfo:
     """Information extracted from a UnitTests block in a .mo file."""
 
     n: int = 1
+    #: The component's instance name in the model — its variables are
+    #: ``<instance>.x[i]`` in the result file.
+    instance: str = "unitTests"
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""  # Raw text of x={...} for complex cases (cat, etc.)
     x_reference: list[float] | None = None
@@ -103,16 +106,36 @@ def _extract_balanced_braces(text: str, start: int) -> str:
     return text[start + 1 :]
 
 
+_WS_RUN_RE = re.compile(r"\s+")
+_WS_AFTER_OPEN_RE = re.compile(r"([\[({])\s+")
+_WS_BEFORE_CLOSE_RE = re.compile(r"\s+([\])},])")
+
+
+def _normalize_expression(text: str) -> str:
+    """One expression without its source layout.
+
+    A ``.mo`` file wraps a long expression over two lines; the wrap is the
+    file's formatting, not part of what the expression names. Whitespace
+    runs become one space, and none is kept directly after an opening
+    bracket or directly before a closing bracket or a comma — so
+    ``a.b[\\n        1, 1]`` and ``a.b[1, 1]`` are one expression.
+    """
+    text = _WS_RUN_RE.sub(" ", text.strip())
+    text = _WS_AFTER_OPEN_RE.sub(r"\1", text)
+    return _WS_BEFORE_CLOSE_RE.sub(r"\1", text)
+
+
 def _parse_x_expressions(raw: str) -> list[str]:
     """Parse x={expr1, expr2, ...} into individual expressions.
 
     Handles simple comma-separated variables but returns raw text for
-    complex cases like cat() or array comprehensions.
+    complex cases like cat() or array comprehensions. Every expression
+    returned is normalized (:func:`_normalize_expression`).
     """
     # If it contains cat( or 'for', it's complex — return as single raw entry
     stripped = raw.strip()
     if "cat(" in stripped or " for " in stripped:
-        return [stripped]
+        return [_normalize_expression(stripped)]
 
     # Split by commas, respecting nested brackets/parens
     expressions = []
@@ -126,13 +149,13 @@ def _parse_x_expressions(raw: str) -> list[str]:
             depth -= 1
             current.append(ch)
         elif ch == "," and depth == 0:
-            expr = "".join(current).strip()
+            expr = _normalize_expression("".join(current))
             if expr:
                 expressions.append(expr)
             current = []
         else:
             current.append(ch)
-    last = "".join(current).strip()
+    last = _normalize_expression("".join(current))
     if last:
         expressions.append(last)
 
@@ -229,7 +252,7 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
     # surrounding model as a test.
     text = _strip_modelica_literals(text)
     pattern = re.compile(
-        r"(?:Utilities\.ErrorAnalysis\.)?UnitTests\s+\w+\s*\(", re.DOTALL
+        r"(?:Utilities\.ErrorAnalysis\.)?UnitTests\s+(\w+)\s*\(", re.DOTALL
     )
     match = pattern.search(text)
     if not match:
@@ -250,7 +273,9 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
 
     param_text = text[start + 1 : end]
 
-    info = UnitTestInfo()
+    # group(1) is the component's INSTANCE name (the word after the class),
+    # not the class: its variables are ``<instance>.x[i]``.
+    info = UnitTestInfo(instance=match.group(1))
 
     # Extract n=
     m = re.search(r"\bn\s*=\s*(\d+)", param_text)
@@ -281,14 +306,14 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
                         break
             raw = param_text[m2.start() + 2 : end2 + 1]  # include "func(...)"
             info.x_raw = raw.strip()
-            info.x_expressions = [raw.strip()]
+            info.x_expressions = [_normalize_expression(raw)]
     else:
         # x=varName or x=some.qualified.name — bare variable reference
         m2 = re.search(r"\bx\s*=\s*([\w.]+(?:\[[\w.,\s]+\])?)", param_text)
         if m2:
             raw = m2.group(1).strip()
             info.x_raw = raw
-            info.x_expressions = [raw]
+            info.x_expressions = [_normalize_expression(raw)]
 
     # Extract x_reference={...}
     m = re.search(r"\bx_reference\s*=\s*\{", param_text)
@@ -473,6 +498,7 @@ class BundledModelicaUnitTestsRecognizer(Recognizer):
             model_id=parsed.model_id,
             source_file=parsed.mo_file,
             n_vars=ut.n if ut else None,
+            unit_tests_instance=ut.instance if ut else None,
             x_expressions=list(ut.x_expressions) if ut else [],
             x_raw=ut.x_raw if ut else "",
             x_reference=list(ut.x_reference)

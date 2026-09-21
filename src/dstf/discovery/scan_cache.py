@@ -30,7 +30,9 @@ from .test_registry import TestModel
 
 logger = logging.getLogger(__name__)
 
-CACHE_VERSION = 1
+# 2: expressions carry no source whitespace and a TestModel names the
+#    UnitTests instance — a version-1 entry would rebuild neither.
+CACHE_VERSION = 2
 
 
 def cache_dir() -> Path:
