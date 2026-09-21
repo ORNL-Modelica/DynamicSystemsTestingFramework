@@ -109,18 +109,32 @@ def _extract_balanced_braces(text: str, start: int) -> str:
 _WS_RUN_RE = re.compile(r"\s+")
 _WS_AFTER_OPEN_RE = re.compile(r"([\[({])\s+")
 _WS_BEFORE_CLOSE_RE = re.compile(r"\s+([\])},])")
+#: A comma that is not the last character before a closing bracket: exactly
+#: one space follows it in the normal form.
+_COMMA_RE = re.compile(r",\s*(?![\])}]|$)")
 
 
 def _normalize_expression(text: str) -> str:
-    """One expression without its source layout.
+    """One expression in its normal form, without its source layout.
 
-    A ``.mo`` file wraps a long expression over two lines; the wrap is the
-    file's formatting, not part of what the expression names. Whitespace
-    runs become one space, and none is kept directly after an opening
-    bracket or directly before a closing bracket or a comma — so
-    ``a.b[\\n        1, 1]`` and ``a.b[1, 1]`` are one expression.
+    A ``.mo`` file wraps a long expression over two lines, or spells an
+    index ``[1,2]`` where the result file spells it ``[1, 2]``; that is the
+    file's formatting, not part of what the expression names. The normal
+    form: whitespace runs become one space; none is kept directly after an
+    opening bracket or directly before a closing bracket or a comma; and
+    every comma is followed by exactly one space — which is how Dymola's own
+    result names read (``a[1, 2]``). So ``a.b[\\n        1, 1]``,
+    ``a.b[ 1 ,1 ]`` and ``a.b[1,1]`` are one expression, and a source
+    reformat does not read as a changed expression on compare.
+
+    Normalizing an expression already in normal form changes nothing.
+
+    OUT OF SCOPE: a comma inside a string literal within an expression —
+    the rule is textual and would put a space inside the literal. No
+    ``x={...}`` in the libraries this parses contains one.
     """
     text = _WS_RUN_RE.sub(" ", text.strip())
+    text = _COMMA_RE.sub(", ", text)
     text = _WS_AFTER_OPEN_RE.sub(r"\1", text)
     return _WS_BEFORE_CLOSE_RE.sub(r"\1", text)
 
@@ -160,6 +174,29 @@ def _parse_x_expressions(raw: str) -> list[str]:
         expressions.append(last)
 
     return expressions
+
+
+def _take_argument(text: str, start: int) -> str:
+    """The rest of one argument of a parameter list, from ``start``.
+
+    Ends at the next top-level comma or at the end of the list (the closing
+    bracket that was never opened inside it), nesting respected — so
+    ``x=a.b[1].c, x_reference={1}`` yields ``a.b[1].c`` and ``x=a.b[1, :]``
+    yields the whole index, where a regex over bracket contents stopped at
+    ``a.b[1]`` and ``a.b``.
+    """
+    depth = 0
+    for i in range(start, len(text)):
+        c = text[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                return text[start:i]
+            depth -= 1
+        elif c == "," and depth == 0:
+            return text[start:i]
+    return text[start:]
 
 
 def _parse_float_list(raw: str) -> list[float] | None:
@@ -251,8 +288,14 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
     # ``UnitTests(...)`` for example purposes doesn't misidentify the
     # surrounding model as a test.
     text = _strip_modelica_literals(text)
+    # The leading ``\b`` is what makes this the UnitTests component and not
+    # any class whose name merely ends in it (``MyUnitTests bar(`` was read
+    # as an instance named ``bar``). A dotted prefix still matches: the
+    # optional ``Utilities.ErrorAnalysis.`` group, and any longer prefix
+    # (``TRANSFORM.Utilities.ErrorAnalysis.``) because the ``.`` before
+    # ``UnitTests`` is itself a word boundary.
     pattern = re.compile(
-        r"(?:Utilities\.ErrorAnalysis\.)?UnitTests\s+(\w+)\s*\(", re.DOTALL
+        r"\b(?:Utilities\.ErrorAnalysis\.)?UnitTests\s+(\w+)\s*\(", re.DOTALL
     )
     match = pattern.search(text)
     if not match:
@@ -308,12 +351,16 @@ def _parse_unit_tests(text: str, source: object = "") -> UnitTestInfo | None:
             info.x_raw = raw.strip()
             info.x_expressions = [_normalize_expression(raw)]
     else:
-        # x=varName or x=some.qualified.name — bare variable reference
-        m2 = re.search(r"\bx\s*=\s*([\w.]+(?:\[[\w.,\s]+\])?)", param_text)
+        # x=varName, x=some.qualified.name, x=a.b[1].c, x=a.b[1, :] — a bare
+        # expression. It runs to the end of ITS argument; a bracket regex
+        # truncated it (``a.b[1].c`` became ``a.b[1]``, ``a.b[1, :]`` became
+        # ``a.b``), which then rode into the baseline as the expression.
+        m2 = re.search(r"\bx\s*=\s*", param_text)
         if m2:
-            raw = m2.group(1).strip()
-            info.x_raw = raw
-            info.x_expressions = [_normalize_expression(raw)]
+            raw = _take_argument(param_text, m2.end()).strip()
+            if raw:
+                info.x_raw = raw
+                info.x_expressions = [_normalize_expression(raw)]
 
     # Extract x_reference={...}
     m = re.search(r"\bx_reference\s*=\s*\{", param_text)

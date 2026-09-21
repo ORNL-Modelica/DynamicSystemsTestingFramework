@@ -36,10 +36,14 @@ def unit_test_variables(test: TestModel) -> list[UnitTestVariable]:
     taken to follow it.
 
     The expression is ``x_expressions[i - 1]`` when the model wrote one per
-    variable, ``f"{x_expressions[0]}[{i}]"`` when it wrote a single array
-    (``x=y``) covering all of them, and ``""`` for any other shape —
-    ``cat(1, a, b)`` for three variables says nothing about which piece is
-    which, and a wrong label is worse than none.
+    variable, and ``f"{x_expressions[0]}[{i}]"`` when it wrote a SINGLE
+    expression covering all of them — an array (``x=y``) or a concatenation
+    (``x=cat(1, a, b)``), whose element ``i`` reads as ``y[i]`` /
+    ``cat(1, a, b)[i]``.
+
+    Any other shape leaves the expression ``""``: two expressions for three
+    variables says nothing about which piece is which, and a wrong label is
+    worse than none.
     """
     if test.source not in ("unit_tests", "both") or test.n_vars <= 0:
         return []

@@ -577,9 +577,14 @@ class JsonRecognizer(Recognizer):
                     continue
             setattr(result, field_name, value)
         # The instance name is the matched component's, never the spec's: a
-        # recognizer that pulls the tracked expressions out of a component
-        # names that component's instance too.
-        if result.x_expressions and cm is not None:
+        # recognizer that takes the tracked variables out of a component —
+        # how MANY of them or WHICH expressions, either is enough — names
+        # that component's instance too, because the result file names them
+        # ``<instance>.x[i]``. Keyed off the count as well as the
+        # expressions: a recognizer that reads only ``n_vars`` off the
+        # component left the instance unset, and every one of its variables
+        # was then looked for under the default ``unitTests.x[i]``.
+        if cm is not None and (result.x_expressions or result.n_vars is not None):
             result.unit_tests_instance = cm.instance_name
         return result
 

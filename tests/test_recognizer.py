@@ -173,3 +173,53 @@ class TestRegistryMerge:
         assert merged.x_expressions == []
         # and the UnitTests component's conventional instance name stands
         assert merged.unit_tests_instance == "unitTests"
+
+    def test_a_later_recognizer_without_an_instance_keeps_the_earlier_one(self):
+        """A field not contributed is not a field contributed empty: a second recognizer
+        that only adjusts the stop time must not blank the instance name the
+        first one read off the component."""
+        from dstf.discovery.test_registry import (
+            _build_test_model_from_recognizer_results,
+        )
+
+        first = RecognizerResult(
+            model_id="L.M", n_vars=1, unit_tests_instance="ut", x_expressions=["a"]
+        )
+        later = RecognizerResult(model_id="L.M", stop_time=5.0)
+        merged = _build_test_model_from_recognizer_results("L.M", [first, later])
+        assert merged.unit_tests_instance == "ut"
+        assert merged.stop_time == 5.0
+
+    def test_a_both_test_keeps_the_scanned_instance(self):
+        """A spec entry for a scanned test names no component, so the merge
+        must leave the scanned instance alone — the component's variables are
+        still ``ut.x[i]`` in the result file."""
+        from dstf.discovery.test_registry import (
+            TestModel,
+            _build_test_model_from_recognizer_results,
+            merge_tests,
+        )
+
+        scanned = _build_test_model_from_recognizer_results(
+            "L.M",
+            [
+                RecognizerResult(
+                    model_id="L.M",
+                    n_vars=1,
+                    unit_tests_instance="ut",
+                    x_expressions=["a"],
+                )
+            ],
+        )
+        spec = TestModel(
+            model_id="L.M",
+            source_file=Path(""),
+            source_package="L",
+            short_name="M",
+            n_vars=0,
+            variable_patterns=["q"],
+            source="spec",
+        )
+        (merged,) = merge_tests({"L.M": scanned}, {"L.M": spec})
+        assert merged.source == "both"
+        assert merged.unit_tests_instance == "ut"

@@ -15,6 +15,7 @@ from dstf.config import (
 from dstf.discovery.mo_parser import (
     _extract_model_name,
     _extract_within,
+    _normalize_expression,
     _parse_experiment,
     _parse_unit_tests,
     parse_mo_file,
@@ -180,12 +181,93 @@ class TestMoParser:
 
     def test_only_the_expression_text_is_normalized(self):
         """A comment inside x={...} is blanked by the literal stripper before
-        the whitespace run collapses; a string elsewhere in the file is not
-        expression text and normalization never reaches it."""
-        info = _parse_unit_tests(
-            'UnitTests ut(n=2, x={a /* why */ , b}) "two   spaces";'
-        )
+        the whitespace run collapses — what is normalized is the expression
+        text the parser extracted, not the source around it."""
+        info = _parse_unit_tests("UnitTests ut(n=2, x={a /* why */ , b});")
         assert info.x_expressions == ["a", "b"]
+
+    def test_a_single_wrapped_element_is_normalized(self):
+        """The only (equally: the last) element of ``x={...}`` leaves the
+        split loop by its own door and is normalized there too."""
+        info = _parse_unit_tests("UnitTests ut(n=1, x={a.b[\n        1, 1]})")
+        assert info.x_expressions == ["a.b[1, 1]"]
+
+    def test_runs_of_spaces_collapse_without_a_newline(self):
+        """A run of spaces or a tab is source layout as much as a wrap is."""
+        info = _parse_unit_tests("UnitTests ut(n=2, x={a   +\tb, c})")
+        assert info.x_expressions == ["a + b", "c"]
+
+    def test_whitespace_before_an_opening_bracket_is_kept(self):
+        """Only whitespace INSIDE a bracket goes: ``a * [1, 2]`` is a
+        product, and closing it up would make it an index."""
+        info = _parse_unit_tests("UnitTests ut(n=1, x={a * [1, 2]})")
+        assert info.x_expressions == ["a * [1, 2]"]
+
+    def test_a_brace_and_a_comma_are_bracket_edges_too(self):
+        """``{`` opens and ``,`` closes for the purposes of the normal form."""
+        info = _parse_unit_tests("UnitTests ut(n=1, x={sum({ a , b })})")
+        assert info.x_expressions == ["sum({a, b})"]
+
+    def test_the_normal_form_is_canonical_about_commas(self):
+        """Every spelling of the same comma-separated expression normalizes
+        to one text — no space before a comma, exactly one after it, which is
+        how Dymola's own result names read (``a[1, 2]``). Without this a
+        source reformat reads as a changed expression on compare."""
+        for source in ("a.b[ 1 ,2 ]", "a.b[1,2]", "a.b[1, 2]", "a.b[1,\n   2]"):
+            info = _parse_unit_tests("UnitTests ut(n=1, x={%s})" % source)
+            assert info.x_expressions == ["a.b[1, 2]"], source
+        info = _parse_unit_tests("UnitTests ut(n=3, x=cat(1,y,y1))")
+        assert info.x_expressions == ["cat(1, y, y1)"]
+
+    def test_the_normal_form_is_idempotent(self):
+        """Normalizing a normalized expression changes nothing — a stored
+        expression re-normalized on the next run must compare equal."""
+        for source in (
+            "a.b[ 1 ,2 ]",
+            "a.b[1,2]",
+            "a.b[1, 2]",
+            "a.b[1,\n   2]",
+            "cat(1,y,y1)",
+            "sum({ a , b })",
+            "a * [1, 2]",
+            "a   +\tb",
+        ):
+            once = _normalize_expression(source)
+            assert _normalize_expression(once) == once, source
+
+    def test_a_class_whose_name_merely_ends_in_unit_tests_is_not_the_component(
+        self,
+    ):
+        """``MyUnitTests bar(...)`` is some other class: the component is
+        ``UnitTests``, bare or under a dotted prefix, and the match needs the
+        word boundary to say so."""
+        assert (
+            _parse_unit_tests("model M\n  MyUnitTests bar(n=2, x={a, b});\nend M;")
+            is None
+        )
+
+    def test_a_longer_dotted_prefix_still_names_the_instance(self):
+        """TRANSFORM spells the component fully qualified."""
+        info = _parse_unit_tests(
+            "TRANSFORM.Utilities.ErrorAnalysis.UnitTests unitTests(n=1, x={a});"
+        )
+        assert info is not None
+        assert info.instance == "unitTests"
+        assert info.x_expressions == ["a"]
+
+    def test_a_bare_expression_runs_to_the_end_of_its_argument(self):
+        """The bare ``x=<expr>`` branch takes the whole argument — up to the
+        next top-level comma or the end of the component's argument list —
+        not the prefix some bracket regex happens to reach."""
+        assert _parse_unit_tests("UnitTests ut(n=1, x=a.b[1].c)").x_expressions == [
+            "a.b[1].c"
+        ]
+        assert _parse_unit_tests("UnitTests ut(n=2, x=a.b[1, :])").x_expressions == [
+            "a.b[1, :]"
+        ]
+        info = _parse_unit_tests("UnitTests ut(n=1, x=a.b[1].c, x_reference={1})")
+        assert info.x_expressions == ["a.b[1].c"]
+        assert info.x_reference == [1.0]
 
 
 # ---------------------------------------------------------------------------

@@ -149,6 +149,48 @@ def _check_expressions(reference: dict, result: TestResult) -> list[StructuralWa
     ]
 
 
+def _warn_about_overrides_that_name_nothing(
+    model_id: str, overrides: dict[str, dict], result: TestResult
+) -> None:
+    """An override key that names no variable of this result does nothing.
+
+    It scored nothing before either — the flat path has always looked its
+    keys up by the result variable's name — but it was silent about it. A key
+    that names a variable's EXPRESSION is the shape a spec written before the
+    identity change has (``pipe.T[1]`` where the result file says
+    ``unitTests.x[1]``): the message says which name it meant and names the
+    command that rewrites it. One line per test; no status changes.
+    """
+    names = {v.name for v in result.variables if v.name}
+    unknown = [key for key in overrides if key not in names]
+    if not unknown:
+        return
+    by_expression = {
+        v.expression: v.name
+        for v in result.variables
+        if v.expression and v.name and v.expression not in names
+    }
+    detail = ", ".join(
+        f"{key!r} (the expression of {by_expression[key]!r})"
+        if key in by_expression
+        else repr(key)
+        for key in unknown
+    )
+    hint = (
+        " — a key that names an expression is rewritten by "
+        "`dstf migrate-variable-names`"
+        if any(key in by_expression for key in unknown)
+        else ""
+    )
+    logger.warning(
+        "%s: variable_overrides key(s) name no variable of this result and "
+        "are ignored: %s%s",
+        model_id,
+        detail,
+        hint,
+    )
+
+
 def _tracked_but_not_scored(
     test: TestModel, result: TestResult
 ) -> StructuralWarning | None:
@@ -321,6 +363,7 @@ def compare_test(
     # Merge variable overrides: spec overrides take precedence over reference
     ref_var_overrides = ref_comparison.get("variable_overrides", {})
     merged_overrides = {**ref_var_overrides, **test.variable_overrides}
+    _warn_about_overrides_that_name_nothing(test.model_id, merged_overrides, result)
 
     for var_result in result.variables:
         # Pair by name first; fall back to index only when the result

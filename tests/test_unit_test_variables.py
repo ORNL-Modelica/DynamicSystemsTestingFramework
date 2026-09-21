@@ -48,6 +48,17 @@ def test_one_expression_for_many_variables_is_indexed():
     ]
 
 
+def test_a_single_concatenation_for_many_variables_is_indexed_too():
+    """``x=cat(1, a, b)`` is one expression covering the whole array, so it
+    indexes like ``x=y`` does. (It is NOT the mismatch case: that is two
+    expressions for three variables, below.)"""
+    assert _pairs(_test(3, ["cat(1, a, b)"])) == [
+        ("unitTests.x[1]", "cat(1, a, b)[1]"),
+        ("unitTests.x[2]", "cat(1, a, b)[2]"),
+        ("unitTests.x[3]", "cat(1, a, b)[3]"),
+    ]
+
+
 def test_expressions_that_match_neither_shape_leave_the_label_empty():
     """Two expressions for three variables says nothing about which is
     which: the variables keep their names and read as them."""

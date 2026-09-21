@@ -364,11 +364,41 @@ class TestComponentMatching:
         assert result.x_expressions == ["pipe.T[1]", "tank.level"]
         assert result.unit_tests_instance == "myTest"
 
-    def test_a_recognizer_that_extracts_no_expressions_names_no_instance(
+    def test_a_count_alone_threads_the_instance(self, tmp_path):
+        """A recognizer that takes only the variable COUNT off the component
+        still names it: its variables are ``myTest.x[1..2]`` in the result
+        file, and without the instance every one of them is looked for under
+        the default ``unitTests.x[i]`` and found missing."""
+        mo = _write_mo(
+            tmp_path,
+            "FooTest",
+            """
+            within MyLib.Examples;
+            model FooTest
+              MyLib.Testing.SafetyTest myTest(numTracked=2);
+            end FooTest;
+        """,
+        )
+        rec = parse_recognizer_spec(
+            {
+                "name": "test",
+                "match": {
+                    "type": "component-instantiation",
+                    "component_name": "MyLib.Testing.SafetyTest",
+                },
+                "fields": {"n_vars": {"from": "parameter", "name": "numTracked"}},
+            }
+        )
+        result = rec.recognize(mo)
+        assert result.n_vars == 2
+        assert result.unit_tests_instance == "myTest"
+
+    def test_a_recognizer_that_contributes_no_variables_names_no_instance(
         self, tmp_path
     ):
-        """Only a recognizer contributing the component's expressions
-        contributes its instance name; anything else leaves the default."""
+        """Only a recognizer contributing the component's variables — their
+        count or their expressions — contributes its instance name. One that
+        reads an unrelated parameter off it leaves the default."""
         mo = _write_mo(
             tmp_path,
             "FooTest",

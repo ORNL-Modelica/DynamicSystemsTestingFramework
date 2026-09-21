@@ -33,7 +33,9 @@ class TestModel:
     n_vars: int
     # The UnitTests component's instance name: its variables are
     # ``<instance>.x[i]`` in the result file. A test with no such component
-    # keeps the conventional default and nothing reads it.
+    # (``source == "spec"``) keeps the conventional default, and
+    # ``unit_test_variables`` returns nothing for it, so that default never
+    # ends up naming anything.
     unit_tests_instance: str = "unitTests"
     x_expressions: list[str] = field(default_factory=list)
     x_raw: str = ""

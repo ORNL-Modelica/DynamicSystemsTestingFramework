@@ -2220,6 +2220,51 @@ class TestVariableIdentity:
             for record in caplog.records
         )
 
+    def test_an_override_that_names_no_variable_warns(self, caplog):
+        """A key matching nothing has always been ignored in silence. It is
+        the only sign a spec key is stale, so say it once per test."""
+        with caplog.at_level(logging.WARNING):
+            comp = compare_test(
+                _vi_test(variable_overrides={"nowhere.near": {"tolerance": 0.5}}),
+                _vi_result(),
+                _vi_reference(),
+            )
+        assert comp.passed
+        (record,) = [
+            r for r in caplog.records if "variable_overrides" in r.getMessage()
+        ]
+        assert "nowhere.near" in record.getMessage()
+        assert "migrate-variable-names" not in record.getMessage()
+
+    def test_an_override_keyed_by_an_expression_warns_and_names_the_command(
+        self, caplog
+    ):
+        """The shape an un-migrated spec has: the key IS the expression the
+        variable now carries beside its name. Say which name it meant and how
+        to rewrite it."""
+        with caplog.at_level(logging.WARNING):
+            compare_test(
+                _vi_test(variable_overrides={VI_EXPR: {"tolerance": 0.5}}),
+                _vi_result(),
+                _vi_reference(),
+            )
+        (record,) = [
+            r for r in caplog.records if "variable_overrides" in r.getMessage()
+        ]
+        message = record.getMessage()
+        assert VI_EXPR in message and VI_NAME in message
+        assert "dstf migrate-variable-names" in message
+
+    def test_an_override_that_names_a_variable_is_silent(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            comp = compare_test(
+                _vi_test(variable_overrides={VI_NAME: {"tolerance": 0.5}}),
+                _vi_result(),
+                _vi_reference(),
+            )
+        assert comp.passed and comp.variables[0].tolerance_used == 0.5
+        assert not [r for r in caplog.records if "variable_overrides" in r.getMessage()]
+
     def test_the_baseline_free_check_reads_the_variables_names(self):
         bounds = {"mode": "range", "min_value": 0.0, "max_value": 2.0}
         assert _test_is_baseline_free(
