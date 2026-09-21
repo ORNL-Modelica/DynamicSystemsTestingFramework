@@ -1995,3 +1995,288 @@ async def test_a_jump_opens_the_first_card_holding_the_row(shell):
         _click(user, jump)
         await _settled(lambda: page.open is not None)
         assert page.open == (0, T0)
+
+
+# -- following the Session plot by plot, and Focus --------------------------
+
+#: A criterion on each of A's variables: a tube on x whose band the trace
+#: leaves (33.3% inside), and a passing range on y.
+TUBE_AND_RANGE = {
+    "combinator": "and",
+    "children": [
+        {
+            "metric": "tube",
+            "variable": "x",
+            "tube_width_mode": "band",
+            "tube_points": [
+                {"time": 0.5, "upper": 0.1, "lower": 0.2},
+                {"time": 0.9, "upper": 0.1, "lower": 0.1},
+            ],
+        },
+        {"metric": "range", "variable": "y", "min_value": -1},
+    ],
+}
+#: The same band, wide enough to hold the trace: the verdict and the readout
+#: move with it ("100.0% inside tube → PASS").
+WIDE = [{"time": 0.5, "upper": 5, "lower": 5}, {"time": 0.9, "upper": 5, "lower": 5}]
+#: And the same again with one point moved along: the PARAMETERS move and
+#: the plot's band with them, while the verdict and the readout do not — a
+#: signature without `params` draws nothing here.
+MOVED = [{"time": 0.55, "upper": 5, "lower": 5}, {"time": 0.9, "upper": 5, "lower": 5}]
+
+
+def _points(shell, path, points):
+    shell.session.stage(
+        [PatchOp(A, "replace", f"{path}/tube_points", copy.deepcopy(points))]
+    )
+
+
+async def test_an_edit_redraws_only_the_plots_it_changed(shell):
+    """Follow by signature: the plot whose criterion moved is re-sent, and
+    it alone — the cost is elements on the wire, not a figure assembled."""
+    _stage_tree(shell, A, TUBE_AND_RANGE)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        cards = list(page.cards)
+        with page.client:
+            for card in cards:
+                card.show()
+        on_x, on_y = _counted(cards[0]), _counted(cards[1])
+        readout = cards[0].rows[T0].readout
+        assert "33.3%" in readout.text
+        _points(shell, T0, WIDE)
+        await _settled(lambda: "100.0%" in readout.text)
+        assert (on_x[0], on_y[0]) == (1, 0)
+        assert page.cards == cards  # painted in place, not rebuilt
+        # The band moves under the trace: the parameters are part of what the
+        # plot DRAWS, and this edit moves nothing else.
+        said = readout.text
+        _points(shell, T0, MOVED)
+        await _settled(lambda: on_x[0] == 2)
+        assert readout.text == said and on_y[0] == 0
+
+
+async def test_an_unshown_plot_is_not_built_by_an_edit(shell):
+    """A plot nobody has scrolled to stays a slot: an edit does not draw it."""
+    _stage_tree(shell, A, TUBE_AND_RANGE)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.cards[0].show()
+        readout = page.cards[0].rows[T0].readout
+        _points(shell, T0, WIDE)
+        await _settled(lambda: "100.0%" in readout.text)
+        assert page.cards[1].plot is None
+
+
+async def test_a_shape_change_rebuilds_the_cards_and_redraws_what_was_shown(shell):
+    """A new criterion is a new row, which no repaint can add. What was
+    drawn is drawn again: the browser's observer has fired for those slots
+    and will not fire twice, so a rebuild would leave them blank."""
+    _stage_tree(shell, A, TUBE_AND_RANGE)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: page.tree.rows.visible)
+        with page.client:
+            page.cards[1].show()
+        old = page.cards[1]
+        shell.session.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/metrics/children/-",
+                    {"metric": "range", "variable": "y", "max_value": 99},
+                )
+            ]
+        )
+        await _settled(lambda: len(page.cards[1].rows) == 2)
+        assert page.cards[1] is not old
+        assert page.cards[1].plot is not None
+        assert page.cards[0].plot is None  # and nothing else is drawn
+        assert page.tree.rows.visible
+
+
+async def test_a_finished_job_redraws_every_shown_plot(shell):
+    """Decision 10: a rerun changes the trajectories under every plot, and
+    no leaf's signature sees that."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.cards[0].show()
+        sent = _counted(page.cards[0])
+        with page.client:
+            page.handle({"event": "job", "state": "finished"})
+        assert sent[0] == 1
+        assert page.cards[1].plot is None  # still nothing draws an unshown plot
+
+
+async def test_a_discard_follows(shell):
+    """Discard restores the loaded verdicts: the pill goes back and the plot
+    with it."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.cards[0].show()
+        shell.session.stage([LOOSEN])  # x passes now
+        await _settled(lambda: "dstf-pill-pass" in _one(user, "plot-pill:0:x").classes)
+        sent = _counted(page.cards[0])
+        shell.session.discard()
+        await _settled(lambda: "dstf-pill-fail" in _one(user, "plot-pill:0:x").classes)
+        assert sent[0] == 1
+
+
+async def test_an_event_for_another_model_costs_this_page_nothing(shell):
+    """The page follows ITS test: an event naming other models must not cost
+    it a tree read, let alone a repaint of every row."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        session = shell.session
+        calls = [0]
+        real = session.tree_view
+
+        def counting(model_id):
+            calls[0] += 1
+            return real(model_id)
+
+        session.tree_view = counting
+        with page.client:
+            page.handle({"event": "results", "models": {D}})
+            assert calls[0] == 0
+            page.handle({"event": "loading", "phase": "results", "model": D})
+            assert calls[0] == 0
+            page.handle({"event": "results", "models": {A, D}})
+            assert calls[0] == 1
+            # A step that names no model at all is the whole project's.
+            page.handle({"event": "loading", "phase": "done"})
+        assert calls[0] == 2
+
+
+async def test_one_cards_failure_leaves_the_others_painted(shell, caplog):
+    """One plot's exception is logged against that plot and stops nothing."""
+    import logging
+
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        painted: list = []
+        real = page.cards[1].paint
+
+        def boom(view):
+            raise RuntimeError("no")
+
+        page.cards[0].paint = boom
+        page.cards[1].paint = lambda view: painted.append(view) or real(view)
+        with caplog.at_level(logging.ERROR, logger="dstf"), page.client:
+            page.sync()
+        assert painted
+        assert [r for r in caplog.records if "plot 0 of FakeLib.A" in r.getMessage()]
+
+
+async def test_a_form_edit_redraws_its_card_once_and_keeps_the_rings(shell):
+    """With an editor open, a keystroke in its form is one edit: the card it
+    is on is re-sent once, and the criterion is still the open one — its
+    rings stay on the plot being edited."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        user.find(marker=f"criterion:0:{T1}").click()
+        await _settled(lambda: page.open == (0, T1))
+        sent = _counted(card)
+        (cell,) = _numbers(page, "Lower bound (optional)")
+        with page.client:
+            cell.set_value(-3.0)
+        await _settled(lambda: (_pending(shell, T1) or {}).get("min_value") == -3.0)
+        await _settled(lambda: sent[0] == 1)
+        await asyncio.sleep(0.3)
+        assert sent[0] == 1
+        assert page.open == (0, T1)
+        assert _sans_rev(card.plot.figure) == shell.session.plot_figure(
+            D, 0, editing=(T1,)
+        )
+
+
+async def test_focus_hides_the_other_cards_and_the_bar_brings_them_back(shell):
+    """Board 5A: "Showing 1 of N plots: <name>", the focused plot's button
+    reading "Focused", and the bar's own way back to all of them."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert page.focus_bar.visible is False
+        user.find(marker="focus:0").click()
+        await _settled(lambda: page.focused == 0)
+        assert [c.card.visible for c in page.cards] == [True, False]
+        assert _one(user, "focus-bar:text").text == "Showing 1 of 2 plots: x"
+        assert _one(user, "focus-bar:all").text == "Show all 2 plots"
+        assert _one(user, "focus:0").text == "Focused"
+        user.find(marker="focus-bar:all").click()
+        await _settled(lambda: page.focused is None)
+        assert all(c.card.visible for c in page.cards)
+        assert page.focus_bar.visible is False
+        assert _one(user, "focus:0").text == "Focus"
+        user.find(marker="focus:0").click()
+        await _settled(lambda: page.focused == 0)
+        user.find(marker="focus:0").click()  # the focused plot's own button
+        await _settled(lambda: page.focused is None)
+        assert all(c.card.visible for c in page.cards)
+
+
+async def test_focus_survives_an_edit_and_ends_on_a_rebuild(shell):
+    """Focus names an INDEX: after a rebuild the indices may name other
+    plots, so it ends there — and an edit that only repaints leaves it."""
+    _stage_tree(shell, A, TUBE_AND_RANGE)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker="focus:0").click()
+        await _settled(lambda: page.focused == 0)
+        readout = page.cards[0].rows[T0].readout
+        _points(shell, T0, WIDE)
+        await _settled(lambda: "100.0%" in readout.text)
+        assert page.focused == 0 and page.cards[1].card.visible is False
+        shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "y"}]}])])
+        await _settled(lambda: len(page.cards) == 1)
+        assert page.focused is None
+        assert page.cards[0].card.visible is True
+        assert page.focus_bar.visible is False
+        assert _one(user, "focus:0").text == "Focus"
+
+
+async def test_opening_a_criterion_on_a_hidden_card_ends_the_focus(shell):
+    """The editor has to be on screen: a jump to a criterion on another
+    plot ends Focus rather than open an editor nobody can see."""
+    _stage_tree(shell, A, TWO_RANGES)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        user.find(marker="focus:0").click()
+        await _settled(lambda: page.focused == 0)
+        with page.client:
+            page.open_criterion(T1)
+        assert page.focused is None
+        assert page.open == (1, T1)
+        assert page.cards[1].card.visible is True
+
+
+async def test_a_mode_switch_keeps_the_editor_open(shell):
+    """A leaf's metric is not part of the page's SHAPE: switching modes in
+    the editor's own form repaints the row's name and leaves the editor
+    open, with the other panel following the new mode."""
+    _stage_tree(shell)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        user.find(marker=f"criterion:0:{T1}").click()
+        await _settled(lambda: page.open == (0, T1))
+        editor = _one(user, f"editor:0:{T1}")
+        (mode,) = [
+            e
+            for e in page.client.elements.values()
+            if isinstance(e, ui.select)
+            and e.props.get("label") == "mode"
+            and editor in list(_ancestors(e))
+        ]
+        with page.client:
+            mode.set_value("tube")
+        await _settled(lambda: page.cards[0].rows[T1].name.text == "tube · x")
+        assert page.open == (0, T1)
+        await _settled(lambda: not _none(user, f"{T1}:tube_points:add"))

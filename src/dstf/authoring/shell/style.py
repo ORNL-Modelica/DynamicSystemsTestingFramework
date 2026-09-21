@@ -85,6 +85,13 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-form { display: contents; }
 .dstf-field { min-width: 140px; }
 .dstf-field-wide { width: 100%; }
+/* Focus (board 5A): "Showing 1 of N plots: <name>" and the way back to all
+   of them, on the accent tint so the page says at a glance that what is
+   below it is one plot of several. */
+.dstf-focus-bar {
+  background: var(--dstf-selection); border: 1px solid var(--dstf-accent);
+  border-radius: 4px; padding: 4px 12px;
+}
 /* Eight rows of 42 px, and then the rows scroll (board 2A) — the
    container this sits on holds the rows alone, never `Add row`. */
 .dstf-table-scroll { max-height: 336px; overflow-y: auto; }

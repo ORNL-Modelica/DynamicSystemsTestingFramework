@@ -63,6 +63,10 @@ class TestPage:
         self.column: ui.column | None = None
         self._shape: Any = None
         self.open: tuple[int, str] | None = None  # (plot index, leaf path)
+        self.focused: int | None = None  # the one plot Focus is showing
+        self.focus_bar: ui.row | None = None
+        self.focus_text: ui.label | None = None
+        self.focus_all: ui.button | None = None
 
     async def build(self, model_id: str) -> None:
         self.client = ui.context.client
@@ -86,6 +90,18 @@ class TestPage:
             self.count = (
                 ui.label().classes("text-secondary text-xs").mark("plots:count")
             )
+            self.focus_bar = (
+                ui.row().classes("dstf-focus-bar items-center gap-3 w-full")
+            ).mark("focus-bar")
+            with self.focus_bar:
+                self.focus_text = ui.label().mark("focus-bar:text")
+                ui.space()
+                self.focus_all = (
+                    ui.button(on_click=self.show_all)
+                    .props("flat dense no-caps")
+                    .mark("focus-bar:all")
+                )
+            self.focus_bar.set_visibility(False)
             self.column = ui.column().classes("dstf-plots w-full gap-3").mark("plots")
         ui.on("dstf_plot_visible", lambda e: self.on_visible(e.args))
         view = self.shell.session.tree_view(model_id)
@@ -172,6 +188,11 @@ class TestPage:
         card = self.cards[index]
         if path not in card.rows:
             return
+        if self.focused is not None and self.focused != index:
+            # The editor has to be on screen: the row it opens under is on a
+            # card Focus is hiding (board 5A shows ONE plot).
+            self.focused = None
+            self._paint_focus()
         self._close()
         self.open = (index, path)
         card.show()
@@ -239,6 +260,10 @@ class TestPage:
         # redraw — these cards are about to be dropped, and one of them may
         # be a plot the staged layout no longer has.
         self._close()
+        # Focus names an INDEX, and after this the indices may name other
+        # plots; the plots a user had drawn are re-drawn where they are left.
+        self.focused = None
+        shown = {card.index for card in self.cards if card.plot is not None}
         for card in self.cards:
             card.dispose()
         self.column.clear()
@@ -248,6 +273,13 @@ class TestPage:
             self.cards = [
                 PlotCard(self, plot.index, plot, view, tracked) for plot in plots
             ]
+        for card in self.cards:
+            # A rebuild must not blank what the user was looking at: the
+            # browser's observer has already fired for those slots and will
+            # not fire again.
+            if card.index in shown:
+                card.show()
+        self._paint_focus()
         project = session.project
         test = project.test(self.model_id) if project is not None else None
         if not plots:
@@ -274,6 +306,39 @@ class TestPage:
 
     def _observe(self) -> None:
         ui.run_javascript(OBSERVE)
+
+    # -- Focus -----------------------------------------------------------------
+
+    def focus(self, index: int) -> None:
+        """Board 5A: Focus is a button on each plot, and the focused plot's
+        button reads "Focused" and is the way out of it, like the bar's."""
+        self.focused = None if self.focused == index else index
+        self._paint_focus()
+
+    def show_all(self) -> None:
+        self.focused = None
+        self._paint_focus()
+
+    def _paint_focus(self) -> None:
+        """The bar and every card's visibility, from `focused` as it is now
+        — the one place either is written, so a rebuild resets both by
+        calling it."""
+        if self.focus_bar is None or self.focus_text is None:
+            return
+        if self.focused is not None and not 0 <= self.focused < len(self.cards):
+            self.focused = None
+        focused = self.focused
+        for card in self.cards:
+            card.card.set_visibility(focused is None or card.index == focused)
+            card.focus.set_text("Focused" if card.index == focused else "Focus")
+        self.focus_bar.set_visibility(focused is not None)
+        if focused is None or self.focus_all is None:
+            return
+        plots = plural(len(self.cards), "plot")
+        name = ", ".join(self.cards[focused].resolved.series)
+        self.focus_text.set_text(f"Showing 1 of {plots}: {name}")
+        self.focus_all.set_text(f"Show all {plots}")
+        self.cards[focused].show()
 
     def shape(self, view: dict | None) -> Any:
         """What the cards are BUILT from and cannot be repainted through:
@@ -330,6 +395,10 @@ class TestPage:
         for card in self.cards:
             try:
                 card.paint(view)
+                if force:
+                    card.redraw(view)
+                else:
+                    card.redraw_if_moved(view)
             except Exception:  # one card's failure is not another's
                 logger.exception("plot %s of %s", card.index, self.model_id)
 
@@ -337,7 +406,11 @@ class TestPage:
         self.header.handle(event)
         if self.actions is not None:
             self.actions.refresh()
-        if event["event"] in ("results", "spec", "loading", "opened", "job"):
+        if event["event"] == "job":
+            self.sync(force=True)
+        elif event["event"] in ("results", "spec", "loading", "opened") and self._mine(
+            event
+        ):
             self.sync()
 
     def _mine(self, event: dict[str, Any]) -> bool:

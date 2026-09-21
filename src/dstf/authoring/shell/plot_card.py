@@ -163,8 +163,8 @@ class PlotCard:
                 ui.space()
                 # The plot's whole toolbar (decision 9): the legend already
                 # toggles the overlays and the error traces.
-                self.focus = ui.button("Focus").props("flat dense no-caps")
-                self.focus.mark(f"focus:{index}")
+                self.focus = ui.button("Focus", on_click=partial(page.focus, index))
+                self.focus.props("flat dense no-caps").mark(f"focus:{index}")
             if resolved.missing:
                 ui.label(f"Not in this result: {', '.join(resolved.missing)}").classes(
                     "dstf-why"
