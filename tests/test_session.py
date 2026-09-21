@@ -2127,6 +2127,28 @@ class TestPlots:
         assert s.tracked(A) == ["x", "y"]
         assert [p.series for p in s.plots(A)] == [("x",), ("y",)]
 
+    def test_a_failed_simulations_partial_result_is_not_tracked(self, tmp_path):
+        """A backend that stopped mid-run leaves what it had in the file.
+        Listing those variables gave the page a card each for a run that
+        produced nothing the test asked for (the final review); the page
+        says "no plots: this test has no result" instead."""
+        s = self._open(tmp_path)
+        assert s.tracked(B) == ["x", "y"]
+        tt = np.asarray([i / 4 for i in range(5)])
+        # The Python driver's reader drops the variables of a failed run;
+        # a reader that keeps what the run wrote — a .mat file truncated
+        # mid-simulation — hands this in.
+        s.project.results[B] = TestResult(
+            model_id=B,
+            success=False,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name="x"),
+                VariableResult(index=2, time=tt, values=2 * tt, name="y"),
+            ],
+        )
+        assert s.tracked(B) == []
+        assert s.plots(B) == ()
+
     def test_variable_names_lists_the_file_tracked_first(self, tmp_path):
         s = self._open(tmp_path)
         assert s.variable_names(A) == ["x", "y", "a0", "z"]

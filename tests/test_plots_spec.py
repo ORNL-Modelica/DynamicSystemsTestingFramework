@@ -204,8 +204,9 @@ class _Var:
 
 
 class _Result:
-    def __init__(self, *variables):
+    def __init__(self, *variables, success=True):
         self.variables = list(variables)
+        self.success = success
 
 
 def test_the_scored_names_come_first_then_the_rest_of_the_result():
@@ -245,6 +246,24 @@ def test_a_nameless_result_variable_is_left_to_the_comparison():
 def test_a_repeated_scored_name_is_listed_once():
     """Several leaves may score one variable."""
     assert tracked_names(["x", "x", "y"], None) == ["x", "y"]
+
+
+def test_a_variable_a_tree_scores_by_its_raw_name_is_not_listed_twice():
+    """The tree-path variant of the same duplicate: an AUTHORED tree may name
+    the variable as the result file spells it, and the rest-of-result pass
+    then added the comparison's label for the SAME trajectory beside it."""
+    result = _Result(_Var("cat(1, a, b)", 1), _Var("y", 2))
+    assert tracked_names(["cat(1, a, b)", "y"], result) == ["cat(1, a, b)", "y"]
+
+
+def test_a_failed_simulations_partial_result_contributes_nothing():
+    """A backend that stopped mid-run still writes what it had. Those are not
+    the test's plots: the page drew a card per half-written variable, and the
+    report a section (the final review). The scored names, if a comparison
+    somehow has any, still stand."""
+    partial = _Result(_Var("x", 1), _Var("y", 2), success=False)
+    assert tracked_names([], partial) == []
+    assert tracked_names(["x"], partial) == ["x"]
 
 
 def test_no_result_leaves_the_scored_names_alone():

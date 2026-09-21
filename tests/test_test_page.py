@@ -1195,6 +1195,28 @@ async def test_an_empty_plots_key_does_not_blame_the_baseline(shell):
         assert _one(user, "tree:summary").text == "0 pass · 2 fail"
 
 
+async def test_a_failed_simulations_partial_result_draws_no_cards(shell):
+    """A reader that keeps what a stopped run wrote hands the page a result
+    with variables and `success=False`. They are not the test's plots — a
+    card each for a run that produced nothing the test asked for (the final
+    review) — and the reason is the run, not the baseline."""
+    from dstf.backends.types import TestResult
+
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, B)
+        assert len(page.cards) == 2
+        result = shell.session.project.results[B]
+        shell.session.project.results[B] = TestResult(
+            model_id=B,
+            success=False,
+            variables=list(result.variables),
+        )
+        with page.client:
+            page.sync()
+        assert page.cards == []
+        assert _one(user, "plots:count").text == "no plots: this test has no result"
+
+
 async def test_a_result_with_no_variables_says_that_and_not_no_baseline(tmp_path):
     """The third reason: a successful result the test tracks nothing of.
     The tree's line is still the baseline's — the two sentences answer two

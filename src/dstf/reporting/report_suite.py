@@ -157,10 +157,18 @@ def plot_inputs(test, comp_variables, result, backend_cls, test_dir):
     a result file through — still opens no result FILE: the default layout
     is one plot per tracked name and ``result`` already holds every one of
     them in memory, so 331 TRANSFORM reports pay nothing.
+
+    Nothing scored and no ``plots`` key is the one case with NO default
+    layout: the page's "Simulated Variables (No Baseline)" block already
+    draws the whole result, so a section per tracked name drew every
+    variable of that page twice (the final review). A test that ASKED for a
+    layout still gets it, drawn from the same no-baseline trajectories.
     """
     from ..discovery.plots import resolved_plots, tracked_names
 
     if test is None:
+        return None, {}
+    if test.plots is None and not comp_variables:
         return None, {}
     tracked = tracked_names([v.name for v in (comp_variables or [])], result)
     if test.plots is None or backend_cls is None or test_dir is None:
@@ -233,8 +241,9 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
         if t.get("name")
     }
     # Disjoint by construction: no-baseline trajectories exist only when
-    # nothing was scored, and then `plot_inputs` takes the result's own list
-    # as tracked and reads only what is NOT in it.
+    # nothing was scored, and then `plot_inputs` resolves a layout only for
+    # a test that DECLARED one — taking the result's own list as tracked and
+    # reading only what is not in it.
     arrays = {**(extra_series or {}), **nobaseline}
     if plots is None:
         plots = tuple(

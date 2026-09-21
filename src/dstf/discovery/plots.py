@@ -114,8 +114,15 @@ def tracked_names(scored: Sequence[str], result: object) -> list[str]:
     A result variable is taken under :func:`comparison.comparator.variable_label`,
     the label the comparison scores it by: reading the RAW name here listed a
     ``cat(...)``-named variable twice, once as ``x[N]`` and once as itself,
-    and the page drew it twice (the 3b review). A variable the result file
-    left nameless is the comparison's to label and is not added from here.
+    and the page drew it twice (the 3b review). It is skipped under EITHER
+    spelling — an authored tree may score it by the raw name the result file
+    carries, and adding the label beside it is the same duplicate by the
+    other road (the final review). A variable the result file left nameless
+    is the comparison's to label and is not added from here.
+
+    A result of a simulation that FAILED contributes nothing: what a backend
+    wrote before it stopped is a partial file, not the test's plots, and the
+    page drew a card per half-written variable (the final review).
 
     ``scored`` comes first even when the tree's order differs from the
     result file's: it is the order the test's author wrote."""
@@ -126,13 +133,16 @@ def tracked_names(scored: Sequence[str], result: object) -> list[str]:
     names = [name for name in scored if name]
     have = set(names)
     out = list(dict.fromkeys(names))
+    if not getattr(result, "success", True):
+        return out
     for var in getattr(result, "variables", None) or ():
         if not var.name:
             continue
         label = variable_label(var.name, var.index)
-        if label not in have:
-            have.add(label)
-            out.append(label)
+        if label in have or var.name in have:
+            continue
+        have.add(label)
+        out.append(label)
     return out
 
 

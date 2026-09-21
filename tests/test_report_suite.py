@@ -1432,10 +1432,13 @@ class TestPlotSections:
         )
         return page, sidecar
 
-    def _render_no_baseline(self, tmp_path, **kw):
+    def _render_no_baseline(self, tmp_path, *, success=True, resolve=False, **kw):
         """No reference and no comparisons: the page's no-baseline path,
         where ``variables_by_name`` is empty and every tracked series lives
-        in ``nobaseline_trajectories``."""
+        in ``nobaseline_trajectories``. ``resolve`` takes the layout from
+        `plot_inputs`, the way the run does, instead of the caller's
+        ``plots=``; ``success=False`` is a simulation that stopped partway
+        and left what it had behind."""
         import json
         from pathlib import Path
 
@@ -1443,12 +1446,12 @@ class TestPlotSections:
 
         from dstf.backends.types import TestResult, VariableResult
         from dstf.discovery.test_registry import TestModel
-        from dstf.reporting.report_suite import generate_comparison_plots
+        from dstf.reporting.report_suite import generate_comparison_plots, plot_inputs
 
         t = np.linspace(0.0, 1.0, 51)
         result = TestResult(
             model_id="M",
-            success=True,
+            success=success,
             variables=[
                 VariableResult(index=1, name="x", time=t, values=np.sin(t)),
                 VariableResult(index=2, name="y", time=t, values=np.cos(t)),
@@ -1460,7 +1463,10 @@ class TestPlotSections:
             source_package="Fixture",
             short_name="M",
             n_vars=2,
+            plots=kw.pop("layout", None),
         )
+        if resolve:
+            kw["plots"], kw["extra_series"] = plot_inputs(test, [], result, None, None)
         plot_dir = tmp_path / "plots"
         html = generate_comparison_plots(
             "M", None, result, [], plot_dir, test_model=test, **kw
@@ -1570,6 +1576,45 @@ class TestPlotSections:
         # It has no criteria because it has no baseline — the no-baseline
         # block below says so; the section must not claim a second reason.
         assert "is plot only" not in page
+
+    def test_a_no_baseline_test_with_no_layout_is_only_its_no_baseline_block(
+        self, tmp_path
+    ):
+        """Nothing was scored and the test declares no ``plots``: the result
+        is drawn ONCE, by the "Simulated Variables (No Baseline)" block that
+        has always drawn it. Resolving a default section per tracked name as
+        well put every variable on the page twice — a titled section above,
+        the same curve again below (the final review)."""
+        import re
+
+        page, sidecar = self._render_no_baseline(tmp_path, resolve=True)
+        ids = re.findall(r'id="((?:variable-section|plot|nb-plot)-\d+)"', page)
+        assert ids == ["nb-plot-0", "nb-plot-1"]
+        assert sidecar["plots"] == []
+
+    def test_a_failed_simulations_partial_result_is_not_a_layout(self, tmp_path):
+        """`success=False` with variables in it: whatever the backend wrote
+        before it stopped. It is not the test's plots — the page drew a
+        section per half-written variable (the final review)."""
+        import re
+
+        page, _ = self._render_no_baseline(tmp_path, success=False, resolve=True)
+        ids = re.findall(r'id="((?:variable-section|plot)-\d+)"', page)
+        assert ids == []
+
+    def test_a_no_baseline_test_keeps_the_layout_it_declared(self, tmp_path):
+        """The other half of the rule: a test that ASKED for a layout gets
+        it, drawn from its no-baseline trajectories."""
+        import re
+
+        from dstf.discovery.plots import parse_plots
+
+        page, sidecar = self._render_no_baseline(
+            tmp_path, resolve=True, layout=parse_plots([{"series": [{"var": "x"}]}])
+        )
+        ids = re.findall(r'id="((?:variable-section|plot|nb-plot)-\d+)"', page)
+        assert ids == ["variable-section-0", "plot-0", "nb-plot-0", "nb-plot-1"]
+        assert sidecar["plots"] == [{"kind": "time", "series": ["x"], "missing": []}]
 
     def test_a_plot_with_one_or_no_drawn_series_is_not_told_about_overlays(
         self, tmp_path
@@ -1907,13 +1952,40 @@ class TestBothTiersDrawTheSamePlots:
         assert self._tool(s, A) == [("x",), ("y",)]
         assert self._report(s, A) == [("x",), ("y",)]
 
+    @staticmethod
+    def _nobaseline(session, model):
+        """The names the page's no-baseline block draws. A test with nothing
+        scored has NO per-variable sections — that block has always drawn
+        its whole result, and a default section each drew every variable a
+        second time (the final review)."""
+        from dstf.reporting.context_builder import _build_template_context
+
+        project = session.project
+        comp = session.comparisons[model]
+        ctx = _build_template_context(
+            model,
+            list(comp.variables),
+            project.store.get_reference(model),
+            None,
+            None,
+            test_model=project.test(model),
+            result=project.results.get(model),
+            metric_tree=comp.metric_tree,
+        )
+        return [traj["name"] for traj in ctx["nobaseline_trajectories"]]
+
     def test_every_fixture_model_draws_the_same_plots_on_both_tiers(self, tmp_path):
         from test_session import A, B, D, G, _two_var_project
 
         cfg, work = _two_var_project(tmp_path)
         s = self._session(cfg, work)
-        for model in (A, B, D, G):
+        for model in (A, D, G):
             assert self._tool(s, model) == self._report(s, model), model
+        # B has no baseline, so nothing is scored: the same two variables,
+        # in the same order, drawn by the block that draws such a test.
+        assert self._tool(s, B) == [("x",), ("y",)]
+        assert self._report(s, B) == []
+        assert self._nobaseline(s, B) == ["x", "y"]
 
     def test_a_relabelled_variable_is_drawn_once_on_both_tiers(self, tmp_path):
         """The comparison scores `cat(1, a, b)` as `x[1]`; reading the RAW
@@ -1925,15 +1997,105 @@ class TestBothTiersDrawTheSamePlots:
         assert self._tool(s, A) == [("x[1]",), ("y",)]
         assert self._report(s, A) == [("x[1]",), ("y",)]
 
-    def test_a_relabelled_variable_with_no_baseline_draws_its_trace(self, tmp_path):
-        """Nothing is scored, so the label is the page's only handle on the
-        trajectory: a view that could not resolve `x[1]` drew an empty plot
+    def test_a_relabelled_variable_whose_baseline_lost_it_is_drawn_once(self, tmp_path):
+        """`with_baseline=False` does NOT reach the no-baseline regime: the
+        fixture's one-variable baseline for A is stored before it, so A is
+        scored against a reference that has none of its variables — the
+        comparator's lost-baseline branch (the final review). What this
+        pins is that the label is the page's only handle on the trajectory
+        there too: a view that could not resolve `x[1]` drew an empty plot
         under a card the same list had just asked for."""
+        from dstf.reporting.status import classify
         from test_session import A, _relabelled_project
 
         cfg, work = _relabelled_project(tmp_path, with_baseline=False)
         s = self._session(cfg, work)
+        assert s.project.store.get_reference(A) is not None
+        assert classify(s.comparisons[A]) == "FAIL"
         assert self._tool(s, A) == [("x[1]",), ("y",)]
         assert self._report(s, A) == [("x[1]",), ("y",)]
         view = s.view(A, "x[1]")
         assert len(view.act_values) == 5
+
+    def test_a_relabelled_tracked_variable_no_criterion_scores_draws_its_trace(
+        self, tmp_path
+    ):
+        """A tracked variable no leaf scores rides in ``extra_series``, from
+        the result in memory — and it is read there under the LABEL the page
+        plots it by. Reading the RAW name matched none of the tracked names,
+        so the section drew nothing under its own title (the final review)."""
+        import json
+
+        from dstf.reporting.context_builder import _build_template_context
+        from dstf.reporting.report_suite import plot_inputs, plot_page_keys
+        from test_session import A, _relabelled_project
+
+        cfg, work = _relabelled_project(tmp_path)
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == A:
+                entry["metrics"] = {
+                    "combinator": "and",
+                    "children": [{"metric": "nrmse", "variable": "y"}],
+                }
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        s = self._session(cfg, work)
+        project = s.project
+        comp = s.comparisons[A]
+        result = project.results.get(A)
+        plots, extra = plot_inputs(
+            project.test(A), comp.variables, result, type(project.backend), None
+        )
+        assert [plot.series for plot in plots] == [("y",), ("x[1]",)]
+        assert list(extra) == ["x[1]"] and len(extra["x[1]"][1]) == 5
+        ctx = _build_template_context(
+            A,
+            list(comp.variables),
+            project.store.get_reference(A),
+            None,
+            None,
+            test_model=project.test(A),
+            result=result,
+            metric_tree=comp.metric_tree,
+        )
+        ctx.update(plot_page_keys(ctx, plots, extra, comp.metric_tree, None))
+        section = next(s for s in ctx["plot_sections"] if s["series"] == ["x[1]"])
+        figure = ctx["plot_figures"][section["index"]]
+        (trace,) = [tr for tr in figure["data"] if tr["meta"]["kind"] == "act"]
+        assert len(trace["y"]) == 5
+
+    def test_a_relabelled_variable_with_really_no_baseline_draws_its_trace(
+        self, tmp_path
+    ):
+        """B has a result and no baseline at all, so nothing is scored and
+        the label the comparison WOULD have used is the page's only handle
+        on the trajectory."""
+        import json
+
+        from dstf.reporting.status import NO_REF, classify
+        from test_session import RELABELLED, B, _two_var_project
+
+        cfg, work = _two_var_project(tmp_path)
+        t = [i / 4 for i in range(5)]
+        (work / "test_0002" / "result.json").write_text(
+            json.dumps(
+                {
+                    "success": True,
+                    "time": t,
+                    "variables": {RELABELLED: t, "y": [2 * v for v in t]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        for entry in spec["tests"]:
+            if entry["model"] == B:
+                entry["variables"] = [RELABELLED, "y"]
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        s = self._session(cfg, work)
+        assert classify(s.comparisons[B]) == NO_REF  # the regime it is named for
+        assert s.project.store.get_reference(B) is None
+        assert self._tool(s, B) == [("x[1]",), ("y",)]
+        assert len(s.view(B, "x[1]").act_values) == 5

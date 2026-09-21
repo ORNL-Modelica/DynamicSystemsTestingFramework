@@ -590,6 +590,37 @@ async def test_the_add_form_offers_a_variable_whose_criterion_was_removed(
         assert var.options == ["x", "y"]
 
 
+async def test_the_add_form_offers_a_relabelled_variable_under_its_label(tmp_path):
+    """TRANSFORM has ~70 tests whose result carries a `cat(...)` name the
+    comparison scores as `x[1]`. The add forms read `Session.tracked`'s list,
+    so they offer the LABEL — offering the raw union listed the same
+    trajectory twice, the second time under a name no leaf can be written
+    against. An AUTHORED tree, because a relabelled test has no implicit one
+    to edit: its spec names the variable as the file spells it."""
+    import json
+
+    from test_session import _relabelled_project
+
+    cfg, work = _relabelled_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {
+                "combinator": "and",
+                "children": [{"metric": "nrmse", "variable": "y"}],
+            }
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    session = Session()
+    session.open(cfg, work_dir=work)
+    assert session.tracked(A) == ["y", "x[1]"]
+    sel = Selection(tests=frozenset({A}), variable="y")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        # The VARIABLE panel is the add form itself, drawn open.
+        (var,) = user.find(marker="apply-add:y:variable").elements
+        assert var.options == ["y", "x[1]"]
+
+
 async def test_the_cluster_add_form_on_a_nested_leaf_lands_under_its_parent(session):
     """The form's `under` is the node the cluster was drawn for, not the
     root: the new leaf joins the k-of-n."""
