@@ -4334,8 +4334,34 @@ expression: stored beside the name in the reference JSON, shown as the display
 label on both tiers, and soft-checked on every compare. Overrides, tree
 leaves, `plots` series, baseline entries, figure ids, DOM attributes and test
 markers are all the name. `backends/types.py::display_label(name, expression)`
-is the one label rule, and `distinct_labels` is what keeps two variables that
-share an expression tellable apart.
+is the one label rule; `variable_texts` is the ONE scope rule above it, and
+what keeps two variables that share an expression tellable apart.
+
+**One text rule, scoped to the test.** `variable_texts(labels, plot_series)`
+returns, per name, a `label` (the `display_label`) and a `text` — the label,
+with the name in parentheses when another name in the SCOPE carries the same
+label and the label is not already the name. The scope is every name the
+test's page can show: the result's tracked variables, the scored comparisons'
+variables and every series of the test's resolved plots, plot-only ones
+included. `reporting/context_builder.py::test_texts` builds it and both tiers
+call it — the report through `_build_template_context`, the tool through
+`Session.variable_texts` (`Session.labels` is its `text` half). The two
+surfaces that already show the muted name beside their title — the report's
+variable heading and the tool's card title — read the plain `label` there;
+every other human-facing surface reads `text`. The console, JUnit and the
+interactive review are outside the rule and keep `label_with_name`: a line of
+CI output is read with no page around it, so there is no scope to
+disambiguate within.
+
+The scope is the test because five narrower ones disagreed on one page (the
+b147918 review): a criteria row disambiguated over the SCORED list read
+`nrmse · a.Q` under a card titled `a.Q` with `unitTests.x[1]` muted beside
+it, once the other variable sharing `a.Q` lost its last criterion; a legend
+disambiguated over its PLOT read `a.Q` where the row two lines below read
+`a.Q (unitTests.x[1])`; and a plot-only variable genuinely NAMED `z` read the
+same as a tracked variable whose EXPRESSION is `z`. The `label != name` half
+of the rule is what resolves that last one: the plain `z` is unambiguous, so
+the one carrying the expression is the one that says its name.
 
 **Why.** Two layers used to rename a variable behind the scoring's back:
 `backends/common/result_variables.py::extract_variables` set the name to the
@@ -4371,8 +4397,14 @@ variable both record a non-empty expression and they differ, the test gains a
 `Expression of unitTests.x[2]: a.Q -> b.Q` — through the same channel as the
 structural warnings. It never fails the test. That is
 what makes a positional name safe: the position is the key, and the check says
-when the quantity under it moved. The check runs once per (variable, baseline)
-pair a leaf actually scores, not once per leaf.
+when the quantity under it moved. Against the PRIMARY baseline every variable
+of the result is checked; a NAMED baseline is checked only on the variables
+some leaf actually scores against it — it is imported whole, so a difference
+in a quantity nothing compares with it is not a finding about this run — and
+then once per (variable, baseline) pair, not once per leaf. A leaf that
+resolves no variable of the result (a `scalar` leaf reading a stored
+statistics path, whose `variable` is free text naming the leaf) registers
+nothing.
 
 **Overlay matching is the one exception.** `reporting/overlay_loader.py`
 matches a companion or a soft-check overlay by NAME and only then by

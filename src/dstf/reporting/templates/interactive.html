@@ -363,7 +363,7 @@ details summary:hover { color: var(--dstf-text); }
   {% for v in plot.variables %}{% if v.tree_here %}
   <div class="node-tree" id="nodes-{{ v.vidx }}" data-variable="{{ v.name }}">{% if v.tree %}{{ node(v.tree) }}{% endif %}</div>
   {% else %}
-  <div class="plot-note">{{ v.label or v.name }}: criteria are under its first plot.</div>
+  <div class="plot-note">{{ v.text or v.name }}: criteria are under its first plot.</div>
   {% endif %}{% endfor %}
   {% for label in plot.plot_only_lines %}
   <div class="plot-note">{{ label }} is plot only: no criterion scores it.</div>

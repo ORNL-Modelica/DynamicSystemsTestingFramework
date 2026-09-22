@@ -476,6 +476,7 @@ def compare_test(
                 statistics=result.statistics or {},
                 diagnostics=result.diagnostics,
             ),
+            model_id=test.model_id,
         )
         unscored = _tracked_but_not_scored(test, result)
         return TestComparison(

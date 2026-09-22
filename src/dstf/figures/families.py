@@ -8,7 +8,17 @@ folded criteria row agree on what a family is.
 A family is a DISPLAY fold, so it folds over what a person reads — the
 label, which for a UnitTests variable is the expression the model wrote.
 Callers pass a ``{name: label}`` mapping; the members stay names, because
-that is what everything else is keyed by."""
+that is what everything else is keyed by.
+
+Two rules, and the caller says which by what it passes. A RESULT-FILE NAME
+(the label a variable has when it has no expression) folds by its last
+single-integer index and nothing else — result files spell names in ways no
+whitelist anticipates (``θ[1]``, ``pipe₊T[1]`` from Julia/MTK, ``T-wall[1]``,
+``$DER.x[1]``), and every one of them was a family before expressions
+existed. An EXPRESSION the model wrote is held to the strict shape below:
+it is text a person typed, and ``sum(pipe.Qs[1])`` folded with
+``sum(pipe.Qs[2])`` gives two quantities one legend entry, one colour ramp
+and a label naming a third thing neither of them is."""
 
 from __future__ import annotations
 
@@ -16,12 +26,13 @@ import re
 from collections.abc import Mapping, Sequence
 
 _LAST_INDEX = re.compile(r"\[(\d+)\](?!.*\[\d+\])")
-#: A Modelica variable name as a RESULT FILE spells one: identifiers, dots
-#: and index brackets, optionally negated (Dymola stores a negated alias as
-#: ``-x[1]``). A quoted identifier (``a.'b c'[2]``) is collapsed to one
-#: letter first, so its spaces and punctuation do not have to be allowed
-#: everywhere.
-_PLAIN_NAME = re.compile(r"^-?[A-Za-z_][A-Za-z_0-9.\[\]]*$")
+#: A multi-dimensional index (``x[2,3]``) is not one array position.
+_MULTI_INDEX = re.compile(r"\[[^\]]*,[^\]]*\]")
+#: A Modelica variable name as a person TYPES one: identifiers (letters in
+#: any script, so ``θ[1]`` is one), dots and index brackets. A quoted
+#: identifier (``a.'b c'[2]``) is collapsed to one letter first, so its
+#: spaces and punctuation do not have to be allowed everywhere.
+_PLAIN_NAME = re.compile(r"^[^\W\d][\w.\[\]]*$")
 _QUOTED_ID = re.compile(r"'[^']*'")
 #: ``der(...)``, and only that: a derivative IS an element of the array it
 #: differentiates. Any OTHER call is a reduction over the array — ``sum(...)``
@@ -41,32 +52,43 @@ HUES: tuple[tuple[str, str, str, str], ...] = (
 def _names_an_element(text: str) -> bool:
     """Does ``text`` spell a variable, rather than compute one?
 
-    A plain name, negated or not, with any number of ``der(...)`` around
-    it. Everything else — ``sum(core.Qs[6, :])``, ``cat(1, a, b)[2]``,
+    A plain name with any number of ``der(...)`` wrappers and leading
+    minus signs around it, in any order — ``-der(x[2])`` and
+    ``der(-x[2])`` are the same quantity and must answer the same.
+    Everything else — ``sum(core.Qs[6, :])``, ``cat(1, a, b)[2]``,
     ``abs(x[1])`` — is an expression: its value is not an element of the
     array whose index it happens to end with.
     """
-    while (inner := _DER_CALL.match(text)) is not None:
+    while True:
+        if text.startswith("-"):
+            text = text[1:]
+            continue
+        inner = _DER_CALL.match(text)
+        if inner is None:
+            break
         text = inner.group(1)
     return bool(_PLAIN_NAME.match(_QUOTED_ID.sub("q", text)))
 
 
-def family_of(text: str) -> tuple[str, int] | None:
+def family_of(text: str, *, expression: bool = False) -> tuple[str, int] | None:
     """``(family key, index)`` — the text with its last ``[integer]`` emptied
     — or ``None`` when it names no element of an array.
 
-    Only a PLAIN indexed name has a family (``pipe.T[3]``,
-    ``der(pipe.T[3])``, ``pipe.medium[3].T``, ``a.'b c'[2]``, ``-x[1]``).
-    An expression the model wrote — ``cat(1, a, b)[2]``,
-    ``sum(core.Qs[6, :])``, ``sum(pipe.Qs[1])`` — is a label, not an
-    element of an array: folding two of those into ``sum(pipe.Qs[1:2])``
-    gives two quantities one legend entry, one colour ramp and a label
-    naming a third thing neither of them is.
+    ``expression=False`` (the default) reads ``text`` as a RESULT-FILE
+    NAME: anything with a single-integer last index is a family, and a
+    multi-dimensional index (``x[2,3]``) is not. This is the rule the
+    module has always applied and the only one a name ever meets — a
+    result file spells names the caller does not get to whitelist.
 
-    Over NAMES — which is every caller's input until a label differs from
-    one — this is exactly what it has always been; only expressions moved.
+    ``expression=True`` reads it as a label a person typed, and only a
+    plain indexed name qualifies (``pipe.T[3]``, ``der(pipe.T[3])``,
+    ``pipe.medium[3].T``, ``a.'b c'[2]``, ``-x[1]``). ``cat(1, a, b)[2]``,
+    ``sum(core.Qs[6, :])`` and ``sum(pipe.Qs[1])`` are computations, not
+    elements of an array.
     """
-    if not _names_an_element(text):
+    if expression and not _names_an_element(text):
+        return None
+    if _MULTI_INDEX.search(text):
         return None
     m = _LAST_INDEX.search(text)
     if m is None:
@@ -76,6 +98,14 @@ def family_of(text: str) -> tuple[str, int] | None:
 
 def _labelled(name: str, labels: Mapping[str, str] | None) -> str:
     return (labels or {}).get(name, name)
+
+
+def _family_of_member(name: str, labels: Mapping[str, str] | None):
+    """The family of what ``name`` READS as, under the rule its text earns:
+    a text that IS the name is a result-file name, anything else is a label
+    the model or the page composed."""
+    text = _labelled(name, labels)
+    return family_of(text, expression=text != name)
 
 
 def group_families(
@@ -92,7 +122,7 @@ def group_families(
     """
     groups: dict[str, list[tuple[int, str]]] = {}
     for name in names:
-        fam = family_of(_labelled(name, labels))
+        fam = _family_of_member(name, labels)
         key, index = fam if fam is not None else (name, 0)
         groups.setdefault(key, []).append((index, name))
     return [(key, [n for _, n in sorted(members)]) for key, members in groups.items()]
@@ -120,7 +150,7 @@ def family_label(
     if len(members) == 1:
         return _labelled(members[0], labels)
     indices = [
-        fam[1] for m in members if (fam := family_of(_labelled(m, labels))) is not None
+        fam[1] for m in members if (fam := _family_of_member(m, labels)) is not None
     ]
     return key.replace("[]", f"[{slice_text(indices)}]", 1) if "[]" in key else key
 

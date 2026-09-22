@@ -115,7 +115,10 @@ def test_a_family_shares_a_hue_ramped_by_index_with_one_legend_entry():
     assert {tr["legendgroup"] for tr in acts} == {"pipe.T[]"}
     assert [tr["showlegend"] for tr in acts] == [True, False, False, False]
     assert acts[0]["name"] == "pipe.T[1:5:16]"
-    assert acts[2]["hovertemplate"] == "pipe.T[11]: %{y:.4g}<extra></extra>"
+    # The label is out of the TEMPLATE: plotly.js substitutes every `%{…}`
+    # in a hovertemplate, so a label holding one was substituted away.
+    assert acts[2]["hovertemplate"] == "%{text}: %{y:.4g}<extra></extra>"
+    assert acts[2]["text"] == "pipe.T[11]"
 
 
 def test_a_second_family_and_a_scalar_take_the_next_hues():
@@ -339,7 +342,7 @@ def test_a_multi_series_plot_reads_the_labels_and_is_keyed_by_the_names():
     assert f"actual/{N1}" in by_id and f"reference/{N1}" in by_id
     assert not any("pipe.T" in i for i in by_id)
     assert by_id[f"reference/{N1}"]["name"] == "pipe.T[1] (reference)"
-    assert by_id[f"actual/{N2}"]["hovertemplate"].startswith("a.Q:")
+    assert by_id[f"actual/{N2}"]["text"] == "a.Q"
     # The legend entry of a family of one is its label.
     assert by_id[f"actual/{N2}"]["name"] == "a.Q"
 
@@ -350,8 +353,8 @@ def test_a_single_variables_hover_carries_the_label():
     # The trace NAMES stay "Actual" / "Reference" (report.js and the overlay
     # picker find them by those); the hover says which variable it is.
     assert by_id["actual"]["name"] == "Actual"
-    assert by_id["actual"]["hovertemplate"].startswith("pipe.T[1]:")
-    assert by_id["reference"]["hovertemplate"].startswith("pipe.T[1] (reference):")
+    assert by_id["actual"]["text"] == "pipe.T[1]"
+    assert by_id["reference"]["text"] == "pipe.T[1] (reference)"
 
 
 def test_a_variable_with_no_expression_draws_exactly_what_it_did():
@@ -362,6 +365,7 @@ def test_a_variable_with_no_expression_draws_exactly_what_it_did():
     assert len(base) == 2
     for trace in base:
         assert "hovertemplate" not in trace
+        assert "text" not in trace
 
 
 def test_families_fold_over_labels_not_names():
@@ -386,7 +390,7 @@ def test_a_family_label_reads_the_labels():
 
 @pytest.mark.parametrize("label", ["cat(1, a, b)[2]", "sum(core.Qs[6, :])", "a.Q"])
 def test_an_expression_that_is_not_a_plain_indexed_name_has_no_family(label):
-    assert family_of(label) is None
+    assert family_of(label, expression=True) is None
 
 
 def test_a_folded_family_of_labels_takes_one_legend_entry():
@@ -395,34 +399,6 @@ def test_a_folded_family_of_labels_takes_one_legend_entry():
     )
     legend = [tr["name"] for tr in fig["data"] if tr.get("showlegend")]
     assert legend == ["pipe.T[1:2]"]
-
-
-#: Result-file variable NAMES, of every shape a `.mat` file produces:
-#: plain, negated aliases, quoted identifiers, derivatives, multi-dimension
-#: indices, a non-integer index. `family_of` answers these exactly as it did
-#: before labels existed — only EXPRESSIONS changed (2ac8c8c).
-RESULT_FILE_NAMES = [
-    "pipe.T[1]",
-    "pipe.medium[3].T",
-    "unitTests.x[3]",
-    "a.b[1].c[2]",
-    "a[1, 2]",
-    "a[1,2]",
-    "x[2, 3]",
-    "x[2,3]",
-    "a[1, 2].b[3]",
-    "a.b[3][1, 2]",
-    "-x[1]",
-    "der(pipe.T[3])",
-    "der(der(x[1]))",
-    "der(x[2, 3])",
-    "a.'b c'[2]",
-    "'quoted.name'[2]",
-    "x[end]",
-    "x[ 1 ]",
-    "x",
-    "q",
-]
 
 
 def _family_of_at_2ac8c8c(name: str):
@@ -439,9 +415,99 @@ def _family_of_at_2ac8c8c(name: str):
     return name[: m.start()] + "[]" + name[m.end() :], int(m.group(1))
 
 
-@pytest.mark.parametrize("name", RESULT_FILE_NAMES)
-def test_family_of_answers_a_name_exactly_as_it_did_before_labels(name):
+def _generated_result_file_names(n: int, seed: int = 20260921) -> list[str]:
+    """Result-file variable NAMES of every shape a solver writes one: dotted
+    components, quoted identifiers (spaces, dots, brackets, commas inside),
+    letters outside ASCII (`θ`, `Ω`) and symbols no whitelist anticipates
+    (Julia/MTK's `₊`, Dymola's `$DER.`, a hyphen), single and
+    multi-dimensional indices, negated aliases, `der(...)` nested and with a
+    second argument."""
+    import random
+
+    rng = random.Random(seed)
+    idents = [
+        "a",
+        "pipe",
+        "T",
+        "x_1",
+        "_q",
+        "medium",
+        "der",
+        "sum",
+        "θ",
+        "Ωx",
+        "pipe₊T",
+        "T-wall",
+        "$DER.x",
+        "$cse1",
+        "'b c'",
+        "'a.b'",
+        "'a[1]'",
+        "'x(y)'",
+        "'a,b'",
+    ]
+
+    def index() -> str:
+        r = rng.random()
+        if r < 0.5:
+            return f"[{rng.randint(1, 12)}]"
+        if r < 0.65:
+            return f"[{rng.randint(1, 9)},{rng.randint(1, 9)}]"
+        if r < 0.8:
+            return f"[{rng.randint(1, 9)}, {rng.randint(1, 9)}]"
+        if r < 0.85:
+            return f"[{rng.randint(1, 3)},{rng.randint(1, 3)},{rng.randint(1, 3)}]"
+        if r < 0.9:
+            return "[:]"
+        return ""
+
+    out = []
+    for _ in range(n):
+        name = ".".join(
+            rng.choice(idents) + (index() if rng.random() < 0.5 else "")
+            for _ in range(rng.randint(1, 4))
+        )
+        r = rng.random()
+        if r < 0.15:
+            name = f"der({name})"
+        elif r < 0.2:
+            name = f"der(der({name}))"
+        elif r < 0.25:
+            name = f"der({name}, 2)"
+        if rng.random() < 0.1:
+            name = "-" + name
+        out.append(name)
+    return out
+
+
+def test_family_of_answers_a_name_exactly_as_it_did_before_labels():
+    """A differential over generated names, not a hand-list: the hand-list
+    agreed while `θ[1]`, `pipe₊T[1]`, `T-wall[1]`, `$DER.x[1]`, `-der(x[2])`
+    and `der(x[2], 2)` had all silently stopped being families (the b147918
+    review fuzzed 300k names against this copy). A result file spells names
+    the figure layer does not get to whitelist."""
+    names = _generated_result_file_names(25000)
+    assert len(set(names)) > 1000  # the generator is not producing one name
+    differing = [n for n in names if family_of(n) != _family_of_at_2ac8c8c(n)]
+    assert differing == []
+    # and it is a real test: some of them DO have families.
+    assert any(family_of(n) is not None for n in names)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["θ[1]", "pipe₊T[1]", "T-wall[1]", "$DER.x[1]", "-der(x[2])", "der(x[2], 2)"],
+)
+def test_a_name_no_ascii_whitelist_anticipates_still_has_a_family(name):
+    """The regression the fuzz found: each of these was a family at 2ac8c8c,
+    and `θ[1..3]` drawn as three families is three hues for one array."""
     assert family_of(name) == _family_of_at_2ac8c8c(name)
+    assert family_of(name) is not None
+
+
+def test_non_ascii_names_fold_into_one_family():
+    names = ["θ[1]", "θ[2]", "θ[3]"]
+    assert group_families(names) == [("θ[]", names)]
 
 
 @pytest.mark.parametrize(
@@ -452,7 +518,15 @@ def test_a_reduction_over_an_array_is_not_an_element_of_one(label):
     """`sum(pipe.Qs[1])` and `sum(pipe.Qs[2])` are two quantities. Folded,
     they took one legend entry, one colour ramp and a label —
     `sum(pipe.Qs[1:2])` — naming a third thing neither of them is."""
-    assert family_of(label) is None
+    assert family_of(label, expression=True) is None
+
+
+@pytest.mark.parametrize("label", ["-der(x[2])", "der(-x[2])"])
+def test_a_negated_derivative_is_an_element_either_way_round(label):
+    """The two spellings of one quantity must agree: `der(-x[2])` was an
+    element of an array and `-der(x[2])` was not."""
+    fam = family_of(label, expression=True)
+    assert fam is not None and fam[1] == 2
 
 
 def test_two_reductions_of_one_array_stay_two_families():
@@ -463,12 +537,25 @@ def test_two_reductions_of_one_array_stay_two_families():
 def test_two_series_sharing_one_expression_read_label_and_name():
     """`x={a.Q, a.Q}` is legal: two result-file variables, one expression.
     Read as the label alone, one legend entry, one hover and one colour
-    stood for both with no way to tell which curve was which."""
-    fig = plot_figure([_labelled(N1, "a.Q", ref=True), _labelled(N2, "a.Q", scale=2.0)])
+    stood for both with no way to tell which curve was which.
+
+    The disambiguation happens ONCE, in the TEST's label scope; the figure
+    draws what the views were built with. Disambiguating here as well was
+    a second scope, and a variable read `a.Q` in this legend while its
+    criteria row read `a.Q (unitTests.x[1])`."""
+    from dstf.backends.types import variable_texts
+
+    texts = variable_texts({N1: "a.Q", N2: "a.Q"})
+    fig = plot_figure(
+        [
+            _labelled(N1, texts[N1].text, ref=True),
+            _labelled(N2, texts[N2].text, scale=2.0),
+        ]
+    )
     by_id = {tr["meta"]["id"]: tr for tr in fig["data"] if tr.get("meta")}
     assert by_id[f"actual/{N1}"]["name"] == f"a.Q ({N1})"
     assert by_id[f"actual/{N2}"]["name"] == f"a.Q ({N2})"
-    assert by_id[f"actual/{N1}"]["hovertemplate"].startswith(f"a.Q ({N1}):")
+    assert by_id[f"actual/{N1}"]["text"] == f"a.Q ({N1})"
     assert by_id[f"reference/{N1}"]["name"] == f"a.Q ({N1}) (reference)"
     # Two legend entries, two hues: `label (name)` belongs to no family.
     assert [tr["name"] for tr in fig["data"] if tr.get("showlegend")] == [
@@ -489,6 +576,24 @@ def test_two_series_with_their_own_expressions_read_the_label_alone():
 
 
 @pytest.mark.parametrize("build", ["single", "multi"])
+def test_a_label_holding_a_plotly_placeholder_is_printed_not_substituted(build):
+    """`%{x}` in a hovertemplate is a data reference plotly.js substitutes,
+    and it has no escape: an expression a model wrote as `a%{x}b` came out
+    of the hover as `ab`. The label rides in the trace's `text` instead,
+    and the template is the only thing holding a placeholder."""
+    views = [_labelled(N1, "a%{x}b", ref=True)]
+    if build == "multi":
+        views.append(_labelled(N2, "c.Q"))
+    fig = plot_figure(views) if build == "multi" else variable_figure(views[0])
+    drawn = [tr for tr in fig["data"] if tr.get("meta", {}).get("kind") == "act"]
+    # One view names its actual trace "actual"; several name it "actual/<name>".
+    mine = next(tr for tr in drawn if tr["meta"]["id"] in ("actual", f"actual/{N1}"))
+    assert "a%{x}b" in mine["text"]
+    assert "a%{x}b" not in mine["hovertemplate"]
+    assert mine["hovertemplate"] == "%{text}: %{y:.4g}<extra></extra>"
+
+
+@pytest.mark.parametrize("build", ["single", "multi"])
 def test_a_label_holding_markup_reaches_plotly_escaped(build):
     """Plotly renders a trace name and a hovertemplate through a small HTML
     subset, so `a<b>c` would lose its middle. The name is a KEY and is
@@ -498,7 +603,7 @@ def test_a_label_holding_markup_reaches_plotly_escaped(build):
         views.append(_labelled(N2, "d&e"))
     fig = plot_figure(views) if build == "multi" else variable_figure(views[0])
     texts = [
-        tr.get("name", "") + tr.get("hovertemplate", "")
+        tr.get("name", "") + tr.get("text", "")
         for tr in fig["data"]
         if tr.get("meta", {}).get("kind") in ("act", "ref")
     ]

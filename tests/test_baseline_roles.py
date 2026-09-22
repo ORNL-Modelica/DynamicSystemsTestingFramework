@@ -8,6 +8,7 @@ companions (plot-only overlays, never scored against).
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -128,14 +129,40 @@ class TestSoftCheckStorage:
             "name": "unitTests.x[1]",
             "index": 1,
         }
-        before = list(entry)
+        before = copy.deepcopy(entry)
         store.add_soft_check(
             test.model_id, "odd-order", time=[0.0, 1.0], variables=[entry]
         )
         sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "odd-order.json"
         (written,) = json.loads(sc_file.read_text())["variables"]
         assert list(written) == ["index", "name", "expression", "values", "unit"]
-        assert list(entry) == before
+        # Values as well as key order: the caller's entry may be a live
+        # result's, and this writer reorders and defaults fields.
+        assert entry == before and list(entry) == list(before)
+
+    def test_a_null_expression_is_written_as_the_empty_text(self, store_with_primary):
+        """JSON someone else wrote may hold `"expression": null` — an
+        `import-baseline` source, a hand-edited file. Every reader of the
+        field takes `""` for "no expression" (`display_label`, the soft
+        check, the migrate hint); `None` is a third value none of them
+        tests for, and it would be written back out as `null`."""
+        store, test = store_with_primary
+        store.add_soft_check(
+            test.model_id,
+            "nulled",
+            time=[0.0, 1.0],
+            variables=[
+                {
+                    "index": 1,
+                    "name": "unitTests.x[1]",
+                    "expression": None,
+                    "values": [0.0, 1.0],
+                }
+            ],
+        )
+        sc_file = store.ref_dir / "soft_checks" / "ref_0001" / "nulled.json"
+        (written,) = json.loads(sc_file.read_text())["variables"]
+        assert written["expression"] == ""
 
     def test_get_roundtrip(self, store_with_primary):
         store, test = store_with_primary

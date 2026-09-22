@@ -32,7 +32,7 @@ from .modes import resolve_mode
 from .registry import DEFAULT_METRIC, MetricDescriptor
 from .registry import combinator as registry_combinator
 from .registry import metric as registry_metric
-from .tree_spec import CombinatorSpec, LeafSpec, SpecNode
+from .tree_spec import CombinatorSpec, LeafSpec, SpecNode, resolves_a_variable
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,7 @@ def evaluate_spec(
     dataset_kind: DatasetType = DatasetType.TIME_SERIES,
     scalars: ScalarSources | None = None,
     path: str = "/metrics",
+    model_id: str = "",
     _warned: set[tuple[str, str]] | None = None,
 ) -> MetricResult:
     """Walk a spec tree and produce an evaluated :class:`MetricResult` root.
@@ -106,6 +107,10 @@ def evaluate_spec(
     ``path`` is this node's RFC 6902 path; leaves are stamped with it
     (``stamp_leaf_path``) so results address the spec, not a position in a
     flat list.
+
+    ``model_id`` only names the test in the migrate-hint log line: a suite
+    of tests printing the same nameless sentence says how many baselines
+    are un-migrated and not one of the models to run the command over.
     """
     sources = scalars if scalars is not None else ScalarSources()
     # The migrate hint is a fact about a VARIABLE's baseline entry, not
@@ -124,6 +129,7 @@ def evaluate_spec(
             dataset_kind,
             sources,
             seen,
+            model_id,
         )
         stamp_leaf_path(result, path)
         return result
@@ -137,6 +143,7 @@ def evaluate_spec(
             dataset_kind,
             sources,
             path=f"{path}/children/{i}",
+            model_id=model_id,
             _warned=seen,
         )
         for i, c in enumerate(spec.children)
@@ -294,6 +301,7 @@ def _evaluate_leaf(
     dataset_kind: DatasetType = DatasetType.TIME_SERIES,
     scalars: ScalarSources | None = None,
     warned: set[tuple[str, str]] | None = None,
+    model_id: str = "",
 ) -> MetricResult:
     # Own set when called outside a walk: one leaf, one line, never silence.
     warned = set() if warned is None else warned
@@ -305,10 +313,9 @@ def _evaluate_leaf(
     # expression onto whatever comparison it returns — a leaf that fails
     # before it ever scores (a lost baseline, a misconfigured metric) is
     # exactly the one a person reads, so it must not fall back to the bare
-    # name (the Task 3 review).
-    scores_stored_scalar = (
-        desc is not None and desc.accepts_quantity and isinstance(quantity, str)
-    )
+    # name (the Task 3 review). ONE definition of "resolves no variable",
+    # shared with the spec walk the expression soft-check reads.
+    scores_stored_scalar = not resolves_a_variable(leaf)
     var_result = (
         None if scores_stored_scalar else var_results_by_name.get(leaf.variable)
     )
@@ -390,7 +397,8 @@ def _evaluate_leaf(
                 if hint and key not in warned:
                     warned.add(key)
                     logger.warning(
-                        "baseline %r holds no variable named %r%s",
+                        "%s: baseline %r holds no variable named %r%s",
+                        model_id or "?",
                         leaf.against,
                         leaf.variable,
                         hint,

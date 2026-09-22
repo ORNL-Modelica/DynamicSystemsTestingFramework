@@ -629,7 +629,7 @@ class TestEmbeddedFigures:
         # embedded side is ``meta.samples`` where the figure layer stamped
         # one, and the x length only where it did not.
         ctx = {
-            "plot_sections": [{"index": 0, "title": "x"}],
+            "plot_sections": [{"index": 0, "title": "x", "series": ["x"]}],
             "plot_figures": [
                 {
                     "data": [
@@ -2226,6 +2226,7 @@ class TestAVariableReadsAsItsExpression:
         plots=None,
         samples=500,
         points=51,
+        extra=(),
     ):
         import json
         from pathlib import Path
@@ -2287,10 +2288,14 @@ class TestAVariableReadsAsItsExpression:
             x_expressions=[expressions[n] for n in names],
             metric_tree_spec=spec,
         )
+        # Names in the RESULT FILE that no leaf scores and the spec does
+        # not track: a plot may still draw them, and they are part of the
+        # page's label scope.
+        extra_series = {n: (t, np.cos(t)) for n in extra}
         resolved = None
         if plots is not None:
             test.plots = parse_plots(plots)
-            resolved = resolved_plots(test, names, available=names)
+            resolved = resolved_plots(test, names, available=[*names, *extra])
         comp = compare_test(test, result, ref)
         html = generate_comparison_plots(
             "M",
@@ -2302,6 +2307,7 @@ class TestAVariableReadsAsItsExpression:
             metric_tree=comp.metric_tree,
             max_embedded_samples=samples,
             plots=resolved,
+            extra_series=extra_series,
         )
         return html.read_text(encoding="utf-8"), json.loads(
             (tmp_path / name / "comparison_data.json").read_text(encoding="utf-8")
@@ -2327,7 +2333,7 @@ class TestAVariableReadsAsItsExpression:
         assert "nrmse · pipe.T[1]" in labels
         figure = _page_data(page, "PLOT_FIGURES")[0]
         actual = next(tr for tr in figure["data"] if tr["meta"]["id"] == "actual")
-        assert actual["hovertemplate"].startswith("pipe.T[1]:")
+        assert actual["text"] == "pipe.T[1]"
 
     def test_a_variable_with_no_expression_renders_as_it_always_did(self, tmp_path):
         """The predicate for every spec-tracked variable in the suite: no
@@ -2378,7 +2384,7 @@ class TestAVariableReadsAsItsExpression:
         labels = dict(zip(names, ["a.Q", "b.Q", "sum(core.Qs[6, :])"]))
         assert len(group_families(names, labels)) == 3
 
-    def _render_no_baseline(self, tmp_path, expressions, name="nobase"):
+    def _render_no_baseline(self, tmp_path, expressions, name="nobase", plots=None):
         """A test with NO reference: nothing is scored, so every tracked
         curve lives in ``nobaseline_trajectories`` and renders under a NEW
         heading with its own figure."""
@@ -2416,8 +2422,14 @@ class TestAVariableReadsAsItsExpression:
             source="unit_tests",
             x_expressions=[expressions[n] for n in names],
         )
+        resolved = None
+        if plots is not None:
+            from dstf.discovery.plots import parse_plots, resolved_plots
+
+            test.plots = parse_plots(plots)
+            resolved = resolved_plots(test, names, available=names)
         html = generate_comparison_plots(
-            "M", None, result, [], tmp_path / name, test_model=test
+            "M", None, result, [], tmp_path / name, test_model=test, plots=resolved
         )
         return html.read_text(encoding="utf-8"), json.loads(
             (tmp_path / name / "comparison_data.json").read_text(encoding="utf-8")
@@ -2437,7 +2449,26 @@ class TestAVariableReadsAsItsExpression:
         assert muted.text() == self.N1
         figure = _page_data(page, "NB_FIGURES")[0]
         actual = next(tr for tr in figure["data"] if tr["meta"]["kind"] == "act")
-        assert actual["hovertemplate"].startswith("pipe.T[1]:")
+        assert actual["text"] == "pipe.T[1]"
+
+    def test_a_no_baseline_plot_reads_the_tests_scope(self, tmp_path):
+        """A test with no reference scores nothing, so its declared plots
+        are drawn from the no-baseline trajectories. Those series read the
+        page's TEXTS like every other: two variables sharing `a.Q` gave one
+        legend two identical entries."""
+        page, _sidecar = self._render_no_baseline(
+            tmp_path,
+            {self.N1: "a.Q", self.N2: "a.Q"},
+            name="nb-plot",
+            plots=[{"kind": "time", "series": [{"var": self.N1}, {"var": self.N2}]}],
+        )
+        figure = _page_data(page, "PLOT_FIGURES")[0]
+        names = [
+            tr["name"]
+            for tr in figure["data"]
+            if tr.get("meta", {}).get("kind") == "act"
+        ]
+        assert names == [f"a.Q ({self.N1})", f"a.Q ({self.N2})"]
 
     def test_a_no_baseline_section_with_no_expression_renders_as_it_did(self, tmp_path):
         page, _sidecar = self._render_no_baseline(tmp_path, {"y": ""}, name="nb-plain")
@@ -2467,6 +2498,164 @@ class TestAVariableReadsAsItsExpression:
         assert any(n.startswith("pipe.T[1]: criteria are under") for n in notes)
         assert not any(n.startswith(self.N1) for n in notes)
 
+    def test_the_second_plot_note_reads_the_text_not_the_plain_label(self, tmp_path):
+        """The note carries no muted name, so it reads the disambiguated
+        text: with both variables on `a.Q` the plain label named neither."""
+        page, _sidecar = self._render(
+            tmp_path,
+            {self.N1: "a.Q", self.N2: "a.Q"},
+            name="twice-shared",
+            plots=[
+                {"kind": "time", "series": [{"var": self.N1}, {"var": self.N2}]},
+                {"kind": "time", "series": [{"var": self.N1}]},
+            ],
+        )
+        notes = [el.text() for el in _parse(page).walk() if "plot-note" in el.classes]
+        assert any(n.startswith(f"a.Q ({self.N1}): criteria are under") for n in notes)
+
+    def test_unique_expressions_read_exactly_as_the_labels(self, tmp_path):
+        """The no-regression predicate for the ordinary case — every
+        expression of the test distinct, one spec-tracked variable beside
+        them. Nothing on this page carries a name in parentheses: the
+        scope disambiguates only what is ambiguous, and widening it to the
+        whole test must not start spelling names at every reader."""
+        page, _sidecar = self._render(
+            tmp_path,
+            {self.N1: "pipe.T[1]", self.N2: "a.Q", "y": ""},
+            name="unique",
+            plots=[
+                {
+                    "kind": "time",
+                    "series": [{"var": self.N1}, {"var": self.N2}, {"var": "y"}],
+                }
+            ],
+        )
+        heading = next(
+            el
+            for el in _parse(page).by_id("variable-section-0").walk()
+            if el.tag == "h2"
+        )
+        assert [m.text() for m in heading.by_class("dstf-varname")] == [
+            self.N1,
+            self.N2,
+        ]
+        assert "pipe.T[1]" in heading.text() and "a.Q" in heading.text()
+        labels = [
+            el.text()
+            for el in _parse(page).by_id("nodes-full").walk()
+            if "node-label" in el.classes
+        ]
+        assert labels == ["and", "nrmse · pipe.T[1]", "nrmse · a.Q", "nrmse · y"]
+        figure = _page_data(page, "PLOT_FIGURES")[0]
+        by_id = {tr["meta"]["id"]: tr for tr in figure["data"] if tr.get("meta")}
+        assert by_id[f"actual/{self.N1}"]["name"] == "pipe.T[1]"
+        assert by_id[f"actual/{self.N2}"]["name"] == "a.Q"
+        assert by_id["actual/y"]["name"] == "y"
+        assert "(unitTests.x[" not in page
+
+    def test_the_scope_is_the_test_not_the_scored_list(self, tmp_path):
+        """Case (a) of the b147918 review: two variables share one
+        expression and only ONE of them is scored. The scored list holds
+        one `a.Q`, so a row disambiguated over it read `nrmse · a.Q` under
+        a card titled `a.Q` with `unitTests.x[1]` muted beside — the very
+        ambiguity the parentheses exist to remove. The scope is the TEST."""
+        page, _sidecar = self._render(
+            tmp_path,
+            {self.N1: "a.Q", self.N2: "a.Q"},
+            metrics={"metric": "nrmse", "variable": self.N1, "tolerance": 0.5},
+            name="scoped",
+        )
+        labels = [
+            el.text()
+            for el in _parse(page).by_id("nodes-full").walk()
+            if "node-label" in el.classes
+        ]
+        assert labels == [f"nrmse · a.Q ({self.N1})"]
+
+    def test_a_title_beside_a_muted_name_reads_the_plain_label(self, tmp_path):
+        """Case (d): the heading already carries the name, muted. Reading
+        the disambiguated text there said `a.Q (unitTests.x[1])` with
+        `unitTests.x[1]` beside it — the name twice, once in each style."""
+        page, _sidecar = self._render(
+            tmp_path, {self.N1: "a.Q", self.N2: "a.Q"}, name="plain-title"
+        )
+        heading = next(
+            el
+            for el in _parse(page).by_id("variable-section-0").walk()
+            if el.tag == "h2"
+        )
+        (muted,) = heading.by_class("dstf-varname")
+        assert muted.text() == self.N1
+        assert "a.Q" in heading.text()
+        assert f"a.Q ({self.N1})" not in heading.text()
+
+    def test_a_legend_reads_the_tests_scope_not_the_plots(self, tmp_path):
+        """Case (b): the plot draws only ONE of the two variables sharing
+        `a.Q`, so a legend disambiguated over the PLOT read `a.Q` while
+        that variable's criteria row read `a.Q (unitTests.x[1])`."""
+        page, _sidecar = self._render(
+            tmp_path,
+            {self.N1: "a.Q", self.N2: "a.Q"},
+            name="plotscope",
+            plots=[{"kind": "time", "series": [{"var": self.N1}, {"var": "z"}]}],
+            extra=("z",),
+        )
+        figure = _page_data(page, "PLOT_FIGURES")[0]
+        actual = next(
+            tr for tr in figure["data"] if tr["meta"]["id"] == f"actual/{self.N1}"
+        )
+        assert actual["name"] == f"a.Q ({self.N1})"
+        assert actual["text"] == f"a.Q ({self.N1})"
+
+    def test_a_plot_only_variable_named_like_an_expression(self, tmp_path):
+        """Case (c): the result file holds a variable genuinely NAMED `z`,
+        and a tracked one whose EXPRESSION is `z`. The plot-only one keeps
+        its plain `z` — its label IS its name, so nothing about it is
+        ambiguous — and the one carrying the expression reads its name
+        beside it. Both said `z`, on the same plot, one line apart."""
+        page, _sidecar = self._render(
+            tmp_path,
+            {self.N1: "z"},
+            name="plotonly",
+            plots=[{"kind": "time", "series": [{"var": self.N1}, {"var": "z"}]}],
+            extra=("z",),
+        )
+        notes = [el.text() for el in _parse(page).walk() if "plot-note" in el.classes]
+        assert "z is plot only: no criterion scores it." in notes
+        labels = [
+            el.text()
+            for el in _parse(page).by_id("nodes-full").walk()
+            if "node-label" in el.classes
+        ]
+        assert labels == ["and", f"nrmse · z ({self.N1})"]
+        figure = _page_data(page, "PLOT_FIGURES")[0]
+        by_id = {tr["meta"]["id"]: tr for tr in figure["data"] if tr.get("meta")}
+        assert by_id[f"actual/{self.N1}"]["name"] == f"z ({self.N1})"
+        assert by_id["actual/z"]["name"] == "z"
+
+    def test_a_tracked_name_and_an_expression_spelling_it_never_fold(self, tmp_path):
+        """The family fold is over the TEXTS. A spec-tracked `pipe.T[1]`
+        beside a `unitTests.x[1]` whose EXPRESSION is `pipe.T[1]` folded
+        into one family of two members both at index 1, and the plot was
+        named `pipe.T[1,1]` — a third thing neither of them is."""
+        page, _sidecar = self._render(
+            tmp_path,
+            {"pipe.T[1]": "", self.N1: "pipe.T[1]"},
+            name="fold",
+            plots=[
+                {"kind": "time", "series": [{"var": "pipe.T[1]"}, {"var": self.N1}]}
+            ],
+            samples=8,
+            points=201,
+        )
+        banner = _parse(page).by_id("decimation-banner")
+        plots = {el.text().split(" ")[0] for el in banner.by_class("dec-trace")}
+        assert "pipe.T[1,1]" not in page and "pipe.T[1:2]" not in page
+        assert any(
+            t.startswith(f"pipe.T[1], pipe.T[1] ({self.N1})")
+            for t in (el.text() for el in banner.by_class("dec-trace"))
+        ), plots
+
     def test_the_decimation_banner_names_a_trace_the_way_the_title_does(self, tmp_path):
         """The banner pairs a plot's TITLE with a trace's name. The title
         reads labels, and the trace came off `meta.id` — a result-file
@@ -2484,6 +2673,22 @@ class TestAVariableReadsAsItsExpression:
         assert any(t.startswith("pipe.T[1], a.Q pipe.T[1] ") for t in traces)
         assert any(t.startswith("pipe.T[1], a.Q a.Q ") for t in traces)
         assert not any(self.N1 in t for t in traces)
+
+    def test_the_banner_tells_two_plots_of_one_expression_apart(self, tmp_path):
+        """The banner shows no muted name, so it reads the TEXTS: two
+        single-series plots of two variables sharing `a.Q` were two rows
+        spelled identically, naming neither curve."""
+        page, _sidecar = self._render(
+            tmp_path,
+            {self.N1: "a.Q", self.N2: "a.Q"},
+            name="banner-shared",
+            samples=8,
+            points=201,
+        )
+        banner = _parse(page).by_id("decimation-banner")
+        traces = [el.text() for el in banner.by_class("dec-trace")]
+        assert any(t.startswith(f"a.Q ({self.N1}) ") for t in traces)
+        assert any(t.startswith(f"a.Q ({self.N2}) ") for t in traces)
 
     def test_two_variables_sharing_one_expression_are_tellable_apart(self, tmp_path):
         """`x={a.Q, a.Q}` is legal: two result-file variables, one

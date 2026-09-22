@@ -22,7 +22,7 @@
 
 - **Float32/64 precision**: Older Dymola versions store `.mat` values as float32; newer versions (2024+) may use float64. When float32 is promoted to float64, trailing noise appears (e.g., `0.001` becomes `0.0010000000474974513`). `_to_json_list()` detects the array dtype and rounds to matching precision — 7 significant digits for float32, 15 for float64.
 
-- **Variable name characters in filenames**: Modelica variable names can contain newlines and whitespace (from multi-line expressions like `heatTransfer.alphas[\n        1, 1]`). Plot filenames must sanitize these — `_sanitize_filename()` collapses whitespace, removes filesystem-unsafe characters.
+- **Variable name characters in filenames**: no longer a constraint on names. A tracked variable is named by its result file (D132), and the source whitespace a multi-line `x={...}` used to carry (`heatTransfer.alphas[\n        1, 1]`) is collapsed by `discovery/mo_parser.py::normalize_expression` where the EXPRESSION is parsed. `report_suite._sanitize_filename()` remains, and takes model ids only.
 
 ## Simulator Behavior
 

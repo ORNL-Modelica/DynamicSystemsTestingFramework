@@ -142,6 +142,24 @@ def collect_variables(spec: SpecNode) -> list[str]:
     return out
 
 
+def resolves_a_variable(leaf: LeafSpec) -> bool:
+    """Does this leaf score a variable of the RESULT?
+
+    False for a stored-scalar leaf — a metric that accepts ``quantity``
+    given a string one reads its numbers from the run's statistics or
+    diagnostics, and its ``variable`` is free text naming that leaf, not a
+    series anything resolves. Treated as a variable it registered
+    ``CPUtime`` for the expression soft-check, which then compared a
+    baseline's recorded expression against a quantity nothing measured.
+    """
+    desc = metric(leaf.metric)
+    return not (
+        desc is not None
+        and desc.accepts_quantity
+        and isinstance(leaf.params.get("quantity"), str)
+    )
+
+
 def collect_variables_by_baseline(spec: SpecNode) -> dict[str, list[str]]:
     """``{baseline name: the variables its leaves score}``, in tree order.
 
@@ -150,10 +168,13 @@ def collect_variables_by_baseline(spec: SpecNode) -> dict[str, list[str]]:
     on every baseline a tree actually uses — once per PAIR, not per leaf
     and not over every variable of the result: a baseline records the
     expressions of the variables it holds, and a variable no leaf scores
-    against it is not being compared with it at all.
+    against it is not being compared with it at all. A leaf that resolves
+    no variable (:func:`resolves_a_variable`) contributes none.
     """
     out: dict[str, list[str]] = {}
     for leaf, _ in _walk_leaves_with_paths(spec, "/metrics"):
+        if not resolves_a_variable(leaf):
+            continue
         names = out.setdefault(leaf.against, [])
         if leaf.variable not in names:
             names.append(leaf.variable)

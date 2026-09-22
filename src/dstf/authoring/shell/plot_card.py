@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
+from ...backends.types import VariableText
 from ...discovery.plots import ResolvedPlot
 from ..capabilities import Placement
 from ..session import Selection
@@ -131,10 +132,11 @@ class PlotCard:
         resolved: ResolvedPlot,
         view: dict | None,
         tracked: Sequence[str],
+        scope: Mapping[str, VariableText],
     ) -> None:
-        """``view`` and ``tracked`` are the page's ONE read of each, handed
-        to every card: a card that read them for itself cost one read per
-        plot on every rebuild (the Task 5-6 review)."""
+        """``view``, ``tracked`` and ``scope`` are the page's ONE read of
+        each, handed to every card: a card that read them for itself cost
+        one read per plot on every rebuild (the Task 5-6 review)."""
         self.page, self.index, self.resolved = page, index, resolved
         self.plot: ui.plotly | None = None
         # Created here, attached in `show()`: a panel hosted under this card
@@ -177,20 +179,26 @@ class PlotCard:
         ):
             self.card = card
             with ui.row().classes("items-center no-wrap gap-3 w-full"):
-                # The title READS the labels (the expressions the model
-                # wrote); the names it is keyed by ride beside it, muted, and
-                # only when one of them differs — a card for `x` would
-                # otherwise say `x x`.
-                labels = page.shell.session.labels(model_id=model)
-                #: What each of this card's series READS as. `Session.labels`
-                #: is disambiguated over the whole TEST, so a variable reads
-                #: the same here, in its pill, in the focus bar and in its
-                #: "Add a criterion for x" button.
-                self.texts = {n: labels.get(n, n) for n in resolved.series}
-                ui.label(", ".join(self.texts[n] for n in resolved.series)).classes(
+                # The title READS the plain labels (the expressions the
+                # model wrote); the names it is keyed by ride beside it,
+                # muted, and only when one of them differs — a card for
+                # `x` would otherwise say `x x`. The muted name is what
+                # tells two series sharing one expression apart HERE, so
+                # the title does not also carry it in parentheses.
+                labels = {
+                    n: scope[n].label if n in scope else n for n in resolved.series
+                }
+                #: What each of this card's series READS as everywhere the
+                #: name is NOT beside it — its pill, the focus bar, its
+                #: plot-only line, its "Add a criterion for x" button.
+                #: Disambiguated over the whole TEST, so all of those agree.
+                self.texts = {
+                    n: scope[n].text if n in scope else n for n in resolved.series
+                }
+                ui.label(", ".join(labels[n] for n in resolved.series)).classes(
                     "text-subtitle2"
                 ).mark(f"plot-title:{index}")
-                if any(labels.get(n, n) != n for n in resolved.series):
+                if any(labels[n] != n for n in resolved.series):
                     ui.label(", ".join(resolved.series)).classes("dstf-varname").mark(
                         f"plot-name:{index}"
                     )
@@ -226,9 +234,12 @@ class PlotCard:
                     if len(only) == 1
                     else "are plot only: they have"
                 )
-                ui.label(f"{', '.join(only)} {verb} no criteria.").classes(
-                    "dstf-why"
-                ).mark(f"plot-only:{index}")
+                # Read as the texts: a plot-only variable NAMED like a
+                # tracked one's expression must not read the same as the
+                # criteria row above it.
+                ui.label(
+                    f"{', '.join(self.texts[n] for n in only)} {verb} no criteria."
+                ).classes("dstf-why").mark(f"plot-only:{index}")
             if self.tracked:
                 # ONE wrapping row for every variable's footer: one full-width
                 # row each pushed the next plot off the screen (the board).

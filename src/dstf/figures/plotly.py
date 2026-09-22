@@ -24,7 +24,6 @@ import html
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from ..backends.types import distinct_labels
 from ..comparison.geometry import (
     Band,
     Box,
@@ -133,12 +132,30 @@ def as_text(label: str) -> str:
     lines. Escaped here — plotly.js decodes the entities back, so an
     ordinary label is unchanged on the page.
 
-    Applied to every LABEL that enters a trace name, a hovertemplate or a
-    title, and to nothing that enters ``meta.id``, ``legendgroup`` or a
-    shape name: those carry NAMES, which the page, the picker and every
-    test look traces up by.
+    Applied to every LABEL that enters a trace name, a hover or a title,
+    and to nothing that enters ``meta.id``, ``legendgroup`` or a shape
+    name: those carry NAMES, which the page, the picker and every test
+    look traces up by.
     """
     return html.escape(label, quote=False)
+
+
+def hover_of(label: str) -> dict:
+    """The trace keys that make a hover READ ``label``, plus the value.
+
+    A hovertemplate is a format string: plotly.js substitutes every
+    ``%{…}`` in it from the trace's data, and there is no escape for a
+    literal one — an expression a model wrote as ``a%{x}b`` came out of the
+    hover as ``ab``. So the label does not enter the template at all. It
+    rides in the trace's ``text`` (a single string applies to every point)
+    and the template references it as ``%{text}``, which is plotly's own
+    way of putting arbitrary text in a hover. ``mode`` never includes
+    ``text``, so nothing of it is drawn on the plot itself.
+    """
+    return {
+        "text": as_text(label),
+        "hovertemplate": "%{text}: %{y:.4g}<extra></extra>",
+    }
 
 
 def _axes(prim: Primitive) -> dict:
@@ -429,9 +446,7 @@ def _base_traces(view: VariableView) -> list[dict]:
     def _hover(suffix: str = "") -> dict:
         if view.label == view.name:
             return {}
-        return {
-            "hovertemplate": f"{as_text(view.label)}{suffix}: %{{y:.4g}}<extra></extra>"
-        }
+        return hover_of(f"{view.label}{suffix}")
 
     if view.act_time is not None and view.act_values is not None:
         traces.append(
@@ -780,12 +795,13 @@ def _draws_actual(view: VariableView) -> bool:
 def series_texts(views: Sequence[VariableView]) -> dict[str, str]:
     """``{name: what that series reads as}`` on a plot drawing several.
 
-    :func:`~dstf.backends.types.distinct_labels` over the views: each one's
-    label, with the name beside it when two of the plot's series share one.
-    Undisambiguated, one legend entry, one hover and one colour ramp stood
-    for two different result-file variables.
+    Each view's own ``label``, which is already what its TEST's page reads
+    for it (:func:`~dstf.backends.types.variable_texts`, applied where the
+    views are built). Disambiguating HERE, over the plot's series alone,
+    was a scope of its own: a variable read ``a.Q`` in this legend and
+    ``a.Q (unitTests.x[1])`` in its criteria row on the same page.
     """
-    return distinct_labels({v.name: v.label for v in views})
+    return {v.name: v.label for v in views}
 
 
 def _series_traces(
@@ -798,11 +814,11 @@ def _series_traces(
     first: bool,
 ) -> list[dict]:
     traces = []
-    # Read as `text` — the label, with the name beside it when the plot
-    # draws another series carrying the same label — and keyed by the name:
+    # Read as `text` — the label, with the name beside it when another
+    # variable of this TEST carries the same label — and keyed by the name:
     # `meta.id` is what the page, the picker and every test address a trace
     # by.
-    hover = f"{as_text(text)}: %{{y:.4g}}<extra></extra>"
+    hover = hover_of(text)
     # Spelled out, not `_draws_actual(view)`: mypy narrows the arrays here.
     if view.act_time is not None and view.act_values is not None:
         traces.append(
@@ -812,7 +828,7 @@ def _series_traces(
                 "name": as_text(label) if first else as_text(text),
                 "legendgroup": group,
                 "showlegend": first,
-                "hovertemplate": hover,
+                **hover,
                 "x": view.act_time.tolist(),
                 "y": view.act_values.tolist(),
                 "line": {"color": color, "width": 1.5},
@@ -832,9 +848,7 @@ def _series_traces(
                 "name": f"{as_text(text)} (reference)",
                 "legendgroup": group,
                 "showlegend": False,
-                "hovertemplate": (
-                    f"{as_text(text)} (reference): %{{y:.4g}}<extra></extra>"
-                ),
+                **hover_of(f"{text} (reference)"),
                 "x": view.ref_time.tolist(),
                 "y": view.ref_values.tolist(),
                 "line": {"color": color, "width": 1.2, "dash": "dash"},

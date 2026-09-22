@@ -17,7 +17,6 @@ import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..backends.types import distinct_labels
 from ..comparison.comparator import VariableComparison
 from .context_builder import _build_template_context, worst_finite_score
 from .status import classify_with_class
@@ -126,10 +125,13 @@ def _json_sanitize(obj):
 
 
 def _sanitize_filename(name: str) -> str:
-    """Sanitize a variable name for use in a filename.
+    """Sanitize a MODEL ID for use in a directory name.
 
-    Collapses whitespace (including newlines), replaces Modelica
-    punctuation, and removes any remaining filesystem-unsafe characters.
+    Collapses whitespace, replaces Modelica punctuation, and removes any
+    remaining filesystem-unsafe character. It took variable names once,
+    when a name could still be the text a multi-line `x={...}` spelled
+    (D132 made a variable's name the result file's); the one caller now
+    passes a model id.
     """
     # Collapse all whitespace (newlines, spaces, tabs) into single underscore
     name = re.sub(r"\s+", "_", name)
@@ -210,22 +212,24 @@ def _tracked_series(result, comp_variables, test, tracked):
     return series
 
 
-def _context_labels(context: dict) -> dict[str, str]:
-    """Name → label for every series a render context can draw.
+def _context_labels(context: dict, key: str = "label") -> dict[str, str]:
+    """Name → what a render context reads for every series it can draw.
 
-    The scored variables carry theirs, a no-baseline trajectory carries its
-    own, and a plot-only name read out of the result file has none, so it
-    reads as itself. Titles, family folds and the decimation banner are
-    over LABELS; everything else — element ids, ``data-variable``, the
-    series lists, ``meta.id`` — is the name.
+    ``key`` picks which of the two readings the context stamped
+    (:func:`~dstf.reporting.context_builder.test_texts`): ``"label"`` for
+    the surfaces that show the muted name beside it — the section heading,
+    the per-variable status badge — and ``"text"`` for every other one.
+    The scored variables carry both, a no-baseline trajectory carries its
+    own, and a plot-only name read out of the result file carries neither,
+    so it reads as itself. Element ids, ``data-variable``, the series
+    lists and ``meta.id`` are always the NAME.
     """
     labels = {
-        n: v.get("label") or n
-        for n, v in (context.get("variables_by_name") or {}).items()
+        n: v.get(key) or n for n, v in (context.get("variables_by_name") or {}).items()
     }
     for t in context.get("nobaseline_trajectories") or []:
         if t.get("name"):
-            labels.setdefault(t["name"], t.get("label") or t["name"])
+            labels.setdefault(t["name"], t.get(key) or t["name"])
     return labels
 
 
@@ -270,7 +274,10 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
             for i, n in enumerate(by_name)
         )
     vidx = {n: i for i, n in enumerate(by_name)}
+    # Two readings of the same scope: `labels` where the muted name rides
+    # beside (the section heading), `texts` everywhere else.
     labels = _context_labels(context)
+    texts = _context_labels(context, "text")
     leaves_by_var = leaves_by_variable(metric_tree)
     budget = max_samples if max_samples and max_samples > 0 else None
 
@@ -291,7 +298,7 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
             if n in by_name
             else build_view(
                 n,
-                label=labels.get(n, n),
+                label=texts.get(n, n),
                 act_time=arrays[n][0],
                 act_values=arrays[n][1],
             )
@@ -325,13 +332,23 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                 # ``PLOT_FIGURES[idx]`` into ``plot-${idx}``, so a section
                 # numbered by anything else renders a blank chart.
                 "index": position,
-                # The title READS the labels; the names ride muted beside
-                # it, and only when one of them differs from its label —
-                # otherwise every title on every existing report would say
-                # its variable twice.
+                # The title READS the plain labels; the names ride muted
+                # beside it, and only when one of them differs from its
+                # label — otherwise every title on every existing report
+                # would say its variable twice. The muted name is what
+                # tells two series sharing one expression apart here, so
+                # the title does not repeat it.
+                #
+                # The FOLD is over the texts: two series whose labels
+                # collide belong to no family (their texts carry a name in
+                # parentheses), so `pipe.T[1]` tracked beside an `x[1]`
+                # whose expression is `pipe.T[1]` cannot read `pipe.T[1,1]`.
+                # Within any family of several, text and label agree — a
+                # colliding label folds into nothing — so the rendered
+                # slice is the same either way.
                 "title": ", ".join(
                     family_label(key, members, labels)
-                    for key, members in group_families(drawn, labels)
+                    for key, members in group_families(drawn, texts)
                 ),
                 "names": ""
                 if all(labels.get(n, n) == n for n in drawn)
@@ -343,19 +360,20 @@ def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> di
                 "single": len(drawn) == 1,
                 "variables": variables,
                 # The heading's tail: every untracked name on the plot,
-                # array families folded to one label.
+                # array families folded to one label. No muted name rides
+                # beside these, so they read the texts.
                 "plot_only_label": ", ".join(
-                    family_label(key, members, labels)
-                    for key, members in group_families(untracked, labels)
+                    family_label(key, members, texts)
+                    for key, members in group_families(untracked, texts)
                 ),
                 # One "…is plot only" line per FAMILY — four members used
                 # to print four sentences. A no-baseline series is left
                 # out: it has no criteria because it has no baseline, and
                 # the no-baseline block below already says so.
                 "plot_only_lines": [
-                    family_label(key, members, labels)
+                    family_label(key, members, texts)
                     for key, members in group_families(
-                        [n for n in untracked if n not in nobaseline], labels
+                        [n for n in untracked if n not in nobaseline], texts
                     )
                 ],
             }
@@ -396,9 +414,10 @@ def _build_figures(context: dict, metric_tree, max_samples: int | None) -> dict:
         variable_figure(
             build_view(
                 t["name"],
-                # The heading above this figure reads the label; its hover
-                # says the same thing.
-                label=t.get("label") or t["name"],
+                # The heading above this figure reads the plain label with
+                # the muted name beside it; the hover has no name beside
+                # it, so it reads the text.
+                label=t.get("text") or t.get("label") or t["name"],
                 act_time=t.get("time"),
                 act_values=t.get("values"),
                 overlays=t.get("overlays") or [],
@@ -458,6 +477,10 @@ def generate_comparison_plots(
         artifact_files=artifact_files,
         overlays=overlays,
         run_metadata=run_metadata,
+        # The page's label scope takes the plots too: a plot-only series
+        # named like another variable's expression is what decides whether
+        # that other one reads its name beside its label.
+        plot_series=[n for p in plots or () for n in p.series],
     )
 
     # The page's plot keys, from the full-resolution context. Only the
@@ -623,9 +646,10 @@ def _trace_label(tr: dict, texts: Mapping[str, str] | None) -> str | None:
     of one printed its name twice (once as the plot's title, once as the
     trace). There the series comes off ``meta.id`` — the NAME — and
     ``texts`` turns it back into what the rest of the page calls it, so one
-    banner line does not pair a title full of expressions with a trace
-    spelled as a result-file name. A derived trace — a band, an error
-    series, a spectrum — has no such id and keeps its own name.
+    banner line does not pair a plot full of expressions with a trace
+    spelled as a result-file name. ``texts`` is the TEST's scope, like the
+    plot's own name in the row beside it. A derived trace — a band, an
+    error series, a spectrum — has no such id and keeps its own name.
     """
     name = tr.get("name")
     if texts is None:
@@ -652,11 +676,12 @@ def _decimated_traces(context: dict) -> list[dict]:
     only for a trace the figure layer does not decimate. The template
     renders this list as the banner, so the reader sees WHICH curves were
     thinned rather than a page-wide total. A comparison trace is placed by
-    its PLOT's title — the variable's own name on a one-series plot, the
-    family label on a plot of several — and named by :func:`_trace_label`.
+    its PLOT, folded the way the section heading folds it but read as the
+    TEXTS: the banner shows no muted name, so two plots of two variables
+    sharing one expression would otherwise be two identical rows.
     """
     out: list[dict] = []
-    labels = _context_labels(context)
+    texts = _context_labels(context, "text")
 
     def scan(varname, fig: dict, *, texts: Mapping[str, str] | None = None) -> None:
         for tr in fig.get("data") or []:
@@ -674,16 +699,19 @@ def _decimated_traces(context: dict) -> list[dict]:
                 }
             )
 
+    from ..figures.families import family_label, group_families
+
     for section, fig in zip(
         context.get("plot_sections") or [], context.get("plot_figures") or []
     ):
         series = section.get("series") or []
         scan(
-            section.get("title"),
+            ", ".join(
+                family_label(key, members, texts)
+                for key, members in group_families(series, texts)
+            ),
             fig,
-            texts=distinct_labels({n: labels.get(n, n) for n in series})
-            if len(series) > 1
-            else None,
+            texts=texts if len(series) > 1 else None,
         )
     for traj, fig in zip(
         context.get("diag_trajectories") or [], context.get("diag_figures") or []

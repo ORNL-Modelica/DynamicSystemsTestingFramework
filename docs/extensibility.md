@@ -194,8 +194,11 @@ Each `VariableResult` a backend produces carries two texts (D132):
 
 `expression` is a LABEL and is never used as a key.
 `backends/types.py::display_label(name, expression)` is the one rule for what a person reads
-(`expression or name`), and `distinct_labels` adds the name beside it
-(`a.Q (unitTests.x[1])`) when two variables shown together share one.
+(`expression or name`), and `variable_texts` is the scope rule above it: over
+every name a TEST's page can show — tracked variables, scored comparisons and
+plot series — it adds the name beside a label another of them also carries
+(`a.Q (unitTests.x[1])`). A title that already shows the muted name reads the
+plain label; every other surface reads the disambiguated text.
 Producing it is `discovery/unit_tests.py::unit_test_variables` — the one
 place a `UnitTests` variable is named — not each backend's own string
 formatting.

@@ -30,10 +30,15 @@ def view_from_trajectory(
 ) -> VariableView:
     """The view for one variable from a report-shaped trajectory entry
     (``act_time`` / ``act_values`` / ``ref_time`` / ``ref_values`` /
-    ``label`` / ``overlays``, any of them absent)."""
+    ``text`` / ``overlays``, any of them absent).
+
+    The view's label is the trajectory's ``text`` — what the test's page
+    reads for the variable — not its ``label``: the plain label belongs to
+    the surfaces that show the muted name beside it, and a figure's legend
+    and hover show no name."""
     return build_view(
         name,
-        label=trajectory.get("label") or name,
+        label=trajectory.get("text") or trajectory.get("label") or name,
         act_time=trajectory.get("act_time"),
         act_values=trajectory.get("act_values"),
         ref_time=trajectory.get("ref_time"),

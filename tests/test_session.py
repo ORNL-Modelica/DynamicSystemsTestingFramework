@@ -2246,6 +2246,39 @@ class TestPlots:
         assert s.labels(A) == {UT1: UT1_EXPR, UT2: UT2}
         assert s.labels(C) == {}  # no result
 
+    def test_labels_are_the_text_the_page_reads_not_the_plain_label(self, tmp_path):
+        """`labels` is the TEXT: a capability's caption, a criteria row and
+        a pill carry no muted name, so the one that is ambiguous says its
+        own. Only a title beside a muted name reads `variable_texts`'
+        plain `label` — and `test_test_page` is not the only thing that
+        may pin this."""
+        cfg, work = _unit_tests_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        with_expressions(s, A, {UT1: "a.Q", UT2: "a.Q"})
+        assert s.labels(A) == {UT1: f"a.Q ({UT1})", UT2: f"a.Q ({UT2})"}
+        scope = s.variable_texts(A)
+        assert [scope[n].label for n in (UT1, UT2)] == ["a.Q", "a.Q"]
+        assert [scope[n].text for n in (UT1, UT2)] == [
+            f"a.Q ({UT1})",
+            f"a.Q ({UT2})",
+        ]
+
+    def test_the_label_scope_holds_a_plot_only_series(self, tmp_path):
+        """The scope is every name the page can SHOW, plot-only ones
+        included: the result-file variable `z` is what makes a tracked
+        variable whose EXPRESSION is `z` read its name beside it. Read
+        from the result's variables alone, both said `z`."""
+        cfg, work = _plots_project(tmp_path)
+        s = Session()
+        s.open(cfg, work_dir=work)
+        with_expressions(s, A, {"x": "z"})
+        s.stage(
+            [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "z"}]}])]
+        )
+        assert s.labels(A)["x"] == "z (x)"
+        assert s.labels(A)["z"] == "z"  # its label IS its name: nothing ambiguous
+
     def test_a_labelled_variable_with_no_baseline_still_reads_the_label(self, tmp_path):
         """Nothing is scored without a reference, so the variable's view is
         built from the NO-BASELINE trajectory instead. That is the only
@@ -2280,7 +2313,7 @@ class TestPlots:
         actual = next(
             tr for tr in s.figure(B, UT1)["data"] if tr["meta"]["id"] == "actual"
         )
-        assert actual["hovertemplate"].startswith(f"{AWKWARD_EXPRESSION}:")
+        assert actual["text"] == AWKWARD_EXPRESSION
 
     def test_a_labelled_variables_figure_reads_the_label(self, tmp_path):
         """The figure the tool draws is the report's, so the label reaches
@@ -2294,7 +2327,7 @@ class TestPlots:
         figure = s.figure(A, UT1)
         actual = next(tr for tr in figure["data"] if tr["meta"]["id"] == "actual")
         assert actual["name"] == "Actual"  # the picker's key, unchanged
-        assert actual["hovertemplate"].startswith(f"{UT1_EXPR}:")
+        assert actual["text"] == UT1_EXPR
 
     def test_a_failed_simulations_partial_result_is_not_tracked(self, tmp_path):
         """A backend that stopped mid-run leaves what it had in the file.

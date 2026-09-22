@@ -1588,13 +1588,13 @@ async def test_a_rebuilt_card_gives_up_its_hook(shell):
 async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(shell):
     """The cost the review measured: every card read `tree_view` and
     `tracked` for itself, so a rebuild cost one read per plot. The page
-    reads and hands both in, so neither grows with the plots."""
+    reads and hands them in, so no CARD grows the count."""
     shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * 5)])
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert len(page.cards) == 5
         session = shell.session
-        calls = {"tree_view": 0, "tracked": 0}
+        calls = {"tree_view": 0, "tracked": 0, "variable_texts": 0}
         for name in calls:
             real = getattr(session, name)
 
@@ -1605,11 +1605,20 @@ async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(shell):
             setattr(session, name, counting)
         view = session.tree_view(A)
         calls["tree_view"] = 0
+        calls["variable_texts"] = 0
         with page.column:
             page.rebuild(view)
-        # The page reads no view of its own, and the few `tracked` reads are
-        # `Session.plots`'s own: the count does not follow the card count.
-        assert calls["tree_view"] == 0 and calls["tracked"] < len(page.cards)
+        # The page reads no view of its own, and the label scope ONCE for
+        # every card. The rest of the `variable_texts` reads are the "Add a
+        # criterion for x" captions': a capability asks the SessionView for
+        # the label of the variable its button names, which is the
+        # capability's API and not a card reading page state. `tracked` is
+        # a read of each of those, so it follows them.
+        assert calls["tree_view"] == 0
+        # ONE scope read for the whole page, plus each card's single "Add a
+        # criterion for x" bar asking for its variable's label as it is
+        # built and as it refreshes. Nothing here is per-series or per-leaf.
+        assert calls["variable_texts"] == 1 + 2 * len(page.cards)
         calls["tracked"] = 0
         with page.client:
             page.sync()
@@ -2881,6 +2890,81 @@ async def test_a_named_pill_the_focus_bar_and_a_jump_all_read_the_label(
         ]
 
 
+async def test_the_scope_is_the_test_not_what_is_scored(shell):
+    """Case (a) of the b147918 review: `x` and `y` share `a.Q` and only
+    `x` still has a criterion. Disambiguated over the SCORED list the row
+    read `nrmse · a.Q` under a card titled `a.Q` with `x` muted — the
+    ambiguity the parentheses exist to remove. `y` is still the test's."""
+    from test_session import with_expressions
+
+    with_expressions(shell.session, A, {"x": "a.Q", "y": "a.Q"})
+    shell.session._score(A)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        _click_in(user, f"remove:{T1}", within=f"node:1:{T1}")
+        await _settled(lambda: len(page.cards) == 2 and not page.cards[1].rows)
+        assert [r.name.text for r in page.cards[0].rows.values()] == ["nrmse · a.Q (x)"]
+        assert [_one(user, f"plot-title:{i}").text for i in (0, 1)] == ["a.Q", "a.Q"]
+        assert [_one(user, f"plot-name:{i}").text for i in (0, 1)] == ["x", "y"]
+
+
+async def test_a_legend_reads_the_tests_scope_not_the_plots(shell):
+    """Case (b): the plot draws only ONE of the two variables sharing
+    `a.Q`, so a legend disambiguated over the PLOT read `a.Q` while the
+    same variable's criteria row read `a.Q (x)` two lines below it."""
+    from test_session import with_expressions
+
+    with_expressions(shell.session, A, {"x": "a.Q", "y": "a.Q"})
+    shell.session._score(A)
+    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}])])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        with page.client:
+            page.cards[0].show()
+        names = [
+            tr["name"]
+            for tr in page.cards[0].plot.figure["data"]
+            if tr.get("meta", {}).get("kind") == "act"
+        ]
+        assert names == ["Actual"]  # one series: the picker's key
+        hover = next(
+            tr["text"]
+            for tr in page.cards[0].plot.figure["data"]
+            if tr.get("meta", {}).get("kind") == "act"
+        )
+        assert hover == "a.Q (x)"
+        assert [r.name.text for r in page.cards[0].rows.values()] == ["nrmse · a.Q (x)"]
+
+
+async def test_a_plot_only_variable_named_like_an_expression(plots_shell):
+    """Case (c): A's result file holds a variable genuinely NAMED `z`, and
+    `x` carries the EXPRESSION `z`. The plot-only one keeps its plain `z`
+    — its label IS its name — and the one carrying the expression reads
+    its name beside it. Both read `z`, one line apart on the same card."""
+    from test_session import with_expressions
+
+    shell = plots_shell
+    with_expressions(shell.session, A, {"x": "z"})
+    shell.session._score(A)
+    shell.session.stage(
+        [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "z"}]}])]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        assert _one(user, "plot-title:0").text == "z, z"
+        assert _one(user, "plot-name:0").text == "x, z"
+        assert _one(user, "plot-only:0").text == "z is plot only: it has no criteria."
+        assert [r.name.text for r in page.cards[0].rows.values()] == ["nrmse · z (x)"]
+        with page.client:
+            page.cards[0].show()
+        names = [
+            tr["name"]
+            for tr in page.cards[0].plot.figure["data"]
+            if tr.get("meta", {}).get("kind") == "act"
+        ]
+        assert names == ["z (x)", "z"]
+
+
 async def test_two_variables_sharing_one_expression_stay_tellable_apart(shell):
     """`x={a.Q, a.Q}` is legal Modelica: one expression, two result-file
     variables. Read as the label alone, the card's title said "a.Q, a.Q",
@@ -2894,7 +2978,10 @@ async def test_two_variables_sharing_one_expression_stay_tellable_apart(shell):
     )
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        assert _one(user, "plot-title:0").text == "a.Q (x), a.Q (y)"
+        # The TITLE reads the plain labels: the names ride beside it,
+        # muted, so repeating them in parentheses said each variable twice.
+        assert _one(user, "plot-title:0").text == "a.Q, a.Q"
+        assert _one(user, "plot-name:0").text == "x, y"
         assert [_one(user, f"plot-pill:0:{v}").text for v in ("x", "y")] == [
             "a.Q (x) FAIL",
             "a.Q (y) FAIL",

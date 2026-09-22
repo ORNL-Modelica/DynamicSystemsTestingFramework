@@ -8,15 +8,40 @@ this module touches Jinja, the filesystem, or the decimation pass.
 
 import logging
 import math
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
 
-from ..backends.types import display_label, distinct_labels
+from ..backends.types import VariableText, display_label, variable_texts
 from ..comparison.comparator import VariableComparison
 from ..comparison.registry import summarize
 
 logger = logging.getLogger(__name__)
+
+
+def test_texts(
+    comparisons: Iterable,
+    result,
+    plot_series: Iterable[str] = (),
+) -> dict[str, VariableText]:
+    """The TEST's label scope (:func:`~dstf.backends.types.variable_texts`)
+    for one page: the result's variables, the scored comparisons' and every
+    series of the test's resolved plots.
+
+    The one builder both tiers call — the report through
+    :func:`_build_template_context`, the tool through
+    ``Session.variable_texts`` — so a variable reads the same in its card
+    title, its criteria row, its pill and its legend entry.
+    """
+    labels: dict[str, str] = {}
+    for var in getattr(result, "variables", None) or ():
+        if var.name:
+            labels[var.name] = display_label(var.name, var.expression)
+    for vc in comparisons:
+        if vc.name:
+            labels.setdefault(vc.name, display_label(vc.name, vc.expression))
+    return variable_texts(labels, plot_series)
 
 
 def _format_value(val) -> str:
@@ -80,10 +105,18 @@ def worst_finite_score(comparisons: list) -> tuple[float | None, int]:
     return (max(finite) if finite else None, n_unscored)
 
 
+def _text_of(texts: dict[str, VariableText] | None, name: str, expression: str) -> str:
+    """What the page reads for ``name``, from the test's scope — or its
+    plain label when the caller built no scope (a variable the scope never
+    saw cannot collide with anything in it)."""
+    entry = (texts or {}).get(name)
+    return entry.text if entry is not None else display_label(name, expression)
+
+
 def _augment_tree_view(
     view: dict,
     comparisons_by_path: dict[str, VariableComparison],
-    texts: dict[str, str] | None = None,
+    texts: dict[str, VariableText] | None = None,
 ) -> None:
     """Walk ``view`` in place, enriching leaf nodes with what the page shows.
 
@@ -93,10 +126,10 @@ def _augment_tree_view(
     detail pairs, and the reason a sentinel could not be scored. Nothing
     here is an input to a computation — the page performs none.
 
-    ``texts`` is ``{name: what to read it as}`` over the TEST's scored
-    variables (:func:`~dstf.backends.types.distinct_labels`): two variables
-    sharing one expression — ``x={a.Q, a.Q}`` — gave two criteria rows the
-    identical text ``nrmse · a.Q``, with nothing on either row saying which
+    ``texts`` is the TEST's label scope (:func:`test_texts`): a criteria
+    row shows no muted name, so it reads the ``text``. Two variables
+    sharing one expression — ``x={a.Q, a.Q}`` — gave two rows the
+    identical ``nrmse · a.Q``, with nothing on either saying which
     variable it scored.
     """
     if view.get("kind") == "leaf":
@@ -115,9 +148,7 @@ def _augment_tree_view(
                 # tiers: the report's node macro and the tool's `leaf_name`
                 # take it from here, so the two cannot drift. `variable`
                 # stays the key a patch op targets.
-                "label": (texts or {}).get(
-                    var_label, display_label(var_label, vc.expression)
-                ),
+                "label": _text_of(texts, var_label, vc.expression),
                 "score_display": summary.display,
                 "criterion": summary.criterion,
                 # The mode's own key/value pairs behind the verdict, as the
@@ -292,12 +323,19 @@ def build_trajectories(
     comparisons: list,
     result,
     ref_data: dict | None,
+    texts: dict[str, VariableText] | None = None,
 ) -> tuple[list, list, list]:
     """Build the trajectory triple — primary tracked variables, diagnostic
     variables (CPUtime / EventCounter), and the no-baseline pass-through
     used when a test runs without a reference. Diagnostic refs may carry
     a scalar summary instead of a full trajectory; the legacy
     full-array shape is still accepted for back-read.
+
+    ``texts`` is the test's label scope (:func:`test_texts`). Every entry
+    carries BOTH readings: ``label`` for the surfaces that show the muted
+    name beside it (the section heading, the per-variable status badge),
+    ``text`` for the ones that do not (the figure's legend and hover, the
+    plot notes).
 
     Returns ``(trajectories, diag_trajectories, nobaseline_trajectories)``.
     """
@@ -343,6 +381,9 @@ def build_trajectories(
                     # ``attach_overlays_to_trajectories``).
                     "expression": act_var.expression if act_var else "",
                     "label": display_label(name, act_var.expression if act_var else ""),
+                    "text": _text_of(
+                        texts, name, act_var.expression if act_var else ""
+                    ),
                     "act_time": act_var.time.tolist() if act_var else [],
                     "act_values": act_var.values.tolist() if act_var else [],
                     "ref_time": ref_time_list,
@@ -378,6 +419,7 @@ def build_trajectories(
                     "name": var.name,
                     "expression": var.expression,
                     "label": display_label(var.name, var.expression),
+                    "text": _text_of(texts, var.name, var.expression),
                     "time": var.time.tolist(),
                     "values": var.values.tolist(),
                 }
@@ -690,13 +732,24 @@ def _spec_for(comparisons: list, test_model):
     )
 
 
-def build_tree_view(comparisons: list, test_model, metric_tree) -> dict | None:
+def build_tree_view(
+    comparisons: list,
+    test_model,
+    metric_tree,
+    texts: dict[str, VariableText] | None = None,
+) -> dict | None:
     """The read-only metric tree as the report renders it — the spec's shape
     (the authored tree, else the implicit one synthesized from what was
     scored) with each leaf carrying the CLI's verdict, ``summarize``'s
     display / criterion / details, the sentinel reason and the advisory
     flag. ``None`` when nothing was compared. The authoring shell shows the
-    same dict, built by this function."""
+    same dict, built by this function.
+
+    ``texts`` is the TEST's label scope (:func:`test_texts`) — the scored
+    variables are only part of it, and a caller that passes none gets each
+    leaf's plain label. Both tiers pass one: a criteria row read ``a.Q``
+    under a card titled ``a.Q (x)`` when the scope was the scored list
+    alone (the b147918 review)."""
     if not comparisons:
         return None
 
@@ -733,13 +786,7 @@ def build_tree_view(comparisons: list, test_model, metric_tree) -> dict | None:
             len(missing),
             ", ".join(missing),
         )
-    _augment_tree_view(
-        tree_view,
-        comparisons_by_path,
-        distinct_labels(
-            {vc.name: display_label(vc.name, vc.expression) for vc in comparisons}
-        ),
-    )
+    _augment_tree_view(tree_view, comparisons_by_path, texts)
     # Must run before the per-variable subtrees are cut: they shallow-copy
     # the leaf dicts, so a flag stamped afterwards would reach the full-tree
     # mount only.
@@ -752,6 +799,7 @@ def _build_tree_view_and_variables(
     test_model,
     metric_tree,
     trajectories: list,
+    texts: dict[str, VariableText] | None = None,
 ) -> tuple[dict | None, dict]:
     """Stage-2 single-source-of-truth: returns ``(tree_view,
     variables_by_name)``.
@@ -776,7 +824,7 @@ def _build_tree_view_and_variables(
         leaves_for_variable as _leaves_for_variable,
     )
 
-    tree_view = build_tree_view(comparisons, test_model, metric_tree)
+    tree_view = build_tree_view(comparisons, test_model, metric_tree, texts)
     if tree_view is None:
         return None, {}
     spec = _spec_for(comparisons, test_model)
@@ -795,8 +843,11 @@ def _build_tree_view_and_variables(
             "name": vn,
             # The variable's own label, from its trajectory (the result is
             # what knows the expression); a variable with no trajectory —
-            # every leaf on it a sentinel — reads as its name.
+            # every leaf on it a sentinel — reads as its name. ``label``
+            # is for the status badge, which shows the muted name beside
+            # it; ``text`` for the plot note, which does not.
             "label": (match_traj or {}).get("label") or vn,
+            "text": (match_traj or {}).get("text") or _text_of(texts, vn, ""),
             "trajectory": match_traj or {},
             "overlays": (match_traj or {}).get("overlays", []),
             "leaf_paths": [p for _, p in _leaves_for_variable(spec, vn)],
@@ -833,11 +884,17 @@ def _build_template_context(
     artifact_files: tuple[tuple[str, str], ...] = (),
     overlays: list | None = None,
     run_metadata: dict | None = None,
+    plot_series: Iterable[str] = (),
 ) -> dict:
     """Build the full template context dict from comparison data.
 
     Orchestrator over the per-section ``_build_*`` helpers above. Each
     output key in the returned dict is produced by exactly one helper.
+
+    ``plot_series`` is every series name of the test's resolved plots,
+    plot-only ones included: they are part of the page's label scope
+    (:func:`test_texts`), so a plot-only variable NAMED like another's
+    expression is what makes that other one read its name too.
     """
     if cur_stats is None:
         cur_stats = {}
@@ -847,10 +904,12 @@ def _build_template_context(
     ref_info = _build_ref_info(comparisons, ref_data, test_dir, ref_file)
     sim_params = _build_sim_params(test_model, ref_sim)
     statistics_sections = _build_statistics_sections(ref_stats, cur_stats)
+    texts = test_texts(comparisons, result, plot_series)
     trajectories, diag_trajectories, nobaseline_trajectories = build_trajectories(
         comparisons,
         result,
         ref_data,
+        texts,
     )
     diag_summaries = _build_diag_summaries(result, ref_data)
     artifacts = _build_artifacts(test_dir, artifact_files)
@@ -886,6 +945,7 @@ def _build_template_context(
         test_model,
         metric_tree,
         trajectories,
+        texts,
     )
 
     return {

@@ -2460,6 +2460,82 @@ class TestTheMigrationHintSeesAnUnNormalizedName:
             "migrate-variable-names" in r.getMessage() for r in caplog.records
         )
 
+    def test_the_hint_is_said_once_per_variable_and_baseline_pair(self, caplog):
+        """The dedupe key is (baseline, variable), not the variable alone:
+        the same variable missing from the PRIMARY and from a soft_check is
+        two baselines to migrate, and one line naming only one of them
+        leaves the other un-migrated with nothing said about it."""
+        from dstf.storage.baseline import Baseline
+
+        class _Store:
+            def get_soft_checks(self, model_id):
+                return {
+                    "fmpy": Baseline(
+                        name="fmpy",
+                        time=list(_VI_T),
+                        variables=[
+                            {
+                                "index": 1,
+                                "name": WRAPPED_STORED,
+                                "values": list(_VI_T),
+                            }
+                        ],
+                    )
+                }
+
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": VI_NAME},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {
+                                "metric": "nrmse",
+                                "variable": VI_NAME,
+                                "against": "fmpy",
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+        with caplog.at_level(logging.WARNING):
+            compare_test(
+                _vi_test(metric_tree_spec=spec, x_expressions=[WRAPPED_EXPR]),
+                _vi_result(expression=WRAPPED_EXPR),
+                self._wrapped_reference(),
+                store=_Store(),
+            )
+        hinted = [
+            r.getMessage()
+            for r in caplog.records
+            if "migrate-variable-names" in r.getMessage()
+        ]
+        assert len(hinted) == 2
+        assert sum("'primary'" in m for m in hinted) == 1
+        assert sum("'fmpy'" in m for m in hinted) == 1
+
+    def test_the_tree_paths_hint_names_the_model(self, caplog):
+        """N tests of one suite printed the identical nameless sentence:
+        the reader learned how many baselines are un-migrated and not one
+        of the models to run the command over. The flat path always said
+        it."""
+        spec = parse_metric_tree({"metric": "nrmse", "variable": VI_NAME})
+        with caplog.at_level(logging.WARNING):
+            compare_test(
+                _vi_test(metric_tree_spec=spec, x_expressions=[WRAPPED_EXPR]),
+                _vi_result(expression=WRAPPED_EXPR),
+                self._wrapped_reference(),
+            )
+        (hinted,) = [
+            r.getMessage()
+            for r in caplog.records
+            if "migrate-variable-names" in r.getMessage()
+        ]
+        assert hinted.startswith("MyLib.Test: ")
+
     def test_the_tree_path_says_it_once_per_variable_not_once_per_leaf(self, caplog):
         """Five criteria on one un-migrated variable is one thing to fix.
         A TRANSFORM test with five leaves printed the same sentence five
@@ -2756,6 +2832,60 @@ class TestTheExpressionCheckPairsByName:
         assert [w.field for w in comp.warnings] == [
             f"Expression of {VI_NAME} (against fmpy)"
         ]
+
+    def test_a_stored_scalar_leaf_registers_no_variable_for_the_check(self):
+        """A `scalar` leaf reading a statistics path resolves no variable of
+        the result: its `variable` is free text naming the leaf. Registered
+        as one, it put `CPUtime` — whose name a result variable happens to
+        share here — into the set of quantities scored against `fmpy`, and
+        the soft_check's entry for it was then compared with an expression
+        nothing had measured against that baseline."""
+        from dstf.storage.baseline import Baseline
+
+        class _Store:
+            def get_soft_checks(self, model_id):
+                return {
+                    "fmpy": Baseline(
+                        name="fmpy",
+                        time=list(_VI_T),
+                        variables=[
+                            {
+                                "index": 1,
+                                "name": VI_NAME,
+                                "expression": "OTHER.Q",
+                                "values": list(_VI_T),
+                            }
+                        ],
+                        statistics={"CPUtime": 1.0},
+                    )
+                }
+
+        spec = parse_metric_tree(
+            {
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": VI_NAME},
+                    {
+                        "combinator": "warn",
+                        "children": [
+                            {
+                                "metric": "scalar",
+                                "variable": VI_NAME,
+                                "quantity": "CPUtime",
+                                "against": "fmpy",
+                                "tolerance": 10.0,
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+        result = _vi_result()
+        result.statistics = {"CPUtime": 1.0}
+        comp = compare_test(
+            _vi_test(metric_tree_spec=spec), result, _vi_reference(), store=_Store()
+        )
+        assert comp.warnings == []
 
 
 class TestPairingIsByNameOnly:

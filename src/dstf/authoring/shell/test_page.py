@@ -259,8 +259,8 @@ class TestPage:
 
     def _variable_of(self, path: str) -> str:
         """What a tree node's variable is CALLED, for a sentence about it —
-        its label, the same text the card titles and the criteria rows read.
-        """
+        the leaf's own text, the same one its criteria row reads (a
+        notification carries no muted name beside it)."""
         node = next((n for n in nodes_of(self._view()) if n.get("path") == path), None)
         if node is None:
             return path
@@ -291,9 +291,13 @@ class TestPage:
         self.column.clear()
         plots = session.plots(self.model_id)
         tracked = session.tracked(self.model_id)
+        # The label scope too: it is one fact about the TEST, and a card
+        # that read it for itself cost one `plots` + `tracked` read per
+        # plot — 35 for a five-plot test.
+        scope = session.variable_texts(self.model_id)
         with self.column:
             self.cards = [
-                PlotCard(self, plot.index, plot, view, tracked) for plot in plots
+                PlotCard(self, plot.index, plot, view, tracked, scope) for plot in plots
             ]
         for card in self.cards:
             # A rebuild must not blank what the user was looking at: the

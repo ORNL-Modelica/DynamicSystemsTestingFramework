@@ -115,9 +115,14 @@ def _with_expression(variable: dict) -> dict:
     ``name`` came after its ``values``, kept its own order and two
     soft_check files written by the same command read differently. The
     input is never mutated — the caller's entry may be a live result's.
+
+    A null ``expression`` becomes the empty text, like a missing one: JSON
+    someone else wrote may hold it, and every reader of this field takes
+    ``""`` for "no expression" (``display_label``, the soft check, the
+    migrate hint) — ``None`` would be a third value none of them tests for.
     """
     out: dict = {
-        key: variable.get(key, "") if key == "expression" else variable[key]
+        key: (variable.get(key) or "") if key == "expression" else variable[key]
         for key in _ENTRY_KEY_ORDER
         if key in variable or key == "expression"
     }

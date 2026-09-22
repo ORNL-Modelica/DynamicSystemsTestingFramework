@@ -24,8 +24,7 @@ from ..backends.progress import recorded_backend
 from ..backends.types import (
     DatasetType,
     TestResult,
-    display_label,
-    distinct_labels,
+    VariableText,
 )
 from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
@@ -455,7 +454,8 @@ class Session:
         reads = self._reads_for(model_id)
         ref = reads.ref
         scored = list(comp.variables) if comp is not None and comp.evaluated else []
-        trajectories, _diag, nobaseline = build_trajectories(scored, result, ref)
+        texts = self.variable_texts(model_id)
+        trajectories, _diag, nobaseline = build_trajectories(scored, result, ref, texts)
         overlays = reads.overlays
         attach_overlays_to_trajectories(trajectories, overlays)
         attach_overlays_to_trajectories(nobaseline, overlays)
@@ -464,7 +464,7 @@ class Session:
             nb = next((t for t in nobaseline if t["name"] == variable), None)
             if nb is not None:
                 traj = {
-                    "label": nb.get("label") or variable,
+                    "text": nb.get("text") or variable,
                     "act_time": nb["time"],
                     "act_values": nb["values"],
                     "overlays": nb["overlays"],
@@ -472,9 +472,16 @@ class Session:
             else:
                 series = self._file_series(model_id, variable)
                 # A series read straight out of the result file carries no
-                # expression — the result in memory is where one lives.
+                # expression — the result in memory is where one lives —
+                # but it is still in the page's label scope, so a
+                # plot-only name that collides with a tracked variable's
+                # expression reads the same here as in its plot note.
                 traj = (
-                    {"act_time": series[0], "act_values": series[1]}
+                    {
+                        "text": texts[variable].text if variable in texts else variable,
+                        "act_time": series[0],
+                        "act_values": series[1],
+                    }
                     if series is not None
                     else {}
                 )
@@ -519,32 +526,46 @@ class Session:
         scored = [vc.name for vc in comp.variables] if comp is not None else []
         return tracked_names(scored, self._require_project().results.get(model_id))
 
-    def labels(self, model_id: str) -> dict[str, str]:
-        """``{name: label}`` for the loaded result's variables — what the
-        page READS for each of them (``display_label``: the expression the
-        model wrote, else the name). ``{}`` when there is no result.
+    def variable_texts(self, model_id: str) -> dict[str, VariableText]:
+        """``{name: VariableText}`` for this test — both readings of every
+        variable its page can show, from the ONE scope builder the report
+        uses (:func:`~dstf.reporting.context_builder.test_texts`).
 
-        Only what the result carries: a name with no entry here is its own
-        label, and the page reads it that way. Nothing is keyed by a label
-        — titles, rows and captions read it, markers and ops do not.
+        The scope is the whole TEST: the loaded result's variables, the
+        scored comparisons' and every series of the test's resolved plots,
+        plot-only names included. Nothing narrower: a card title, its
+        criteria rows, its pills and its legend entries each disambiguated
+        over their own little set, and the same variable read four
+        different ways on one page (the b147918 review).
 
-        The scope of the disambiguation is the TEST
-        (:func:`~dstf.backends.types.distinct_labels`): ``x={a.Q, a.Q}``
-        gives two result-file variables one expression, and every surface
-        of this test's page — the card titles, the named pills, the focus
-        bar, the "Add a criterion for x" buttons, the add form's options —
-        would otherwise show the same text twice with no way to tell which
-        variable each belongs to. One map, so all of them agree."""
-        result = self._require_project().results.get(model_id)
-        if result is None:
+        A name the scope does not carry is its own label, and the page
+        reads it that way. Nothing is ever keyed by either reading —
+        titles, rows and captions read them; markers and ops do not."""
+        from ..reporting.context_builder import test_texts
+
+        project = self._require_project()
+        if project.test(model_id) is None:
             return {}
-        return distinct_labels(
-            {
-                var.name: display_label(var.name, var.expression)
-                for var in result.variables
-                if var.name
-            }
+        comp = self.comparisons.get(model_id)
+        return test_texts(
+            list(comp.variables) if comp is not None else [],
+            project.results.get(model_id),
+            [name for plot in self.plots(model_id) for name in plot.series],
         )
+
+    def labels(self, model_id: str) -> dict[str, str]:
+        """``{name: what every human-facing surface of this test's page
+        reads for it}`` — the ``text`` of :meth:`variable_texts`, so the
+        criteria rows, the pills, the focus bar, the "Add a criterion for
+        x" captions and the add form's options all say the same thing.
+
+        NOT the plain label: a surface that shows the muted name beside
+        its title (the card title) reads ``variable_texts(...)[name].label``
+        instead — the name is already there, so the title does not repeat
+        it in parentheses."""
+        return {
+            name: entry.text for name, entry in self.variable_texts(model_id).items()
+        }
 
     def variable_names(self, model_id: str) -> list[str]:
         """Every variable the last result holds: the tracked ones first, in
@@ -694,7 +715,12 @@ class Session:
         comp = self.comparisons.get(model_id)
         if comp is None or not comp.evaluated:
             return None
-        return build_tree_view(list(comp.variables), test, comp.metric_tree)
+        return build_tree_view(
+            list(comp.variables),
+            test,
+            comp.metric_tree,
+            self.variable_texts(model_id),
+        )
 
     def tree(self, model_id: str) -> dict | None:
         """The raw tree a Patch edits: the entry's ``metrics`` block, else the
@@ -1229,6 +1255,10 @@ class SessionView:
         return self._session.variable_names(model_id)
 
     def labels(self, model_id: str) -> dict[str, str]:
+        """``{name: what a capability's own text reads for it}`` —
+        :meth:`Session.labels`, so a panel's caption and the page's rows
+        say the same thing. It is the TEXT, not the plain label: a
+        capability's caption carries no muted name to disambiguate it."""
         return self._session.labels(model_id)
 
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:

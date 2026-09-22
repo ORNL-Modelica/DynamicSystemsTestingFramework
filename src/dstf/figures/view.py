@@ -44,9 +44,11 @@ class LeafView:
 class VariableView:
     #: The variable's result-file name — the key everywhere.
     name: str
-    #: What a person reads for it (``display_label``): the expression the
-    #: model wrote, or the name. Defaults to the name, so a view built
-    #: without one draws exactly what it always drew.
+    #: What a person reads for it on this test's page
+    #: (:func:`~dstf.backends.types.variable_texts`' ``text``): the
+    #: expression the model wrote, with the name beside it when another
+    #: variable of the test carries the same expression. Defaults to the
+    #: name, so a view built without one draws exactly what it always drew.
     label: str = ""
     act_time: np.ndarray | None = None
     act_values: np.ndarray | None = None
@@ -129,7 +131,9 @@ def build_view(
     """Assemble a view from array-likes (lists or arrays), overlay dicts of
     the report's shape (``name`` / ``role`` / ``kind`` / ``time`` /
     ``values``), and ``(leaf_path, VariableComparison)`` pairs. ``label``
-    is what a person reads for the variable; empty means its name."""
+    is what a person reads for the variable on its test's page (the
+    ``text`` of :func:`~dstf.backends.types.variable_texts`); empty means
+    its name."""
     at, av, rt, rv = (
         _array(act_time),
         _array(act_values),

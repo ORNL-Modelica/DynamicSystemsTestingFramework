@@ -86,9 +86,11 @@ class EditTree:
     def caption(self, s: SessionView) -> str:
         sel = s.selection
         if sel.node_path is None and sel.variable:
-            # Read as the variable's label — the expression its model wrote
-            # — under a card whose title says the same thing; the form the
-            # button opens still writes the leaf against the NAME.
+            # Read as what the page reads for the variable (`s.labels`:
+            # the expression its model wrote, with the name beside it when
+            # another variable of this test shares that expression) — the
+            # same text as its criteria row above; the form the button
+            # opens still writes the leaf against the NAME.
             #
             # VARIABLE placement is single-test (`available` refuses any
             # other selection). With two tests selected there is no one

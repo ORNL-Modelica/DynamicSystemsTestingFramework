@@ -172,10 +172,16 @@ the authoring tool draw for that test. Scoring ignores it.
   inside a plot or a series are refused, so a typo is loud.
 - Indexed LABELS that differ in their last integer index (`pipe.T[1]`,
   `pipe.T[6]`, …) draw as one family: one hue ramped light to dark by index,
-  one legend entry (`pipe.T[1:5:11]`). The fold is over what a person reads
-  and only over plain indexed names, negated aliases and `der(...)` of one:
-  a reduction over an array (`sum(core.Qs[6, :])`) is a quantity of its own,
-  so two of them are two families.
+  one legend entry (`pipe.T[1:5:11]`). The fold is over what a person reads,
+  under one of two rules. A RESULT-FILE NAME folds on its last single-integer
+  index and nothing else — a result file spells names no whitelist
+  anticipates (`θ[1]`, `pipe₊T[1]` from Julia/MTK, `T-wall[1]`,
+  `$DER.x[1]`), and a multi-dimensional index (`x[2,3]`) is not one array
+  position. An EXPRESSION the model wrote must additionally be a plain
+  indexed name, a negated alias or `der(...)` of one: a reduction over an
+  array (`sum(core.Qs[6, :])`) is a quantity of its own, so two of them are
+  two families. A text that carries a name in parentheses — two variables
+  sharing one expression — belongs to no family either.
 - A plot of several series shows no overlays and no error traces; both belong
   to a plot of one variable.
 - A series the result does not hold draws nothing and the plot says
@@ -201,12 +207,25 @@ variable's **expression**. It is a label:
 - stored beside the name in the reference JSON (`{"index", "name",
   "expression", "values"}`, always written, `""` included);
 - what the console, JUnit, the report page and `dstf author` READ for that
-  variable. The report and the tool put the name beside it, muted, where the
-  two differ; the console, JUnit and the interactive review print
-  `expression (name)` instead, because a line of CI output is read with no
-  plot beside it. Where two variables of one test carry the SAME expression
-  — `x={a.Q, a.Q}` is legal — every surface reads `expression (name)` so
-  they stay tellable apart;
+  variable. ONE rule decides the text, and its scope is the TEST — every
+  name the test's page can show: the result's tracked variables, the scored
+  comparisons' variables and every series of the test's plots, plot-only
+  ones included. A variable reads as its expression, unless another name in
+  that scope carries the same expression — `x={a.Q, a.Q}` is legal — and
+  then the name rides with it: `a.Q (unitTests.x[1])`. A variable whose
+  label IS its name is never spelled twice, so a plot-only variable
+  genuinely named `z` keeps its plain `z` beside a tracked one whose
+  EXPRESSION is `z`.
+  The two surfaces that show the name beside the title anyway — the
+  report's variable heading and the tool's card title — read the plain
+  expression there, because the muted name already says which variable it
+  is. Every other human-facing surface reads the disambiguated text:
+  criteria rows and tree leaves, status pills, the focus bar, the "Add a
+  criterion for …" captions, the add form's options, the plot notes,
+  legend entries and hovers, and the decimation banner.
+  The console, JUnit and the interactive review are outside that rule and
+  print `expression (name)` whenever the two differ: a line of CI output is
+  read with no page around it, so there is no scope to disambiguate within;
 - soft-checked on every compare: if the baseline recorded one expression and
   this run measures another, the test gains a structural warning naming both
   — never a failure. That is what makes the positional name safe.
