@@ -1,5 +1,9 @@
 {
   "kind": "external",
   "format": "json",
-  "path": "../../../../../../modelica/ModelicaTestingLib/Resources/ReferenceResults/OpenModelica/linux/ref_0007.json"
+  "path": "../../../../../../modelica/ModelicaTestingLib/Resources/ReferenceResults/OpenModelica/linux/ref_0007.json",
+  "variables": {
+    "x": "unitTests.x[1]",
+    "y": "unitTests.x[2]"
+  }
 }
