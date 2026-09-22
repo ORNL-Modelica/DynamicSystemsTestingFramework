@@ -9,7 +9,9 @@ D66/D67 split the baseline-role model into three:
   as :class:`Baseline` via :meth:`ReferenceStore.get_soft_checks`.
 * **companions** — plot-only pointers to external files (experimental
   data, analytical solutions, rig logs). Never scored. Reporter loads
-  them here.
+  them here. A companion's metadata records which of ITS variables draw
+  on which of the test's; :func:`attach_overlays_to_trajectories` is
+  where that record is read, and what it does without one.
 
 Graceful degradation is the whole contract: a companion whose backing
 file has been moved or renamed must not break the report. Missing /
@@ -60,8 +62,20 @@ class Overlay:
     """One visual overlay attached to a test report.
 
     Populated for every registered soft_check + companion on the model.
-    ``variables`` is keyed by variable name — the reporter only renders
-    overlays for variables the current test already plots.
+    ``variables`` is keyed by the overlay's OWN variable names — the
+    reporter only renders overlays for variables the current test plots,
+    and ``mapping`` is what says which is which.
+
+    ``mapping`` is ``{test variable name: this overlay's variable name}``,
+    read from a companion's metadata. Soft_checks and the auto-discovered
+    sibling-backend references carry none: they are DSTF's own data, keyed
+    by the same names the test uses. See
+    :func:`attach_overlays_to_trajectories` for what an absent mapping
+    means.
+
+    ``warnings`` is filled by that same function when a spelling could
+    stand for two of this overlay's variables; :func:`overlay_summary`
+    surfaces them on the report's overlay table.
     """
 
     name: str
@@ -70,12 +84,20 @@ class Overlay:
     status: str = "loaded"  # "loaded" | "missing" | "invalid"
     note: str = ""
     variables: dict[str, OverlayVariable] = field(default_factory=dict)
+    mapping: dict[str, str] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
 class OverlayVariable:
     time: list[float]
     values: list[float]
+    #: What the overlay's own source calls this quantity, when it records
+    #: one: a companion that is itself a DSTF baseline of another library
+    #: stores an ``expression`` beside each variable's name (D132). It is
+    #: the last spelling the read rule tries for an unmapped companion —
+    #: never a key.
+    expression: str = ""
 
 
 def load_overlays(store, model_id: str, config=None) -> list[Overlay]:
@@ -274,13 +296,27 @@ def _ref_data_to_overlay_vars(ref_data: dict) -> dict[str, OverlayVariable]:
         values = entry.get("values")
         if not name or not isinstance(values, list):
             continue
-        out[name] = OverlayVariable(time=list(time), values=list(values))
+        out[name] = OverlayVariable(
+            time=list(time),
+            values=list(values),
+            expression=_entry_expression(entry),
+        )
     return out
 
 
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+def _entry_expression(entry: dict) -> str:
+    """The ``expression`` a reference-shape variable entry records, as text.
+
+    Missing, null and non-text all read as "no expression" — the same
+    thing every other reader of the field takes ``""`` for (D132).
+    """
+    value = entry.get("expression")
+    return value if isinstance(value, str) else ""
 
 
 def _baseline_to_overlay_vars(baseline) -> dict[str, OverlayVariable]:
@@ -294,7 +330,11 @@ def _baseline_to_overlay_vars(baseline) -> dict[str, OverlayVariable]:
         values = var.get("values")
         if not isinstance(values, list):
             continue
-        out[name] = OverlayVariable(time=list(time), values=list(values))
+        out[name] = OverlayVariable(
+            time=list(time),
+            values=list(values),
+            expression=_entry_expression(var),
+        )
     return out
 
 
@@ -355,6 +395,7 @@ def _load_companion(store, model_id: str, companion) -> Overlay:
         kind=companion.kind,
         status="loaded",
         variables=vars_,
+        mapping=dict(companion.variables),
     )
 
 
@@ -402,8 +443,25 @@ def _load_json(path: Path) -> dict[str, OverlayVariable]:
         values = entry.get("values")
         if not name or not isinstance(values, list):
             continue
-        out[name] = OverlayVariable(time=list(time), values=list(values))
+        out[name] = OverlayVariable(
+            time=list(time),
+            values=list(values),
+            expression=_entry_expression(entry),
+        )
     return out
+
+
+def companion_variable_names(path: Path, fmt: str) -> list[str]:
+    """The names a companion file gives its variables, in file order.
+
+    What ``dstf companion add`` checks a ``--map``'s right-hand sides
+    against: a JSON companion's ``variables[].name``, a CSV companion's
+    column headers after the time column. Raises whatever the parse
+    raises — the caller is registering, not rendering, so a file it
+    cannot read is a registration error rather than a silent overlay.
+    """
+    vars_ = _load_csv(path) if (fmt or "json").lower() == "csv" else _load_json(path)
+    return list(vars_)
 
 
 def _load_csv(path: Path) -> dict[str, OverlayVariable]:
@@ -453,15 +511,37 @@ def attach_overlays_to_trajectories(
     picker); they're dropped from per-trajectory lists since there's
     nothing to render.
 
-    A variable is matched by NAME, and only then by its EXPRESSION — the one
-    place an expression is a key. An overlay is another source's data: a
-    companion is a different library's (or a different tool's) run, and it
-    names the quantity the way ITS result file does. For a variable of the
-    UnitTests component the name is positional (``unitTests.x[2]``), which
-    no other source can be expected to use, and the expression the model
-    wrote is the only spelling the two have in common. The name wins when
-    both match, or an overlay that happens to carry both spellings would
-    decide which trajectory its trace belongs to.
+    **The mapping is the record.** An overlay is another source's data,
+    and a companion names the quantity the way ITS result file does. Which
+    of its variables draws on which of the test's is a fact only whoever
+    registered it knows, so the companion records it in its own metadata
+    (``dstf companion add … --map TEST_VAR=COMPANION_VAR``). Where an
+    overlay HAS a mapping, that is the whole rule: a trajectory the
+    mapping does not name gets no trace from it, even when the overlay
+    holds a variable spelled exactly like it. Guessing behind a recorded
+    answer is how somebody else's curve ends up under the wrong plot.
+
+    **The fallbacks are for a companion nobody mapped** — the ones
+    registered before there was a mapping to write, and soft_checks and
+    sibling-backend references, which are DSTF's own data and carry none
+    by design. In order, the overlay's variable whose
+
+    1. NAME is the trajectory's name. The two sources agree on a spelling
+       the test already uses; nothing else needs to be true.
+    2. NAME is the trajectory's EXPRESSION. A variable of the Modelica
+       ``UnitTests`` component is named positionally (``unitTests.x[2]``),
+       which no other tool can be expected to use; the expression the
+       model wrote is the only spelling the two have in common (D132).
+    3. EXPRESSION is the trajectory's name, or its expression. The mirror
+       of 2, for a companion that is itself a DSTF baseline of another
+       library: there the POSITIONAL name is on the companion's side and
+       the quantity's text is what it records beside it.
+
+    A fallback step that finds more than one candidate attaches nothing
+    and records a warning on the overlay (``x={a.Q, a.Q}`` is legal, so
+    one expression may belong to two of a companion's variables). Nothing
+    is drawn rather than the first of two, and the warning names the
+    trajectory, the candidates, and the mapping that would settle it.
     """
     for traj in trajectories:
         name = traj.get("name", "")
@@ -470,9 +550,9 @@ def attach_overlays_to_trajectories(
         for ov in overlays:
             if ov.status != "loaded":
                 continue
-            var = ov.variables.get(name)
-            if var is None and expression:
-                var = ov.variables.get(expression)
+            var, ambiguous = _overlay_variable_for(ov, name, expression)
+            if ambiguous:
+                _record_ambiguity(ov, name, ambiguous)
             if var is None:
                 continue
             attached.append(
@@ -487,9 +567,65 @@ def attach_overlays_to_trajectories(
         traj["overlays"] = attached
 
 
+def _overlay_variable_for(
+    ov: Overlay,
+    name: str,
+    expression: str,
+) -> tuple[OverlayVariable | None, list[str]]:
+    """This overlay's variable for one trajectory, else why not.
+
+    Returns ``(variable, [])`` for a hit, ``(None, [])`` for a clean miss,
+    and ``(None, candidates)`` when a fallback step could not choose.
+    """
+    if ov.mapping:
+        mapped = ov.mapping.get(name)
+        # A mapping naming a variable the file does not hold draws nothing:
+        # the file has been replaced since, and the mapping is now wrong.
+        return (ov.variables.get(mapped) if mapped else None), []
+
+    var = ov.variables.get(name)
+    if var is not None:
+        return var, []
+    if expression:
+        var = ov.variables.get(expression)
+        if var is not None:
+            return var, []
+
+    wanted = {name, expression} - {""}
+    candidates = sorted(
+        key for key, value in ov.variables.items() if value.expression in wanted
+    )
+    if len(candidates) > 1:
+        return None, candidates
+    if candidates:
+        return ov.variables[candidates[0]], []
+    return None, []
+
+
+def _record_ambiguity(ov: Overlay, name: str, candidates: list[str]) -> None:
+    """Say, once, that this overlay could not tell which curve is which.
+
+    The report attaches over the scored trajectories and then over the
+    no-baseline ones with the same overlay objects, so the same finding
+    arrives twice.
+    """
+    text = (
+        f"{name}: {len(candidates)} of this overlay's variables carry it as "
+        f"their expression ({', '.join(candidates)}), so nothing is drawn for "
+        f"it — add a mapping: dstf companion add <model> {ov.name} <path> "
+        f"--map {name}=<one of them>"
+    )
+    if text not in ov.warnings:
+        ov.warnings.append(text)
+
+
 def overlay_summary(overlays: list[Overlay]) -> list[dict]:
     """Test-level summary of every overlay — includes missing/invalid ones
     so the report can show a "not rendered" hint.
+
+    ``warnings`` carries what :func:`attach_overlays_to_trajectories` found
+    it could not decide, so call this AFTER attaching (the reporter and the
+    authoring Session both do).
     """
     out = []
     for ov in overlays:
@@ -501,6 +637,7 @@ def overlay_summary(overlays: list[Overlay]) -> list[dict]:
                 "status": ov.status,
                 "note": ov.note,
                 "variables": sorted(ov.variables.keys()),
+                "warnings": list(ov.warnings),
             }
         )
     return out

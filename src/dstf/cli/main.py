@@ -424,6 +424,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Data format (auto-detected from extension if omitted)",
     )
+    p_companion.add_argument(
+        "--map",
+        dest="variable_map",
+        action="append",
+        metavar="TEST_VAR=COMPANION_VAR",
+        default=None,
+        help="'add': which of the companion's variables draws on which of "
+        "the test's. Repeat per variable. Both names are checked against "
+        "the stored baseline and the companion file. Two test variables "
+        "may name one companion variable (one curve, drawn twice). "
+        "Without any --map the reporter falls back on matching spellings.",
+    )
 
     # soft-check — manage advisory cross-check baselines (D66)
     p_soft = subparsers.add_parser(

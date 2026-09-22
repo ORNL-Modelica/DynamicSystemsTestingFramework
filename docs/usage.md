@@ -230,10 +230,13 @@ variable's **expression**. It is a label:
   this run measures another, the test gains a structural warning naming both
   — never a failure. That is what makes the positional name safe.
 
-It is a key of nothing. The one exception is overlay matching: a companion or
-soft-check overlay is matched by name and only then by expression, because
-another tool's result file cannot be expected to spell a positional name (see
-`docs/decisions.md` D132).
+It is a key of nothing. The one exception is overlay matching, and even there
+the expression is only the fallback: a companion records which of ITS
+variables draw on which of the test's, in its own metadata (see
+[Companions](#companions) below and `docs/decisions.md` D132). A companion
+with no mapping — and a soft-check or sibling-backend overlay, which never
+has one — is matched by name, then by expression, because another tool's
+result file cannot be expected to spell a positional name.
 
 A `test_spec.json` written before this change names expressions where it now
 needs names, and a baseline accepted before it is stored under the expression
@@ -368,6 +371,48 @@ store.add_soft_check(
 ```
 
 The model must already have a primary baseline (run with `--accept` once). A soft_check is a separate file, so accepting fresh primary results never touches it.
+
+### Companions
+
+A companion is data shown on the test's plots and never scored — rig logs,
+an analytical solution, another library's run of the same model. It is
+registered against a model that already has a primary baseline, and stored
+as metadata under `<reference_root>/<Backend>/<os>/companions/ref_NNNN/<name>.json`
+pointing at the file (`companion freeze` copies the data in beside it).
+
+```bash
+# A rig export, with the columns it draws on named
+uv run dstf --config testing.json companion add MyLib.HeatExchanger rig ./rig.csv \
+    --map "unitTests.x[1]=T_in" --map "unitTests.x[2]=T_out"
+
+# What is registered, and what each companion draws on
+uv run dstf --config testing.json companion list MyLib.HeatExchanger
+```
+
+**Say which variable is which.** `--map TEST_VAR=COMPANION_VAR` is repeatable
+and is the record the report reads: the left name is a variable of the test
+(the name its result file gives it — `unitTests.x[1]`, not the expression the
+model wrote), the right one is a variable of the companion's file (a JSON
+companion's `variables[].name`, a CSV companion's column header). Both are
+checked when you register, against the stored baseline and against the file,
+so a typo is refused there and then rather than drawing nothing months later.
+Two test variables may name one companion variable — that draws the one curve
+on both plots. One test variable may not be named twice.
+
+Where a companion has a mapping, that is the whole rule: a variable the
+mapping does not name draws nothing from it, even if the companion happens to
+hold a variable spelled exactly like it. **Map a companion whenever the two
+sources name the quantity differently**, which is every companion of a
+Modelica `UnitTests` test, since its variables are named positionally.
+
+A companion with no mapping falls back on spellings — that is what the
+companions registered before mappings existed do, and what soft_checks and
+the auto-discovered sibling-backend overlays always do, being DSTF's own data
+under the same names. In order: the companion variable whose name is the
+test variable's name, whose name is its expression, and whose own recorded
+expression is either. If a step finds two candidates the companion draws
+nothing for that variable and the report's overlay table says so, naming the
+candidates and the `--map` that settles it.
 
 ---
 

@@ -106,7 +106,10 @@ uv run dstf --config testing.json spec-update spec_patch.json
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs
-uv run dstf --config testing.json companion add <model> <name> <path>
+# --map (repeatable) records which of the companion's variables draws on which of the
+# test's — checked against both files at add time, and the only thing the report reads
+# for a mapped companion. Unmapped ones match by name, then by expression.
+uv run dstf --config testing.json companion add <model> <name> <path> [--map TEST_VAR=COMPANION_VAR]
 uv run dstf --config testing.json soft-check list <model>
 uv run dstf --config testing.json import-baseline <model> <name> <source>   # soft_checks only; companions via companion add
 
@@ -185,7 +188,7 @@ The tool looks for `testing.json` near the library root or reference root. Key f
 
 Note: `OutputCPUtime := true;` and `Advanced.UI.TranslationInCommandLog := true;` are hardcoded in the Dymola backend.
 
-Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-checks live under `.../soft_checks/ref_NNNN/<name>.json`, companions under `.../companions/ref_NNNN/<name>.{json,csv}`.
+Reference results are partitioned by `<reference_root>/<Backend>/<os>/`. Soft-checks live under `.../soft_checks/ref_NNNN/<name>.json`, companions under `.../companions/ref_NNNN/<name>.{json,csv}` — a companion's metadata carries a `variables` mapping saying which of its variables draw on which of the test's.
 
 ### test_spec.json format
 

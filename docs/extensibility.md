@@ -204,14 +204,22 @@ place a `UnitTests` variable is named — not each backend's own string
 formatting.
 
 **The one exception** is overlay matching, in
-`reporting/overlay_loader.py::attach_overlays_to_trajectories`: a variable is
-matched against an overlay by name, and only then by expression. An overlay
-is another source's data — a companion is a different library's or a
-different tool's run — and it names the quantity the way ITS result file
-does. A positional `unitTests.x[3]` is a name no other source can be expected
-to use; the expression the model wrote is the only spelling the two have in
-common. The name wins when both match, so an overlay that happens to carry
-both spellings does not get to choose which trajectory its trace belongs to.
+`reporting/overlay_loader.py::attach_overlays_to_trajectories`. An overlay is
+another source's data — a companion is a different library's or a different
+tool's run — and it names the quantity the way ITS result file does, so a
+positional `unitTests.x[3]` is a name no other source can be expected to use.
+Which of a companion's variables draws on which of the test's is therefore
+recorded in the companion's own metadata, as the `variables` mapping
+`dstf companion add --map` writes; where a companion has one, it is the whole
+rule, and a trajectory it does not name draws nothing from that companion.
+Only an overlay with NO mapping falls back on spellings — the companions
+registered before there was a mapping to write, and soft_checks and
+sibling-backend references, which are DSTF's own data keyed by the same names.
+Those try, in order, the overlay variable whose name is the trajectory's name,
+whose name is its expression, and whose own expression is either. A fallback
+step that finds two candidates draws nothing and warns: `x={a.Q, a.Q}` is
+legal, so one expression can belong to two of a companion's variables, and
+guessing puts somebody else's curve under the wrong plot.
 
 ### Persistent-worker contract
 

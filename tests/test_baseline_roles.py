@@ -370,6 +370,64 @@ class TestCompanionStorage:
         assert (co_dir / "rig.csv").read_text() == "time,value\n0,0\n"
         assert set(store.get_companions(test.model_id)) == {"rig", "analytical"}
 
+    def test_the_variable_mapping_round_trips(self, store_with_primary, tmp_path):
+        """The companion records HOW its variables map onto the test's, in
+        its own metadata. That record is the whole story at read time."""
+        store, test = store_with_primary
+        external = tmp_path / "rig.csv"
+        external.write_text("time,sensor_a\n0,0\n1,1\n", encoding="utf-8")
+        store.add_companion(
+            test.model_id, "rig", path=external, variables={"x": "sensor_a"}
+        )
+        meta = json.loads(
+            (store.ref_dir / "companions" / "ref_0001" / "rig.json").read_text()
+        )
+        assert meta["variables"] == {"x": "sensor_a"}
+        assert store.get_companions(test.model_id)["rig"].variables == {"x": "sensor_a"}
+
+    def test_a_companion_with_no_mapping_still_writes_the_key(
+        self, store_with_primary, tmp_path
+    ):
+        """A writer never leaves the field out, so a registration WITHOUT
+        the key is one no writer of this version made."""
+        store, test = store_with_primary
+        external = tmp_path / "rig.csv"
+        external.write_text("time,h\n0,0\n", encoding="utf-8")
+        store.add_companion(test.model_id, "rig", path=external)
+        meta = json.loads(
+            (store.ref_dir / "companions" / "ref_0001" / "rig.json").read_text()
+        )
+        assert meta["variables"] == {}
+        assert store.get_companions(test.model_id)["rig"].variables == {}
+
+    def test_metadata_written_before_the_key_existed_reads_as_no_mapping(
+        self, store_with_primary, tmp_path
+    ):
+        """Old data is tolerated: a registration from before the mapping
+        existed falls back on name, then expression."""
+        store, test = store_with_primary
+        external = tmp_path / "rig.csv"
+        external.write_text("time,h\n0,0\n", encoding="utf-8")
+        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir.mkdir(parents=True)
+        (co_dir / "rig.json").write_text(
+            json.dumps({"kind": "external", "format": "csv", "path": str(external)}),
+            encoding="utf-8",
+        )
+        assert store.get_companions(test.model_id)["rig"].variables == {}
+
+    def test_freeze_carries_the_mapping_through(self, store_with_primary, tmp_path):
+        store, test = store_with_primary
+        external = tmp_path / "rig.csv"
+        external.write_text("time,sensor_a\n0,0\n1,1\n", encoding="utf-8")
+        store.add_companion(
+            test.model_id, "rig", path=external, variables={"x": "sensor_a"}
+        )
+        assert store.freeze_companion(test.model_id, "rig") is True
+        companions = store.get_companions(test.model_id)
+        assert companions["rig"].kind == "frozen"
+        assert companions["rig"].variables == {"x": "sensor_a"}
+
     def test_data_suffix_name_rejected(self, store_with_primary, tmp_path):
         """``<x>.data`` would own the filename a frozen ``<x>`` writes into."""
         store, test = store_with_primary
@@ -478,3 +536,148 @@ class TestRoleNamespace:
         baselines = store.get_baselines(test.model_id)
         assert "rig" not in baselines
         assert set(baselines) == {"primary"}
+
+
+# ---------------------------------------------------------------------------
+# `dstf companion add --map` — the CLI that writes the record
+# ---------------------------------------------------------------------------
+
+
+class TestCompanionMapCLI:
+    """``--map TEST_VAR=COMPANION_VAR``, validated against both files at
+    registration: a mapping naming something neither side has would draw
+    nothing and say nothing, months later, in a report."""
+
+    @staticmethod
+    def _run(store, test, *argv):
+        from dstf.cli import main
+
+        return main(
+            [
+                "--source-path",
+                str(store.config.source_path),
+                "--reference-root",
+                str(store.config.reference_root),
+                "companion",
+                *argv,
+            ]
+        )
+
+    @pytest.fixture
+    def rig(self, tmp_path):
+        path = tmp_path / "rig.csv"
+        path.write_text("time,sensor_a,sensor_b\n0,0,0\n1,1,2\n", encoding="utf-8")
+        return path
+
+    def test_add_with_a_map_records_it(self, store_with_primary, rig, capsys):
+        store, test = store_with_primary
+        rc = self._run(
+            store, test, "add", test.model_id, "rig", str(rig), "--map", "x=sensor_a"
+        )
+        assert rc == 0, capsys.readouterr()
+        assert store.get_companions(test.model_id)["rig"].variables == {"x": "sensor_a"}
+
+    def test_two_test_variables_may_name_one_companion_variable(
+        self, store_with_primary, rig, capsys
+    ):
+        """One curve drawn twice is a legitimate thing to ask for."""
+        store, test = store_with_primary
+        t = np.linspace(0, 10, 11)
+        store.store_reference(
+            test,
+            TestResult(
+                model_id=test.model_id,
+                success=True,
+                variables=[
+                    VariableResult(index=1, time=t, values=np.sin(t), name="x"),
+                    VariableResult(index=2, time=t, values=np.cos(t), name="y"),
+                ],
+            ),
+        )
+        rc = self._run(
+            store,
+            test,
+            "add",
+            test.model_id,
+            "rig",
+            str(rig),
+            "--map",
+            "x=sensor_a",
+            "--map",
+            "y=sensor_a",
+        )
+        assert rc == 0, capsys.readouterr()
+        assert store.get_companions(test.model_id)["rig"].variables == {
+            "x": "sensor_a",
+            "y": "sensor_a",
+        }
+
+    def test_an_unknown_test_variable_is_refused(self, store_with_primary, rig, capsys):
+        store, test = store_with_primary
+        rc = self._run(
+            store, test, "add", test.model_id, "rig", str(rig), "--map", "nope=sensor_a"
+        )
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "nope" in out
+        assert "rig" not in store.get_companions(test.model_id)
+
+    def test_an_unknown_companion_variable_is_refused(
+        self, store_with_primary, rig, capsys
+    ):
+        store, test = store_with_primary
+        rc = self._run(
+            store, test, "add", test.model_id, "rig", str(rig), "--map", "x=sensor_z"
+        )
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "sensor_z" in out
+        assert "rig" not in store.get_companions(test.model_id)
+
+    def test_a_map_without_an_equals_sign_is_refused(
+        self, store_with_primary, rig, capsys
+    ):
+        store, test = store_with_primary
+        rc = self._run(store, test, "add", test.model_id, "rig", str(rig), "--map", "x")
+        assert rc == 1
+        assert "TEST_VAR=COMPANION_VAR" in capsys.readouterr().out
+
+    def test_one_test_variable_may_not_be_mapped_twice(
+        self, store_with_primary, rig, capsys
+    ):
+        store, test = store_with_primary
+        rc = self._run(
+            store,
+            test,
+            "add",
+            test.model_id,
+            "rig",
+            str(rig),
+            "--map",
+            "x=sensor_a",
+            "--map",
+            "x=sensor_b",
+        )
+        assert rc == 1
+        assert "x" in capsys.readouterr().out
+
+    def test_list_shows_the_mapping(self, store_with_primary, rig, capsys):
+        store, test = store_with_primary
+        self._run(
+            store, test, "add", test.model_id, "rig", str(rig), "--map", "x=sensor_a"
+        )
+        capsys.readouterr()
+        assert self._run(store, test, "list", test.model_id) == 0
+        out = capsys.readouterr().out
+        assert "x -> sensor_a" in out
+
+    def test_list_over_every_model_shows_the_mapping(
+        self, store_with_primary, rig, capsys
+    ):
+        store, test = store_with_primary
+        self._run(
+            store, test, "add", test.model_id, "rig", str(rig), "--map", "x=sensor_a"
+        )
+        capsys.readouterr()
+        assert self._run(store, test, "list") == 0
+        assert "x -> sensor_a" in capsys.readouterr().out

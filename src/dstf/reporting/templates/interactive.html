@@ -70,6 +70,9 @@ details summary:hover { color: var(--dstf-text); }
 .overlay-picker .ov-role { display: inline-block; padding: 0 0.3em; border-radius: 3px; font-size: 0.72em; text-transform: uppercase; }
 .overlay-picker .ov-soft_check { background: var(--dstf-role-soft_check-bg); color: var(--dstf-role-soft_check-fg); border: 1px solid var(--dstf-role-soft_check-border); }
 .overlay-picker .ov-companion { background: var(--dstf-role-companion-bg); color: var(--dstf-role-companion-fg); border: 1px solid var(--dstf-role-companion-border); }
+/* A spelling that could stand for two of an overlay's variables: nothing
+   is drawn for it, and this row says which mapping would settle it. */
+.ov-warning { margin-top: 0.2em; }
 /* Stage 2 — recursive SpecNodeView */
 .variable-section { margin-bottom: 2em; padding: 1em; background: var(--dstf-surface); border: 1px solid var(--dstf-border); border-radius: 4px; }
 .variable-section h2 { margin-top: 0; border-bottom: 1px solid var(--dstf-border-hairline); padding-bottom: 0.3em; }
@@ -251,12 +254,12 @@ details summary:hover { color: var(--dstf-text); }
   <table class="meta-table">
   <tr><th>Name</th><th>Role</th><th>Status</th><th>Variables</th><th>Note</th></tr>
   {% for ov in overlay_rows %}
-  <tr{% if ov.status != 'loaded' %} style="background: var(--dstf-warn-tint)"{% endif %}>
+  <tr{% if ov.status != 'loaded' or ov.warnings %} style="background: var(--dstf-warn-tint)"{% endif %}>
     <td>{{ ov.name }}</td>
     <td>{{ ov.role }}{% if ov.kind %} ({{ ov.kind }}){% endif %}</td>
     <td>{{ ov.status }}</td>
     <td>{% if ov.variables %}{{ ov.variables | join(", ") }}{% else %}&mdash;{% endif %}</td>
-    <td style="font-size:0.8em; color: var(--dstf-text-secondary)">{{ ov.note }}</td>
+    <td style="font-size:0.8em; color: var(--dstf-text-secondary)">{{ ov.note }}{% for warning in ov.warnings %}<div class="ov-warning">{{ warning }}</div>{% endfor %}</td>
   </tr>
   {% endfor %}
   </table>

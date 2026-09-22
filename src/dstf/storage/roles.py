@@ -4,7 +4,8 @@ Both roles hang off a model's primary ref file: soft_checks in
 ``<ref_dir>/soft_checks/ref_NNNN/<name>.json`` (scored via ``against:``, but
 the validator forces ``warn`` wrapping so they never hard-fail) and companions
 in ``<ref_dir>/companions/ref_NNNN/<name>.{json,csv}`` (plot-only overlays,
-never scored against).
+never scored against; the metadata records which of the companion's own
+variables draw on which of the test's).
 
 The CRUD is packaged as :class:`_RolesMixin` so the public call sites stay
 ``store.add_soft_check(...)`` / ``store.get_companions(...)``. The mixin's
@@ -70,7 +71,7 @@ def _companion_dir(ref_dir: Path, ref_file: Path) -> Path:
 _COMPANION_FORMAT_EXT = {"csv": ".csv", "json": ".json"}
 
 
-def _infer_companion_format(path: str) -> str:
+def infer_companion_format(path: str) -> str:
     """Infer companion format from file extension. Defaults to JSON."""
     lower = path.lower()
     if lower.endswith(".csv"):
@@ -142,6 +143,13 @@ class Companion:
     or disappear and the reporter degrades gracefully.
     ``kind="frozen"`` has been copied into ref storage (data_file sits
     next to this metadata) and is stable across repo moves.
+
+    ``variables`` is the companion's own record of which of ITS variables
+    draw on which of the test's — ``{test variable name: companion
+    variable name}``, the ``variables`` key of the metadata JSON. It is
+    what the reporter reads; without it the overlay loader has to guess
+    from spellings. Empty for a registration that declared none, and for
+    one written before the key existed.
     """
 
     name: str
@@ -150,6 +158,22 @@ class Companion:
     path: str | None = None  # absolute path for external
     data_file: str | None = None  # basename for frozen (sibling of metadata)
     provenance: dict = field(default_factory=dict)
+    variables: dict[str, str] = field(default_factory=dict)
+
+
+def _read_variable_mapping(entry: dict) -> dict[str, str]:
+    """The ``variables`` mapping of a companion's metadata, as text pairs.
+
+    Old data is tolerated — a registration written before the key existed
+    has no mapping, and reads as none — but so is a hand-edited file whose
+    ``variables`` is not an object of strings: an entry that is not a
+    text-to-text pair is dropped rather than raised, because a companion
+    is plot-only and must never break a report.
+    """
+    raw = entry.get("variables")
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
 
 
 class _RolesMixin:
@@ -339,6 +363,7 @@ class _RolesMixin:
                 path=entry.get("path"),
                 data_file=entry.get("data_file"),
                 provenance=entry.get("provenance", {}),
+                variables=_read_variable_mapping(entry),
             )
         return out
 
@@ -350,6 +375,7 @@ class _RolesMixin:
         *,
         format: str | None = None,
         provenance: dict | None = None,
+        variables: dict[str, str] | None = None,
     ) -> bool:
         """Register an external file as a companion (pointer only, no copy).
 
@@ -362,6 +388,14 @@ class _RolesMixin:
                 registration time; the resolved absolute path is stored.
             format: ``"csv"`` or ``"json"``. Auto-detected from the file
                 extension if not given.
+            variables: which of the companion's variables draw on which of
+                the test's — ``{test variable name: companion variable
+                name}``. Two test variables MAY name one companion
+                variable: that draws the one curve on both plots, which is
+                a legitimate thing to ask of a rig channel that stands in
+                for several modelled quantities. Whether the names on
+                either side exist is not checked here — the caller that
+                has both files open does that (``dstf companion add``).
         """
         if name == PRIMARY_BASELINE:
             raise ValueError("'primary' is reserved for the stored simulation result")
@@ -403,12 +437,15 @@ class _RolesMixin:
                 f"existing file at registration time"
             )
         path_str = str(resolved)
-        fmt = format or _infer_companion_format(path_str)
+        fmt = format or infer_companion_format(path_str)
 
         meta: dict[str, Any] = {
             "kind": "external",
             "format": fmt,
             "path": path_str,
+            # A writer never leaves the mapping out, so metadata WITHOUT
+            # the key is a registration no writer of this version made.
+            "variables": dict(variables or {}),
         }
         if provenance:
             meta["provenance"] = dict(provenance)
@@ -472,6 +509,9 @@ class _RolesMixin:
             "kind": "frozen",
             "format": co.format,
             "data_file": data_basename,
+            # Freezing copies the data; it does not rename anything, so
+            # the mapping rides across unchanged.
+            "variables": dict(co.variables),
         }
         if co.provenance:
             meta["provenance"] = dict(co.provenance)

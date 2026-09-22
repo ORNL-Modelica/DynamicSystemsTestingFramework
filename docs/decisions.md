@@ -4413,14 +4413,40 @@ resolves no variable of the result (a `scalar` leaf reading a stored
 statistics path, whose `variable` is free text naming the leaf) registers
 nothing.
 
-**Overlay matching is the one exception.** `reporting/overlay_loader.py`
-matches a companion or a soft-check overlay by NAME and only then by
-EXPRESSION. An overlay is another source's data — the repo's example
-companions are Julia baselines naming the quantity `x` / `y` — and no other
-tool can be expected to spell a positional `unitTests.x[2]`; the expression
-the model wrote is the only spelling the two have in common. The name wins
-when both match, so an overlay carrying both spellings does not get to decide
-which trajectory its trace belongs to.
+**Overlay matching is the one exception, and the record is the companion's
+own** (owner ruling 2026-09-22, replacing the fallback-only rule this
+paragraph first carried). An overlay is another source's data — the repo's
+example companions are Julia baselines naming the quantity `x` / `y` — and no
+other tool can be expected to spell a positional `unitTests.x[2]`. Which of a
+companion's variables draws on which of the test's is a fact only whoever
+registered it knows, so the companion records it in its metadata JSON:
+`"variables": {<test variable name>: <companion variable name>}`, written by
+`dstf companion add … --map TEST_VAR=COMPANION_VAR` (repeatable), carried
+through `freeze_companion`, read into `Companion.variables` and onto
+`Overlay.mapping`. `add` refuses a mapping naming a variable the test's stored
+baseline does not hold, or one the companion's file does not hold; two test
+variables MAY name one companion variable, which draws the one curve twice.
+Where an overlay HAS a mapping, that is the whole rule in
+`attach_overlays_to_trajectories`: a trajectory the mapping does not name gets
+no trace from it, even when the overlay holds a variable spelled exactly like
+it — guessing behind a recorded answer is how somebody else's curve ends up
+under the wrong plot.
+
+**The fallbacks are for an overlay nobody mapped** — companions registered
+before there was a mapping to write, and soft_checks and sibling-backend
+references, which are DSTF's own data keyed by the same names and carry none
+by design. In order: the overlay variable whose NAME is the trajectory's name
+(the two sources agree on a spelling); whose NAME is the trajectory's
+EXPRESSION (the positional name is on the test's side, and the text the model
+wrote is what the two share); whose own EXPRESSION is the trajectory's name or
+expression (the mirror, for a companion that is itself a DSTF baseline of
+another library — which is what the repo's example companions are, and why
+none of the seven Julia-side ones drew anything before this change). A step
+that finds MORE THAN ONE candidate attaches nothing and records a warning on
+the overlay, surfaced by `overlay_summary` on the report's overlay table,
+naming the trajectory, the candidates and the `--map` that settles it:
+`x={a.Q, a.Q}` is legal, so one expression can belong to two of a companion's
+variables.
 
 **The seam, and its coordination.** Reference-JSON variable names and the
 `test_spec.json` keys that named an expression both changed, and stored

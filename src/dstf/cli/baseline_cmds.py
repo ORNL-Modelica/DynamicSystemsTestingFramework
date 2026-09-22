@@ -41,32 +41,130 @@ def _require_positionals(
     )
 
 
+class _MapError(Exception):
+    """A ``--map`` the user must fix before anything is registered."""
+
+
+def _parse_variable_map(raw: list[str] | None) -> dict[str, str]:
+    """``["x=sensor_a", ...]`` → ``{"x": "sensor_a"}``.
+
+    Two test variables MAY name one companion variable — that draws the
+    one curve on both plots. One test variable named twice is a typo: the
+    second would silently win, so it is refused instead.
+    """
+    mapping: dict[str, str] = {}
+    for item in raw or []:
+        test_var, sep, companion_var = item.partition("=")
+        if not sep or not test_var.strip() or not companion_var.strip():
+            raise _MapError(
+                f"--map {item!r} is not TEST_VAR=COMPANION_VAR — one test "
+                f"variable name, '=', one companion variable name"
+            )
+        test_var, companion_var = test_var.strip(), companion_var.strip()
+        if test_var in mapping:
+            raise _MapError(
+                f"--map names the test variable {test_var!r} twice "
+                f"({mapping[test_var]!r} and {companion_var!r}); a variable "
+                f"draws one companion curve"
+            )
+        mapping[test_var] = companion_var
+    return mapping
+
+
+def _check_variable_map(
+    store,
+    model_id: str,
+    path: Path,
+    fmt: str,
+    mapping: dict[str, str],
+) -> None:
+    """Refuse a mapping naming something neither file has.
+
+    A wrong name draws nothing and says nothing, months later, in a
+    report — so both sides are checked here, where both files are open:
+    the left against the test's stored baseline, the right against the
+    companion's own data. A path that does not resolve is left to
+    ``add_companion``, which reports it as the registration error it is.
+    """
+    if not mapping:
+        return
+    from ..reporting.overlay_loader import companion_variable_names
+
+    reference = store.get_reference(model_id) or {}
+    known = {
+        entry.get("name")
+        for entry in reference.get("variables") or []
+        if isinstance(entry, dict)
+    }
+    unknown = sorted(v for v in mapping if v not in known)
+    if unknown:
+        raise _MapError(
+            f"--map names {', '.join(repr(v) for v in unknown)}, which the "
+            f"baseline of {model_id} does not hold. Its variables are: "
+            f"{', '.join(sorted(n for n in known if n))}"
+        )
+
+    if not path.exists():
+        return
+    try:
+        companion_vars = set(companion_variable_names(path, fmt))
+    except Exception as e:
+        raise _MapError(f"cannot read {path} to check --map against it: {e}") from e
+    missing = sorted(set(mapping.values()) - companion_vars)
+    if missing:
+        raise _MapError(
+            f"--map names {', '.join(repr(v) for v in missing)}, which "
+            f"{path} does not hold. Its variables are: "
+            f"{', '.join(sorted(companion_vars))}"
+        )
+
+
+def _print_companions(companions: dict) -> None:
+    """One line per companion, plus one per mapped variable under it."""
+    for name, co in companions.items():
+        extra = co.path if co.kind == "external" else co.data_file
+        print(f"  {name:<30} kind={co.kind:<8} format={co.format:<5} {extra}")
+        for test_var, companion_var in co.variables.items():
+            print(f"  {'':<30} {test_var} -> {companion_var}")
+
+
 def cmd_companion(args: argparse.Namespace) -> int:
     """Manage plot-only companion references (D66).
 
     Companions are experimental / analytical / rig data shown as plot
     overlays but never scored against. Four actions:
-      add <model> <name> <path> [--format csv|json]
+      add <model> <name> <path> [--format csv|json] [--map TEST=COMPANION]
       list [<model>]
       freeze <model> <name>
       remove <model> <name>
+
+    ``--map`` is repeatable and records which of the companion's variables
+    draws on which of the test's — the answer the report reads instead of
+    guessing from spellings. Two test variables may name one companion
+    variable; one test variable may not be named twice.
     """
     _require_positionals(args, "companion", _COMPANION_REQUIRED)
     config = _build_config(args)
     from ..storage.reference_store import ReferenceStore
+    from ..storage.roles import infer_companion_format
 
     store = ReferenceStore(config)
     action = args.action
 
     if action == "add":
+        path = Path(args.path)
+        fmt = getattr(args, "format", None) or infer_companion_format(str(path))
         try:
+            mapping = _parse_variable_map(getattr(args, "variable_map", None))
+            _check_variable_map(store, args.model_id, path, fmt, mapping)
             ok = store.add_companion(
                 args.model_id,
                 args.name,
-                path=Path(args.path),
+                path=path,
                 format=getattr(args, "format", None),
+                variables=mapping,
             )
-        except (ValueError, FileNotFoundError) as e:
+        except (_MapError, ValueError, FileNotFoundError) as e:
             print(f"Error: {e}")
             return 1
         print(
@@ -84,9 +182,7 @@ def cmd_companion(args: argparse.Namespace) -> int:
                 print(f"No companions registered for {model_id}")
                 return 0
             print(f"Companions for {model_id}:")
-            for name, co in companions.items():
-                extra = co.path if co.kind == "external" else co.data_file
-                print(f"  {name:<30} kind={co.kind:<8} format={co.format:<5} {extra}")
+            _print_companions(companions)
             return 0
         # All models
         total = 0
@@ -96,11 +192,7 @@ def cmd_companion(args: argparse.Namespace) -> int:
             companions = store.get_companions(entry["model_id"])
             if companions:
                 print(f"{entry['model_id']}:")
-                for name, co in companions.items():
-                    extra = co.path if co.kind == "external" else co.data_file
-                    print(
-                        f"  {name:<30} kind={co.kind:<8} format={co.format:<5} {extra}"
-                    )
+                _print_companions(companions)
                 total += len(companions)
         if total == 0:
             print("No companions registered.")
