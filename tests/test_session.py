@@ -2313,7 +2313,7 @@ class TestPlots:
         actual = next(
             tr for tr in s.figure(B, UT1)["data"] if tr["meta"]["id"] == "actual"
         )
-        assert actual["text"] == AWKWARD_EXPRESSION
+        assert actual["meta"]["label"] == AWKWARD_EXPRESSION
 
     def test_a_labelled_variables_figure_reads_the_label(self, tmp_path):
         """The figure the tool draws is the report's, so the label reaches
@@ -2327,7 +2327,7 @@ class TestPlots:
         figure = s.figure(A, UT1)
         actual = next(tr for tr in figure["data"] if tr["meta"]["id"] == "actual")
         assert actual["name"] == "Actual"  # the picker's key, unchanged
-        assert actual["text"] == UT1_EXPR
+        assert actual["meta"]["label"] == UT1_EXPR
 
     def test_a_failed_simulations_partial_result_is_not_tracked(self, tmp_path):
         """A backend that stopped mid-run leaves what it had in the file.

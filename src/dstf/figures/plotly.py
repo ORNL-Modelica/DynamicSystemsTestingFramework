@@ -145,17 +145,42 @@ def hover_of(label: str) -> dict:
 
     A hovertemplate is a format string: plotly.js substitutes every
     ``%{…}`` in it from the trace's data, and there is no escape for a
-    literal one — an expression a model wrote as ``a%{x}b`` came out of the
-    hover as ``ab``. So the label does not enter the template at all. It
-    rides in the trace's ``text`` (a single string applies to every point)
-    and the template references it as ``%{text}``, which is plotly's own
-    way of putting arbitrary text in a hover. ``mode`` never includes
-    ``text``, so nothing of it is drawn on the plot itself.
+    literal one. So the label does not enter the template at all — it rides
+    in the trace's ``meta`` and the template references it as
+    ``%{meta.label}``.
+
+    NOT ``text``: plotly.js substitutes ``%{text}`` only from a PER-POINT
+    array. A scalar string is left alone, so every labelled hover on both
+    tiers rendered the literal ``%{text}: 1.234`` — read off a real mouse
+    hover in Chromium, which is the only place it shows (the figure dict
+    looked right). An array would be the label copied once per sample into
+    the page; ``meta`` is one object per trace, and ``%{meta.label}``
+    substitutes from it.
+
+    The ``meta`` here is MERGED into the trace's own, which already carries
+    its id and its sample counts — :func:`with_hover` does that, and a
+    plain spread beside a ``"meta"`` key would not.
     """
     return {
-        "text": as_text(label),
-        "hovertemplate": "%{text}: %{y:.4g}<extra></extra>",
+        "meta": {"label": as_text(label)},
+        "hovertemplate": "%{meta.label}: %{y:.4g}<extra></extra>",
     }
+
+
+def with_hover(trace: dict, label: str | None) -> dict:
+    """``trace`` with a hover reading ``label``; ``None`` leaves it alone.
+
+    The one way :func:`hover_of` is applied: its ``meta`` folds into the
+    trace's own rather than replacing it, so the hover cannot cost a trace
+    its ``meta.id`` — the key the page, the overlay picker and every test
+    address a trace by.
+    """
+    if label is None:
+        return trace
+    hover = hover_of(label)
+    trace["hovertemplate"] = hover["hovertemplate"]
+    trace["meta"] = {**trace.get("meta", {}), **hover["meta"]}
+    return trace
 
 
 def _axes(prim: Primitive) -> dict:
@@ -443,46 +468,54 @@ def _base_traces(view: VariableView) -> list[dict]:
     # hover says the label too: on a `unitTests.x[3]` card, "Actual" alone
     # names nothing a person recognises. A variable whose label IS its name
     # gets no hover it did not have.
-    def _hover(suffix: str = "") -> dict:
+    def _hover(suffix: str = "") -> str | None:
         if view.label == view.name:
-            return {}
-        return hover_of(f"{view.label}{suffix}")
+            return None
+        return f"{view.label}{suffix}"
 
     if view.act_time is not None and view.act_values is not None:
         traces.append(
-            {
-                "type": "scatter",
-                "mode": "lines",
-                "name": "Actual",
-                **_hover(),
-                "x": view.act_time.tolist(),
-                "y": view.act_values.tolist(),
-                "line": {"color": ACTUAL, "width": 1.5},
-                "meta": {
-                    "id": "actual",
-                    "kind": "act",
-                    "samples": len(view.act_time),
-                    "full_samples": view.full_samples.get("act", len(view.act_time)),
+            with_hover(
+                {
+                    "type": "scatter",
+                    "mode": "lines",
+                    "name": "Actual",
+                    "x": view.act_time.tolist(),
+                    "y": view.act_values.tolist(),
+                    "line": {"color": ACTUAL, "width": 1.5},
+                    "meta": {
+                        "id": "actual",
+                        "kind": "act",
+                        "samples": len(view.act_time),
+                        "full_samples": view.full_samples.get(
+                            "act", len(view.act_time)
+                        ),
+                    },
                 },
-            }
+                _hover(),
+            )
         )
     if view.ref_time is not None and view.ref_values is not None:
         traces.append(
-            {
-                "type": "scatter",
-                "mode": "lines",
-                "name": "Reference",
-                **_hover(" (reference)"),
-                "x": view.ref_time.tolist(),
-                "y": view.ref_values.tolist(),
-                "line": {"color": REFERENCE, "width": 1.5, "dash": "dash"},
-                "meta": {
-                    "id": "reference",
-                    "kind": "ref",
-                    "samples": len(view.ref_time),
-                    "full_samples": view.full_samples.get("ref", len(view.ref_time)),
+            with_hover(
+                {
+                    "type": "scatter",
+                    "mode": "lines",
+                    "name": "Reference",
+                    "x": view.ref_time.tolist(),
+                    "y": view.ref_values.tolist(),
+                    "line": {"color": REFERENCE, "width": 1.5, "dash": "dash"},
+                    "meta": {
+                        "id": "reference",
+                        "kind": "ref",
+                        "samples": len(view.ref_time),
+                        "full_samples": view.full_samples.get(
+                            "ref", len(view.ref_time)
+                        ),
+                    },
                 },
-            }
+                _hover(" (reference)"),
+            )
         )
     for ov in view.overlays:
         if ov.role == "soft_check":
@@ -818,47 +851,55 @@ def _series_traces(
     # variable of this TEST carries the same label — and keyed by the name:
     # `meta.id` is what the page, the picker and every test address a trace
     # by.
-    hover = hover_of(text)
+    #
     # Spelled out, not `_draws_actual(view)`: mypy narrows the arrays here.
     if view.act_time is not None and view.act_values is not None:
         traces.append(
-            {
-                "type": "scatter",
-                "mode": "lines",
-                "name": as_text(label) if first else as_text(text),
-                "legendgroup": group,
-                "showlegend": first,
-                **hover,
-                "x": view.act_time.tolist(),
-                "y": view.act_values.tolist(),
-                "line": {"color": color, "width": 1.5},
-                "meta": {
-                    "id": f"actual/{view.name}",
-                    "kind": "act",
-                    "samples": len(view.act_time),
-                    "full_samples": view.full_samples.get("act", len(view.act_time)),
+            with_hover(
+                {
+                    "type": "scatter",
+                    "mode": "lines",
+                    "name": as_text(label) if first else as_text(text),
+                    "legendgroup": group,
+                    "showlegend": first,
+                    "x": view.act_time.tolist(),
+                    "y": view.act_values.tolist(),
+                    "line": {"color": color, "width": 1.5},
+                    "meta": {
+                        "id": f"actual/{view.name}",
+                        "kind": "act",
+                        "samples": len(view.act_time),
+                        "full_samples": view.full_samples.get(
+                            "act", len(view.act_time)
+                        ),
+                    },
                 },
-            }
+                text,
+            )
         )
     if view.ref_time is not None and view.ref_values is not None:
         traces.append(
-            {
-                "type": "scatter",
-                "mode": "lines",
-                "name": f"{as_text(text)} (reference)",
-                "legendgroup": group,
-                "showlegend": False,
-                **hover_of(f"{text} (reference)"),
-                "x": view.ref_time.tolist(),
-                "y": view.ref_values.tolist(),
-                "line": {"color": color, "width": 1.2, "dash": "dash"},
-                "opacity": 0.7,
-                "meta": {
-                    "id": f"reference/{view.name}",
-                    "kind": "ref",
-                    "samples": len(view.ref_time),
-                    "full_samples": view.full_samples.get("ref", len(view.ref_time)),
+            with_hover(
+                {
+                    "type": "scatter",
+                    "mode": "lines",
+                    "name": f"{as_text(text)} (reference)",
+                    "legendgroup": group,
+                    "showlegend": False,
+                    "x": view.ref_time.tolist(),
+                    "y": view.ref_values.tolist(),
+                    "line": {"color": color, "width": 1.2, "dash": "dash"},
+                    "opacity": 0.7,
+                    "meta": {
+                        "id": f"reference/{view.name}",
+                        "kind": "ref",
+                        "samples": len(view.ref_time),
+                        "full_samples": view.full_samples.get(
+                            "ref", len(view.ref_time)
+                        ),
+                    },
                 },
-            }
+                f"{text} (reference)",
+            )
         )
     return traces

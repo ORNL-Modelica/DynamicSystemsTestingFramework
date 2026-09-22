@@ -23,7 +23,9 @@ def _load_spec_for_edit(spec_path: Path) -> dict:
     if not spec_path.exists():
         return {"tests": []}
     try:
-        text = spec_path.read_text(encoding="utf-8")
+        # `utf-8-sig`, like every other reader of this file: a BOM is not
+        # a reason to refuse a spec that otherwise parses.
+        text = spec_path.read_text(encoding="utf-8-sig")
     except OSError as e:
         raise ConfigError(f"Cannot read test spec {spec_path}: {e}") from e
     try:
@@ -140,7 +142,8 @@ def parse_test_spec(spec_path: Path) -> list[TestModel]:
     directly with its in-memory document.
     """
     try:
-        data = json.loads(spec_path.read_text(encoding="utf-8"))
+        # `utf-8-sig`, like every other reader of this file.
+        data = json.loads(spec_path.read_text(encoding="utf-8-sig"))
     except (json.JSONDecodeError, OSError) as e:
         logger.error("Failed to read test spec %s: %s", spec_path, e)
         return []

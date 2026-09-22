@@ -387,19 +387,30 @@ def test_the_caption_at_a_variable_names_it(session):
     assert EditTree().caption(SessionView(session, _node(A, ROOT))) == "Edit tree"
 
 
-def test_the_caption_with_more_than_one_test_selected_says_the_name(two_var_session):
-    """VARIABLE placement is single-test — `available` refuses anything else
-    — and a label belongs to ONE test's result. Reading it off
-    `next(iter(sel.tests))` put an arbitrary test's expression on the
-    button: A and B both track `x` here, each with its own expression, and
-    a frozenset has no order to pick by. With two selected the caption says
-    the name."""
+def test_the_caption_reads_the_scope_the_selection_carries(two_var_session):
+    """The caption reads `Selection.texts` — the page's one read of the
+    test's label scope, handed down with the selection — and derives
+    nothing: a caption that built the scope for itself did it twice per
+    card, which was the Test page's whole rebuild cost (40 cards: 82 scope
+    builds, 0.37 s).
+
+    A selection carrying no scope says the NAME. That also settles what a
+    label off `next(iter(sel.tests))` used to do: A and B both track `x`
+    here, each with its own expression, and a frozenset has no order to
+    pick by — VARIABLE placement is single-test anyway (`available`
+    refuses anything else)."""
     from test_session import with_expressions
 
     with_expressions(two_var_session, A, {"x": "a.Q"})
     with_expressions(two_var_session, B, {"x": "b.Q"})
-    one = SessionView(two_var_session, Selection(tests=frozenset({A}), variable="x"))
+    scope = two_var_session.variable_texts(A)
+    one = SessionView(
+        two_var_session,
+        Selection(tests=frozenset({A}), variable="x", texts=scope),
+    )
     assert EditTree().caption(one) == "Add a criterion for a.Q"
+    bare = SessionView(two_var_session, Selection(tests=frozenset({A}), variable="x"))
+    assert EditTree().caption(bare) == "Add a criterion for x"
     two = SessionView(two_var_session, Selection(tests=frozenset({A, B}), variable="x"))
     assert EditTree().available(two) == "select exactly one test"
     assert EditTree().caption(two) == "Add a criterion for x"

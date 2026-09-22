@@ -37,7 +37,13 @@ _QUOTED_ID = re.compile(r"'[^']*'")
 #: ``der(...)``, and only that: a derivative IS an element of the array it
 #: differentiates. Any OTHER call is a reduction over the array — ``sum(...)``
 #: of two different slices is two quantities, not two elements of one.
-_DER_CALL = re.compile(r"^der\((.*)\)$")
+#:
+#: Indexed AFTER the call too (``der(x)[1]``): that is a plain indexed name
+#: of the derivative of an array, so ``der(x)[1]`` and ``der(x)[2]`` are two
+#: elements of one array and fold. ``der(x[1], 2)`` does NOT — a second
+#: derivative is a call of two arguments, and the index inside it belongs to
+#: the argument, not to what the call returns; it stays a family of one.
+_DER_CALL = re.compile(r"^der\((.*)\)(?:\[\d+\])*$")
 
 #: Four stops per hue, light to dark (Material 200 / 400 / 700 / 900). The
 #: first is DESIGN.md's accent ramp; a second family on a plot takes the
@@ -54,9 +60,11 @@ def _names_an_element(text: str) -> bool:
 
     A plain name with any number of ``der(...)`` wrappers and leading
     minus signs around it, in any order — ``-der(x[2])`` and
-    ``der(-x[2])`` are the same quantity and must answer the same.
-    Everything else — ``sum(core.Qs[6, :])``, ``cat(1, a, b)[2]``,
-    ``abs(x[1])`` — is an expression: its value is not an element of the
+    ``der(-x[2])`` are the same quantity and must answer the same. A
+    ``der(...)`` may itself be indexed (``der(x)[1]``, the derivative of an
+    array taken element by element). Everything else —
+    ``sum(core.Qs[6, :])``, ``cat(1, a, b)[2]``, ``abs(x[1])``,
+    ``der(x[1], 2)`` — is an expression: its value is not an element of the
     array whose index it happens to end with.
     """
     while True:
@@ -82,9 +90,11 @@ def family_of(text: str, *, expression: bool = False) -> tuple[str, int] | None:
 
     ``expression=True`` reads it as a label a person typed, and only a
     plain indexed name qualifies (``pipe.T[3]``, ``der(pipe.T[3])``,
-    ``pipe.medium[3].T``, ``a.'b c'[2]``, ``-x[1]``). ``cat(1, a, b)[2]``,
-    ``sum(core.Qs[6, :])`` and ``sum(pipe.Qs[1])`` are computations, not
-    elements of an array.
+    ``der(pipe.T)[3]``, ``pipe.medium[3].T``, ``a.'b c'[2]``, ``-x[1]``).
+    ``cat(1, a, b)[2]``, ``sum(core.Qs[6, :])``, ``sum(pipe.Qs[1])`` and
+    ``der(x[1], 2)`` are computations, not elements of an array — the
+    second derivative's index belongs to the ARGUMENT of a two-argument
+    call, and nothing here can say the call returns an element of it.
     """
     if expression and not _names_an_element(text):
         return None

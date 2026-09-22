@@ -616,3 +616,74 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         expect(page.locator(".dstf-plot:visible")).to_have_count(
             7, timeout=EXPECT_TIMEOUT
         )
+
+
+#: A pixel at the x of one point of a drawn trace, on the VISIBLE card's
+#: drag layer. `hovermode` is `x unified`, so the hover is decided by the x
+#: alone and the y only has to be somewhere the mouse reaches the plot: the
+#: tool's figure draws every criterion's geometry ABOVE the drag layer, and
+#: a pixel that lands on a band or a ring hovers nothing. The column is
+#: swept the way `FIND_RING` sweeps for a shape.
+POINT_PIXEL = """
+(gd, [id, idx]) => {
+  const fl = gd._fullLayout, r = gd.getBoundingClientRect();
+  const tr = (gd.data || []).find(t => (t.meta || {}).id === id);
+  if (!tr) return null;
+  const x = r.left + fl.xaxis._offset + fl.xaxis.l2p(tr.x[idx]);
+  const top = r.top + fl.yaxis._offset;
+  for (let f = 0.05; f < 1; f += 0.05) {
+    const y = top + fl.yaxis._length * f;
+    const el = document.elementFromPoint(x, y);
+    if (el && el.closest && el.closest('.nsewdrag')) return [x, y];
+  }
+  return null;
+}
+"""
+
+#: Every line of the hover box. The figure's `hovermode` is `x unified`, so
+#: the box is a legend-shaped group under `.hoverlayer`, not a `.hovertext`.
+HOVER_TEXTS = (
+    "() => Array.from(document.querySelectorAll('.hoverlayer text'))"
+    ".map(e => e.textContent)"
+)
+
+
+def test_a_hover_over_a_card_reads_the_series_it_is_over(tmp_path, playwright_browser):
+    """The hover box a person sees in the TOOL, under a real mouse.
+
+    The tool re-hosts the figure the report draws, under NiceGUI's own
+    plotly build, and every labelled hover on both tiers printed the
+    literal `%{text}: 1.234`: plotly.js substitutes `%{text}` only from a
+    per-point array. Nothing but a rendered page says so — the figure dict
+    carried the label all along.
+
+    A card drawing SEVERAL series is the one that always carries a hover:
+    a single-series card names its traces "Actual" / "Reference" and adds
+    one only when the label is not the name. Plot 2 of the fixture is
+    `[x, y]`; Focus is how it is drawn without scrolling to it."""
+    with _served(tmp_path, playwright_browser) as page:
+        page.locator(".dstf-plot").nth(2).get_by_role("button", name="Focus").click()
+        expect(page.locator(".dstf-plot:visible")).to_have_count(
+            1, timeout=EXPECT_TIMEOUT
+        )
+        expect(page.locator(".dstf-plot:visible .js-plotly-plot")).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        plot = page.locator(".dstf-plot:visible .js-plotly-plot")
+        pixel = None
+        for _ in range(30):
+            pixel = plot.evaluate(POINT_PIXEL, ["actual/x", 3])
+            if pixel is not None:
+                break
+            page.wait_for_timeout(200)
+        assert pixel is not None, "the focused card never drew actual/x"
+        x, y = pixel
+        page.mouse.move(x - 40, y - 20)
+        page.wait_for_timeout(100)
+        page.mouse.move(x, y, steps=4)
+        page.wait_for_timeout(400)
+        texts = page.evaluate(HOVER_TEXTS)
+        _shot(page, tmp_path, "hover")
+        assert texts, "no hover box under the mouse"
+        assert any(line.startswith("x: ") for line in texts), texts
+        assert not any("%{" in line for line in texts), texts

@@ -1585,6 +1585,21 @@ async def test_a_rebuilt_card_gives_up_its_hook(shell):
         assert not [e for entries in old.hook._handlers.values() for e in entries]
 
 
+def _count_reads(session, names=("tree_view", "tracked", "variable_texts", "plots")):
+    """Count the Session reads a page makes, by patching the reader on the
+    instance. Returns the live dict."""
+    calls = dict.fromkeys(names, 0)
+    for name in calls:
+        real = getattr(session, name)
+
+        def counting(*a, _real=real, _name=name, **k):
+            calls[_name] += 1
+            return _real(*a, **k)
+
+        setattr(session, name, counting)
+    return calls
+
+
 async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(shell):
     """The cost the review measured: every card read `tree_view` and
     `tracked` for itself, so a rebuild cost one read per plot. The page
@@ -1594,35 +1609,63 @@ async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(shell):
         page = await _test_page(shell, user)
         assert len(page.cards) == 5
         session = shell.session
-        calls = {"tree_view": 0, "tracked": 0, "variable_texts": 0}
-        for name in calls:
-            real = getattr(session, name)
-
-            def counting(*a, _real=real, _name=name, **k):
-                calls[_name] += 1
-                return _real(*a, **k)
-
-            setattr(session, name, counting)
+        calls = _count_reads(session)
         view = session.tree_view(A)
         calls["tree_view"] = 0
-        calls["variable_texts"] = 0
+        calls["variable_texts"] = calls["plots"] = calls["tracked"] = 0
         with page.column:
             page.rebuild(view)
-        # The page reads no view of its own, and the label scope ONCE for
-        # every card. The rest of the `variable_texts` reads are the "Add a
-        # criterion for x" captions': a capability asks the SessionView for
-        # the label of the variable its button names, which is the
-        # capability's API and not a card reading page state. `tracked` is
-        # a read of each of those, so it follows them.
+        # The page reads no view of its own, and the label scope ONCE — not
+        # once per card. The captions of the cards' "Add a criterion for x"
+        # bars read the scope the page hands down with their selection
+        # (`Selection.texts`); deriving it in the caption instead was 2
+        # scope builds per card, each re-resolving the test's plots and
+        # tracked names (80 of them on a 40-card page).
         assert calls["tree_view"] == 0
-        # ONE scope read for the whole page, plus each card's single "Add a
-        # criterion for x" bar asking for its variable's label as it is
-        # built and as it refreshes. Nothing here is per-series or per-leaf.
-        assert calls["variable_texts"] == 1 + 2 * len(page.cards)
+        assert calls["variable_texts"] <= 2, calls
+        # Bounded, and by the page — not by how many cards it has.
+        assert calls["plots"] <= 4 and calls["tracked"] <= 8, calls
         calls["tracked"] = 0
         with page.client:
             page.sync()
         assert calls["tree_view"] == 1
+
+
+@pytest.mark.parametrize("n", [5, 40])
+async def test_the_page_costs_the_same_whether_it_has_five_cards_or_forty(shell, n):
+    """The guard the review's cost probe is: a build, a rebuild and a sync
+    read the Session a bounded number of times, and the bound does not move
+    between five cards and forty. It was O(cards) with a factor of two —
+    40 cards meant 82 label-scope builds, 84 plot resolutions and 169
+    tracked-name reads per rebuild, 0.37 s against 0.03 s at five.
+
+    Drawing is not in the bound: `show()` is per card by nature — a figure
+    is assembled for the card being drawn — and the page draws only what is
+    scrolled to."""
+    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * n)])
+    session = shell.session
+    calls = _count_reads(session)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user)
+        await _settled(lambda: len(page.cards) == n)
+        build = dict(calls)
+        for key in calls:
+            calls[key] = 0
+        view = session.tree_view(A)
+        for key in calls:
+            calls[key] = 0
+        with page.column:
+            page.rebuild(view)
+        rebuild = dict(calls)
+        for key in calls:
+            calls[key] = 0
+        with page.client:
+            page.sync()
+        sync = dict(calls)
+    for phase in (build, rebuild, sync):
+        assert phase["variable_texts"] <= 2, (phase, n)
+        assert phase["plots"] <= 4, (phase, n)
+        assert phase["tracked"] <= 10, (phase, n)
 
 
 # -- the editor: below its row, one at a time, the plot as its surface ------
@@ -2928,7 +2971,7 @@ async def test_a_legend_reads_the_tests_scope_not_the_plots(shell):
         ]
         assert names == ["Actual"]  # one series: the picker's key
         hover = next(
-            tr["text"]
+            tr["meta"]["label"]
             for tr in page.cards[0].plot.figure["data"]
             if tr.get("meta", {}).get("kind") == "act"
         )

@@ -13,12 +13,17 @@ import numpy as np
 from dstf.reporting.report_suite import plot_page_keys
 
 
-def _fixture_context() -> dict:
+def _fixture_context(label: str | None = None) -> dict:
     """A minimal render context: one variable, one tube leaf, an empty figure.
 
     Every key the template dereferences is here — the template renders the
     tree, the summary line and the variable pill server-side, so a missing
     key is a silently blank page rather than an error.
+
+    ``label`` gives the variable an EXPRESSION to read as — stamped where
+    ``_build_template_context`` stamps it, in ``variable_texts`` and on the
+    trajectory — so a page can be rendered for a variable whose label is
+    not its name without a whole comparison behind it.
     """
     t = np.linspace(0, 3, 50).tolist()
     ref = [1 + np.sin(x) for x in t]
@@ -78,9 +83,13 @@ def _fixture_context() -> dict:
         "variables_by_name": {
             "h": {
                 "name": "h",
+                "label": label or "h",
+                "text": label or "h",
                 "trajectory": {
                     "index": 1,
                     "name": "h",
+                    "label": label or "h",
+                    "text": label or "h",
                     "act_time": t,
                     "act_values": act,
                     "ref_time": t,
@@ -93,6 +102,7 @@ def _fixture_context() -> dict:
                 "n_advisory_failed": 0,
             }
         },
+        "variable_texts": {"h": {"label": label or "h", "text": label or "h"}},
         "decimated": [],
         "diag_figures": [],
         "nb_figures": [],
@@ -115,13 +125,13 @@ def _render_with_context(tmp_path: Path, ctx: dict) -> Path:
     return html_path
 
 
-def _context_with_figure():
+def _context_with_figure(label: str | None = None):
     from dstf.comparison.algorithms import _compare_tube
     from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
     from dstf.figures.plotly import variable_figure
     from dstf.figures.view import build_view
 
-    ctx = _fixture_context()
+    ctx = _fixture_context(label)
     var = next(iter(ctx["variables_by_name"]))
     traj = ctx["variables_by_name"][var]["trajectory"]
     t = np.asarray(traj["ref_time"], dtype=float)
@@ -136,6 +146,7 @@ def _context_with_figure():
     fig = variable_figure(
         build_view(
             var,
+            label=label or var,
             act_time=act_t,
             act_values=act,
             ref_time=t,

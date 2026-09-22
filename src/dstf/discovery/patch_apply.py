@@ -102,7 +102,13 @@ def load_spec_document(spec_path: Path) -> dict:
     if not spec_path.exists():
         return {"tests": []}
     try:
-        data = json.loads(spec_path.read_text(encoding="utf-8"))
+        # `utf-8-sig`: a spec a Windows editor saved keeps a BOM, and a BOM
+        # is not a reason to refuse a file that otherwise parses — the
+        # baselines have always been read this way, and a BOM'd spec made
+        # `migrate-variable-names` call the whole file unreadable. The other
+        # two spec readers (`spec_parser._load_spec`, `SpecDocument.load`)
+        # decode the same way, or this one alone could read it.
+        data = json.loads(spec_path.read_text(encoding="utf-8-sig"))
     except (json.JSONDecodeError, OSError) as e:
         raise PatchError(f"cannot read {spec_path}: {e}") from e
     return spec_document_shape(data)

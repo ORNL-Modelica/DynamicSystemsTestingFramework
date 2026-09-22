@@ -253,6 +253,11 @@ class PlotCard:
                                     Selection,
                                     tests=frozenset({model}),
                                     variable=variable,
+                                    # The page's one read of the scope, so
+                                    # the footer's caption reads this
+                                    # variable's text without building it
+                                    # per card (`Selection.texts`).
+                                    texts=scope,
                                 ),
                                 marker=f"variable-actions:{index}:{variable}",
                                 figure=self.hook,

@@ -115,10 +115,13 @@ def test_a_family_shares_a_hue_ramped_by_index_with_one_legend_entry():
     assert {tr["legendgroup"] for tr in acts} == {"pipe.T[]"}
     assert [tr["showlegend"] for tr in acts] == [True, False, False, False]
     assert acts[0]["name"] == "pipe.T[1:5:16]"
-    # The label is out of the TEMPLATE: plotly.js substitutes every `%{…}`
-    # in a hovertemplate, so a label holding one was substituted away.
-    assert acts[2]["hovertemplate"] == "%{text}: %{y:.4g}<extra></extra>"
-    assert acts[2]["text"] == "pipe.T[11]"
+    # The label is out of the TEMPLATE and in `meta`: plotly.js
+    # substitutes every `%{…}` in a hovertemplate from the trace's data,
+    # and a scalar `text` is not data it substitutes from.
+    assert acts[2]["hovertemplate"] == "%{meta.label}: %{y:.4g}<extra></extra>"
+    assert acts[2]["meta"]["label"] == "pipe.T[11]"
+    # The hover did not cost the trace the key everything addresses it by.
+    assert acts[2]["meta"]["id"] == "actual/pipe.T[11]"
 
 
 def test_a_second_family_and_a_scalar_take_the_next_hues():
@@ -342,7 +345,7 @@ def test_a_multi_series_plot_reads_the_labels_and_is_keyed_by_the_names():
     assert f"actual/{N1}" in by_id and f"reference/{N1}" in by_id
     assert not any("pipe.T" in i for i in by_id)
     assert by_id[f"reference/{N1}"]["name"] == "pipe.T[1] (reference)"
-    assert by_id[f"actual/{N2}"]["text"] == "a.Q"
+    assert by_id[f"actual/{N2}"]["meta"]["label"] == "a.Q"
     # The legend entry of a family of one is its label.
     assert by_id[f"actual/{N2}"]["name"] == "a.Q"
 
@@ -353,8 +356,8 @@ def test_a_single_variables_hover_carries_the_label():
     # The trace NAMES stay "Actual" / "Reference" (report.js and the overlay
     # picker find them by those); the hover says which variable it is.
     assert by_id["actual"]["name"] == "Actual"
-    assert by_id["actual"]["text"] == "pipe.T[1]"
-    assert by_id["reference"]["text"] == "pipe.T[1] (reference)"
+    assert by_id["actual"]["meta"]["label"] == "pipe.T[1]"
+    assert by_id["reference"]["meta"]["label"] == "pipe.T[1] (reference)"
 
 
 def test_a_variable_with_no_expression_draws_exactly_what_it_did():
@@ -391,6 +394,25 @@ def test_a_family_label_reads_the_labels():
 @pytest.mark.parametrize("label", ["cat(1, a, b)[2]", "sum(core.Qs[6, :])", "a.Q"])
 def test_an_expression_that_is_not_a_plain_indexed_name_has_no_family(label):
     assert family_of(label, expression=True) is None
+
+
+def test_a_derivative_indexed_after_the_call_is_a_family_member():
+    """`der(x)[1]` is a plain indexed name of a derivative — the derivative
+    of an array, element by element — so `der(x)[1..3]` is one family, one
+    legend entry and one colour ramp. `der(x)` alone is a family of one."""
+    assert family_of("der(x)[1]", expression=True) == ("der(x)[]", 1)
+    labels = {N1: "der(x)[1]", N2: "der(x)[2]"}
+    assert group_families([N1, N2], labels) == [("der(x)[]", [N1, N2])]
+
+
+def test_a_second_derivative_is_not_folded():
+    """`der(x[1], 2)` is a call of TWO arguments: the index is the
+    argument's, and nothing here can say the call returns an element of an
+    array. It stays a family of one — reading `der(x[1:2], 2)` over two of
+    them would name a third thing neither of them is."""
+    assert family_of("der(x[1], 2)", expression=True) is None
+    labels = {N1: "der(x[1], 2)", N2: "der(x[2], 2)"}
+    assert group_families([N1, N2], labels) == [(N1, [N1]), (N2, [N2])]
 
 
 def test_a_folded_family_of_labels_takes_one_legend_entry():
@@ -555,7 +577,7 @@ def test_two_series_sharing_one_expression_read_label_and_name():
     by_id = {tr["meta"]["id"]: tr for tr in fig["data"] if tr.get("meta")}
     assert by_id[f"actual/{N1}"]["name"] == f"a.Q ({N1})"
     assert by_id[f"actual/{N2}"]["name"] == f"a.Q ({N2})"
-    assert by_id[f"actual/{N1}"]["text"] == f"a.Q ({N1})"
+    assert by_id[f"actual/{N1}"]["meta"]["label"] == f"a.Q ({N1})"
     assert by_id[f"reference/{N1}"]["name"] == f"a.Q ({N1}) (reference)"
     # Two legend entries, two hues: `label (name)` belongs to no family.
     assert [tr["name"] for tr in fig["data"] if tr.get("showlegend")] == [
@@ -578,9 +600,16 @@ def test_two_series_with_their_own_expressions_read_the_label_alone():
 @pytest.mark.parametrize("build", ["single", "multi"])
 def test_a_label_holding_a_plotly_placeholder_is_printed_not_substituted(build):
     """`%{x}` in a hovertemplate is a data reference plotly.js substitutes,
-    and it has no escape: an expression a model wrote as `a%{x}b` came out
-    of the hover as `ab`. The label rides in the trace's `text` instead,
-    and the template is the only thing holding a placeholder."""
+    and it has no escape — so a label never enters the template. It rides
+    in the trace's `meta`, which the template references as one whole
+    value: `%{meta.label}` prints a label holding `%{x}` exactly as it is
+    (measured in Chromium over the vendored plotly.js).
+
+    The legend is NOT defended the same way: plotly.js templates a trace
+    NAME from `meta` too, and a name holding `%{x}` rendered as `ab` in the
+    legend of that same page. No Modelica expression spells one — this
+    test is about the template, not about a real label — so nothing here
+    tries to escape a placeholder into a legend entry."""
     views = [_labelled(N1, "a%{x}b", ref=True)]
     if build == "multi":
         views.append(_labelled(N2, "c.Q"))
@@ -588,9 +617,9 @@ def test_a_label_holding_a_plotly_placeholder_is_printed_not_substituted(build):
     drawn = [tr for tr in fig["data"] if tr.get("meta", {}).get("kind") == "act"]
     # One view names its actual trace "actual"; several name it "actual/<name>".
     mine = next(tr for tr in drawn if tr["meta"]["id"] in ("actual", f"actual/{N1}"))
-    assert "a%{x}b" in mine["text"]
+    assert "a%{x}b" in mine["meta"]["label"]
     assert "a%{x}b" not in mine["hovertemplate"]
-    assert mine["hovertemplate"] == "%{text}: %{y:.4g}<extra></extra>"
+    assert mine["hovertemplate"] == "%{meta.label}: %{y:.4g}<extra></extra>"
 
 
 @pytest.mark.parametrize("build", ["single", "multi"])
@@ -603,7 +632,7 @@ def test_a_label_holding_markup_reaches_plotly_escaped(build):
         views.append(_labelled(N2, "d&e"))
     fig = plot_figure(views) if build == "multi" else variable_figure(views[0])
     texts = [
-        tr.get("name", "") + tr.get("text", "")
+        tr.get("name", "") + (tr.get("meta") or {}).get("label", "")
         for tr in fig["data"]
         if tr.get("meta", {}).get("kind") in ("act", "ref")
     ]

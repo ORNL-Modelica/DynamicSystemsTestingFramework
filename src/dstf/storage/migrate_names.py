@@ -38,9 +38,13 @@ from .ref_index import _REF_FILE_PATTERN, _atomic_write_text
 #: ``status`` of a :class:`FileOutcome`. ``renamed`` and ``expression-added``
 #: are separate because they are different events for a reviewer: the first
 #: moved a key every other file keys off, the second only wrote the field the
-#: writer now always writes.
+#: writer now always writes. ``reordered`` is the third: every entry already
+#: HAS its expression and the rewrite only moves it up beside the name, so a
+#: reviewer reading "gained an expression field" would look for a field that
+#: was there all along.
 RENAMED = "renamed"
 EXPRESSION_ADDED = "expression-added"
+REORDERED = "reordered"
 MIGRATED = "migrated"
 SKIPPED = "skipped"
 UNKNOWN_MODEL = "unknown-model"
@@ -115,6 +119,14 @@ def _read_document(path: Path) -> tuple[dict | None, str, bool]:
     that is truncated, empty, not UTF-8 or not a JSON object comes back with
     a reason naming it — the caller turns that into a skip, because a raw
     ``JSONDecodeError`` over a tree of 900 baselines names no file.
+
+    The SHAPE the rest of this module walks is checked here too, and for
+    the same reason: ``"variables": [1, 2]``, a ``null`` entry in it, a
+    ``comparison`` that is a string and a ``variable_overrides`` that is a
+    list each raised an ``AttributeError`` naming no file at all. A
+    document this module cannot walk has not been read, so it blocks the
+    writes like any other unreadable file — the decisions were made from an
+    incomplete picture.
     """
     try:
         raw = path.read_bytes()
@@ -123,7 +135,34 @@ def _read_document(path: Path) -> tuple[dict | None, str, bool]:
         return None, f"{type(exc).__name__}: {exc}", False
     if not isinstance(document, dict):
         return None, f"not a JSON object but a {type(document).__name__}", False
+    shape = _shape_problem(document)
+    if shape:
+        return None, shape, False
     return document, "", b"\r\n" in raw
+
+
+def _shape_problem(document: dict) -> str:
+    """Why this module cannot walk ``document``, or ``""``. Only the keys it
+    reads: everything else is carried through untouched."""
+    variables = document.get("variables", [])
+    if not isinstance(variables, list):
+        return f"'variables' is not a list but a {type(variables).__name__}"
+    for position, entry in enumerate(variables, start=1):
+        if not isinstance(entry, dict):
+            return (
+                f"variable entry {position} is not an object but a "
+                f"{type(entry).__name__}"
+            )
+    comparison = document.get("comparison")
+    if comparison is not None and not isinstance(comparison, dict):
+        return f"'comparison' is not an object but a {type(comparison).__name__}"
+    overrides = (comparison or {}).get("variable_overrides")
+    if overrides is not None and not isinstance(overrides, dict):
+        return (
+            "'comparison.variable_overrides' is not an object but a "
+            f"{type(overrides).__name__}"
+        )
+    return ""
 
 
 def _entry(entry: dict, name: str, expression: str) -> dict:
@@ -152,7 +191,14 @@ def _override_targets(
     indices (``x={a, a}``): the caller reports it and renames nothing,
     because picking the last one silently moves the override to a different
     variable.
+
+    Also empty for anything that is not a string: a metrics leaf written
+    ``{"variable": null}`` is nothing this command can rename, and it used
+    to reach the normalizer as a ``None`` and raise an ``AttributeError``
+    naming no file.
     """
+    if not isinstance(key, str):
+        return []
     if key in patterns:
         return []
     return by_expression.get(normalize_expression(key), [])
@@ -233,6 +279,11 @@ def migrate_document(
     overrides = comparison.get("variable_overrides") or {}
     patterns = set(test.variable_patterns)
     moved: dict[str, dict] = {}
+    #: new key -> the override key that claimed it. Two SPELLINGS of one
+    #: expression (``b[1, 1]`` and ``b[1,1]``, which normalize alike) both
+    #: name one variable, and writing them both into one dict dropped the
+    #: first silently. Same class as the old/new collision below.
+    claimed_key: dict[str, str] = {}
     for key, value in overrides.items():
         names = _override_targets(key, by_expression, patterns)
         if len(names) > 1:
@@ -249,6 +300,14 @@ def migrate_document(
                 "one wins is yours to say"
             )
             continue
+        if new_key in claimed_key:
+            problems.append(
+                f"override keys {claimed_key[new_key]!r} and {key!r} are two "
+                f"spellings of one expression and both name {new_key!r} — which "
+                "one wins is yours to say"
+            )
+            continue
+        claimed_key[new_key] = key
         moved[new_key] = value
     if problems:
         return None, problems, notes
@@ -334,6 +393,18 @@ def _renamed(old: dict, new: dict) -> bool:
     return keys(old) != keys(new)
 
 
+def _change_status(old: dict, new: dict) -> str:
+    """What a rewritten file's outcome is CALLED. Three different events:
+    a key moved, a field was added, or a field that was there all along
+    moved up beside the name (``expression`` after ``values`` — the shape a
+    hand-edited file has; ``_entry`` writes it directly after ``name``)."""
+    if _renamed(old, new):
+        return RENAMED
+    if any("expression" not in entry for entry in old.get("variables", [])):
+        return EXPRESSION_ADDED
+    return REORDERED
+
+
 def migrate(config: Config, *, apply: bool) -> MigrationReport:
     """Rewrite every partition's baselines and the spec. Writes only when
     ``apply``; the report is identical either way.
@@ -400,9 +471,7 @@ def migrate(config: Config, *, apply: bool) -> MigrationReport:
         if new is None:
             report.files.append(FileOutcome(path, MIGRATED))
             continue
-        report.files.append(
-            FileOutcome(path, RENAMED if _renamed(data, new) else EXPRESSION_ADDED)
-        )
+        report.files.append(FileOutcome(path, _change_status(data, new)))
         planned.append((path, json.dumps(new, indent=2) + "\n"))
         if had_crlf[path]:
             report.crlf.append(path)
@@ -491,13 +560,30 @@ def _migrate_spec(
         overrides = comparison.get("variable_overrides")
         if overrides:
             collisions = set()
+            #: new key -> the override keys that would become it. Two
+            #: SPELLINGS of one expression (``b[1, 1]``, ``b[1,1]``) name one
+            #: variable, and renaming both into one dict dropped the first
+            #: silently — the same decision as the collision above.
+            wanted: dict[str, list[str]] = {}
             for key in overrides:
                 names = _override_targets(key, by_expression, patterns)
-                if len(names) == 1 and names[0] != key and names[0] in overrides:
+                if len(names) != 1:
+                    continue
+                if names[0] != key and names[0] in overrides:
                     collisions.add(key)
                     skip(
                         f"{model_id}: {key!r} and {names[0]!r} are both override "
                         "keys — which one wins is yours to say"
+                    )
+                    continue
+                wanted.setdefault(names[0], []).append(key)
+            for new_key, keys in wanted.items():
+                if len(keys) > 1:
+                    collisions.update(keys)
+                    skip(
+                        f"{model_id}: {', '.join(repr(k) for k in keys)} are "
+                        f"spellings of one expression and all name {new_key!r} — "
+                        "which one wins is yours to say"
                     )
             comparison["variable_overrides"] = {
                 (key if key in collisions else (target(key) or key)): value

@@ -73,7 +73,9 @@ class SpecDocument:
         except OSError as e:
             raise ConfigError(f"{path}: {e}") from e
         try:
-            data = spec_document_shape(json.loads(raw.decode("utf-8")))
+            # `utf-8-sig`, like every other reader of this file; a Save
+            # writes the same bytes back without the BOM.
+            data = spec_document_shape(json.loads(raw.decode("utf-8-sig")))
         except (json.JSONDecodeError, UnicodeDecodeError, PatchError) as e:
             raise ConfigError(f"{path}: {e}") from e
         return cls(path=path, loaded=data, content_hash=hashlib.sha256(raw).hexdigest())

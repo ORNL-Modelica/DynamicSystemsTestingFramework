@@ -154,3 +154,60 @@ def test_error_axis_is_hidden_until_an_error_series_is_shown(
     assert not any("y3zl" in c for c in before["zerolines"])
     assert after["visible"] is True and after["y4"] is False
     assert again["visible"] is False and again["y4"] is False
+
+
+#: The pixel of one point of the page's actual trace, from the axis objects
+#: — a hover is a real mouse move, and nothing on the page says where a
+#: data point landed but Plotly's own layout.
+POINT_PIXEL = """
+(idx) => {
+  const gd = document.getElementById('plot-0');
+  const fl = gd._fullLayout, r = gd.getBoundingClientRect();
+  const tr = gd.data.find(t => (t.meta || {}).kind === 'act');
+  return [r.left + fl.xaxis._offset + fl.xaxis.l2p(tr.x[idx]),
+          r.top + fl.yaxis._offset + fl.yaxis.l2p(tr.y[idx])];
+}
+"""
+
+#: Every line of text in the hover box, whatever shape it takes: the
+#: figure's `hovermode` is `x unified`, and a unified box is a
+#: legend-shaped group (`.hoverlayer .legend`), not the `.hovertext` of
+#: closest-mode. Reading every `text` under the layer says what a person
+#: sees under either.
+HOVER_TEXTS = (
+    "() => Array.from(document.querySelectorAll('.hoverlayer text'))"
+    ".map(e => e.textContent)"
+)
+
+
+def test_a_labelled_hover_reads_its_label_under_a_real_mouse(
+    tmp_path, playwright_browser
+):
+    """The hover box a person sees, read off a real mouse move.
+
+    The figure dict looked right in every unit test while the page printed
+    the literal `%{text}: 1.234`: plotly.js substitutes `%{text}` only from
+    a PER-POINT array, and the label is one string for the whole trace. It
+    rides in `meta` now, and `%{meta.label}` substitutes from that.
+
+    Only a browser can say so — `Plotly.Fx.hover` shows the same box, but
+    it is the mouse that a person uses, and this test is the one place the
+    rendered text is asserted on the REPORT's own vendored plotly.js.
+    """
+    ctx, _ = _context_with_figure(label="pipe.T[1]")
+    html_path = _render_with_context(tmp_path, ctx)
+    page = playwright_browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(html_path.as_uri())
+    page.wait_for_selector("#plot-0 .scatterlayer")
+    # The plot sits below the page's summary: a mouse move to a pixel
+    # outside the viewport reaches nothing.
+    page.evaluate("() => document.getElementById('plot-0').scrollIntoView()")
+    page.wait_for_timeout(200)
+    x, y = page.evaluate(POINT_PIXEL, 20)
+    page.mouse.move(x, y)
+    page.wait_for_timeout(300)
+    texts = page.evaluate(HOVER_TEXTS)
+    page.close()
+    assert texts, "no hover box under the mouse"
+    assert any(line.startswith("pipe.T[1]: ") for line in texts), texts
+    assert not any("%{" in line for line in texts), texts

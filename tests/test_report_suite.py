@@ -2236,9 +2236,9 @@ class TestAVariableReadsAsItsExpression:
         from dstf.backends.types import TestResult, VariableResult
         from dstf.comparison.comparator import compare_test
         from dstf.comparison.tree_spec import parse_metric_tree
-        from dstf.discovery.plots import parse_plots, resolved_plots
+        from dstf.discovery.plots import parse_plots
         from dstf.discovery.test_registry import TestModel
-        from dstf.reporting.report_suite import generate_comparison_plots
+        from dstf.reporting.report_suite import generate_comparison_plots, plot_inputs
 
         t = np.linspace(0.0, 1.0, points)
         names = list(expressions)
@@ -2291,12 +2291,15 @@ class TestAVariableReadsAsItsExpression:
         # Names in the RESULT FILE that no leaf scores and the spec does
         # not track: a plot may still draw them, and they are part of the
         # page's label scope.
-        extra_series = {n: (t, np.cos(t)) for n in extra}
-        resolved = None
         if plots is not None:
             test.plots = parse_plots(plots)
-            resolved = resolved_plots(test, names, available=[*names, *extra])
         comp = compare_test(test, result, ref)
+        # Through the production producer, not a hand-rolled layout: the
+        # page's plots are one per TRACKED name — the scored ones and then
+        # the rest of the result's — and `plot_inputs` also hands back the
+        # arrays of the tracked variables no section carries.
+        resolved, tracked_extra = plot_inputs(test, comp.variables, result, None, None)
+        extra_series = {**tracked_extra, **{n: (t, np.cos(t)) for n in extra}}
         html = generate_comparison_plots(
             "M",
             ref,
@@ -2333,7 +2336,7 @@ class TestAVariableReadsAsItsExpression:
         assert "nrmse · pipe.T[1]" in labels
         figure = _page_data(page, "PLOT_FIGURES")[0]
         actual = next(tr for tr in figure["data"] if tr["meta"]["id"] == "actual")
-        assert actual["text"] == "pipe.T[1]"
+        assert actual["meta"]["label"] == "pipe.T[1]"
 
     def test_a_variable_with_no_expression_renders_as_it_always_did(self, tmp_path):
         """The predicate for every spec-tracked variable in the suite: no
@@ -2449,7 +2452,7 @@ class TestAVariableReadsAsItsExpression:
         assert muted.text() == self.N1
         figure = _page_data(page, "NB_FIGURES")[0]
         actual = next(tr for tr in figure["data"] if tr["meta"]["kind"] == "act")
-        assert actual["text"] == "pipe.T[1]"
+        assert actual["meta"]["label"] == "pipe.T[1]"
 
     def test_a_no_baseline_plot_reads_the_tests_scope(self, tmp_path):
         """A test with no reference scores nothing, so its declared plots
@@ -2605,7 +2608,7 @@ class TestAVariableReadsAsItsExpression:
             tr for tr in figure["data"] if tr["meta"]["id"] == f"actual/{self.N1}"
         )
         assert actual["name"] == f"a.Q ({self.N1})"
-        assert actual["text"] == f"a.Q ({self.N1})"
+        assert actual["meta"]["label"] == f"a.Q ({self.N1})"
 
     def test_a_plot_only_variable_named_like_an_expression(self, tmp_path):
         """Case (c): the result file holds a variable genuinely NAMED `z`,
@@ -2673,6 +2676,54 @@ class TestAVariableReadsAsItsExpression:
         assert any(t.startswith("pipe.T[1], a.Q pipe.T[1] ") for t in traces)
         assert any(t.startswith("pipe.T[1], a.Q a.Q ") for t in traces)
         assert not any(self.N1 in t for t in traces)
+
+    def test_a_tracked_variable_no_criterion_scores_reads_the_tests_scope(
+        self, tmp_path
+    ):
+        """A variable the result tracks and the tree does not score reads
+        the same text as every other variable of its test.
+
+        It is in neither list the page used to re-derive its labels from —
+        the scored comparisons and the no-baseline trajectories — so its
+        heading, its "is plot only" note, its hover and the decimation
+        banner all said the bare `unitTests.x[2]` while the tool, over the
+        same result, said `a.Q (unitTests.x[2])`. The whole test's scope is
+        stamped on the context now, and every one of those reads it.
+        """
+        n3 = "unitTests.x[3]"
+        page, _sidecar = self._render(
+            tmp_path,
+            {self.N1: "a.Q", self.N2: "a.Q", n3: "b.Q"},
+            metrics={
+                "combinator": "and",
+                "children": [
+                    {"metric": "nrmse", "variable": self.N1, "tolerance": 0.5},
+                    {"metric": "nrmse", "variable": n3, "tolerance": 0.5},
+                ],
+            },
+            name="unscored",
+            samples=8,
+            points=201,
+        )
+        parsed = _parse(page)
+        # Its section: the last of the three, drawn because it is TRACKED.
+        heading = next(
+            el
+            for el in parsed.walk()
+            if el.tag in ("h2", "h3") and self.N2 in el.text()
+        )
+        assert "a.Q" in heading.text()
+        (muted,) = heading.by_class("dstf-varname")
+        assert muted.text() == self.N2
+        notes = [el.text() for el in parsed.walk() if "plot-note" in el.classes]
+        assert any(n.startswith(f"a.Q ({self.N2}) is plot only") for n in notes), notes
+        figure = _page_data(page, "PLOT_FIGURES")[2]
+        actual = next(tr for tr in figure["data"] if tr["meta"]["kind"] == "act")
+        assert actual["meta"]["label"] == f"a.Q ({self.N2})"
+        traces = [
+            el.text() for el in parsed.by_id("decimation-banner").by_class("dec-trace")
+        ]
+        assert any(t.startswith(f"a.Q ({self.N2}) ") for t in traces), traces
 
     def test_the_banner_tells_two_plots_of_one_expression_apart(self, tmp_path):
         """The banner shows no muted name, so it reads the TEXTS: two

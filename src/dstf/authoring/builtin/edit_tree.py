@@ -86,19 +86,21 @@ class EditTree:
     def caption(self, s: SessionView) -> str:
         sel = s.selection
         if sel.node_path is None and sel.variable:
-            # Read as what the page reads for the variable (`s.labels`:
-            # the expression its model wrote, with the name beside it when
-            # another variable of this test shares that expression) — the
-            # same text as its criteria row above; the form the button
-            # opens still writes the leaf against the NAME.
+            # Read as what the PAGE reads for the variable — the scope it
+            # handed down with the selection (`Selection.texts`: the
+            # expression its model wrote, with the name beside it when
+            # another variable of that test shares it), the same text as
+            # its criteria row above. The form the button opens still
+            # writes the leaf against the NAME.
             #
-            # VARIABLE placement is single-test (`available` refuses any
-            # other selection). With two tests selected there is no one
-            # result to read a label from, so the caption says the name:
-            # picking one of the selected tests would put ANOTHER test's
-            # expression on this button.
-            labels = s.labels(next(iter(sel.tests))) if len(sel.tests) == 1 else {}
-            return f"Add a criterion for {labels.get(sel.variable, sel.variable)}"
+            # The scope is not derived here: a caption per card that built
+            # it for itself was the page's whole rebuild cost. A selection
+            # that carries none reads the name — and since no test is read
+            # to find a label, a selection of two (refused at VARIABLE by
+            # `available`) cannot show one of them's expression either.
+            entry = sel.texts.get(sel.variable)
+            text = sel.variable if entry is None else entry.text
+            return f"Add a criterion for {text}"
         return self.label
 
     def available(self, s: SessionView) -> bool | str:

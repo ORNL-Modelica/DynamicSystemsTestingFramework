@@ -965,6 +965,18 @@ def _build_template_context(
         "trajectories": trajectories,
         "diag_trajectories": diag_trajectories,
         "nobaseline_trajectories": nobaseline_trajectories,
+        # The TEST's label scope, stamped once and read by every surface
+        # that says a variable's name (`report_suite._context_labels`).
+        # Read back off the entries that carry a label of their own — the
+        # scored variables and the no-baseline trajectories — it was the
+        # scope of those entries, not of the test: a TRACKED variable no
+        # criterion scores is in neither list, so its heading, its "is plot
+        # only" note, its legend entry and the decimation banner all read
+        # its bare `unitTests.x[2]` while the tool read `a.Q (unitTests.x[2])`.
+        "variable_texts": {
+            name: {"label": entry.label, "text": entry.text}
+            for name, entry in texts.items()
+        },
         # A2 / idea #50 — companion + soft_check overlays (default off).
         "overlay_rows": overlay_rows,
         # Stage 2 — recursive tree view + per-variable plot grouping.

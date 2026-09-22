@@ -15,6 +15,7 @@ from dstf.storage.migrate_names import (
     EXPRESSION_ADDED,
     MIGRATED,
     RENAMED,
+    REORDERED,
     SKIPPED,
     UNKNOWN_MODEL,
     migrate,
@@ -556,6 +557,88 @@ def test_an_unreadable_spec_writes_no_baseline_either(lib):
     assert report.clean is False
 
 
+@pytest.mark.parametrize(
+    "variables",
+    [
+        pytest.param([1, 2], id="ints"),
+        pytest.param("oops", id="string"),
+        pytest.param([{"index": 1, "name": "a", "values": []}, None], id="null-entry"),
+    ],
+)
+def test_a_variables_list_this_command_cannot_walk_is_a_skip(lib, variables):
+    """A shape check is part of reading the file. Walking these raised an
+    `AttributeError` naming no file at all — over 900 baselines, the one
+    thing the user needs is which file."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = json.loads(path.read_text())
+    data["variables"] = variables
+    _write(path, data)
+    before = _snapshot(lib)
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [SKIPPED]
+    assert "variable" in _reasons(report, path)
+    assert path in report.unreadable
+    assert _snapshot(lib) == before
+
+
+@pytest.mark.parametrize(
+    "comparison",
+    [
+        pytest.param("x", id="string"),
+        pytest.param({"variable_overrides": [1]}, id="list-overrides"),
+        pytest.param({"variable_overrides": "a"}, id="string-overrides"),
+    ],
+)
+def test_a_comparison_block_this_command_cannot_walk_is_a_skip(lib, comparison):
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = json.loads(path.read_text())
+    data["comparison"] = comparison
+    _write(path, data)
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [SKIPPED]
+    assert "comparison" in _reasons(report, path)
+    assert path in report.unreadable
+
+
+def test_a_content_skip_in_one_file_does_not_block_the_others(lib):
+    """The guard on the two phases: a file this command could READ and then
+    decided not to touch is not an unreadable one. Only the second stops
+    every write — the picture the decisions were made from is incomplete.
+    A skip that blocked all writes would make one hand-edited baseline
+    stop the migration of a whole tree."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = json.loads(path.read_text())
+    data["variables"][1]["name"] = "something.else"
+    _write(path, data)
+    before = path.read_bytes()
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [SKIPPED]
+    assert not report.unreadable
+    assert path.read_bytes() == before
+    # Everything else moved: the other partition's file of the same id, the
+    # soft check beside the skipped one, another model, and the spec.
+    assert _names(lib / "refs/OpenModelica/linux/ref_0001.json") == NEW_PLAIN
+    assert _names(lib / "refs/Dymola/linux/soft_checks/ref_0001/om.json") == NEW_PLAIN
+    assert _names(lib / "refs/Dymola/linux/ref_0002.json")[0] == (
+        "ut.x[1]",
+        "cat(1, y, y)[1]",
+    )
+    spec = json.loads((lib / "test_spec.json").read_text())
+    assert spec["tests"][0]["metrics"]["children"][0]["variable"] == "unitTests.x[1]"
+
+
+def test_a_bom_prefixed_spec_is_read_like_a_bom_prefixed_baseline(lib):
+    """A spec a Windows editor saved keeps a BOM too. It used to be the one
+    file of the tree a BOM made "unreadable" — which stopped every write."""
+    spec_path = lib / "test_spec.json"
+    spec_path.write_bytes(b"\xef\xbb\xbf" + spec_path.read_bytes())
+    report = migrate(_cfg(lib), apply=True)
+    assert spec_path not in report.unreadable
+    assert report.spec_rewritten
+    assert _names(lib / "refs/Dymola/linux/ref_0001.json") == NEW_PLAIN
+    assert not spec_path.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
 def test_a_bom_prefixed_file_is_read_and_migrated(lib):
     """A baseline a Windows editor saved keeps its BOM. It parses; it is
     not a reason to refuse the file."""
@@ -621,6 +704,43 @@ def test_an_old_and_a_new_override_key_in_one_ref_map_skips_the_file(lib):
     assert path.read_bytes() == before
 
 
+def test_two_spellings_of_one_expression_skip_the_ref_file(lib):
+    """`b[1, 1]` and `b[1,1]` are one expression written two ways — the
+    normalizer is what makes a line-wrapped stored name match — so both
+    name `unitTests.x[2]`. Written into one dict, the first was dropped
+    with nothing said: the same decision as an old and a new key both
+    present, and the same answer."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = json.loads(path.read_text())
+    data["comparison"] = {
+        "variable_overrides": {"b[1, 1]": {"tolerance": 1}, "b[1,1]": {"tolerance": 2}}
+    }
+    _write(path, data)
+    before = path.read_bytes()
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [SKIPPED]
+    reasons = _reasons(report, path)
+    assert "'b[1, 1]'" in reasons and "'b[1,1]'" in reasons
+    assert "unitTests.x[2]" in reasons
+    assert path.read_bytes() == before
+
+
+def test_two_spellings_of_one_expression_are_left_alone_in_the_spec(lib):
+    spec_path = lib / "test_spec.json"
+    spec = json.loads(spec_path.read_text())
+    spec["tests"][0]["comparison"]["variable_overrides"] = {
+        "b[1, 1]": {"tolerance": 1},
+        "b[1,1]": {"tolerance": 2},
+    }
+    _write(spec_path, spec)
+    report = migrate(_cfg(lib), apply=True)
+    assert json.loads(spec_path.read_text())["tests"][0]["comparison"][
+        "variable_overrides"
+    ] == {"b[1, 1]": {"tolerance": 1}, "b[1,1]": {"tolerance": 2}}
+    assert any("'b[1,1]'" in line for line in report.spec_skipped)
+    assert report.clean is False
+
+
 def test_an_old_and_a_new_override_key_in_one_spec_map_is_left_alone(lib):
     spec_path = lib / "test_spec.json"
     spec = json.loads(spec_path.read_text())
@@ -637,7 +757,11 @@ def test_an_old_and_a_new_override_key_in_one_spec_map_is_left_alone(lib):
     assert report.clean is False
 
 
-@pytest.mark.parametrize("index", [None, "1", 1.0], ids=["missing", "string", "float"])
+@pytest.mark.parametrize(
+    "index",
+    [None, "1", 1.0, True],
+    ids=["missing", "string", "float", "bool"],
+)
 def test_an_entry_without_an_integer_index_skips_the_file(lib, index):
     """It used to fall down the pattern branch: reported 'expression-added',
     exit 0, 'already migrated' on the next run — with its names never
@@ -755,6 +879,46 @@ def test_a_ref_override_key_a_spec_pattern_tracks_is_left_alone(lib):
     migrate(_cfg(lib), apply=True)
     ref = json.loads((lib / "refs/Dymola/linux/ref_0001.json").read_text())
     assert ref["comparison"]["variable_overrides"] == {"a": {"tolerance": 0.2}}
+
+
+def test_an_expression_stored_after_the_values_is_a_reorder_not_an_addition(lib):
+    """Already migrated, but hand-edited: the field sits at the END of the
+    entry and `_entry` writes it directly after the name. The file is
+    rewritten, and calling that "gained an expression field" sends a
+    reviewer looking for a field that was there all along."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = _ref("Plain", [n for n, _ in NEW_PLAIN], "0001")
+    for entry, (_, expression) in zip(data["variables"], NEW_PLAIN):
+        entry["expression"] = expression  # after "values"
+    _write(path, data)
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [REORDERED]
+    assert _names(path) == NEW_PLAIN
+    assert list(json.loads(path.read_text())["variables"][0]) == [
+        "index",
+        "name",
+        "expression",
+        "values",
+    ]
+    # Not a skip: the file's outcome carries no reasons.
+    assert _reasons(report, path) == ""
+
+
+def test_a_metrics_leaf_with_no_variable_is_not_a_traceback(lib):
+    """A scalar leaf scoring a diagnostic writes `"variable": null`. It is
+    nothing this command can rename; it used to reach the normalizer as a
+    None and raise an AttributeError naming no file."""
+    spec_path = lib / "test_spec.json"
+    spec = json.loads(spec_path.read_text())
+    spec["tests"][0]["metrics"]["children"].append(
+        {"metric": "scalar", "variable": None, "quantity": "CPUtime.final"}
+    )
+    _write(spec_path, spec)
+    report = migrate(_cfg(lib), apply=True)
+    assert report.spec_rewritten
+    leaves = json.loads(spec_path.read_text())["tests"][0]["metrics"]["children"]
+    assert leaves[0]["variable"] == "unitTests.x[1]"
+    assert leaves[-1]["variable"] is None
 
 
 def test_a_rewritten_file_that_held_crlf_is_named(lib):

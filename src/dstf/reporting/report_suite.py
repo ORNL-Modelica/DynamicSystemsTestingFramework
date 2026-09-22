@@ -215,22 +215,27 @@ def _tracked_series(result, comp_variables, test, tracked):
 def _context_labels(context: dict, key: str = "label") -> dict[str, str]:
     """Name → what a render context reads for every series it can draw.
 
-    ``key`` picks which of the two readings the context stamped
+    ``key`` picks which of the two readings
     (:func:`~dstf.reporting.context_builder.test_texts`): ``"label"`` for
     the surfaces that show the muted name beside it — the section heading,
     the per-variable status badge — and ``"text"`` for every other one.
-    The scored variables carry both, a no-baseline trajectory carries its
-    own, and a plot-only name read out of the result file carries neither,
-    so it reads as itself. Element ids, ``data-variable``, the series
-    lists and ``meta.id`` are always the NAME.
+    Element ids, ``data-variable``, the series lists and ``meta.id`` are
+    always the NAME.
+
+    ONE source: the ``variable_texts`` the context stamped, which is the
+    whole TEST's scope — every variable of the result, every scored
+    comparison and every plot series. Re-deriving it here from the entries
+    that happen to carry a label (the scored variables, the no-baseline
+    trajectories) gave a narrower scope that left a TRACKED but unscored
+    variable out, and it read its bare name on four surfaces of a page
+    where the tool read its expression. A context with no stamp — a
+    hand-built one — reads names, which is what a variable with no
+    expression reads anyway.
     """
-    labels = {
-        n: v.get(key) or n for n, v in (context.get("variables_by_name") or {}).items()
+    return {
+        name: entry.get(key) or name
+        for name, entry in (context.get("variable_texts") or {}).items()
     }
-    for t in context.get("nobaseline_trajectories") or []:
-        if t.get("name"):
-            labels.setdefault(t["name"], t.get(key) or t["name"])
-    return labels
 
 
 def plot_page_keys(context, plots, extra_series, metric_tree, max_samples) -> dict:

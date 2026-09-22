@@ -14,6 +14,7 @@ def cmd_migrate_variable_names(args: argparse.Namespace) -> int:
         EXPRESSION_ADDED,
         MIGRATED,
         RENAMED,
+        REORDERED,
         SKIPPED,
         UNKNOWN_MODEL,
         migrate,
@@ -41,6 +42,7 @@ def cmd_migrate_variable_names(args: argparse.Namespace) -> int:
         print(
             f"{partition}: {counts[RENAMED]} {verb}, "
             f"{counts[EXPRESSION_ADDED]} gained an expression field only, "
+            f"{counts[REORDERED]} had their expression moved beside the name, "
             f"{counts[MIGRATED]} already migrated, "
             f"{counts[SKIPPED]} skipped, {counts[UNKNOWN_MODEL]} unknown model"
         )
