@@ -1613,3 +1613,30 @@ planning.
     variable stays tracked → duplicate `x[N]` cards and diverging tiers → every
     no-baseline report page doubled) — each caught only by the NEXT fresh
     review, none by a test written with the fix.
+
+- **Follow-ups from the variable-identity build (2026-09-21)** — residuals the
+  eight review rounds found and the build did not take on:
+  - Checkpoint markers hover as a bare number (`hoverinfo: x+y`, no label);
+    overlay hovers are Plotly-truncated (`Overlay: com... : 0.15`). Pre-existing.
+  - A plot-only series read straight from the result file has no expression
+    carrier, so the served tool's hover test covers only label == name; giving
+    the Python demo backend an expression carrier would let it cross the
+    process boundary.
+  - `show()` still derives the page scope per drawn card (~2 ms each, 41 at 40
+    cards) because `session.plot_figure` is self-contained by contract.
+  - The scan cache keys user recognizers by NAME only: a changed recognizer
+    body is served stale until the digest of the discovery code changes.
+  - Two instances of the UnitTests component in one model: the first wins,
+    silently. Mixed `{cat(1,a,b), c}` expression lists label as
+    `cat(1,a,b), c[i]`.
+  - A `both` test whose spec pattern names a UnitTests expression loses that
+    spec variable's baseline after migration ("re-accept needed" list); none in
+    TRANSFORM.
+  - The report's per-variable badge reads the plain label beside the muted
+    name; the tool's multi-series pill reads the disambiguated text — two
+    surfaces, one rule, but worth one sentence in usage.md if it confuses.
+  - The tree-path migrate hint is logged once per (baseline, variable); the
+    flat path's override warning once per compare — `run --merge` repeats it.
+  - Process: a LOOK screenshot cannot show a hover; a UI rule that puts text
+    into a Plotly template needs a real-mouse Playwright assertion, not a
+    dict-shape test (the one REJECT of this build).
