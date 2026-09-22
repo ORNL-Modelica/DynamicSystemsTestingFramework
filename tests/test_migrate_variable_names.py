@@ -535,26 +535,48 @@ def test_a_soft_check_whose_primary_cannot_be_read_says_so(lib):
     assert soft not in report.unreadable
 
 
-def test_a_bad_file_late_in_the_walk_leaves_the_earlier_ones_unwritten(lib):
-    """Two phases. The walk reaches OpenModelica after Dymola, and the spec
-    after both: a file it cannot read there must leave a tree in which
-    NOTHING moved, not one whose first partition migrated."""
-    (lib / "refs/OpenModelica/linux/ref_0001.json").write_bytes(b'{"model_id": ')
-    before = _snapshot(lib)
+def test_a_baseline_that_cannot_be_read_stops_that_file_only(lib, capsys):
+    """Two phases, and what they are for. The walk reaches OpenModelica
+    after Dymola: a file it cannot read there is a skip of ITS OWN file and
+    the rest of the run is still decided and written. No cross-file decision
+    reads a baseline's content, and one stray junk file in a tree of 900
+    must not stall the other 899 — the exit code is what says it happened.
+    """
+    junk = lib / "refs/OpenModelica/linux/ref_0001.json"
+    junk.write_bytes(b'{"model_id": ')
     report = migrate(_cfg(lib), apply=True)
-    assert _snapshot(lib) == before
-    assert report.unreadable
+    assert _status(report, junk) == [SKIPPED]
+    assert junk in report.unreadable and report.clean is False
+    assert junk.read_bytes() == b'{"model_id": '
+    # Everything else moved: the earlier partition, the soft check beside
+    # its primary, and the spec.
+    assert _names(lib / "refs/Dymola/linux/ref_0001.json") == NEW_PLAIN
+    assert _names(lib / "refs/Dymola/linux/soft_checks/ref_0001/om.json") == NEW_PLAIN
+    spec = json.loads((lib / "test_spec.json").read_text())
+    assert spec["tests"][0]["metrics"]["children"][0]["variable"] == "unitTests.x[1]"
+    capsys.readouterr()
     assert _exit_code(lib, "--apply") == 1
-    assert _snapshot(lib) == before
+    out = capsys.readouterr().out
+    assert "1 file(s) could not be read and are left alone" in out
+    assert "NOTHING" not in out
 
 
-def test_an_unreadable_spec_writes_no_baseline_either(lib):
+def test_an_unreadable_spec_writes_no_baseline_either(lib, capsys):
+    """The one file whose reading gates every write: the spec's keys and the
+    baselines that key off them are one coordinated change."""
     (lib / "test_spec.json").write_text("{not json")
     before = _snapshot(lib)
     report = migrate(_cfg(lib), apply=True)
     assert _snapshot(lib) == before
-    assert lib / "test_spec.json" in report.unreadable
+    assert report.spec_unreadable == lib / "test_spec.json"
     assert report.clean is False
+    capsys.readouterr()
+    assert _exit_code(lib, "--apply") == 1
+    out = capsys.readouterr().out
+    assert "test_spec.json could not be read" in out and "NOTHING is written" in out
+    # and the counts do not claim otherwise
+    assert "would rewrite" in out
+    assert _snapshot(lib) == before
 
 
 @pytest.mark.parametrize(
@@ -573,12 +595,38 @@ def test_a_variables_list_this_command_cannot_walk_is_a_skip(lib, variables):
     data = json.loads(path.read_text())
     data["variables"] = variables
     _write(path, data)
-    before = _snapshot(lib)
+    before = path.read_bytes()
     report = migrate(_cfg(lib), apply=True)
     assert _status(report, path) == [SKIPPED]
     assert "variable" in _reasons(report, path)
     assert path in report.unreadable
-    assert _snapshot(lib) == before
+    assert path.read_bytes() == before
+    assert _names(lib / "refs/OpenModelica/linux/ref_0001.json") == NEW_PLAIN
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        pytest.param({"index": 1, "name": None}, id="null-name"),
+        pytest.param({"index": 1, "name": 5}, id="int-name"),
+        pytest.param({"index": 1, "name": "a", "expression": 5}, id="int-expression"),
+    ],
+)
+def test_a_variable_entry_whose_name_is_not_text_is_a_skip(lib, entry):
+    """`name` and `expression` are READ as text, so their type is part of
+    the shape: a `null` name reached `normalize_expression` and raised an
+    `AttributeError` naming no file, and a non-string expression was
+    written back into the file as one."""
+    path = lib / "refs/Dymola/linux/ref_0001.json"
+    data = json.loads(path.read_text())
+    data["variables"][0] = {**entry, "values": [0.0, 1.0]}
+    _write(path, data)
+    before = path.read_bytes()
+    report = migrate(_cfg(lib), apply=True)
+    assert _status(report, path) == [SKIPPED]
+    assert "entry 1" in _reasons(report, path)
+    assert path in report.unreadable
+    assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize(
@@ -601,11 +649,10 @@ def test_a_comparison_block_this_command_cannot_walk_is_a_skip(lib, comparison):
 
 
 def test_a_content_skip_in_one_file_does_not_block_the_others(lib):
-    """The guard on the two phases: a file this command could READ and then
-    decided not to touch is not an unreadable one. Only the second stops
-    every write — the picture the decisions were made from is incomplete.
-    A skip that blocked all writes would make one hand-edited baseline
-    stop the migration of a whole tree."""
+    """A file this command could READ and then decided not to touch is not
+    an unreadable one — the two are reported apart, and neither stops the
+    run: one hand-edited baseline must not stop the migration of a whole
+    tree."""
     path = lib / "refs/Dymola/linux/ref_0001.json"
     data = json.loads(path.read_text())
     data["variables"][1]["name"] = "something.else"
@@ -633,7 +680,7 @@ def test_a_bom_prefixed_spec_is_read_like_a_bom_prefixed_baseline(lib):
     spec_path = lib / "test_spec.json"
     spec_path.write_bytes(b"\xef\xbb\xbf" + spec_path.read_bytes())
     report = migrate(_cfg(lib), apply=True)
-    assert spec_path not in report.unreadable
+    assert report.spec_unreadable is None
     assert report.spec_rewritten
     assert _names(lib / "refs/Dymola/linux/ref_0001.json") == NEW_PLAIN
     assert not spec_path.read_bytes().startswith(b"\xef\xbb\xbf")

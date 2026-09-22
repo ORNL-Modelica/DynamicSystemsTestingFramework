@@ -11,10 +11,18 @@ rather than guessing.
 TWO PHASES, and that is the point. Every partition and the spec are READ
 and every file's outcome DECIDED before any file is written, so a truncated
 file late in the walk cannot leave the earlier half of a tree migrated and
-the rest not. A file this command cannot read, or cannot decide, is a skip
-carrying the file and the reason — never a traceback — and while any file
-could not be READ nothing at all is written: the picture the decisions were
-made from is incomplete.
+the rest not. A baseline this command cannot read, or cannot decide, is a
+skip carrying the file and the reason — never a traceback — and the rest of
+the run is decided and written around it: no cross-file decision reads a
+baseline's content (an unreadable primary already makes the soft checks
+beside it a skip of their own, and the spec tier reads only the discovered
+tests), so one stray junk file must not stall a tree of 900. The exit code
+is what says it happened.
+
+The SPEC is the exception: while IT cannot be read nothing at all is
+written, baselines included. Its keys and the names the baselines are
+stored under are one coordinated change, and half of it is worse than
+neither half.
 
 DELETED AT THE v1.0 TAG. Nothing reads the old shape — an un-migrated
 baseline simply reads as a missing one — so once every tree that matters
@@ -94,9 +102,14 @@ class MigrationReport:
     #: not a skip — but it is the one place a spec entry silently does
     #: nothing, so it is said out loud.
     spec_not_considered: list[str] = field(default_factory=list)
-    #: Files no decision could be made about at all. While this is non-empty
-    #: NOTHING is written, whatever ``apply`` says.
+    #: Files no decision could be made about at all — each of them a skip of
+    #: its OWN file. Reported apart from the content skips because they are a
+    #: different job for the reader: a file to fix, not a decision to make.
     unreadable: list[Path] = field(default_factory=list)
+    #: The spec, when IT could not be read. The one file whose reading gates
+    #: every write: its keys and the names the baselines are stored under are
+    #: one coordinated change.
+    spec_unreadable: Path | None = None
 
     @property
     def clean(self) -> bool:
@@ -122,11 +135,10 @@ def _read_document(path: Path) -> tuple[dict | None, str, bool]:
 
     The SHAPE the rest of this module walks is checked here too, and for
     the same reason: ``"variables": [1, 2]``, a ``null`` entry in it, a
-    ``comparison`` that is a string and a ``variable_overrides`` that is a
-    list each raised an ``AttributeError`` naming no file at all. A
-    document this module cannot walk has not been read, so it blocks the
-    writes like any other unreadable file — the decisions were made from an
-    incomplete picture.
+    ``null`` variable name, a ``comparison`` that is a string and a
+    ``variable_overrides`` that is a list each raised an ``AttributeError``
+    naming no file at all. A document this module cannot walk has not been
+    read, so it is a skip of its own file like any other unreadable one.
     """
     try:
         raw = path.read_bytes()
@@ -152,6 +164,23 @@ def _shape_problem(document: dict) -> str:
             return (
                 f"variable entry {position} is not an object but a "
                 f"{type(entry).__name__}"
+            )
+        # Both are READ as text — the name is normalized to compare it with
+        # the model's expression, and the expression is carried into the
+        # rewritten entry — so their type is part of the shape. A ``null``
+        # expression is the one non-string this module can answer: nothing
+        # was recorded, which is what ``""`` says.
+        name = entry.get("name")
+        if "name" in entry and not isinstance(name, str):
+            return (
+                f"variable entry {position}: 'name' is not a string but a "
+                f"{type(name).__name__}"
+            )
+        expression = entry.get("expression")
+        if expression is not None and not isinstance(expression, str):
+            return (
+                f"variable entry {position}: 'expression' is not a string but a "
+                f"{type(expression).__name__}"
             )
     comparison = document.get("comparison")
     if comparison is not None and not isinstance(comparison, dict):
@@ -410,7 +439,9 @@ def migrate(config: Config, *, apply: bool) -> MigrationReport:
     ``apply``; the report is identical either way.
 
     Every file is read and every outcome decided first; the writes happen
-    together at the end, and not at all while any file could not be read.
+    together at the end. A baseline that could not be read is a skip of its
+    own file and the rest is still written; the SPEC that could not be read
+    stops every write.
     """
     report = MigrationReport()
     tests = {t.model_id: t for t in discover_tests(config)}
@@ -481,7 +512,7 @@ def migrate(config: Config, *, apply: bool) -> MigrationReport:
         report.reaccept += [(model_id, v) for v in _needs_reaccept(tests[model_id])]
 
     spec_write = _migrate_spec(config, tests, report)
-    if apply and not report.unreadable:
+    if apply and report.spec_unreadable is None:
         for path, text in planned:
             _atomic_write_text(path, text)
         if spec_write is not None:
@@ -509,7 +540,7 @@ def _migrate_spec(
     try:
         doc = load_spec_document(spec_path)
     except PatchError as exc:
-        report.unreadable.append(spec_path)
+        report.spec_unreadable = spec_path
         report.spec_skipped.append(f"{spec_path.name} cannot be read: {exc}")
         return None
     before = json.dumps(doc)

@@ -4363,6 +4363,13 @@ same as a tracked variable whose EXPRESSION is `z`. The `label != name` half
 of the rule is what resolves that last one: the plain `z` is unambiguous, so
 the one carrying the expression is the one that says its name.
 
+**Families fold over the label.** `figures/families.py` groups indexed names
+into an array family by what a person READS, and a label the model wrote must
+additionally be a plain indexed name to fold, so `der(x)[1]` and `der(x)[2]`
+are two elements of one array and do, while `der(x[1], 2)` does not — a second
+derivative's index belongs to the ARGUMENT of a two-argument call, not to what
+the call returns.
+
 **Why.** Two layers used to rename a variable behind the scoring's back:
 `backends/common/result_variables.py::extract_variables` set the name to the
 expression text (or `expr[i]`, or `x[i]`), and
@@ -4426,10 +4433,14 @@ clause naming the command. `dstf migrate-variable-names` is the coordination
 rewrites a UnitTests entry whose stored name normalizes to that index's
 expression, gives every other entry `"expression": ""`, and renames the
 matching `variable_overrides` keys, `metrics` leaf variables and `plots`
-series in `test_spec.json`. A file it cannot match entirely is reported and
-left untouched, and it exits 1 if anything was skipped. **It is deleted at the
-v1.0 tag**: nothing reads the old shape, so once the trees that matter have
-been migrated it is a code path nobody exercises.
+series in `test_spec.json`. A file it cannot match entirely — or cannot read
+at all — is reported and left untouched, and it exits 1; that skip stops that
+one file and not the run, because no cross-file decision reads a baseline's
+content and one stray junk file must not stall a tree of 900. The spec is the
+exception: while IT cannot be read nothing at all is written, its keys and the
+names the baselines are stored under being one coordinated change. **It is
+deleted at the v1.0 tag**: nothing reads the old shape, so once the trees that
+matter have been migrated it is a code path nobody exercises.
 
 **Deleted.** `comparator.variable_label`; the seven `name or f"x[{index}]"`
 index fallbacks (a nameless result variable is a backend bug, not an

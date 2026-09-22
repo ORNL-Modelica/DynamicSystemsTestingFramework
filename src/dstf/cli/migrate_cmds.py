@@ -24,9 +24,10 @@ def cmd_migrate_variable_names(args: argparse.Namespace) -> int:
     report = migrate(config, apply=args.apply)
     root = config.reference_root
     assert root is not None
-    # Nothing is written while a file could not be read, whatever --apply
-    # said: the decisions were made from an incomplete picture.
-    wrote = args.apply and not report.unreadable
+    # An unreadable baseline is a skip of its own file; an unreadable SPEC
+    # stops every write, whatever --apply said — its keys and the names the
+    # baselines are stored under are one coordinated change.
+    wrote = args.apply and report.spec_unreadable is None
     verb = "rewritten" if wrote else "would rewrite"
 
     def partition_of(path):
@@ -83,9 +84,14 @@ def cmd_migrate_variable_names(args: argparse.Namespace) -> int:
 
     if report.unreadable:
         print(
-            f"{len(report.unreadable)} file(s) could not be read; NOTHING is "
-            "written while one stands — every file's outcome is decided before "
-            "any file is written"
+            f"{len(report.unreadable)} file(s) could not be read and are left "
+            "alone — the rest of the run is decided without them"
+        )
+    if report.spec_unreadable is not None:
+        print(
+            f"{report.spec_unreadable.name} could not be read; NOTHING is "
+            "written while it stands — its keys and the names the baselines "
+            "are stored under are one change"
         )
     if not args.apply:
         print("dry run — nothing written; pass --apply to write")

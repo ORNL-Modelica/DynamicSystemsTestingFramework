@@ -254,15 +254,20 @@ renames the matching override keys — in the baseline's own `comparison`
 section as well as the spec's — plus the leaf variables and plot series in
 `test_spec.json`. A second `--apply` rewrites nothing.
 
-**Everything is read and decided before anything is written.** A file the
-command cannot read — truncated, empty, not UTF-8, not a JSON object, or
+**Everything is read and decided before anything is written.** A baseline
+the command cannot read — truncated, empty, not UTF-8, not a JSON object, or
 shaped so the command cannot walk it (`variables` that is not a list of
-objects, a `comparison` or a `variable_overrides` that is not an object) —
-is reported by file and reason rather than raising, and while any such file
-stands **nothing at all is written**: the picture the decisions were made
-from is incomplete, so fix the file and run again. (A UTF-8 BOM is not such
-a reason: a baseline — or a `test_spec.json` — a Windows editor saved is
-read and migrated like any other, and written back without it.)
+objects, a variable `name` or `expression` that is not text, a `comparison`
+or a `variable_overrides` that is not an object) — is reported by file and
+reason rather than raising, and left exactly as it was; the rest of the run
+is still decided and written around it, because no cross-file decision reads
+a baseline's content and one stray junk file must not stall a tree of 900.
+The exit code is 1, so fix the file and run it again. **The `test_spec.json`
+is the exception**: while IT cannot be read **nothing at all is written**,
+baselines included — its keys and the names the baselines are stored under
+are one coordinated change. (A UTF-8 BOM is a reason to refuse neither: a
+baseline — or a `test_spec.json` — a Windows editor saved is read and
+migrated like any other, and written back without it.)
 
 A **skip** leaves that one file exactly as it was, and there are five kinds:
 an entry whose stored name matches neither the expression nor the migrated
