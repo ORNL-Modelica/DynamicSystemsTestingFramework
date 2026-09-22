@@ -1640,3 +1640,10 @@ planning.
   - Process: a LOOK screenshot cannot show a hover; a UI rule that puts text
     into a Plotly template needs a real-mouse Playwright assertion, not a
     dict-shape test (the one REJECT of this build).
+  - Companions (2026-09-22): `freeze_companion` rewrites `variables` from the
+    surviving pairs, so freezing a companion whose record was entirely
+    malformed turns it into an unmapped one; the tool has no overlay-status
+    surface (missing / invalid / warned companions are unshown there — only
+    the report's overlay table says); a CLI-added companion still stores an
+    absolute path; `--map` refusal on freeze/remove exits 2 via ConfigError
+    while other companion failures exit 1.
