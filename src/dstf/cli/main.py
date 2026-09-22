@@ -430,8 +430,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="TEST_VAR=COMPANION_VAR",
         default=None,
-        help="'add': which of the companion's variables draws on which of "
-        "the test's. Repeat per variable. Both names are checked against "
+        help="'add' only: which of the companion's variables draws on which "
+        "of the test's. Repeat per variable. Both names are checked against "
         "the stored baseline and the companion file. Two test variables "
         "may name one companion variable (one curve, drawn twice). "
         "Without any --map the reporter falls back on matching spellings.",

@@ -212,14 +212,19 @@ Which of a companion's variables draws on which of the test's is therefore
 recorded in the companion's own metadata, as the `variables` mapping
 `dstf companion add --map` writes; where a companion has one, it is the whole
 rule, and a trajectory it does not name draws nothing from that companion.
-Only an overlay with NO mapping falls back on spellings — the companions
-registered before there was a mapping to write, and soft_checks and
-sibling-backend references, which are DSTF's own data keyed by the same names.
-Those try, in order, the overlay variable whose name is the trajectory's name,
-whose name is its expression, and whose own expression is either. A fallback
-step that finds two candidates draws nothing and warns: `x={a.Q, a.Q}` is
-legal, so one expression can belong to two of a companion's variables, and
-guessing puts somebody else's curve under the wrong plot.
+Only a COMPANION with no mapping falls back on spellings — the ones registered
+before there was a mapping to write. It tries, in order, the companion variable
+whose name is the trajectory's name, whose name is its expression, and whose own
+expression is either. A fallback step that finds two candidates draws nothing and
+warns: `x={a.Q, a.Q}` is legal, so one expression can belong to two of a
+companion's variables, and guessing puts somebody else's curve under the wrong
+plot. Nothing else falls back: a soft_check, a cross-backend import stored as
+one, and an auto-discovered sibling-backend reference are DSTF's own data keyed
+by the names this test uses, so they match BY NAME ONLY — and a soft_check is
+also SCORED by name (`against:`), so the curve drawn for it has to be the curve
+scored for it. A companion whose recorded mapping could not be read (a
+hand-edited `variables`) keeps its record's authority too: it says what was
+wrong on the overlay table and draws only what survived reading it.
 
 ### Persistent-worker contract
 

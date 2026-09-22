@@ -150,6 +150,11 @@ class Companion:
     what the reporter reads; without it the overlay loader has to guess
     from spellings. Empty for a registration that declared none, and for
     one written before the key existed.
+
+    ``mapping_warnings`` is what reading that record found wrong, one
+    line per finding. A record with any of these is still a record: the
+    overlay says so and draws by what survived, rather than falling back
+    on spellings behind the author's back (D132).
     """
 
     name: str
@@ -159,21 +164,40 @@ class Companion:
     data_file: str | None = None  # basename for frozen (sibling of metadata)
     provenance: dict = field(default_factory=dict)
     variables: dict[str, str] = field(default_factory=dict)
+    mapping_warnings: tuple[str, ...] = ()
 
 
-def _read_variable_mapping(entry: dict) -> dict[str, str]:
-    """The ``variables`` mapping of a companion's metadata, as text pairs.
+def _read_variable_mapping(entry: dict) -> tuple[dict[str, str], tuple[str, ...]]:
+    """The ``variables`` mapping of a companion's metadata, and what is
+    wrong with it: ``(pairs, warnings)``.
 
     Old data is tolerated — a registration written before the key existed
-    has no mapping, and reads as none — but so is a hand-edited file whose
-    ``variables`` is not an object of strings: an entry that is not a
-    text-to-text pair is dropped rather than raised, because a companion
-    is plot-only and must never break a report.
+    has no mapping, and reads as none, as does the empty object a
+    registration with no ``--map`` writes. A hand-edited file is a
+    different thing: a ``variables`` that is not an object, or an entry
+    whose value is not a variable name, is a MALFORMED record, not an
+    absent one. The entry is dropped rather than raised (a companion is
+    plot-only and must never break a report) and the finding is said —
+    the warnings reach the report's overlay table through
+    :class:`~dstf.reporting.overlay_loader.Overlay`, and the companion
+    keeps its record's authority rather than falling back on spellings.
     """
-    raw = entry.get("variables")
+    if "variables" not in entry:
+        return {}, ()
+    raw = entry["variables"]
     if not isinstance(raw, dict):
-        return {}
-    return {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
+        return {}, (
+            "the 'variables' record is not an object of <test variable>: "
+            "<companion variable> pairs, so nothing is drawn from it",
+        )
+    mapping: dict[str, str] = {}
+    warnings: list[str] = []
+    for key, value in raw.items():
+        if isinstance(key, str) and isinstance(value, str) and value:
+            mapping[key] = value
+        else:
+            warnings.append(f"mapping for {key} is not a variable name")
+    return mapping, tuple(warnings)
 
 
 class _RolesMixin:
@@ -356,6 +380,7 @@ class _RolesMixin:
             # in this directory is not a registration.
             if entry.get("kind") not in ("external", "frozen"):
                 continue
+            mapping, mapping_warnings = _read_variable_mapping(entry)
             out[name] = Companion(
                 name=name,
                 kind=entry["kind"],
@@ -363,7 +388,8 @@ class _RolesMixin:
                 path=entry.get("path"),
                 data_file=entry.get("data_file"),
                 provenance=entry.get("provenance", {}),
-                variables=_read_variable_mapping(entry),
+                variables=mapping,
+                mapping_warnings=mapping_warnings,
             )
         return out
 

@@ -406,13 +406,20 @@ sources name the quantity differently**, which is every companion of a
 Modelica `UnitTests` test, since its variables are named positionally.
 
 A companion with no mapping falls back on spellings — that is what the
-companions registered before mappings existed do, and what soft_checks and
-the auto-discovered sibling-backend overlays always do, being DSTF's own data
-under the same names. In order: the companion variable whose name is the
-test variable's name, whose name is its expression, and whose own recorded
-expression is either. If a step finds two candidates the companion draws
-nothing for that variable and the report's overlay table says so, naming the
-candidates and the `--map` that settles it.
+companions registered before mappings existed do. In order: the companion
+variable whose name is the test variable's name, whose name is its expression,
+and whose own recorded expression is either. If a step finds two candidates the
+companion draws nothing for that variable and the report's overlay table says
+so, naming the candidates and the `--map` that settles it.
+
+**Only a companion falls back.** Soft_checks and the auto-discovered
+sibling-backend overlays are DSTF's own data under the test's own names, so
+they match by name and nothing else — a soft_check is scored by name
+(`against:`), and the curve drawn for it has to be the curve scored for it. A
+companion whose `variables` record has been hand-edited into something
+unreadable does not fall back either: the overlay table says what was wrong
+with it, and it draws only the entries that survived reading — a record, even
+a broken one, is an answer, and guessing behind it is still guessing.
 
 ---
 

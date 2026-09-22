@@ -73,8 +73,16 @@ class Overlay:
     :func:`attach_overlays_to_trajectories` for what an absent mapping
     means.
 
-    ``warnings`` is filled by that same function when a spelling could
-    stand for two of this overlay's variables; :func:`overlay_summary`
+    ``mapping_malformed`` says the companion recorded a mapping that could
+    not be read as pairs (see
+    :func:`~dstf.storage.roles._read_variable_mapping`). The record is
+    still a record: such an overlay draws only what survived reading it,
+    and never falls back on spellings.
+
+    ``warnings`` says what this overlay could not draw and why — a
+    malformed or stale mapping, filled in by :func:`_load_companion`, and
+    a spelling that could stand for two of its variables, filled in by
+    :func:`attach_overlays_to_trajectories`. :func:`overlay_summary`
     surfaces them on the report's overlay table.
     """
 
@@ -85,6 +93,7 @@ class Overlay:
     note: str = ""
     variables: dict[str, OverlayVariable] = field(default_factory=dict)
     mapping: dict[str, str] = field(default_factory=dict)
+    mapping_malformed: bool = False
     warnings: list[str] = field(default_factory=list)
 
 
@@ -389,13 +398,25 @@ def _load_companion(store, model_id: str, companion) -> Overlay:
             note="no variables parsed from file",
         )
 
+    mapping = dict(companion.variables)
+    # What the author wrote and what the file holds are read together
+    # exactly once, here: a mapping naming a variable the file lacks draws
+    # nothing (the file has been replaced since, and the mapping is now
+    # stale), and saying so is the only way the author finds out.
+    warnings = list(companion.mapping_warnings) + [
+        f"mapping for {test_var} names {companion_var}, which {path} does not hold"
+        for test_var, companion_var in mapping.items()
+        if companion_var not in vars_
+    ]
     return Overlay(
         name=companion.name,
         role="companion",
         kind=companion.kind,
         status="loaded",
         variables=vars_,
-        mapping=dict(companion.variables),
+        mapping=mapping,
+        mapping_malformed=bool(companion.mapping_warnings),
+        warnings=warnings,
     )
 
 
@@ -522,9 +543,14 @@ def attach_overlays_to_trajectories(
     answer is how somebody else's curve ends up under the wrong plot.
 
     **The fallbacks are for a companion nobody mapped** — the ones
-    registered before there was a mapping to write, and soft_checks and
-    sibling-backend references, which are DSTF's own data and carry none
-    by design. In order, the overlay's variable whose
+    registered before there was a mapping to write — and for NOTHING
+    else. A soft_check, the primary of a sibling partition and a
+    cross-backend import are DSTF's own data, keyed by the names this
+    test uses: they match BY NAME ONLY. A soft_check is also SCORED by
+    name (``against:``), so the curve drawn for it has to be the curve
+    scored for it; a spelling rule that found some other variable of it
+    would draw one thing and score another. In order, the companion
+    variable whose
 
     1. NAME is the trajectory's name. The two sources agree on a spelling
        the test already uses; nothing else needs to be true.
@@ -577,15 +603,22 @@ def _overlay_variable_for(
     Returns ``(variable, [])`` for a hit, ``(None, [])`` for a clean miss,
     and ``(None, candidates)`` when a fallback step could not choose.
     """
-    if ov.mapping:
+    # A companion that recorded a mapping is read by that alone — even
+    # when nothing readable survived it (``mapping_malformed``): the
+    # author wrote an answer, and guessing behind a broken one is still
+    # guessing.
+    if ov.mapping or ov.mapping_malformed:
         mapped = ov.mapping.get(name)
         # A mapping naming a variable the file does not hold draws nothing:
         # the file has been replaced since, and the mapping is now wrong.
+        # ``_load_companion`` has already warned about it.
         return (ov.variables.get(mapped) if mapped else None), []
 
     var = ov.variables.get(name)
     if var is not None:
         return var, []
+    if not _matches_by_more_than_name(ov):
+        return None, []
     if expression:
         var = ov.variables.get(expression)
         if var is not None:
@@ -602,12 +635,32 @@ def _overlay_variable_for(
     return None, []
 
 
+def _matches_by_more_than_name(ov: Overlay) -> bool:
+    """Whether this overlay's variables may be found by anything but name.
+
+    Only a REGISTERED companion may: it is an outside file, naming the
+    quantity the way its own source does. Everything else on the picker
+    is DSTF's own data under the test's own names — a soft_check
+    (imported whole, and SCORED by name through ``against:``, so the
+    curve drawn has to be the curve scored), a cross-backend import,
+    which is stored as one, and the auto-discovered primary of a sibling
+    partition. For those the name is the whole rule (D132).
+    """
+    return ov.role == "companion" and ov.kind != "sibling-backend"
+
+
 def _record_ambiguity(ov: Overlay, name: str, candidates: list[str]) -> None:
     """Say, once, that this overlay could not tell which curve is which.
 
-    The report attaches over the scored trajectories and then over the
-    no-baseline ones with the same overlay objects, so the same finding
-    arrives twice.
+    Only a companion reaches here — nothing else falls back on spellings
+    (:func:`_matches_by_more_than_name`) — which is why the remedy is
+    worded as one: ``dstf companion add`` is the command that would
+    settle it, and there is no such command for a soft_check.
+
+    Once, because the finding outlives the pass that made it: the
+    authoring Session caches these overlay objects per model and
+    re-attaches them over the same trajectories on every ``view()``, so
+    an ambiguity would otherwise be appended again on every click.
     """
     text = (
         f"{name}: {len(candidates)} of this overlay's variables carry it as "
@@ -624,8 +677,9 @@ def overlay_summary(overlays: list[Overlay]) -> list[dict]:
     so the report can show a "not rendered" hint.
 
     ``warnings`` carries what :func:`attach_overlays_to_trajectories` found
-    it could not decide, so call this AFTER attaching (the reporter and the
-    authoring Session both do).
+    it could not decide, so call this AFTER attaching — which is what the
+    report's ``context_builder`` does, its only caller. (The authoring tool
+    reads the overlays themselves, not this summary.)
     """
     out = []
     for ov in overlays:

@@ -32,6 +32,7 @@ class _FakeCompanion:
     data_file: str | None = None
     provenance: dict = field(default_factory=dict)
     variables: dict = field(default_factory=dict)
+    mapping_warnings: tuple = ()
 
 
 @dataclass
@@ -645,6 +646,211 @@ class TestTheFallbacksForACompanionNobodyMapped:
         assert overlays[0].warnings == []
 
 
+class TestOnlyACompanionFallsBackOnSpellings:
+    """The fallbacks are for a COMPANION nobody mapped — somebody else's
+    file, naming the quantity its own way. Everything else on the picker
+    is DSTF's own data under the test's own names: a soft_check (imported
+    whole, and scored by name through ``against:``), a cross-backend
+    import stored as one, and the auto-discovered primary of a sibling
+    partition. Those match by name and nothing else."""
+
+    SOFT_CHECK = {"other.name": _ov([1, 2], expression="a.Q")}
+
+    def test_a_soft_check_does_not_draw_where_it_only_shares_an_expression(self):
+        """The scenario this rule is about: a soft_check variable called
+        something else entirely, carrying the trajectory's expression. It
+        would have been drawn under `unitTests.x[1]` while `against:`
+        scored nothing of the sort."""
+        trajectories = [{"name": "unitTests.x[1]", "expression": "a.Q"}]
+        overlays = [
+            Overlay(
+                name="dymola-via-fmpy",
+                role="soft_check",
+                status="loaded",
+                variables=dict(self.SOFT_CHECK),
+            )
+        ]
+        attach_overlays_to_trajectories(trajectories, overlays)
+        assert trajectories[0]["overlays"] == []
+        assert overlays[0].warnings == []
+
+    def test_a_soft_check_variable_named_like_the_expression_is_not_taken_either(self):
+        trajectories = [{"name": "unitTests.x[1]", "expression": "a.Q"}]
+        overlays = [
+            Overlay(
+                name="experiment",
+                role="soft_check",
+                status="loaded",
+                variables={"a.Q": _ov([1, 2])},
+            )
+        ]
+        attach_overlays_to_trajectories(trajectories, overlays)
+        assert trajectories[0]["overlays"] == []
+
+    def test_a_soft_check_draws_on_the_name_the_two_share(self):
+        """The name is the whole rule for it — not no rule at all."""
+        trajectories = [{"name": "unitTests.x[1]", "expression": "a.Q"}]
+        overlays = [
+            Overlay(
+                name="experiment",
+                role="soft_check",
+                status="loaded",
+                variables={"unitTests.x[1]": _ov([1, 2], expression="b.Q")},
+            )
+        ]
+        attach_overlays_to_trajectories(trajectories, overlays)
+        assert trajectories[0]["overlays"][0]["values"] == [1, 2]
+
+    def test_a_sibling_backend_reference_matches_by_name_only(self):
+        """It is the same library's primary under another backend — the
+        names are ours on both sides."""
+        trajectories = [{"name": "unitTests.x[1]", "expression": "a.Q"}]
+        overlays = [
+            Overlay(
+                name="OpenModelica/linux",
+                role="companion",
+                kind="sibling-backend",
+                status="loaded",
+                variables=dict(self.SOFT_CHECK),
+            )
+        ]
+        attach_overlays_to_trajectories(trajectories, overlays)
+        assert trajectories[0]["overlays"] == []
+        assert overlays[0].warnings == []
+
+    def test_a_registered_companion_in_the_same_shape_still_falls_back(self):
+        """The control: what changed is whose data it is, not the rule."""
+        trajectories = [{"name": "unitTests.x[1]", "expression": "a.Q"}]
+        overlays = [
+            Overlay(
+                name="rig",
+                role="companion",
+                kind="external",
+                status="loaded",
+                variables=dict(self.SOFT_CHECK),
+            )
+        ]
+        attach_overlays_to_trajectories(trajectories, overlays)
+        assert trajectories[0]["overlays"][0]["values"] == [1, 2]
+
+    def test_nothing_but_a_companion_can_be_told_to_add_a_mapping(self):
+        """``dstf companion add … --map`` is the only remedy there is, so
+        an ambiguity — the only thing that words it — must be reachable
+        only from a companion. Two variables carrying one expression are
+        ambiguous for one; for DSTF's own data they are not candidates at
+        all, and nothing is said."""
+        ambiguous = {
+            "unitTests.x[1]": _ov([1, 2], expression="a.Q"),
+            "unitTests.x[2]": _ov([3, 4], expression="a.Q"),
+        }
+        overlays = [
+            Overlay(
+                name="experiment",
+                role="soft_check",
+                status="loaded",
+                variables=dict(ambiguous),
+            ),
+            Overlay(
+                name="OpenModelica/linux",
+                role="companion",
+                kind="sibling-backend",
+                status="loaded",
+                variables=dict(ambiguous),
+            ),
+        ]
+        attach_overlays_to_trajectories([{"name": "a.Q"}], overlays)
+        assert [ov.warnings for ov in overlays] == [[], []]
+        rows = overlay_summary(overlays)
+        assert [row["warnings"] for row in rows] == [[], []]
+        assert "companion add" not in json.dumps(rows)
+
+
+class TestAMalformedMappingIsSaidAndStillCounts:
+    """A ``variables`` record that could not be read is a malformed
+    record, not an absent one: the entry is dropped, the author is told
+    on the overlay table, and the companion does not quietly go back to
+    guessing from spellings."""
+
+    def _store(self, tmp_path, **companion_kwargs):
+        data_file = tmp_path / "ext.json"
+        data_file.write_text(
+            json.dumps(
+                {
+                    "time": [0.0, 1.0],
+                    "variables": [
+                        {"name": "h", "values": [1, 2]},
+                        {"name": "other", "values": [3, 4]},
+                    ],
+                }
+            )
+        )
+        companion = _FakeCompanion(
+            name="rig",
+            kind="external",
+            format="json",
+            path=str(data_file),
+            **companion_kwargs,
+        )
+        return _FakeStore(tmp_path, companions={"rig": companion}), data_file
+
+    def test_a_dropped_entry_is_reported_and_the_record_still_rules(self, tmp_path):
+        store, _ = self._store(
+            tmp_path,
+            variables={"v": "other"},
+            mapping_warnings=("mapping for h is not a variable name",),
+        )
+        overlay = load_overlays(store, "M")[0]
+        assert overlay.warnings == ["mapping for h is not a variable name"]
+        assert overlay.mapping_malformed is True
+        # `h` is spelled the same on both sides and draws nothing anyway:
+        # the author's record is what is read, broken entry and all.
+        trajectories = [{"name": "h"}, {"name": "v"}]
+        attach_overlays_to_trajectories(trajectories, [overlay])
+        assert trajectories[0]["overlays"] == []
+        assert trajectories[1]["overlays"][0]["values"] == [3, 4]
+
+    def test_a_record_that_is_not_pairs_at_all_draws_nothing(self, tmp_path):
+        """Present-and-empty: there is a record, and none of it survived."""
+        store, _ = self._store(
+            tmp_path,
+            mapping_warnings=("the 'variables' record is not an object",),
+        )
+        overlay = load_overlays(store, "M")[0]
+        assert overlay.mapping == {} and overlay.mapping_malformed is True
+        trajectories = [{"name": "h"}]
+        attach_overlays_to_trajectories(trajectories, [overlay])
+        assert trajectories[0]["overlays"] == []
+        assert overlay.warnings == ["the 'variables' record is not an object"]
+
+    def test_no_record_at_all_still_falls_back(self, tmp_path):
+        """The other side of the same rule — an unmapped companion is
+        unchanged."""
+        store, _ = self._store(tmp_path)
+        overlay = load_overlays(store, "M")[0]
+        assert overlay.mapping_malformed is False
+        trajectories = [{"name": "h"}]
+        attach_overlays_to_trajectories(trajectories, [overlay])
+        assert trajectories[0]["overlays"][0]["values"] == [1, 2]
+
+    def test_a_mapping_naming_a_variable_the_file_lacks_says_which(self, tmp_path):
+        """It draws nothing either way — but silently, the author has no
+        way to learn the file was replaced under the registration."""
+        store, data_file = self._store(tmp_path, variables={"v": "gone"})
+        overlay = load_overlays(store, "M")[0]
+        assert overlay.warnings == [
+            f"mapping for v names gone, which {data_file} does not hold"
+        ]
+        assert overlay.mapping_malformed is False
+        trajectories = [{"name": "v"}]
+        attach_overlays_to_trajectories(trajectories, [overlay])
+        assert trajectories[0]["overlays"] == []
+
+    def test_a_mapping_the_file_honours_says_nothing(self, tmp_path):
+        store, _ = self._store(tmp_path, variables={"v": "other"})
+        overlay = load_overlays(store, "M")[0]
+        assert overlay.warnings == []
+
+
 class TestOverlaySummary:
     def test_an_ambiguity_reaches_the_summary(self):
         overlays = [
@@ -673,6 +879,62 @@ class TestOverlaySummary:
             )
         ]
         assert overlay_summary(overlays)[0]["warnings"] == []
+
+
+class TestTheWarningOnTheReportPage:
+    """The overlay table's warning cell, rendered through the production
+    template. Its text quotes a companion's own variable names — somebody
+    else's file — so it is escaped, and it is the page that says a row
+    has something wrong with it."""
+
+    def test_report_page_renders_the_warning_escaped(self, tmp_path):
+        from report_fixtures import _fixture_context, _render_with_context
+
+        ctx = _fixture_context()
+        overlay = Overlay(
+            name="rig",
+            role="companion",
+            kind="external",
+            status="loaded",
+            variables={
+                "p1": _ov([0, 1], expression="x<b>"),
+                "p2": _ov([0, 1], expression="x<b>"),
+            },
+        )
+        attach_overlays_to_trajectories(
+            [{"name": "h", "expression": "x<b>"}], [overlay]
+        )
+        assert overlay.warnings, "the fixture must produce a warning to render"
+        overlay.warnings.append("raw <script>alert(1)</script> & stuff")
+        ctx["overlay_rows"] = overlay_summary([overlay])
+
+        html = _render_with_context(tmp_path, ctx).read_text(encoding="utf-8")
+        assert "&lt;script&gt;alert(1)&lt;/script&gt; &amp; stuff" in html
+        assert "<script>alert(1)</script>" not in html
+        assert 'class="ov-warning"' in html
+        assert "h: 2 of this overlay" in html
+        assert "--map h=&lt;one of them&gt;" in html
+        assert "background: var(--dstf-warn-tint)" in html
+
+    def test_a_row_with_nothing_wrong_is_not_tinted(self, tmp_path):
+        from report_fixtures import _fixture_context, _render_with_context
+
+        ctx = _fixture_context()
+        ctx["overlay_rows"] = overlay_summary(
+            [
+                Overlay(
+                    name="rig",
+                    role="companion",
+                    kind="external",
+                    status="loaded",
+                    variables={"h": _ov([0, 1])},
+                )
+            ]
+        )
+        body = _render_with_context(tmp_path, ctx).read_text(encoding="utf-8")
+        body = body.split("</style>")[1]
+        assert 'class="ov-warning"' not in body
+        assert "var(--dstf-warn-tint)" not in body
 
     def test_surfaces_missing_and_invalid(self):
         overlays = [

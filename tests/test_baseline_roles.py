@@ -22,6 +22,7 @@ from dstf.reporting.overlay_loader import load_overlays
 from dstf.storage.reference_store import (
     ReferenceStore,
 )
+from dstf.storage.roles import _read_variable_mapping
 
 
 def _make_test_model(model_id="Lib.Test1"):
@@ -488,6 +489,66 @@ class TestCompanionStorage:
             store.add_companion(test.model_id, "primary", path=tmp_path / "x")
 
 
+class TestReadingAMalformedVariableMap:
+    """A record that cannot be read as pairs is MALFORMED, not absent:
+    every finding is said, so the author can see it on the report's
+    overlay table, and the companion keeps its record's authority
+    instead of quietly guessing from spellings (D132)."""
+
+    def test_a_registration_from_before_the_key_records_nothing(self):
+        assert _read_variable_mapping({"kind": "external"}) == ({}, ())
+
+    def test_the_empty_object_a_no_map_registration_writes_records_nothing(self):
+        assert _read_variable_mapping({"variables": {}}) == ({}, ())
+
+    @pytest.mark.parametrize("bad", ["", None, 3, ["sensor_a"], {"n": "s"}])
+    def test_an_entry_that_is_not_a_variable_name_is_dropped_and_said(self, bad):
+        mapping, warnings = _read_variable_mapping(
+            {"variables": {"x": bad, "y": "sensor_b"}}
+        )
+        assert mapping == {"y": "sensor_b"}
+        assert warnings == ("mapping for x is not a variable name",)
+
+    @pytest.mark.parametrize("bad", ["x=y", ["x", "y"], 7, None, True])
+    def test_a_variables_that_is_not_an_object_is_a_record_that_says_so(self, bad):
+        mapping, warnings = _read_variable_mapping({"variables": bad})
+        assert mapping == {}
+        assert len(warnings) == 1 and "pairs" in warnings[0]
+
+    def test_the_findings_reach_the_companion_and_then_the_overlay(
+        self, store_with_primary, tmp_path
+    ):
+        """End to end over the real store: a hand-edited metadata file."""
+        store, test = store_with_primary
+        external = tmp_path / "rig.json"
+        external.write_text(
+            json.dumps(
+                {"time": [0, 1], "variables": [{"name": "h", "values": [1, 2]}]}
+            ),
+            encoding="utf-8",
+        )
+        co_dir = store.ref_dir / "companions" / "ref_0001"
+        co_dir.mkdir(parents=True)
+        (co_dir / "rig.json").write_text(
+            json.dumps(
+                {
+                    "kind": "external",
+                    "format": "json",
+                    "path": str(external),
+                    "variables": {"x": None},
+                }
+            ),
+            encoding="utf-8",
+        )
+        companion = store.get_companions(test.model_id)["rig"]
+        assert companion.variables == {}
+        assert companion.mapping_warnings == ("mapping for x is not a variable name",)
+
+        overlay = load_overlays(store, test.model_id)[0]
+        assert overlay.mapping_malformed is True
+        assert overlay.warnings == ["mapping for x is not a variable name"]
+
+
 # ---------------------------------------------------------------------------
 # Cross-role namespace
 # ---------------------------------------------------------------------------
@@ -670,6 +731,53 @@ class TestCompanionMapCLI:
         assert self._run(store, test, "list", test.model_id) == 0
         out = capsys.readouterr().out
         assert "x -> sensor_a" in out
+
+    def test_a_model_with_no_baseline_is_told_so(self, store_with_primary, rig, capsys):
+        """There is nothing to check the left-hand names against, and the
+        user needs to hear that — not that the baseline they have not
+        stored holds none of them."""
+        store, test = store_with_primary
+        rc = self._run(
+            store, test, "add", "Lib.Missing", "rig", str(rig), "--map", "x=sensor_a"
+        )
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "No primary baseline" in out
+        assert "Its variables are" not in out
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ("freeze", "Lib.Test1", "rig"),
+            ("remove", "Lib.Test1", "rig"),
+            ("list", "Lib.Test1"),
+        ],
+    )
+    def test_only_add_accepts_a_map(self, store_with_primary, rig, capsys, argv):
+        """Only ``add`` writes the record, and an option silently ignored
+        is an option the user believes took effect."""
+        store, test = store_with_primary
+        assert (
+            self._run(
+                store,
+                test,
+                "add",
+                test.model_id,
+                "rig",
+                str(rig),
+                "--map",
+                "x=sensor_a",
+            )
+            == 0
+        )
+        capsys.readouterr()
+        rc = self._run(store, test, *argv, "--map", "x=sensor_b")
+        assert rc == 2
+        assert "--map is only accepted by" in capsys.readouterr().err
+        # and nothing was done: the registration still says what it said
+        companions = store.get_companions(test.model_id)
+        assert companions["rig"].kind == "external"
+        assert companions["rig"].variables == {"x": "sensor_a"}
 
     def test_list_over_every_model_shows_the_mapping(
         self, store_with_primary, rig, capsys

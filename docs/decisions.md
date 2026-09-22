@@ -4426,17 +4426,21 @@ through `freeze_companion`, read into `Companion.variables` and onto
 `Overlay.mapping`. `add` refuses a mapping naming a variable the test's stored
 baseline does not hold, or one the companion's file does not hold; two test
 variables MAY name one companion variable, which draws the one curve twice.
+`add` is the only action that writes the record, so it is the only one that
+accepts `--map` — `freeze`, `remove` and `list` refuse it as a usage error
+rather than ignoring it — and a model with no stored baseline is told exactly
+that, by the same error `add_companion` raises for it, instead of being shown
+an empty list of the variables its baseline holds.
 Where an overlay HAS a mapping, that is the whole rule in
 `attach_overlays_to_trajectories`: a trajectory the mapping does not name gets
 no trace from it, even when the overlay holds a variable spelled exactly like
 it — guessing behind a recorded answer is how somebody else's curve ends up
 under the wrong plot.
 
-**The fallbacks are for an overlay nobody mapped** — companions registered
-before there was a mapping to write, and soft_checks and sibling-backend
-references, which are DSTF's own data keyed by the same names and carry none
-by design. In order: the overlay variable whose NAME is the trajectory's name
-(the two sources agree on a spelling); whose NAME is the trajectory's
+**The fallbacks are for a COMPANION nobody mapped** — the ones registered
+before there was a mapping to write — and for nothing else (review correction,
+2026-09-22). In order: the companion variable whose NAME is the trajectory's
+name (the two sources agree on a spelling); whose NAME is the trajectory's
 EXPRESSION (the positional name is on the test's side, and the text the model
 wrote is what the two share); whose own EXPRESSION is the trajectory's name or
 expression (the mirror, for a companion that is itself a DSTF baseline of
@@ -4446,7 +4450,31 @@ that finds MORE THAN ONE candidate attaches nothing and records a warning on
 the overlay, surfaced by `overlay_summary` on the report's overlay table,
 naming the trajectory, the candidates and the `--map` that settles it:
 `x={a.Q, a.Q}` is legal, so one expression can belong to two of a companion's
-variables.
+variables. That remedy is worded as `dstf companion add … --map`, which is the
+only command there is for it — and, the fallbacks being a companion's alone,
+the only overlay that can reach the warning.
+
+**Everything else on the picker matches BY NAME ONLY**: a soft_check, a
+cross-backend import (stored as one), and the auto-discovered primary of a
+sibling partition are DSTF's own data, keyed by the names this test uses.
+A soft_check is also SCORED by name, through `against:`, so the curve drawn
+for it has to be the curve scored for it — a spelling rule that found some
+OTHER variable of it would draw one thing and score another. The first
+version of this paragraph let every unmapped overlay fall back, and a
+soft_check holding `other.name` with expression `a.Q` drew on every
+trajectory whose expression was `a.Q`.
+
+**A malformed record is a record.** `variables` holding an entry whose value
+is not a variable name, or not being an object at all, is a hand-edit, not an
+old registration: `storage/roles.py::_read_variable_mapping` drops the entry
+and RETURNS the finding beside the pairs, `Companion.mapping_warnings` carries
+it to `Overlay.warnings` and the overlay table, and `Overlay.mapping_malformed`
+keeps the companion on its own record — it draws what survived reading and
+never falls back. A mapping naming a variable the companion's file does not
+hold is read the same way at load time: one warning per stale entry, naming
+the test variable, the companion variable and the file. Only an ABSENT record
+falls back — the key missing, or the empty object a registration with no
+`--map` writes.
 
 **The seam, and its coordination.** Reference-JSON variable names and the
 `test_spec.json` keys that named an expression both changed, and stored

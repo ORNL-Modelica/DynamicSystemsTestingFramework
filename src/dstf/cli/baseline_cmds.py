@@ -84,13 +84,18 @@ def _check_variable_map(
     report — so both sides are checked here, where both files are open:
     the left against the test's stored baseline, the right against the
     companion's own data. A path that does not resolve is left to
-    ``add_companion``, which reports it as the registration error it is.
+    ``add_companion``, which reports it as the registration error it is,
+    and so is a model with no stored baseline at all: there is nothing to
+    check the left-hand names against, and "no primary baseline" is the
+    error the user needs, not an empty list of the variables one holds.
     """
     if not mapping:
         return
     from ..reporting.overlay_loader import companion_variable_names
 
-    reference = store.get_reference(model_id) or {}
+    reference = store.get_reference(model_id)
+    if reference is None:
+        return
     known = {
         entry.get("name")
         for entry in reference.get("variables") or []
@@ -141,9 +146,19 @@ def cmd_companion(args: argparse.Namespace) -> int:
     ``--map`` is repeatable and records which of the companion's variables
     draws on which of the test's — the answer the report reads instead of
     guessing from spellings. Two test variables may name one companion
-    variable; one test variable may not be named twice.
+    variable; one test variable may not be named twice. Only ``add``
+    writes the record, so only ``add`` accepts ``--map``.
     """
     _require_positionals(args, "companion", _COMPANION_REQUIRED)
+    if args.action != "add" and getattr(args, "variable_map", None):
+        # argparse cannot scope an option to one value of a positional
+        # choice, so the refusal lives here — silently ignoring it would
+        # leave the user believing a mapping had been recorded.
+        raise ConfigError(
+            f"companion {args.action}: --map is only accepted by "
+            f"`companion add`, which writes the mapping. To change one, "
+            f"re-add the companion with the --map you want."
+        )
     config = _build_config(args)
     from ..storage.reference_store import ReferenceStore
     from ..storage.roles import infer_companion_format
