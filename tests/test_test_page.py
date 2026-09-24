@@ -1106,7 +1106,10 @@ async def test_show_builds_the_plot_once_with_no_rings(shell):
         with page.client:
             page.cards[0].show()
             plot = page.cards[0].plot
-            assert _sans_rev(plot.figure) == shell.session.plot_figure(A, 0, editing=())
+            # The card's figure is the Session's with the card's Visibility.
+            assert _sans_rev(plot.figure) == shell.session.plot_figure(
+                A, 0, editing=(), visibility=page.cards[0].visibility()
+            )
             page.cards[0].show()
         assert page.cards[0].plot is plot and page.cards[1].plot is None
         assert plot.parent_slot.parent is _one(user, "plot-slot:0")
@@ -1121,7 +1124,9 @@ async def test_a_shown_plot_has_no_rings_until_a_criterion_opens(shell):
         with page.client:
             page.cards[0].show()
         figure = page.cards[0].plot.figure
-        assert _sans_rev(figure) == shell.session.plot_figure(D, 0, editing=())
+        assert _sans_rev(figure) == shell.session.plot_figure(
+            D, 0, editing=(), visibility=page.cards[0].visibility()
+        )
         assert _sans_rev(figure) != shell.session.plot_figure(D, 0)
         assert not [s for s in figure["layout"]["shapes"] if s.get("type") == "circle"]
 
@@ -1791,7 +1796,7 @@ async def test_the_open_criterion_is_the_only_one_with_rings(shell):
         user.find(marker=f"criterion:0:{T0}").click()
         await _settled(lambda: page.open == (0, T0))
         assert _sans_rev(card.plot.figure) == shell.session.plot_figure(
-            D, 0, editing=(T0,)
+            D, 0, editing=(T0,), visibility=card.visibility()
         )
         rings = {
             s["name"]
@@ -1802,7 +1807,7 @@ async def test_the_open_criterion_is_the_only_one_with_rings(shell):
         user.find(marker=f"editor-done:0:{T0}").click()
         await _settled(lambda: page.open is None)
         assert _sans_rev(card.plot.figure) == shell.session.plot_figure(
-            D, 0, editing=()
+            D, 0, editing=(), visibility=card.visibility()
         )
         assert card.plot is plot  # the same node throughout
         assert card.plot.figure["config"] == config
@@ -1842,7 +1847,7 @@ async def test_a_drag_stages_one_replace_and_the_plot_follows(shell):
         assert [op.op for op in ops] == ["replace"]
         assert ops[0].value["tube_points"][0]["upper"] == pytest.approx(0.3)
         assert _sans_rev(card.plot.figure) == shell.session.plot_figure(
-            D, 0, editing=(T0,)
+            D, 0, editing=(T0,), visibility=card.visibility()
         )
         # The table followed the ring: the editor was rebuilt whole.
         await _settled(
@@ -2795,7 +2800,7 @@ async def test_a_form_edit_redraws_its_card_once_and_keeps_the_rings(shell):
         assert sent[0] == 1
         assert page.open == (0, T1)
         assert _sans_rev(card.plot.figure) == shell.session.plot_figure(
-            D, 0, editing=(T1,)
+            D, 0, editing=(T1,), visibility=card.visibility()
         )
 
 
@@ -3048,3 +3053,230 @@ async def test_two_variables_sharing_one_expression_stay_tellable_apart(shell):
             for e in user.find(marker="action:edit-tree").elements
             if e.text.startswith("Add a criterion")
         ) == ["Add a criterion for a.Q (x)", "Add a criterion for a.Q (y)"]
+
+
+# -- legend b: a swatch per criterion, one error select -----------------------
+
+TUBE = "/metrics/children/0"
+RANGE_X = "/metrics/children/1"
+RANGE_Y = "/metrics/children/2"
+
+
+@pytest.fixture
+def page_shell(tmp_path):
+    """`_page_project`: A is `and[tube · x, range · x, range · y]` — the tube
+    and range·y FAIL, range·x passes — drawn as seven plots (0: x, 1: y,
+    2..6: x and y)."""
+    from test_session import _page_project
+
+    cfg, work = _page_project(tmp_path)
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.load.phase = "done"
+    return s
+
+
+def _drawn_leaves(figure: dict) -> dict[str, bool]:
+    """``{leaf path: drawn}`` from what a card last sent: a leaf is drawn
+    when none of its traces and none of its shapes is ``visible: false``."""
+    out: dict[str, bool] = {}
+    for tr in figure["data"]:
+        leaf = (tr.get("meta") or {}).get("leaf")
+        if leaf is not None:
+            out[leaf] = out.get(leaf, True) and tr.get("visible") is not False
+    for shape in figure["layout"]["shapes"]:
+        for path in (TUBE, RANGE_X, RANGE_Y):
+            if shape["name"].startswith(path + "/"):
+                out[path] = out.get(path, True) and shape.get("visible") is not False
+    return out
+
+
+def _range_lines_drawn(figure: dict, path: str) -> list[bool]:
+    return [
+        s.get("visible") is not False
+        for s in figure["layout"]["shapes"]
+        if s["name"].startswith(path + "/")
+    ]
+
+
+async def test_a_closed_range_starts_hidden_and_a_failing_one_drawn(page_shell):
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        with page.client:
+            page.cards[0].show()
+            page.cards[1].show()
+        # range·x passes and range draws nothing by default; the tube is on.
+        assert _drawn_leaves(page.cards[0].plot.figure) == {
+            TUBE: True,
+            RANGE_X: False,
+        }
+        assert _range_lines_drawn(page.cards[0].plot.figure, RANGE_X) == [
+            False,
+            False,
+        ]
+        # range·y FAILS: a failure never starts hidden.
+        assert _drawn_leaves(page.cards[1].plot.figure) == {RANGE_Y: True}
+
+
+async def test_a_swatch_toggles_its_criterions_drawing(page_shell):
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        with page.client:
+            for card in page.cards[:3]:
+                card.show()
+        card = page.cards[0]
+        sent = _counted(card)
+        others = [_counted(c) for c in page.cards[1:3]]
+        user.find(marker=f"swatch:0:{RANGE_X}").click()
+        await _settled(lambda: _drawn_leaves(card.plot.figure)[RANGE_X])
+        assert sent == [1] and page.open is None
+        assert card.rows[RANGE_X].swatch_tip.text == "Hide this criterion's drawing"
+        user.find(marker=f"swatch:0:{RANGE_X}").click()
+        await _settled(lambda: not _drawn_leaves(card.plot.figure)[RANGE_X])
+        assert sent == [2]
+        assert card.rows[RANGE_X].swatch_tip.text == "Show this criterion's drawing"
+        assert [c[0] for c in others] == [0, 0]
+
+
+async def test_a_failing_criterions_swatch_hides_it(page_shell):
+    """The owner's 2026-09-24 ruling: a FAILING criterion is drawn by
+    default and its swatch hides it like any other — the failure stays on
+    the row's pill and the card's."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        card = page.cards[1]
+        with page.client:
+            card.show()
+        assert _drawn_leaves(card.plot.figure) == {RANGE_Y: True}
+        swatch = card.rows[RANGE_Y].swatch
+        assert swatch.props.get("aria-disabled") != "true"
+        assert "dstf-swatch-locked" not in swatch.classes
+        assert card.rows[RANGE_Y].swatch_tip.text == "Hide this criterion's drawing"
+        sent = _counted(card)
+        user.find(marker=f"swatch:1:{RANGE_Y}").click()
+        await _settled(lambda: not _drawn_leaves(card.plot.figure)[RANGE_Y])
+        assert sent == [1]
+        assert _range_lines_drawn(card.plot.figure, RANGE_Y) == [False, False]
+        assert _one(user, f"criterion-pill:1:{RANGE_Y}").text == "fail"
+        assert _one(user, "plot-pill:1:y").text == "fail"
+
+
+async def test_the_open_criterions_swatch_cannot_hide_it(page_shell):
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        card = page.cards[0]
+        user.find(marker=f"criterion:0:{RANGE_X}").click()
+        await _settled(lambda: page.open == (0, RANGE_X))
+        assert _drawn_leaves(card.plot.figure)[RANGE_X] is True
+        swatch = card.rows[RANGE_X].swatch
+        assert swatch.props.get("aria-disabled") == "true"
+        assert "dstf-swatch-locked" in swatch.classes
+        assert card.rows[RANGE_X].swatch_tip.text == "the open criterion always draws"
+        sent = _counted(card)
+        user.find(marker=f"swatch:0:{RANGE_X}").click()  # does nothing
+        await asyncio.sleep(0.1)
+        assert sent == [0] and RANGE_X not in card.choices
+        assert _drawn_leaves(card.plot.figure)[RANGE_X] is True
+        user.find(marker=f"editor-done:0:{RANGE_X}").click()
+        await _settled(lambda: page.open is None)
+        # No choice was made: closed, it is the metric's default again.
+        assert _drawn_leaves(card.plot.figure)[RANGE_X] is False
+        assert RANGE_X not in card.choices
+        assert swatch.props.get("aria-disabled") != "true"
+
+
+async def test_the_error_select_shows_one_series(page_shell):
+    from dstf.figures.plotly import _LABELS
+
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        with page.client:
+            page.cards[0].show()
+            page.cards[2].show()
+        select = _one(user, "error-select:0")
+        assert list(select.options.values()) == [
+            "No error",
+            _LABELS["error/signed"],
+            _LABELS["error/abs"],
+            _LABELS["error/nrmse"],
+        ]
+        assert list(select.options.values())[1:] == [
+            "Signed error",
+            "Abs error",
+            "NRMSE (per-point)",
+        ]
+        card = page.cards[0]
+        sent = _counted(card)
+        with page.client:
+            select.set_value("error/abs")
+        await _settled(lambda: card.error == "error/abs")
+        assert sent == [1]
+        assert card.plot.figure["layout"]["yaxis3"]["visible"] is True
+        assert card.plot.figure["layout"]["yaxis4"]["visible"] is False
+        shown = [
+            tr["meta"]["id"]
+            for tr in card.plot.figure["data"]
+            if tr["meta"].get("kind") == "error" and tr["visible"] is True
+        ]
+        assert shown == ["error/abs"]
+        # A plot of several series has no error traces, so no select.
+        assert page.cards[2].plot is not None
+        assert _none(user, "error-select:2")
+
+
+async def test_a_swatch_is_there_once_the_plot_is(page_shell):
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        card = page.cards[0]
+        # Nothing is known of what a leaf draws before its figure exists.
+        assert card.plot is None
+        assert not any(row.swatch.visible for row in card.rows.values())
+        with page.client:
+            card.show()
+        assert {p for p, row in card.rows.items() if row.swatch.visible} == {
+            TUBE,
+            RANGE_X,
+        }
+
+
+async def test_a_criterion_that_draws_only_a_shape_has_a_swatch(page_shell):
+    """A windowed nrmse draws ONE shape — its window — and no trace: its
+    swatch is found from the shape's name, not from `meta.leaf` alone."""
+    shell = page_shell
+    windowed = "/metrics/children/3"
+    shell.session.stage(
+        [
+            PatchOp(
+                A,
+                "add",
+                "/metrics/children/-",
+                {
+                    "metric": "nrmse",
+                    "variable": "x",
+                    "window": {"start": 0.2, "end": 0.6},
+                },
+            )
+        ]
+    )
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        figure = card.plot.figure
+        assert not [
+            tr
+            for tr in figure["data"]
+            if (tr.get("meta") or {}).get("leaf") == windowed
+        ]
+        assert any(
+            s["name"].startswith(windowed + "/") for s in figure["layout"]["shapes"]
+        )
+        assert windowed in card.drawable
+        assert card.rows[windowed].swatch.visible

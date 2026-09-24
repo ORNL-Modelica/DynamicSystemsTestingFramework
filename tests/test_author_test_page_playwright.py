@@ -129,6 +129,11 @@ def _crit(page, index: int, name: str):
     )
 
 
+def _swatch(page, index: int, name: str):
+    """The swatch on that criteria row: its drawing on the plot, on or off."""
+    return _crit(page, index, name).locator(".dstf-swatch")
+
+
 def _open_crit(page, index: int, name: str) -> dict:
     """Click a criteria row open and return its box. The click lands left of
     the node's controls: a click there is the controls', not the row's."""
@@ -484,6 +489,16 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         # 5b. Another leaf's bound line is on the same plot and Plotly lets
         #     it be dragged: the open editor refuses it BY NAME, stages
         #     nothing, and the picture goes back.
+        # A closed range starts hidden (legend b): its swatch draws it.
+        _swatch(page, 0, "range · x").click()
+        page.wait_for_function(
+            "(n) => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
+            ".shapes || []).some(s => s.name === n && s.visible)",
+            arg=MAX_LINE,
+            timeout=EXPECT_TIMEOUT,
+        )
+        # The click scrolled its row into view, and plot 0 off the top.
+        page.evaluate("() => window.scrollTo(0, 0)")
         page.evaluate(RELAYOUT_Y, LINE_Y)
         page.wait_for_timeout(300)
         line = page.evaluate(FIND_LINE, MAX_LINE)
@@ -636,3 +651,136 @@ def test_a_hover_over_a_card_reads_the_series_it_is_over(tmp_path, playwright_br
         assert texts, "no hover box under the mouse"
         assert any(line.startswith("x: ") for line in texts), texts
         assert not any("%{" in line for line in texts), texts
+
+
+# -- legend b: the swatch, the error select, the legend above ---------------
+
+READ_SHAPES = """
+() => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const fl = gd._fullLayout;
+  return {
+    stamp: gd.__dstfStamp,
+    xrange: fl.xaxis.range.slice(),
+    shapes: (fl.shapes || []).map(s => [s.type, s.name, s.visible]),
+    painted: gd.querySelectorAll('g.shapelayer path').length,
+  };
+}
+"""
+
+#: A pixel on plot 0's drag layer at data-x ``x``: the unified hover is
+#: decided by x alone, and the column is swept for the drag layer the way
+#: `POINT_PIXEL` sweeps it.
+PIXEL_AT_X = """
+(x) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const fl = gd._fullLayout, r = gd.getBoundingClientRect();
+  const px = r.left + fl.xaxis._offset + fl.xaxis.l2p(x);
+  const top = r.top + fl.yaxis._offset;
+  for (let f = 0.05; f < 1; f += 0.05) {
+    const y = top + fl.yaxis._length * f;
+    const el = document.elementFromPoint(px, y);
+    if (el && el.closest && el.closest('.nsewdrag')) return [px, y];
+  }
+  return null;
+}
+"""
+
+
+def _hover_at(page, x: float) -> list[str]:
+    """Every line of the unified hover box under a real mouse at data-x
+    ``x`` on plot 0 (a screenshot cannot show a hover)."""
+    pixel = page.evaluate(PIXEL_AT_X, x)
+    assert pixel is not None, page.evaluate(READ_PLOT)
+    page.mouse.move(pixel[0] - 60, pixel[1] - 20)
+    page.wait_for_timeout(150)
+    page.mouse.move(pixel[0], pixel[1], steps=4)
+    page.wait_for_timeout(400)
+    return page.evaluate(HOVER_TEXTS)
+
+
+def test_a_swatch_hides_a_criterion_and_the_zoom_stays(tmp_path, playwright_browser):
+    with _served(tmp_path, playwright_browser) as page:
+        page.wait_for_timeout(700)
+        page.evaluate(ZOOM_AND_STAMP, [ZOOM_X, LINE_Y])
+        page.wait_for_timeout(200)
+        start = page.evaluate(READ_SHAPES)
+        # range · x passes, and a range draws nothing until asked.
+        assert [s[2] for s in start["shapes"] if s[1].startswith(RANGE_X)] == [
+            False,
+            False,
+        ], start
+        swatch = _swatch(page, 0, "range · x")
+        expect(swatch).to_be_visible(timeout=EXPECT_TIMEOUT)
+        swatch.click()
+        page.wait_for_function(
+            "() => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
+            ".shapes || []).filter(s => s.visible && s.name.startsWith("
+            f"'{RANGE_X}/')).length === 2",
+            timeout=EXPECT_TIMEOUT,
+        )
+        after = page.evaluate(READ_SHAPES)
+        # Hidden shapes leave the shape layer (nothing else draws a shape on
+        # plot 0 while no criterion is open); shown, the lines are painted.
+        assert start["painted"] == 0 and after["painted"] > 0, (start, after)
+        # A `react`, not a `newPlot`: the zoom and the stamp are still there.
+        assert [round(v, 6) for v in after["xrange"]] == ZOOM_X, after
+        assert after["stamp"] == "before-open", after
+        # The swatch's click is the swatch's: it did not reach the row, which
+        # would have opened the editor too. Retrying reads, because an editor
+        # the click opened arrives on the next round trip.
+        page.wait_for_timeout(300)
+        expect(page.locator(".dstf-crit-open")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.wait_for_timeout(200)
+        # 8. Plot 0 with range · x's swatch on: two bound lines, the legend
+        #    above the plot area.
+        _shot(page, tmp_path, "range-swatch-on")
+
+        # The legend sits above the plot area, so the ring finder's hit test
+        # lands on a ring, not on a legend entry.
+        _open_crit(page, 0, "tube · x")
+        expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.evaluate(RELAYOUT_Y, ZOOM_Y)
+        page.wait_for_timeout(300)
+        assert page.evaluate(FIND_RING) is not None, page.evaluate(READ_PLOT)
+
+        # A real-mouse hover at t = 0.5 lists the tube's handles while it
+        # draws. Its marker groups hover as bare values (`hoverinfo: "x+y"`):
+        # the handles at t = 0.5 sit at 0.6 (upper) and 0.3 (lower).
+        texts = _hover_at(page, 0.5)
+        assert "0.6000" in texts and "0.3000" in texts, texts
+        # An OPEN criterion cannot be hidden: close it, then its swatch.
+        page.mouse.move(5, 5)
+        page.locator(".dstf-editor").get_by_role("button", name="Done").click()
+        expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        _swatch(page, 0, "tube · x").click()
+        page.wait_for_function(
+            "() => (document.querySelectorAll('.js-plotly-plot')[0].data || [])"
+            f".filter(t => (t.meta || {{}}).leaf === '{TUBE}')"
+            ".every(t => t.visible === false)",
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.wait_for_timeout(200)
+        texts = _hover_at(page, 0.5)
+        assert texts, "no hover box under the mouse"
+        assert "0.6000" not in texts and "0.3000" not in texts, texts
+
+        # The error select shows one series, and the figure shows its axis.
+        page.mouse.move(5, 5)
+        plot0 = page.locator(".dstf-plot").first
+        plot0.locator(".q-select").click()
+        page.locator(".q-menu .q-item").filter(has_text="Abs error").click()
+        page.wait_for_function(
+            "() => document.querySelectorAll('.js-plotly-plot')[0]"
+            "._fullLayout.yaxis3.visible === true",
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.wait_for_timeout(300)
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.wait_for_timeout(200)
+        # 8. Plot 0 with "Abs error" chosen: its trace and its right axis.
+        _shot(page, tmp_path, "error-abs")

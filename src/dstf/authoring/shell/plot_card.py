@@ -22,7 +22,9 @@ from typing import TYPE_CHECKING, Any
 from nicegui import ui
 
 from ...backends.types import VariableText
+from ...comparison import registry
 from ...discovery.plots import ResolvedPlot
+from ...figures.plotly import _LABELS, Visibility
 from ..capabilities import Placement
 from ..session import Selection
 from .actions import ActionBar, InlineHost
@@ -77,14 +79,42 @@ def worst(statuses: list[str]) -> str:
     return next((status for status in _WORST if status in statuses), "queued")
 
 
+def drawn(leaf: dict, choice: bool | None, is_open: bool) -> bool:
+    """Whether one criterion draws on its plot (legend b). The open one
+    always does — the plot is its editing surface. Else the swatch's choice,
+    when there is one; else a failing criterion does, so a FAIL never starts
+    hidden; else the metric's own default."""
+    if is_open:
+        return True
+    if choice is not None:
+        return choice
+    if leaf.get("passed") is False:
+        return True
+    desc = registry.metric(str(leaf.get("metric")))
+    return desc is None or desc.drawn_by_default
+
+
+#: The swatch's tooltip: what a click on it would do, or why it does nothing.
+_SWATCH_TIPS = {
+    "open": "the open criterion always draws",
+    True: "Hide this criterion's drawing",
+    False: "Show this criterion's drawing",
+}
+_SWATCH_STATES = " ".join(
+    f"dstf-swatch-{s}"
+    for s in ("on", "off", "locked", "pass", "fail", "warn", "queued")
+)
+
+
 class CriterionRow:
-    """One criterion under its plot (DESIGN.md "Criteria rows"): the pill,
-    the metric and its variable, the CLI's readout, and that node's controls
-    — whatever attaches at NODE. `paint` writes a new verdict into the row
-    that is already there."""
+    """One criterion under its plot (DESIGN.md "Criteria rows"): the swatch
+    that shows or hides its drawing, the pill, the metric and its variable,
+    the CLI's readout, and that node's controls — whatever attaches at NODE.
+    `paint` writes a new verdict into the row that is already there."""
 
     def __init__(self, card: PlotCard, leaf: dict) -> None:
         index, path = card.index, str(leaf["path"])
+        self.card, self.leaf = card, leaf
         self.path, self.variable = path, str(leaf.get("variable"))
         model, variable = card.page.model_id, self.variable
         self.row = ui.row().classes("dstf-crit items-center no-wrap gap-3 w-full")
@@ -93,6 +123,25 @@ class CriterionRow:
         # not a click on the row — `InlineHost`'s column stops it.
         self.row.on("click", partial(card.page.toggle_criterion, index, path))
         with self.row.mark(f"criterion:{index}:{path}"):
+            # The criterion's drawing on the plot above, shown or hidden
+            # (legend b). Its click is stopped in the BROWSER before it
+            # reaches the row, which would open the editor too; the user
+            # simulation's click never bubbles, so only Chromium can say so.
+            self.swatch = (
+                ui.element("span")
+                .classes("dstf-swatch")
+                .mark(f"swatch:{index}:{path}")
+                .on(
+                    "click",
+                    self._toggle,
+                    js_handler="(e) => { e.stopPropagation(); emit(); }",
+                )
+            )
+            with self.swatch:
+                self.swatch_tip = ui.tooltip("")
+            # Hidden until the plot is drawn: which leaves draw anything is
+            # known only from the figure (`PlotCard.drawable`).
+            self.swatch.set_visibility(False)
             self.pill = Pill(leaf_status(leaf), f"criterion-pill:{index}:{path}")
             self.name = ui.label().classes("text-body2 text-weight-medium")
             self.readout = ui.label().classes("dstf-mono text-xs")
@@ -122,6 +171,38 @@ class CriterionRow:
         self.pill.set(leaf_status(leaf))
         self.name.set_text(leaf_name(leaf))
         self.readout.set_text(leaf_readout(leaf))
+        self.paint_swatch(leaf)
+
+    def paint_swatch(self, leaf: dict) -> None:
+        """Filled in the pill's status colour while the drawing shows, an
+        outline of it while hidden; locked while this criterion is open. A
+        verdict that flips moves a default, so every paint repaints it."""
+        self.leaf = leaf
+        card = self.card
+        is_open = card.open_path == self.path
+        on = drawn(leaf, card.choices.get(self.path), is_open)
+        self.swatch.set_visibility(self.path in card.drawable)
+        self.swatch.classes(remove=_SWATCH_STATES)
+        self.swatch.classes(
+            add=f"dstf-swatch-{'on' if on else 'off'} dstf-swatch-{leaf_status(leaf)}"
+            + (" dstf-swatch-locked" if is_open else "")
+        )
+        if is_open:
+            self.swatch.props("aria-disabled=true")
+        else:
+            self.swatch.props(remove="aria-disabled")
+        self.swatch_tip.set_text(_SWATCH_TIPS["open" if is_open else on])
+
+    def _toggle(self) -> None:
+        card = self.card
+        if card.open_path == self.path:
+            return  # the open criterion always draws: it is the editing surface
+        card.choices[self.path] = not drawn(
+            self.leaf, card.choices.get(self.path), False
+        )
+        # By the signature, which carries the hidden set: one send, and only
+        # of this card.
+        card.redraw_if_moved()
 
 
 class PlotCard:
@@ -161,6 +242,14 @@ class PlotCard:
         self._revision = 0
         #: The leaf the open editor was built from (`_EDITED`).
         self._edited: tuple | None = None
+        #: Legend b: the swatches' choices by leaf path (a leaf with none
+        #: follows `drawn`'s defaults), the one error series shown, and the
+        #: leaves the last figure drew anything for — only those get a
+        #: swatch. Set before the rows, which paint their swatch from them.
+        self.choices: dict[str, bool] = {}
+        self.error: str | None = None
+        self.drawable: frozenset[str] = frozenset()
+        self.error_select: ui.select | None = None
         model = page.model_id
         known = set(tracked)
         #: This plot's TRACKED series — the ones that carry criteria rows and
@@ -212,8 +301,11 @@ class PlotCard:
                             pill.label.classes(add="dstf-pill-named")
                         self.pills[variable] = pill
                 ui.space()
-                # The plot's whole toolbar (decision 9): the legend already
-                # toggles the overlays and the error traces.
+                # The plot's whole toolbar (decision 9): the legend toggles
+                # the signals and the overlays; the criteria are toggled
+                # from their rows (legend b) and the errors from this select,
+                # built once the plot is drawn.
+                self.error_slot = ui.row().classes("items-center gap-0")
                 self.focus = ui.button("Focus", on_click=partial(page.focus, index))
                 self.focus.props("flat dense no-caps").mark(f"focus:{index}")
             if resolved.missing:
@@ -305,10 +397,7 @@ class PlotCard:
                 else None
             )
             pill.set(status, text)
-        for leaf in leaves_of(view):
-            row = self.rows.get(str(leaf["path"]))
-            if row is not None:
-                row.paint(leaf)
+        self._paint_rows(view)
         for row in self.rows.values():
             # The row stands; what its node's controls MAY do does not (a
             # job's lock comes and goes without the shape moving).
@@ -329,9 +418,56 @@ class PlotCard:
         for bar in self.bars:
             bar.refresh()
 
+    def _paint_rows(self, view: dict | None) -> None:
+        for leaf in leaves_of(view):
+            row = self.rows.get(str(leaf["path"]))
+            if row is not None:
+                row.paint(leaf)
+
     # -- the plot ------------------------------------------------------------------
 
-    def _figure(self) -> dict:
+    def _leaves_all(self, view: dict | None) -> list[dict]:
+        """Every leaf on this plot's series, tracked or not."""
+        return [
+            leaf
+            for leaf in leaves_of(view)
+            if leaf.get("variable") in self.resolved.series
+        ]
+
+    def visibility(self, view: Any = UNREAD) -> Visibility:
+        """What this card chose to show (legend b): the leaves `drawn` says
+        are off, and the one error series."""
+        hidden = frozenset(
+            str(leaf["path"])
+            for leaf in self._leaves_all(self._view(view))
+            if not drawn(
+                leaf,
+                self.choices.get(str(leaf["path"])),
+                str(leaf["path"]) == self.open_path,
+            )
+        )
+        return Visibility(hidden=hidden, error=self.error)
+
+    def _drawable(self, figure: dict, view: dict | None) -> frozenset[str]:
+        """The leaves this figure draws ANYTHING for: a trace with the path
+        in ``meta.leaf``, or a shape named under it. A windowed nrmse draws
+        one shape and no trace, and its swatch must still show. Longest
+        path first, so ``/metrics/children/1`` never claims a shape of
+        ``/metrics/children/10``."""
+        paths = sorted(
+            (str(leaf["path"]) for leaf in self._leaves_all(view)),
+            key=len,
+            reverse=True,
+        )
+        found = {(tr.get("meta") or {}).get("leaf") for tr in figure["data"]}
+        for shape in figure["layout"].get("shapes", []):
+            name = str(shape.get("name", ""))
+            hit = next((p for p in paths if name.startswith(p + "/")), None)
+            if hit is not None:
+                found.add(hit)
+        return frozenset(str(p) for p in found if p is not None)
+
+    def _figure(self, view: Any = UNREAD) -> dict:
         """The Session's figure with this card's own `editrevision` on it.
         Plotly's `editrevision` DEFAULTS to `uirevision`, which the tool's
         figure pins to "keep" so a zoom survives a redraw — and with it
@@ -341,9 +477,14 @@ class PlotCard:
         An incrementing revision says the shapes are new. The layout is
         COPIED: a Session figure is deterministic, and nothing here writes
         into what it was handed."""
+        view = self._view(view)
         figure = self.page.shell.session.plot_figure(
-            self.page.model_id, self.index, editing=self.page.editing_for(self.index)
+            self.page.model_id,
+            self.index,
+            editing=self.page.editing_for(self.index),
+            visibility=self.visibility(view),
         )
+        self.drawable = self._drawable(figure, view)
         self._revision += 1
         return {
             **figure,
@@ -357,13 +498,14 @@ class PlotCard:
         self.wanted = True
         if self.plot is not None:
             return
+        view = self._view(view)
         # Whatever a previous try left: `show()` is called again on every
         # opening row, and a slot that kept each failure's label stacked
         # them — with the recovered plot drawn UNDER them.
         self.slot.clear()
         with self.slot:
             try:
-                figure = self._figure()
+                figure = self._figure(view)
             except Exception as e:  # a plot that cannot draw says so in place
                 text = f"{type(e).__name__}: {e}"
                 if text != self._error:  # the same failure is not news
@@ -375,6 +517,35 @@ class PlotCard:
             self.plot = ui.plotly(figure).classes("w-full").style("height: 320px")
         self.hook.attach(self.plot)
         self._drawn = self.signature(view)
+        self._error_select(figure)
+        # `drawable` is first known here: the swatches show with the plot.
+        self._paint_rows(view)
+
+    def _error_select(self, figure: dict) -> None:
+        """One select for the error series (legend b), on a plot whose
+        figure has any; a plot of several series has none."""
+        ids = [
+            tr["meta"]["id"]
+            for tr in figure["data"]
+            if (tr.get("meta") or {}).get("kind") == "error"
+        ]
+        if not ids or self.error_select is not None:
+            return
+        with self.error_slot:
+            self.error_select = (
+                ui.select(
+                    {"none": "No error", **{i: _LABELS[i] for i in ids}},
+                    value="none",
+                    on_change=lambda e: self._choose_error(e.value),
+                )
+                .props("dense options-dense")
+                .mark(f"error-select:{self.index}")
+            )
+
+    def _choose_error(self, value: str) -> None:
+        self.error = None if value == "none" else value
+        # By the signature, which carries the error: one send.
+        self.redraw_if_moved()
 
     def _retried(self, view: Any) -> bool:
         """A card with no plot: retry the draw if somebody asked for one.
@@ -397,14 +568,17 @@ class PlotCard:
         if self._retried(view):
             return
         assert self.plot is not None
-        self.plot.update_figure(self._figure())
+        view = self._view(view)
+        self.plot.update_figure(self._figure(view))
         self._drawn = self.signature(view)
+        # The swatches say what was just sent (an open or a close moves one).
+        self._paint_rows(view)
 
     def signature(self, view: Any = UNREAD) -> str:
         """What this plot draws that an edit can move: which criterion is
-        open — its rings, and only its — and every leaf on this plot's
-        series. Comparing it to what was last sent is the ONE thing that
-        decides a redraw."""
+        open — its rings, and only its — every leaf on this plot's series,
+        which leaves are hidden and which error series shows. Comparing it
+        to what was last sent is the ONE thing that decides a redraw."""
         view = self._view(view)
         leaves = [
             [leaf.get("path"), *(leaf.get(key) for key in _SIGNED)]
@@ -412,7 +586,12 @@ class PlotCard:
             if leaf.get("variable") in self.resolved.series
         ]
         return json.dumps(
-            [list(self.page.editing_for(self.index)), leaves],
+            [
+                list(self.page.editing_for(self.index)),
+                leaves,
+                sorted(self.visibility(view).hidden),
+                self.error,
+            ],
             sort_keys=True,
             default=str,
         )

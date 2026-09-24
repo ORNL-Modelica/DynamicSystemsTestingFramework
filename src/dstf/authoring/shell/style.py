@@ -16,6 +16,14 @@ _PILLS = "".join(
     for status in ("pass", "fail", "warn", "queued")
 )
 
+#: A criterion's swatch (legend b) in the colour its pill's border uses:
+#: filled while its drawing shows, and `.dstf-swatch-off` empties it.
+_SWATCHES = "".join(
+    f".dstf-swatch-{status} {{ border-color: var(--dstf-{status}-border); "
+    f"background: var(--dstf-{status}-border); }}\n"
+    for status in ("pass", "fail", "warn", "queued")
+)
+
 _TINTS = "".join(
     f".dstf-tint-{status} {{ background: var(--dstf-{status}-tint); }}\n"
     for status in STATUS
@@ -67,6 +75,13 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 .dstf-crit:hover { background: var(--dstf-surface-hover); }
 .dstf-crit-open { background: var(--dstf-selection); }
+/* A criterion's swatch: its status colour, filled while its drawing shows,
+   an outline of it while hidden; the open criterion's is locked on. */
+.dstf-swatch {
+  width: 12px; height: 12px; border-radius: 2px; flex: none;
+  border: 2px solid; cursor: pointer; box-sizing: border-box;
+}
+.dstf-swatch-locked { cursor: default; opacity: .6; }
 /* The editor belongs to the row above it: indented under it, with the
    accent rule down its left saying how far it reaches. */
 .dstf-editor {
@@ -128,4 +143,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 """
     + _TINTS
     + _PILLS
+    + _SWATCHES
+    # After the fills, so an outline wins over the colour it is drawn in.
+    + ".dstf-swatch-off { background: transparent; }\n"
 )
