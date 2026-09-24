@@ -640,3 +640,40 @@ def test_a_label_holding_markup_reaches_plotly_escaped(build):
     assert not any("a<b>c" in t for t in texts)
     ids = [tr["meta"]["id"] for tr in fig["data"] if tr.get("meta")]
     assert not any("&lt;" in i for i in ids)
+
+
+def test_a_plot_of_several_takes_visibility():
+    from dstf.comparison.algorithms import _compare_range
+    from dstf.figures.plotly import Visibility
+    from test_figures import _stamped, _tube_and_range_view
+
+    vx = _tube_and_range_view()
+    hidden = "/metrics/children/2"
+    rng = _compare_range(vx.act_time, vx.act_values, min_value=-1.0, max_value=1.0)
+    rng.name = "y"
+    vy = build_view(
+        "y",
+        act_time=vx.act_time,
+        act_values=vx.act_values,
+        ref_time=vx.ref_time,
+        ref_values=vx.ref_values,
+        leaves=[_stamped(rng, hidden)],
+    )
+    plain = plot_figure([vx, vy])
+    fig = plot_figure([vx, vy], visibility=Visibility(hidden=frozenset({hidden})))
+    mine = [tr for tr in fig["data"] if (tr.get("meta") or {}).get("leaf") == hidden]
+    assert mine and all(tr["visible"] is False for tr in mine)
+    shapes = fig["layout"]["shapes"]
+    assert [s["name"] for s in shapes] == [s["name"] for s in plain["layout"]["shapes"]]
+    assert any(s["name"].startswith(hidden + "/") for s in shapes)
+    assert all(
+        s["visible"] is False for s in shapes if s["name"].startswith(hidden + "/")
+    )
+    assert all(
+        "visible" not in s for s in shapes if not s["name"].startswith(hidden + "/")
+    )
+
+    def acts(f):
+        return [tr["showlegend"] for tr in f["data"] if tr["meta"].get("kind") == "act"]
+
+    assert acts(fig) == acts(plain) == [True, True]

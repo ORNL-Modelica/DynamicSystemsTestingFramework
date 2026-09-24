@@ -59,6 +59,42 @@ ERROR_AXES = {"error/signed": "y3", "error/abs": "y3", "error/nrmse": "y4"}
 TIME_DOMAIN = (0.45, 1.0)
 SPECTRUM_DOMAIN = (0.0, 0.32)
 
+#: Where the legend sits, on both tiers: above the plot area, one line.
+#: Plotly grows the top margin to fit it (measured: 25 -> 41 px), so it never
+#: sits on the trace start or on a ring (the 2026-09-21 board, option b).
+LEGEND = {
+    "orientation": "h",
+    "x": 0,
+    "xanchor": "left",
+    "y": 1,
+    "yanchor": "bottom",
+    "bgcolor": "rgba(0,0,0,0)",
+}
+
+
+@dataclass(frozen=True)
+class Visibility:
+    """What the tool's page chose to show on one plot (legend b).
+
+    ``hidden``: the leaf paths whose drawing is off. ``error``: the one error
+    series shown — a key of :data:`ERROR_AXES` — or ``None``. A figure built
+    WITH a Visibility puts only signals in its legend: the criteria are
+    toggled from their rows and the errors from one select. A figure built
+    without one (the report) keeps every legend entry."""
+
+    hidden: frozenset[str] = frozenset()
+    error: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.hidden, str):
+            raise TypeError(
+                "hidden takes a collection of leaf paths, not a str "
+                "(a str matches by substring)"
+            )
+        if self.error is not None and self.error not in ERROR_AXES:
+            raise ValueError(f"error {self.error!r} is none of {', '.join(ERROR_AXES)}")
+
+
 _LABELS = {
     "tube/band": "Tube",
     "tube/upper": "Tube upper points",
@@ -550,8 +586,8 @@ def _base_traces(view: VariableView) -> list[dict]:
     return traces
 
 
-def _error_trace(s: Series, ctx: _Ctx) -> dict:
-    return {
+def _error_trace(s: Series, ctx: _Ctx, visibility: Visibility | None) -> dict:
+    trace = {
         "type": "scatter",
         "mode": "lines",
         "x": s.x.tolist(),
@@ -569,6 +605,10 @@ def _error_trace(s: Series, ctx: _Ctx) -> dict:
             "full_samples": _full(ctx, s.id, len(s.x)),
         },
     }
+    if visibility is not None:
+        trace["showlegend"] = False
+        trace["visible"] = s.id == visibility.error
+    return trace
 
 
 def _time_span(view: VariableView) -> tuple[float, float]:
@@ -593,7 +633,7 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
             "uirevision": "keep",
         },
         "margin": {"t": 25, "b": 45, "l": 60, "r": 20},
-        "legend": {"x": 0, "y": 1, "bgcolor": "rgba(255,255,255,0.8)"},
+        "legend": dict(LEGEND),
         "hovermode": "x unified",
         "shapes": shapes,
         "uirevision": "keep",
@@ -644,6 +684,7 @@ def _leaf_traces(
     *,
     editable: bool,
     rings_for: Collection[str] | None = None,
+    visibility: Visibility | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Every leaf of one view, drawn: ``(traces, shapes, rings)``.
 
@@ -661,6 +702,8 @@ def _leaf_traces(
     for leaf in view.leaves:
         window = next((p for p in leaf.geometry if isinstance(p, Window)), None)
         markers: list[Marker] = []
+        leaf_data: list[dict] = []
+        leaf_shapes: list[dict] = []
         for prim in leaf.geometry:
             if isinstance(prim, Marker):
                 markers.append(prim)
@@ -672,11 +715,28 @@ def _leaf_traces(
                     f"(id {prim.id!r}); add one to TRACE_BUILDERS"
                 )
             traces, new_shapes = builder(prim, leaf, window, ctx)
-            data.extend(traces)
-            shapes.extend(new_shapes)
-        data.extend(_marker_traces(markers, leaf))
-        if editable and (rings_for is None or leaf.path in rings_for):
-            rings.extend(_handle_rings(markers))
+            leaf_data.extend(traces)
+            leaf_shapes.extend(new_shapes)
+        leaf_data.extend(_marker_traces(markers, leaf))
+        leaf_rings = (
+            _handle_rings(markers)
+            if editable and (rings_for is None or leaf.path in rings_for)
+            else []
+        )
+        for trace in leaf_data:
+            trace["meta"] = {**trace.get("meta", {}), "leaf": leaf.path}
+        if visibility is not None:
+            for trace in leaf_data:
+                trace["showlegend"] = False
+            if leaf.path in visibility.hidden:
+                # `visible: false`, never removed: a shape's INDEX is what a
+                # drag's relayout names, and the hook resolves it against
+                # the full list (the 2026-09-24 spike, fact 2-3).
+                for item in (*leaf_data, *leaf_shapes, *leaf_rings):
+                    item["visible"] = False
+        data.extend(leaf_data)
+        shapes.extend(leaf_shapes)
+        rings.extend(leaf_rings)
     return data, shapes, rings
 
 
@@ -700,6 +760,7 @@ def variable_figure(
     *,
     editable: bool = False,
     rings_for: Collection[str] | None = None,
+    visibility: Visibility | None = None,
 ) -> dict:
     """The one figure both tiers draw. ``max_samples`` decimates the view first.
 
@@ -722,17 +783,16 @@ def variable_figure(
     )
     data: list[dict] = _base_traces(view)
     leaf_data, shapes, rings = _leaf_traces(
-        view, ctx, editable=editable, rings_for=rings_for
+        view, ctx, editable=editable, rings_for=rings_for, visibility=visibility
     )
     data.extend(leaf_data)
     for s in view.errors:
-        data.append(_error_trace(s, ctx))
+        data.append(_error_trace(s, ctx, visibility))
     config: dict = _config(editable)
-    return {
-        "data": data,
-        "layout": _layout(view, shapes + rings, bool(view.errors)),
-        "config": config,
-    }
+    layout = _layout(view, shapes + rings, bool(view.errors))
+    if visibility is not None and visibility.error is not None and view.errors:
+        layout[ERROR_AXES[visibility.error].replace("y", "yaxis")]["visible"] = True
+    return {"data": data, "layout": layout, "config": config}
 
 
 def plot_figure(
@@ -742,6 +802,7 @@ def plot_figure(
     editable: bool = False,
     labels: Mapping[str, str] | None = None,
     rings_for: Collection[str] | None = None,
+    visibility: Visibility | None = None,
 ) -> dict:
     """The figure for one plot of a test (DESIGN.md "Plots are modular").
 
@@ -751,11 +812,17 @@ def plot_figure(
     legend entry — with the geometry of every leaf of every series, and NO
     overlays or error traces: both are per-variable pickers keyed by trace
     name. ``labels`` overrides a family's legend text by family key.
-    ``rings_for`` is :func:`variable_figure`'s, reaching every series' leaves.
+    ``rings_for`` and ``visibility`` are :func:`variable_figure`'s, reaching
+    every series' leaves; a plot of several has no error traces, so
+    ``visibility.error`` has nothing to act on there.
     """
     if len(views) == 1:
         return variable_figure(
-            views[0], max_samples, editable=editable, rings_for=rings_for
+            views[0],
+            max_samples,
+            editable=editable,
+            rings_for=rings_for,
+            visibility=visibility,
         )
     if max_samples:
         views = [decimate_view(v, max_samples) for v in views]
@@ -801,7 +868,7 @@ def plot_figure(
             full_samples=view.full_samples,
         )
         leaf_data, leaf_shapes, leaf_rings = _leaf_traces(
-            view, ctx, editable=editable, rings_for=rings_for
+            view, ctx, editable=editable, rings_for=rings_for, visibility=visibility
         )
         data.extend(leaf_data)
         shapes.extend(leaf_shapes)

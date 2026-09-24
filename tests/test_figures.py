@@ -597,3 +597,183 @@ def test_leaves_by_variable_groups_stamped_leaves():
     ]
     assert all(vc.name == name for name, pairs in grouped.items() for _, vc in pairs)
     assert leaves_by_variable(None) == {}
+
+
+# -- legend b: what the page chose to show (the form-row + legend plan, Task 1) --
+
+TUBE_P = "/metrics/children/0"
+RANGE_P = "/metrics/children/1"
+
+
+def _tube_and_range_view():
+    """A tube leaf (a band, two marker groups) and a range leaf (two lines
+    and their anchor traces) on one variable, with its error series."""
+    t = np.linspace(0.0, 1.0, 11)
+    ref = np.sin(t)
+    act = ref + 0.01
+    tube = _compare_tube(
+        t,
+        ref,
+        t,
+        act,
+        {
+            "tube_width_mode": "band",
+            "tube_abs": 0.05,
+            "tube_points": [{"time": 0.2, "upper": 0.1, "lower": 0.1}],
+        },
+    )
+    tube.name = "x"
+    rng = _compare_range(t, act, min_value=-1.0, max_value=2.0)
+    rng.name = "x"
+    return build_view(
+        "x",
+        act_time=t,
+        act_values=act,
+        ref_time=t,
+        ref_values=ref,
+        leaves=[_stamped(tube, TUBE_P), _stamped(rng, RANGE_P)],
+    )
+
+
+def _leaf_of(trace: dict) -> str | None:
+    return (trace.get("meta") or {}).get("leaf")
+
+
+def test_every_leaf_trace_names_its_leaf():
+    view = _tube_and_range_view()
+    fig = variable_figure(view, editable=True)
+    kinds = {}
+    for tr in fig["data"]:
+        meta = tr.get("meta") or {}
+        if meta.get("kind") in ("act", "ref", "error", "overlay"):
+            assert "leaf" not in meta, tr["name"]
+        else:
+            assert _leaf_of(tr) in (TUBE_P, RANGE_P), tr
+            kinds.setdefault(_leaf_of(tr), set()).add(
+                "marker"
+                if "family" in meta
+                else "anchor"
+                if "anchor_for" in meta
+                else "band"
+            )
+    assert kinds[TUBE_P] >= {"marker", "band"}
+    assert kinds[RANGE_P] == {"anchor"}
+
+
+def test_the_legend_sits_above_the_plot_area():
+    from dstf.figures.plotly import plot_figure
+
+    want = {
+        "orientation": "h",
+        "x": 0,
+        "xanchor": "left",
+        "y": 1,
+        "yanchor": "bottom",
+        "bgcolor": "rgba(0,0,0,0)",
+    }
+    view = _tube_and_range_view()
+    assert variable_figure(view)["layout"]["legend"] == want
+    two = plot_figure([view, replace(view, name="y", leaves=())])
+    assert two["layout"]["legend"] == want
+
+
+def test_without_visibility_the_figure_is_the_reports():
+    view = _tube_and_range_view()
+    fig = variable_figure(view)
+    for tr in fig["data"]:
+        assert tr.get("visible") in (None, "legendonly"), tr
+    err = [tr for tr in fig["data"] if tr["meta"].get("kind") == "error"]
+    assert err and all(
+        tr["visible"] == "legendonly" and tr.get("showlegend", True) for tr in err
+    )
+    band = next(tr for tr in fig["data"] if tr["meta"].get("kind") == "result")
+    assert band["showlegend"] is True
+    assert all("visible" not in s for s in fig["layout"]["shapes"])
+
+
+def test_visibility_hides_a_leafs_traces_and_shapes():
+    from dstf.figures.plotly import Visibility
+
+    view = _tube_and_range_view()
+    plain = variable_figure(view, editable=True, rings_for=(TUBE_P,))
+    fig = variable_figure(
+        view,
+        editable=True,
+        rings_for=(TUBE_P,),
+        visibility=Visibility(hidden=frozenset({RANGE_P})),
+    )
+    ranged = [tr for tr in fig["data"] if _leaf_of(tr) == RANGE_P]
+    assert ranged and all(tr["visible"] is False for tr in ranged)
+    assert all("visible" not in tr for tr in fig["data"] if _leaf_of(tr) == TUBE_P)
+    shapes = fig["layout"]["shapes"]
+    assert [s["name"] for s in shapes] == [s["name"] for s in plain["layout"]["shapes"]]
+    hid = [s for s in shapes if s["name"].startswith(RANGE_P + "/")]
+    assert hid and all(s["visible"] is False for s in hid)
+    rest = [s for s in shapes if not s["name"].startswith(RANGE_P + "/")]
+    assert any(s["type"] == "circle" for s in rest)
+    assert all("visible" not in s for s in rest)
+    # And a hidden OPEN leaf's rings go with it (the page never asks for
+    # that — the open leaf always draws — but the figure does not care).
+    rings_hidden = variable_figure(
+        view,
+        editable=True,
+        rings_for=(TUBE_P,),
+        visibility=Visibility(hidden=frozenset({TUBE_P})),
+    )
+    circles = [s for s in rings_hidden["layout"]["shapes"] if s["type"] == "circle"]
+    assert circles and all(s["visible"] is False for s in circles)
+
+
+def test_visibility_puts_only_signals_in_the_legend():
+    from dstf.figures.plotly import Visibility
+
+    view = _tube_and_range_view()
+    plain = variable_figure(view)
+    fig = variable_figure(view, visibility=Visibility())
+    for before, after in zip(plain["data"], fig["data"]):
+        kind = before["meta"].get("kind")
+        if kind in ("act", "ref", "overlay"):
+            assert after == before
+        else:
+            assert after["showlegend"] is False, after.get("name")
+
+
+def test_visibility_shows_the_chosen_error_and_its_axis():
+    from dstf.figures.plotly import Visibility
+
+    view = _tube_and_range_view()
+
+    def state(error):
+        fig = variable_figure(view, visibility=Visibility(error=error))
+        vis = {
+            tr["meta"]["id"]: tr["visible"]
+            for tr in fig["data"]
+            if tr["meta"].get("kind") == "error"
+        }
+        lay = fig["layout"]
+        return vis, lay["yaxis3"]["visible"], lay["yaxis4"]["visible"]
+
+    assert state("error/abs") == (
+        {"error/signed": False, "error/abs": True, "error/nrmse": False},
+        True,
+        False,
+    )
+    assert state("error/nrmse") == (
+        {"error/signed": False, "error/abs": False, "error/nrmse": True},
+        False,
+        True,
+    )
+    assert state(None) == (
+        {"error/signed": False, "error/abs": False, "error/nrmse": False},
+        False,
+        False,
+    )
+
+
+def test_visibility_refuses_a_bare_string_and_an_unknown_error():
+    from dstf.figures.plotly import Visibility
+
+    with pytest.raises(TypeError, match="not a str"):
+        Visibility(hidden="/metrics/children/0")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="error/signed, error/abs, error/nrmse"):
+        Visibility(error="error/bogus")
