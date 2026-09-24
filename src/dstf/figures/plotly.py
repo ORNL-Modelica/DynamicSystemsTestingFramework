@@ -201,7 +201,9 @@ def hover_of(label: str) -> dict:
     """
     return {
         "meta": {"label": as_text(label)},
-        "hovertemplate": "%{meta.label}: %{y:.4g}<extra></extra>",
+        # `.4~g` like the y axes' `hoverformat` (`_Y_LABELS`): a template
+        # overrides it, so it says the same itself.
+        "hovertemplate": "%{meta.label}: %{y:.4~g}<extra></extra>",
     }
 
 
@@ -599,7 +601,8 @@ def _error_trace(s: Series, ctx: _Ctx, visibility: Visibility | None) -> dict:
         "opacity": 0.6,
         "yaxis": ERROR_AXES[s.id],
         "visible": "legendonly",
-        "hovertemplate": f"{_label(s.id)}: %{{y:.4g}}<extra></extra>",
+        # `.4~g` like the y axes' `hoverformat` (`_Y_LABELS`).
+        "hovertemplate": f"{_label(s.id)}: %{{y:.4~g}}<extra></extra>",
         "meta": {
             "id": s.id,
             "kind": "error",
@@ -621,11 +624,15 @@ def _time_span(view: VariableView) -> tuple[float, float]:
 
 
 #: How every y axis prints its numbers, on both tiers: Plotly's automatic
-#: tick labels with `e` exponents, and 4 significant digits on a hover (a
-#: trace's own hovertemplate still says its own). A fixed `.4g` tickformat
-#: printed `0.2000` for 0.2 and `0.00002000` for an error around 1e-5, the
-#: size a passing test's error usually is (54 px against 23 for `2e−5`).
-_Y_LABELS = {"exponentformat": "e", "hoverformat": ".4g"}
+#: tick labels with `e` exponents, and 4 significant digits on a hover with
+#: the trailing zeros trimmed (d3 `.4~g`: 0.6 reads `0.6`, 2.5e-5 reads
+#: `0.000025`, where `.4g` printed `0.6000` and `0.00002500`; the same in
+#: plotly.js 2.35.0 and 3.1.1). A trace's own hovertemplate overrides it,
+#: so `hover_of` and `_error_trace` say `.4~g` too. A fixed `.4g`
+#: tickformat printed `0.2000` for 0.2 and `0.00002000` for an error around
+#: 1e-5, the size a passing test's error usually is (54 px against 23 for
+#: `2e−5`).
+_Y_LABELS = {"exponentformat": "e", "hoverformat": ".4~g"}
 
 
 def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
@@ -657,6 +664,7 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
         layout["xaxis2"] = {"title": {"text": "Frequency [Hz]"}, "anchor": "y2"}
         layout["yaxis2"] = {
             "title": {"text": "Magnitude"},
+            **_Y_LABELS,
             "domain": list(SPECTRUM_DOMAIN),
             "anchor": "x2",
         }
@@ -822,8 +830,8 @@ def variable_figure(
             # both at True: its axes.js flips `visible` in the page.
             layout[key]["automargin"] = axis == shown
         # One error axis at a time here, so NRMSE's sits on the plot's edge
-        # like the other's: left free + autoshift, it floated about 48 px
-        # off the plot once Abs error had shown.
+        # like the other's: left free + autoshift, it floated off the plot
+        # once Abs error had shown.
         layout["yaxis4"]["anchor"] = "x"
         del layout["yaxis4"]["autoshift"]
     return {"data": data, "layout": layout, "config": config}

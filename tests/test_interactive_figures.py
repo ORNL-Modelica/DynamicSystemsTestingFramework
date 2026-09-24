@@ -220,18 +220,34 @@ def test_a_labelled_hover_reads_its_label_under_a_real_mouse(
 #: Which error-axis labels — tick text and axis titles — sit under the
 #: vertical toolbar (`.modebar`) of plot ``gd``, by their boxes. Shared with
 #: the tool's browser test; ``labels`` says the read found any at all.
+#: ``inside`` says the toolbar's box lies inside the plot's CARD — the
+#: tool's `.dstf-plot`, the report's `.variable-section` / `.plot-section`:
+#: a gutter that moved the toolbar clear of the axes but past the card's
+#: edge (the plot at full width plus the gutter's margin) passed the
+#: intersect read alone. ``crossed`` names every y3 label or title that
+#: intersects a y4 one: the report can show both axes at once.
 UNDER_TOOLBAR = """
 (gd) => {
   const hit = (a, b) => a.left < b.right && b.left < a.right
                      && a.top < b.bottom && b.top < a.bottom;
   const mb = gd.querySelector('.modebar');
-  if (!mb) return null;
-  const m = mb.getBoundingClientRect();
-  const boxes = Array.from(gd.querySelectorAll(
-      'g[class*="y3tick"] text, g[class*="y4tick"] text, .g-y3title text, .g-y4title text'))
+  const card = gd.closest('.dstf-plot, .variable-section, .plot-section');
+  if (!mb || !card) return null;
+  const m = mb.getBoundingClientRect(), c = card.getBoundingClientRect();
+  const read = (sel) => Array.from(gd.querySelectorAll(sel))
     .map(e => [e.textContent, e.getBoundingClientRect()])
     .filter(([, b]) => b.width > 0);
-  return {labels: boxes.length, under: boxes.filter(([, b]) => hit(b, m)).map(([t]) => t)};
+  const y3 = read('g[class*="y3tick"] text, .g-y3title text');
+  const y4 = read('g[class*="y4tick"] text, .g-y4title text');
+  const boxes = [...y3, ...y4];
+  return {
+    labels: boxes.length,
+    under: boxes.filter(([, b]) => hit(b, m)).map(([t]) => t),
+    inside: m.left >= c.left && m.right <= c.right
+         && m.top >= c.top && m.bottom <= c.bottom,
+    toolbar: [m.left, m.right], card: [c.left, c.right],
+    crossed: y3.filter(([, a]) => y4.some(([, b]) => hit(a, b))).map(([t]) => t),
+  };
 }
 """
 
@@ -261,22 +277,26 @@ def _page_with_errors(tmp_path, scale: float):
     return _render_with_context(tmp_path, ctx)
 
 
+@pytest.mark.parametrize("width", [1280, 900])
 @pytest.mark.parametrize("scale", [1.0, 1e-4])
 @pytest.mark.parametrize(
     "shown",
     [["error/signed"], ["error/abs"], ["error/nrmse"], ["error/signed", "error/nrmse"]],
 )
 def test_no_error_axis_label_sits_under_the_toolbar(
-    tmp_path, playwright_browser, shown, scale
+    tmp_path, playwright_browser, shown, scale, width
 ):
     """Hovered, so the toolbar shows: no tick label and no title of a shown
     error axis intersects it — signed and NRMSE together included (the
     report's legend can show both, the second axis standing past the first),
     and errors around 1e-5 too. The toolbar stands in its own gutter right
     of the plot (the page's stylesheet), so the axes never compete with it
-    for the figure's right margin, however wide their labels grow."""
+    for the figure's right margin, however wide their labels grow; and the
+    gutter is inside the plot's section, so the toolbar stays inside it
+    (900 px: where a plot at full width beside the gutter's margin hung the
+    toolbar 15 px past its section)."""
     html_path = _page_with_errors(tmp_path, scale)
-    page = playwright_browser.new_page(viewport={"width": 1280, "height": 900})
+    page = playwright_browser.new_page(viewport={"width": width, "height": 900})
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     page.goto(html_path.as_uri())
@@ -305,9 +325,43 @@ def test_no_error_axis_label_sits_under_the_toolbar(
     shot = os.environ.get("DSTF_KEEP_SHOTS")
     if shot and shown == ["error/signed", "error/nrmse"]:
         Path(shot).mkdir(parents=True, exist_ok=True)
-        page.screenshot(path=str(Path(shot) / f"report-signed-nrmse-{scale:g}.png"))
+        page.screenshot(
+            path=str(Path(shot) / f"report-signed-nrmse-{scale:g}-{width}.png")
+        )
     page.close()
     assert errors == []
     assert read is not None and read["labels"] > 0, read
     assert read["under"] == [], read
+    assert read["inside"] is True, read
+    # Two axes shown: NRMSE's stands past signed's (free + autoshift), so
+    # none of their labels meet. Anchored to x it drew over the first.
+    assert read["crossed"] == [], read
     assert overflow <= 0, overflow
+
+
+def test_a_hover_trims_its_digits_under_a_real_mouse(tmp_path, playwright_browser):
+    """The owner's ruling: a hover reads 4 significant digits with the
+    trailing zeros trimmed (d3 `.4~g`). At t = 0.5 the page's abs error is
+    1.25e-5, which `.4g` printed `0.00001250`; a real mouse reads the box
+    the report's own vendored plotly.js draws from the trace's template."""
+    html_path = _page_with_errors(tmp_path, 1e-4)
+    page = playwright_browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(html_path.as_uri())
+    page.wait_for_selector("#plot-0 .scatterlayer")
+    page.evaluate(
+        """() => { const el = document.getElementById('plot-0');
+           const idx = [], vis = [];
+           el.data.forEach((t, i) => { if ((t.meta || {}).kind !== 'error') return;
+             idx.push(i); vis.push(t.meta.id === 'error/abs' ? true : 'legendonly'); });
+           Plotly.restyle(el, {visible: vis}, idx);
+           el.scrollIntoView(); }"""
+    )
+    page.wait_for_timeout(300)
+    x, y = page.evaluate(POINT_PIXEL, 10)
+    page.mouse.move(x - 40, y - 20)
+    page.wait_for_timeout(100)
+    page.mouse.move(x, y, steps=4)
+    page.wait_for_timeout(300)
+    texts = page.evaluate(HOVER_TEXTS)
+    page.close()
+    assert "Abs error: 0.0000125" in texts, texts

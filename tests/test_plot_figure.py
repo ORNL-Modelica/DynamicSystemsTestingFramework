@@ -117,8 +117,9 @@ def test_a_family_shares_a_hue_ramped_by_index_with_one_legend_entry():
     assert acts[0]["name"] == "pipe.T[1:5:16]"
     # The label is out of the TEMPLATE and in `meta`: plotly.js
     # substitutes every `%{…}` in a hovertemplate from the trace's data,
-    # and a scalar `text` is not data it substitutes from.
-    assert acts[2]["hovertemplate"] == "%{meta.label}: %{y:.4g}<extra></extra>"
+    # and a scalar `text` is not data it substitutes from. `.4~g`: 4
+    # significant digits, trailing zeros trimmed (the owner's ruling).
+    assert acts[2]["hovertemplate"] == "%{meta.label}: %{y:.4~g}<extra></extra>"
     assert acts[2]["meta"]["label"] == "pipe.T[11]"
     # The hover did not cost the trace the key everything addresses it by.
     assert acts[2]["meta"]["id"] == "actual/pipe.T[11]"
@@ -619,7 +620,8 @@ def test_a_label_holding_a_plotly_placeholder_is_printed_not_substituted(build):
     mine = next(tr for tr in drawn if tr["meta"]["id"] in ("actual", f"actual/{N1}"))
     assert "a%{x}b" in mine["meta"]["label"]
     assert "a%{x}b" not in mine["hovertemplate"]
-    assert mine["hovertemplate"] == "%{meta.label}: %{y:.4g}<extra></extra>"
+    # `.4~g` trims a hover's trailing zeros (the owner's 2026-09-24 ruling).
+    assert mine["hovertemplate"] == "%{meta.label}: %{y:.4~g}<extra></extra>"
 
 
 @pytest.mark.parametrize("build", ["single", "multi"])

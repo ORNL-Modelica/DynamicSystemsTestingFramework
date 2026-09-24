@@ -789,9 +789,11 @@ def test_a_swatch_hides_a_criterion_and_the_zoom_stays(tmp_path, playwright_brow
 
         # A real-mouse hover at t = 0.5 lists the tube's handles while it
         # draws. Its marker groups hover as bare values (`hoverinfo: "x+y"`):
-        # the handles at t = 0.5 sit at 0.6 (upper) and 0.3 (lower).
+        # the handles at t = 0.5 sit at 0.6 (upper) and 0.3 (lower), read
+        # through the y axis's `hoverformat` — `.4~g` trims the trailing
+        # zeros `.4g` printed as `0.6000` (the owner's 2026-09-24 ruling).
         texts = _hover_at(page, 0.5)
-        assert "0.6000" in texts and "0.3000" in texts, texts
+        assert "0.6" in texts and "0.3" in texts, texts
         # An OPEN criterion cannot be hidden: close it, then its swatch.
         page.mouse.move(5, 5)
         page.locator(".dstf-editor").get_by_role("button", name="Done").click()
@@ -807,7 +809,7 @@ def test_a_swatch_hides_a_criterion_and_the_zoom_stays(tmp_path, playwright_brow
         page.wait_for_timeout(200)
         texts = _hover_at(page, 0.5)
         assert texts, "no hover box under the mouse"
-        assert "0.6000" not in texts and "0.3000" not in texts, texts
+        assert "0.6" not in texts and "0.3" not in texts, texts
 
         # The error select shows one series, and the figure shows its axis.
         page.mouse.move(5, 5)
@@ -857,7 +859,9 @@ def _choose_error(page, label: str, axis: str | None) -> None:
 
 def _error_labels_under_toolbar(page) -> list[str]:
     """Hover plot 0 so its toolbar shows, then name every error-axis label
-    under it (`UNDER_TOOLBAR`); a read that found no label at all fails."""
+    under it (`UNDER_TOOLBAR`); a read that found no label at all fails, and
+    so does a toolbar outside its card (`.dstf-plot`): the gutter that
+    clears the axes must not push the toolbar past the card's edge."""
     plot = page.locator(".js-plotly-plot").first
     box = plot.bounding_box()
     assert box is not None
@@ -865,6 +869,7 @@ def _error_labels_under_toolbar(page) -> list[str]:
     page.wait_for_timeout(300)
     read = plot.evaluate(UNDER_TOOLBAR)
     assert read is not None and read["labels"] > 0, read
+    assert read["inside"] is True, read
     return read["under"]
 
 
@@ -887,8 +892,15 @@ def test_no_error_axis_label_sits_under_the_toolbar(
         ):
             _choose_error(page, label, axis)
             assert _error_labels_under_toolbar(page) == [], label
-        # Still hovered: plot 0, Abs error, its toolbar in the gutter.
+        # A real-mouse hover at t = 0.5 reads Abs error trimmed to 4
+        # significant digits (d3 `.4~g`, the owner's 2026-09-24 ruling): at
+        # 1e-4 the error there is 1.25e-5, which `.4g` printed `0.00001250`.
+        texts = _hover_at(page, 0.5)
+        want = "Abs error: 0.0000125" if scale != 1.0 else "Abs error: 0.125"
+        # Still hovered: plot 0, Abs error, its hover box and its axis, the
+        # toolbar in the gutter.
         _shot(page, tmp_path, f"gutter-abs-{scale:g}")
+        assert want in texts, texts
         # The gutter costs no horizontal scroll: the page is as wide as the view.
         assert (
             page.evaluate(

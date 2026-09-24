@@ -243,21 +243,7 @@ class TestFigure:
         )
 
     def test_spectrum_primitives_open_a_second_panel(self):
-        t = np.linspace(0.0, 10.0, 1001)
-        sig = np.sin(2 * np.pi * 2.0 * t)
-        vc = _compare_dominant_frequency(
-            t, sig, t, sig, peaks=[{"freq": 2.0, "tolerance": 0.05}]
-        )
-        vc.name = "x"
-        view = build_view(
-            "x",
-            act_time=t,
-            act_values=sig,
-            ref_time=t,
-            ref_values=sig,
-            leaves=[_stamped(vc)],
-        )
-        fig = variable_figure(view)
+        fig = variable_figure(_spectrum_view())
         assert fig["layout"]["xaxis2"]["title"]["text"] == "Frequency [Hz]"
         spectrum = next(
             tr
@@ -599,6 +585,25 @@ def test_leaves_by_variable_groups_stamped_leaves():
     assert leaves_by_variable(None) == {}
 
 
+def _spectrum_view():
+    """One dominant-frequency leaf on a 2 Hz sine: its spectrum opens the
+    second panel (``xaxis2`` / ``yaxis2``)."""
+    t = np.linspace(0.0, 10.0, 1001)
+    sig = np.sin(2 * np.pi * 2.0 * t)
+    vc = _compare_dominant_frequency(
+        t, sig, t, sig, peaks=[{"freq": 2.0, "tolerance": 0.05}]
+    )
+    vc.name = "x"
+    return build_view(
+        "x",
+        act_time=t,
+        act_values=sig,
+        ref_time=t,
+        ref_values=sig,
+        leaves=[_stamped(vc)],
+    )
+
+
 # -- legend b: what the page chose to show (the form-row + legend plan, Task 1) --
 
 TUBE_P = "/metrics/children/0"
@@ -835,14 +840,58 @@ def test_every_y_axis_reads_automatic_labels_with_e_exponents():
     for tier, key, axis in axes:
         assert "tickformat" not in axis, (tier, key)
         assert axis["exponentformat"] == "e", (tier, key)
-        assert axis["hoverformat"] == ".4g", (tier, key)
+        # `.4~g`, not `.4g`: 4 significant digits with the trailing zeros
+        # trimmed (the owner's 2026-09-24 ruling), so 0.6 hovers as `0.6`
+        # and 2.5e-5 as `0.000025`, not `0.6000` and `0.00002500`.
+        assert axis["hoverformat"] == ".4~g", (tier, key)
+
+
+def test_the_spectrum_axis_reads_the_same_labels():
+    """The owner's ruling was "all y axes": the spectrum panel's magnitude
+    axis prints its ticks and its hover the way the time panel's do."""
+    from dstf.figures.plotly import Visibility
+
+    view = _spectrum_view()
+    for tier, fig in (
+        ("report", variable_figure(view)),
+        ("tool", variable_figure(view, visibility=Visibility())),
+    ):
+        axis = fig["layout"]["yaxis2"]
+        assert "tickformat" not in axis, tier
+        assert axis["exponentformat"] == "e", tier
+        assert axis["hoverformat"] == ".4~g", tier
+
+
+def test_every_hover_trims_to_four_significant_digits():
+    """A trace's own hovertemplate overrides its axis's `hoverformat`, so
+    the owner's `.4~g` ruling holds only if every template says it too: the
+    labelled signals of a multi-series plot (`hover_of`) and the three error
+    series (`_error_trace`), on the report's figure and on the tool's."""
+    from dstf.figures.plotly import Visibility, plot_figure
+
+    view = _tube_and_range_view()
+    figures = {
+        "report": variable_figure(view),
+        "tool": variable_figure(view, visibility=Visibility(error="error/abs")),
+        "plot": plot_figure([view, replace(view, name="y", leaves=())]),
+    }
+    kinds = set()
+    for tier, fig in figures.items():
+        for tr in fig["data"]:
+            template = tr.get("hovertemplate")
+            if template is None:
+                continue
+            kinds.add(tr["meta"]["kind"])
+            assert "%{y:.4~g}" in template, (tier, tr["name"], template)
+            assert ".4g" not in template, (tier, tr["name"], template)
+    # Both builders were read: a vacuous pass over no template says nothing.
+    assert {"act", "error"} <= kinds, kinds
 
 
 def test_the_tools_nrmse_axis_is_anchored_to_the_plot():
     """With the page's Visibility only one error axis ever shows, so the
     NRMSE axis sits on the plot's edge like the other: left `free` with
-    `autoshift`, it floated about 48 px off the plot once Abs error had
-    shown. The report keeps `free` + `autoshift`: its legend can show signed
+    `autoshift`, it floated off the plot once Abs error had shown. The report keeps `free` + `autoshift`: its legend can show signed
     and NRMSE together, and the second axis must stand past the first."""
     from dstf.figures.plotly import Visibility
 
