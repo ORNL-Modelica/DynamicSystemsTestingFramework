@@ -645,7 +645,7 @@ def test_a_label_holding_markup_reaches_plotly_escaped(build):
 def test_a_plot_of_several_takes_visibility():
     from dstf.comparison.algorithms import _compare_range
     from dstf.figures.plotly import Visibility
-    from test_figures import _stamped, _tube_and_range_view
+    from test_figures import RANGE_P, _stamped, _tube_and_range_view
 
     vx = _tube_and_range_view()
     hidden = "/metrics/children/2"
@@ -677,3 +677,8 @@ def test_a_plot_of_several_takes_visibility():
         return [tr["showlegend"] for tr in f["data"] if tr["meta"].get("kind") == "act"]
 
     assert acts(fig) == acts(plain) == [True, True]
+
+    # One view is variable_figure's branch: the visibility must reach it too.
+    one = plot_figure([vx], visibility=Visibility(hidden=frozenset({RANGE_P})))
+    own = [tr for tr in one["data"] if (tr.get("meta") or {}).get("leaf") == RANGE_P]
+    assert own and all(tr["visible"] is False for tr in own)

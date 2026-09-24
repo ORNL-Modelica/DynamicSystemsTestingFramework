@@ -380,7 +380,8 @@ class TestResetForTests:
 
 def test_a_metric_says_whether_its_drawing_shows_by_default():
     # A bound across the whole plot (range, scalar) starts hidden on the Test
-    # page; every other builtin draws until its swatch says otherwise.
+    # page when it is a closed criterion that is not failing; every other
+    # builtin draws until its swatch says otherwise.
     assert {d.name: d.drawn_by_default for d in registry.metrics()} == {
         "nrmse": True,
         "tube": True,

@@ -59,9 +59,11 @@ ERROR_AXES = {"error/signed": "y3", "error/abs": "y3", "error/nrmse": "y4"}
 TIME_DOMAIN = (0.45, 1.0)
 SPECTRUM_DOMAIN = (0.0, 0.32)
 
-#: Where the legend sits, on both tiers: above the plot area, one line.
-#: Plotly grows the top margin to fit it (measured: 25 -> 41 px), so it never
-#: sits on the trace start or on a ring (the 2026-09-21 board, option b).
+#: Where the legend sits, on both tiers: above the plot area, one row that
+#: wraps to more when its entries don't fit (a report legend of 8 entries is
+#: 2 rows at 900 px). Plotly grows the top margin to fit it (measured: 25 ->
+#: 41 px for one row), so it never sits on the trace start or on a ring (the
+#: 2026-09-21 board, option b).
 LEGEND = {
     "orientation": "h",
     "x": 0,
@@ -771,6 +773,11 @@ def variable_figure(
     rings never overlap; ``config`` does not depend on it. A path is matched
     whole, and a bare ``str`` is a ``TypeError`` — its membership test is by
     substring, which would ring leaves nobody named.
+
+    ``visibility`` is what the tool's page chose: with one, only signals are
+    in the legend, a hidden leaf's traces and shapes are ``visible: False``
+    (kept in place, so shape indices do not move), and only the chosen error
+    series shows, with its axis. Without one, the figure is the report's.
     """
     if max_samples:
         view = decimate_view(view, max_samples)
