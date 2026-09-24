@@ -17,8 +17,6 @@ scroll the PAGE — the gesture that draws the cards below."""
 
 from __future__ import annotations
 
-import copy
-import json
 import os
 import re
 import shutil
@@ -39,8 +37,7 @@ from test_author_suite_playwright import (  # noqa: E402
     _start,
     _wait_until_serving,
 )
-from test_handles import TREE  # noqa: E402
-from test_session import A, _two_var_project  # noqa: E402
+from test_session import A, _page_project  # noqa: E402
 
 VIEWPORT = {"width": 1280, "height": 900}
 #: The zoom set before a criterion opens and read back after: the tool's
@@ -60,54 +57,6 @@ TUBE = "/metrics/children/0"
 RANGE_X = "/metrics/children/1"
 MAX_LINE = f"{RANGE_X}/range/max"
 MIN_LINE = f"{RANGE_X}/range/min"
-
-
-def _page_project(tmp_path: Path) -> tuple[Path, Path]:
-    """`_two_var_project`, scored by an explicit tree and drawn as seven
-    plots — a page taller than the viewport, so the cards below it are the
-    ones render-on-scroll has to reach.
-
-    A's tree is `and[tube · x, range · x, range · y]` (the tube is
-    `test_handles.TREE`'s band leaf, its control points inside the trace's
-    span): the tube and the range on y FAIL, the range on x passes, so the
-    closed tree line has a tally and two jumps, and the test's verdict is
-    FAIL. The tube is the leaf with rings; the range on x is the leaf whose
-    bound LINES are on the same plot, which is what a refused drag needs.
-    """
-    cfg, work = _two_var_project(tmp_path)
-    spec_path = cfg.parent / "test_spec.json"
-    spec = json.loads(spec_path.read_text(encoding="utf-8"))
-    for entry in spec["tests"]:
-        if entry["model"] != A:
-            continue
-        entry["metrics"] = {
-            "combinator": "and",
-            "children": [
-                copy.deepcopy(TREE["children"][0]),
-                {
-                    "metric": "range",
-                    "variable": "x",
-                    "min_value": -1.0,
-                    "max_value": 2.0,
-                },
-                {
-                    "metric": "range",
-                    "variable": "y",
-                    "min_value": -1.0,
-                    "max_value": 1.0,
-                },
-            ],
-        }
-        entry["plots"] = [
-            {"kind": "time", "series": [{"var": "x"}]},
-            {"kind": "time", "series": [{"var": "y"}]},
-            *(
-                {"kind": "time", "series": [{"var": "x"}, {"var": "y"}]}
-                for _ in range(5)
-            ),
-        ]
-    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
-    return cfg, work
 
 
 @contextmanager

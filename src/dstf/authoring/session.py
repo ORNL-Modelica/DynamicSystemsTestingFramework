@@ -65,6 +65,8 @@ from .spec_document import PatchOp, SpecDocument
 if TYPE_CHECKING:
     import numpy as np
 
+    from ..figures.plotly import Visibility
+
 Event = Literal["spec", "results", "job", "loading"]
 Listener = Callable[[dict[str, Any]], None]
 
@@ -637,32 +639,47 @@ class Session:
         )
 
     def plot_figure(
-        self, model_id: str, index: int, *, editing: Collection[str] | None = None
+        self,
+        model_id: str,
+        index: int,
+        *,
+        editing: Collection[str] | None = None,
+        visibility: Visibility | None = None,
     ) -> dict:
         """The editable figure of plot ``index`` (IndexError past the end).
         One series is :meth:`figure`; several are drawn over the same cached
-        bases. ``editing`` as in :meth:`figure`."""
+        bases. ``editing`` and ``visibility`` as in :meth:`figure`."""
         from ..figures.plotly import plot_figure
 
         if index < 0:
             raise IndexError(index)
         plot = self.plots(model_id)[index]
         if len(plot.series) == 1:
-            return self.figure(model_id, plot.series[0], editing=editing)
+            return self.figure(
+                model_id, plot.series[0], editing=editing, visibility=visibility
+            )
         return plot_figure(
             [self._editable_view(model_id, name) for name in plot.series],
             None,
             editable=True,
             rings_for=editing,
+            visibility=visibility,
         )
 
     def figure(
-        self, model_id: str, variable: str, *, editing: Collection[str] | None = None
+        self,
+        model_id: str,
+        variable: str,
+        *,
+        editing: Collection[str] | None = None,
+        visibility: Visibility | None = None,
     ) -> dict:
         """The tool's figure is the editable one — handle rings a user can
         drag (``variable_figure(..., editable=True)``); the report's is not.
         ``editing``: the leaf paths whose handles get a ring, ``None`` meaning
-        every leaf; the Plotly ``config`` never depends on it."""
+        every leaf; the Plotly ``config`` never depends on it. ``visibility``:
+        what the page chose to show (legend b); the cached base does not
+        depend on it."""
         from ..figures.plotly import variable_figure
 
         if self._require_project().test(model_id) is None:
@@ -672,6 +689,7 @@ class Session:
             None,
             editable=True,
             rings_for=editing,
+            visibility=visibility,
         )
 
     def _editable_view(self, model_id: str, variable: str) -> VariableView:
@@ -1260,9 +1278,16 @@ class SessionView:
         return self._session.view(model_id, variable)
 
     def figure(
-        self, model_id: str, variable: str, *, editing: Collection[str] | None = None
+        self,
+        model_id: str,
+        variable: str,
+        *,
+        editing: Collection[str] | None = None,
+        visibility: Visibility | None = None,
     ) -> dict:
-        return self._session.figure(model_id, variable, editing=editing)
+        return self._session.figure(
+            model_id, variable, editing=editing, visibility=visibility
+        )
 
     def variable_names(self, model_id: str) -> list[str]:
         return self._session.variable_names(model_id)
@@ -1278,9 +1303,16 @@ class SessionView:
         return self._session.plots(model_id)
 
     def plot_figure(
-        self, model_id: str, index: int, *, editing: Collection[str] | None = None
+        self,
+        model_id: str,
+        index: int,
+        *,
+        editing: Collection[str] | None = None,
+        visibility: Visibility | None = None,
     ) -> dict:
-        return self._session.plot_figure(model_id, index, editing=editing)
+        return self._session.plot_figure(
+            model_id, index, editing=editing, visibility=visibility
+        )
 
     def tree_view(self, model_id: str) -> dict | None:
         return self._session.tree_view(model_id)

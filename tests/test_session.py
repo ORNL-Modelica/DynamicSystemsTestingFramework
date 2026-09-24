@@ -3,6 +3,7 @@ Python against a Python-backend project whose run is on disk."""
 
 from __future__ import annotations
 
+import copy
 import json
 import threading
 import time
@@ -206,6 +207,57 @@ def _two_var_project(tmp_path: Path, ref_models=(A,)) -> tuple[Path, Path]:
                 ],
             ),
         )
+    return cfg, work
+
+
+def _page_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_two_var_project`, scored by an explicit tree and drawn as seven
+    plots — a page taller than the viewport, so the cards below it are the
+    ones render-on-scroll has to reach.
+
+    A's tree is `and[tube · x, range · x, range · y]` (the tube is
+    `test_handles.TREE`'s band leaf, its control points inside the trace's
+    span): the tube and the range on y FAIL, the range on x passes, so the
+    closed tree line has a tally and two jumps, and the test's verdict is
+    FAIL. The tube is the leaf with rings; the range on x is the leaf whose
+    bound LINES are on the same plot, which is what a refused drag needs.
+    """
+    # test_handles imports this module: its TREE is read at call time.
+    from test_handles import TREE
+
+    cfg, work = _two_var_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] != A:
+            continue
+        entry["metrics"] = {
+            "combinator": "and",
+            "children": [
+                copy.deepcopy(TREE["children"][0]),
+                {
+                    "metric": "range",
+                    "variable": "x",
+                    "min_value": -1.0,
+                    "max_value": 2.0,
+                },
+                {
+                    "metric": "range",
+                    "variable": "y",
+                    "min_value": -1.0,
+                    "max_value": 1.0,
+                },
+            ],
+        }
+        entry["plots"] = [
+            {"kind": "time", "series": [{"var": "x"}]},
+            {"kind": "time", "series": [{"var": "y"}]},
+            *(
+                {"kind": "time", "series": [{"var": "x"}, {"var": "y"}]}
+                for _ in range(5)
+            ),
+        ]
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
     return cfg, work
 
 
@@ -2738,3 +2790,32 @@ class TestPlotsMisses:
         s = self._open(tmp_path)
         with pytest.raises(IndexError):
             s.plot_figure(A, -1)
+
+
+def test_plot_figure_passes_the_pages_visibility(tmp_path):
+    """Legend b: the page's Visibility reaches both figure reads, on the
+    Session and through SessionView, with no new public name."""
+    from dstf.figures.plotly import Visibility
+
+    cfg, work = _page_project(tmp_path)
+    s = Session()
+    s.open(cfg, work_dir=work)
+    range_x = "/metrics/children/1"
+    hide = Visibility(hidden=frozenset({range_x}))
+    for reader in (s, SessionView(s)):
+        # Plot 0 draws x alone (the one-series branch), plot 2 x and y.
+        for index in (0, 2):
+            fig = reader.plot_figure(A, index, editing=(), visibility=hide)
+            mine = [
+                t for t in fig["data"] if (t.get("meta") or {}).get("leaf") == range_x
+            ]
+            assert mine and all(t["visible"] is False for t in mine), index
+        fig = reader.figure(A, "x", visibility=Visibility(error="error/signed"))
+        shown = [
+            t["meta"]["id"]
+            for t in fig["data"]
+            if t["meta"].get("kind") == "error" and t["visible"] is True
+        ]
+        assert shown == ["error/signed"]
+        assert fig["layout"]["yaxis3"]["visible"] is True
+        assert fig["layout"]["yaxis4"]["visible"] is False
