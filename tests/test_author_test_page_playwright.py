@@ -37,6 +37,7 @@ from test_author_suite_playwright import (  # noqa: E402
     _start,
     _wait_until_serving,
 )
+from test_axes_js_playwright import UNDER_TOOLBAR  # noqa: E402
 from test_session import A, _page_project  # noqa: E402
 
 VIEWPORT = {"width": 1280, "height": 900}
@@ -180,9 +181,8 @@ READ_PLOT = """
 }
 """
 
-#: The first ring whose pixel centre really belongs to a shape: Plotly's
-#: legend sits top-left INSIDE the plot and can cover one, and a grab that
-#: lands on the legend drags nothing.
+#: The first ring whose pixel centre really belongs to a shape: a grab that
+#: lands on anything drawn over the ring drags nothing.
 FIND_RING = """
 () => {
   const gd = document.querySelectorAll('.js-plotly-plot')[0];
@@ -200,6 +200,27 @@ FIND_RING = """
     }
   }
   return null;
+}
+"""
+
+#: Every visible ring inside the zoomed ranges, and whether its pixel centre
+#: hits the shape layer: the legend above the plot area and the vertical
+#: toolbar on its right edge must cover none of them.
+ALL_RINGS = """
+() => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const fl = gd._fullLayout, rect = gd.getBoundingClientRect();
+  const xa = fl.xaxis, ya = fl.yaxis;
+  const inside = (v, r) => v >= Math.min(r[0], r[1]) && v <= Math.max(r[0], r[1]);
+  return (fl.shapes || [])
+    .filter(s => s.type === 'circle' && s.visible !== false
+      && inside(s.xanchor, xa.range) && inside(s.yanchor, ya.range))
+    .map(s => {
+      const cx = rect.left + xa._offset + xa.l2p(s.xanchor);
+      const cy = rect.top + ya._offset + ya.l2p(s.yanchor);
+      const el = document.elementFromPoint(cx, cy);
+      return [s.name, !!(el && el.closest('g.shapelayer'))];
+    });
 }
 """
 
@@ -746,6 +767,10 @@ def test_a_swatch_hides_a_criterion_and_the_zoom_stays(tmp_path, playwright_brow
         page.evaluate(RELAYOUT_Y, ZOOM_Y)
         page.wait_for_timeout(300)
         assert page.evaluate(FIND_RING) is not None, page.evaluate(READ_PLOT)
+        # Every ring in view, not only the first: one the legend or the
+        # toolbar covered would be one a person cannot grab.
+        rings = page.evaluate(ALL_RINGS)
+        assert rings and all(hit for _, hit in rings), rings
 
         # A real-mouse hover at t = 0.5 lists the tube's handles while it
         # draws. Its marker groups hover as bare values (`hoverinfo: "x+y"`):
@@ -784,3 +809,114 @@ def test_a_swatch_hides_a_criterion_and_the_zoom_stays(tmp_path, playwright_brow
         page.wait_for_timeout(200)
         # 8. Plot 0 with "Abs error" chosen: its trace and its right axis.
         _shot(page, tmp_path, "error-abs")
+        # The plot reserves right margin while an error axis shows: hovered,
+        # the vertical toolbar covers none of its labels (the owner's
+        # 2026-09-24 ruling). NRMSE's axis sits further out, so it too.
+        assert _error_labels_under_toolbar(page) == []
+        _choose_error(page, "NRMSE", "yaxis4")
+        assert _error_labels_under_toolbar(page) == []
+        _shot(page, tmp_path, "error-nrmse")
+        # No error: the margin, automargin's growth included, comes back.
+        _choose_error(page, "No error", None)
+        assert (
+            page.evaluate(
+                "() => document.querySelectorAll('.js-plotly-plot')[0]._fullLayout._size.r"
+            )
+            == 20
+        )
+
+
+def _choose_error(page, label: str, axis: str | None) -> None:
+    """Pick ``label`` in plot 0's error select and wait for ``axis`` to show
+    (or, for None, for both error axes to hide)."""
+    page.mouse.move(5, 5)
+    page.locator(".dstf-plot").first.locator(".q-select").click()
+    page.locator(".q-menu .q-item").filter(has_text=label).click()
+    want = (
+        f"fl.{axis}.visible === true"
+        if axis
+        else "fl.yaxis3.visible === false && fl.yaxis4.visible === false"
+    )
+    page.wait_for_function(
+        "() => { const fl = document.querySelectorAll('.js-plotly-plot')[0]"
+        f"._fullLayout; return {want}; }}",
+        timeout=EXPECT_TIMEOUT,
+    )
+    page.wait_for_timeout(300)
+    page.evaluate("() => window.scrollTo(0, 0)")
+    page.wait_for_timeout(200)
+
+
+def _error_labels_under_toolbar(page) -> list[str]:
+    """Hover plot 0 so its toolbar shows, then name every error-axis label
+    under it (`UNDER_TOOLBAR`); a read that found no label at all fails."""
+    plot = page.locator(".js-plotly-plot").first
+    box = plot.bounding_box()
+    assert box is not None
+    page.mouse.move(box["x"] + box["width"] * 0.4, box["y"] + box["height"] * 0.5)
+    page.wait_for_timeout(300)
+    read = plot.evaluate(UNDER_TOOLBAR)
+    assert read is not None and read["labels"] > 0, read
+    return read["under"]
+
+
+def _range_lines_shown(page) -> int:
+    return page.evaluate(
+        "() => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
+        ".shapes || []).filter(s => s.visible && s.name.startsWith("
+        f"'{RANGE_X}/')).length"
+    )
+
+
+def test_a_swatch_answers_the_keyboard(tmp_path, playwright_browser):
+    """The swatch is a button to the keyboard: Tab reaches it, Enter and
+    Space toggle it the way a click does, and the open criterion's is
+    locked to the keyboard too."""
+    with _served(tmp_path, playwright_browser) as page:
+        page.wait_for_timeout(700)
+        expect(_swatch(page, 0, "range · x")).to_be_visible(timeout=EXPECT_TIMEOUT)
+        assert _range_lines_shown(page) == 0
+        # Tab from the plot's title — a click there sets where the
+        # keyboard's next Tab starts — until the range's swatch has focus.
+        page.locator(".dstf-plot").first.locator(".text-subtitle2").first.click()
+        on_swatch = (
+            "() => { const a = document.activeElement;"
+            " return !!a && a.classList.contains('dstf-swatch')"
+            " && a.closest('.dstf-crit').textContent.includes('range · x'); }"
+        )
+        for _ in range(40):
+            page.keyboard.press("Tab")
+            if page.evaluate(on_swatch):
+                break
+        assert page.evaluate(on_swatch), page.evaluate(
+            "() => document.activeElement.outerHTML.slice(0, 200)"
+        )
+        page.keyboard.press("Enter")
+        page.wait_for_function(
+            "() => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
+            ".shapes || []).filter(s => s.visible && s.name.startsWith("
+            f"'{RANGE_X}/')).length === 2",
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.keyboard.press(" ")
+        page.wait_for_function(
+            "() => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
+            ".shapes || []).filter(s => s.visible && s.name.startsWith("
+            f"'{RANGE_X}/')).length === 0",
+            timeout=EXPECT_TIMEOUT,
+        )
+        # A key on the swatch is the swatch's: no editor opened.
+        expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+
+        # The open criterion's swatch does nothing to the keyboard either:
+        # closed again, range · x is its metric's default — hidden — because
+        # the Enter made no choice.
+        _open_crit(page, 0, "range · x")
+        expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        _swatch(page, 0, "range · x").focus()
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(500)
+        page.locator(".dstf-editor").get_by_role("button", name="Done").click()
+        expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(500)
+        assert _range_lines_shown(page) == 0

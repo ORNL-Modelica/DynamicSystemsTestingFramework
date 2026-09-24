@@ -777,3 +777,67 @@ def test_visibility_refuses_a_bare_string_and_an_unknown_error():
         Visibility(hidden="/metrics/children/0")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="error/signed, error/abs, error/nrmse"):
         Visibility(error="error/bogus")
+
+
+def test_the_toolbar_stands_vertical_on_both_tiers():
+    """The owner's 2026-09-24 ruling: the legend sits above the plot area,
+    where a horizontal hover toolbar covered a wrapped report legend's
+    second row. The toolbar stands on the right edge instead."""
+    from dstf.figures.plotly import Visibility, plot_figure
+
+    view = _tube_and_range_view()
+    assert variable_figure(view)["layout"]["modebar"] == {"orientation": "v"}
+    shown = variable_figure(view, visibility=Visibility(error="error/abs"))
+    assert shown["layout"]["modebar"] == {"orientation": "v"}
+    two = plot_figure([view, replace(view, name="y", leaves=())])
+    assert two["layout"]["modebar"] == {"orientation": "v"}
+
+
+def test_an_error_axis_takes_margin_only_while_it_shows():
+    """With the page's Visibility, an error axis's ``automargin`` is its
+    ``visible``: a hidden axis left at ``automargin: True`` kept the right
+    margin it had grown (55 px after Abs error, 103 after NRMSE, against 20)
+    through every later react in Chromium. The report's figure keeps both
+    axes as they were — its axes.js flips ``visible`` in the page."""
+    from dstf.figures.plotly import Visibility
+
+    view = _tube_and_range_view()
+    for error in (None, "error/signed", "error/abs", "error/nrmse"):
+        lay = variable_figure(view, visibility=Visibility(error=error))["layout"]
+        for axis in ("yaxis3", "yaxis4"):
+            assert lay[axis]["automargin"] is lay[axis]["visible"], (error, axis)
+    lay = variable_figure(view, visibility=Visibility(error="error/nrmse"))["layout"]
+    assert lay["yaxis4"]["automargin"] is True
+    assert lay["yaxis3"]["automargin"] is False
+    report = variable_figure(view)["layout"]
+    for axis in ("yaxis3", "yaxis4"):
+        assert report[axis]["automargin"] is True
+        assert report[axis]["visible"] is False
+
+
+def test_a_shown_error_axis_reserves_right_margin_for_the_toolbar():
+    """The owner's 2026-09-24 ruling: while an error axis shows, the plot
+    keeps the vertical toolbar off its ticks and title by reserving right
+    margin. Only the tool's figure picks its series; the report's keeps its
+    own margin and `axes.js` reserves it in the page."""
+    from dstf.figures.plotly import ERROR_MARGIN_R, Visibility, plot_figure
+    from dstf.reporting.report_suite import axes_js_source
+
+    view = _tube_and_range_view()
+    own = variable_figure(view)["layout"]["margin"]["r"]
+    assert own == 20
+    assert ERROR_MARGIN_R > own
+    for error in ("error/signed", "error/abs", "error/nrmse"):
+        lay = variable_figure(view, visibility=Visibility(error=error))["layout"]
+        assert lay["margin"]["r"] == ERROR_MARGIN_R, error
+    assert (
+        variable_figure(view, visibility=Visibility())["layout"]["margin"]["r"] == own
+    )
+    # No error traces, so no error axis to make room for.
+    two = plot_figure(
+        [view, replace(view, name="y", leaves=())],
+        visibility=Visibility(error="error/abs"),
+    )
+    assert two["layout"]["margin"]["r"] == own
+    # The report's page script reserves the same number.
+    assert f"var ERROR_MARGIN_R = {ERROR_MARGIN_R};" in axes_js_source()

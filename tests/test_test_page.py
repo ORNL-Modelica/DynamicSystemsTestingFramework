@@ -3280,3 +3280,107 @@ async def test_a_criterion_that_draws_only_a_shape_has_a_swatch(page_shell):
         )
         assert windowed in card.drawable
         assert card.rows[windowed].swatch.visible
+
+
+def _count_sends(card) -> list[int]:
+    """Count every figure a card SENDS, the first included: the plot's
+    creation carries one, and each `update_figure` after it another."""
+    sends = [0]
+    real_show = card.show
+
+    def show(view=plot_card.UNREAD):
+        had = card.plot is not None
+        real_show(view)
+        if not had and card.plot is not None:
+            sends[0] += 1
+            real_update = card.plot.update_figure
+
+            def update(figure):
+                sends[0] += 1
+                real_update(figure)
+
+            card.plot.update_figure = update
+
+    card.show = show
+    return sends
+
+
+async def test_the_first_open_of_a_hidden_criterion_sends_one_figure(page_shell):
+    """ "Is this criterion open" has ONE source, the page's `editing_for`,
+    which is set before the card draws. Read from the card's `open_path` —
+    set only after `show()` — the first figure drew range·x hidden and a
+    second one, sent straight after, drew it."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        card = page.cards[0]
+        assert card.plot is None
+        sends = _count_sends(card)
+        user.find(marker=f"criterion:0:{RANGE_X}").click()
+        await _settled(lambda: page.open == (0, RANGE_X))
+        await asyncio.sleep(0.1)
+        assert sends == [1]
+        assert _drawn_leaves(card.plot.figure)[RANGE_X] is True
+        assert "dstf-swatch-locked" in card.rows[RANGE_X].swatch.classes
+
+
+async def test_a_paint_that_changes_nothing_repaints_no_swatch(page_shell):
+    """A no-op sync re-sent every swatch: removing the state classes and
+    adding them back is two changes to the element, each an update."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        updates: dict[str, int] = {}
+        for path, row in card.rows.items():
+            real = row.swatch.update
+
+            def counting(_path=path, _real=real):
+                updates[_path] = updates.get(_path, 0) + 1
+                _real()
+
+            row.swatch.update = counting
+        view = shell.session.tree_view(A)
+        with page.client:
+            card.paint(view)
+        assert updates == {}
+        # The spy sees a swatch that DOES change.
+        user.find(marker=f"swatch:0:{RANGE_X}").click()
+        await _settled(lambda: _drawn_leaves(card.plot.figure)[RANGE_X])
+        assert updates.get(RANGE_X, 0) > 0
+
+
+async def test_a_redraw_that_gains_error_traces_gains_the_select(page_shell):
+    """The error select is built wherever a figure is sent, not only by
+    the first draw: a figure that gains error traces on a redraw gains the
+    select with them."""
+    shell = page_shell
+    session = shell.session
+    real = session.plot_figure
+
+    def without_errors(*a, **k):
+        figure = real(*a, **k)
+        data = [
+            tr for tr in figure["data"] if (tr.get("meta") or {}).get("kind") != "error"
+        ]
+        return {**figure, "data": data}
+
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        card = page.cards[0]
+        session.plot_figure = without_errors
+        with page.client:
+            card.show()
+        assert card.plot is not None
+        assert _none(user, "error-select:0")
+        session.plot_figure = real
+        with page.client:
+            card.redraw()
+        assert list(_one(user, "error-select:0").options) == [
+            "none",
+            "error/signed",
+            "error/abs",
+            "error/nrmse",
+        ]

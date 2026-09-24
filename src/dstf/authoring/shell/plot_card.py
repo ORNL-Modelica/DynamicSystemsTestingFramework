@@ -127,14 +127,26 @@ class CriterionRow:
             # (legend b). Its click is stopped in the BROWSER before it
             # reaches the row, which would open the editor too; the user
             # simulation's click never bubbles, so only Chromium can say so.
+            # A button to the keyboard as well: Tab reaches it, and Enter or
+            # Space toggles it the way a click does (Space's default would
+            # scroll the page).
             self.swatch = (
                 ui.element("span")
                 .classes("dstf-swatch")
+                .props('role=button tabindex="0"')
                 .mark(f"swatch:{index}:{path}")
                 .on(
                     "click",
                     self._toggle,
                     js_handler="(e) => { e.stopPropagation(); emit(); }",
+                )
+                .on(
+                    "keydown",
+                    self._toggle,
+                    js_handler=(
+                        "(e) => { if (e.key === 'Enter' || e.key === ' ') "
+                        "{ e.preventDefault(); e.stopPropagation(); emit(); } }"
+                    ),
                 )
             )
             with self.swatch:
@@ -179,13 +191,15 @@ class CriterionRow:
         verdict that flips moves a default, so every paint repaints it."""
         self.leaf = leaf
         card = self.card
-        is_open = card.open_path == self.path
+        is_open = card.is_open(self.path)
         on = drawn(leaf, card.choices.get(self.path), is_open)
         self.swatch.set_visibility(self.path in card.drawable)
-        self.swatch.classes(remove=_SWATCH_STATES)
+        # ONE call: a remove and then an add are two changes to the element
+        # even when they cancel, and a no-op sync re-sent every swatch.
         self.swatch.classes(
+            remove=_SWATCH_STATES,
             add=f"dstf-swatch-{'on' if on else 'off'} dstf-swatch-{leaf_status(leaf)}"
-            + (" dstf-swatch-locked" if is_open else "")
+            + (" dstf-swatch-locked" if is_open else ""),
         )
         if is_open:
             self.swatch.props("aria-disabled=true")
@@ -195,7 +209,7 @@ class CriterionRow:
 
     def _toggle(self) -> None:
         card = self.card
-        if card.open_path == self.path:
+        if card.is_open(self.path):
             return  # the open criterion always draws: it is the editing surface
         card.choices[self.path] = not drawn(
             self.leaf, card.choices.get(self.path), False
@@ -434,6 +448,13 @@ class PlotCard:
             if leaf.get("variable") in self.resolved.series
         ]
 
+    def is_open(self, path: str) -> bool:
+        """Whether ``path`` is the open criterion — the page's word, the ONE
+        source the rings read too. Not `open_path`: that is set after
+        `show()` draws, so the first open of a hidden criterion on an
+        undrawn card sent it hidden and then, at once, drawn."""
+        return path in self.page.editing_for(self.index)
+
     def visibility(self, view: Any = UNREAD) -> Visibility:
         """What this card chose to show (legend b): the leaves `drawn` says
         are off, and the one error series."""
@@ -443,7 +464,7 @@ class PlotCard:
             if not drawn(
                 leaf,
                 self.choices.get(str(leaf["path"])),
-                str(leaf["path"]) == self.open_path,
+                self.is_open(str(leaf["path"])),
             )
         )
         return Visibility(hidden=hidden, error=self.error)
@@ -451,14 +472,10 @@ class PlotCard:
     def _drawable(self, figure: dict, view: dict | None) -> frozenset[str]:
         """The leaves this figure draws ANYTHING for: a trace with the path
         in ``meta.leaf``, or a shape named under it. A windowed nrmse draws
-        one shape and no trace, and its swatch must still show. Longest
-        path first, so ``/metrics/children/1`` never claims a shape of
-        ``/metrics/children/10``."""
-        paths = sorted(
-            (str(leaf["path"]) for leaf in self._leaves_all(view)),
-            key=len,
-            reverse=True,
-        )
+        one shape and no trace, and its swatch must still show. A shape is
+        matched on its path plus ``/``, so ``/metrics/children/1`` never
+        claims a shape of ``/metrics/children/10``."""
+        paths = [str(leaf["path"]) for leaf in self._leaves_all(view)]
         found = {(tr.get("meta") or {}).get("leaf") for tr in figure["data"]}
         for shape in figure["layout"].get("shapes", []):
             name = str(shape.get("name", ""))
@@ -523,7 +540,8 @@ class PlotCard:
 
     def _error_select(self, figure: dict) -> None:
         """One select for the error series (legend b), on a plot whose
-        figure has any; a plot of several series has none."""
+        figure has any; a plot of several series has none. Asked of every
+        figure sent, so a redraw that gains error traces gains the select."""
         ids = [
             tr["meta"]["id"]
             for tr in figure["data"]
@@ -569,8 +587,10 @@ class PlotCard:
             return
         assert self.plot is not None
         view = self._view(view)
-        self.plot.update_figure(self._figure(view))
+        figure = self._figure(view)
+        self.plot.update_figure(figure)
         self._drawn = self.signature(view)
+        self._error_select(figure)
         # The swatches say what was just sent (an open or a close moves one).
         self._paint_rows(view)
 

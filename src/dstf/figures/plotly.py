@@ -55,6 +55,19 @@ ERROR = "#f44336"
 #: family is not here raises rather than being drawn against the wrong unit.
 ERROR_AXES = {"error/signed": "y3", "error/abs": "y3", "error/nrmse": "y4"}
 
+#: The right margin a plot reserves while an error axis shows, on both tiers
+#: (the owner's 2026-09-24 ruling): the vertical toolbar stands on the right
+#: edge, over the axis's tick labels and title otherwise. Measured in
+#: Chromium with the toolbar showing, the smallest `margin.r` that cleared it
+#: was the axes' own automargin plus ~20 px: 75 for signed or abs error, 125
+#: for NRMSE in the tool (plotly.js 3.1.1 shifts its free axis outward), 85
+#: for one series and 135 for signed plus NRMSE together in the report —
+#: the same at 900, 1020 and 1280 px. One number for both: the largest. A
+#: tick label wider than those fixtures' (`0.2000`, `0.01000`) grows the
+#: automargin past it. `templates/axes.js` carries the same number; a test
+#: pins them equal.
+ERROR_MARGIN_R = 135
+
 #: Vertical extent of the two panels when a spectrum is present.
 TIME_DOMAIN = (0.45, 1.0)
 SPECTRUM_DOMAIN = (0.0, 0.32)
@@ -636,6 +649,10 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
         },
         "margin": {"t": 25, "b": 45, "l": 60, "r": 20},
         "legend": dict(LEGEND),
+        # The hover toolbar stands on the right edge: laid across the top it
+        # covered the legend above the plot area once that wrapped to a
+        # second row (the owner's 2026-09-24 ruling, both tiers).
+        "modebar": {"orientation": "v"},
         "hovermode": "x unified",
         "shapes": shapes,
         "uirevision": "keep",
@@ -797,8 +814,20 @@ def variable_figure(
         data.append(_error_trace(s, ctx, visibility))
     config: dict = _config(editable)
     layout = _layout(view, shapes + rings, bool(view.errors))
-    if visibility is not None and visibility.error is not None and view.errors:
-        layout[ERROR_AXES[visibility.error].replace("y", "yaxis")]["visible"] = True
+    if visibility is not None and view.errors:
+        shown = ERROR_AXES.get(visibility.error or "")
+        for axis in ("y3", "y4"):
+            key = axis.replace("y", "yaxis")  # "y3" -> "yaxis3"
+            layout[key]["visible"] = axis == shown
+            # A hidden axis left at automargin kept the right margin it had
+            # grown while shown, through every later react (Chromium: 55 px
+            # after Abs error, 103 after NRMSE, against 20). The report keeps
+            # both at True: its axes.js flips `visible` in the page.
+            layout[key]["automargin"] = axis == shown
+        if shown is not None:
+            # The vertical toolbar stands on the right edge, over a shown
+            # error axis's ticks and title unless the plot makes room.
+            layout["margin"]["r"] = ERROR_MARGIN_R
     return {"data": data, "layout": layout, "config": config}
 
 
