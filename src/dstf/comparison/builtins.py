@@ -172,6 +172,7 @@ def register_builtins() -> None:
             score_direction="lower",
             summarize=summarize_range,
             edit_handle=edit_range_handle,
+            drawn_by_default=False,
         )
     )
     register_metric(
@@ -207,6 +208,7 @@ def register_builtins() -> None:
             accepts_quantity=True,
             summarize=summarize_scalar,
             edit_handle=edit_scalar_handle,
+            drawn_by_default=False,
         )
     )
 

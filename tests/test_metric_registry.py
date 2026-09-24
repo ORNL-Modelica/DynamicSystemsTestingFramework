@@ -376,3 +376,19 @@ class TestResetForTests:
         registry._reset_for_tests()
         registry._reset_for_tests()
         assert [d.name for d in registry.metrics()][0] == "nrmse"
+
+
+def test_a_metric_says_whether_its_drawing_shows_by_default():
+    # A bound across the whole plot (range, scalar) starts hidden on the Test
+    # page; every other builtin draws until its swatch says otherwise.
+    assert {d.name: d.drawn_by_default for d in registry.metrics()} == {
+        "nrmse": True,
+        "tube": True,
+        "points": True,
+        "range": False,
+        "event-timing": True,
+        "dominant-frequency": True,
+        "scalar": False,
+    }
+    # A third-party metric registered without the field draws by default.
+    assert _final_slope_descriptor().drawn_by_default is True

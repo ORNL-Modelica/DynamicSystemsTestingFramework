@@ -71,6 +71,10 @@ class MetricDescriptor:
     in, the new raw leaf out, :class:`~.handles.HandleEditError` for a drag
     the leaf cannot take; see :mod:`.handles`. ``None`` for a metric no drag
     edits (the builtins ``nrmse`` and ``event-timing``).
+
+    ``drawn_by_default`` says whether the Test page draws a closed criterion
+    of this metric before its swatch is touched (``range`` and ``scalar``
+    do not).
     """
 
     name: str
@@ -84,6 +88,11 @@ class MetricDescriptor:
     summarize: Callable[[VariableComparison], ScoreSummary] = summarize_default
     #: A drag on one of the mode's handles, as the new raw leaf.
     edit_handle: Callable[[HandleEdit], dict] | None = None
+    #: Whether a closed criterion of this metric draws on the Test page until
+    #: its swatch says otherwise (legend b). Off for metrics whose drawing is a
+    #: bound across the whole plot — range, scalar — which would otherwise
+    #: cover every plot they sit on. The open criterion always draws.
+    drawn_by_default: bool = True
 
 
 @dataclass(frozen=True)
