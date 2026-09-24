@@ -815,29 +815,42 @@ def test_an_error_axis_takes_margin_only_while_it_shows():
         assert report[axis]["visible"] is False
 
 
-def test_a_shown_error_axis_reserves_right_margin_for_the_toolbar():
-    """The owner's 2026-09-24 ruling: while an error axis shows, the plot
-    keeps the vertical toolbar off its ticks and title by reserving right
-    margin. Only the tool's figure picks its series; the report's keeps its
-    own margin and `axes.js` reserves it in the page."""
-    from dstf.figures.plotly import ERROR_MARGIN_R, Visibility, plot_figure
-    from dstf.reporting.report_suite import axes_js_source
+def test_every_y_axis_reads_automatic_labels_with_e_exponents():
+    """The owner's 2026-09-24 ruling, both tiers: `tickformat: ".4g"` printed
+    `0.2000` for 0.2 and `0.00002000` for an error around 1e-5 (54 px, into
+    the toolbar's strip, against 23 px for `2e−5`). Plotly's automatic
+    labels with `e` exponents read short; a hover still reads 4 significant
+    digits (`hoverformat`), which a trace's own hovertemplate overrides."""
+    from dstf.figures.plotly import Visibility, plot_figure
 
     view = _tube_and_range_view()
-    own = variable_figure(view)["layout"]["margin"]["r"]
-    assert own == 20
-    assert ERROR_MARGIN_R > own
-    for error in ("error/signed", "error/abs", "error/nrmse"):
+    report = variable_figure(view)["layout"]
+    tool = variable_figure(view, visibility=Visibility(error="error/abs"))["layout"]
+    two = plot_figure([view, replace(view, name="y", leaves=())])["layout"]
+    axes = [
+        *(("report", k, report[k]) for k in ("yaxis", "yaxis3", "yaxis4")),
+        *(("tool", k, tool[k]) for k in ("yaxis", "yaxis3", "yaxis4")),
+        ("plot", "yaxis", two["yaxis"]),
+    ]
+    for tier, key, axis in axes:
+        assert "tickformat" not in axis, (tier, key)
+        assert axis["exponentformat"] == "e", (tier, key)
+        assert axis["hoverformat"] == ".4g", (tier, key)
+
+
+def test_the_tools_nrmse_axis_is_anchored_to_the_plot():
+    """With the page's Visibility only one error axis ever shows, so the
+    NRMSE axis sits on the plot's edge like the other: left `free` with
+    `autoshift`, it floated about 48 px off the plot once Abs error had
+    shown. The report keeps `free` + `autoshift`: its legend can show signed
+    and NRMSE together, and the second axis must stand past the first."""
+    from dstf.figures.plotly import Visibility
+
+    view = _tube_and_range_view()
+    for error in (None, "error/signed", "error/abs", "error/nrmse"):
         lay = variable_figure(view, visibility=Visibility(error=error))["layout"]
-        assert lay["margin"]["r"] == ERROR_MARGIN_R, error
-    assert (
-        variable_figure(view, visibility=Visibility())["layout"]["margin"]["r"] == own
-    )
-    # No error traces, so no error axis to make room for.
-    two = plot_figure(
-        [view, replace(view, name="y", leaves=())],
-        visibility=Visibility(error="error/abs"),
-    )
-    assert two["layout"]["margin"]["r"] == own
-    # The report's page script reserves the same number.
-    assert f"var ERROR_MARGIN_R = {ERROR_MARGIN_R};" in axes_js_source()
+        assert lay["yaxis4"]["anchor"] == "x", error
+        assert "autoshift" not in lay["yaxis4"], error
+    report = variable_figure(view)["layout"]
+    assert report["yaxis4"]["anchor"] == "free"
+    assert report["yaxis4"]["autoshift"] is True

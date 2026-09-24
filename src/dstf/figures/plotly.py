@@ -55,19 +55,6 @@ ERROR = "#f44336"
 #: family is not here raises rather than being drawn against the wrong unit.
 ERROR_AXES = {"error/signed": "y3", "error/abs": "y3", "error/nrmse": "y4"}
 
-#: The right margin a plot reserves while an error axis shows, on both tiers
-#: (the owner's 2026-09-24 ruling): the vertical toolbar stands on the right
-#: edge, over the axis's tick labels and title otherwise. Measured in
-#: Chromium with the toolbar showing, the smallest `margin.r` that cleared it
-#: was the axes' own automargin plus ~20 px: 75 for signed or abs error, 125
-#: for NRMSE in the tool (plotly.js 3.1.1 shifts its free axis outward), 85
-#: for one series and 135 for signed plus NRMSE together in the report —
-#: the same at 900, 1020 and 1280 px. One number for both: the largest. A
-#: tick label wider than those fixtures' (`0.2000`, `0.01000`) grows the
-#: automargin past it. `templates/axes.js` carries the same number; a test
-#: pins them equal.
-ERROR_MARGIN_R = 135
-
 #: Vertical extent of the two panels when a spectrum is present.
 TIME_DOMAIN = (0.45, 1.0)
 SPECTRUM_DOMAIN = (0.0, 0.32)
@@ -633,6 +620,14 @@ def _time_span(view: VariableView) -> tuple[float, float]:
     return float(min(a[0] for a in xs)), float(max(a[-1] for a in xs))
 
 
+#: How every y axis prints its numbers, on both tiers: Plotly's automatic
+#: tick labels with `e` exponents, and 4 significant digits on a hover (a
+#: trace's own hovertemplate still says its own). A fixed `.4g` tickformat
+#: printed `0.2000` for 0.2 and `0.00002000` for an error around 1e-5, the
+#: size a passing test's error usually is (54 px against 23 for `2e−5`).
+_Y_LABELS = {"exponentformat": "e", "hoverformat": ".4g"}
+
+
 def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
     layout: dict = {
         "xaxis": {
@@ -642,7 +637,7 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
         },
         "yaxis": {
             "title": {"text": "Value", "standoff": 10},
-            "tickformat": ".4g",
+            **_Y_LABELS,
             "automargin": True,
             "nticks": 6,
             "uirevision": "keep",
@@ -673,9 +668,11 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
         layout["yaxis3"] = _secondary_axis("Error [signal units]")
         layout["yaxis4"] = {
             **_secondary_axis("NRMSE [–]"),
-            # A second right axis anchored to x would draw over the first;
+            # The report's legend can show signed and NRMSE together, and a
+            # second right axis anchored to x would draw over the first;
             # free + autoshift stacks it outward (plotly.js >= 2.25; the
-            # report vendors 2.35.0, NiceGUI 3.16 bundles 3.1.1).
+            # report vendors 2.35.0, NiceGUI 3.16 bundles 3.1.1). The tool
+            # shows one at a time and anchors it (`variable_figure`).
             "anchor": "free",
             "autoshift": True,
         }
@@ -685,7 +682,7 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
 def _secondary_axis(title: str) -> dict:
     return {
         "title": {"text": title, "font": {"color": ERROR, "size": 10}},
-        "tickformat": ".4g",
+        **_Y_LABELS,
         "nticks": 4,
         "automargin": True,
         "overlaying": "y",
@@ -824,10 +821,11 @@ def variable_figure(
             # after Abs error, 103 after NRMSE, against 20). The report keeps
             # both at True: its axes.js flips `visible` in the page.
             layout[key]["automargin"] = axis == shown
-        if shown is not None:
-            # The vertical toolbar stands on the right edge, over a shown
-            # error axis's ticks and title unless the plot makes room.
-            layout["margin"]["r"] = ERROR_MARGIN_R
+        # One error axis at a time here, so NRMSE's sits on the plot's edge
+        # like the other's: left free + autoshift, it floated about 48 px
+        # off the plot once Abs error had shown.
+        layout["yaxis4"]["anchor"] = "x"
+        del layout["yaxis4"]["autoshift"]
     return {"data": data, "layout": layout, "config": config}
 
 

@@ -40,7 +40,16 @@ tr:hover { background: var(--dstf-surface-hover); }
 /* Plots */
 .plot-section { margin-bottom: 1.5em; background: var(--dstf-surface); padding: 1em; border: 1px solid var(--dstf-border-hairline); border-radius: 4px; }
 .plot-section h3 { margin-top: 0; }
-.plotly-chart { width: 100%; height: 350px; }
+.plotly-chart { height: 350px; --toolbar-gutter: 34px; margin-right: var(--toolbar-gutter); }
+/* The plot's vertical toolbar stands in a gutter of its own, right of the
+   figure, instead of over the error axes' tick labels and titles: a margin
+   reserved inside the figure could not know how wide those labels grow (an
+   error around 1e-5 outgrew every reserve measured). The chart is the
+   gutter's width narrower than its section; Plotly pins the toolbar's
+   container with an inline `right: 0px`, hence the `!important`. The
+   authoring tool's plots carry the same gutter (shell/style.py). The
+   width is not a `--dstf-` token: those are the theme's table (theme.py). */
+.plotly-chart .modebar-container { right: calc(-1 * var(--toolbar-gutter)) !important; }
 
 /* Collapsible */
 details { margin-bottom: 1.5em; }

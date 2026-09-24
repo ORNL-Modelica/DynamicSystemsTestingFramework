@@ -17,6 +17,7 @@ scroll the PAGE — the gesture that draws the cards below."""
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -37,7 +38,7 @@ from test_author_suite_playwright import (  # noqa: E402
     _start,
     _wait_until_serving,
 )
-from test_axes_js_playwright import UNDER_TOOLBAR  # noqa: E402
+from test_interactive_figures import UNDER_TOOLBAR  # noqa: E402
 from test_session import A, _page_project  # noqa: E402
 
 VIEWPORT = {"width": 1280, "height": 900}
@@ -61,11 +62,14 @@ MIN_LINE = f"{RANGE_X}/range/min"
 
 
 @contextmanager
-def _served(tmp_path: Path, playwright_browser):
+def _served(tmp_path: Path, playwright_browser, error_scale: float = 1.0):
     """`dstf author` over the fixture, with `/test/FakeLib.A` open. On the
     way out: assertion 7 — no page error, no console error, and the spec
-    file byte-for-byte as it was (nothing is saved by looking)."""
+    file byte-for-byte as it was (nothing is saved by looking).
+    ``error_scale`` scales x's error against its baseline (`_scale_x_error`)."""
     cfg, work = _page_project(tmp_path)
+    if error_scale != 1.0:
+        _scale_x_error(work, error_scale)
     spec_file = cfg.parent / "test_spec.json"
     before = spec_file.read_bytes()
     log = tmp_path / "author.log"
@@ -99,6 +103,17 @@ def _served(tmp_path: Path, playwright_browser):
             proc.terminate()
             proc.wait(READY_TIMEOUT)
     assert spec_file.read_bytes() == before
+
+
+def _scale_x_error(work: Path, scale: float) -> None:
+    """Rewrite x's result so its error against the baseline (x = t) is
+    ``0.25 * scale * t`` instead of ``0.25 * t``: at 1e-4 an error around
+    2.5e-5, the size a passing test's error usually is."""
+    for key in ("test_0001", "test_0002"):
+        path = work / key / "result.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["variables"]["x"] = [v + 0.25 * scale * v for v in data["time"]]
+        path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def _shot(page, tmp_path: Path, name: str) -> None:
@@ -809,14 +824,7 @@ def test_a_swatch_hides_a_criterion_and_the_zoom_stays(tmp_path, playwright_brow
         page.wait_for_timeout(200)
         # 8. Plot 0 with "Abs error" chosen: its trace and its right axis.
         _shot(page, tmp_path, "error-abs")
-        # The plot reserves right margin while an error axis shows: hovered,
-        # the vertical toolbar covers none of its labels (the owner's
-        # 2026-09-24 ruling). NRMSE's axis sits further out, so it too.
-        assert _error_labels_under_toolbar(page) == []
-        _choose_error(page, "NRMSE", "yaxis4")
-        assert _error_labels_under_toolbar(page) == []
-        _shot(page, tmp_path, "error-nrmse")
-        # No error: the margin, automargin's growth included, comes back.
+        # No error: the right margin automargin grew for the axis comes back.
         _choose_error(page, "No error", None)
         assert (
             page.evaluate(
@@ -860,6 +868,43 @@ def _error_labels_under_toolbar(page) -> list[str]:
     return read["under"]
 
 
+@pytest.mark.parametrize("scale", [1.0, 1e-4])
+def test_no_error_axis_label_sits_under_the_toolbar(
+    tmp_path, playwright_browser, scale
+):
+    """Hovered, so the toolbar shows: no tick label and no title of the
+    error axis the select shows intersects it, for each series it offers
+    and for errors around 1e-5 too. The toolbar stands in its own gutter
+    right of the plot (`shell/style.py`), so the axes never compete with it
+    for the figure's right margin, however wide their labels grow."""
+    with _served(tmp_path, playwright_browser, error_scale=scale) as page:
+        page.wait_for_timeout(700)
+        # Each step flips the axis it waits on: signed and abs share y3.
+        for label, axis in (
+            ("Signed error", "yaxis3"),
+            ("NRMSE", "yaxis4"),
+            ("Abs error", "yaxis3"),
+        ):
+            _choose_error(page, label, axis)
+            assert _error_labels_under_toolbar(page) == [], label
+        # Still hovered: plot 0, Abs error, its toolbar in the gutter.
+        _shot(page, tmp_path, f"gutter-abs-{scale:g}")
+        # The gutter costs no horizontal scroll: the page is as wide as the view.
+        assert (
+            page.evaluate(
+                "() => document.documentElement.scrollWidth"
+                " - document.documentElement.clientWidth"
+            )
+            <= 0
+        )
+        _choose_error(page, "No error", None)
+        box = page.locator(".js-plotly-plot").first.bounding_box()
+        assert box is not None
+        page.mouse.move(box["x"] + box["width"] * 0.4, box["y"] + box["height"] * 0.5)
+        page.wait_for_timeout(300)
+        _shot(page, tmp_path, f"gutter-none-{scale:g}")
+
+
 def _range_lines_shown(page) -> int:
     return page.evaluate(
         "() => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
@@ -891,6 +936,10 @@ def test_a_swatch_answers_the_keyboard(tmp_path, playwright_browser):
         assert page.evaluate(on_swatch), page.evaluate(
             "() => document.activeElement.outerHTML.slice(0, 200)"
         )
+        # A screen reader announces it as a button.
+        assert page.evaluate("() => document.activeElement.getAttribute('role')") == (
+            "button"
+        )
         page.keyboard.press("Enter")
         page.wait_for_function(
             "() => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
@@ -898,6 +947,12 @@ def test_a_swatch_answers_the_keyboard(tmp_path, playwright_browser):
             f"'{RANGE_X}/')).length === 2",
             timeout=EXPECT_TIMEOUT,
         )
+        # Space on a focused element scrolls the page unless the handler
+        # prevents it: in a scrolled page, the toggle leaves the scroll be.
+        page.evaluate("() => window.scrollTo(0, 120)")
+        page.wait_for_timeout(200)
+        scrolled = page.evaluate("() => window.scrollY")
+        assert scrolled > 0 and page.evaluate(on_swatch)
         page.keyboard.press(" ")
         page.wait_for_function(
             "() => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
@@ -905,6 +960,8 @@ def test_a_swatch_answers_the_keyboard(tmp_path, playwright_browser):
             f"'{RANGE_X}/')).length === 0",
             timeout=EXPECT_TIMEOUT,
         )
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => window.scrollY") == scrolled
         # A key on the swatch is the swatch's: no editor opened.
         expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
 

@@ -68,7 +68,20 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 /* A plot card: its title row, its plot, its criteria rows and its footers
    at the card's own spacing (the brief's "col gap 10px"). */
 .dstf-plot { gap: 10px; }
-.dstf-plot-slot { min-height: 320px; }
+.dstf-plot-slot { min-height: 320px; --toolbar-gutter: 34px; }
+/* The plot's vertical toolbar stands in a gutter of its own, right of the
+   figure, instead of over the error axis's tick labels and title: a margin
+   reserved inside the figure could not know how wide those labels grow
+   (an error around 1e-5 outgrew every reserve measured). The plot is the
+   gutter's width narrower than its slot; Plotly pins the toolbar's
+   container with an inline `right: 0px`, hence the `!important`. The
+   width is not a `--dstf-` token: those are the theme's table (theme.py). */
+.dstf-plot-slot > .js-plotly-plot {
+  width: auto; margin-right: var(--toolbar-gutter);
+}
+.dstf-plot-slot .js-plotly-plot .modebar-container {
+  right: calc(-1 * var(--toolbar-gutter)) !important;
+}
 .dstf-crit {
   min-height: 36px; padding: 4px 8px; cursor: pointer;
   border-top: 1px solid var(--dstf-border-hairline);

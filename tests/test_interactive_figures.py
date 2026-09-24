@@ -7,6 +7,10 @@ asserted trace for trace. The end-to-end path — a page out of
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+import numpy as np
 import pytest
 
 pytest.importorskip("playwright.sync_api")
@@ -211,3 +215,99 @@ def test_a_labelled_hover_reads_its_label_under_a_real_mouse(
     assert texts, "no hover box under the mouse"
     assert any(line.startswith("pipe.T[1]: ") for line in texts), texts
     assert not any("%{" in line for line in texts), texts
+
+
+#: Which error-axis labels — tick text and axis titles — sit under the
+#: vertical toolbar (`.modebar`) of plot ``gd``, by their boxes. Shared with
+#: the tool's browser test; ``labels`` says the read found any at all.
+UNDER_TOOLBAR = """
+(gd) => {
+  const hit = (a, b) => a.left < b.right && b.left < a.right
+                     && a.top < b.bottom && b.top < a.bottom;
+  const mb = gd.querySelector('.modebar');
+  if (!mb) return null;
+  const m = mb.getBoundingClientRect();
+  const boxes = Array.from(gd.querySelectorAll(
+      'g[class*="y3tick"] text, g[class*="y4tick"] text, .g-y3title text, .g-y4title text'))
+    .map(e => [e.textContent, e.getBoundingClientRect()])
+    .filter(([, b]) => b.width > 0);
+  return {labels: boxes.length, under: boxes.filter(([, b]) => hit(b, m)).map(([t]) => t)};
+}
+"""
+
+
+def _page_with_errors(tmp_path, scale: float):
+    """The report's page over one signal whose error ramps from 0 to
+    ``0.25 * scale``: the tool fixture's x (1.25 t against t) at 1, and at
+    1e-4 an error around 2.5e-5 — the size a passing test's error usually
+    is, whose labels were the widest (`0.00002000` under `.4g`)."""
+    from dstf.figures.plotly import variable_figure
+    from dstf.figures.view import build_view
+
+    ctx, _ = _context_with_figure()
+    var = next(iter(ctx["variables_by_name"]))
+    t = np.linspace(0.0, 1.0, 21)
+    ctx["plot_figures"] = [
+        variable_figure(
+            build_view(
+                var,
+                act_time=t,
+                act_values=t + 0.25 * scale * t,
+                ref_time=t,
+                ref_values=t,
+            )
+        )
+    ]
+    return _render_with_context(tmp_path, ctx)
+
+
+@pytest.mark.parametrize("scale", [1.0, 1e-4])
+@pytest.mark.parametrize(
+    "shown",
+    [["error/signed"], ["error/abs"], ["error/nrmse"], ["error/signed", "error/nrmse"]],
+)
+def test_no_error_axis_label_sits_under_the_toolbar(
+    tmp_path, playwright_browser, shown, scale
+):
+    """Hovered, so the toolbar shows: no tick label and no title of a shown
+    error axis intersects it — signed and NRMSE together included (the
+    report's legend can show both, the second axis standing past the first),
+    and errors around 1e-5 too. The toolbar stands in its own gutter right
+    of the plot (the page's stylesheet), so the axes never compete with it
+    for the figure's right margin, however wide their labels grow."""
+    html_path = _page_with_errors(tmp_path, scale)
+    page = playwright_browser.new_page(viewport={"width": 1280, "height": 900})
+    errors: list[str] = []
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+    page.goto(html_path.as_uri())
+    page.wait_for_selector("#plot-0 .scatterlayer")
+    # A legend click and the select are both restyles; axes.js follows.
+    page.evaluate(
+        """(shown) => { const el = document.getElementById('plot-0');
+           const idx = [], vis = [];
+           el.data.forEach((t, i) => { if ((t.meta || {}).kind !== 'error') return;
+             idx.push(i); vis.push(shown.includes(t.meta.id) ? true : 'legendonly'); });
+           Plotly.restyle(el, {visible: vis}, idx);
+           el.scrollIntoView(); }""",
+        shown,
+    )
+    page.wait_for_timeout(300)
+    plot = page.locator("#plot-0")
+    box = plot.bounding_box()
+    assert box is not None
+    page.mouse.move(box["x"] + box["width"] * 0.4, box["y"] + box["height"] * 0.5)
+    page.wait_for_timeout(300)
+    read = plot.evaluate(UNDER_TOOLBAR)
+    # The gutter costs no horizontal scroll: the page is as wide as the view.
+    overflow = page.evaluate(
+        "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
+    )
+    shot = os.environ.get("DSTF_KEEP_SHOTS")
+    if shot and shown == ["error/signed", "error/nrmse"]:
+        Path(shot).mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(Path(shot) / f"report-signed-nrmse-{scale:g}.png"))
+    page.close()
+    assert errors == []
+    assert read is not None and read["labels"] > 0, read
+    assert read["under"] == [], read
+    assert overflow <= 0, overflow

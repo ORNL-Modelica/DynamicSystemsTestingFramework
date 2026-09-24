@@ -6,21 +6,11 @@
 // traces toggle — by the report's select (Plotly.restyle) or by a legend
 // click, which is a client-side restyle the server never hears.
 //
-// While ANY secondary axis shows, the plot also reserves right margin for
-// the vertical toolbar, which stands on the right edge over the axis's
-// ticks and title otherwise (the owner's 2026-09-24 ruling); when the last
-// one hides, the layout's own margin comes back.
-//
 // One script for both tiers: the report loads it as the first part of
 // interactive.js; the tool adds it to its page body. It computes nothing
 // about the data — it reads `visible` flags and writes `visible` flags
-// and the right margin — on a restyle (the select, a legend click) and
-// after a react.
+// — on a restyle (the select, a legend click) and after a react.
 (function () {
-  // dstf.figures.plotly.ERROR_MARGIN_R, where the measurement behind it is
-  // written down; a test pins the two equal.
-  var ERROR_MARGIN_R = 135;
-
   function anyVisibleOn(gd, axisId) {
     return (gd.data || []).some(function (t) {
       return (t.yaxis || 'y') === axisId && t.visible !== 'legendonly' && t.visible !== false;
@@ -30,28 +20,12 @@
   function dstfFollowSecondaryAxes(gd) {
     var layout = gd.layout || {};
     var update = {};
-    var anyShown = false;
     Object.keys(layout).forEach(function (key) {
       var m = /^yaxis(\d+)$/.exec(key);
       if (!m || !layout[key] || !layout[key].overlaying) return;
       var want = anyVisibleOn(gd, 'y' + m[1]);
-      if (want) anyShown = true;
       if (Boolean(layout[key].visible) !== want) update[key + '.visible'] = want;
     });
-    var r = (layout.margin || {}).r;
-    if (anyShown) {
-      // The layout's own value is remembered as the reserve is first taken;
-      // a react that brings the server's layout back re-takes it and keeps
-      // the remembered value.
-      if (!gd._dstfReserving) {
-        gd._dstfOwnMarginR = r;
-        gd._dstfReserving = true;
-      }
-      if (r !== ERROR_MARGIN_R) update['margin.r'] = ERROR_MARGIN_R;
-    } else if (gd._dstfReserving) {
-      gd._dstfReserving = false;
-      if (r !== gd._dstfOwnMarginR) update['margin.r'] = gd._dstfOwnMarginR;
-    }
     if (Object.keys(update).length) Plotly.relayout(gd, update);
   }
 

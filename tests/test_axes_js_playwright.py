@@ -14,7 +14,7 @@ pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
 
 sys.path.insert(0, str(Path(__file__).parent))
-from dstf.figures.plotly import ERROR_MARGIN_R, variable_figure  # noqa: E402
+from dstf.figures.plotly import variable_figure  # noqa: E402
 from dstf.reporting.report_suite import axes_js_source, copy_vendor_assets  # noqa: E402
 from test_figures import _tube_view  # noqa: E402
 
@@ -29,32 +29,13 @@ PROBE = """() => {
 }"""
 
 
-#: Which error-axis labels — tick text and axis titles — sit under the
-#: vertical toolbar (`.modebar`) of plot ``gd``, by their boxes. Shared with
-#: the tool's browser test; ``labels`` says the read found any at all.
-UNDER_TOOLBAR = """
-(gd) => {
-  const hit = (a, b) => a.left < b.right && b.left < a.right
-                     && a.top < b.bottom && b.top < a.bottom;
-  const mb = gd.querySelector('.modebar');
-  if (!mb) return null;
-  const m = mb.getBoundingClientRect();
-  const boxes = Array.from(gd.querySelectorAll(
-      'g[class*="y3tick"] text, g[class*="y4tick"] text, .g-y3title text, .g-y4title text'))
-    .map(e => [e.textContent, e.getBoundingClientRect()])
-    .filter(([, b]) => b.width > 0);
-  return {labels: boxes.length, under: boxes.filter(([, b]) => hit(b, m)).map(([t]) => t)};
-}
-"""
-
-
 @pytest.fixture(scope="module")
 def page_path(tmp_path_factory) -> Path:
     root = tmp_path_factory.mktemp("axes")
     copy_vendor_assets(root)
     fig = variable_figure(_tube_view())
     (root / "page.html").write_text(
-        "<html><head><script src='plotly.min.js'></script>"
+        "<html><head><meta charset='utf-8'><script src='plotly.min.js'></script>"
         f"<script>{axes_js_source()}</script></head><body>"
         "<div id='p' style='width:900px;height:350px'></div>"
         f"<script>const FIG={json.dumps(fig)};"
@@ -213,67 +194,3 @@ def test_the_axis_survives_a_react_that_keeps_the_legend_state(
     assert errors == []
     assert after_react["traces"]["error/nrmse"] is True  # uirevision kept it
     assert (after_react["y3"], after_react["y4"]) == (False, True)
-
-
-def _show(page, shown):
-    """Show exactly the error series in ``shown`` (the report's select and
-    legend clicks are both restyles) and let axes.js follow."""
-    page.evaluate(
-        """(shown) => { const el = document.getElementById('p');
-           const idx = [], vis = [];
-           el.data.forEach((t, i) => { if ((t.meta || {}).kind !== 'error') return;
-             idx.push(i); vis.push(shown.includes(t.meta.id) ? true : 'legendonly'); });
-           Plotly.restyle(el, {visible: vis}, idx); }""",
-        shown,
-    )
-    page.wait_for_timeout(250)
-
-
-def _margin_r(page):
-    return page.evaluate("() => document.getElementById('p').layout.margin.r")
-
-
-def test_a_shown_axis_reserves_the_margin_and_the_last_to_hide_gives_it_back(
-    playwright_browser, page_path
-):
-    """The owner's 2026-09-24 ruling: while ANY secondary axis shows, the
-    plot reserves right margin for the vertical toolbar; when the last one
-    hides, the layout's own margin comes back."""
-    page, errors = _open(playwright_browser, page_path)
-    own = _margin_r(page)
-    seen = []
-    for shown in (
-        ["error/nrmse"],
-        ["error/signed", "error/nrmse"],
-        ["error/signed"],
-        [],
-    ):
-        _show(page, shown)
-        seen.append(_margin_r(page))
-    page.close()
-    assert errors == []
-    assert own == 20
-    assert seen == [ERROR_MARGIN_R, ERROR_MARGIN_R, ERROR_MARGIN_R, own]
-
-
-@pytest.mark.parametrize(
-    "shown",
-    [["error/signed"], ["error/abs"], ["error/nrmse"], ["error/signed", "error/nrmse"]],
-)
-def test_no_error_axis_label_sits_under_the_toolbar(
-    playwright_browser, page_path, shown
-):
-    """Hovered, so the toolbar shows: no tick label and no title of a shown
-    error axis intersects it — signed and NRMSE together included, where
-    the NRMSE axis is shifted outward past the first."""
-    page, errors = _open(playwright_browser, page_path)
-    _show(page, shown)
-    box = page.locator("#p").bounding_box()
-    assert box is not None
-    page.mouse.move(box["x"] + box["width"] * 0.4, box["y"] + box["height"] * 0.5)
-    page.wait_for_timeout(300)
-    read = page.locator("#p").evaluate(UNDER_TOOLBAR)
-    page.close()
-    assert errors == []
-    assert read is not None and read["labels"] > 0, read
-    assert read["under"] == [], read
