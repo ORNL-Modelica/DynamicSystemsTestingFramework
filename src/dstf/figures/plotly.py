@@ -671,8 +671,11 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
     if has_errors:
         # Both axes are laid out hidden: a laid-out axis with only
         # legend-only traces gets a placeholder range and draws its zero
-        # line as a stray black rule across the plot. templates/axes.js
-        # shows an axis while a series on it is visible, in both tiers.
+        # line as a stray black rule across the plot. In the report,
+        # templates/axes.js shows an axis while a series on it is visible,
+        # following the select and legend clicks; the tool's figure, built
+        # with a Visibility, sets its one chosen axis visible itself
+        # (`variable_figure`) and loads no axis script.
         layout["yaxis3"] = _secondary_axis("Error [signal units]")
         layout["yaxis4"] = {
             **_secondary_axis("NRMSE [–]"),

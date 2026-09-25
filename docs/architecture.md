@@ -119,13 +119,18 @@ src/dstf/
 │   └── reference_store.py    # ReferenceStore: primary CRUD + accept path
 ├── authoring/
 │   ├── session.py            # Session: open / rescore / view / stage / save / discard / export / apply
-│   ├── capabilities.py       # The capability contract: Capability, Placement, the five outcomes
+│   ├── capabilities.py       # The capability contract: Capability, Placement, Panel, the five outcomes
 │   ├── spec_document.py      # SpecDocument — the spec as loaded, its pending ops and its on-disk hash
+│   ├── tree_pointer.py       # node_at / node_or_none — a raw tree node by its /metrics pointer (UI-free)
+│   ├── tree_text.py          # What a tree node reads as (leaf_name, node_text): the rows and Edit tree's
+│   │                         #   form titles say the same thing (UI-free)
 │   ├── shell/                # The NiceGUI tier: shell.py (the process: Session, open thread, event fan-out),
-│   │                         #   suite.py + test_page.py (one object per browser tab), tree_card.py (the
-│   │                         #   criteria tree), plot_card.py (one plot, its criteria rows and its editor),
+│   │                         #   suite.py + test_page.py (one object per browser tab; the one open editor
+│   │                         #   or form row), tree_card.py (the criteria tree), plot_card.py (one plot,
+│   │                         #   its criteria rows with their swatches, its error select and its editor),
 │   │                         #   header.py, actions.py (ActionBar — a button per capability at a placement,
-│   │                         #   its panel in a dialog; InlineHost — the same panels drawn inline),
+│   │                         #   its panel in a dialog; InlineHost — the same panels drawn inline, with
+│   │                         #   a RowTarget to open a form row under their row),
 │   │                         #   runs.py, tabstate.py, figure_hook.py (one hook per plot)
 │   ├── forms.py              # NiceGUI controls from a mode's derived schema
 │   └── builtin/              # The capabilities that ship: edit_criteria.py, edit_tree.py,
@@ -143,7 +148,7 @@ src/dstf/
     ├── theme.py              # The token table — rendered to :root { --dstf-...: ... } for both
                               #   pages and the tool, and to the tool's Quasar palette
     └── templates/            # interactive.html (server-rendered tree, summary, banner) + axes.js
-                              #   (a secondary axis visible while a trace on it is) + report.js
+                              #   (the report's: a secondary axis visible while a trace on it is) + report.js
                               #   (both copied out as interactive.js via report_suite.INTERACTIVE_JS_PARTS)
                               #   + dashboard.html / dashboard.js + vendor/plotly.min.js
 ```
@@ -154,7 +159,10 @@ The figure layer sits beside them, and both tiers draw from it:
 src/dstf/figures/
 ├── view.py                   # VariableView — the library-neutral picture of one variable
 ├── plotly.py                 # VariableView → a plotly figure dict (traces + shapes); editable=True
-│                             #   (the tool's, never the report's) adds a draggable ring per handle
+│                             #   (the tool's, never the report's) adds a draggable ring per handle;
+│                             #   visibility=Visibility(hidden, error) (the tool's) keeps only signals in
+│                             #   the legend, hides the leaves the page hid and shows one error series
+│                             #   with its axis; the legend sits above the plot area on both tiers
 │                             #   plot_figure: several views on one plot (families in a hue ramp);
 │                             #   one view is variable_figure, unchanged
 ├── families.py               # Array families: the last integer index, slice text, the hue ramp
@@ -185,6 +193,20 @@ plot card — turns a drag into a per-shape payload, and the Edit on plot
 capability joins the two:
 the handle's id names the leaf, `edit_handle` returns the new leaf, and the
 Session stages one `replace` of it.
+
+What a plot shows is chosen the same way, without the figure layer knowing the
+page (D133). The tool's plot card keeps one choice per criterion — its row's
+swatch — and the error series its select names, decides each criterion with
+`drawn` (the open one always, then the swatch, then a failing one, then the
+metric's `MetricDescriptor.drawn_by_default`), and hands the result to
+`Session.plot_figure(…, visibility=Visibility(hidden, error))`. The figure
+built with a `Visibility` sets `visible` on the hidden leaves' traces and
+shapes, keeps them in place so shape indices do not move, and shows the chosen
+error series with its axis; the choice is part of the card's redraw
+signature, so a swatch click or a select change is one `Plotly.react` that
+keeps the zoom. The report's figure is built without one, keeps every legend
+entry, and `templates/axes.js` shows an error axis while a trace on it is
+visible.
 
 ## Data Flow
 

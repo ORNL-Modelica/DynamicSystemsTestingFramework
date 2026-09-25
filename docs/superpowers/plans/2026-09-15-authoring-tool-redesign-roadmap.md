@@ -302,6 +302,34 @@ state.
 
 **3b's gate over a COPY of the TRANSFORM work dir and of its spec** (2026-09-21, at 51abcdc; D131). What stayed the same: `compare --report` at the pre-plan commit (70aaabf) and at HEAD gave the same verdicts over the 331 tests (330 pass, 1 timed out; no flip), the same 342 report dirs, and NO page whose `variable-section-N` / `plot-N` / `nodes-N` / `nb-plot-N` ids differ — the no-baseline and failed-simulation pages included, which the "one rule for both tiers" change had briefly doubled before its review. What the feature did, in Chromium at 1280×900 over `…Demonstrations.Examples.BatemanEquations_Test` (4 tracked variables, every criterion nrmse): 4 cards for 4 variables, 2 of them drawn at load and all 4 after a wheel scroll with the cursor over the plots (`scrollY` 0 → 1392); first plot 38.9 s after navigation on a cold open, 7.6 s warm; the tree line "and · 4 criteria · 4 pass", open to 5 rows with `+` / wrap / `−`; the wrap popover 220 px wide under its icon; a criterion's editor directly under its row, indented 16 px, saying "nrmse has no on-plot handles". A tube staged IN MEMORY through that editor (mode → tube, Width mode → band, Add row, 5 % of the y range: 2 pending edits — the materialized tree and the replace), its upper ring centre-dragged 25 px: `yanchor` 68.65 → 138.33, the table's cell following, a 2-D zoom and the graph node kept, and `plotly_afterplot` counts of `[2, 0, 0, 0]` — only that plot redrew. Focus: 1 of 4 cards, "Showing 1 of 4 plots: batemanEquations.Ns[1]", "Focused", and back. Discard: 0 pending, the row nrmse again. No page or console error. The owner's spec md5, the reference dir (331 files) and the TRANSFORM repo's status were unchanged; four screenshots were READ. Not exercisable there: a refused drag's snap-back (the test has no bound LINE; the browser test covers it over FakeLib). Found for later: between "mode → tube" and the width mode the staged leaf is misconfigured and its row reads FAIL with the config error; at 1280 px the shared header's first row wraps and the sub-header's two actions stack; the tube editor (455 px) plus the plot does not fit a 900 px screen; an open popover covers the neighbouring rows' icons; a non-browser GET of `/` logs a `tab_state()` traceback; a test whose variables are relabelled `x[N]` (about 70 in TRANSFORM) still has no editable tree.
 
+**Variable identity BUILT (2026-09-21 to 2026-09-22; D132).** A tracked
+variable is keyed everywhere by the name its result file gives it: for the
+Modelica `UnitTests` component, `unitTests.x[i]`, in overrides, tree leaves,
+`plots` series, baseline entries, figure ids and markers. The text the model
+wrote in `x={...}` is the variable's expression: stored beside the name in the
+reference JSON, read as its label on both tiers and soft-checked on every
+compare, and the key of nothing. That is what gives the tests whose variables
+used to be relabelled `x[N]` an editable tree. `dstf migrate-variable-names`
+rewrote the stored baselines and the spec keys, and it has been run on the
+owner's library; it is deleted at the v1.0 tag. A companion records which of
+its variables draw on which of the test's (`companion add --map`).
+
+**Form row + legend BUILT (2026-09-24 to 2026-09-25; D133)**, task by task on
+`v1.0-prep` from the plan `2026-09-24-form-row-and-legend.md` (631052f), each
+review's corrections folded into the next run. A node's add / wrap / edit
+forms open as a row under its tree row or criteria row, one kind's fields, a
+sentence and Cancel, with Unwrap inside Edit; one thing is open at a time on
+the page, form or editor, and after an Add the new criterion's editor opens.
+A capability reaches that through `Panel.row` and `Panel.reveal`. A plot's
+legend in the tool holds its signals, above the plot area on both tiers. Each
+criterion's drawing is toggled by a swatch on its row, defaulting to its
+metric's `drawn_by_default`, drawn while failing and always while open. The
+error series are one select per plot. Plotly's toolbar stands vertical in a
+gutter outside the figure on both tiers; y axes read short automatic labels
+and hovers `.4~g`. The tool no longer needs `axes.js`: its figure says which
+error axis is visible. Its gate over a copy of the owner's library is the
+plan's Task 9, not yet run when this was written.
+
 **Settles.** The `plots` schema and its validation; the series model
 (`{"var": ...}` now, expression and unit later); how the report renders a
 `plots` layout; the in-place redraw per plot.

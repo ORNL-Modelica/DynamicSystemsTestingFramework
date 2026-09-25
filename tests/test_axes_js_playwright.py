@@ -15,7 +15,7 @@ pytestmark = pytest.mark.playwright
 
 sys.path.insert(0, str(Path(__file__).parent))
 from dstf.figures.plotly import variable_figure  # noqa: E402
-from dstf.reporting.report_suite import axes_js_source, copy_vendor_assets  # noqa: E402
+from dstf.reporting.report_suite import _TEMPLATE_DIR, copy_vendor_assets  # noqa: E402
 from test_figures import _tube_view  # noqa: E402
 
 PROBE = """() => {
@@ -34,9 +34,10 @@ def page_path(tmp_path_factory) -> Path:
     root = tmp_path_factory.mktemp("axes")
     copy_vendor_assets(root)
     fig = variable_figure(_tube_view())
+    axes_js = (_TEMPLATE_DIR / "axes.js").read_text(encoding="utf-8")
     (root / "page.html").write_text(
         "<html><head><meta charset='utf-8'><script src='plotly.min.js'></script>"
-        f"<script>{axes_js_source()}</script></head><body>"
+        f"<script>{axes_js}</script></head><body>"
         "<div id='p' style='width:900px;height:350px'></div>"
         f"<script>const FIG={json.dumps(fig)};"
         "const FIG0=JSON.parse(JSON.stringify(FIG));"

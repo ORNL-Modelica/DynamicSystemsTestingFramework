@@ -539,7 +539,9 @@ markup the server rendered. It shows
   the metrics emitted (a tube's band, a range's bounds, a points leaf's
   tolerance boxes, event windows, the FFT spectrum on its own axis pair, a
   scoped leaf's window as a shaded band). Zoom, hover and legend toggles are
-  live, which is how you read values off a plot. A section's heading reads
+  live, which is how you read values off a plot. The legend sits above the
+  plot area, and Plotly's toolbar stands vertically in a gutter right of the
+  plot. A section's heading reads
   its variables' labels, with their result-file names muted beside it when
   the two differ, and `data-variable` on the markup is always the name;
 - an **overlay picker** above any plot whose variable a soft_check or companion
@@ -739,12 +741,29 @@ the first failures by name, each a button that jumps to its criterion — and
 "Show tree" opens it to a row per node. Then come the test's plots, one per
 tracked variable unless the entry's `plots` key says otherwise, each drawn as
 it scrolls into view. Under each plot are the criteria rows of the variables it
-draws: a verdict pill, `metric · <the variable's label>`, the CLI's criterion
-line, and that node's `+` / wrap / `−`. Clicking a row opens that criterion's editor below it,
-one at a time, with the plot above as its editing surface — drag a ring to move
-a handle, or edit the fields; every change is staged, and Save writes them.
-Under the plot sits "Add a criterion for x" per tracked series, and Focus on
-the plot's own toolbar shows that plot alone until "Show all N plots".
+draws: a swatch, a verdict pill, `metric · <the variable's label>`, the CLI's
+criterion line, and that node's controls (Edit tree, below). Clicking a row
+opens that criterion's editor below it, one at a time, with the plot above as
+its editing surface — drag a ring to move a handle, or edit the fields; every
+change is staged, and Save writes them. Under the plot sits "Add a criterion
+for x" per tracked series, and Focus on the plot's own toolbar shows that plot
+alone until "Show all N plots".
+
+A plot's legend holds its signals only — actual, reference and any overlays —
+on a line above the plot area, so it never sits on the trace or on a ring.
+Each criterion's drawing is shown or hidden by the swatch on its row, filled
+while it draws and an outline while it does not; Enter or Space on a focused
+swatch does the same. Before a swatch is touched, what draws is the metric's
+default — tube, points, event-timing and dominant-frequency draw; range and
+scalar, whose bounds cross the whole plot, do not — except that a failing
+criterion draws. The open criterion always draws, since the plot is its
+editing surface, and its swatch is locked while its editor is open. A failing
+criterion's swatch hides it like any other: the failure still shows on the
+row's pill, the card's, the closed tree line, the header and the Suite page.
+The error series are one select on the plot's toolbar — No error, or one of
+the signed, absolute and per-point NRMSE series, each on its labelled axis.
+Plotly's own toolbar stands vertically in a gutter right of the plot, clear of
+that axis's labels.
 
 Below the Suite page's list is the job panel: while a job runs it reads
 `running: <label>` and one row per test in the job, taken from the `status.json`
@@ -771,14 +790,31 @@ replaces of one leaf collapse into one pending op, so the drawer reads "leaf →
 new leaf" rather than a keystroke log.
 
 **Edit tree** is the controls on every node of the tree and on every criteria
-row — `+`, wrap, `−`, and on a combinator edit and unwrap — and the "Add a
-criterion for x" form under each plot. Each stages one op per structural
+row — `+`, wrap and `−`, and on a combinator edit, with Unwrap inside it — and
+the "Add a criterion for x" form under each plot. Each stages one op per structural
 change: wrap a node in a combinator, change a combinator's kind and its `k` /
 weights / threshold, add a leaf beside or under a node, remove a node (the root
 has nothing to be removed from). A test the flat path scored gets its implicit
-tree materialized by the same op. Each form opens in a small menu on its own
-button, built from the tree as it is at that moment; a change the validator
-refuses is said in place and stages nothing.
+tree materialized by the same op.
+
+Each form opens as a row under the node's row, titled for the node, and it is
+the one thing open on the page: it replaces an open criterion's editor, and an
+editor or another form replaces it; clicking a criteria row closes a form open
+under it and opens nothing. A row that opens below the fold scrolls just far
+enough to show itself. It shows the chosen combinator kind's fields and no
+other kind's, one sentence saying what the action does to the tree, and Cancel
+beside the action. It is built from the tree as it is when it opens, and
+rebuilt when an edit staged elsewhere moves its node. An action that goes
+through stages its op and closes the row — after an Add, the new criterion's
+editor opens under its plot; Edit stages only what changed, so an unchanged
+Apply stages nothing. A change the validator refuses is said under the node's
+row, stages nothing, and leaves the form open with what was typed. A weighted
+form's threshold starts empty, and its action is grey until one is typed; its
+weights start as one `1` per child. Unwrap gives a single-child combinator's
+place to its child, and a combinator with several children gives its place to
+all of them, in order — which the root, having no parent, cannot do. `+` is
+grey under a `warn` (it takes exactly one child) and under a `weighted` node
+(one weight per child), with that reason as its tooltip.
 
 **Accept** applies to the selected tests: their current results become
 baselines through the same accept function `run --accept` and `compare --accept`

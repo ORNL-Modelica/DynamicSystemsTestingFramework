@@ -463,6 +463,14 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    is read from `dataclasses.fields`, not through `derive_schema`, so it
    never reaches `export-schema`. A list field without `columns` gets no
    table; Edit criteria shows every list field read-only either way.
+9. `drawn_by_default` (default `True`) says whether the authoring tool's
+   Test page draws a closed criterion of this metric on its plot before the
+   swatch on its row is touched. Set it `False` for a metric whose drawing
+   crosses the whole plot — the builtins `range` and `scalar` draw bounds
+   from edge to edge, which would cover every plot they sit on. It is only
+   the default: a failing criterion draws whatever it says, the open one
+   always draws, and the swatch overrides it either way. The report does
+   not read it.
 
 ### Currently registered
 
@@ -682,8 +690,28 @@ the shell calls `act(view, **inputs)` and hands what comes back to
 exception from either is shown with the panel — above an inline one, in the
 dialog of a button placement — with the Session unchanged; the next successful
 submit hides it in place, without rebuilding the panel, so the field being typed
-in survives. Import the UI framework inside `panel`, not at module level, so the
+in survives. `submit` returns whether it went through: `False` when `act` or the
+apply raised. Import the UI framework inside `panel`, not at module level, so the
 module stays importable without the `[author]` extra — the built-ins do.
+
+**A form row.** `panel.row(title, build)` opens a form below the row the panel
+is drawn in — how Edit tree's add, wrap and edit forms open under a tree node's
+row or a criteria row (D133). `build(close)` draws the form's content; `close`
+takes the row away. Call `close` after a `submit` that returned `True`, never
+before it: a refused act then leaves the form open with what was typed, and its
+error shows under the row. One thing is open at a time on a page, so opening a
+row closes any other row and the open criterion's editor, and opening an editor
+closes the row. While the row is open the page calls `build` again, into an
+emptied row, when an edit staged elsewhere moves the node the panel is for, so a
+form never shows a value its node no longer has; build its fields from the view
+each time. The row also closes when its host is rebuilt, when its row is hidden
+and when its node is gone. In a dialog (a button placement) the form is drawn
+in the dialog, below the panel; the criterion editor has no row, and `row`
+raises there. `panel.reveal(leaf_path)` asks the page to open that criterion's
+editor once the page has drawn it — after an add, the new criterion. It records
+the path only when that node exists, so call it after the `submit` that made
+it; where no page reveals criteria (a dialog, the editor, the variable's
+footer) it does nothing.
 
 **Build from the view, every time.** An inline host rebuilds every capability's
 panel in its slot whenever what they show can have moved — after a staged edit,

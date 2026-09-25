@@ -41,11 +41,6 @@ VENDOR_ASSETS: tuple[str, ...] = ("plotly.min.js",)
 INTERACTIVE_JS_PARTS: tuple[str, ...] = ("axes.js", "report.js")
 
 
-def axes_js_source() -> str:
-    """The shared axis-follow script (templates/axes.js), for the tool's page."""
-    return (_TEMPLATE_DIR / "axes.js").read_text(encoding="utf-8")
-
-
 def interactive_js_source() -> str:
     """Return the concatenated ``interactive.js`` served with a report."""
     return "".join(
