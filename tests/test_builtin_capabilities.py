@@ -4,6 +4,7 @@ simulation through `capability_host` — no shell, no browser."""
 
 from __future__ import annotations
 
+import asyncio
 import copy
 
 import pytest
@@ -386,6 +387,20 @@ def _tips(element) -> list[str]:
     return [e.text for e in element.descendants() if isinstance(e, ui.tooltip)]
 
 
+def _shown_tips(element) -> list[str]:
+    """The tooltips a hover over ``element`` would raise: a hidden one says
+    nothing."""
+    return [
+        e.text for e in element.descendants() if isinstance(e, ui.tooltip) and e.visible
+    ]
+
+
+def _by_label(select, label: str):
+    """The option VALUE a person picks by reading ``label``."""
+    (value,) = [v for v, text in select.options.items() if text == label]
+    return value
+
+
 def test_edit_tree_needs_one_test_and_a_node_or_a_variable(session):
     cap = EditTree()
     assert cap.available(SessionView(session, Selection(tests=frozenset({A})))) == (
@@ -735,7 +750,12 @@ async def test_a_form_opened_after_the_session_moved_shows_the_node_as_it_is(ses
         assert k.value == 1  # the node as it is now
         staged = len(session.spec.pending)
         user.find(marker=f"apply-edit:{k_of_n}").click()
-        await _settled(lambda: len(session.spec.pending) > staged)
+        # An Apply stages only what moved (the Task 6 review), and the form
+        # shows the node as it is: nothing is staged — a form built at the
+        # first open would have staged its k of 2 back.
+        await _settled(lambda: _none(user, "host-row:title"))
+        await asyncio.sleep(0.1)
+        assert len(session.spec.pending) == staged
         assert session.tree(D)["children"][1]["k"] == 1  # not the k of the first open
         assert errors == {}
 
@@ -1033,9 +1053,15 @@ async def test_edit_carries_unwrap_and_the_nodes_direction(session):
         await user.should_see(marker=f"unwrap-in-edit:{node}")
         assert _one(user, "host-row:title").text == "Edit this combinator"
         (direction,) = _labelled(user, ui.select, "Direction")
+        # Pinned, and chosen BY LABEL below: a test that set the value
+        # "less" passed against a select that wrote its labels as values.
+        assert direction.options == {
+            "less": "lower is better",
+            "greater": "higher is better",
+        }
         assert direction.options[direction.value] == "higher is better"
         await user.should_see("Changes this node's kind and fields; its children stay.")
-        direction.set_value("less")
+        direction.set_value(_by_label(direction, "lower is better"))
         staged = len(session.spec.pending)
         user.find(marker=f"apply-edit:{node}").click()
         await _settled(lambda: len(session.spec.pending) > staged)
@@ -1168,6 +1194,193 @@ async def test_cancel_stages_nothing(session):
         await _settled(lambda: _none(user, f"cancel:{leaf}"))
         assert _none(user, "host-row:title")  # `close` emptied the row
         assert session.spec.pending == []
+
+
+# -- the Task 6 review's corrections ----------------------------------------
+
+
+async def test_an_untouched_weighted_wrap_waits_for_a_typed_threshold(session):
+    """A weighted wrap's Threshold starts EMPTY and Wrap is grey, saying
+    why, until a number is typed; the one weight starts as 1, one per child
+    (the wrapped node). Before, an untouched weighted Wrap was refused every
+    time (no weights), and threshold 0 with `less` always fails."""
+    leaf = "/metrics/children/0"
+    async with host(session, EditTree(), _node(A, leaf)) as (user, errors, _f):
+        user.find(marker=f"wrap:{leaf}").click()
+        (kind,) = _labelled(user, ui.select, "Combinator")
+        kind.set_value("weighted")
+        await _settled(lambda: "Threshold" in _labels_shown(user))
+        (threshold,) = _labelled(user, ui.number, "Threshold")
+        (weights,) = _labelled(user, ui.input, "Weights, one per child")
+        assert threshold.value is None
+        assert weights.value == "1"
+        wrap = _one(user, f"apply-wrap:{leaf}")
+        assert not wrap.enabled
+        assert _shown_tips(wrap) == ["enter a threshold"]
+        threshold.set_value(0.25)
+        await _settled(lambda: wrap.enabled)
+        assert _shown_tips(wrap) == []
+        # Another kind needs no threshold; back to weighted, still typed.
+        kind.set_value("and")
+        await _settled(lambda: "Threshold" not in _labels_shown(user))
+        assert wrap.enabled
+        kind.set_value("weighted")
+        await _settled(lambda: "Threshold" in _labels_shown(user))
+        assert wrap.enabled
+        user.find(marker=f"apply-wrap:{leaf}").click()
+        await _settled(lambda: session.tree(A)["children"][0].get("combinator"))
+        node = session.tree(A)["children"][0]
+        assert node["combinator"] == "weighted"
+        assert (node["weights"], node["threshold"]) == ([1.0], 0.25)
+        assert errors == {}
+
+
+async def test_edit_to_weighted_waits_for_a_threshold_too(session):
+    """The same rule when Edit switches a node that has no threshold to
+    weighted; its weights start as one 1 per child."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    k_of_n = "/metrics/children/1"
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _f):
+        user.find(marker=f"edit:{k_of_n}").click()
+        (kind,) = _labelled(user, ui.select, "Combinator")
+        kind.set_value("weighted")
+        await _settled(lambda: "Threshold" in _labels_shown(user))
+        (threshold,) = _labelled(user, ui.number, "Threshold")
+        (weights,) = _labelled(user, ui.input, "Weights, one per child")
+        assert (threshold.value, weights.value) == (None, "1, 1")
+        apply = _one(user, f"apply-edit:{k_of_n}")
+        assert not apply.enabled
+        assert _shown_tips(apply) == ["enter a threshold"]
+        threshold.set_value(0.5)
+        await _settled(lambda: apply.enabled)
+        user.find(marker=f"apply-edit:{k_of_n}").click()
+        await _settled(
+            lambda: session.tree(D)["children"][1]["combinator"] == "weighted"
+        )
+        node = session.tree(D)["children"][1]
+        assert (node["weights"], node["threshold"]) == ([1.0, 1.0], 0.5)
+        assert "k" not in node and "direction" not in node  # `less` is the default
+        assert errors == {}
+
+
+def test_a_weighted_act_with_no_threshold_is_refused_by_name(session):
+    """The act does not read a missing threshold as 0 — that always fails."""
+    with pytest.raises(ValueError, match="enter a threshold"):
+        EditTree().act(
+            SessionView(session, _node(A, ROOT)),
+            action="wrap",
+            model_id=A,
+            path="/metrics/children/0",
+            kind="weighted",
+            k=1,
+            weights="1",
+            threshold=None,
+            direction="less",
+        )
+
+
+async def test_an_unchanged_edit_stages_nothing_and_closes_the_row(session):
+    """Apply with nothing changed staged four ops (the kind, and every field
+    again). Now it stages what moved, and here nothing did."""
+    weighted = {
+        "combinator": "weighted",
+        "weights": [1.0, 2.0],
+        "threshold": 0.5,
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {"metric": "range", "variable": "x", "max_value": 9.0},
+        ],
+    }
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    session.stage([PatchOp(D, "add", "/metrics/children/-", copy.deepcopy(weighted))])
+    for node in ("/metrics/children/1", "/metrics/children/3"):
+        async with host(session, EditTree(), _node(D, node)) as (user, errors, _f):
+            staged = len(session.spec.pending)
+            user.find(marker=f"edit:{node}").click()
+            await user.should_see(marker=f"apply-edit:{node}")
+            user.find(marker=f"apply-edit:{node}").click()
+            await _settled(lambda: _none(user, "host-row:title"))
+            await asyncio.sleep(0.1)
+            assert len(session.spec.pending) == staged, session.spec.pending[staged:]
+            assert errors == {}
+
+
+def test_an_edit_stages_only_the_fields_that_moved(session):
+    """One field changed is one op; ``direction`` is written only when it
+    differs from the node's own, or from `less` when the node has none."""
+    weighted = {
+        "combinator": "weighted",
+        "weights": [1.0, 2.0],
+        "threshold": 0.5,
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {"metric": "range", "variable": "x", "max_value": 9.0},
+        ],
+    }
+    session.stage(
+        [PatchOp(D, "add", ROOT, {"combinator": "and", "children": [weighted]})]
+    )
+    node = "/metrics/children/0"
+    view = SessionView(session, _node(D, node))
+    common = {"action": "edit", "model_id": D, "path": node, "kind": "weighted"}
+    common |= {"k": 1, "weights": "1, 2", "threshold": 0.5}
+    outcome = EditTree().act(view, **common, direction="greater")
+    assert [(op.op, op.path, op.value) for op in outcome.ops] == [
+        ("add", f"{node}/direction", "greater")
+    ]
+    outcome = EditTree().act(view, **{**common, "threshold": 0.75}, direction="less")
+    assert [(op.op, op.path, op.value) for op in outcome.ops] == [
+        ("replace", f"{node}/threshold", 0.75)
+    ]
+
+
+def test_unwrap_at_a_later_index_lands_its_children_there(session):
+    """`and[l0, k-of-n[a, b], l2]` unwrap the k-of-n → `and[l0, a, b, l2]`:
+    the adds count from the node's own index, not from 0."""
+    l0 = {"metric": "nrmse", "variable": "x"}
+    a = {"metric": "range", "variable": "x", "max_value": 9.0}
+    b = {"metric": "range", "variable": "x", "max_value": 8.0}
+    l2 = {"metric": "range", "variable": "x", "max_value": 5.0}
+    tree = {
+        "combinator": "and",
+        "children": [l0, {"combinator": "k-of-n", "k": 1, "children": [a, b]}, l2],
+    }
+    session.stage([PatchOp(D, "add", ROOT, tree)])
+    node = "/metrics/children/1"
+    outcome = EditTree().act(
+        SessionView(session, _node(D, node)), action="unwrap", model_id=D, path=node
+    )
+    assert [(op.op, op.path) for op in outcome.ops] == [
+        ("remove", node),
+        ("add", "/metrics/children/1"),
+        ("add", "/metrics/children/2"),
+    ]
+    session.apply(outcome)
+    assert session.tree(D) == {"combinator": "and", "children": [l0, a, b, l2]}
+
+
+async def test_add_beside_a_nested_leaf_reveals_its_parents_next_child(session):
+    """Beside a leaf two levels down: the new criterion is its OWN parent's
+    next child, not the root's."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    leaf = "/metrics/children/1/children/0"
+    reveals: list[str] = []
+    async with host(session, EditTree(), _node(D, leaf), reveals) as (user, e, _f):
+        user.find(marker=f"add:{leaf}").click()
+        await user.should_see(marker=f"apply-add:{leaf}")
+        user.find(marker=f"apply-add:{leaf}").click()
+        await _settled(lambda: len(session.tree(D)["children"][1]["children"]) == 3)
+        assert reveals == ["/metrics/children/1/children/2"] and e == {}
+
+
+async def test_the_add_rows_fields_read_variable_and_metric(session):
+    """The board's table names the Add row's fields `Variable` and
+    `Metric`; they read `leaf variable` / `leaf metric`."""
+    async with host(session, EditTree(), _node(A, ROOT)) as (user, _errors, _f):
+        user.find(marker=f"add:{ROOT}").click()
+        await user.should_see(marker=f"apply-add:{ROOT}")
+        assert {"Variable", "Metric"} <= _labels_shown(user)
+        assert not {"leaf variable", "leaf metric"} & _labels_shown(user)
 
 
 # -- Accept (§4.6 table, §4.7) --------------------------------------------

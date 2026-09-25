@@ -1082,9 +1082,6 @@ def test_a_form_row_opens_under_its_node_and_nothing_covers_it(
         crit_box, form_box = crit.bounding_box(), form.bounding_box()
         assert crit_box is not None and form_box is not None
         assert form_box["y"] >= crit_box["y"] + crit_box["height"] - 1
-        # The row opens below a criteria row near the viewport's foot, so
-        # the picture brings the whole form on screen first.
-        form.scroll_into_view_if_needed()
         page.mouse.move(5, 5)
         page.wait_for_timeout(300)
         _shot(page, tmp_path, "form-row-warn")
@@ -1107,3 +1104,99 @@ def test_a_form_row_opens_under_its_node_and_nothing_covers_it(
         expect(tip).to_have_count(1, timeout=EXPECT_TIMEOUT)
         assert tip.inner_text().strip() == "a warn takes exactly one child"
         _shot(page, tmp_path, "plus-under-warn")
+
+
+def test_a_form_row_scrolls_into_view_and_a_weighted_wrap_waits_for_a_threshold(
+    tmp_path, playwright_browser
+):
+    """A row opened from a criteria row at the viewport's foot scrolls
+    itself into view, just enough to show all of it (the owner's ruling;
+    the review measured such a row at 882-1052 px in a 900 px viewport).
+    A weighted Wrap is grey, saying why under a real mouse, until its
+    threshold is typed."""
+    with _served(tmp_path, playwright_browser) as page:
+        # Plot 1's row starts below the fold; brought up until its foot is
+        # 4 px above the viewport's — twice, since the plot it scrolls into
+        # view is drawn and may move it.
+        crit = _crit(page, 1, "range · y")
+        for _ in range(2):
+            box = crit.bounding_box()
+            assert box is not None
+            page.evaluate(
+                "(dy) => window.scrollBy(0, dy)",
+                box["y"] + box["height"] - VIEWPORT["height"] + 4,
+            )
+            page.wait_for_timeout(500)
+        box = crit.bounding_box()
+        assert box is not None
+        foot = box["y"] + box["height"]
+        assert VIEWPORT["height"] - 40 < foot <= VIEWPORT["height"], box
+        _icon(crit, "data_array").click()
+        form = page.locator(".dstf-form-row")
+        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(600)
+        form_box = form.bounding_box()
+        assert form_box is not None
+        assert form_box["y"] + form_box["height"] <= VIEWPORT["height"], form_box
+        # Just enough: the row it opened under is still on screen above it.
+        crit_box = crit.bounding_box()
+        assert crit_box is not None and crit_box["y"] >= 0, crit_box
+        page.mouse.move(5, 5)
+        page.wait_for_timeout(300)
+        _shot(page, tmp_path, "form-row-scrolled-into-view")
+
+        _choose(page, form, "weighted")
+        expect(form.get_by_label("Threshold")).to_be_visible(timeout=EXPECT_TIMEOUT)
+        assert form.get_by_label("Threshold").input_value() == ""
+        assert form.get_by_label("Weights, one per child").input_value() == "1"
+        wrap = form.get_by_role("button", name="Wrap", exact=True)
+        expect(wrap).to_be_disabled(timeout=EXPECT_TIMEOUT)
+        form.scroll_into_view_if_needed()
+        box = wrap.bounding_box()
+        assert box is not None
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        tip = page.locator(".q-tooltip")
+        expect(tip).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        assert tip.inner_text().strip() == "enter a threshold"
+        page.wait_for_timeout(400)  # the tooltip's fade-in, for the picture
+        _shot(page, tmp_path, "wrap-weighted-waiting")
+
+        form.get_by_label("Threshold").fill("0.5")
+        expect(wrap).to_be_enabled(timeout=EXPECT_TIMEOUT)
+        page.mouse.move(5, 5)
+        page.wait_for_timeout(300)
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.wait_for_timeout(600)
+        assert page.locator(".q-tooltip:visible").count() == 0
+        _shot(page, tmp_path, "wrap-weighted-typed")
+
+        # Two weights for one child: refused by the validator, by name. The
+        # error sits on its own line under the row, and the row's icons
+        # stay where every other row's are.
+        icons = _icon(crit, "add").bounding_box()
+        form.get_by_label("Weights, one per child").fill("1, 2")
+        wrap.click()
+        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        error = page.locator(".dstf-plot").nth(1).locator(".text-negative")
+        expect(error).to_contain_text("weights", timeout=EXPECT_TIMEOUT)
+        row_box, error_box = crit.bounding_box(), error.bounding_box()
+        assert row_box is not None and error_box is not None and icons is not None
+        assert error_box["y"] >= row_box["y"] + row_box["height"] - 1, (
+            row_box,
+            error_box,
+        )
+        assert _icon(crit, "add").bounding_box() == icons
+        page.mouse.move(5, 5)
+        page.wait_for_timeout(300)
+        _shot(page, tmp_path, "wrap-refused-error")
+        # The row reopened: the error goes with it; typed right, it stages.
+        _icon(crit, "data_array").click()
+        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(error).to_be_hidden(timeout=EXPECT_TIMEOUT)
+        _choose(page, form, "weighted")
+        form.get_by_label("Threshold").fill("0.5")
+        wrap.click()
+        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )

@@ -40,3 +40,14 @@ def node_text(node: dict) -> str:
     if node.get("combinator") == "k-of-n" and node.get("k") is not None:
         text += f" · k={node['k']}"
     return text
+
+
+def parent_kinds(view: dict | None) -> dict[str, str | None]:
+    """Each node's path -> its parent's combinator (None for the root):
+    what a leaf's `+` reads, since the parent takes the child it adds."""
+    kinds: dict[str, str | None] = {}
+    for node in nodes_of(view):
+        kinds.setdefault(str(node.get("path")), None)
+        for child in node.get("children") or []:
+            kinds[str(child.get("path"))] = node.get("combinator")
+    return kinds

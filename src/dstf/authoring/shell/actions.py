@@ -17,7 +17,7 @@ into a slot the page owns, which is how the criterion editor and a tree
 node's controls are drawn without the shell knowing a capability by name.
 A host given a `RowTarget` lends its panels the page's form row under the
 row it is drawn in (`Panel.row`) and the page's `reveal`; a bar's dialog
-draws a panel's row in the panel's own slot."""
+draws a panel's row inside the dialog, below the panel."""
 
 from __future__ import annotations
 
@@ -95,6 +95,9 @@ class RowTarget:
         #: The slot under the row, set by the row's owner once it exists:
         #: the host is built INSIDE the row, before the slot below it is.
         self.slot: ui.column | None = None
+        #: Hides the errors the host drawn in this row shows; set by that
+        #: host. The page calls it when a form row opens or closes.
+        self.hush: Callable[[], None] = lambda: None
 
     def open(self, title: str, build: RowBuild) -> None:
         self.page.open_row(self, title, build)
@@ -244,10 +247,11 @@ class InlineHost:
     An unavailable capability keeps its place and says why (brief §3.3).
     `build()` rebuilds from the selection as it is now; `clear()` empties
     the column and drops this host's figure handlers and the form row its
-    panels opened. A raising act shows
-    above that capability's panel and changes nothing; the next success
-    hides it in place — the panel is not rebuilt, so a field being typed in
-    survives. `on_applied` is called with that capability's name when its
+    panels opened. A raising act shows above that capability's panel — in
+    a host drawn in a row, on a line of its own under the row — and
+    changes nothing; the next success hides it in place, and so does a
+    form row opening or closing (`hush`). The panel is not rebuilt, so a
+    field being typed in survives. `on_applied` is called with that capability's name when its
     act returned an outcome, and only then: an act returning ``None``
     changed nothing, and the rebuild it would trigger discards a half-typed
     row for nothing. `follow()` is how a host that is never rebuilt keeps
@@ -268,6 +272,8 @@ class InlineHost:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
         self.figure, self.marker, self.on_applied = figure, marker, on_applied
         self.row = row
+        if row is not None:
+            row.hush = self.hush
         self.errors: dict[str, ui.label] = {}
         self.cells: dict[str, ui.column] = {}  # capability name -> its place
         #: capability name -> the `available` answer its place was built on
@@ -281,6 +287,14 @@ class InlineHost:
     def _owner(self, name: str) -> str:
         return f"{self.marker}:{name}"
 
+    def hush(self) -> None:
+        """Hide every error this host shows: a row's error goes with the
+        row. A refused act's error stayed up after its form was reopened,
+        and after later edits in other rows (the Task 6 review)."""
+        for label in self.errors.values():
+            if not label.is_deleted:
+                label.set_visibility(False)
+
     def clear(self) -> None:
         if self.figure is not None:
             for name in self.cells:
@@ -292,6 +306,10 @@ class InlineHost:
             # act from it staged nothing and showed nothing — the error
             # label had gone with the rebuild (the Task 5 review).
             self.row.page.drop_row(self.row)
+            # Its error labels live in the row's slot, not in the column.
+            for label in self.errors.values():
+                if not label.is_deleted:
+                    label.delete()
         self.column.clear()
         self.errors, self.cells, self.answers = {}, {}, {}
 
@@ -339,7 +357,17 @@ class InlineHost:
             self.build()
 
     def _build_one(self, cap: Capability, avail: bool | str, view: Any) -> None:
-        error = ui.label("").classes("text-negative text-xs").mark(f"error:{cap.name}")
+        slot = self.row.slot if self.row is not None else None
+        if slot is not None:
+            # A host drawn in a row puts its error on a line of its own in
+            # the row's slot, under the icons: in the host, a long refusal
+            # widened the host and pushed its icons left of every other
+            # row's (the Task 6 review, in Chromium).
+            with slot:
+                error = ui.label("").classes("text-negative text-xs self-end")
+        else:
+            error = ui.label("").classes("text-negative text-xs")
+        error.mark(f"error:{cap.name}")
         error.set_visibility(False)
         self.errors[cap.name] = error
         if avail is not True:
@@ -351,9 +379,13 @@ class InlineHost:
             try:
                 outcome = cap.act(view, **inputs)
                 self.shell.session.apply(outcome)
-            except Exception as e:  # shown above the panel; changes nothing
+            except Exception as e:  # shown, and changes nothing
                 error.set_text(f"{type(e).__name__}: {e}")
                 error.set_visibility(True)
+                if self.row is not None:
+                    # For the page to hush when a form row next opens or
+                    # closes, whichever row that is.
+                    self.row.page.erred(self.row)
                 return
             error.set_visibility(False)
             if outcome is not None and self.on_applied is not None:

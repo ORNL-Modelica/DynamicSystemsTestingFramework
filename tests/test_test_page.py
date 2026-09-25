@@ -966,7 +966,7 @@ async def test_a_sentinel_leafs_readout_is_the_criterion_that_says_the_reason(sh
     _stage_tree(shell, D, sentinel)
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user, D)
-        from dstf.authoring.shell.tree_card import leaf_readout, leaves_of
+        from dstf.authoring.shell.tree_card import leaf_readout
 
         scored, unscorable = leaves_of(shell.session.tree_view(D))
         assert leaf_readout(unscorable).startswith("scalar leaf not scored — ")
@@ -1730,6 +1730,14 @@ TWO_RANGES = {
 }
 
 
+def _slot_holds(row) -> list:
+    """What a criteria row's slot holds besides its host's error labels,
+    which live there — on a line of their own under the row, hidden until
+    an act is refused (the Task 6 review)."""
+    errors = list(row.host.errors.values())
+    return [c for c in row.slot.default_slot.children if c not in errors]
+
+
 async def test_a_click_on_a_row_opens_its_editor_below_it(shell):
     """Brief §3.2: the editor is whatever attaches at CRITERION, stacked
     without headings — Edit criteria and Edit on plot read as ONE editor,
@@ -1738,7 +1746,7 @@ async def test_a_click_on_a_row_opens_its_editor_below_it(shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
         row = page.cards[0].rows[T0]
-        assert len(row.slot.default_slot.children) == 0
+        assert _slot_holds(row) == []
         user.find(marker=f"criterion:0:{T0}").click()
         await _settled(lambda: not _none(user, f"editor:0:{T0}"))
         editor = _one(user, f"editor:0:{T0}")
@@ -1770,7 +1778,7 @@ async def test_one_editor_at_a_time_page_wide(shell):
         user.find(marker=f"criterion:1:{T1}").click()
         await _settled(lambda: page.open == (1, T1))
         row = page.cards[0].rows[T0]
-        assert len(row.slot.default_slot.children) == 0
+        assert _slot_holds(row) == []
         assert "dstf-crit-open" not in row.row.classes
         assert _none(user, f"editor:0:{T0}") and not _none(user, f"editor:1:{T1}")
         user.find(marker=f"criterion:1:{T1}").click()  # the open row closes it
@@ -3906,5 +3914,135 @@ async def test_a_discarded_edit_reopens_on_the_nodes_value(tmp_path):
         user.find(marker="discard").click()
         await _settled(lambda: k_field().value == 1)
         user.find(marker="apply-edit:/metrics").click()
-        await _settled(lambda: bool(shell.session.spec.pending))
+        # An Apply stages only what moved (the Task 6 review): the rebuilt
+        # form shows the node's own k, so nothing is staged — the stale 2
+        # would have been.
+        await _settled(lambda: page.form is None)
+        await asyncio.sleep(0.1)
+        assert shell.session.spec.pending == []
         assert shell.session.tree(A)["k"] == 1  # not the stale 2
+
+
+# -- the Task 6 review's corrections ----------------------------------------
+
+WEIGHTED_TIP = "a weighted node has one weight per child; a child cannot be added alone"
+
+
+def _plus(user, path: str, within: str):
+    (plus,) = _inside(user, f"add:{path}", within)
+    return plus
+
+
+def _plus_tips(plus) -> list[str]:
+    return [e.text for e in plus.descendants() if isinstance(e, ui.tooltip)]
+
+
+async def test_the_grey_plus_follows_the_parents_kind(shell):
+    """`+` was decided when the cluster was built: a node edited from
+    weighted to and kept a grey `+` with the weighted reason, and the
+    reverse kept an enabled one whose Add was refused. The tree's rows
+    rebuild when a node's kind moves, and a criteria row's controls
+    rebuild when its PARENT's kind moves. Two ranges: a weighted node
+    refuses to sum a tube's higher-is-better score with a range's."""
+    _stage_tree(shell, A, {"combinator": "and", "children": [_range(-1), _range(5)]})
+    to_weighted = [
+        PatchOp(A, "replace", "/metrics/combinator", "weighted"),
+        PatchOp(A, "add", "/metrics/weights", [1.0, 1.0]),
+        PatchOp(A, "add", "/metrics/threshold", 0.5),
+    ]
+    to_and = [
+        PatchOp(A, "replace", "/metrics/combinator", "and"),
+        PatchOp(A, "remove", "/metrics/weights"),
+        PatchOp(A, "remove", "/metrics/threshold"),
+    ]
+    places = [
+        ("/metrics", "node:/metrics"),
+        (TUBE, f"node:{TUBE}"),
+        (TUBE, f"node:0:{TUBE}"),
+    ]
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        user.find(marker="tree:toggle").click()
+        await user.should_see(marker=f"tree-row:{TUBE}")
+        for path, within in places:
+            assert _plus(user, path, within).enabled, within
+        shell.session.apply(Patch(ops=to_weighted))
+        for path, within in places:
+            await _settled(lambda p=path, w=within: not _plus(user, p, w).enabled)
+            assert _plus_tips(_plus(user, path, within)) == [WEIGHTED_TIP], within
+        shell.session.apply(Patch(ops=to_and))
+        for path, within in places:
+            await _settled(lambda p=path, w=within: _plus(user, p, w).enabled)
+
+
+async def test_a_rows_error_goes_when_a_row_opens_or_closes(page_shell):
+    """A refused act's error stayed up after its form was reopened, and
+    after later edits in other rows: opening or closing any form row takes
+    it away."""
+    shell = page_shell
+    probe = _RowProbe()
+    # A leaf holds no children: the validator refuses the add by its path.
+    probe.stage = [
+        PatchOp(
+            A,
+            "add",
+            "/metrics/children/0/children/-",
+            {"metric": "tube", "variable": "x"},
+        )
+    ]
+    _only(probe)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        error = page.cards[0].rows[TUBE].host.errors["row-probe"]
+
+        async def refused() -> None:
+            _click_in(user, f"probe-act:{TUBE}", within=f"criterion:0:{TUBE}")
+            await _settled(lambda: error.visible)
+
+        await refused()
+        # Reopened on the same row: the error goes.
+        _click_in(user, f"probe-open:{TUBE}", within=f"criterion:0:{TUBE}")
+        await user.should_see(marker=f"form-row:crit:0:{TUBE}")
+        assert not error.visible
+        user.find(marker=f"probe-close:{TUBE}").click()
+        await _settled(lambda: page.form is None)
+        await refused()
+        # A row opened on ANOTHER criterion: the error goes too.
+        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
+        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
+        assert not error.visible
+        # And a row closing takes an error shown while it was open.
+        await refused()
+        user.find(marker=f"probe-close:{RANGE_X}").click()
+        await _settled(lambda: page.form is None)
+        assert not error.visible
+
+
+async def test_a_rows_error_sits_on_its_own_line_under_the_row(page_shell):
+    """In the row's own slot, not beside the icons: drawn in the host, a
+    long refusal widened the host and pushed its icons left of every other
+    row's."""
+    shell = page_shell
+    probe = _RowProbe()
+    probe.stage = [
+        PatchOp(
+            A,
+            "add",
+            "/metrics/children/0/children/-",
+            {"metric": "tube", "variable": "x"},
+        )
+    ]
+    _only(probe)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        row = page.cards[0].rows[TUBE]
+        _click_in(user, f"probe-act:{TUBE}", within=f"criterion:0:{TUBE}")
+        await _settled(lambda: row.host.errors["row-probe"].visible)
+        above = list(_ancestors(row.host.errors["row-probe"]))
+        assert row.slot in above and row.row not in above
+        # A rebuilt host takes its error with it.
+        with page.client:
+            row.host.build()
+        assert not [
+            e for e in row.slot.descendants() if isinstance(e, ui.label) and e.visible
+        ]

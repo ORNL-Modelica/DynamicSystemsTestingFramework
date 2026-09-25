@@ -27,7 +27,7 @@ from ...discovery.plots import ResolvedPlot
 from ...figures.plotly import _LABELS, Visibility
 from ..capabilities import Placement
 from ..session import Selection
-from ..tree_text import leaf_name, leaves_of
+from ..tree_text import leaf_name, leaves_of, parent_kinds
 from .actions import ActionBar, InlineHost, RowTarget
 from .figure_hook import FigureHook
 from .tree_card import leaf_readout, leaf_status
@@ -113,9 +113,12 @@ class CriterionRow:
     the CLI's readout, and that node's controls — whatever attaches at NODE.
     `paint` writes a new verdict into the row that is already there."""
 
-    def __init__(self, card: PlotCard, leaf: dict) -> None:
+    def __init__(self, card: PlotCard, leaf: dict, taker: str | None) -> None:
         index, path = card.index, str(leaf["path"])
         self.card, self.leaf = card, leaf
+        #: The parent's combinator the controls were built under: it takes
+        #: the child `+` adds, so a kind that moves rebuilds them (`paint`).
+        self.taker = taker
         self.path, self.variable = path, str(leaf.get("variable"))
         model, variable = card.page.model_id, self.variable
         self.row = ui.row().classes("dstf-crit items-center no-wrap gap-3 w-full")
@@ -336,10 +339,12 @@ class PlotCard:
             self.slot = ui.element("div").classes("dstf-plot-slot w-full")
             self.slot.props(f'data-plot="{index}"').mark(f"plot-slot:{index}")
             criteria = ui.column().classes("dstf-criteria w-full gap-0")
+            takers = parent_kinds(view)
             with criteria.mark(f"criteria:{index}"):
                 for variable in self.tracked:
                     for leaf in self._leaves(view, variable):
-                        self.rows[str(leaf["path"])] = CriterionRow(self, leaf)
+                        path = str(leaf["path"])
+                        self.rows[path] = CriterionRow(self, leaf, takers.get(path))
             only = [name for name in resolved.series if name not in known]
             if only:
                 verb = (
@@ -419,10 +424,19 @@ class PlotCard:
             )
             pill.set(status, text)
         self._paint_rows(view)
-        for row in self.rows.values():
-            # The row stands; what its node's controls MAY do does not (a
-            # job's lock comes and goes without the shape moving).
-            row.host.follow()
+        takers = parent_kinds(view)
+        for path, row in self.rows.items():
+            if takers.get(path) != row.taker:
+                # The row stands, but its parent changed kind — `+` grey
+                # under a warn or a weighted — and the controls read it
+                # when they are built (the Task 6 review): an edit from
+                # weighted to and left `+` grey with the weighted reason.
+                row.taker = takers.get(path)
+                row.host.build()
+            else:
+                # What its node's controls MAY do moves too (a job's lock
+                # comes and goes without the shape moving).
+                row.host.follow()
         if self.editor is not None:
             edited = self._edited_now(view)
             if edited != self._edited:

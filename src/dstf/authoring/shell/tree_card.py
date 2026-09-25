@@ -30,15 +30,23 @@ if TYPE_CHECKING:
 NAMED = 2  #: failures the closed line names; the rest are counted
 
 
-def shape_of(view: dict | None) -> tuple[tuple[str, str, str], ...]:
+def shape_of(view: dict | None) -> tuple[tuple[str, str, str, str], ...]:
     """What a row is drawn from and cannot be repainted through. The paths
     are what decides the rows — one per node, painted by its path — and the
     kind and the leaf's variable ride along harmlessly: a row is built for
     that node's selection and controls, so a row whose kind or variable
-    moved is one worth rebuilding anyway. The metric is NOT in it: a mode
-    switch repaints the row's name in place."""
+    moved is one worth rebuilding anyway. The combinator is in it because
+    the controls read it: `+` is grey under a warn or a weighted, and a
+    node edited from weighted to and kept a grey `+` with the weighted
+    reason (the Task 6 review). The metric is NOT in it: a mode switch
+    repaints the row's name in place."""
     return tuple(
-        (str(node.get("path")), str(node.get("kind")), str(node.get("variable")))
+        (
+            str(node.get("path")),
+            str(node.get("kind")),
+            str(node.get("variable")),
+            str(node.get("combinator")),
+        )
         for node in nodes_of(view)
     )
 
@@ -128,7 +136,7 @@ class TreeCard:
         self.root_pill: Pill | None = None
         self.hosts: list[InlineHost] = []
         self.painters: dict[str, _Row] = {}
-        self._shape: tuple[tuple[str, str, str], ...] = ()
+        self._shape: tuple[tuple[str, str, str, str], ...] = ()
         with ui.card().classes("dstf-card dstf-tree w-full gap-1").mark("tree"):
             self.line = ui.row().classes("dstf-tree-line items-center gap-3 w-full")
             self.rows = ui.column().classes("w-full gap-0").mark("tree:rows")

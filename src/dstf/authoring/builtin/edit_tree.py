@@ -38,7 +38,9 @@ _COMBINATOR_KEYS = ("k", "weights", "threshold", "direction")
 
 
 def _kind_fields(kind: str, inputs: dict[str, Any]) -> dict[str, Any]:
-    """The raw fields ``kind`` takes, from the panel's controls."""
+    """The raw fields ``kind`` takes, from the panel's controls. A weighted
+    node's threshold is never read as 0 when none was typed: 0 with `less`
+    always fails."""
     if kind == "k-of-n":
         return {"k": int(round(float(inputs["k"] or 0)))}
     if kind == "weighted":
@@ -49,12 +51,20 @@ def _kind_fields(kind: str, inputs: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(
                 f"weights: {text!r} is not a comma-separated list of numbers"
             ) from None
+        if not _typed(inputs["threshold"]):
+            raise ValueError(_NO_THRESHOLD)
         return {
             "weights": weights,
-            "threshold": float(inputs["threshold"] or 0.0),
+            "threshold": float(inputs["threshold"]),
             "direction": str(inputs.get("direction") or "less"),
         }
     return {}
+
+
+def _typed(value: Any) -> bool:
+    """Whether a number field holds a number: an emptied `ui.number` reads
+    None, an untouched one here too."""
+    return value is not None and value != ""
 
 
 #: What each Wrap does to the tree, one sentence per kind (the 2026-09-21
@@ -84,6 +94,12 @@ _NO_ADD = {
     "added alone",
 }
 _ROOT_UNWRAP = "the root has no parent to take its children"
+#: Why a weighted form's action is grey: its threshold starts EMPTY, not 0
+#: (0 with `less` always fails), and has to be typed.
+_NO_THRESHOLD = "enter a threshold"
+#: The direction a weighted node has when it names none (`tree_spec`); an
+#: Edit leaves it unwritten rather than stage the default.
+_DEFAULT_DIRECTION = "less"
 #: A weighted node's ``direction``, as the Direction select reads it.
 _DIRECTIONS = {"less": "lower is better", "greater": "higher is better"}
 
@@ -155,7 +171,7 @@ class EditTree:
                 mark=f"apply-add:{sel.variable}",
             )
 
-    def act(self, s: SessionView, **inputs: Any) -> Patch:
+    def act(self, s: SessionView, **inputs: Any) -> Patch | None:
         action, model_id, path = inputs["action"], inputs["model_id"], inputs["path"]
         if action == "remove":
             return Patch(ops=[PatchOp(model_id, "remove", path)])
@@ -210,43 +226,53 @@ class EditTree:
             value = {"combinator": kind, "children": [node], **fields}
             return Patch(ops=[PatchOp(model_id, op, path, value)])
         if action == "edit":
-            ops = [PatchOp(model_id, "replace", f"{path}/combinator", kind)]
+            # Only what moved: an Apply with nothing changed staged the
+            # kind and every field again, four ops for no edit. Nothing
+            # moved is None — the row has closed, and nothing is staged.
+            ops = []
+            if node.get("combinator") != kind:
+                ops.append(PatchOp(model_id, "replace", f"{path}/combinator", kind))
             for key, value in fields.items():
-                ops.append(
-                    PatchOp(
-                        model_id,
-                        "replace" if key in node else "add",
-                        f"{path}/{key}",
-                        value,
-                    )
-                )
+                if key in node:
+                    if node[key] != value:
+                        ops.append(PatchOp(model_id, "replace", f"{path}/{key}", value))
+                elif not (key == "direction" and value == _DEFAULT_DIRECTION):
+                    ops.append(PatchOp(model_id, "add", f"{path}/{key}", value))
             keeps = _KIND_KEYS.get(kind, ())
             ops += [
                 PatchOp(model_id, "remove", f"{path}/{key}")
                 for key in _COMBINATOR_KEYS
                 if key in node and key not in keeps
             ]
-            return Patch(ops=ops)
+            return Patch(ops=ops) if ops else None
         raise ValueError(f"unknown action {action!r}")
 
 
 def _combinator_fields(
-    ui: Any, node: dict | None, sentence: Callable[[str], str]
-) -> Callable[[], dict[str, Any]]:
+    ui: Any, node: dict | None, sentence: Callable[[str], str], children: int
+) -> tuple[Callable[[], dict[str, Any]], Callable[[Any], None]]:
     """The kind select and ONLY the chosen kind's fields (board 1B), in a
     column rebuilt on the select's change; a value typed for a kind is kept
     for when the user returns to it. Under them, ``sentence(kind)`` — what
-    the action does for that kind (`dstf-why`). The returned callable reads
-    them at apply time. ``node`` prefills them: the node's own kind and
-    fields for Edit, none for Wrap."""
+    the action does for that kind (`dstf-why`). ``node`` prefills them: the
+    node's own kind and fields for Edit, none for Wrap.
+
+    Returns the reader the action calls at apply time, and ``guard``: the
+    action button handed to it is grey, with `enter a threshold` as its
+    tooltip, while the kind is weighted and no threshold is typed. The
+    threshold starts EMPTY unless the node has one, and the weights start
+    as one 1 per child — ``children``, the node's count after the action
+    (1 for a wrap) — so an untouched weighted form stages what it shows:
+    before, it staged no weights and threshold 0, refused every time."""
     names = [c.name for c in combinators()]
     node = node or {}
     current = node.get("combinator")
+    weights = node.get("weights") or [1] * children
     values: dict[str, Any] = {
         "k": node.get("k") or 1,
-        "weights": ", ".join(str(w) for w in node.get("weights") or []),
-        "threshold": node.get("threshold") or 0.0,
-        "direction": node.get("direction") or "less",
+        "weights": ", ".join(str(w) for w in weights),
+        "threshold": node.get("threshold"),
+        "direction": node.get("direction") or _DEFAULT_DIRECTION,
     }
     kind = (
         ui.select(
@@ -257,9 +283,21 @@ def _combinator_fields(
     )
     fields = ui.column().classes("w-full gap-1")
     why = ui.label("").classes("dstf-why")
+    #: The action buttons `guard` was handed, each with its tooltip.
+    guarded: list[tuple[Any, Any]] = []
+
+    def gate() -> None:
+        waiting = kind.value == "weighted" and not _typed(values["threshold"])
+        for button, tip in guarded:
+            button.set_enabled(not waiting)
+            tip.set_visibility(waiting)
 
     def keep(key: str) -> Callable[[Any], None]:
-        return lambda e: values.__setitem__(key, e.value)
+        def kept(e: Any) -> None:
+            values[key] = e.value
+            gate()
+
+        return kept
 
     def rebuild() -> None:
         fields.clear()
@@ -288,10 +326,17 @@ def _combinator_fields(
                     on_change=keep("direction"),
                 ).props("dense").classes("w-full")
         why.set_text(sentence(str(kind.value)))
+        gate()
+
+    def guard(button: Any) -> None:
+        with button:
+            tip = ui.tooltip(_NO_THRESHOLD)
+        guarded.append((button, tip))
+        gate()
 
     kind.on_value_change(lambda _e: rebuild())
     rebuild()
-    return lambda: {"kind": kind.value, **values}
+    return (lambda: {"kind": kind.value, **values}), guard
 
 
 def _add_form(
@@ -323,7 +368,7 @@ def _add_form(
     var = (
         ui.select(
             {n: labels.get(n, n) for n in names} or {"": ""},
-            label="leaf variable",
+            label="Variable",
             value=variable if variable else (names[0] if names else ""),
         )
         .props("dense")
@@ -331,9 +376,7 @@ def _add_form(
         .mark(f"{mark}:variable")
     )
     met = (
-        ui.select(
-            [d.name for d in metrics()], label="leaf metric", value=DEFAULT_METRIC
-        )
+        ui.select([d.name for d in metrics()], label="Metric", value=DEFAULT_METRIC)
         .props("dense")
         .classes("w-full")
     )
@@ -469,8 +512,12 @@ def _cluster(
         if fresh() is None:
             return
         what = "node" if is_combinator else "criterion"
-        values = _combinator_fields(
-            ui, None, lambda kind: _WRAP_SENTENCES.get(kind, "").format(what=what)
+        # The wrapped node is the new combinator's one child.
+        values, guard = _combinator_fields(
+            ui,
+            None,
+            lambda kind: _WRAP_SENTENCES.get(kind, "").format(what=what),
+            children=1,
         )
 
         def apply() -> None:
@@ -479,15 +526,22 @@ def _cluster(
 
         with ui.row().classes("items-center gap-2"):
             _cancel(ui, close, path)
-            ui.button("Wrap", on_click=apply).props("dense no-caps").mark(
-                f"apply-wrap:{path}"
+            guard(
+                ui.button("Wrap", on_click=apply)
+                .props("dense no-caps")
+                .mark(f"apply-wrap:{path}")
             )
 
     def build_edit(close: Callable[[], None]) -> None:
         at_open = fresh()
         if at_open is None:
             return
-        values = _combinator_fields(ui, at_open, lambda _kind: _EDIT_SENTENCE)
+        values, guard = _combinator_fields(
+            ui,
+            at_open,
+            lambda _kind: _EDIT_SENTENCE,
+            children=len(at_open.get("children") or []),
+        )
 
         def apply() -> None:
             close()
@@ -510,8 +564,10 @@ def _cluster(
                 with unwrap_button:
                     ui.tooltip(_ROOT_UNWRAP)
             _cancel(ui, close, path)
-            ui.button("Apply", on_click=apply).props("dense no-caps").mark(
-                f"apply-edit:{path}"
+            guard(
+                ui.button("Apply", on_click=apply)
+                .props("dense no-caps")
+                .mark(f"apply-edit:{path}")
             )
 
     with ui.row().classes("dstf-node-controls items-center no-wrap gap-0"):
