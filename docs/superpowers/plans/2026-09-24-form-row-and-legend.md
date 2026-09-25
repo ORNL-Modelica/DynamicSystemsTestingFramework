@@ -159,6 +159,14 @@
      - Rewrap the 130-character docstring line in `edit_tree.py` and the 124-character line in `DESIGN.md`.
      - The roadmap's migration sentence reads "898 stored baselines and the spec (899 files)".
 
+21. **From item 20's review (ACCEPT-WITH-FIXES), the last batch:**
+   - **The report rescales an error axis on every change of series, as the tool does.** On the report, Abs → Signed after a zoom kept yaxis3 at [0.098, 0.181] while the signed data spans [−0.25, 0.25], hiding its negative half. Both ride yaxis3, which stays visible, so axes.js never autoranged it. Fix: axes.js sets `autorange: true` for an axis whenever the set of visible traces on it changes, not only when the axis becomes visible. A zoom made while the set stays the same is kept. Test on the report: zoom while Signed shows, switch to Abs, and the axis covers Abs's extent; then zoom and toggle an unrelated overlay, and the error axis keeps its zoom. Mutation: autorange only on show. Remove the ideas.md bullet about this (item 20's leftover), since it is now fixed.
+   - **y4 gets a browser read on the tool.** Add an NRMSE step to `test_an_error_axis_zoomed_while_hidden_scales_fresh_when_chosen`. Give that test's fixture a signed error that differs from abs, so a Signed step can tell the axes apart. Mutation: uirevision keyed on yaxis3 only (M4), which only the figure test caught before.
+   - **Docs:**
+     - `docs/architecture.md` (near "select change keeps the zoom") and D133 say a zoom survives a change of error series. It survives a redraw; a new series scales its axis fresh.
+     - The roadmap's D133 paragraph gives the Task 9 gate's result (item 20's numbers) instead of "not yet run".
+     - Rewrap the short line the `edit_tree.py` rewrap left.
+
 ## Conventions for every task
 
 The "Conventions for every task" block of `docs/superpowers/plans/2026-09-20-the-test-page.md` holds verbatim (gates and how to read them; red before green, shown; named mutations run in a `git archive` copy with an ABSOLUTE exported `PYTHONPATH`, `PYTHONDONTWRITEBYTECODE=1`, the module's `__file__` printed and ASSERTED under the archive first; commit by path with `-F <own msg file>`, never `--amend`, never `git stash` — not even inside a one-liner; never run `dstf` against `testing_output/` or a real work dir; done-checks are predicates; locate code by content; no internal record id in a tracked file; `docs/ideas.md` and `.soul/` untouched), and so do its "Corrections" items 2, 3, 6 and 8 where they still apply (the user simulation's rules; mypy/ruff idioms; the review harness; the NiceGUI facts). `docs/decisions.md` gains exactly one entry, D133, in Task 8. Additionally:
