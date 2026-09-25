@@ -15,6 +15,7 @@ from dstf.authoring.layout import (
     remove_series,
     reset_op,
     stranded,
+    stranded_sentence,
 )
 from dstf.authoring.spec_document import PatchOp
 from dstf.discovery.plots import PlotSpec, SeriesSpec, parse_plots
@@ -84,6 +85,19 @@ def test_stranded_names_the_scored_variables_a_change_takes_off_every_plot():
     # a scored variable no plot showed before is not this change's doing
     assert stranded(_l(["x"]), (), ["x", "q"]) == ["x"]
     assert plots_showing(before, "x") == (0, 1)
+
+
+def test_the_stranded_sentence_in_the_singular_and_the_plural():
+    """One sentence for Remove plot's tooltip and the drawer's grey row."""
+    assert stranded_sentence(["x"], 1) == (
+        "x is scored by 1 criterion and this is the only plot that shows it. "
+        "Add it to another plot first, or remove its criteria."
+    )
+    assert stranded_sentence(["x"], 2).startswith("x is scored by 2 criteria and")
+    assert stranded_sentence(["x", "y"], 2) == (
+        "x, y are scored by 2 criteria and this is the only plot that shows "
+        "them. Add them to another plot first, or remove their criteria."
+    )
 
 
 def test_the_op_is_add_without_a_plots_key_and_replace_with_one():

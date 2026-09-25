@@ -26,7 +26,7 @@ from ...comparison import registry
 from ...discovery.plots import ResolvedPlot
 from ...figures.plotly import _LABELS, Visibility
 from ..capabilities import Placement
-from ..layout import Layout, remove_plot, stranded
+from ..layout import Layout, remove_plot, stranded, stranded_sentence
 from ..session import Selection
 from ..tree_text import leaf_name, leaves_of, parent_kinds
 from .actions import ActionBar, InlineHost, RowTarget
@@ -433,14 +433,11 @@ class PlotCard:
             )
             if stuck:
                 button.disable()
-                n = sum(scored[v] for v in stuck)
-                texts = ", ".join(self.texts.get(v, v) for v in stuck)
-                verb = "is" if len(stuck) == 1 else "are"
-                criteria = "criterion" if n == 1 else "criteria"
                 ui.tooltip(
-                    f"{texts} {verb} scored by {n} {criteria} and this is the only "
-                    "plot that shows it. Add it to another plot first, or "
-                    "remove its criteria."
+                    stranded_sentence(
+                        [self.texts.get(v, v) for v in stuck],
+                        sum(scored[v] for v in stuck),
+                    )
                 )
 
     def _add_series(self) -> None:

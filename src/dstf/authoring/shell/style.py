@@ -184,7 +184,10 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
     + _SWATCHES
     # After the fills, so an outline wins over the colour it is drawn in.
     + ".dstf-swatch-off { background: transparent; }\n"
-    # After the tints: the current test's row in the Tests drawer read the
-    # fail tint, rgb(255,235,238), when this came first (the 3c review).
+    # Two classes: that alone beats the one-class status tints, whatever the
+    # order (as one class it tied with them and read the fail tint,
+    # rgb(255,235,238) — the 3c review). The order that matters is after
+    # `.dstf-row:hover`, which has the same specificity: last, the current
+    # row stays lit under the mouse.
     + ".dstf-row.dstf-row-current { background: var(--dstf-selection); }\n"
 )

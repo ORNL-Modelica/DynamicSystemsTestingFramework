@@ -88,6 +88,20 @@ def stranded(before: Layout, after: Layout, scored: Sequence[str]) -> list[str]:
     ]
 
 
+def stranded_sentence(texts: Sequence[str], criteria: int) -> str:
+    """Why a change is refused: ``texts`` are what the stranded variables
+    read as, ``criteria`` the criteria on them. ONE sentence for Remove
+    plot's tooltip and the Variables drawer's grey row, in the singular or
+    the plural."""
+    one = len(texts) == 1
+    return (
+        f"{', '.join(texts)} {'is' if one else 'are'} scored by {criteria} "
+        f"{'criterion' if criteria == 1 else 'criteria'} and this is the only "
+        f"plot that shows {'it' if one else 'them'}. Add {'it' if one else 'them'} "
+        f"to another plot first, or remove {'its' if one else 'their'} criteria."
+    )
+
+
 def layout_op(model_id: str, entry: dict | None, layout: Layout) -> PatchOp:
     """The ONE op a gesture stages: ``add`` when the effective entry has no
     ``plots`` key (or no entry: the op creates it), ``replace`` when it has."""

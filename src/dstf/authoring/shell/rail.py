@@ -46,7 +46,11 @@ class TestsDrawer:
         self._rebuild()
 
     def _rebuild(self) -> None:
+        """The rows from scratch, and the tab's filter APPLIED to them: a
+        drawer built on the next test's page showed the filter in its box
+        over every row until some event happened to apply it."""
         self.list.rebuild(self.page.shell.visible_tests(), grouped=True, short=True)
+        self._filter()
 
     def _open(self, model_id: str) -> None:
         ui.navigate.to(f"/test/{quote(model_id, safe='')}")

@@ -4196,21 +4196,70 @@ class TestRail:
                 m for m in shell.visible_tests() if not _none(user, "tests-drawer:" + m)
             ]
             assert shown == [D]
+            # The drawer's own filter: the Suite page's stays as it was.
+            assert _page(shell, user).state.needle == ""
 
     async def test_a_click_in_the_tests_drawer_opens_that_test_and_the_drawer_stays(
         self, shell
     ):
         async with user_simulation(root=shell.index) as user:
-            await _test_page(shell, user)
+            page = await _test_page(shell, user)
+            heard: list[str] = []
+            real = page.handle
+            page.handle = lambda e: (heard.append(e["event"]), real(e))
             shell.session.stage([LOOSEN])
             staged = list(shell.session.spec.pending)
             assert staged[-1] == LOOSEN
+            # The stage's events delivered HERE, to A's page: one arriving
+            # at D's page after it is built would apply the filter for it,
+            # and the test would pass by the tick's timing.
+            await _settled(lambda: "results" in heard)
             user.find(marker="rail:tests").click()
+            user.find(marker="tests-drawer:needle").type("D")
+            await _settled(lambda: _none(user, "tests-drawer:" + A))
             user.find(marker="tests-drawer:" + D).click()
             await user.should_see(D, marker="model", retries=20)
             await _settled(lambda: _page(shell, user).model_id == D)
             assert not _none(user, "drawer:tests")
             assert shell.session.spec.pending == staged
+            # The remembered filter is APPLIED on the new page, not only
+            # written into its box: the box read "D" over all five rows.
+            assert _one(user, "tests-drawer:needle").value == "D"
+            assert _none(user, "tests-drawer:" + A)
+            assert not _none(user, "tests-drawer:" + D)
+
+    async def test_a_rescore_repaints_the_drawers_row_in_place(self, shell):
+        """A `results` event reaches the Tests drawer through the rail and
+        repaints the model's pill and tint on the rows already there. A
+        comparison tolerance staged on D (nrmse 6e-4) fails it: the stage
+        emits `spec`, which paints nothing, then `results` for D."""
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            user.find(marker="rail:tests").click()
+            drawer = page.rail.tests
+            assert drawer is not None
+            rows = dict(drawer.list.rows)
+            assert rows[D].verdict == "PASS"
+            rebuilds = []
+            real = drawer.list.rebuild
+            drawer.list.rebuild = lambda *a, **kw: (rebuilds.append(1), real(*a, **kw))
+            shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
+            await _settled(lambda: drawer.list.rows[D].verdict == "FAIL")
+            row = drawer.list.rows[D]
+            assert row.badge.text == "FAIL"
+            assert "dstf-tint-fail" in row.container.classes
+            assert "dstf-tint-pass" not in row.container.classes
+            assert all(drawer.list.rows[m] is r for m, r in rows.items())
+            assert rebuilds == []
+
+
+def test_the_current_row_is_emitted_after_the_row_hover():
+    """`.dstf-row.dstf-row-current` and `.dstf-row:hover` weigh the same, so
+    the later one wins: the current test's row keeps its tint under the
+    mouse only while it comes after."""
+    from dstf.authoring.shell.style import STYLE
+
+    assert STYLE.index(".dstf-row.dstf-row-current") > STYLE.index(".dstf-row:hover")
 
 
 # -- 3c: the selected plot, Add series, Remove plot, Reset layout -------------
@@ -4306,6 +4355,20 @@ class TestLayoutControls:
             assert not _one(user, "remove-plot:1").enabled
             assert _tooltip_text(_one(user, "remove-plot:1:why")).startswith(
                 "y is scored by 1 criterion"
+            )
+
+    async def test_remove_plot_says_the_plural_for_several_stranded_variables(
+        self, shell
+    ):
+        shell.session.stage([PatchOp(A, "add", "/plots", [_plot("x", "y")])])
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            assert len(page.cards) == 1
+            assert not _one(user, "remove-plot:0").enabled
+            assert _tooltip_text(_one(user, "remove-plot:0:why")) == (
+                "x, y are scored by 2 criteria and this is the only plot that "
+                "shows them. Add them to another plot first, or remove their "
+                "criteria."
             )
 
     async def test_reset_layout_shows_while_the_entry_has_plots_and_stages_its_removal(

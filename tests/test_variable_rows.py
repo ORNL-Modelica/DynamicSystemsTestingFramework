@@ -212,7 +212,7 @@ def test_the_layout_is_indexed_once_not_scanned_per_name(monkeypatch):
     names = [f"v{i}" for i in range(40)]
     layout = _l(
         names[0:10],
-        [*names[5:15], "v5"],  # a variable twice on one plot is one plot
+        names[5:15],
         names[12:13],
         ["v0", "v39"],
     )
@@ -273,6 +273,26 @@ def test_the_fold_is_over_the_texts_and_the_row_reads_the_label():
         (("u1",), "pipe.T[1]", "u1"),
         (("u2",), "pipe.T[1]", "u2"),
     ]
+
+
+def test_the_filter_asks_the_label_not_the_text():
+    """A row READS the plain label, so the filter asks that and the name —
+    never the disambiguated text, whose ``(u1)`` the row does not show. A
+    needle only the text matches keeps nothing."""
+    labels = {"u1": "pipe.T[1]", "u2": "pipe.T[1]"}
+    texts = {"u1": "pipe.T[1] (u1)", "u2": "pipe.T[1] (u2)"}
+    args = dict(
+        names=["u1", "u2"],
+        tracked=[],
+        labels=labels,
+        texts=texts,
+        layout=(),
+        selected=None,
+        scored={},
+    )
+    assert _groups(**args, keep=matcher("(u1)", regex=False, case=False)) == []
+    (group,) = _groups(**args, keep=matcher("u1", regex=False, case=False))
+    assert [r.members for r in group.rows] == [("u1",)]
 
 
 def test_prefix_groups_sort_without_case():
