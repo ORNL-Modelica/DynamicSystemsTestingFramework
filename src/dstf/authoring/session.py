@@ -816,11 +816,13 @@ class Session:
         # remove after a replace is the remove. A remove after an ADD is
         # kept as two: when the member existed, the add replaced it, and
         # dropping both would leave it. A batch is never collapsed: its ops
-        # belong together.
+        # belong together. A replace at an append path (``/-``) names no
+        # member and is left for `effective` to refuse, never folded in.
         pending = list(self.spec.pending)
         if len(staged) == 1 and pending:
             new, last = staged[0], pending[-1]
-            if (new.model_id, new.path) == (last.model_id, last.path):
+            same = (new.model_id, new.path) == (last.model_id, last.path)
+            if same and not new.path.endswith("/-"):
                 if new.op == "replace" and last.op in ("add", "replace"):
                     pending.pop()
                     staged = [PatchOp(new.model_id, last.op, new.path, new.value)]

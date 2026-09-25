@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from dstf.authoring.layout import (
     add_series,
     current_layout,
@@ -45,6 +47,23 @@ def test_a_new_plot_goes_below_the_selected_one_and_says_where():
 
 def test_remove_plot():
     assert remove_plot(_l(["x"], ["y"]), 0) == _l(["y"])
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda layout: remove_plot(layout, -1),
+        lambda layout: remove_plot(layout, len(layout)),
+        lambda layout: add_series(layout, -1, ["z"]),
+        lambda layout: add_series(layout, len(layout), ["z"]),
+    ],
+    ids=["remove_plot-1", "remove_plot-len", "add_series-1", "add_series-len"],
+)
+def test_an_index_outside_the_layout_is_refused(edit):
+    """A negative index would count from the end and one past it would
+    append or do nothing: a gesture names a plot the page draws, or none."""
+    with pytest.raises(IndexError):
+        edit(_l(["x"], ["y"]))
 
 
 def test_stranded_names_the_scored_variables_a_change_takes_off_every_plot():

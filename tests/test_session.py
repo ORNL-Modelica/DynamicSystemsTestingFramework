@@ -23,7 +23,8 @@ from dstf.authoring.session import (
 )
 from dstf.authoring.spec_document import PatchOp
 from dstf.backends.types import TestResult, VariableResult
-from dstf.config import Config
+from dstf.config import Config, ConfigError
+from dstf.discovery.patch_apply import PatchError
 from dstf.discovery.plots import default_plots, parse_plots
 from dstf.discovery.spec_update import implicit_tree_op, materialize_implicit_metrics
 from dstf.discovery.test_registry import TestModel
@@ -2547,6 +2548,9 @@ class TestPlots:
         series the result lacks, which `plots` (what a page draws) drops."""
         s = self._open(tmp_path)
         assert s.layout(A) == default_plots(["x", "y"])
+        assert s.layout(B) == default_plots(
+            ["x", "y"]
+        )  # nothing scored: the result's names
         s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
         assert s.layout(A) == parse_plots(LAYOUT)
         s.discard()
@@ -2894,3 +2898,50 @@ class TestStageCollapses:
         # A's replace of its own /plots follows B's add: another model's op.
         session.stage([PatchOp(A, "replace", "/plots", L2)])
         assert len(session.spec.pending) == 3
+
+    def test_a_refused_stage_keeps_the_op_a_collapse_would_have_replaced(
+        self, tmp_path
+    ):
+        """The collapse pops the last pending op from a COPY: a stage the
+        Session refuses must leave the live op where it was."""
+        s = _session_with_plots(tmp_path, L1)
+        s.stage([PatchOp(A, "replace", "/plots", L2)])
+        before = list(s.spec.pending)
+        with pytest.raises(ConfigError):
+            s.stage([PatchOp(A, "replace", "/plots", [{"kind": "nope"}])])
+        assert s.spec.pending == before
+
+    def test_a_batch_is_not_collapsed_through_its_last_op(self, session):
+        session.stage([PatchOp(A, "add", "/plots", L1)])
+        session.stage(
+            [
+                PatchOp(A, "add", "/comparison/tolerance", 0.5),
+                PatchOp(A, "replace", "/plots", L2),
+            ]
+        )
+        assert len(session.spec.pending) == 3
+
+    def test_a_replace_at_an_append_path_is_not_collapsed(self, session):
+        """``/-`` names no member a replace could land on: the add appended
+        one, and the replace is refused rather than folded into the add."""
+        session.stage(
+            [
+                PatchOp(
+                    A,
+                    "add",
+                    "/metrics/children/-",
+                    {"metric": "nrmse", "variable": "x"},
+                )
+            ]
+        )
+        with pytest.raises(PatchError):
+            session.stage(
+                [
+                    PatchOp(
+                        A,
+                        "replace",
+                        "/metrics/children/-",
+                        {"metric": "nrmse", "variable": "x"},
+                    )
+                ]
+            )

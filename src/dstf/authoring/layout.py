@@ -22,6 +22,8 @@ def current_layout(plots: Sequence[PlotSpec] | None, tracked: Sequence[str]) -> 
 
 
 def _with(layout: Layout, index: int, plot: PlotSpec) -> Layout:
+    if not 0 <= index < len(layout):
+        raise IndexError(index)
     return layout[:index] + (plot,) + layout[index + 1 :]
 
 
@@ -55,6 +57,11 @@ def new_plot(
 
 
 def remove_plot(layout: Layout, index: int) -> Layout:
+    """Plot ``index`` gone. An index outside the layout is refused, as
+    `Session.plot_figure` refuses it: a slice would count a negative one
+    from the end, or quietly change nothing."""
+    if not 0 <= index < len(layout):
+        raise IndexError(index)
     return layout[:index] + layout[index + 1 :]
 
 
