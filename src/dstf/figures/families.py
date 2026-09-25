@@ -39,8 +39,9 @@ _QUOTED_ID = re.compile(r"'[^']*'")
 #: in an array, however many dimensions. Collapsed before `_PLAIN_NAME`, so
 #: an expression that indexes a port two-dimensionally is still a plain name
 #: (`massPorts[4, 1].C[1]`). A slice (`[6, :]`) is not one: it stays and
-#: refuses the name.
-_INT_INDEX = re.compile(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]")
+#: refuses the name. No space just inside the brackets, as `_LAST_INDEX`
+#: allows none: otherwise `x[1].C[ 2 ]` folded on its FIRST index.
+_INT_INDEX = re.compile(r"\[\d+(?:\s*,\s*\d+)*\]")
 #: ``der(...)``, and only that: a derivative IS an element of the array it
 #: differentiates. Any OTHER call is a reduction over the array — ``sum(...)``
 #: of two different slices is two quantities, not two elements of one.

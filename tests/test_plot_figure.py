@@ -550,6 +550,7 @@ def test_an_expression_may_index_with_an_integer_list_before_its_last_index():
     )
     assert family_of("a[1, :].b[2]", expression=True) is None
     assert family_of("sum(core.Qs[6, :])", expression=True) is None
+    assert family_of("x[1].C[ 2 ]", expression=True) is None
     labels = {N1: "p.m[4, 1].C[1]", N2: "p.m[4, 1].C[2]"}
     (key, members) = group_families([N1, N2], labels)[0]
     assert members == [N1, N2]
