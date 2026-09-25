@@ -1200,3 +1200,62 @@ def test_a_form_row_scrolls_into_view_and_a_weighted_wrap_waits_for_a_threshold(
         expect(page.locator(".dstf-header-row")).to_contain_text(
             "1 pending edit", timeout=EXPECT_TIMEOUT
         )
+
+
+# -- the page as one piece: the legend holds the signals, above the plot ---
+
+#: Plot 0's legend: the names of its entries, from the figure Plotly holds
+#: and from the SVG it drew, and the legend's box against the plot area's
+#: top (`_size.t` below the plot's own top).
+READ_LEGEND = """
+() => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const fl = gd._fullLayout, rect = gd.getBoundingClientRect();
+  const legend = gd.querySelector('.infolayer .legend');
+  const box = legend ? legend.getBoundingClientRect() : null;
+  return {
+    listed: gd._fullData
+      .filter(t => t.showlegend !== false && t.visible !== false)
+      .map(t => t.name),
+    drawn: Array.from(gd.querySelectorAll('.legend .legendtext'))
+      .map(e => e.textContent),
+    bottom: box ? box.bottom : null,
+    plotTop: rect.top + fl._size.t,
+  };
+}
+"""
+
+
+def test_the_legend_holds_signals_and_sits_above(tmp_path, playwright_browser):
+    """Legend b, in Chromium: plot 0's legend lists the signals and nothing
+    else — the failing tube draws by default, range · x's swatch is on and
+    an error series is chosen, and not one of their names is in it — and
+    its box ends at or above the plot area's top. A real mouse reads the
+    hover box: the actual's line renders its label (never a template's
+    `%{...}`) with its digits trimmed (`.4~g`: 0.625, where `.4g` printed
+    0.6250)."""
+    with _served(tmp_path, playwright_browser) as page:
+        page.wait_for_timeout(700)
+        _swatch(page, 0, "range · x").click()
+        page.wait_for_function(
+            "() => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
+            ".shapes || []).filter(s => s.visible && s.name.startsWith("
+            f"'{RANGE_X}/')).length === 2",
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.evaluate("() => window.scrollTo(0, 0)")
+        _choose_error(page, "Abs error", "yaxis3")
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.wait_for_timeout(300)
+        legend = page.evaluate(READ_LEGEND)
+        assert legend["listed"] == ["Actual", "Reference"], legend
+        assert legend["drawn"] == ["Actual", "Reference"], legend
+        assert legend["bottom"] is not None, legend
+        assert legend["bottom"] <= legend["plotTop"] + 0.5, legend
+
+        page.mouse.move(5, 5)
+        texts = _hover_at(page, 0.5)
+        assert texts, "no hover box under the mouse"
+        assert not any("%{" in line for line in texts), texts
+        assert "Actual : 0.625" in texts, texts
+        assert "Reference : 0.5" in texts, texts
