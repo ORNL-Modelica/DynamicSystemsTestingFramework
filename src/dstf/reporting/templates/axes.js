@@ -12,7 +12,7 @@
 // (dstf.figures.plotly.Visibility), so nothing in its page toggles a
 // trace behind the server's back. It computes nothing about the data —
 // it reads `visible` flags and writes `visible` flags — on a restyle
-// (the select, a legend click) and after a react.
+// (the select, a legend click).
 (function () {
   function anyVisibleOn(gd, axisId) {
     return (gd.data || []).some(function (t) {
@@ -32,46 +32,13 @@
     if (Object.keys(update).length) Plotly.relayout(gd, update);
   }
 
-  function isWired(gd) {
-    // Plotly.newPlot on an already-plotted node purges it, which removes
-    // every listener (plotly.min.js 2.35.0: Plots.purge ends in
-    // removeAllListeners) while the node object — and any flag on it —
-    // survives; so ask the emitter whether OUR handler is registered. Not
-    // "any listener": NiceGUI's plotly element registers its own
-    // plotly_restyle forwarder after every newPlot, before this script's
-    // observer runs (the authoring tool's page, when it loaded this
-    // script).
-    var follow = gd._dstfFollow;
-    return !!(follow && gd._ev && typeof gd._ev.listeners === 'function' &&
-              gd._ev.listeners('plotly_restyle').indexOf(follow) !== -1);
-  }
-
+  // report.js calls this once per plot, right after its one newPlot of
+  // that node; the report never reacts or re-plots.
   function dstfWireSecondaryAxes(gd) {
-    if (!gd || typeof gd.on !== 'function' || isWired(gd)) return;
-    var follow = function () { dstfFollowSecondaryAxes(gd); };
-    gd._dstfFollow = follow;
-    gd.on('plotly_restyle', follow);
-    // Plotly.react (NiceGUI's update_figure, which the authoring tool
-    // called when it loaded this script) replaces the layout with the
-    // server's — every secondary axis hidden — while uirevision keeps a
-    // legend-shown trace visible, and fires no restyle. The report never
-    // reacts.
-    gd.on('plotly_react', follow);
+    if (!gd || typeof gd.on !== 'function') return;
+    gd.on('plotly_restyle', function () { dstfFollowSecondaryAxes(gd); });
     dstfFollowSecondaryAxes(gd);
   }
-
-  // A plot created after the page is built, or re-plotted on the same
-  // node (NiceGUI's element calls newPlot when the figure's config
-  // changes, react otherwise — the authoring tool's page, when it loaded
-  // this script), is wired when Plotly adds its class; a node that is not
-  // yet a plot has no `on` and is skipped until then. report.js wires its
-  // own plots as it draws them.
-  var observer = new MutationObserver(function () {
-    document.querySelectorAll('.js-plotly-plot').forEach(dstfWireSecondaryAxes);
-  });
-  observer.observe(document.documentElement, {
-    childList: true, subtree: true, attributes: true, attributeFilter: ['class'],
-  });
 
   window.dstfFollowSecondaryAxes = dstfFollowSecondaryAxes;
   window.dstfWireSecondaryAxes = dstfWireSecondaryAxes;

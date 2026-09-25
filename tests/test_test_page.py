@@ -455,6 +455,27 @@ async def test_an_action_bars_dialog_closes_only_for_an_act_that_applied(shell):
         await _settled(lambda: bars[0].dialog.value is False)
 
 
+async def test_an_action_bars_dialog_stays_open_on_a_refused_act(shell):
+    """A raising act changed nothing: the dialog stays open with the error
+    above its panel and what was chosen in it, so the person can correct
+    it there. Once the act goes through, the dialog closes."""
+    probe = _Probe("one", {Placement.VARIABLE}, raises="no", outcome=OUTCOME)
+    _only(probe)
+    bars, root = _barred(shell, None)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        user.find(marker="action:one").click()
+        await user.should_see(marker="probe:one")
+        user.find(marker="go:one").click()
+        await _settled(lambda: _one(user, "error:one").visible)
+        assert _one(user, "error:one").text == "ValueError: no"
+        await asyncio.sleep(0.1)
+        assert bars[0].dialog.value is True
+        probe.raises = None
+        user.find(marker="go:one").click()
+        await _settled(lambda: bars[0].dialog.value is False)
+
+
 async def test_an_action_bar_hands_its_figure_to_the_dialog_panel(shell):
     probe = _Probe("one", {Placement.VARIABLE}, subscribe=True)
     _only(probe)
@@ -4065,9 +4086,9 @@ def _errors_under(user, row) -> list[str]:
 async def test_a_refused_wrap_keeps_its_row_and_what_was_typed(page_shell):
     """A form closes on SUCCESS: it closed before it submitted, so a refused
     Wrap took the typed weights with it and the refusal showed under a row
-    with no form. Now the row stays open with what was typed and the
-    refusal under it, as the criterion editor does; typed right, the Wrap
-    stages and the row goes."""
+    with no form. Now the row stays open with what was typed, and the
+    refusal shows under the node's row, above the form, as the criterion
+    editor does; typed right, the Wrap stages and the row goes."""
     shell = page_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, A)

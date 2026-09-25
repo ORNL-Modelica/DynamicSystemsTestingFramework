@@ -160,7 +160,8 @@ class Panel(Protocol):
         inline one, in the dialog of a placement that is a button. Returns
         whether it went through: ``False`` when ``act`` or the apply
         raised. A form row closes on ``True`` and only then — refused, it
-        stays open with what was typed and the refusal shows under it."""
+        stays open with what was typed, and the refusal shows under the
+        node's row, above the form."""
         ...
 
     def row(self, title: str, build: Callable[[Callable[[], None]], None]) -> None:

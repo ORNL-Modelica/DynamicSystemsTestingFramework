@@ -217,20 +217,22 @@ is one plot per tracked variable. Users add and remove plots, add series to a
 plot, or separate them. A plot has a `kind`; only the time plot exists now,
 and profile, x-y, heat-map and 3-D kinds are reserved on the same model. A tracked variable's criteria rows follow it onto
 whichever plot shows it; a plot-only series has no criteria until it is
-tracked. Legend at top-left inside the plot, as today. Secondary axes appear
-only while a series on them is visible; a second unit family on one plot gets
-one. A plot of several series shows no overlays and no error traces — both
+tracked. The legend sits above the plot area and holds the signals: actual,
+reference and any overlays. Secondary axes appear only while a series on them
+is visible; a second unit family on one plot gets one. A plot of several series shows no overlays and no error traces — both
 belong to a plot of one variable — and says so where it greys them.
 
-*As built:* a plot's toolbar is **Focus** alone — `Showing 1 of N plots:
-<name> — Show all N plots` on the accent tint above it, the focused plot's
-own button reading "Focused". The overlays and the error traces are already in
-the figure as hidden traces and the legend is what toggles them, so neither
-gets a control of its own. The wheel scrolls the page, never the plot: plots
-are stacked full-width, and a plot that ate the wheel stopped the page dead
-(the report, one figure to a page, keeps wheel zoom). Series chips, "Set
-window" and Remove plot are scheduled — "Set window" with the rest of the
-gesture work, the plot-layout controls with the Variables drawer.
+*As built:* a plot's toolbar is the **Error** select, where the plot draws one
+series, and **Focus** — `Showing 1 of N plots: <name> — Show all N plots` on
+the accent tint above it, the focused plot's own button reading "Focused". The
+error series is chosen by the select, one at a time, with its axis; a
+criterion's drawing is shown or hidden by the swatch on its criteria row; the
+overlays are in the figure as hidden traces, and the legend toggles them. The
+wheel scrolls the page, never the plot: plots are stacked full-width, and a
+plot that ate the wheel stopped the page dead (the report, one figure to a
+page, keeps wheel zoom). Series chips, "Set window" and Remove plot are
+scheduled — "Set window" with the rest of the gesture work, the plot-layout
+controls with the Variables drawer.
 
 **Icons.** Material Icons in the tool (Quasar ships them). In mockups, inline
 stroke SVG on a 16px grid. Never emoji.

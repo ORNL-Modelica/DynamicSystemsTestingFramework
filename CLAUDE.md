@@ -105,7 +105,7 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # +/wrap/− on every tree node and edit on a combinator, each form opening as a row under its node,
 # "Add a criterion for x" under its plot, Focus to show one plot alone. A plot's legend holds its
 # signals, above the plot; a swatch on each criteria row shows or hides that criterion's drawing;
-# one Error select per plot picks the error series shown.
+# one Error select per plot that draws one series picks the error series shown.
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs

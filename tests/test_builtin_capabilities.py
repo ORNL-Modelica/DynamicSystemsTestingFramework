@@ -1728,3 +1728,66 @@ async def test_a_refused_form_keeps_its_row_and_what_was_typed(session):
         assert not _none(user, "host-row:title")
         assert weights.value == "1"
         assert session.tree(D)["children"][1]["combinator"] == "k-of-n"
+
+
+async def test_a_refused_add_keeps_its_row_and_what_was_chosen(session):
+    """An Add row opened under an inner `and`; the node is staged to `warn`
+    elsewhere while the row is open, and a `warn` takes one child, so the
+    Add is refused. The row stays with what was chosen and nothing is
+    revealed; an Add that closed its row before it submitted took both."""
+    inner = "/metrics/children/0"
+    tree = copy.deepcopy(NESTED)
+    tree["children"][0] = {
+        "combinator": "and",
+        "children": [{"metric": "nrmse", "variable": "x"}],
+    }
+    session.stage([PatchOp(D, "add", ROOT, tree)])
+    reveals: list[str] = []
+    async with host(session, EditTree(), _node(D, inner), reveals) as (
+        user,
+        errors,
+        _f,
+    ):
+        user.find(marker=f"add:{inner}").click()
+        await user.should_see(marker=f"apply-add:{inner}")
+        (metric,) = _labelled(user, ui.select, "Metric")
+        metric.set_value("range")
+        session.stage([PatchOp(D, "replace", f"{inner}/combinator", "warn")])
+        staged = len(session.spec.pending)
+        user.find(marker=f"apply-add:{inner}").click()
+        await _settled(lambda: "edit-tree" in errors)
+        assert "'warn' combinator requires exactly 1 child" in errors["edit-tree"]
+        assert not _none(user, "host-row:title")
+        assert metric.value == "range"
+        assert len(session.spec.pending) == staged and reveals == []
+        assert len(session.tree(D)["children"][0]["children"]) == 1
+
+
+async def test_a_refused_unwrap_keeps_the_edit_row(session):
+    """Unwrap of a `k-of-n` of two under a `warn`: its two children would
+    take its place, and a `warn` takes one, so the validator refuses it.
+    The Edit row stays open with what was typed in it; an Unwrap that
+    closed the row before it submitted took both."""
+    tree = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {"combinator": "warn", "children": [copy.deepcopy(NESTED["children"][1])]},
+        ],
+    }
+    session.stage([PatchOp(D, "add", ROOT, tree)])
+    k_of_n = "/metrics/children/1/children/0"
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _f):
+        user.find(marker=f"edit:{k_of_n}").click()
+        await user.should_see(marker=f"unwrap-in-edit:{k_of_n}")
+        (k,) = _labelled(user, ui.number, K)
+        k.set_value(1)
+        staged = len(session.spec.pending)
+        user.find(marker=f"unwrap-in-edit:{k_of_n}").click()
+        await _settled(lambda: "edit-tree" in errors)
+        assert "'warn' combinator requires exactly 1 child" in errors["edit-tree"]
+        assert not _none(user, "host-row:title")
+        assert not _none(user, f"unwrap-in-edit:{k_of_n}")
+        assert k.value == 1
+        assert len(session.spec.pending) == staged
+        assert session.tree(D)["children"][1]["children"][0]["combinator"] == "k-of-n"

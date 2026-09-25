@@ -40,7 +40,6 @@ def page_path(tmp_path_factory) -> Path:
         f"<script>{axes_js}</script></head><body>"
         "<div id='p' style='width:900px;height:350px'></div>"
         f"<script>const FIG={json.dumps(fig)};"
-        "const FIG0=JSON.parse(JSON.stringify(FIG));"
         "Plotly.newPlot('p', FIG.data, FIG.layout, FIG.config);"
         "dstfWireSecondaryAxes(document.getElementById('p'));</script>"
         "</body></html>",
@@ -109,9 +108,9 @@ def test_a_restyle_shows_exactly_the_axis_of_the_shown_series(
 
 
 def test_a_legend_click_drives_the_axis_too(playwright_browser, page_path):
-    """The tool has no select: its only toggle is the legend, a client-side
-    restyle the server never sees. Plotly's legend entries are SVG text
-    over a `.legendtoggle` rect that takes the pointer."""
+    """The report's other toggle is the legend: a legend click is a
+    client-side restyle no script of the page makes. Plotly's legend entries
+    are SVG text over a `.legendtoggle` rect that takes the pointer."""
     page, errors = _open(playwright_browser, page_path)
     _toggle_nrmse_in_legend(page, True)
     after_show = page.evaluate(PROBE)
@@ -123,75 +122,3 @@ def test_a_legend_click_drives_the_axis_too(playwright_browser, page_path):
     assert (after_show["y3"], after_show["y4"]) == (False, True)
     assert after_hide["traces"]["error/nrmse"] == "legendonly"
     assert (after_hide["y3"], after_hide["y4"]) == (False, False)
-
-
-def test_the_axis_still_follows_after_a_re_plot_of_the_same_node(
-    playwright_browser, page_path
-):
-    """Plotly.newPlot on a plotted node purges its listeners but keeps the
-    node, so a wired-flag on the node would skip the re-wire; the emitter's
-    listener list, asked for OUR handler, does not."""
-    page, errors = _open(playwright_browser, page_path)
-    page.evaluate(
-        """() => { Plotly.newPlot('p', FIG.data, FIG.layout, FIG.config);
-           dstfWireSecondaryAxes(document.getElementById('p')); }"""
-    )
-    page.wait_for_timeout(200)
-    _toggle_nrmse_in_legend(page, True)
-    after_show = page.evaluate(PROBE)
-    page.close()
-    assert errors == []
-    assert after_show["traces"]["error/nrmse"] is True
-    assert (after_show["y3"], after_show["y4"]) == (False, True)
-
-
-def test_a_foreign_restyle_listener_registered_first_does_not_count_as_wired(
-    playwright_browser, page_path
-):
-    """The tool's page: NiceGUI's plotly element registers its own
-    plotly_restyle forwarder on every newPlot, before this script's observer
-    runs. A wired check that COUNTS listeners sees one and never wires, and
-    the axes never follow a legend click in the tool. The check must ask for
-    this script's own handler — and wiring twice must not add it twice."""
-    page, errors = _open(playwright_browser, page_path)
-    page.evaluate(
-        """() => { const el = document.getElementById('p');
-           Plotly.newPlot('p', FIG.data, FIG.layout, FIG.config);  // purges ours
-           el.on('plotly_restyle', function () {});               // foreign, first
-           dstfWireSecondaryAxes(el);
-           dstfWireSecondaryAxes(el); }"""
-    )
-    page.wait_for_timeout(200)
-    count = page.evaluate(
-        "() => document.getElementById('p')._ev.listenerCount('plotly_restyle')"
-    )
-    _toggle_nrmse_in_legend(page, True)
-    after_show = page.evaluate(PROBE)
-    page.close()
-    assert errors == []
-    assert count == 2  # the foreign one and ours, once
-    assert after_show["traces"]["error/nrmse"] is True
-    assert (after_show["y3"], after_show["y4"]) == (False, True)
-
-
-def test_the_axis_survives_a_react_that_keeps_the_legend_state(
-    playwright_browser, page_path
-):
-    """Plotly.react with the figure the server holds — every secondary axis
-    hidden — is what the tool's update_figure and a drag's snap-back do.
-    `uirevision: "keep"` keeps the legend-shown trace visible, but the axis
-    flag the follow set lives in the layout and is replaced; react fires no
-    plotly_restyle. The follow must also run on plotly_react."""
-    page, errors = _open(playwright_browser, page_path)
-    _toggle_nrmse_in_legend(page, True)
-    assert page.evaluate(PROBE)["y4"] is True
-    page.evaluate(
-        """() => Plotly.react('p', JSON.parse(JSON.stringify(FIG0.data)),
-                              JSON.parse(JSON.stringify(FIG0.layout)), FIG0.config)"""
-    )
-    page.wait_for_timeout(200)
-    after_react = page.evaluate(PROBE)
-    page.close()
-    assert errors == []
-    assert after_react["traces"]["error/nrmse"] is True  # uirevision kept it
-    assert (after_react["y3"], after_react["y4"]) == (False, True)

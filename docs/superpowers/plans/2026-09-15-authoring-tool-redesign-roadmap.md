@@ -310,25 +310,27 @@ wrote in `x={...}` is the variable's expression: stored beside the name in the
 reference JSON, read as its label on both tiers and soft-checked on every
 compare, and the key of nothing. That is what gives the tests whose variables
 used to be relabelled `x[N]` an editable tree. `dstf migrate-variable-names`
-rewrote the stored baselines and the spec keys, and it has been run on the
-owner's library; it is deleted at the v1.0 tag. A companion records which of
-its variables draw on which of the test's (`companion add --map`).
+rewrites the stored baselines and the spec keys. The owner ran it on
+2026-09-22 over TRANSFORM-UnitTests' 899 reference files, and committing them
+there is the owner's; the command is deleted at the v1.0 tag. A companion
+records which of its variables draw on which of the test's (`companion add
+--map`).
 
 **Form row + legend BUILT (2026-09-24 to 2026-09-25; D133)**, task by task on
 `v1.0-prep` from the plan `2026-09-24-form-row-and-legend.md` (631052f), each
 review's corrections folded into the next run. A node's add / wrap / edit
 forms open as a row under its tree row or criteria row, one kind's fields, a
 sentence and Cancel, with Unwrap inside Edit; one thing is open at a time on
-the page, form or editor, and after an Add the new criterion's editor opens.
-A capability reaches that through `Panel.row` and `Panel.reveal`. A plot's
+the page, form or editor, and after an Add the new criterion's editor opens. A
+capability reaches that through `Panel.row` and `Panel.reveal`. A plot's
 legend in the tool holds its signals, above the plot area on both tiers. Each
 criterion's drawing is toggled by a swatch on its row, defaulting to its
 metric's `drawn_by_default`, drawn while failing and always while open. The
-error series are one select per plot. Plotly's toolbar stands vertical in a
-gutter outside the figure on both tiers; y axes read short automatic labels
-and hovers `.4~g`. The tool no longer needs `axes.js`: its figure says which
-error axis is visible. Its gate over a copy of the owner's library is the
-plan's Task 9, not yet run when this was written.
+error series are one select per plot that draws one series. Plotly's toolbar
+stands vertical in a gutter outside the figure on both tiers; y axes read
+short automatic labels and hovers `.4~g`. The tool no longer needs `axes.js`:
+its figure says which error axis is visible. Its gate over a copy of the
+owner's library is the plan's Task 9, not yet run when this was written.
 
 **Settles.** The `plots` schema and its validation; the series model
 (`{"var": ...}` now, expression and unit later); how the report renders a

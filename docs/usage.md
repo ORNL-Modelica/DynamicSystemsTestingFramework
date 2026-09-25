@@ -760,8 +760,9 @@ criterion draws. The open criterion always draws, since the plot is its
 editing surface, and its swatch is locked while its editor is open. A failing
 criterion's swatch hides it like any other: the failure still shows on the
 row's pill, the card's, the closed tree line, the header and the Suite page.
-The error series are one select on the plot's toolbar — No error, or one of
-the signed, absolute and per-point NRMSE series, each on its labelled axis.
+The error series are one Error select per plot that draws one series, on the
+plot's toolbar — No error, or one of the signed, absolute and per-point NRMSE
+series, each on its labelled axis.
 Plotly's own toolbar stands vertically in a gutter right of the plot, clear of
 that axis's labels.
 

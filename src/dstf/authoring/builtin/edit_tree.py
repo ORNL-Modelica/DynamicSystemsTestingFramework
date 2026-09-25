@@ -440,12 +440,11 @@ def _cluster(
 
     A form is built on its icon's CLICK, from the tree as it is then, and
     cleared on Cancel, on an action that went through (a refused one keeps
-    the row and what was typed, with the refusal under it), or when the
-    page closes the row; the
-    page rebuilds an open one when an edit staged elsewhere moves its node
-    (`Panel.row`'s contract), so a form never shows a value the node no
-    longer has — a combinator edited and then Discarded reopened on its old
-    ``k``. Nothing but the icons exists until then: a cluster whose three
+    the row and what was typed, with the refusal under the node's row,
+    above the form), or when the page closes the row; the page rebuilds an
+    open one when an edit staged elsewhere moves its node (`Panel.row`'s
+    contract), so a form never shows a value the node no longer has — a
+    combinator edited and then Discarded reopened on its old ``k``. Nothing but the icons exists until then: a cluster whose three
     forms were built with it was ~28 elements, and a tree row holds one per
     node — 40 leaves made a 2387-element page with the tree open, and every
     sync re-sent them. The title is read inside the click too: a

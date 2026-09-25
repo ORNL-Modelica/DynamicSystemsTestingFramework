@@ -4525,22 +4525,21 @@ tag could never remove.
 ## D133 — A node's forms open as a row under it; a plot's legend holds its signals (2026-09-24)
 
 **Context.** The owner's board of 2026-09-21 ruled two things about the Test
-page (D131) after using it: Edit tree's add / wrap / edit forms opened in a
-`ui.menu` over the node's row, covering the rows around it; and a plot's
-legend listed every criterion's drawing and all three error series beside the
-signals, inside the plot area, on top of the trace's start and of the rings an
-author drags.
+page (D131): Edit tree's add / wrap / edit forms opened in a `ui.menu` over
+the node's row, covering the rows around it; and a plot's legend listed every
+criterion's drawing and all three error series beside the signals, inside the
+plot area, on top of the trace's start and of the rings an author drags.
 
 **The form row.** A node's forms open as a ROW below the node's row — a tree
 row or a criteria row — indented like the criterion editor, with its rule; the
 node's row stays lit, and the form's title names the node the way its row reads
-(`authoring/tree_text.py`, shared by the rows and the titles). A form shows only
-the chosen combinator kind's fields, one sentence saying what the action does to
-the tree, and Cancel beside the action; Unwrap lives inside Edit. One thing is
-open at a time on the page: a form replaces the open criterion editor, the
-editor replaces a form, and a click on a criteria row closes a form open under
-it and opens nothing. The page owns that rule (`TestPage.open_row`), and a
-capability reaches it through two methods the `Panel` contract gains:
+(`authoring/tree_text.py`, shared by the rows and the titles). A form shows
+only the chosen combinator kind's fields, one sentence saying what the action
+does to the tree, and Cancel beside the action; Unwrap lives inside Edit. One
+thing is open at a time on the page: a form replaces the open criterion editor,
+the editor replaces a form, and a click on a criteria row closes a form open
+under it and opens nothing. The page owns that rule (`TestPage.open_row`), and
+a capability reaches it through two methods the `Panel` contract gains:
 `row(title, build)` and `reveal(leaf_path)` — after an Add, the new criterion's
 editor opens under its plot. A form is built when its icon is clicked, from the
 tree as it is then, and rebuilt when an edit staged elsewhere moves its node —
@@ -4548,11 +4547,11 @@ the criterion editor's rule applied to a node — so it never shows a value the
 node no longer has; it closes with its host, when its row is hidden, and when
 its node is gone. `Panel.submit` returns whether the act went through, and a
 form closes on that and only then: a refused Wrap, Add or Edit keeps its row
-open with what was typed, and the refusal shows under the node's row. That
-error belongs to its row: it goes when THAT row's form opens or closes or its
-host rebuilds, and another row's form leaves it alone. Two rulings of
-2026-09-25 complete it: a row that opens below the fold scrolls just far
-enough to show itself (`scrollIntoView({block: "nearest"})`), and a row
+open with what was typed, and the refusal shows under the node's row, above the
+form. That error belongs to its row: it goes when THAT row's form opens or
+closes or its host rebuilds, and another row's form leaves it alone. Two
+rulings of 2026-09-25 complete it: a row that opens below the fold scrolls just
+far enough to show itself (`scrollIntoView({block: "nearest"})`), and a row
 already in view does not move the page; and a weighted form's threshold starts
 empty, its action grey with `enter a threshold` until one is typed, because
 threshold 0 with `less` always fails, while its weights start as one `1` per
@@ -4571,14 +4570,14 @@ changes it.
 **Legend b.** In the tool, a plot's legend holds its SIGNALS — actual,
 reference, overlays — and nothing else. Each criterion's drawing is shown and
 hidden by a swatch on its criteria row, and the three error series are one
-select on the card's toolbar. `figures/plotly.py` takes a
-`Visibility(hidden, error)`: with one (the tool), every leaf trace and every
-error trace is out of the legend, a hidden leaf's traces and shapes are
-`visible: false`, and only the chosen error series shows, with its axis. A
-hidden shape stays in `layout.shapes`, so shape indices do not move and the
-figure hook still resolves a dragged ring by its index. The card keeps the
-choices, and they are part of its redraw signature, so a swatch click or a
-select change is one `Plotly.react`. A zoom survives it, and a signal the
+Error select per plot that draws one series, on the card's toolbar.
+`figures/plotly.py` takes a `Visibility(hidden, error)`: with one (the tool),
+every leaf trace and every error trace is out of the legend, a hidden leaf's
+traces and shapes are `visible: false`, and only the chosen error series shows,
+with its axis. A hidden shape stays in `layout.shapes`, so shape indices do not
+move and the figure hook still resolves a dragged ring by its index. The card
+keeps the choices, and they are part of its redraw signature, so a swatch click
+or a select change is one `Plotly.react`. A zoom survives it, and a signal the
 author hid by a legend click stays hidden, because the server never changed
 that trace's `visible` and `uirevision` keeps the user's. Both were measured in
 Chromium.
@@ -4597,36 +4596,37 @@ flips on every rerun, would read as broken.
 
 The legend moved ABOVE the plot area on both tiers: one layout dict,
 `LEGEND`, horizontal and anchored at the plot's top, for which Plotly grows the
-top margin. The report keeps its criterion entries for now, and at 900 px they
-wrap to a second row there.
+top margin. The report keeps its criterion entries for now; its eight-entry
+legend, measured at 900 px, wrapped to a second row.
 
 **The toolbar gutter.** A legend above the plot met Plotly's toolbar, which
 appears across the plot's top on hover: at 900 px the report's eight-entry
-legend wrapped to two rows and the toolbar covered two of them. The owner chose
-a VERTICAL toolbar, on both tiers, over a legend below the plot, which collided
-with the x-axis title, and over no toolbar. Standing on the right edge, the
-toolbar then covered the error axis's title and tick labels. A margin reserved
-inside the figure while an error axis shows was built and failed. A fixed
-reserve cannot know how wide the labels will be: an error around 1e-5, the
-usual size for a passing test, printed `0.00002000` and reached the toolbar at
-every reserve measured. The toolbar and the right-hand axes were competing for
-one strip inside the figure. So the toolbar gets a gutter OUTSIDE the figure,
-in CSS on each tier (`shell/style.py`, `templates/interactive.html`): the plot
-is 34 px narrower than its container, and `.modebar-container` sits in those
-34 px. Measured in Chromium: no label or title box meets the toolbar, for any
-error series the tier allows, including 1e-5 labels. Browser tests on both
-tiers hold that and hold the toolbar inside its card.
+legend wrapped to two rows and the toolbar covered two of its entries. The
+owner chose a VERTICAL toolbar, on both tiers, over a legend below the plot,
+which collided with the x-axis title, and over no toolbar. Standing on the
+right edge, the toolbar then covered the error axis's title and tick labels. A
+margin reserved inside the figure while an error axis shows was built and
+failed. A fixed reserve cannot know how wide the labels will be: an error
+around 1e-5, the usual size for a passing test, printed `0.00002000` and
+reached the toolbar at every reserve measured. The toolbar and the right-hand
+axes were competing for one strip inside the figure. So the toolbar gets a
+gutter OUTSIDE the figure, in CSS on each tier (`shell/style.py`,
+`templates/interactive.html`): the plot is 34 px narrower than its container,
+and `.modebar-container` sits in those 34 px. Measured in Chromium: no label or
+title box meets the toolbar, for any error series the tier allows, including
+1e-5 labels. Browser tests on both tiers hold that and hold the toolbar inside
+its card.
 
 Two more rulings of 2026-09-24 settled what the labels print. Every y axis
 uses Plotly's automatic tick labels with `e` exponents (`0.2`, not `0.2000`;
-`2e−5`, not `0.00002000`). Every hover reads four significant digits with
-trailing zeros trimmed, d3 `.4~g`, in the axes' `hoverformat` and in every
-trace's own `hovertemplate`. In the tool's figure, each error axis's
-`automargin` follows its visibility: a hidden axis left at automargin kept the
-right margin it had grown, through every later react. NRMSE's axis is anchored
-to the plot there, since the tool shows one error axis at a time. The report
-keeps it free and auto-shifted, since its legend can show signed and NRMSE
-together.
+`2e−5`, not `0.00002000`). Every y value in a hover reads four significant
+digits with trailing zeros trimmed, d3 `.4~g`, in the y axes' `hoverformat`
+and in every trace's own `hovertemplate`; the time axis hovers with `.6~g`.
+In the tool's figure, each error axis's `automargin` follows its visibility:
+a hidden axis left at automargin kept the right margin it had grown, through
+every later react. NRMSE's axis is anchored to the plot there, since the tool
+shows one error axis at a time. The report keeps it free and auto-shifted,
+since its legend can show signed and NRMSE together.
 
 **The axes.js regression, and why the fix is structural.** When the old shell
 was deleted (22d3284), the tool's page stopped loading `templates/axes.js`,
@@ -4644,12 +4644,12 @@ called, is deleted, and the prose that said the tool loads the script is
 corrected.
 
 **Alternatives considered.** Keeping the menus: an open one covered the
-neighbouring rows' icons (3b's gate over the owner's library), and the board
-put the form where its node is. A swatch
-greyed on a failing criterion: the ruling above. The report's legend below its
-plots: it collided with the x-axis title. A margin reserve: see the toolbar
-gutter. Tick labels inside the plot area: they still met the toolbar. Loading
-axes.js in the tool again: the regression paragraph.
+neighbouring rows' icons (3b's gate over a copy of the owner's library), and
+the board put the form where its node is. A swatch greyed on a failing
+criterion: the ruling above. The report's legend below its plots: it
+collided with the x-axis title. A margin reserve: see the toolbar gutter. Tick
+labels inside the plot area: they still met the toolbar. Loading axes.js in the
+tool again: the regression paragraph.
 
 **Not built here**, so nobody looks for it: the report's criterion entries
 leaving its legend (a later change, on the board's table); the "Add a
