@@ -329,8 +329,17 @@ metric's `drawn_by_default`, drawn while failing and always while open. The
 error series are one select per plot that draws one series. Plotly's toolbar
 stands vertical in a gutter outside the figure on both tiers; y axes read
 short automatic labels and hovers `.4~g`. The tool no longer needs `axes.js`:
-its figure says which error axis is visible. Its gate over a copy of the
-owner's library is the plan's Task 9, not yet run when this was written.
+its figure says which error axis is visible. The gate over a copy of the
+owner's library (the plan's Task 9, 2026-09-25) covered 331 tests and 873
+plots, all single-series. Every legend shrank to its signals (max 8 → 5
+entries, mean 6.67 → 3.67); no plot changed its trace count (5823 both) or its
+shape count; no verdict flipped (330 pass and 1 known error, before at 4b96973
+and after at 3518738); the browser checks passed on
+`MSLFluid.InverseParameterization` with a staged tube and range, discarded
+after; and the owner's 902 reference files, the work dir and the library
+listing were byte-identical before and after. It found one defect, an error
+axis zoomed while hidden showing a stale range when chosen, fixed on both
+tiers: a new error series scales its axis afresh.
 
 **Settles.** The `plots` schema and its validation; the series model
 (`{"var": ...}` now, expression and unit later); how the report renders a

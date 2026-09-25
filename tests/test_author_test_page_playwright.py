@@ -18,9 +18,11 @@ scroll the PAGE — the gesture that draws the cards below."""
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -62,14 +64,18 @@ MIN_LINE = f"{RANGE_X}/range/min"
 
 
 @contextmanager
-def _served(tmp_path: Path, playwright_browser, error_scale: float = 1.0):
+def _served(
+    tmp_path: Path,
+    playwright_browser,
+    x_error: Callable[[float], float] | None = None,
+):
     """`dstf author` over the fixture, with `/test/FakeLib.A` open. On the
     way out: assertion 7 — no page error, no console error, and the spec
     file byte-for-byte as it was (nothing is saved by looking).
-    ``error_scale`` scales x's error against its baseline (`_scale_x_error`)."""
+    ``x_error`` replaces x's error against its baseline (`_set_x_error`)."""
     cfg, work = _page_project(tmp_path)
-    if error_scale != 1.0:
-        _scale_x_error(work, error_scale)
+    if x_error is not None:
+        _set_x_error(work, x_error)
     spec_file = cfg.parent / "test_spec.json"
     before = spec_file.read_bytes()
     log = tmp_path / "author.log"
@@ -105,14 +111,13 @@ def _served(tmp_path: Path, playwright_browser, error_scale: float = 1.0):
     assert spec_file.read_bytes() == before
 
 
-def _scale_x_error(work: Path, scale: float) -> None:
+def _set_x_error(work: Path, error: Callable[[float], float]) -> None:
     """Rewrite x's result so its error against the baseline (x = t) is
-    ``0.25 * scale * t`` instead of ``0.25 * t``: at 1e-4 an error around
-    2.5e-5, the size a passing test's error usually is."""
+    ``error(t)`` instead of ``0.25 * t``."""
     for key in ("test_0001", "test_0002"):
         path = work / key / "result.json"
         data = json.loads(path.read_text(encoding="utf-8"))
-        data["variables"]["x"] = [v + 0.25 * scale * v for v in data["time"]]
+        data["variables"]["x"] = [v + error(v) for v in data["time"]]
         path.write_text(json.dumps(data), encoding="utf-8")
 
 
@@ -882,7 +887,11 @@ def test_no_error_axis_label_sits_under_the_toolbar(
     and for errors around 1e-5 too. The toolbar stands in its own gutter
     right of the plot (`shell/style.py`), so the axes never compete with it
     for the figure's right margin, however wide their labels grow."""
-    with _served(tmp_path, playwright_browser, error_scale=scale) as page:
+    # At 1e-4 an error around 2.5e-5, the size a passing test's error
+    # usually is.
+    with _served(
+        tmp_path, playwright_browser, x_error=lambda t: 0.25 * scale * t
+    ) as page:
         page.wait_for_timeout(700)
         # Each step flips the axis it waits on: signed and abs share y3.
         for label, axis in (
@@ -917,21 +926,33 @@ def test_no_error_axis_label_sits_under_the_toolbar(
         _shot(page, tmp_path, f"gutter-none-{scale:g}")
 
 
-#: Plot 0's error axes and the Abs error trace's y extent, from the figure
+#: Plot 0's error axes and each error trace's y extent, from the figure
 #: Plotly holds.
 READ_ERROR_AXIS = """
 () => {
   const gd = document.querySelectorAll('.js-plotly-plot')[0];
   const fl = gd._fullLayout;
-  const tr = gd.data.find(t => (t.meta || {}).id === 'error/abs');
+  const extent = (id) => {
+    const t = gd.data.find(t => (t.meta || {}).id === id);
+    return [Math.min(...t.y), Math.max(...t.y)];
+  };
   return {
     xrange: fl.xaxis.range.slice(),
     y3: fl.yaxis3.range.slice(),
     y4: fl.yaxis4.range.slice(),
-    abs: [Math.min(...tr.y), Math.max(...tr.y)],
+    abs: extent('error/abs'),
+    signed: extent('error/signed'),
+    nrmse: extent('error/nrmse'),
   };
 }
 """
+
+
+def _covers_and_fills(axis: list[float], extent: list[float]) -> bool:
+    """The axis covers the series, and the series fills most of it: a stale
+    [-0.49, 3.51] covered [0, 0.25] too, with the line flat."""
+    (lo, hi), (a, b) = axis, extent
+    return lo <= a and b <= hi and (b - a) > 0.5 * (hi - lo)
 
 
 def _box_zoom(page, fx: tuple[float, float], fy: tuple[float, float]) -> None:
@@ -961,8 +982,12 @@ def test_an_error_axis_zoomed_while_hidden_scales_fresh_when_chosen(
     line along 0 (the TRANSFORM gate, 2026-09-25). Each error axis's
     `uirevision` is the chosen series (`figures.plotly.variable_figure`):
     choosing one scales its axis to its data, and a zoom made while it
-    shows is kept through a redraw."""
-    with _served(tmp_path, playwright_browser) as page:
+    shows is kept through a redraw. x's error is ``0.25 sin(2 pi t)``:
+    signed spans [-0.25, 0.25] where abs spans [0, 0.25], so Signed after
+    Abs tells whether their shared axis scaled afresh; NRMSE, on the other
+    axis, tells whether that one did."""
+    wave = lambda t: 0.25 * math.sin(2 * math.pi * t)  # noqa: E731
+    with _served(tmp_path, playwright_browser, x_error=wave) as page:
         page.wait_for_timeout(700)
         page.evaluate("() => window.scrollTo(0, 0)")
         before = page.evaluate(READ_ERROR_AXIS)
@@ -975,11 +1000,7 @@ def test_an_error_axis_zoomed_while_hidden_scales_fresh_when_chosen(
         _choose_error(page, "Abs error", "yaxis3")
         shown = page.evaluate(READ_ERROR_AXIS)
         _shot(page, tmp_path, "zoomed-then-abs")
-        (lo, hi), (a, b) = shown["y3"], shown["abs"]
-        # Its axis covers the series, and the series fills most of it: the
-        # stale [-0.49, 3.51] covered [0, 0.25] too, with the line flat.
-        assert lo <= a and b <= hi, shown
-        assert (b - a) > 0.5 * (hi - lo), shown
+        assert _covers_and_fills(shown["y3"], shown["abs"]), shown
         # The time zoom is the page's, and stays.
         assert shown["xrange"] == zoomed["xrange"], (zoomed, shown)
 
@@ -999,6 +1020,24 @@ def test_an_error_axis_zoomed_while_hidden_scales_fresh_when_chosen(
         redrawn = page.evaluate(READ_ERROR_AXIS)
         assert redrawn["y3"] == rezoomed["y3"], (rezoomed, redrawn)
         assert redrawn["xrange"] == rezoomed["xrange"], (rezoomed, redrawn)
+
+        # Signed takes the axis Abs held, zoomed: it scales afresh to
+        # Signed's negative half too.
+        _choose_error(page, "Signed error", "yaxis3")
+        page.wait_for_function(
+            "() => document.querySelectorAll('.js-plotly-plot')[0].data"
+            ".find(t => (t.meta || {}).id === 'error/signed').visible === true",
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.wait_for_timeout(300)
+        signed = page.evaluate(READ_ERROR_AXIS)
+        assert _covers_and_fills(signed["y3"], signed["signed"]), (redrawn, signed)
+
+        # NRMSE's axis took both box zooms while it hid; chosen, it scales
+        # to NRMSE.
+        _choose_error(page, "NRMSE", "yaxis4")
+        nrmse = page.evaluate(READ_ERROR_AXIS)
+        assert _covers_and_fills(nrmse["y4"], nrmse["nrmse"]), (redrawn, nrmse)
 
 
 def _range_lines_shown(page) -> int:

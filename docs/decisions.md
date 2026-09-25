@@ -4577,10 +4577,12 @@ traces and shapes are `visible: false`, and only the chosen error series shows,
 with its axis. A hidden shape stays in `layout.shapes`, so shape indices do not
 move and the figure hook still resolves a dragged ring by its index. The card
 keeps the choices, and they are part of its redraw signature, so a swatch click
-or a select change is one `Plotly.react`. A zoom survives it, and a signal the
-author hid by a legend click stays hidden, because the server never changed
-that trace's `visible` and `uirevision` keeps the user's. Both were measured in
-Chromium.
+or a select change is one `Plotly.react`. A zoom survives that redraw, and a
+signal the author hid by a legend click stays hidden, because the server never
+changed that trace's `visible` and `uirevision` keeps the user's. Both were
+measured in Chromium. A newly chosen error series is the exception: its axis's
+`uirevision` is the chosen series, so the axis scales to it afresh rather than
+keeping a zoom made over another series, or made while it hid.
 
 What draws before a swatch is touched is a property of the metric:
 `MetricDescriptor.drawn_by_default`, `True` unless the metric says otherwise.

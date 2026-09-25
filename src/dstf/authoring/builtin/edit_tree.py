@@ -446,11 +446,11 @@ def _cluster(
     contract), so a form never shows a value the node no longer has — a
     combinator edited and then Discarded reopened on its old ``k``. Nothing
     but the icons exists until then: a cluster whose three forms were built
-    with it was ~28 elements, and a tree row holds one per
-    node — 40 leaves made a 2387-element page with the tree open, and every
-    sync re-sent them. The title is read inside the click too: a
-    `tree_view` read per cluster at build cost one read per node on every
-    rebuild of the rows (the page's cost tests)."""
+    with it was ~28 elements, and a tree row holds one per node — 40 leaves
+    made a 2387-element page with the tree open, and every sync re-sent
+    them. The title is read inside the click too: a `tree_view` read per
+    cluster at build cost one read per node on every rebuild of the rows
+    (the page's cost tests)."""
     tree = s.tree(model_id)
     node = node_or_none(tree, path)
     if node is None:  # `available` already says so; a job may race

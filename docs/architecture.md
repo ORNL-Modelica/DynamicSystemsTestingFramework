@@ -203,10 +203,11 @@ metric's `MetricDescriptor.drawn_by_default`), and hands the result to
 built with a `Visibility` sets `visible` on the hidden leaves' traces and
 shapes, keeps them in place so shape indices do not move, and shows the chosen
 error series with its axis; the choice is part of the card's redraw
-signature, so a swatch click or a select change is one `Plotly.react` that
-keeps the zoom. The report's figure is built without one, keeps every legend
-entry, and `templates/axes.js` shows an error axis while a trace on it is
-visible.
+signature, so a swatch click or a select change is one `Plotly.react`. A zoom
+survives that redraw, except on an error axis given a new series: it scales
+to that series afresh. The report's figure is built without one, keeps every
+legend entry, and `templates/axes.js` shows an error axis while a trace on it
+is visible and scales it afresh whenever the set of those traces changes.
 
 ## Data Flow
 

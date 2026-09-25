@@ -12,27 +12,39 @@
 // (dstf.figures.plotly.Visibility), so nothing in its page toggles a
 // trace behind the server's back. It computes nothing about the data —
 // it reads `visible` flags and writes `visible` flags, and `autorange` on
-// an axis it shows — on a restyle (the select, a legend click).
+// an axis whose shown traces change — on a restyle (the select, a legend
+// click).
 (function () {
-  function anyVisibleOn(gd, axisId) {
-    return (gd.data || []).some(function (t) {
-      return (t.yaxis || 'y') === axisId && t.visible !== 'legendonly' && t.visible !== false;
+  // The indices of the visible traces on the axis, as one string: the
+  // report never adds, removes or reorders a trace, so an index names one.
+  function visibleOn(gd, axisId) {
+    var ids = [];
+    (gd.data || []).forEach(function (t, i) {
+      if ((t.yaxis || 'y') !== axisId) return;
+      if (t.visible === 'legendonly' || t.visible === false) return;
+      ids.push(i);
     });
+    return ids.join(',');
   }
 
   function dstfFollowSecondaryAxes(gd) {
     var layout = gd.layout || {};
+    var seen = gd._dstfShownOn || (gd._dstfShownOn = {});
     var update = {};
     Object.keys(layout).forEach(function (key) {
       var m = /^yaxis(\d+)$/.exec(key);
       if (!m || !layout[key] || !layout[key].overlaying) return;
-      var want = anyVisibleOn(gd, 'y' + m[1]);
-      if (Boolean(layout[key].visible) === want) return;
-      update[key + '.visible'] = want;
-      // A box zoom made while the axis hides scales it too (it overlays
-      // `y`): shown on that range, an error drew as a flat line. It
-      // scales to its data when it shows.
-      if (want) update[key + '.autorange'] = true;
+      var ids = visibleOn(gd, 'y' + m[1]);
+      var was = seen[key];
+      seen[key] = ids;
+      var want = ids !== '';
+      if (Boolean(layout[key].visible) !== want) update[key + '.visible'] = want;
+      // A box zoom scales the axis too, shown or hidden (it overlays `y`):
+      // kept when another series took the axis, it cut that series off or
+      // drew it as a flat line. A new set of series scales it to their
+      // data; a restyle that leaves the set alone (an overlay on `y`)
+      // keeps a zoom.
+      if (want && ids !== was) update[key + '.autorange'] = true;
     });
     if (Object.keys(update).length) Plotly.relayout(gd, update);
   }

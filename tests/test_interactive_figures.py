@@ -406,20 +406,40 @@ def test_a_hover_trims_its_digits_under_a_real_mouse(tmp_path, playwright_browse
     assert "Actual : 0.5" in texts, texts
 
 
-#: The page's error axes and the Abs error trace's y extent, from the
-#: figure Plotly holds.
+#: The page's error axes and each error trace's y extent, from the figure
+#: Plotly holds.
 READ_ERROR_AXIS = """
 () => {
   const el = document.getElementById('plot-0');
   const fl = el._fullLayout;
   const tr = el.data.find(t => (t.meta || {}).id === 'error/abs');
+  const extent = (id) => {
+    const t = el.data.find(t => (t.meta || {}).id === id);
+    return [Math.min(...t.y), Math.max(...t.y)];
+  };
   return {
     y3: fl.yaxis3.range.slice(), y4: fl.yaxis4.range.slice(),
     visible: fl.yaxis3.visible, shown: tr.visible,
-    abs: [Math.min(...tr.y), Math.max(...tr.y)],
+    abs: extent('error/abs'), signed: extent('error/signed'),
   };
 }
 """
+
+
+def _box_zoom(page, fx: tuple[float, float], fy: tuple[float, float]) -> None:
+    """A real-mouse box zoom on plot 0, from and to these fractions of its
+    plot area (x from the left, y from the top). It scales every axis of
+    the subplot, the error axes overlaying `y` too."""
+    left, top, width, height = page.evaluate(
+        "() => { const el = document.getElementById('plot-0');"
+        " const fl = el._fullLayout, r = el.getBoundingClientRect();"
+        " return [r.left + fl._size.l, r.top + fl._size.t, fl._size.w, fl._size.h]; }"
+    )
+    page.mouse.move(left + width * fx[0], top + height * fy[0])
+    page.mouse.down()
+    page.mouse.move(left + width * fx[1], top + height * fy[1], steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
 
 
 @pytest.mark.parametrize("by", ["select", "legend"])
@@ -438,16 +458,7 @@ def test_an_error_axis_zoomed_while_hidden_scales_fresh_when_shown(
     page.wait_for_selector("#plot-0 .scatterlayer")
     page.evaluate("() => document.getElementById('plot-0').scrollIntoView()")
     before = page.evaluate(READ_ERROR_AXIS)
-    left, top, width, height = page.evaluate(
-        "() => { const el = document.getElementById('plot-0');"
-        " const fl = el._fullLayout, r = el.getBoundingClientRect();"
-        " return [r.left + fl._size.l, r.top + fl._size.t, fl._size.w, fl._size.h]; }"
-    )
-    page.mouse.move(left + width * 0.2, top + height * 0.15)
-    page.mouse.down()
-    page.mouse.move(left + width * 0.7, top + height * 0.75, steps=8)
-    page.mouse.up()
-    page.wait_for_timeout(300)
+    _box_zoom(page, (0.2, 0.7), (0.15, 0.75))
     zoomed = page.evaluate(READ_ERROR_AXIS)
     if by == "select":
         page.locator(".error-overlay-select").first.select_option("abs")
@@ -469,3 +480,93 @@ def test_an_error_axis_zoomed_while_hidden_scales_fresh_when_shown(
     (lo, hi), (a, b) = shown["y3"], shown["abs"]
     assert lo <= a and b <= hi, (zoomed, shown)
     assert (b - a) > 0.5 * (hi - lo), (zoomed, shown)
+
+
+def _page_with_a_wave_and_an_overlay(tmp_path):
+    """The report's page over one signal whose error is ``0.25 sin(2 pi t)``
+    — signed spans [-0.25, 0.25], abs [0, 0.25], on the one axis they
+    share — with one soft-check overlay and its row in the picker."""
+    from dstf.figures.plotly import variable_figure
+    from dstf.figures.view import build_view
+
+    ctx, _ = _context_with_figure()
+    var = next(iter(ctx["variables_by_name"]))
+    t = np.linspace(0.0, 1.0, 21)
+    overlay = {
+        "name": "alt",
+        "role": "soft_check",
+        "kind": None,
+        "time": list(t),
+        "values": list(t * 1.01),
+    }
+    ctx["variables_by_name"][var]["overlays"] = [overlay]
+    # The picker's rows are built from the context's overlays; the figure
+    # is replaced after, which the rebuild would otherwise overwrite.
+    ctx.update(plot_page_keys(ctx, None, {}, None, None))
+    ctx["plot_figures"][0] = variable_figure(
+        build_view(
+            var,
+            act_time=t,
+            act_values=t + 0.25 * np.sin(2 * np.pi * t),
+            ref_time=t,
+            ref_values=t,
+            overlays=[overlay],
+        )
+    )
+    return _render_with_context(tmp_path, ctx)
+
+
+def test_an_error_axis_scales_fresh_when_its_series_changes(
+    tmp_path, playwright_browser
+):
+    """Signed and Abs error ride the one axis, which stays shown from one to
+    the other. A zoom made while Signed shows, then Abs chosen: the axis
+    covers Abs, which fills most of it (a zoom kept there held
+    [0.098, 0.181] of a series spanning [-0.25, 0.25]). A zoom made while
+    Abs shows is kept when an unrelated overlay toggles: the series on the
+    axis did not change."""
+    html_path = _page_with_a_wave_and_an_overlay(tmp_path)
+    page = playwright_browser.new_page(viewport={"width": 1280, "height": 900})
+    errors: list[str] = []
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+    page.goto(html_path.as_uri())
+    page.wait_for_selector("#plot-0 .scatterlayer")
+    page.evaluate("() => document.getElementById('plot-0').scrollIntoView()")
+    select = page.locator(".error-overlay-select").first
+    select.select_option("signed")
+    page.wait_for_function(
+        "() => document.getElementById('plot-0')._fullLayout.yaxis3.visible === true",
+        timeout=5000,
+    )
+    page.wait_for_timeout(200)
+    signed = page.evaluate(READ_ERROR_AXIS)
+    _box_zoom(page, (0.2, 0.7), (0.15, 0.75))
+    zoomed = page.evaluate(READ_ERROR_AXIS)
+    select.select_option("abs")
+    page.wait_for_function(
+        "() => document.getElementById('plot-0').data"
+        ".find(t => (t.meta || {}).id === 'error/abs').visible === true",
+        timeout=5000,
+    )
+    page.wait_for_timeout(200)
+    shown = page.evaluate(READ_ERROR_AXIS)
+
+    _box_zoom(page, (0.3, 0.6), (0.3, 0.6))
+    rezoomed = page.evaluate(READ_ERROR_AXIS)
+    page.locator('[data-plot-id="plot-0"] input.overlay-toggle').first.check()
+    page.wait_for_function(
+        "() => document.getElementById('plot-0').data"
+        ".find(t => (t.meta || {}).kind === 'overlay').visible === true",
+        timeout=5000,
+    )
+    page.wait_for_timeout(200)
+    toggled = page.evaluate(READ_ERROR_AXIS)
+    page.close()
+    assert errors == []
+    # The zoom reached the shown axis, cutting off part of Signed.
+    assert zoomed["y3"] != signed["y3"], (signed, zoomed)
+    (lo, hi), (a, b) = shown["y3"], shown["abs"]
+    assert lo <= a and b <= hi, (zoomed, shown)
+    assert (b - a) > 0.5 * (hi - lo), (zoomed, shown)
+    assert rezoomed["y3"] != shown["y3"], (shown, rezoomed)
+    assert toggled["y3"] == rezoomed["y3"], (rezoomed, toggled)

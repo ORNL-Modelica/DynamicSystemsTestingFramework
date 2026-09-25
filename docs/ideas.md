@@ -1651,10 +1651,6 @@ planning.
 - **Follow-ups from the form row + legend build (2026-09-25)**: residuals the
   reviews and the TRANSFORM gate found and did not fix, with no owner ruling
   on them yet.
-  - On the report, switching the error select straight from Signed to Abs
-    keeps a zoom made while Signed showed (both ride yaxis3, which stays
-    visible, so axes.js never autoranges it). The tool rescales on every
-    choice.
   - Swatch and error choices reset when adding or removing a criterion
     rebuilds the page (paths shift, so keeping them needs a mapping).
   - Tooltips stay up after a click. The swatch's tooltip covers the "Add a
