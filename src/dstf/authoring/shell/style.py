@@ -75,9 +75,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    (an error around 1e-5 outgrew every reserve measured). The plot is the
    gutter's width narrower than its slot: `width: auto` undoes the plot's
    `w-full`, so the margin narrows the plot instead of hanging the toolbar
-   15 px past the card at 900 px. Plotly pins the toolbar's
-   container with an inline `right: 0px`, hence the `!important`. The
-   width is not a `--dstf-` token: those are the theme's table (theme.py). */
+   15 px past the card. Plotly pins the toolbar's container with an inline
+   `right: 0px`, hence the `!important`. The width is not a `--dstf-`
+   token: those are the theme's table (theme.py). */
 .dstf-plot-slot > .js-plotly-plot {
   width: auto; margin-right: var(--toolbar-gutter);
 }

@@ -197,8 +197,30 @@ def test_a_labelled_hover_reads_its_label_under_a_real_mouse(
     Only a browser can say so — `Plotly.Fx.hover` shows the same box, but
     it is the mouse that a person uses, and this test is the one place the
     rendered text is asserted on the REPORT's own vendored plotly.js.
+
+    The value is read too, the whole line: the actual is 0.600025 at the
+    hovered point, which the owner's `.4~g` reads `0.6` and a `.4g` left in
+    `hover_of`'s template read `0.6000` — a format only the dict shape
+    pinned until a mouse read it.
     """
+    from dstf.figures.plotly import variable_figure
+    from dstf.figures.view import build_view
+
     ctx, _ = _context_with_figure(label="pipe.T[1]")
+    var = next(iter(ctx["variables_by_name"]))
+    t = np.linspace(0.0, 1.0, 21)
+    ctx["plot_figures"] = [
+        variable_figure(
+            build_view(
+                var,
+                label="pipe.T[1]",
+                act_time=t,
+                act_values=t + 2.5e-5,
+                ref_time=t,
+                ref_values=t,
+            )
+        )
+    ]
     html_path = _render_with_context(tmp_path, ctx)
     page = playwright_browser.new_page(viewport={"width": 1280, "height": 900})
     page.goto(html_path.as_uri())
@@ -207,13 +229,13 @@ def test_a_labelled_hover_reads_its_label_under_a_real_mouse(
     # outside the viewport reaches nothing.
     page.evaluate("() => document.getElementById('plot-0').scrollIntoView()")
     page.wait_for_timeout(200)
-    x, y = page.evaluate(POINT_PIXEL, 20)
+    x, y = page.evaluate(POINT_PIXEL, 12)
     page.mouse.move(x, y)
     page.wait_for_timeout(300)
     texts = page.evaluate(HOVER_TEXTS)
     page.close()
     assert texts, "no hover box under the mouse"
-    assert any(line.startswith("pipe.T[1]: ") for line in texts), texts
+    assert "pipe.T[1]: 0.6" in texts, texts
     assert not any("%{" in line for line in texts), texts
 
 
@@ -224,16 +246,28 @@ def test_a_labelled_hover_reads_its_label_under_a_real_mouse(
 #: tool's `.dstf-plot`, the report's `.variable-section` / `.plot-section`:
 #: a gutter that moved the toolbar clear of the axes but past the card's
 #: edge (the plot at full width plus the gutter's margin) passed the
-#: intersect read alone. ``crossed`` names every y3 label or title that
-#: intersects a y4 one: the report can show both axes at once.
+#: intersect read alone. It is read against the card's CONTENT box: its
+#: border box left the toolbar 17 px of slack in the card's padding.
+#: ``card`` is the class the card was found by, so each tier asserts the
+#: toolbar was measured against ITS card and not some wider ancestor.
+#: ``crossed`` names every y3 label or title that intersects a y4 one: the
+#: report can show both axes at once.
 UNDER_TOOLBAR = """
 (gd) => {
   const hit = (a, b) => a.left < b.right && b.left < a.right
                      && a.top < b.bottom && b.top < a.bottom;
+  const kinds = ['dstf-plot', 'variable-section', 'plot-section'];
   const mb = gd.querySelector('.modebar');
-  const card = gd.closest('.dstf-plot, .variable-section, .plot-section');
+  const card = gd.closest(kinds.map(k => '.' + k).join(', '));
   if (!mb || !card) return null;
-  const m = mb.getBoundingClientRect(), c = card.getBoundingClientRect();
+  const m = mb.getBoundingClientRect(), r = card.getBoundingClientRect();
+  const cs = getComputedStyle(card), px = (k) => parseFloat(cs[k]) || 0;
+  const c = {
+    left: r.left + px('borderLeftWidth') + px('paddingLeft'),
+    right: r.right - px('borderRightWidth') - px('paddingRight'),
+    top: r.top + px('borderTopWidth') + px('paddingTop'),
+    bottom: r.bottom - px('borderBottomWidth') - px('paddingBottom'),
+  };
   const read = (sel) => Array.from(gd.querySelectorAll(sel))
     .map(e => [e.textContent, e.getBoundingClientRect()])
     .filter(([, b]) => b.width > 0);
@@ -245,7 +279,7 @@ UNDER_TOOLBAR = """
     under: boxes.filter(([, b]) => hit(b, m)).map(([t]) => t),
     inside: m.left >= c.left && m.right <= c.right
          && m.top >= c.top && m.bottom <= c.bottom,
-    toolbar: [m.left, m.right], card: [c.left, c.right],
+    card: kinds.find(k => card.classList.contains(k)),
     crossed: y3.filter(([, a]) => y4.some(([, b]) => hit(a, b))).map(([t]) => t),
   };
 }
@@ -293,8 +327,8 @@ def test_no_error_axis_label_sits_under_the_toolbar(
     of the plot (the page's stylesheet), so the axes never compete with it
     for the figure's right margin, however wide their labels grow; and the
     gutter is inside the plot's section, so the toolbar stays inside it
-    (900 px: where a plot at full width beside the gutter's margin hung the
-    toolbar 15 px past its section)."""
+    (a plot at full width beside the gutter's margin hung the toolbar
+    15 px past its section)."""
     html_path = _page_with_errors(tmp_path, scale)
     page = playwright_browser.new_page(viewport={"width": width, "height": 900})
     errors: list[str] = []
@@ -333,6 +367,7 @@ def test_no_error_axis_label_sits_under_the_toolbar(
     assert read is not None and read["labels"] > 0, read
     assert read["under"] == [], read
     assert read["inside"] is True, read
+    assert read["card"] == "variable-section", read
     # Two axes shown: NRMSE's stands past signed's (free + autoshift), so
     # none of their labels meet. Anchored to x it drew over the first.
     assert read["crossed"] == [], read
@@ -343,7 +378,10 @@ def test_a_hover_trims_its_digits_under_a_real_mouse(tmp_path, playwright_browse
     """The owner's ruling: a hover reads 4 significant digits with the
     trailing zeros trimmed (d3 `.4~g`). At t = 0.5 the page's abs error is
     1.25e-5, which `.4g` printed `0.00001250`; a real mouse reads the box
-    the report's own vendored plotly.js draws from the trace's template."""
+    the report's own vendored plotly.js draws from the trace's template.
+    The actual there, 0.5000125, has no template of its own (its label is
+    its name): it reads through the y axis' `hoverformat`, `0.5` where a
+    `.4g` there read `0.5000`."""
     html_path = _page_with_errors(tmp_path, 1e-4)
     page = playwright_browser.new_page(viewport={"width": 1280, "height": 900})
     page.goto(html_path.as_uri())
@@ -365,3 +403,4 @@ def test_a_hover_trims_its_digits_under_a_real_mouse(tmp_path, playwright_browse
     texts = page.evaluate(HOVER_TEXTS)
     page.close()
     assert "Abs error: 0.0000125" in texts, texts
+    assert "Actual : 0.5" in texts, texts

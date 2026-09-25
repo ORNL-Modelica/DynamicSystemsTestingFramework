@@ -891,8 +891,9 @@ def test_every_hover_trims_to_four_significant_digits():
 def test_the_tools_nrmse_axis_is_anchored_to_the_plot():
     """With the page's Visibility only one error axis ever shows, so the
     NRMSE axis sits on the plot's edge like the other: left `free` with
-    `autoshift`, it floated off the plot once Abs error had shown. The report keeps `free` + `autoshift`: its legend can show signed
-    and NRMSE together, and the second axis must stand past the first."""
+    `autoshift`, it floated off the plot once Abs error had shown. The
+    report keeps `free` + `autoshift`: its legend can show signed and
+    NRMSE together, and the second axis must stand past the first."""
     from dstf.figures.plotly import Visibility
 
     view = _tube_and_range_view()

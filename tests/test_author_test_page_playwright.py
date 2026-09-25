@@ -870,6 +870,7 @@ def _error_labels_under_toolbar(page) -> list[str]:
     read = plot.evaluate(UNDER_TOOLBAR)
     assert read is not None and read["labels"] > 0, read
     assert read["inside"] is True, read
+    assert read["card"] == "dstf-plot", read
     return read["under"]
 
 
