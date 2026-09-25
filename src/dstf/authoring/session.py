@@ -798,21 +798,23 @@ class Session:
             staged += [
                 PatchOp(model_id, r["op"], r["path"], r.get("value")) for r in full
             ]
-        # Convention 8: Edit criteria stages on every control change, so a
-        # ``replace`` landing on the path the last pending op already
-        # replaces supersedes it — the drawer and the exported envelope
-        # read "leaf -> new leaf", never a keystroke log. A batch is never
-        # collapsed: its ops belong together.
+        # Convention 8: an edit that lands on the path the last pending op
+        # wrote supersedes it, so the drawer and the envelope read "value ->
+        # new value", never a keystroke log: a replace after an add or a
+        # replace of the same path is that op with the new value, and a
+        # remove after a replace is the remove. A remove after an ADD is
+        # kept as two: when the member existed, the add replaced it, and
+        # dropping both would leave it. A batch is never collapsed: its ops
+        # belong together.
         pending = list(self.spec.pending)
-        if (
-            len(staged) == 1
-            and staged[0].op == "replace"
-            and pending
-            and pending[-1].op == "replace"
-            and pending[-1].model_id == staged[0].model_id
-            and pending[-1].path == staged[0].path
-        ):
-            pending = pending[:-1]
+        if len(staged) == 1 and pending:
+            new, last = staged[0], pending[-1]
+            if (new.model_id, new.path) == (last.model_id, last.path):
+                if new.op == "replace" and last.op in ("add", "replace"):
+                    pending.pop()
+                    staged = [PatchOp(new.model_id, last.op, new.path, new.value)]
+                elif new.op == "remove" and last.op == "replace":
+                    pending.pop()
         candidate = SpecDocument(
             self.spec.path,
             self.spec.loaded,

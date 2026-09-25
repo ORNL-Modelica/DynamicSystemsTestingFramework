@@ -1335,17 +1335,21 @@ class TestRescoreAndStage:
         n = len(session.spec.pending)
         for tol in (0.4, 0.3, 0.2):
             session.stage([PatchOp(A, "replace", "/metrics/children/0/tolerance", tol)])
-        assert len(session.spec.pending) == n + 1
-        assert session.spec.pending[-1].value == 0.2
+        # LOOSEN is an add, and a replace after an add of its path is that
+        # add with the new value: the three replaces collapse INTO it.
+        assert len(session.spec.pending) == n
+        assert session.spec.pending[-1] == PatchOp(
+            A, "add", "/metrics/children/0/tolerance", 0.2
+        )
         session.stage(
             [
                 PatchOp(A, "replace", "/metrics/children/0/tolerance", 0.9),
                 PatchOp(A, "add", "/comparison", {"tolerance": 0.5}),
             ]
         )
-        assert len(session.spec.pending) == n + 3  # a batch is never collapsed
-        # The four discriminators, each one op: a different path, a different
-        # model, a non-replace op, and then a replace again (collapses).
+        assert len(session.spec.pending) == n + 2  # a batch is never collapsed
+        # The discriminators, each one op: a different path, a different
+        # model, and an add then a remove of one path (never collapsed).
         m = len(session.spec.pending)
         session.stage(
             [PatchOp(A, "replace", "/comparison/tolerance", 0.6)]
@@ -1356,8 +1360,12 @@ class TestRescoreAndStage:
         session.stage([PatchOp(D, "replace", "/comparison/tolerance", 0.2)])
         session.stage([PatchOp(A, "replace", "/comparison/tolerance", 0.7)])
         assert len(session.spec.pending) == m + 5  # a different model never collapses
+        session.stage([PatchOp(A, "add", "/comparison/tolerance", 0.8)])
+        assert len(session.spec.pending) == m + 6  # an add never collapses
         session.stage([PatchOp(A, "remove", "/comparison/tolerance")])
-        assert len(session.spec.pending) == m + 6  # a non-replace never collapses
+        # A remove after an ADD stays two ops: the add may have replaced a
+        # member that existed, and dropping both would leave that member.
+        assert len(session.spec.pending) == m + 7
 
 
 class TestView:
@@ -2819,3 +2827,56 @@ def test_plot_figure_passes_the_pages_visibility(tmp_path):
         assert shown == ["error/signed"]
         assert fig["layout"]["yaxis3"]["visible"] is True
         assert fig["layout"]["yaxis4"]["visible"] is False
+
+
+L1 = [{"kind": "time", "series": [{"var": "x"}]}]
+L2 = [{"kind": "time", "series": [{"var": "x"}, {"var": "y"}]}]
+
+
+def _session_with_plots(tmp_path: Path, plots: list) -> Session:
+    """`_project` with A's entry holding ``plots`` on disk before `open`."""
+    cfg, work = _project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["plots"] = plots
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    s = Session()
+    s.open(cfg, work_dir=work)
+    return s
+
+
+class TestStageCollapses:
+    """Every layout gesture stages the whole `/plots` list, so a run of
+    gestures on one path must read as one pending op, never five."""
+
+    def test_a_replace_after_an_add_of_one_path_is_one_add(self, session):
+        session.stage([PatchOp(A, "add", "/plots", L1)])
+        session.stage([PatchOp(A, "replace", "/plots", L2)])
+        assert session.spec.pending == [PatchOp(A, "add", "/plots", L2)]
+        assert session.spec.entry(A)["plots"] == L2
+
+    def test_a_remove_after_a_replace_is_one_remove(self, tmp_path):
+        s = _session_with_plots(tmp_path, L1)
+        s.stage([PatchOp(A, "replace", "/plots", L2)])
+        s.stage([PatchOp(A, "remove", "/plots")])
+        assert s.spec.pending == [PatchOp(A, "remove", "/plots")]
+        assert "plots" not in s.spec.entry(A)
+
+    def test_a_remove_after_an_add_is_not_collapsed(self, tmp_path):
+        """The add acts as a replace of the L1 on disk: dropping both ops
+        would leave L1 in place instead of removing it."""
+        s = _session_with_plots(tmp_path, L1)
+        s.stage([PatchOp(A, "add", "/plots", L2)])
+        s.stage([PatchOp(A, "remove", "/plots")])
+        assert len(s.spec.pending) == 2
+        assert "plots" not in s.spec.entry(A)
+
+    def test_ops_on_other_paths_or_models_do_not_collapse(self, session):
+        session.stage([PatchOp(A, "add", "/plots", L1)])
+        session.stage([PatchOp(B, "add", "/plots", L1)])
+        assert len(session.spec.pending) == 2
+        # A's replace of its own /plots follows B's add: another model's op.
+        session.stage([PatchOp(A, "replace", "/plots", L2)])
+        assert len(session.spec.pending) == 3
