@@ -820,6 +820,24 @@ def test_an_error_axis_takes_margin_only_while_it_shows():
         assert report[axis]["visible"] is False
 
 
+def test_an_error_axis_keeps_its_zoom_only_under_one_choice():
+    """With the page's Visibility, each error axis's ``uirevision`` is the
+    chosen series, or "none": a box zoom made while the axes hide scales
+    them too, and under the figure's "keep" that range outlived the choice
+    (Abs error drew flat on [-0.49, 3.51] in Chromium). The report's figure
+    sets none — its axes inherit the layout's."""
+    from dstf.figures.plotly import Visibility
+
+    view = _tube_and_range_view()
+    for error in (None, "error/signed", "error/abs", "error/nrmse"):
+        lay = variable_figure(view, visibility=Visibility(error=error))["layout"]
+        for axis in ("yaxis3", "yaxis4"):
+            assert lay[axis]["uirevision"] == (error or "none"), (error, axis)
+    report = variable_figure(view)["layout"]
+    for axis in ("yaxis3", "yaxis4"):
+        assert "uirevision" not in report[axis]
+
+
 def test_every_y_axis_reads_automatic_labels_with_e_exponents():
     """The owner's 2026-09-24 ruling, both tiers: `tickformat: ".4g"` printed
     `0.2000` for 0.2 and `0.00002000` for an error around 1e-5 (54 px, into

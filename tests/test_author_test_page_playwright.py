@@ -917,6 +917,90 @@ def test_no_error_axis_label_sits_under_the_toolbar(
         _shot(page, tmp_path, f"gutter-none-{scale:g}")
 
 
+#: Plot 0's error axes and the Abs error trace's y extent, from the figure
+#: Plotly holds.
+READ_ERROR_AXIS = """
+() => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const fl = gd._fullLayout;
+  const tr = gd.data.find(t => (t.meta || {}).id === 'error/abs');
+  return {
+    xrange: fl.xaxis.range.slice(),
+    y3: fl.yaxis3.range.slice(),
+    y4: fl.yaxis4.range.slice(),
+    abs: [Math.min(...tr.y), Math.max(...tr.y)],
+  };
+}
+"""
+
+
+def _box_zoom(page, fx: tuple[float, float], fy: tuple[float, float]) -> None:
+    """A real-mouse box zoom on plot 0, from and to these fractions of its
+    plot area (x from the left, y from the top). A box zoom scales every
+    axis of the subplot, the hidden ones overlaying `y` too; a
+    `Plotly.relayout` of `yaxis.range` scales `y` alone."""
+    box = page.evaluate(
+        "() => { const gd = document.querySelectorAll('.js-plotly-plot')[0];"
+        " const fl = gd._fullLayout, r = gd.getBoundingClientRect();"
+        " return [r.left + fl._size.l, r.top + fl._size.t, fl._size.w, fl._size.h]; }"
+    )
+    left, top, width, height = box
+    page.mouse.move(left + width * fx[0], top + height * fy[0])
+    page.mouse.down()
+    page.mouse.move(left + width * fx[1], top + height * fy[1], steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+
+
+def test_an_error_axis_zoomed_while_hidden_scales_fresh_when_chosen(
+    tmp_path, playwright_browser
+):
+    """A box zoom made before any error series shows zooms the hidden error
+    axes too: they overlay `y`. Under the figure's `uirevision: "keep"` that
+    range outlived the choice, so Abs error drew on [-0.49, 3.51] as a flat
+    line along 0 (the TRANSFORM gate, 2026-09-25). Each error axis's
+    `uirevision` is the chosen series (`figures.plotly.variable_figure`):
+    choosing one scales its axis to its data, and a zoom made while it
+    shows is kept through a redraw."""
+    with _served(tmp_path, playwright_browser) as page:
+        page.wait_for_timeout(700)
+        page.evaluate("() => window.scrollTo(0, 0)")
+        before = page.evaluate(READ_ERROR_AXIS)
+        _box_zoom(page, (0.2, 0.7), (0.15, 0.75))
+        zoomed = page.evaluate(READ_ERROR_AXIS)
+        # The box zoom reached the hidden axes: the defect's precondition.
+        assert zoomed["y3"] != before["y3"], (before, zoomed)
+        assert zoomed["y4"] != before["y4"], (before, zoomed)
+
+        _choose_error(page, "Abs error", "yaxis3")
+        shown = page.evaluate(READ_ERROR_AXIS)
+        _shot(page, tmp_path, "zoomed-then-abs")
+        (lo, hi), (a, b) = shown["y3"], shown["abs"]
+        # Its axis covers the series, and the series fills most of it: the
+        # stale [-0.49, 3.51] covered [0, 0.25] too, with the line flat.
+        assert lo <= a and b <= hi, shown
+        assert (b - a) > 0.5 * (hi - lo), shown
+        # The time zoom is the page's, and stays.
+        assert shown["xrange"] == zoomed["xrange"], (zoomed, shown)
+
+        # A zoom made while Abs error shows is kept through a redraw: the
+        # swatch's send is a `Plotly.react` with the same error chosen.
+        _box_zoom(page, (0.3, 0.6), (0.3, 0.6))
+        rezoomed = page.evaluate(READ_ERROR_AXIS)
+        assert rezoomed["y3"] != shown["y3"], (shown, rezoomed)
+        _swatch(page, 0, "range · x").click()
+        page.wait_for_function(
+            "() => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
+            ".shapes || []).filter(s => s.visible && s.name.startsWith("
+            f"'{RANGE_X}/')).length === 2",
+            timeout=EXPECT_TIMEOUT,
+        )
+        page.wait_for_timeout(300)
+        redrawn = page.evaluate(READ_ERROR_AXIS)
+        assert redrawn["y3"] == rezoomed["y3"], (rezoomed, redrawn)
+        assert redrawn["xrange"] == rezoomed["xrange"], (rezoomed, redrawn)
+
+
 def _range_lines_shown(page) -> int:
     return page.evaluate(
         "() => (document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"

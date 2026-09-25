@@ -444,8 +444,9 @@ def _cluster(
     above the form), or when the page closes the row; the page rebuilds an
     open one when an edit staged elsewhere moves its node (`Panel.row`'s
     contract), so a form never shows a value the node no longer has — a
-    combinator edited and then Discarded reopened on its old ``k``. Nothing but the icons exists until then: a cluster whose three
-    forms were built with it was ~28 elements, and a tree row holds one per
+    combinator edited and then Discarded reopened on its old ``k``. Nothing
+    but the icons exists until then: a cluster whose three forms were built
+    with it was ~28 elements, and a tree row holds one per
     node — 40 leaves made a 2387-element page with the tree open, and every
     sync re-sent them. The title is read inside the click too: a
     `tree_view` read per cluster at build cost one read per node on every

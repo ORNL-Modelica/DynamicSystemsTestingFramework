@@ -832,6 +832,13 @@ def variable_figure(
             # after Abs error, 103 after NRMSE, against 20). The report keeps
             # both at True: its axes.js flips `visible` in the page.
             layout[key]["automargin"] = axis == shown
+            # A box zoom made while the axis hides scales it too (it
+            # overlays `y`), and the figure's `uirevision: "keep"` kept
+            # that range: Abs error then drew as a flat line on the stale
+            # [-0.49, 3.51] (the TRANSFORM gate, 2026-09-25). Keyed by the
+            # chosen series, a new choice autoranges the axis, and a zoom
+            # made while it shows is kept through a redraw.
+            layout[key]["uirevision"] = visibility.error or "none"
         # One error axis at a time here, so NRMSE's sits on the plot's edge
         # like the other's: left free + autoshift, it floated off the plot
         # once Abs error had shown.

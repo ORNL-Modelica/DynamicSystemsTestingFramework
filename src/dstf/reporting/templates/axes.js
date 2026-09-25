@@ -11,8 +11,8 @@
 // legend, and the figure it sends names the one error axis shown
 // (dstf.figures.plotly.Visibility), so nothing in its page toggles a
 // trace behind the server's back. It computes nothing about the data —
-// it reads `visible` flags and writes `visible` flags — on a restyle
-// (the select, a legend click).
+// it reads `visible` flags and writes `visible` flags, and `autorange` on
+// an axis it shows — on a restyle (the select, a legend click).
 (function () {
   function anyVisibleOn(gd, axisId) {
     return (gd.data || []).some(function (t) {
@@ -27,7 +27,12 @@
       var m = /^yaxis(\d+)$/.exec(key);
       if (!m || !layout[key] || !layout[key].overlaying) return;
       var want = anyVisibleOn(gd, 'y' + m[1]);
-      if (Boolean(layout[key].visible) !== want) update[key + '.visible'] = want;
+      if (Boolean(layout[key].visible) === want) return;
+      update[key + '.visible'] = want;
+      // A box zoom made while the axis hides scales it too (it overlays
+      // `y`): shown on that range, an error drew as a flat line. It
+      // scales to its data when it shows.
+      if (want) update[key + '.autorange'] = true;
     });
     if (Object.keys(update).length) Plotly.relayout(gd, update);
   }
@@ -40,6 +45,5 @@
     dstfFollowSecondaryAxes(gd);
   }
 
-  window.dstfFollowSecondaryAxes = dstfFollowSecondaryAxes;
   window.dstfWireSecondaryAxes = dstfWireSecondaryAxes;
 })();

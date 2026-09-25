@@ -219,8 +219,9 @@ and profile, x-y, heat-map and 3-D kinds are reserved on the same model. A track
 whichever plot shows it; a plot-only series has no criteria until it is
 tracked. The legend sits above the plot area and holds the signals: actual,
 reference and any overlays. Secondary axes appear only while a series on them
-is visible; a second unit family on one plot gets one. A plot of several series shows no overlays and no error traces — both
-belong to a plot of one variable — and says so where it greys them.
+is visible; a second unit family on one plot gets one. A plot of several
+series shows no overlays and no error traces — both belong to a plot of one
+variable — and says so where it greys them.
 
 *As built:* a plot's toolbar is the **Error** select, where the plot draws one
 series, and **Focus** — `Showing 1 of N plots: <name> — Show all N plots` on

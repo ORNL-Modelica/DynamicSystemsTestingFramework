@@ -404,3 +404,68 @@ def test_a_hover_trims_its_digits_under_a_real_mouse(tmp_path, playwright_browse
     page.close()
     assert "Abs error: 0.0000125" in texts, texts
     assert "Actual : 0.5" in texts, texts
+
+
+#: The page's error axes and the Abs error trace's y extent, from the
+#: figure Plotly holds.
+READ_ERROR_AXIS = """
+() => {
+  const el = document.getElementById('plot-0');
+  const fl = el._fullLayout;
+  const tr = el.data.find(t => (t.meta || {}).id === 'error/abs');
+  return {
+    y3: fl.yaxis3.range.slice(), y4: fl.yaxis4.range.slice(),
+    visible: fl.yaxis3.visible, shown: tr.visible,
+    abs: [Math.min(...tr.y), Math.max(...tr.y)],
+  };
+}
+"""
+
+
+@pytest.mark.parametrize("by", ["select", "legend"])
+def test_an_error_axis_zoomed_while_hidden_scales_fresh_when_shown(
+    tmp_path, playwright_browser, by
+):
+    """A real-mouse box zoom made before any error series shows scales the
+    hidden error axes too: they overlay `y`. Then Abs error is shown — by
+    the page's select or by a legend click — and its axis covers the
+    series, which fills most of it."""
+    html_path = _page_with_errors(tmp_path, 1.0)
+    page = playwright_browser.new_page(viewport={"width": 1280, "height": 900})
+    errors: list[str] = []
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+    page.goto(html_path.as_uri())
+    page.wait_for_selector("#plot-0 .scatterlayer")
+    page.evaluate("() => document.getElementById('plot-0').scrollIntoView()")
+    before = page.evaluate(READ_ERROR_AXIS)
+    left, top, width, height = page.evaluate(
+        "() => { const el = document.getElementById('plot-0');"
+        " const fl = el._fullLayout, r = el.getBoundingClientRect();"
+        " return [r.left + fl._size.l, r.top + fl._size.t, fl._size.w, fl._size.h]; }"
+    )
+    page.mouse.move(left + width * 0.2, top + height * 0.15)
+    page.mouse.down()
+    page.mouse.move(left + width * 0.7, top + height * 0.75, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    zoomed = page.evaluate(READ_ERROR_AXIS)
+    if by == "select":
+        page.locator(".error-overlay-select").first.select_option("abs")
+    else:
+        entry = page.locator("#plot-0 .legend .traces").filter(has_text="Abs error")
+        entry.locator(".legendtoggle").click(force=True)
+    # A legend click lands after plotly's double-click window (300 ms).
+    page.wait_for_function(
+        "() => document.getElementById('plot-0')._fullLayout.yaxis3.visible === true",
+        timeout=5000,
+    )
+    page.wait_for_timeout(200)
+    shown = page.evaluate(READ_ERROR_AXIS)
+    page.close()
+    assert errors == []
+    # The box zoom reached the hidden axis: the defect's precondition.
+    assert zoomed["y3"] != before["y3"], (before, zoomed)
+    assert shown["shown"] is True, shown
+    (lo, hi), (a, b) = shown["y3"], shown["abs"]
+    assert lo <= a and b <= hi, (zoomed, shown)
+    assert (b - a) > 0.5 * (hi - lo), (zoomed, shown)

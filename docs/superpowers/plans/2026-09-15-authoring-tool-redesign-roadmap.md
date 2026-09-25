@@ -311,10 +311,10 @@ reference JSON, read as its label on both tiers and soft-checked on every
 compare, and the key of nothing. That is what gives the tests whose variables
 used to be relabelled `x[N]` an editable tree. `dstf migrate-variable-names`
 rewrites the stored baselines and the spec keys. The owner ran it on
-2026-09-22 over TRANSFORM-UnitTests' 899 reference files, and committing them
-there is the owner's; the command is deleted at the v1.0 tag. A companion
-records which of its variables draw on which of the test's (`companion add
---map`).
+2026-09-22 over TRANSFORM-UnitTests' 898 stored baselines and the spec (899
+files), and committing them there is the owner's; the command is deleted at
+the v1.0 tag. A companion records which of its variables draw on which of the
+test's (`companion add --map`).
 
 **Form row + legend BUILT (2026-09-24 to 2026-09-25; D133)**, task by task on
 `v1.0-prep` from the plan `2026-09-24-form-row-and-legend.md` (631052f), each
