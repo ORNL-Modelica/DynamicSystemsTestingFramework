@@ -30,7 +30,7 @@ from ..comparison.comparator import DEFAULT_TOLERANCE, compare_one
 from ..comparison.types import TestComparison
 from ..config import Config, ConfigError
 from ..discovery.patch_apply import PatchError
-from ..discovery.plots import ResolvedPlot, resolved_plots, tracked_names
+from ..discovery.plots import PlotSpec, ResolvedPlot, resolved_plots, tracked_names
 from ..discovery.scan_cache import load_scan, store_scan
 from ..discovery.spec_parser import spec_models_from_document
 from ..discovery.spec_update import (
@@ -60,6 +60,7 @@ from .capabilities import (
     Patch,
     StoreWrite,
 )
+from .layout import current_layout
 from .spec_document import PatchOp, SpecDocument
 
 if TYPE_CHECKING:
@@ -625,6 +626,16 @@ class Session:
             )
             reads.series[variable] = got.get(variable)
         return reads.series[variable]
+
+    def layout(self, model_id: str) -> tuple[PlotSpec, ...]:
+        """The layout a gesture edits (`authoring.layout`): the effective
+        ``plots`` key with pending ops applied, else one plot per tracked
+        variable. Unlike :meth:`plots` it keeps a series the result lacks —
+        it is what the spec says, not what a page can draw."""
+        test = self._require_project().test(model_id)
+        if test is None:
+            raise KeyError(model_id)
+        return current_layout(test.plots, self.tracked(model_id))
 
     def plots(self, model_id: str) -> tuple[ResolvedPlot, ...]:
         """The test's plots as the page draws them: the entry's ``plots``

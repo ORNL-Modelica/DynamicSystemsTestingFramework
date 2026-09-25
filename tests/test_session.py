@@ -24,6 +24,7 @@ from dstf.authoring.session import (
 from dstf.authoring.spec_document import PatchOp
 from dstf.backends.types import TestResult, VariableResult
 from dstf.config import Config
+from dstf.discovery.plots import default_plots, parse_plots
 from dstf.discovery.spec_update import implicit_tree_op, materialize_implicit_metrics
 from dstf.discovery.test_registry import TestModel
 from dstf.reporting.status import FAIL, NO_REF, PASS, SIM_FAIL, classify
@@ -2540,6 +2541,19 @@ class TestPlots:
         assert [(p.series, p.missing) for p in s.plots(A)] == [(("x", "z"), ())]
         s.discard()
         assert len(s.plots(A)) == 2
+
+    def test_layout_is_the_effective_plots_key_else_one_per_tracked(self, tmp_path):
+        """The layout a gesture edits is what the spec SAYS: it keeps a
+        series the result lacks, which `plots` (what a page draws) drops."""
+        s = self._open(tmp_path)
+        assert s.layout(A) == default_plots(["x", "y"])
+        s.stage([PatchOp(A, "add", "/plots", LAYOUT)])
+        assert s.layout(A) == parse_plots(LAYOUT)
+        s.discard()
+        raw = [{"kind": "time", "series": [{"var": "x"}, {"var": "nope"}]}]
+        s.stage([PatchOp(A, "add", "/plots", raw)])
+        assert s.layout(A) == parse_plots(raw)
+        assert [p.series for p in s.plots(A)] == [("x",)]
 
     def test_a_series_the_result_lacks_is_named_missing(self, tmp_path):
         s = self._open(tmp_path)
