@@ -444,8 +444,9 @@ class TestPage:
                 card.show(view)
         self._paint_focus(view)
         # The selection names an INDEX too; it is kept, clamped to the cards
-        # there are now, and its ring painted on the new cards.
-        self.select(self.selected)
+        # there are now, and its ring painted on the new cards. The drawer
+        # follows at the end of the sync that called this, once.
+        self._ring(self.selected)
         project = session.project
         test = project.test(self.model_id) if project is not None else None
         if not plots:
@@ -476,8 +477,13 @@ class TestPage:
     # -- the selected plot and the layout ---------------------------------------
 
     def select(self, index: int) -> None:
-        """Select plot ``index``, clamped to the cards (0 with none), and
-        move the ring to its card."""
+        """Select plot ``index``, clamped to the cards (0 with none), move
+        the ring to its card, and the open Variables drawer's checks with
+        it."""
+        self._ring(index)
+        self.rail.refresh()
+
+    def _ring(self, index: int) -> None:
         self.selected = max(0, min(index, len(self.cards) - 1))
         for card in self.cards:
             if card.index == self.selected:
@@ -657,6 +663,8 @@ class TestPage:
             # rebuild drew it.
             path, self.pending_reveal = self.pending_reveal, None
             self.open_criterion(path)
+        # Last: the drawer's checks read the cards and the selection.
+        self.rail.refresh()
 
     def _gone(self) -> None:
         """This page's test is no longer a test of the open project — an

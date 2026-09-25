@@ -15,6 +15,7 @@ from urllib.parse import quote
 from nicegui import ui
 
 from .test_list import TestList
+from .variables_drawer import VariablesDrawer
 
 if TYPE_CHECKING:
     from .test_page import TestPage
@@ -88,6 +89,7 @@ class Rail:
     def __init__(self, page: TestPage) -> None:
         self.page = page
         self.tests: TestsDrawer | None = None
+        self.variables: VariablesDrawer | None = None
         self.buttons: dict[str, ui.button] = {}
         self.panels: dict[str, ui.column] = {}
         self.drawer = (
@@ -133,9 +135,22 @@ class Rail:
         self.page.state.drawer = kind
         if kind == "tests" and self.tests is None:
             self.tests = TestsDrawer(self.page, self.panels["tests"])
+        elif kind == "variables":
+            if self.variables is None:
+                self.variables = VariablesDrawer(self.page, self.panels["variables"])
+            else:
+                self.variables.rebuild()  # it was not followed while closed
 
     def toggle(self, kind: str) -> None:
         self.open(None if self.page.state.drawer == kind else kind)
+
+    def refresh(self) -> None:
+        """The open Variables drawer follows the page — the plot selected,
+        the layout staged, the result read. The ONE way the page's changes
+        reach it: `TestPage.select` and the end of `TestPage.sync` call
+        this. A closed one is left alone; it is rebuilt when it opens."""
+        if self.page.state.drawer == "variables" and self.variables is not None:
+            self.variables.rebuild()
 
     def handle(self, event: dict[str, Any]) -> None:
         if self.tests is not None:

@@ -169,6 +169,23 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-rail-label { font-size: 10px; letter-spacing: 0; line-height: 1.2; }
 .dstf-rail-on { background: var(--dstf-selection); color: var(--dstf-accent); }
 .dstf-drawer-panel { width: 320px; min-width: 0; }
+/* The Variables drawer's rows (3c): "+ new plot" is there on the hovered
+   row only (the owner's ruling, Q6 A) — `visibility`, so the row does not
+   reflow as the mouse moves down the list. A family's members hang under
+   it, indented; a family carries the ramp its members are drawn in. The
+   target line wears the selected plot's ring. */
+.dstf-var-row { min-height: 28px; }
+.dstf-var-row:hover { background: var(--dstf-surface-hover); }
+.dstf-var-row .dstf-var-new { visibility: hidden; }
+.dstf-var-row:hover .dstf-var-new { visibility: visible; }
+.dstf-var-member { padding-left: 24px; }
+.dstf-var-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dstf-var-ramp { width: 16px; height: 8px; border-radius: 2px; flex: none; }
+.dstf-var-target { cursor: pointer; font-size: 12px; color: var(--dstf-text-secondary); }
+.dstf-var-ring {
+  width: 12px; height: 12px; border-radius: 2px; flex: none;
+  box-shadow: inset 0 0 0 2px var(--dstf-accent);
+}
 .dstf-chip-active { outline: 2px solid var(--dstf-accent); }
 .dstf-card {
   border: 1px solid var(--dstf-border); border-radius: 4px; box-shadow: none;

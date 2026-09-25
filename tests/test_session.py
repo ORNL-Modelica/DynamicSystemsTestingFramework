@@ -2288,6 +2288,38 @@ def _plots_project(tmp_path: Path) -> tuple[Path, Path]:
     return cfg, work
 
 
+#: What `_drawer_project` adds to A's result after x and y: a name of every
+#: group the Variables drawer draws — top level, two families (one behind a
+#: two-dimensional index), a diagnostic.
+DRAWER_EXTRA = [
+    "a0",
+    "z",
+    "pipe.T[1]",
+    "pipe.T[2]",
+    "pipe.T[3]",
+    "port[2, 1].C[1]",
+    "port[2, 1].C[2]",
+    "port[2, 1].C[3]",
+    "CPUtime",
+]
+
+
+def _drawer_project(tmp_path: Path, extra: int = 0) -> tuple[Path, Path]:
+    """`_two_var_project` with A's result carrying, after x and y, the
+    untracked `DRAWER_EXTRA`, each a distinct ramp so a plot shows them
+    apart, and ``extra`` more untracked `v0`, `v1`, ... for the drawer's cap.
+    A's tree is the implicit one: x and y scored, one nrmse each."""
+    cfg, work = _two_var_project(tmp_path)
+    path = work / "test_0001" / "result.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    t = payload["time"]
+    names = DRAWER_EXTRA + [f"v{i}" for i in range(extra)]
+    for k, name in enumerate(names, start=3):
+        payload["variables"][name] = [k * v for v in t]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return cfg, work
+
+
 LAYOUT = [{"kind": "time", "series": [{"var": "x"}, {"var": "z"}]}]
 
 

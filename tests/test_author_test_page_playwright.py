@@ -41,7 +41,7 @@ from test_author_suite_playwright import (  # noqa: E402
     _wait_until_serving,
 )
 from test_interactive_figures import UNDER_TOOLBAR  # noqa: E402
-from test_session import A, _page_project  # noqa: E402
+from test_session import A, _drawer_project, _page_project  # noqa: E402
 
 VIEWPORT = {"width": 1280, "height": 900}
 #: The zoom set before a criterion opens and read back after: the tool's
@@ -68,12 +68,14 @@ def _served(
     tmp_path: Path,
     playwright_browser,
     x_error: Callable[[float], float] | None = None,
+    project: Callable[[Path], tuple[Path, Path]] = _page_project,
 ):
-    """`dstf author` over the fixture, with `/test/FakeLib.A` open. On the
-    way out: assertion 7 — no page error, no console error, and the spec
-    file byte-for-byte as it was (nothing is saved by looking).
-    ``x_error`` replaces x's error against its baseline (`_set_x_error`)."""
-    cfg, work = _page_project(tmp_path)
+    """`dstf author` over ``project`` (`_page_project` unless said), with
+    `/test/FakeLib.A` open. On the way out: assertion 7 — no page error, no
+    console error, and the spec file byte-for-byte as it was (nothing is
+    saved by looking). ``x_error`` replaces x's error against its baseline
+    (`_set_x_error`)."""
+    cfg, work = project(tmp_path)
     if x_error is not None:
         _set_x_error(work, x_error)
     spec_file = cfg.parent / "test_spec.json"
@@ -1623,3 +1625,108 @@ def test_a_click_selects_a_plot_outside_its_plot_area(tmp_path, playwright_brows
         cards.nth(1).get_by_role("button", name="Remove plot").click()
         expect(cards).to_have_count(6, timeout=EXPECT_TIMEOUT)
         _ring_is(page, 2)
+
+
+# -- 3c: the Variables drawer ---------------------------------------------------
+
+#: A pixel on the drag layer at the middle of a plot's x-axis: the unified
+#: hover is decided by x alone.
+MID_PIXEL = """
+(gd) => {
+  const fl = gd._fullLayout, r = gd.getBoundingClientRect();
+  const x = r.left + fl.xaxis._offset + fl.xaxis._length / 2;
+  const top = r.top + fl.yaxis._offset;
+  for (let f = 0.05; f < 1; f += 0.05) {
+    const y = top + fl.yaxis._length * f;
+    const el = document.elementFromPoint(x, y);
+    if (el && el.closest && el.closest('.nsewdrag')) return [x, y];
+  }
+  return null;
+}
+"""
+
+#: A card's legend entries, read as SVG text (`inner_text` has none).
+LEGEND = "e => [...e.querySelectorAll('.legendtext')].map(t => t.textContent)"
+
+
+def _var_row(page, text: str):
+    """The drawer's row that reads ``text`` exactly."""
+    return page.locator(".dstf-var-row").filter(
+        has=page.locator(".dstf-var-text", has_text=re.compile(f"^{re.escape(text)}$"))
+    )
+
+
+def test_the_variables_drawer_edits_the_layout_with_a_real_mouse(
+    tmp_path, playwright_browser
+):
+    """The owner's rulings Q5-Q6 under a real mouse: Add series selects its
+    plot and opens the drawer on it, "+ new plot" is there on the hovered
+    row only, a check adds a series to the selected plot, and "+ new plot"
+    puts a family on a plot of its own below it, selected, as ONE legend
+    entry whose hover still names each member. Discard puts it all back;
+    `_served` checks the spec file never moved."""
+    with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
+        cards = page.locator(".dstf-plot")
+        cards.nth(1).scroll_into_view_if_needed()
+        cards.nth(1).get_by_role("button", name="Add series").click()
+        _ring_is(page, 1)
+        target = page.locator(".dstf-var-target")
+        expect(target).to_have_text(
+            "Checkboxes act on plot 2 of 2", timeout=EXPECT_TIMEOUT
+        )
+
+        z = _var_row(page, "z")
+        expect(z.locator(".dstf-var-new")).to_be_hidden()
+        z.hover()
+        expect(z.locator(".dstf-var-new")).to_be_visible(timeout=EXPECT_TIMEOUT)
+        target.hover()
+        expect(z.locator(".dstf-var-new")).to_be_hidden(timeout=EXPECT_TIMEOUT)
+
+        z.locator('[role="checkbox"]').click()
+        expect(z.locator('[role="checkbox"]')).to_have_attribute(
+            "aria-checked", "true", timeout=EXPECT_TIMEOUT
+        )
+        cards.nth(1).scroll_into_view_if_needed()
+        legend = cards.nth(1).locator(".js-plotly-plot")
+        expect(legend).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('.dstf-plot')[1]"
+            ".querySelectorAll('.legendtext')].some(t => t.textContent === 'z')",
+            timeout=EXPECT_TIMEOUT,
+        )
+        _shot(page, tmp_path, "var-check")
+
+        port = _var_row(page, "port[2, 1].C[1:3]")
+        port.hover()
+        port.locator(".dstf-var-new").click()
+        expect(cards).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        _ring_is(page, 2)
+        expect(target).to_have_text(
+            "Checkboxes act on plot 3 of 3", timeout=EXPECT_TIMEOUT
+        )
+        cards.nth(2).scroll_into_view_if_needed()
+        plot = cards.nth(2).locator(".js-plotly-plot")
+        expect(plot).to_be_visible(timeout=EXPECT_TIMEOUT)
+        page.wait_for_function(
+            "() => document.querySelectorAll('.dstf-plot')[2]"
+            ".querySelectorAll('.legendtext').length > 0",
+            timeout=EXPECT_TIMEOUT,
+        )
+        assert cards.nth(2).evaluate(LEGEND) == ["port[2, 1].C[1:3]"]
+        pixel = plot.evaluate(MID_PIXEL)
+        assert pixel is not None
+        page.mouse.move(pixel[0] - 60, pixel[1] - 20)
+        page.wait_for_timeout(150)
+        page.mouse.move(pixel[0], pixel[1], steps=4)
+        page.wait_for_timeout(400)
+        texts = page.evaluate(HOVER_TEXTS)
+        _shot(page, tmp_path, "var-new-plot")
+        assert any("port[2, 1].C[2]" in line for line in texts), texts
+        assert not any("%{" in line for line in texts), texts
+
+        assert "1 pending edit" in _pending(page)
+        page.locator(".dstf-header-row").get_by_role(
+            "button", name=re.compile(r"^Discard")
+        ).click()
+        expect(cards).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        _ring_is(page, 1)

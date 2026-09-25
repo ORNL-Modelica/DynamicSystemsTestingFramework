@@ -24,6 +24,7 @@ from nicegui import ui
 from ...backends.types import VariableText
 from ...comparison import registry
 from ...discovery.plots import ResolvedPlot
+from ...figures.families import family_label, group_families
 from ...figures.plotly import _LABELS, Visibility
 from ..capabilities import Placement
 from ..layout import Layout, remove_plot, stranded, stranded_sentence
@@ -329,13 +330,25 @@ class PlotCard:
                 self.texts = {
                     n: scope[n].text if n in scope else n for n in resolved.series
                 }
-                ui.label(", ".join(labels[n] for n in resolved.series)).classes(
-                    "text-subtitle2"
-                ).mark(f"plot-title:{index}")
-                if any(labels[n] != n for n in resolved.series):
-                    ui.label(", ".join(resolved.series)).classes("dstf-varname").mark(
-                        f"plot-name:{index}"
+                # Array families fold, as the report's plot titles do
+                # (`report_suite`): the fold over the texts, so two series
+                # whose labels collide are no family; each family READS its
+                # labels' slice (`pipe.T[1:3]`), and the muted line folds
+                # the names the same way.
+                series = list(resolved.series)
+                ui.label(
+                    ", ".join(
+                        family_label(key, members, labels)
+                        for key, members in group_families(series, self.texts)
                     )
+                ).classes("text-subtitle2").mark(f"plot-title:{index}")
+                if any(labels[n] != n for n in series):
+                    ui.label(
+                        ", ".join(
+                            family_label(key, members)
+                            for key, members in group_families(series)
+                        )
+                    ).classes("dstf-varname").mark(f"plot-name:{index}")
                 for variable in self.tracked:
                     if self._leaves(view, variable):
                         pill = Pill("queued", f"plot-pill:{index}:{variable}")
@@ -379,10 +392,15 @@ class PlotCard:
                 )
                 # Read as the texts: a plot-only variable NAMED like a
                 # tracked one's expression must not read the same as the
-                # criteria row above it.
-                ui.label(
-                    f"{', '.join(self.texts[n] for n in only)} {verb} no criteria."
-                ).classes("dstf-why").mark(f"plot-only:{index}")
+                # criteria row above it. A family is one entry, as in the
+                # report's plot-only lines.
+                texts = ", ".join(
+                    family_label(key, members, self.texts)
+                    for key, members in group_families(only, self.texts)
+                )
+                ui.label(f"{texts} {verb} no criteria.").classes("dstf-why").mark(
+                    f"plot-only:{index}"
+                )
             if self.tracked:
                 # ONE wrapping row for every variable's footer: one full-width
                 # row each pushed the next plot off the screen (the board).
