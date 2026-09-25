@@ -1459,3 +1459,87 @@ def test_the_legend_holds_signals_and_sits_above(tmp_path, playwright_browser):
         assert not any("%{" in line for line in texts), texts
         assert "Actual : 0.625" in texts, texts
         assert "Reference : 0.5" in texts, texts
+
+
+# -- 3c: the rail narrows the plots ---------------------------------------------
+
+#: Every rail label, read whole: its text fits its own box, and its box sits
+#: inside the drawer, whose content does not scroll sideways. The labels
+#: clipped at "Tes" once by the DRAWER's padding pushing the buttons past
+#: its edge, which a label measured only against itself or its button does
+#: not see.
+RAIL_LABELS = """
+() => {
+  const drawer = document.querySelector('.q-drawer--left .q-drawer__content');
+  const d = drawer.getBoundingClientRect();
+  return [...drawer.querySelectorAll('.dstf-rail-label')].map((label) => {
+    const l = label.getBoundingClientRect();
+    return {text: label.textContent, fits: label.scrollWidth <= label.clientWidth
+      && l.left >= d.left && l.right <= d.right
+      && drawer.scrollWidth <= drawer.clientWidth};
+  });
+}
+"""
+WHOLE = [{"text": "Tests", "fits": True}, {"text": "Vars", "fits": True}]
+
+
+def _plot_width(page) -> float:
+    return page.locator(".js-plotly-plot").first.evaluate(
+        "e => e.getBoundingClientRect().width"
+    )
+
+
+def _steady_width(page) -> float:
+    """The plot's width once a resize has finished: two reads 300 ms apart
+    agree."""
+    last = -1.0
+    for _ in range(40):
+        width = _plot_width(page)
+        if abs(width - last) < 0.5:
+            return width
+        last = width
+        page.wait_for_timeout(300)
+    raise AssertionError(f"the plot's width never settled: {last}")
+
+
+def _plot_width_is(page, width: float) -> None:
+    page.wait_for_function(
+        "() => Math.abs(document.querySelector('.js-plotly-plot')"
+        f".getBoundingClientRect().width - ({width})) <= 4",
+        timeout=EXPECT_TIMEOUT,
+    )
+
+
+def test_the_rail_narrows_the_plots_and_nothing_scrolls_sideways(
+    tmp_path, playwright_browser
+):
+    """The owner's ruling (2026-09-25): the drawer PUSHES the plots, at a
+    desktop width and below Quasar's 1024 px breakpoint too, and the rail's
+    labels read whole. The current test's row wears the selection tint over
+    its status tint (A fails, so the fail tint is what it would show)."""
+    with _served(tmp_path, playwright_browser) as page:
+        tests = page.locator(".dstf-rail").get_by_text("Tests", exact=True)
+        assert page.evaluate(RAIL_LABELS) == WHOLE
+        for width in (1280, 900):
+            page.set_viewport_size({"width": width, "height": 900})
+            w0 = _steady_width(page)
+            tests.click()
+            current = page.locator(".dstf-row-current")
+            expect(current).to_be_visible(timeout=EXPECT_TIMEOUT)
+            _plot_width_is(page, w0 - 320)
+            # The width lands before the layout settles: a single read as
+            # the plot's width landed saw 1551 at a 1280 px viewport.
+            page.wait_for_function(
+                "() => document.documentElement.scrollWidth == window.innerWidth",
+                timeout=EXPECT_TIMEOUT,
+            )
+            svg = page.locator(".js-plotly-plot .main-svg").first
+            assert abs(float(svg.get_attribute("width")) - (w0 - 320)) <= 4
+            assert page.evaluate(RAIL_LABELS) == WHOLE
+            assert (
+                current.evaluate("e => getComputedStyle(e).backgroundColor")
+                == "rgb(227, 242, 253)"
+            )
+            _shot(page, tmp_path, f"rail-{width}")
+            tests.click()
+            _plot_width_is(page, w0)

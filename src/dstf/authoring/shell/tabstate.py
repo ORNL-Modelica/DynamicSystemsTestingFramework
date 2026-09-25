@@ -20,6 +20,10 @@ class TabState:
     status_filter: set[str] = field(default_factory=set)
     grouped: bool = True
     short: bool = True
+    #: The Test page's open drawer — "tests", "variables" or None — and the
+    #: Tests drawer's filter (3c): the tab's, so a switch of test keeps them.
+    drawer: str | None = None
+    tests_needle: str = ""
 
 
 def tab_state() -> TabState:

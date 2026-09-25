@@ -26,6 +26,7 @@ from ..tree_text import leaves_of, nodes_of
 from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
 from .plot_card import UNREAD, PlotCard
+from .rail import Rail
 from .tabstate import tab_state
 from .tree_card import TreeCard
 
@@ -106,6 +107,7 @@ class TestPage:
         # came back however many events arrived (the final review). `sync`
         # below fills it, or `_gone` writes the sentence into it.
         self.header = Header(self.shell, below=self._subheader)
+        self.rail = Rail(self)
         with ui.column().classes("dstf-test w-full q-pa-md gap-3"):
             self.tree = TreeCard(self)
             self.count = (
@@ -127,6 +129,7 @@ class TestPage:
         ui.on("dstf_plot_visible", lambda e: self.on_visible(e.args))
         self.shell.register(self)
         self.sync()
+        self.rail.open(self.state.drawer)
 
     def _known(self) -> bool:
         """Whether this page's test is a test of the OPEN project. It can
@@ -631,6 +634,7 @@ class TestPage:
 
     def handle(self, event: dict[str, Any]) -> None:
         self.header.handle(event)
+        self.rail.handle(event)
         known = self._known()
         if self.actions is not None and known:
             self.actions.refresh()

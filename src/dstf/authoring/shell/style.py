@@ -153,6 +153,18 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   color: #ffffff; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .03em; border-radius: 3px;
 }
+/* The Test page's rail (3c): labelled buttons in 40 px. NiceGUI pads a
+   drawer by 1rem, which put the rail's buttons at 16-56 px of a 40 px
+   drawer and clipped "Tests" to "Tes" (the review's screenshot, and again
+   with 10 px labels): the drawer carries no padding. The rail and the
+   panel may give up the 1 px of the drawer's border rather than overflow
+   it. The open drawer's button sits on the selection tint. */
+.nicegui-drawer.dstf-rail-drawer { padding: 0; gap: 0; }
+.dstf-rail { width: 40px; min-width: 0; padding-top: 4px; }
+.dstf-rail .q-btn { width: 100%; padding: 4px 0; min-width: 0; }
+.dstf-rail-label { font-size: 10px; letter-spacing: 0; line-height: 1.2; }
+.dstf-rail-on { background: var(--dstf-selection); color: var(--dstf-accent); }
+.dstf-drawer-panel { width: 320px; min-width: 0; }
 .dstf-chip-active { outline: 2px solid var(--dstf-accent); }
 .dstf-card {
   border: 1px solid var(--dstf-border); border-radius: 4px; box-shadow: none;
@@ -164,4 +176,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
     + _SWATCHES
     # After the fills, so an outline wins over the colour it is drawn in.
     + ".dstf-swatch-off { background: transparent; }\n"
+    # After the tints: the current test's row in the Tests drawer read the
+    # fail tint, rgb(255,235,238), when this came first (the 3c review).
+    + ".dstf-row.dstf-row-current { background: var(--dstf-selection); }\n"
 )

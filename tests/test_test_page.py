@@ -4152,3 +4152,62 @@ async def test_an_error_belongs_to_its_row(page_shell):
         user.find(marker=f"probe-close:{TUBE}").click()
         await _settled(lambda: page.form is None)
         assert not error.visible
+
+
+# -- 3c: the rail and the Tests drawer -----------------------------------------
+
+
+class TestRail:
+    """The rail's two buttons open one drawer at a time; the Tests drawer is
+    the Suite page's list without checkboxes (the owner's ruling,
+    2026-09-25). `user.find` sees visible elements only, so a hidden panel
+    is one `_none` finds nothing for."""
+
+    async def test_the_rail_opens_one_drawer_at_a_time(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            await _test_page(shell, user)
+            assert not _none(user, "rail:tests")
+            assert not _none(user, "rail:variables")
+            assert _none(user, "drawer:tests") and _none(user, "drawer:variables")
+            user.find(marker="rail:tests").click()
+            assert not _none(user, "drawer:tests")
+            assert _none(user, "drawer:variables")
+            user.find(marker="rail:variables").click()
+            assert not _none(user, "drawer:variables")
+            assert _none(user, "drawer:tests")
+            user.find(marker="rail:variables").click()
+            assert _none(user, "drawer:tests") and _none(user, "drawer:variables")
+
+    async def test_the_tests_drawer_lists_the_suite_and_marks_this_test(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            await _test_page(shell, user)
+            user.find(marker="rail:tests").click()
+            await user.should_see(marker="tests-drawer:group:FakeLib")
+            for model_id in shell.visible_tests():
+                assert not _none(user, "tests-drawer:" + model_id), model_id
+            assert _none(user, "tests-drawer:check:" + A)
+            container = _one(user, "tests-drawer:" + A).parent_slot.parent
+            assert "dstf-row-current" in container.classes
+            other = _one(user, "tests-drawer:" + D).parent_slot.parent
+            assert "dstf-row-current" not in other.classes
+            user.find(marker="tests-drawer:needle").type("D")
+            await _settled(lambda: _none(user, "tests-drawer:" + A))
+            shown = [
+                m for m in shell.visible_tests() if not _none(user, "tests-drawer:" + m)
+            ]
+            assert shown == [D]
+
+    async def test_a_click_in_the_tests_drawer_opens_that_test_and_the_drawer_stays(
+        self, shell
+    ):
+        async with user_simulation(root=shell.index) as user:
+            await _test_page(shell, user)
+            shell.session.stage([LOOSEN])
+            staged = list(shell.session.spec.pending)
+            assert staged[-1] == LOOSEN
+            user.find(marker="rail:tests").click()
+            user.find(marker="tests-drawer:" + D).click()
+            await user.should_see(D, marker="model", retries=20)
+            await _settled(lambda: _page(shell, user).model_id == D)
+            assert not _none(user, "drawer:tests")
+            assert shell.session.spec.pending == staged
