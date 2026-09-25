@@ -1647,3 +1647,29 @@ planning.
     the report's overlay table says); a CLI-added companion still stores an
     absolute path; `--map` refusal on freeze/remove exits 2 via ConfigError
     while other companion failures exit 1.
+
+- **Follow-ups from the form row + legend build (2026-09-25)**: residuals the
+  reviews and the TRANSFORM gate found and did not fix, with no owner ruling
+  on them yet.
+  - On the report, switching the error select straight from Signed to Abs
+    keeps a zoom made while Signed showed (both ride yaxis3, which stays
+    visible, so axes.js never autoranges it). The tool rescales on every
+    choice.
+  - Swatch and error choices reset when adding or removing a criterion
+    rebuilds the page (paths shift, so keeping them needs a mapping).
+  - Tooltips stay up after a click. The swatch's tooltip covers the "Add a
+    criterion for x" button, the icon's covers the row above, and the grey
+    Wrap's covers the start of the sentence below.
+  - `.dstf-form-row` and `.dstf-editor` overflow their row by 16 px; one rule
+    for both.
+  - At 900 px the tool's header cuts off "dashboard" and "Stop server". This
+    predates the build.
+  - Plotly's "Double-click to zoom back out" notice covers the header's Export
+    and dashboard buttons for a few seconds after a zoom.
+  - A row taller than the viewport scrolls its title to the header's edge, so
+    the criteria row that opened it goes under the header.
+  - Unwrap under a weighted parent is refused with the validator's
+    `…weights: length (2) must match children (3)`, which does not say
+    "weighted".
+  - No multi-series plot exists in TRANSFORM, so the gate could not exercise
+    one. The fixture's seven-plot page is the only coverage.
