@@ -3,27 +3,31 @@ drawer"), as data: the page draws them and knows none of the rules.
 
 Every variable of the last result, in groups — the tracked ones first, then
 by the first dot component of the NAME ("(top level)" for a name with
-none), the diagnostics last — with arrays folded into one row over their
-LABELS (`figures.families`, the one family rule both tiers use), filtered,
-and each row's state against the selected plot."""
+none), the diagnostics last — with arrays folded into one row
+(`figures.families`, the one family rule both tiers use), filtered, and
+each row's state against the selected plot."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..backends.types import _pattern_to_regex, is_glob_pattern
 from ..discovery.plots import PlotSpec
 from ..figures.families import family_label, group_families
-from .layout import plots_showing
 
 TOP_LEVEL = "(top level)"
 
 
 @dataclass(frozen=True)
 class VarRow:
-    key: str  #: the family key, or the name of a lone variable
+    #: the family key (``pipe.T[]``; a lone variable's too when it has one,
+    #: ``$DER.x[]``), else the name. Not unique: a tracked family whose
+    #: expressions are ``pipe.T[i]`` keys ``pipe.T[]`` as the result file's
+    #: own ``pipe.T[i]`` do — ``id`` is.
+    key: str
+    id: str  #: ``<group title>/<key>``, unique within the drawer
     members: tuple[str, ...]  #: names, by index; one for a lone variable
     text: str  #: what it reads as: the family label, or the label
     name: str | None  #: the muted name beside ``text``, when they differ
@@ -37,6 +41,10 @@ class VarRow:
 
 @dataclass(frozen=True)
 class VarGroup:
+    #: 0 tracked, 1 a prefix group, 2 top level, 3 diagnostics: a variable
+    #: named ``Tracked.a`` is in a prefix group titled "Tracked", never in
+    #: the tracked one
+    rank: int
     title: str
     rows: tuple[VarRow, ...]
 
@@ -60,14 +68,14 @@ def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
     return lambda text: folded in (text if case else text.lower())
 
 
-def _group_title(name: str, tracked: set[str], diagnostics: set[str]) -> str:
+def _group(name: str, tracked: set[str], diagnostics: set[str]) -> tuple[int, str]:
     if name in tracked:
-        return "Tracked"
+        return 0, "Tracked"
     if name in diagnostics:
-        return "Diagnostics"
+        return 3, "Diagnostics"
     head, dot, _ = name.partition(".")
     # the component, not its index: `port[2, 1].C[1]` is in "port"
-    return head.split("[", 1)[0] if dot else TOP_LEVEL
+    return (1, head.split("[", 1)[0]) if dot else (2, TOP_LEVEL)
 
 
 def variable_groups(
@@ -76,42 +84,57 @@ def variable_groups(
     tracked: Sequence[str],
     diagnostics: Collection[str],
     labels: Mapping[str, str],
+    texts: Mapping[str, str],
     layout: Sequence[PlotSpec],
     selected: int | None,
     scored: Mapping[str, int],
     keep: Callable[[str], bool],
 ) -> list[VarGroup]:
-    """``names`` in the drawer's groups. ``labels`` maps a name to what it
-    reads as (absent: the name); ``scored`` maps a scored name to its number
-    of criteria; ``keep`` is the filter, asked of the name AND the label."""
+    """``names`` in the drawer's groups. ``scored`` maps a scored name to
+    its number of criteria; ``keep`` is the filter, asked of the name AND
+    the label. Absent from either map, a name reads as itself.
+
+    Two maps, the report's rule for a plot title
+    (``reporting/report_suite.py``): the FOLD is over ``texts`` (the test's
+    disambiguated texts, ``pipe.T[1] (u1)``), so two variables whose labels
+    collide belong to no family — ``x={pipe.T[1], pipe.T[1]}`` is two rows,
+    never one reading ``pipe.T[1,1]``; a row READS ``labels`` (the plain
+    label), with the name muted beside it where they differ."""
     tracked_set, diag = set(tracked), set(diagnostics)
     kept = [n for n in names if keep(n) or (n in labels and keep(labels[n]))]
-    by_title: dict[str, list[str]] = {}
+    by_group: dict[tuple[int, str], list[str]] = {}
     for name in kept:
-        by_title.setdefault(_group_title(name, tracked_set, diag), []).append(name)
-    middle = sorted(
-        t for t in by_title if t not in ("Tracked", TOP_LEVEL, "Diagnostics")
-    )
-    order = ["Tracked", *middle, TOP_LEVEL, "Diagnostics"]
-    layout = tuple(layout)
-    showing = {n: plots_showing(layout, n) for n in kept}
+        by_group.setdefault(_group(name, tracked_set, diag), []).append(name)
+    # the layout indexed once: scanning every plot per name cost 395 ms over
+    # 6,093 names and 300 plots
+    index: dict[str, list[int]] = {}
+    for i, plot in enumerate(layout):
+        for s in plot.series:
+            at = index.setdefault(s.var, [])
+            if not at or at[-1] != i:
+                at.append(i)
+    showing = {n: tuple(index.get(n, ())) for n in kept}
     out: list[VarGroup] = []
-    for title in order:
-        members_of = by_title.get(title)
-        if not members_of:
-            continue
+    for rank, title in sorted(by_group, key=lambda g: (g[0], g[1].casefold(), g[1])):
         rows = []
-        for key, members in group_families(members_of, labels):
+        for key, members in group_families(by_group[rank, title], texts):
             text = family_label(key, members, labels)
             lone = members[0] if len(members) == 1 else None
             on = [m for m in members if selected is not None and selected in showing[m]]
             elsewhere = sorted(
                 {i for m in members for i in showing[m] if i != selected}
             )
-            stuck = tuple(m for m in on if m in scored and showing[m] == (selected,))
+            # a row partly on the plot ADDS its missing members on a click:
+            # no removal is on offer, so nothing is stranded
+            stuck = (
+                tuple(m for m in on if m in scored and showing[m] == (selected,))
+                if len(on) == len(members)
+                else ()
+            )
             rows.append(
                 VarRow(
                     key=key,
+                    id=f"{title}/{key}",
                     members=tuple(members),
                     text=text,
                     name=lone if lone is not None and text != lone else None,
@@ -121,7 +144,7 @@ def variable_groups(
                     criteria=sum(scored[m] for m in stuck),
                 )
             )
-        out.append(VarGroup(title, tuple(rows)))
+        out.append(VarGroup(rank, title, tuple(rows)))
     return out
 
 
@@ -133,6 +156,6 @@ def cap(groups: list[VarGroup], limit: int) -> tuple[list[VarGroup], int, int]:
     for g in groups:
         if left <= 0:
             break
-        out.append(VarGroup(g.title, g.rows[:left]))
+        out.append(replace(g, rows=g.rows[:left]))
         left -= len(out[-1].rows)
     return out, min(total, limit), total
