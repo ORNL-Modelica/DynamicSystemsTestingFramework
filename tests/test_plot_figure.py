@@ -34,6 +34,9 @@ def _view(name, scale=1.0, *, ref=False):
         ("x[2,3]", None),
         ("der(pipe.T[3])", ("der(pipe.T[])", 3)),
         ("x[i]", None),
+        ("massPorts[4, 1].C[3]", ("massPorts[4, 1].C[]", 3)),
+        ("a[1,2].b[7]", ("a[1,2].b[]", 7)),
+        ("a[1].b[2,3]", None),
     ],
 )
 def test_family_of_is_the_last_integer_index(name, expected):
@@ -503,18 +506,56 @@ def _generated_result_file_names(n: int, seed: int = 20260921) -> list[str]:
     return out
 
 
-def test_family_of_answers_a_name_exactly_as_it_did_before_labels():
-    """A differential over generated names, not a hand-list: the hand-list
-    agreed while `θ[1]`, `pipe₊T[1]`, `T-wall[1]`, `$DER.x[1]`, `-der(x[2])`
-    and `der(x[2], 2)` had all silently stopped being families (the b147918
-    review fuzzed 300k names against this copy). A result file spells names
-    the figure layer does not get to whitelist."""
+def _family_of_after_3c(name: str):
+    """`_family_of_at_2ac8c8c` with the one change 3c ruled: a
+    multi-dimensional index refuses a family only when it comes AFTER the
+    last single-integer index. Copied, not imported."""
+    import re
+
+    m = re.compile(r"\[(\d+)\](?!.*\[\d+\])").search(name)
+    if m is None:
+        return None
+    if re.compile(r"\[[^\]]*,[^\]]*\]").search(name, m.end()):
+        return None
+    return name[: m.start()] + "[]" + name[m.end() :], int(m.group(1))
+
+
+def test_family_of_over_names_changed_only_where_3c_ruled():
+    """A differential over generated names, not a hand-list (the b147918
+    review fuzzed 300k names against 2ac8c8c's copy). The current rule
+    agrees with 2ac8c8c's everywhere except names whose multi-dimensional
+    index precedes the last single one — and those it now folds."""
+    import re
+
     names = _generated_result_file_names(25000)
-    assert len(set(names)) > 1000  # the generator is not producing one name
-    differing = [n for n in names if family_of(n) != _family_of_at_2ac8c8c(n)]
-    assert differing == []
-    # and it is a real test: some of them DO have families.
-    assert any(family_of(n) is not None for n in names)
+    assert len(set(names)) > 1000
+    assert [n for n in names if family_of(n) != _family_of_after_3c(n)] == []
+    changed = [n for n in names if _family_of_after_3c(n) != _family_of_at_2ac8c8c(n)]
+    assert changed  # the generator does produce the ruled shape
+    multi = re.compile(r"\[[^\]]*,[^\]]*\]")
+    for n in changed:
+        assert _family_of_at_2ac8c8c(n) is None
+        key, _ = family_of(n)
+        assert multi.search(key[: key.index("[]")])
+
+
+def test_an_expression_may_index_with_an_integer_list_before_its_last_index():
+    """TRANSFORM's UnitTests expressions index ports two-dimensionally and the
+    species last: `pipe_single.massPorts[4, 1].C[1]` is element 1 of an
+    array, and `C[1..3]` of one port fold (3c ruling). A slice or a
+    reduction is still no element."""
+    assert family_of("pipe_single.massPorts[4, 1].C[1]", expression=True) == (
+        "pipe_single.massPorts[4, 1].C[]",
+        1,
+    )
+    assert family_of("a[1, :].b[2]", expression=True) is None
+    assert family_of("sum(core.Qs[6, :])", expression=True) is None
+    labels = {N1: "p.m[4, 1].C[1]", N2: "p.m[4, 1].C[2]"}
+    (key, members) = group_families([N1, N2], labels)[0]
+    assert members == [N1, N2]
+    from dstf.figures.families import family_label
+
+    assert family_label(key, members, labels) == "p.m[4, 1].C[1:2]"
 
 
 @pytest.mark.parametrize(

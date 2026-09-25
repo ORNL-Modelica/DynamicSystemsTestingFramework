@@ -1,9 +1,10 @@
 """Array families (DESIGN.md "Array families on a plot"; brief §3.9).
 
 Indexed names fold by their LAST integer index: ``pipe.T[3]`` and
-``pipe.medium[3].T`` each belong to a family; ``x[2,3]`` does not. One
-function, so the figure's legend, the Variables drawer's folded row and the
-folded criteria row agree on what a family is.
+``pipe.medium[3].T`` each belong to a family; ``x[2,3]`` does not.
+``massPorts[4, 1].C[3]`` does, by its last index. One function, so the
+figure's legend, the Variables drawer's folded row and the folded criteria
+row agree on what a family is.
 
 A family is a DISPLAY fold, so it folds over what a person reads — the
 label, which for a UnitTests variable is the expression the model wrote.
@@ -34,6 +35,12 @@ _MULTI_INDEX = re.compile(r"\[[^\]]*,[^\]]*\]")
 #: spaces and punctuation do not have to be allowed everywhere.
 _PLAIN_NAME = re.compile(r"^[^\W\d][\w.\[\]]*$")
 _QUOTED_ID = re.compile(r"'[^']*'")
+#: An index of integers only, one or several (`[3]`, `[4, 1]`): a position
+#: in an array, however many dimensions. Collapsed before `_PLAIN_NAME`, so
+#: an expression that indexes a port two-dimensionally is still a plain name
+#: (`massPorts[4, 1].C[1]`). A slice (`[6, :]`) is not one: it stays and
+#: refuses the name.
+_INT_INDEX = re.compile(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]")
 #: ``der(...)``, and only that: a derivative IS an element of the array it
 #: differentiates. Any OTHER call is a reduction over the array — ``sum(...)``
 #: of two different slices is two quantities, not two elements of one.
@@ -75,7 +82,7 @@ def _names_an_element(text: str) -> bool:
         if inner is None:
             break
         text = inner.group(1)
-    return bool(_PLAIN_NAME.match(_QUOTED_ID.sub("q", text)))
+    return bool(_PLAIN_NAME.match(_INT_INDEX.sub("[0]", _QUOTED_ID.sub("q", text))))
 
 
 def family_of(text: str, *, expression: bool = False) -> tuple[str, int] | None:
@@ -84,8 +91,9 @@ def family_of(text: str, *, expression: bool = False) -> tuple[str, int] | None:
 
     ``expression=False`` (the default) reads ``text`` as a RESULT-FILE
     NAME: anything with a single-integer last index is a family, and a
-    multi-dimensional index (``x[2,3]``) is not. This is the rule the
-    module has always applied and the only one a name ever meets — a
+    multi-dimensional index (``x[2,3]``) is not. ``massPorts[4, 1].C[3]``
+    is, by its last index: a multi-dimensional index refuses a family only
+    AFTER the last single one. This is the only rule a name ever meets — a
     result file spells names the caller does not get to whitelist.
 
     ``expression=True`` reads it as a label a person typed, and only a
@@ -98,10 +106,14 @@ def family_of(text: str, *, expression: bool = False) -> tuple[str, int] | None:
     """
     if expression and not _names_an_element(text):
         return None
-    if _MULTI_INDEX.search(text):
-        return None
     m = _LAST_INDEX.search(text)
     if m is None:
+        return None
+    # Multi-dimensional AFTER the last single index (`a[1].b[2,3]`): the
+    # element's own position is two-dimensional, so it is no member of an
+    # `a` array. BEFORE it (`massPorts[4, 1].C[3]`) it is where the array
+    # sits, and the element is C's 3rd (3c ruling).
+    if _MULTI_INDEX.search(text, m.end()):
         return None
     return text[: m.start()] + "[]" + text[m.end() :], int(m.group(1))
 
