@@ -16,6 +16,7 @@ def no_ui(name, *a, **k):
 builtins.__import__ = no_ui
 import dstf.authoring  # registers the builtins, imports the Session and the contract
 import dstf.authoring.session, dstf.authoring.capabilities, dstf.authoring.spec_document
+import dstf.authoring.tree_pointer
 import dstf.authoring.builtin.accept, dstf.authoring.builtin.rerun
 import dstf.authoring.builtin.edit_criteria, dstf.authoring.builtin.edit_tree
 import dstf.authoring.builtin.edit_on_plot

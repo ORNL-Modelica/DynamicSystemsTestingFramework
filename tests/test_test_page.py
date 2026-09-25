@@ -20,7 +20,7 @@ from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 from capability_host import open_menu  # noqa: E402
 from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
-from dstf.authoring.capabilities import Artifact, Job, Placement  # noqa: E402
+from dstf.authoring.capabilities import Artifact, Job, Patch, Placement  # noqa: E402
 from dstf.authoring.session import Selection  # noqa: E402
 from dstf.authoring.shell import plot_card  # noqa: E402
 from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
@@ -3384,3 +3384,261 @@ async def test_a_redraw_that_gains_error_traces_gains_the_select(page_shell):
             "error/abs",
             "error/nrmse",
         ]
+
+
+# -- Panel.row / Panel.reveal: one thing open at a time ----------------------
+
+
+class _RowProbe:
+    """At NODE (and VARIABLE, for the dialog): one button that opens a row
+    under its host's row, whose content counts how many times it was built
+    and carries a close button; and one that runs `act` — staging ``stage``
+    — then reveals ``reveal``, recording anything the reveal raised."""
+
+    name = "row-probe"
+    label = "Row probe"
+    placements = frozenset({Placement.NODE, Placement.VARIABLE})
+
+    def __init__(self):
+        self.built: dict[str, int] = {}
+        self.stage: list = []
+        self.reveal: str | None = None
+        self.reveal_errors: list[Exception] = []
+
+    def available(self, s):
+        return True
+
+    def caption(self, s):
+        return "Row probe"
+
+    def panel(self, s, ui_panel):
+        path = s.selection.node_path or f"var:{s.selection.variable}"
+
+        def build(close):
+            self.built[path] = self.built.get(path, 0) + 1
+            ui.label(f"built {self.built[path]}").mark(f"probe-body:{path}")
+            ui.button("close", on_click=close).mark(f"probe-close:{path}")
+
+        def act_and_reveal():
+            ui_panel.submit()
+            if self.reveal is not None:
+                try:
+                    ui_panel.reveal(self.reveal)
+                except Exception as e:  # recorded: a reveal must raise nothing
+                    self.reveal_errors.append(e)
+
+        ui.button("open", on_click=lambda: ui_panel.row(f"probe {path}", build)).mark(
+            f"probe-open:{path}"
+        )
+        ui.button("act", on_click=act_and_reveal).mark(f"probe-act:{path}")
+
+    def act(self, s, **inputs):
+        return Patch(ops=list(self.stage)) if self.stage else None
+
+
+def _next_sibling(element):
+    siblings = element.parent_slot.children
+    return siblings[siblings.index(element) + 1]
+
+
+def _has_rings(card) -> bool:
+    return any(s.get("type") == "circle" for s in card.plot.figure["layout"]["shapes"])
+
+
+async def test_a_panel_row_opens_in_a_dialogs_slot(shell):
+    """A dialog has no row to open one under: the form is drawn in the
+    panel's own slot, inside the dialog, and ``close`` takes it away. A
+    dialog is no page, so ``reveal`` does nothing and raises nothing."""
+    probe = _RowProbe()
+    _only(probe)
+    bars, root = _barred(shell, None)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        user.find(marker="action:row-probe").click()
+        await user.should_see(marker="probe-open:var:x")
+        user.find(marker="probe-open:var:x").click()
+        await user.should_see("probe var:x")
+        body = _one(user, "probe-body:var:x")
+        assert bars[0].dialog in list(_ancestors(body))
+        user.find(marker="probe-close:var:x").click()
+        await _settled(lambda: _none(user, "probe-body:var:x"))
+        probe.reveal = "/metrics/children/0"
+        user.find(marker="probe-act:var:x").click()
+        await asyncio.sleep(0.1)
+        assert probe.reveal_errors == []
+        assert bars[0].errors == {}
+
+
+async def test_a_row_opens_under_the_tree_row_it_was_asked_from(page_shell):
+    """The form opens BELOW the node's row (board 1A), in the slot between
+    that row and the next node's, and the row stays lit."""
+    shell = page_shell
+    _only(_RowProbe())
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        user.find(marker="tree:toggle").click()
+        await user.should_see(marker=f"tree-row:{TUBE}")
+        _click_in(user, f"probe-open:{TUBE}", within=f"tree-row:{TUBE}")
+        await user.should_see(marker=f"form-row:tree:{TUBE}")
+        row = _one(user, f"tree-row:{TUBE}")
+        form = _one(user, f"form-row:tree:{TUBE}")
+        slot = _next_sibling(row)
+        assert form.parent_slot.parent is slot
+        assert _next_sibling(slot) is _one(user, f"tree-row:{RANGE_X}")
+        assert _one(user, f"form-title:tree:{TUBE}").text == f"probe {TUBE}"
+        assert "dstf-row-open" in row.classes
+
+
+async def test_one_thing_is_open_at_a_time(page_shell):
+    """ONE thing open on the page: a row replaces another row, the editor
+    replaces a row, and a row replaces the editor — whose rings go with it."""
+    shell = page_shell
+    _only(_RowProbe())
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        card = page.cards[0]
+        with page.client:
+            card.show()
+        user.find(marker="tree:toggle").click()
+        await user.should_see(marker=f"tree-row:{TUBE}")
+        _click_in(user, f"probe-open:{TUBE}", within=f"tree-row:{TUBE}")
+        await user.should_see(marker=f"form-row:tree:{TUBE}")
+        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
+        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
+        assert _none(user, f"form-row:tree:{TUBE}")
+        assert "dstf-row-open" not in _one(user, f"tree-row:{TUBE}").classes
+        user.find(marker=f"criterion:0:{TUBE}").click()
+        await _settled(lambda: page.open == (0, TUBE))
+        assert _none(user, f"form-row:crit:0:{RANGE_X}")
+        assert page.form is None
+        assert _has_rings(card)
+        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
+        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
+        assert page.open is None
+        assert _none(user, f"editor:0:{TUBE}")
+        await _settled(lambda: not _has_rings(card))
+
+
+async def test_a_click_on_the_criteria_row_closes_its_form_and_opens_nothing(
+    page_shell,
+):
+    """Board 1A: on a criteria row, clicking the row's name closes a form
+    open under it — and opens no editor in its place."""
+    shell = page_shell
+    _only(_RowProbe())
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
+        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
+        user.find(marker=f"criterion:0:{RANGE_X}").click()
+        await _settled(lambda: _none(user, f"form-row:crit:0:{RANGE_X}"))
+        await asyncio.sleep(0.1)
+        assert page.open is None and page.form is None
+        # With no form under it, the same click opens the editor as ever.
+        user.find(marker=f"criterion:0:{RANGE_X}").click()
+        await _settled(lambda: page.open == (0, RANGE_X))
+
+
+async def test_an_edit_staged_elsewhere_rebuilds_the_open_row(page_shell):
+    """The criterion editor's rule, for a node: a form open while an edit is
+    staged elsewhere is rebuilt from the tree as it is then — and ONLY
+    then; an edit that moves the tree's shape takes the row away with the
+    rows it hung under."""
+    shell = page_shell
+    probe = _RowProbe()
+    _only(probe)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        user.find(marker="tree:toggle").click()
+        await user.should_see(marker="tree-row:/metrics")
+        _click_in(user, "probe-open:/metrics", within="tree-row:/metrics")
+        await user.should_see(marker="form-row:tree:/metrics")
+        assert probe.built["/metrics"] == 1
+        with page.client:
+            page.sync()  # an unrelated sync rebuilds nothing
+        assert probe.built["/metrics"] == 1
+        shell.session.apply(
+            Patch(
+                ops=[
+                    PatchOp(
+                        A, "replace", "/metrics/children/0/tube_points/0/upper", 0.15
+                    )
+                ]
+            )
+        )
+        await _settled(lambda: probe.built["/metrics"] == 2)
+        assert _one(user, "probe-body:/metrics").text == "built 2"
+        assert page.form is not None
+        shell.session.apply(
+            Patch(
+                ops=[
+                    PatchOp(
+                        A,
+                        "add",
+                        "/metrics/children/-",
+                        {"metric": "nrmse", "variable": "x"},
+                    )
+                ]
+            )
+        )
+        await _settled(lambda: page.form is None)
+        assert _none(user, "form-row:tree:/metrics")
+
+
+async def test_reveal_opens_the_criterion_after_the_page_redraws(page_shell):
+    """After an add, the new criterion's editor opens under its plot — at
+    the end of the sync that drew its row: before it, there is no row."""
+    shell = page_shell
+    probe = _RowProbe()
+    probe.stage = [
+        PatchOp(A, "add", "/metrics/children/-", {"metric": "tube", "variable": "x"})
+    ]
+    probe.reveal = "/metrics/children/3"
+    _only(probe)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, f"probe-act:{TUBE}", within=f"criterion:0:{TUBE}")
+        await _settled(lambda: page.open == (0, "/metrics/children/3"))
+        await user.should_see(marker="editor:0:/metrics/children/3")
+        assert probe.reveal_errors == []
+
+
+async def test_a_refused_add_reveals_nothing(page_shell):
+    """Apply is synchronous: a refused add leaves no node, and its reveal
+    is not kept for later — held, it opened the NEXT add's criterion by
+    itself, one nobody asked to see."""
+    shell = page_shell
+    probe = _RowProbe()
+    # A leaf holds no children: the validator refuses the add by its path.
+    probe.stage = [
+        PatchOp(
+            A,
+            "add",
+            "/metrics/children/0/children/-",
+            {"metric": "tube", "variable": "x"},
+        )
+    ]
+    probe.reveal = "/metrics/children/3"
+    _only(probe)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, f"probe-act:{TUBE}", within=f"criterion:0:{TUBE}")
+        await _settled(
+            lambda: page.cards[0].rows[TUBE].host.errors["row-probe"].visible
+        )
+        assert page.pending_reveal is None
+        shell.session.apply(
+            Patch(
+                ops=[
+                    PatchOp(
+                        A,
+                        "add",
+                        "/metrics/children/-",
+                        {"metric": "tube", "variable": "x"},
+                    )
+                ]
+            )
+        )
+        await _settled(lambda: "/metrics/children/3" in page.cards[0].rows)
+        await asyncio.sleep(0.2)
+        assert page.open is None

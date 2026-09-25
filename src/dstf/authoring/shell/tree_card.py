@@ -20,7 +20,7 @@ from nicegui import ui
 
 from ..capabilities import Placement
 from ..session import Selection
-from .actions import InlineHost
+from .actions import InlineHost, RowTarget
 from .widgets import Pill
 
 if TYPE_CHECKING:
@@ -272,19 +272,24 @@ class TreeCard:
             if node.get("kind") == "leaf":
                 readout = ui.label(leaf_readout(node)).classes("dstf-mono text-xs")
             ui.space()
+            target = RowTarget(self.page, f"tree:{path}", row, path)
             host = InlineHost(
                 self.page.shell,
                 Placement.NODE,
                 partial(Selection, tests=frozenset({model}), node_path=path),
                 figure=None,
                 marker=f"node:{path}",
+                row=target,
             )
             # A host drawn inside a row keeps to its own width, or the
             # cluster sits left of where it belongs (the 3b review, in
             # Chromium).
             host.column.classes(remove="w-full", add="dstf-node-host")
-            host.build()
-            self.hosts.append(host)
+        # The row's form slot, between it and the next node's row; the
+        # host is built once its panels have somewhere to open a row.
+        target.slot = ui.column().classes("w-full gap-0")
+        host.build()
+        self.hosts.append(host)
         self.painters[path] = _Row(pill, text, readout)
         for child in node.get("children") or []:
             self._row(child, depth + 1)

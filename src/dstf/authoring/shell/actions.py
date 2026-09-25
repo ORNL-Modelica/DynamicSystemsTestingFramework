@@ -14,7 +14,10 @@ dialog closes.
 `InlineHost` hosts the same contract the other way (brief §3.2): no button
 and no dialog — every capability placed here has its panel built straight
 into a slot the page owns, which is how the criterion editor and a tree
-node's controls are drawn without the shell knowing a capability by name."""
+node's controls are drawn without the shell knowing a capability by name.
+A host given a `RowTarget` lends its panels the page's form row under the
+row it is drawn in (`Panel.row`) and the page's `reveal`; a bar's dialog
+draws a panel's row in the panel's own slot."""
 
 from __future__ import annotations
 
@@ -35,6 +38,9 @@ if TYPE_CHECKING:
 
 LOADING = "batch actions unlock when loading finishes"
 
+#: A form row's content: ``build(close)`` draws it; ``close`` takes it away.
+RowBuild = Callable[[Callable[[], None]], None]
+
 
 class _NoFigure:
     """`Panel.figure` where there is no plot (SUITE, TEST): a subscription
@@ -51,11 +57,47 @@ class ShellPanel:
 
     figure: FigureHookProtocol
 
-    def __init__(self, submit: Callable[..., None], figure: FigureHookProtocol) -> None:
+    def __init__(
+        self,
+        submit: Callable[..., None],
+        figure: FigureHookProtocol,
+        row: Callable[[str, RowBuild], None] | None = None,
+        reveal: Callable[[str], None] | None = None,
+    ) -> None:
         self._submit, self.figure = submit, figure
+        self._row, self._reveal = row, reveal
 
     def submit(self, **inputs: Any) -> None:
         self._submit(**inputs)
+
+    def row(self, title: str, build: RowBuild) -> None:
+        # Loud, like `_NoFigure`: a placement that draws no row asked for
+        # one is a contract misuse, not a form to drop silently.
+        if self._row is None:
+            raise RuntimeError("no row at this placement")
+        self._row(title, build)
+
+    def reveal(self, leaf_path: str) -> None:
+        # Quiet where there is no page (a dialog): the contract's no-op.
+        if self._reveal is not None:
+            self._reveal(leaf_path)
+
+
+class RowTarget:
+    """Where an InlineHost's panels open their rows: a slot the page owns
+    under one row, and the page's one-open-at-a-time rule. ``key`` names the
+    slot page-wide (``tree:<path>`` or ``crit:<index>:<path>``); ``node`` is
+    the node path the forms act on — what the page watches to rebuild an
+    open row."""
+
+    def __init__(self, page: Any, key: str, row: ui.row, node: str) -> None:
+        self.page, self.key, self.row, self.node = page, key, row, node
+        #: The slot under the row, set by the row's owner once it exists:
+        #: the host is built INSIDE the row, before the slot below it is.
+        self.slot: ui.column | None = None
+
+    def open(self, title: str, build: RowBuild) -> None:
+        self.page.open_row(self, title, build)
 
 
 class ActionBar:
@@ -167,11 +209,24 @@ class ActionBar:
                     # None must not close the dialog it sits in.
                     close()
 
+            def row(title: str, build: RowBuild) -> None:
+                """A dialog has no row to open one under: the form is drawn
+                in the panel's own slot, below the panel, one at a time."""
+                form.clear()
+
+                def close_row() -> None:
+                    form.clear()
+
+                with form:
+                    ui.label(title).classes("text-subtitle2")
+                    build(close_row)
+
             with slot:
                 try:
-                    cap.panel(view, ShellPanel(submit, figure))
+                    cap.panel(view, ShellPanel(submit, figure, row=row))
                 except Exception as e:  # shown in the slot, never breaks the page
                     ui.label(f"{type(e).__name__}: {e}").classes("text-negative")
+                form = ui.column().classes("w-full gap-2")
             ui.button("Close", on_click=close).props("flat dense no-caps").mark(
                 f"close:{cap.name}"
             )
@@ -203,9 +258,11 @@ class InlineHost:
         figure: FigureHook | None,
         marker: str,
         on_applied: Callable[[str], None] | None = None,
+        row: RowTarget | None = None,
     ) -> None:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
         self.figure, self.marker, self.on_applied = figure, marker, on_applied
+        self.row = row
         self.errors: dict[str, ui.label] = {}
         self.cells: dict[str, ui.column] = {}  # capability name -> its place
         #: capability name -> the `available` answer its place was built on
@@ -295,6 +352,14 @@ class InlineHost:
             figure = self.figure.owned(self._owner(cap.name))
         with ui.column().classes("w-full gap-2").mark(f"panel:{cap.name}"):
             try:
-                cap.panel(view, ShellPanel(submit, figure))
+                cap.panel(
+                    view,
+                    ShellPanel(
+                        submit,
+                        figure,
+                        row=None if self.row is None else self.row.open,
+                        reveal=None if self.row is None else self.row.page.reveal,
+                    ),
+                )
             except Exception as e:  # shown in the slot, never breaks the page
                 ui.label(f"{type(e).__name__}: {e}").classes("text-negative")

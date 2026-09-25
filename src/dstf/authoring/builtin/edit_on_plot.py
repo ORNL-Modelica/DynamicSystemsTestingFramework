@@ -24,7 +24,7 @@ from ...comparison.registry import DEFAULT_METRIC, metric
 from ...figures.assemble import leaves_by_variable
 from ..capabilities import Panel, Patch, Placement
 from ..spec_document import PatchOp
-from .edit_tree import _node_at
+from ..tree_pointer import node_at
 
 if TYPE_CHECKING:
     from ..session import SessionView
@@ -93,7 +93,7 @@ def _leaf_at(s: SessionView, model_id: str, path: str) -> dict:
     node: Any = None
     if tokens[:1] == ["metrics"]:
         try:
-            node = _node_at(tree, path)
+            node = node_at(tree, path)
         except (KeyError, IndexError, TypeError, ValueError):
             node = None
     if not isinstance(node, dict):
@@ -253,7 +253,7 @@ class EditOnPlot:
         for path, _mode in _leaf_paths(s, model_id, variable):
             if path != leaf_path:  # the editor is the open criterion's
                 continue
-            raw = _node_at(tree, path)
+            raw = node_at(tree, path)
             name = raw.get("metric", DEFAULT_METRIC)
             for field, columns in _list_fields(name):
                 ui.label(_field_label(name, field)).classes("text-xs text-bold")
@@ -294,7 +294,7 @@ class EditOnPlot:
         tree = s.tree(model_id)
         if tree is None:
             raise ValueError(f"{model_id} has no tree to edit")
-        raw = _node_at(tree, path)
+        raw = node_at(tree, path)
         name = raw.get("metric", DEFAULT_METRIC)
         desc = metric(name)
         if desc is None or desc.edit_handle is None:

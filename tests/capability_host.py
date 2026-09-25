@@ -30,20 +30,54 @@ class RecordingFigure:
 
 
 class HostPanel:
-    def __init__(self, submit: Callable[..., None], figure: RecordingFigure) -> None:
+    """`Panel` for the host: ``row`` draws the form inline, in a column of
+    its own below the panel (marked ``host-row``, its title
+    ``host-row:title``), and ``close`` empties it; ``reveal`` records the
+    path in ``reveals`` — there is no page to open it on."""
+
+    def __init__(
+        self,
+        submit: Callable[..., None],
+        figure: RecordingFigure,
+        reveals: list[str] | None = None,
+    ) -> None:
         self.figure = figure
         self._submit = submit
+        self.reveals = reveals if reveals is not None else []
+        #: Set by `host` once the panel is drawn, so the row sits below it.
+        self.slot: ui.column | None = None
+        self.closed = 0
 
     def submit(self, **inputs: Any) -> None:
         self._submit(**inputs)
 
+    def row(self, title: str, build: Callable[[Callable[[], None]], None]) -> None:
+        slot = self.slot
+        assert slot is not None
+
+        def close() -> None:
+            self.closed += 1
+            slot.clear()
+
+        slot.clear()
+        with slot:
+            ui.label(title).mark("host-row:title")
+            build(close)
+
+    def reveal(self, leaf_path: str) -> None:
+        self.reveals.append(leaf_path)
+
 
 @asynccontextmanager
 async def host(
-    session: Session, cap: Any, selection: Selection
+    session: Session,
+    cap: Any,
+    selection: Selection,
+    reveals: list[str] | None = None,
 ) -> AsyncIterator[tuple[User, dict[str, str], RecordingFigure]]:
     """Yield ``(user, errors, figure)`` with the panel built at ``/`` — or,
-    when ``available`` is not True, a label marked ``reason`` in its place."""
+    when ``available`` is not True, a label marked ``reason`` in its place.
+    The panel's ``reveal`` appends to ``reveals`` when one is given."""
     errors: dict[str, str] = {}
     figure = RecordingFigure()
     view = SessionView(session, selection)
@@ -62,7 +96,9 @@ async def host(
                 "reason"
             )
             return
-        cap.panel(view, HostPanel(submit, figure))
+        panel = HostPanel(submit, figure, reveals)
+        cap.panel(view, panel)
+        panel.slot = ui.column().classes("w-full").mark("host-row")
 
     async with user_simulation(root=root) as user:
         await user.open("/")

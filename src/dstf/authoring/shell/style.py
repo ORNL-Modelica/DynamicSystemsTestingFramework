@@ -89,7 +89,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   border-top: 1px solid var(--dstf-border-hairline);
 }
 .dstf-crit:hover { background: var(--dstf-surface-hover); }
-.dstf-crit-open { background: var(--dstf-selection); }
+/* The open criterion's row, and a row with a form open under it, stay
+   lit. */
+.dstf-crit-open, .dstf-row-open { background: var(--dstf-selection); }
 /* A criterion's swatch: its status colour, filled while its drawing shows,
    an outline of it while hidden; the open criterion's is locked on. */
 .dstf-swatch {
@@ -98,8 +100,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 }
 .dstf-swatch-locked { cursor: default; opacity: .6; }
 /* The editor belongs to the row above it: indented under it, with the
-   accent rule down its left saying how far it reaches. */
-.dstf-editor {
+   accent rule down its left saying how far it reaches. A node's form row
+   belongs to its row the same way (the 2026-09-21 board, 1A). */
+.dstf-editor, .dstf-form-row {
   margin: 0 0 8px 16px; padding: 12px;
   border-left: 3px solid var(--dstf-accent);
   border-top: 1px solid var(--dstf-border-hairline);

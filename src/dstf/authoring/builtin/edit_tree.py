@@ -19,6 +19,7 @@ from ..capabilities import Panel, Patch, Placement
 if TYPE_CHECKING:
     from ..session import SessionView
 from ..spec_document import PatchOp
+from ..tree_pointer import node_or_none
 
 # NO module-level `nicegui` import: `import dstf.authoring` runs
 # register_builtins(), and the Session must import without the extra.
@@ -33,30 +34,6 @@ _KIND_KEYS: dict[str, tuple[str, ...]] = {
     "weighted": ("weights", "threshold", "direction"),
 }
 _COMBINATOR_KEYS = ("k", "weights", "threshold", "direction")
-
-
-def _node_at(tree: dict, path: str) -> dict:
-    """The raw node at ``path``, a pointer whose first token names the tree
-    itself (``/metrics``, ``/metrics/children/0``, ...)."""
-    node: Any = tree
-    for token in [t for t in path.split("/") if t][1:]:
-        # A pointer alternates `children` (a key) and an index (into that
-        # list): consume each token as what it is.
-        node = node[int(token)] if token.isdigit() else node[token]
-    return node
-
-
-def _node_or_none(tree: dict | None, path: str) -> dict | None:
-    """The node at ``path``, or ``None`` when the pointer names none of
-    ``tree`` — a stale selection, or one naming a raw key (``/metrics/
-    combinator`` resolves to a word, which is no node)."""
-    if tree is None:
-        return None
-    try:
-        node = _node_at(tree, path)
-    except (KeyError, IndexError, TypeError, ValueError):
-        return None
-    return node if isinstance(node, dict) else None
 
 
 def _kind_fields(kind: str, inputs: dict[str, Any]) -> dict[str, Any]:
@@ -114,7 +91,7 @@ class EditTree:
         tree = s.tree(model_id)
         if tree is None:
             return "no tree to edit (nothing scored)"
-        if sel.node_path is not None and _node_or_none(tree, sel.node_path) is None:
+        if sel.node_path is not None and node_or_none(tree, sel.node_path) is None:
             # A selection the tree moved under: the panel would index a list
             # that is shorter now.
             return f"{sel.node_path} names no node of {model_id}"
@@ -149,7 +126,7 @@ class EditTree:
         tree = s.tree(model_id)
         if tree is None:
             raise ValueError(f"{model_id} has no tree to edit")
-        node = _node_or_none(tree, path)
+        node = node_or_none(tree, path)
         if node is None:
             raise ValueError(f"{path} names no node of {model_id}")
         if action == "add":
@@ -338,7 +315,7 @@ def _cluster(
 ) -> None:
     """One node's controls: flat round icon buttons, each form in its
     menu."""
-    node = _node_or_none(s.tree(model_id), path)
+    node = node_or_none(s.tree(model_id), path)
     if node is None:  # `available` already says so; a job may race
         return
     is_combinator = "combinator" in node
@@ -358,7 +335,7 @@ def _cluster(
     def fresh() -> dict | None:
         """The node as it is at THIS open; the sentence in the menu when the
         tree has moved out from under the path since the cluster was drawn."""
-        at_open = _node_or_none(s.tree(model_id), path)
+        at_open = node_or_none(s.tree(model_id), path)
         if at_open is None:
             ui.label(f"{path} names no node of {model_id}").classes("text-negative")
         return at_open

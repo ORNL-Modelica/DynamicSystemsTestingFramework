@@ -27,7 +27,7 @@ from ...discovery.plots import ResolvedPlot
 from ...figures.plotly import _LABELS, Visibility
 from ..capabilities import Placement
 from ..session import Selection
-from .actions import ActionBar, InlineHost
+from .actions import ActionBar, InlineHost, RowTarget
 from .figure_hook import FigureHook
 from .tree_card import leaf_name, leaf_readout, leaf_status, leaves_of
 from .widgets import Pill
@@ -119,9 +119,10 @@ class CriterionRow:
         model, variable = card.page.model_id, self.variable
         self.row = ui.row().classes("dstf-crit items-center no-wrap gap-3 w-full")
         # The row IS the way in: its editor opens below it, and a second
-        # click closes it. A click on the node's controls inside the row is
-        # not a click on the row — `InlineHost`'s column stops it.
-        self.row.on("click", partial(card.page.toggle_criterion, index, path))
+        # click closes it — or closes a form row open under it and opens
+        # nothing (board 1A). A click on the node's controls inside the row
+        # is not a click on the row — `InlineHost`'s column stops it.
+        self.row.on("click", partial(card.page.row_click, index, path))
         with self.row.mark(f"criterion:{index}:{path}"):
             # The criterion's drawing on the plot above, shown or hidden
             # (legend b). Its click is stopped in the BROWSER before it
@@ -159,6 +160,7 @@ class CriterionRow:
             self.readout = ui.label().classes("dstf-mono text-xs")
             self.readout.mark(f"criterion-readout:{index}:{path}")
             ui.space()
+            self.target = RowTarget(card.page, f"crit:{index}:{path}", self.row, path)
             self.host = InlineHost(
                 card.page.shell,
                 Placement.NODE,
@@ -170,13 +172,17 @@ class CriterionRow:
                 ),
                 figure=None,
                 marker=f"node:{index}:{path}",
+                row=self.target,
             )
             # A host drawn inside a row keeps to its own width, or the
             # cluster takes the rest of the row and sits left of the end
             # (the 3b review, in Chromium).
             self.host.column.classes(remove="w-full", add="dstf-node-host")
-            self.host.build()
-        self.slot = ui.column().classes("w-full gap-0")  # the row's editor slot
+        # The row's slot: its editor, or a form row — one at a time. The
+        # host is built once its panels have somewhere to open a row.
+        self.slot = ui.column().classes("w-full gap-0")
+        self.target.slot = self.slot
+        self.host.build()
         self.paint(leaf)
 
     def paint(self, leaf: dict) -> None:

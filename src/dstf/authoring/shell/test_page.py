@@ -3,12 +3,15 @@ second row of the shared one, its criteria tree closed to a line, and its
 plots stacked, each drawn when it scrolls into view with that variable's
 criteria rows under it and, under the row that was clicked, that
 criterion's editor — one at a time, page-wide, with the plot above it as
-its editing surface. One object per browser tab, like the Suite page. The
+its editing surface. A node's forms open as a row under the row they were
+asked from, and that row is the same one thing: it replaces the editor and
+the editor replaces it. One object per browser tab, like the Suite page. The
 page knows no capability by name: what edits a criterion, a tree node or a
 variable is whatever attaches at that placement."""
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -18,7 +21,8 @@ from ...reporting.status import classify_with_class
 from ...storage.ref_index import RefIndex
 from ..capabilities import Placement, plural
 from ..session import Selection
-from .actions import ActionBar
+from ..tree_pointer import node_or_none
+from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
 from .plot_card import UNREAD, PlotCard
 from .tabstate import tab_state
@@ -72,6 +76,11 @@ class TestPage:
         #: instead of a test (`_gone`).
         self.gone = False
         self.open: tuple[int, str] | None = None  # (plot index, leaf path)
+        #: The one open form row: its target, its title, its build, its
+        #: column, and the node's raw JSON it was last built from.
+        self.form: tuple[RowTarget, str, RowBuild, ui.column, str] | None = None
+        #: A criterion to open at the end of the next sync (`reveal`).
+        self.pending_reveal: str | None = None
         self.focused: int | None = None  # the one plot Focus is showing
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
@@ -183,6 +192,85 @@ class TestPage:
             return (self.open[1],)
         return ()
 
+    # -- the one open form row --------------------------------------------------
+
+    def _node_json(self, node: str) -> str:
+        tree = self.shell.session.tree(self.model_id)
+        return json.dumps(node_or_none(tree, node), sort_keys=True, default=str)
+
+    def open_row(self, target: RowTarget, title: str, build: RowBuild) -> None:
+        """A form row under ``target``'s row (the 2026-09-21 board, 1A-1D).
+        ONE thing open at a time: the editor goes, and any other row — and
+        the card whose rings went with the editor is re-sent, once."""
+        view = self._view()
+        self._close()
+        self._close_row()
+        self._redraw_moved(view)
+        assert target.slot is not None  # set by the row's owner at build
+        with target.slot:
+            column = (
+                ui.column()
+                .classes("dstf-form-row w-full gap-2")
+                .mark(f"form-row:{target.key}")
+            )
+        target.row.classes(add="dstf-row-open")
+        self.form = (target, title, build, column, self._node_json(target.node))
+        self._build_row()
+
+    def _build_row(self) -> None:
+        assert self.form is not None
+        target, title, build, column, _ = self.form
+        column.clear()
+        with column:
+            ui.label(title).classes("text-subtitle2").mark(f"form-title:{target.key}")
+            build(self._close_row)
+
+    def _close_row(self) -> None:
+        """Take the open form row away, if there is one; nothing is redrawn
+        — a row draws on no plot."""
+        if self.form is None:
+            return
+        target, _, _, column, _ = self.form
+        self.form = None
+        if not column.is_deleted:
+            column.delete()
+        if not target.row.is_deleted:
+            target.row.classes(remove="dstf-row-open")
+
+    def _follow_row(self) -> None:
+        """The open row after a sync: gone with the rows it hung under (a
+        shape change rebuilt them), or rebuilt when an edit staged ELSEWHERE
+        moved its node — the criterion editor's rule, applied to a node: a
+        form showing a value the node no longer has would stage it straight
+        back. Anything else leaves it alone, so a field being typed in
+        survives every unrelated sync."""
+        if self.form is None:
+            return
+        target, title, build, column, built = self.form
+        if column.is_deleted or target.row.is_deleted:
+            self.form = None
+            return
+        now = self._node_json(target.node)
+        if now != built:
+            self.form = (target, title, build, column, now)
+            self._build_row()
+
+    def row_click(self, index: int, path: str) -> None:
+        """A criteria row's own click (board 1A): it closes a form open
+        under it and opens nothing; else it toggles the row's editor."""
+        if self.form is not None and self.form[0].key == f"crit:{index}:{path}":
+            self._close_row()
+            return
+        self.toggle_criterion(index, path)
+
+    def reveal(self, path: str) -> None:
+        """Open ``path``'s editor at the end of the next sync — the one that
+        draws the row an add just made. Recorded only when that criterion
+        EXISTS: apply is synchronous, so a refused add left no node, and a
+        reveal kept for it opened the next add's criterion by itself."""
+        if node_or_none(self.shell.session.tree(self.model_id), path) is not None:
+            self.pending_reveal = path
+
     def toggle_criterion(self, index: int, path: str) -> None:
         """A criteria row's own click: its editor opens, or closes if that
         row was the open one."""
@@ -205,6 +293,7 @@ class TestPage:
         if path not in card.rows:
             return
         view = self._view()
+        self._close_row()
         if self.focused is not None and self.focused != index:
             # The editor has to be on screen: the row it opens under is on a
             # card Focus is hiding (board 5A shows ONE plot).
@@ -439,16 +528,22 @@ class TestPage:
             # page with the NEW shape already recorded and half the cards
             # built, and no later sync ever rebuilt it (the 3b review).
             self._shape = shape
-            return
-        for card in self.cards:
-            try:
-                card.paint(view)
-                if force:
-                    card.redraw(view)
-                else:
-                    card.redraw_if_moved(view)
-            except Exception:  # one card's failure is not another's
-                logger.exception("plot %s of %s", card.index, self.model_id)
+        else:
+            for card in self.cards:
+                try:
+                    card.paint(view)
+                    if force:
+                        card.redraw(view)
+                    else:
+                        card.redraw_if_moved(view)
+                except Exception:  # one card's failure is not another's
+                    logger.exception("plot %s of %s", card.index, self.model_id)
+        self._follow_row()
+        if self.pending_reveal is not None:
+            # After the cards: the row an add made exists only once a
+            # rebuild drew it.
+            path, self.pending_reveal = self.pending_reveal, None
+            self.open_criterion(path)
 
     def _gone(self) -> None:
         """This page's test is no longer a test of the open project — an
@@ -466,6 +561,8 @@ class TestPage:
             return
         self.gone = True
         self._close()
+        self._close_row()
+        self.pending_reveal = None
         if self.actions is not None:
             self.actions.dialog.close()
             self.actions.container.clear()

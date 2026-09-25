@@ -160,6 +160,22 @@ class Panel(Protocol):
         inline one, in the dialog of a placement that is a button."""
         ...
 
+    def row(self, title: str, build: Callable[[Callable[[], None]], None]) -> None:
+        """Open a form row below the row this panel is drawn in, titled
+        ``title``. ``build(close)`` draws its content — fields, a sentence,
+        its buttons; ``close`` takes the row away. ONE thing is open at a
+        time on a page: this closes any other row and the criterion editor.
+        While it is open, ``build`` is called AGAIN, into an emptied row, when
+        an edit staged elsewhere moves the node the panel is for — a form
+        never shows a value the node no longer has. Where the panel has no
+        row (a dialog), the form is drawn in the panel's own slot."""
+        ...
+
+    def reveal(self, leaf_path: str) -> None:
+        """Show that criterion's editor once the page has drawn it — after
+        an add, the new criterion. A no-op where there is no page."""
+        ...
+
 
 @runtime_checkable
 class Capability(Protocol):
