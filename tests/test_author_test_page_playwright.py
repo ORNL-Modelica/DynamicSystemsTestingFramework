@@ -1574,3 +1574,52 @@ def test_a_criteria_rows_name_stays_on_one_line_beside_an_open_drawer(
         names = page.evaluate(CRIT_NAME_LINES)
         assert names, "no criteria row is drawn"
         assert [n for n in names if n["lines"] > 1.5] == []
+
+
+#: The index, among the page's plot cards, of each card wearing the ring.
+RINGED = """
+() => [...document.querySelectorAll('.dstf-plot')]
+  .map((card, i) => card.classList.contains('dstf-plot-selected') ? i : -1)
+  .filter((i) => i >= 0)
+"""
+
+
+def _ring_is(page, index: int) -> None:
+    page.wait_for_function(
+        f"() => JSON.stringify(({RINGED})()) === '[{index}]'", timeout=EXPECT_TIMEOUT
+    )
+
+
+def test_a_click_selects_a_plot_outside_its_plot_area(tmp_path, playwright_browser):
+    """Planner's choice 8: a click on a card selects its plot — its title, a
+    criteria row — but a click on the plot itself does not: the plot takes
+    zooms and handle drags. Remove plot's click stops before the card, so
+    the ring stays on the plot it was on, which has moved up one."""
+    with _served(tmp_path, playwright_browser) as page:
+        cards = page.locator(".dstf-plot")
+        _ring_is(page, 0)
+        cards.nth(3).scroll_into_view_if_needed()
+        cards.nth(3).locator(".text-subtitle2").first.click()
+        _ring_is(page, 3)
+        cards.nth(4).scroll_into_view_if_needed()
+        plot = cards.nth(4).locator(".js-plotly-plot")
+        expect(plot).to_be_visible(timeout=EXPECT_TIMEOUT)
+        plot.click()
+        page.wait_for_timeout(500)
+        assert page.evaluate(RINGED) == [3]
+        crit = _crit(page, 1, "range · y")
+        crit.scroll_into_view_if_needed()
+        crit.locator(".dstf-crit-name").click()
+        _ring_is(page, 1)
+        cards.nth(1).scroll_into_view_if_needed()
+        # The ring is PAINTED, not only classed: `.dstf-card`'s own
+        # `box-shadow: none` came later in the sheet and won.
+        ring = cards.nth(1).evaluate("e => getComputedStyle(e).boxShadow")
+        assert "inset" in ring and "2px" in ring, ring
+        assert cards.nth(0).evaluate("e => getComputedStyle(e).boxShadow") == "none"
+        _shot(page, tmp_path, "ring")
+        cards.nth(3).locator(".text-subtitle2").first.click()
+        _ring_is(page, 3)
+        cards.nth(1).get_by_role("button", name="Remove plot").click()
+        expect(cards).to_have_count(6, timeout=EXPECT_TIMEOUT)
+        _ring_is(page, 2)

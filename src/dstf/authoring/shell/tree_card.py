@@ -201,6 +201,23 @@ class TreeCard:
 
     # -- the closed line -----------------------------------------------------------
 
+    def _reset_layout(self) -> None:
+        """Reset layout, at the line's end while the test's EFFECTIVE entry
+        has a ``plots`` key (the owner's ruling, Q8 A) — on both of the
+        line's branches: a test with no tree can have a layout."""
+        page = self.page
+        if "plots" not in (page.shell.session.spec.entry(page.model_id) or {}):
+            return
+        ui.space()
+        with (
+            ui.button("Reset layout", on_click=page.reset_layout)
+            .props("flat dense no-caps")
+            .mark("tree:reset-layout")
+        ):
+            ui.tooltip(
+                "Stage removing this test's plots key: one plot per tracked variable"
+            )
+
     def _line(self, view: dict | None) -> None:
         self.line.clear()
         self.named, self.root_pill = [], None
@@ -209,6 +226,7 @@ class TreeCard:
                 ui.label(f"nothing scored: {self.page.unscored_reason()}").classes(
                     "text-secondary"
                 ).mark("tree:summary")
+                self._reset_layout()
                 return
             ui.button(
                 "Hide tree" if self.is_open else "Show tree",
@@ -230,6 +248,7 @@ class TreeCard:
                     ui.tooltip(str(leaf["path"]))
             if more:
                 ui.label(f"+{more} more").classes("text-secondary").mark("tree:more")
+            self._reset_layout()
 
     # -- the rows ------------------------------------------------------------------
 

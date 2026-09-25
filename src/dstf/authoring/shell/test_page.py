@@ -17,10 +17,13 @@ from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
+from ...config import ConfigError
+from ...discovery.patch_apply import PatchError
 from ...reporting.status import classify_with_class
 from ...storage.ref_index import RefIndex
 from ..capabilities import Placement, plural
-from ..session import Selection
+from ..layout import Layout, layout_op, reset_op
+from ..session import JobRunningError, LockedError, Selection
 from ..tree_pointer import node_or_none
 from ..tree_text import leaves_of, nodes_of
 from .actions import ActionBar, RowBuild, RowTarget
@@ -92,6 +95,10 @@ class TestPage:
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
         self.focus_all: ui.button | None = None
+        #: The plot the Variables drawer's checkboxes act on (the owner's
+        #: ruling, Q5 A): the first until a click on a card, or its Add
+        #: series, selects another. Its card wears `dstf-plot-selected`.
+        self.selected = 0
 
     async def build(self, model_id: str) -> None:
         self.client = ui.context.client
@@ -419,9 +426,15 @@ class TestPage:
         # that read it for itself cost one `plots` + `tracked` read per
         # plot — 35 for a five-plot test.
         scope = session.variable_texts(self.model_id)
+        # The layout and the scored counts too, for every card's Remove
+        # plot: a card that asked for them read the layout and the tree
+        # once per plot (3c's executing review).
+        layout = session.layout(self.model_id)
+        scored = self.scored(view)
         with self.column:
             self.cards = [
-                PlotCard(self, plot.index, plot, view, tracked, scope) for plot in plots
+                PlotCard(self, plot.index, plot, view, tracked, scope, layout, scored)
+                for plot in plots
             ]
         for card in self.cards:
             # A rebuild must not blank what the user was looking at: the
@@ -430,6 +443,9 @@ class TestPage:
             if card.index in shown:
                 card.show(view)
         self._paint_focus(view)
+        # The selection names an INDEX too; it is kept, clamped to the cards
+        # there are now, and its ring painted on the new cards.
+        self.select(self.selected)
         project = session.project
         test = project.test(self.model_id) if project is not None else None
         if not plots:
@@ -456,6 +472,61 @@ class TestPage:
 
     def _observe(self) -> None:
         ui.run_javascript(OBSERVE)
+
+    # -- the selected plot and the layout ---------------------------------------
+
+    def select(self, index: int) -> None:
+        """Select plot ``index``, clamped to the cards (0 with none), and
+        move the ring to its card."""
+        self.selected = max(0, min(index, len(self.cards) - 1))
+        for card in self.cards:
+            if card.index == self.selected:
+                card.card.classes(add="dstf-plot-selected")
+            else:
+                card.card.classes(remove="dstf-plot-selected")
+
+    def scored(self, view: dict | None) -> dict[str, int]:
+        """``{variable: its number of criteria}`` over ``view``, the caller's
+        ONE read of the tree — this never reads one itself."""
+        out: dict[str, int] = {}
+        for leaf in leaves_of(view):
+            name = leaf.get("variable")
+            if name:
+                out[str(name)] = out.get(str(name), 0) + 1
+        return out
+
+    def stage_layout(self, layout: Layout, select: int | None = None) -> bool:
+        """Stage ``layout`` as the ONE op on `/plots`. ``select`` is set
+        BEFORE the stage — the rebuild its `spec` event causes reads it —
+        and put back if the Session refuses: a refused edit is said, and
+        nothing else changes (3c, planner's choice 10)."""
+        session = self.shell.session
+        op = layout_op(self.model_id, session.spec.entry(self.model_id), layout)
+        before = self.selected
+        if select is not None:
+            self.selected = select
+        try:
+            session.stage([op])
+        except (LockedError, PatchError, ConfigError, JobRunningError) as e:
+            self.selected = before
+            ui.notify(str(e), type="warning")
+            return False
+        return True
+
+    def remove_plot(self, index: int, layout: Layout) -> None:
+        """Stage ``layout`` (plot ``index`` gone) with the selection kept on
+        the SAME plot: a removal above it shifts it up by one; the selected
+        plot removed selects the one now at its index, the last if it was
+        the last (the rebuild clamps)."""
+        self.stage_layout(layout, select=self.selected - (index < self.selected))
+
+    def reset_layout(self) -> None:
+        """Stage removing the entry's ``plots`` key: one plot per tracked
+        variable again. Refused, it is said, like any layout edit."""
+        try:
+            self.shell.session.stage([reset_op(self.model_id)])
+        except (LockedError, PatchError, ConfigError, JobRunningError) as e:
+            ui.notify(str(e), type="warning")
 
     # -- Focus -----------------------------------------------------------------
 

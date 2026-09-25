@@ -4211,3 +4211,155 @@ class TestRail:
             await _settled(lambda: _page(shell, user).model_id == D)
             assert not _none(user, "drawer:tests")
             assert shell.session.spec.pending == staged
+
+
+# -- 3c: the selected plot, Add series, Remove plot, Reset layout -------------
+
+
+def _ringed(page) -> list[int]:
+    return [c.index for c in page.cards if "dstf-plot-selected" in c.card.classes]
+
+
+def _tooltip_text(element) -> str:
+    """The text of the `ui.tooltip` directly inside ``element``."""
+    (tip,) = [
+        child
+        for slot in element.slots.values()
+        for child in slot.children
+        if isinstance(child, ui.tooltip)
+    ]
+    return tip.text
+
+
+class TestLayoutControls:
+    """The plot the drawer's checkboxes act on (the owner's ruling, Q5 A),
+    and the layout edits a card and the tree line make. `page_shell` is A
+    drawn as seven plots (0: x, 1: y, 2..6: x and y) from a `plots` key;
+    `shell` is A drawn one plot per tracked variable, no key."""
+
+    async def test_the_first_plot_is_selected_and_select_moves_the_ring(
+        self, page_shell
+    ):
+        async with user_simulation(root=page_shell.index) as user:
+            page = await _test_page(page_shell, user)
+            assert len(page.cards) == 7
+            assert page.selected == 0 and _ringed(page) == [0]
+            with page.client:
+                page.select(3)
+            assert page.selected == 3 and _ringed(page) == [3]
+            with page.client:
+                page.select(99)  # clamped to the cards
+            assert page.selected == 6 and _ringed(page) == [6]
+
+    async def test_add_series_selects_its_plot_and_opens_the_variables_drawer(
+        self, page_shell
+    ):
+        async with user_simulation(root=page_shell.index) as user:
+            page = await _test_page(page_shell, user)
+            assert _none(user, "drawer:variables")
+            user.find(marker="add-series:2").click()
+            assert page.selected == 2 and _ringed(page) == [2]
+            assert not _none(user, "drawer:variables")
+            assert page.state.drawer == "variables"
+
+    async def test_remove_plot_stages_one_op_without_that_plot(self, page_shell):
+        shell = page_shell
+        plots = copy.deepcopy(shell.session.spec.entry(A)["plots"])
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            user.find(marker="remove-plot:0").click()
+            assert shell.session.spec.pending == [
+                PatchOp(A, "replace", "/plots", plots[1:])
+            ]
+            await _settled(lambda: len(page.cards) == 6)
+
+    async def test_removal_keeps_the_selection_on_the_same_plot(self, page_shell):
+        """A removed plot above the selected one shifts it up by one; the
+        selected plot removed selects the one now at its index, the last if
+        it was the last."""
+        shell = page_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            with page.client:
+                page.select(3)
+            user.find(marker="remove-plot:1").click()
+            await _settled(lambda: len(page.cards) == 6)
+            assert page.selected == 2 and _ringed(page) == [2]
+            user.find(marker="remove-plot:2").click()
+            await _settled(lambda: len(page.cards) == 5)
+            assert page.selected == 2 and _ringed(page) == [2]
+            with page.client:
+                page.select(4)
+            user.find(marker="remove-plot:4").click()
+            await _settled(lambda: len(page.cards) == 4)
+            assert page.selected == 3 and _ringed(page) == [3]
+
+    async def test_remove_plot_is_grey_when_it_strands_a_scored_variable(self, shell):
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            assert len(page.cards) == 2  # x, y: each the only plot showing it
+            assert not _one(user, "remove-plot:0").enabled
+            assert _tooltip_text(_one(user, "remove-plot:0:why")) == (
+                "x is scored by 1 criterion and this is the only plot that shows "
+                "it. Add it to another plot first, or remove its criteria."
+            )
+            assert not _one(user, "remove-plot:1").enabled
+            assert _tooltip_text(_one(user, "remove-plot:1:why")).startswith(
+                "y is scored by 1 criterion"
+            )
+
+    async def test_reset_layout_shows_while_the_entry_has_plots_and_stages_its_removal(
+        self, page_shell
+    ):
+        shell = page_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            user.find(marker="tree:reset-layout").click()
+            assert shell.session.spec.pending == [PatchOp(A, "remove", "/plots")]
+            await _settled(lambda: _none(user, "tree:reset-layout"))
+            await _settled(lambda: len(page.cards) == 2)
+            assert [c.resolved.series for c in page.cards] == [("x",), ("y",)]
+            assert _one(user, "plots:count").text == (
+                "2 plots · one per tracked variable"
+            )
+
+    async def test_reset_layout_is_absent_without_a_plots_key_and_on_an_unscored_test(
+        self, shell
+    ):
+        """Both branches of the tree line: A is scored and has no key; B has
+        no baseline, so no tree, and a staged key puts the button there."""
+        async with user_simulation(root=shell.index) as user:
+            await _test_page(shell, user)
+            assert _none(user, "tree:reset-layout")
+            shell.session.stage(
+                [PatchOp(B, "add", "/plots", [{"series": [{"var": "x"}]}])]
+            )
+            await _test_page(shell, user, B)
+            assert shell.session.tree_view(B) is None
+            assert not _none(user, "tree:reset-layout")
+
+    async def test_a_refused_layout_edit_is_said_and_changes_nothing(
+        self, page_shell, monkeypatch
+    ):
+        from dstf.authoring.session import LockedError
+
+        shell = page_shell
+        error = LockedError([A], "Rerun")
+
+        def refuse(ops):
+            raise error
+
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            with page.client:
+                page.select(4)
+            monkeypatch.setattr(shell.session, "stage", refuse)
+            user.find(marker="remove-plot:1").click()
+            await _settled(lambda: user.notify.messages != [])
+            assert user.notify.messages == [str(error)]
+            assert shell.session.spec.pending == []
+            assert page.selected == 4 and len(page.cards) == 7
+            with page.client:
+                assert page.stage_layout(shell.session.layout(A), select=6) is False
+            assert page.selected == 4
+            assert shell.session.spec.pending == []

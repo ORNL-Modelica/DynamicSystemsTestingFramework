@@ -26,6 +26,7 @@ from ...comparison import registry
 from ...discovery.plots import ResolvedPlot
 from ...figures.plotly import _LABELS, Visibility
 from ..capabilities import Placement
+from ..layout import Layout, remove_plot, stranded
 from ..session import Selection
 from ..tree_text import leaf_name, leaves_of, parent_kinds
 from .actions import ActionBar, InlineHost, RowTarget
@@ -240,10 +241,13 @@ class PlotCard:
         view: dict | None,
         tracked: Sequence[str],
         scope: Mapping[str, VariableText],
+        layout: Layout,
+        scored: Mapping[str, int],
     ) -> None:
-        """``view``, ``tracked`` and ``scope`` are the page's ONE read of
-        each, handed to every card: a card that read them for itself cost
-        one read per plot on every rebuild (the Task 5-6 review)."""
+        """``view``, ``tracked``, ``scope``, ``layout`` and ``scored`` (a
+        variable's number of criteria) are the page's ONE read of each,
+        handed to every card: a card that read them for itself cost one read
+        per plot on every rebuild (the Task 5-6 review)."""
         self.page, self.index, self.resolved = page, index, resolved
         self.plot: ui.plotly | None = None
         # Created here, attached in `show()`: a panel hosted under this card
@@ -296,6 +300,18 @@ class PlotCard:
             .mark(f"plot:{index}") as card
         ):
             self.card = card
+            # A click anywhere on the card selects its plot — the toolbar,
+            # the title, a criteria row — except on the plot itself, which
+            # takes zooms and handle drags (3c, planner's choice 8). The guard is
+            # the browser's: the user simulation calls every click listener
+            # and ignores `js_handler`.
+            card.on(
+                "click",
+                partial(page.select, index),
+                js_handler=(
+                    "(e) => { if (!e.target.closest('.dstf-plot-slot')) emit(); }"
+                ),
+            )
             with ui.row().classes("items-center no-wrap gap-3 w-full"):
                 # The title READS the plain labels (the expressions the
                 # model wrote); the names it is keyed by ride beside it,
@@ -337,6 +353,10 @@ class PlotCard:
                 self.error_slot = ui.row().classes("items-center gap-0")
                 self.focus = ui.button("Focus", on_click=partial(page.focus, index))
                 self.focus.props("flat dense no-caps").mark(f"focus:{index}")
+                ui.button("Add series", on_click=self._add_series).props(
+                    "flat dense no-caps"
+                ).mark(f"add-series:{index}")
+                self._remove_button(index, tuple(layout), scored)
             if resolved.missing:
                 ui.label(f"Not in this result: {', '.join(resolved.missing)}").classes(
                     "dstf-why"
@@ -387,6 +407,46 @@ class PlotCard:
                             )
                         )
         self.paint(view)
+
+    def _remove_button(
+        self, index: int, layout: Layout, scored: Mapping[str, int]
+    ) -> None:
+        """Remove plot, grey with the reason when it would leave a scored
+        variable on no plot (the owner's ruling, Q7 A; 3c, planner's choice 9).
+        A disabled Quasar button takes no pointer events, so the reason's
+        tooltip is on a span around it."""
+        after = remove_plot(layout, index)
+        stuck = stranded(layout, after, list(scored))
+        with ui.element("span").mark(f"remove-plot:{index}:why"):
+            # Its click stops in the BROWSER: bubbling to the card selected
+            # it, and after the rebuild the ring sat on whichever plot moved
+            # into the removed one's place.
+            button = (
+                ui.button("Remove plot")
+                .props("flat dense no-caps")
+                .mark(f"remove-plot:{index}")
+                .on(
+                    "click",
+                    partial(self.page.remove_plot, index, after),
+                    js_handler="(e) => { e.stopPropagation(); emit(); }",
+                )
+            )
+            if stuck:
+                button.disable()
+                n = sum(scored[v] for v in stuck)
+                texts = ", ".join(self.texts.get(v, v) for v in stuck)
+                verb = "is" if len(stuck) == 1 else "are"
+                criteria = "criterion" if n == 1 else "criteria"
+                ui.tooltip(
+                    f"{texts} {verb} scored by {n} {criteria} and this is the only "
+                    "plot that shows it. Add it to another plot first, or "
+                    "remove its criteria."
+                )
+
+    def _add_series(self) -> None:
+        """Select this plot and open the Variables drawer on it (Q5 A)."""
+        self.page.select(self.index)
+        self.page.rail.open("variables")
 
     @staticmethod
     def _leaves(view: dict | None, variable: str) -> list[dict]:

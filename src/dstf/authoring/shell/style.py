@@ -174,6 +174,10 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   border: 1px solid var(--dstf-border); border-radius: 4px; box-shadow: none;
   background: var(--dstf-surface); padding: 16px;
 }
+/* The selected plot, the one the Variables drawer's checkboxes act on: two
+   classes and after `.dstf-card`, whose `box-shadow: none` otherwise wins
+   and the ring is classed but never painted (3c's LOOK, in Chromium). */
+.dstf-card.dstf-plot-selected { box-shadow: inset 0 0 0 2px var(--dstf-accent); }
 """
     + _TINTS
     + _PILLS
