@@ -167,13 +167,17 @@ class Panel(Protocol):
         time on a page: this closes any other row and the criterion editor.
         While it is open, ``build`` is called AGAIN, into an emptied row, when
         an edit staged elsewhere moves the node the panel is for — a form
-        never shows a value the node no longer has. Where the panel has no
-        row (a dialog), the form is drawn in the panel's own slot."""
+        never shows a value the node no longer has — and it closes with the
+        host, when its row is hidden, and when its node is gone. In a
+        dialog (a placement that is a button) the form is drawn in the
+        dialog, below the panel. A panel with no row to open one under —
+        the criterion editor — raises."""
         ...
 
     def reveal(self, leaf_path: str) -> None:
         """Show that criterion's editor once the page has drawn it — after
-        an add, the new criterion. A no-op where there is no page."""
+        an add, the new criterion. A no-op where no page reveals criteria:
+        a dialog, the criterion editor, the variable's footer."""
         ...
 
 

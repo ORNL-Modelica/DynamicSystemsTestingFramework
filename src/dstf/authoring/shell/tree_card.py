@@ -206,6 +206,12 @@ class TreeCard:
             self.is_open = False
         self._line(view)
         self.rows.set_visibility(self.is_open)
+        if not self.is_open:
+            # A form nobody can see is no form: hiding the tree takes a
+            # form open under one of its rows away (the Task 5 review).
+            for host in self.hosts:
+                if host.row is not None:
+                    self.page.drop_row(host.row)
         if view is None or not self.is_open:
             return
         shape = shape_of(view)

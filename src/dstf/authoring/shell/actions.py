@@ -191,6 +191,11 @@ class ActionBar:
             error.mark(f"error:{cap.name}")
             error.set_visibility(bool(error.text))
             slot = ui.column().classes("w-full").mark(f"panel:{cap.name}")
+            # The form row's column, below the panel, exists BEFORE the
+            # panel runs: a panel may open its row while it is built, and
+            # a column made after it raised NameError from `row` (the Task
+            # 5 review).
+            form = ui.column().classes("w-full gap-2")
 
             def submit(**inputs: Any) -> None:
                 try:
@@ -211,7 +216,7 @@ class ActionBar:
 
             def row(title: str, build: RowBuild) -> None:
                 """A dialog has no row to open one under: the form is drawn
-                in the panel's own slot, below the panel, one at a time."""
+                in the dialog, below the panel, one at a time."""
                 form.clear()
 
                 def close_row() -> None:
@@ -226,7 +231,6 @@ class ActionBar:
                     cap.panel(view, ShellPanel(submit, figure, row=row))
                 except Exception as e:  # shown in the slot, never breaks the page
                     ui.label(f"{type(e).__name__}: {e}").classes("text-negative")
-                form = ui.column().classes("w-full gap-2")
             ui.button("Close", on_click=close).props("flat dense no-caps").mark(
                 f"close:{cap.name}"
             )
@@ -239,7 +243,8 @@ class InlineHost:
     and Edit on plot read as one editor; a node's controls are a panel).
     An unavailable capability keeps its place and says why (brief §3.3).
     `build()` rebuilds from the selection as it is now; `clear()` empties
-    the column and drops this host's figure handlers. A raising act shows
+    the column and drops this host's figure handlers and the form row its
+    panels opened. A raising act shows
     above that capability's panel and changes nothing; the next success
     hides it in place — the panel is not rebuilt, so a field being typed in
     survives. `on_applied` is called with that capability's name when its
@@ -280,6 +285,13 @@ class InlineHost:
         if self.figure is not None:
             for name in self.cells:
                 self.figure.clear(self._owner(name))
+        if self.row is not None:
+            # A form row lives only as long as the host whose panel opened
+            # it: rebuilt under a job's lock, the host said "rerun is
+            # running" while its row stayed open with live buttons, and an
+            # act from it staged nothing and showed nothing — the error
+            # label had gone with the rebuild (the Task 5 review).
+            self.row.page.drop_row(self.row)
         self.column.clear()
         self.errors, self.cells, self.answers = {}, {}, {}
 

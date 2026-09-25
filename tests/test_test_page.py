@@ -3404,6 +3404,8 @@ class _RowProbe:
         self.stage: list = []
         self.reveal: str | None = None
         self.reveal_errors: list[Exception] = []
+        #: Open the row while the panel is being built, not on a click.
+        self.open_at_build = False
 
     def available(self, s):
         return True
@@ -3431,6 +3433,8 @@ class _RowProbe:
             f"probe-open:{path}"
         )
         ui.button("act", on_click=act_and_reveal).mark(f"probe-act:{path}")
+        if self.open_at_build:
+            ui_panel.row(f"probe {path}", build)
 
     def act(self, s, **inputs):
         return Patch(ops=list(self.stage)) if self.stage else None
@@ -3642,3 +3646,165 @@ async def test_a_refused_add_reveals_nothing(page_shell):
         await _settled(lambda: "/metrics/children/3" in page.cards[0].rows)
         await asyncio.sleep(0.2)
         assert page.open is None
+
+
+# -- a form row lives only as long as its host (Task 5's review) ------------
+
+
+class _LockedRowProbe(_RowProbe):
+    """`_RowProbe` whose `available` follows the job lock, the way Edit
+    tree's does: under a rerun its host is rebuilt to the sentence."""
+
+    def available(self, s):
+        model = next(iter(s.selection.tests))
+        if s.running is not None and s.is_locked(model):
+            return f"{s.running.label} is running on {model}"
+        return True
+
+
+async def test_a_form_row_goes_when_its_host_is_rebuilt_under_a_lock(page_shell):
+    """Under a job lock the host said "rerun is running on …" while its row
+    stayed open with live buttons, and an act from it staged nothing and
+    showed nothing: the error label had gone with the host's rebuild."""
+    shell = page_shell
+    _only(_LockedRowProbe())
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
+        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        try:
+            await _settled(
+                lambda: bool(_inside(user, "why:row-probe", f"node:0:{RANGE_X}"))
+            )
+            assert page.form is None
+            assert _none(user, f"form-row:crit:0:{RANGE_X}")
+            row = page.cards[0].rows[RANGE_X].row
+            assert "dstf-row-open" not in row.classes
+        finally:
+            gate.release.set()
+
+
+async def test_hide_tree_closes_a_tree_rows_form(page_shell):
+    """A form nobody can see is no form: hiding the tree takes a form open
+    under one of its rows away, as it would the criterion editor."""
+    shell = page_shell
+    _only(_RowProbe())
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        user.find(marker="tree:toggle").click()
+        await user.should_see(marker=f"tree-row:{TUBE}")
+        _click_in(user, f"probe-open:{TUBE}", within=f"tree-row:{TUBE}")
+        await user.should_see(marker=f"form-row:tree:{TUBE}")
+        user.find(marker="tree:toggle").click()
+        await _settled(lambda: not page.tree.rows.visible)
+        assert page.form is None
+        assert _none(user, f"form-row:tree:{TUBE}")
+
+
+async def test_focus_on_another_plot_closes_a_form_on_the_card_it_hides(page_shell):
+    """Focus shows ONE plot: a form under a criteria row of a card it hides
+    goes, as the editor does; a form on the focused card stays."""
+    shell = page_shell
+    _only(_RowProbe())
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
+        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
+        user.find(marker="focus:0").click()
+        await _settled(lambda: page.focused == 0)
+        assert page.form is not None  # its card is the one shown
+        user.find(marker="focus:0").click()
+        await _settled(lambda: page.focused is None)
+        user.find(marker="focus:1").click()
+        await _settled(lambda: page.focused == 1)
+        assert page.form is None
+        assert _none(user, f"form-row:crit:0:{RANGE_X}")
+
+
+async def test_a_form_whose_node_is_gone_closes_and_is_not_rebuilt(page_shell):
+    """`_follow_row` over a node the tree no longer has: it closes the form
+    rather than call ``build`` on a path that names nothing (the probe
+    built twice for one). Driven directly: through a sync, the rows the
+    form hangs under are rebuilt first and their host takes it away."""
+    shell = page_shell
+    probe = _RowProbe()
+    _only(probe)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, f"probe-open:{RANGE_Y}", within=f"criterion:1:{RANGE_Y}")
+        await user.should_see(marker=f"form-row:crit:1:{RANGE_Y}")
+        assert probe.built[RANGE_Y] == 1
+        with page.client:
+            shell.session.stage([PatchOp(A, "remove", RANGE_Y)])
+            page._follow_row()
+        assert page.form is None
+        assert probe.built[RANGE_Y] == 1
+        assert _none(user, f"form-row:crit:1:{RANGE_Y}")
+
+
+async def test_one_sync_after_a_rebuild_reveals_and_drops_the_form(page_shell):
+    """The sync that rebuilds is the one that follows: its reveal opens the
+    new criterion and the form the rebuild orphaned is gone, with no
+    second sync to cover for it. Every call below runs before the app's
+    timer can hand the Session's queued events to the page."""
+    shell = page_shell
+    _only(_RowProbe())
+    new = "/metrics/children/3"
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        with page.client:
+            shell.session.apply(
+                Patch(
+                    ops=[
+                        PatchOp(
+                            A,
+                            "add",
+                            "/metrics/children/-",
+                            {"metric": "tube", "variable": "x"},
+                        )
+                    ]
+                )
+            )
+            page.reveal(new)
+            page.sync()
+            assert page.open == (0, new)
+        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
+        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
+        with page.client:
+            shell.session.apply(Patch(ops=[PatchOp(A, "remove", new)]))
+            page.sync()
+            assert page.form is None
+
+
+async def test_a_dialogs_form_row_opens_while_its_panel_is_built(shell):
+    """A panel may open its row while it is being built: the dialog's form
+    column exists before the panel runs (it raised NameError). A second
+    open shows ONE body, and a close takes the title with it."""
+    probe = _RowProbe()
+    probe.open_at_build = True
+    _only(probe)
+    bars, root = _barred(shell, None)
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        user.find(marker="action:row-probe").click()
+        await user.should_see(marker="probe-body:var:x")
+        assert not [
+            e
+            for e in _one(user, "panel:row-probe").descendants()
+            if isinstance(e, ui.label) and "Error" in e.text
+        ]
+        user.find(marker="probe-open:var:x").click()
+        await _settled(lambda: probe.built["var:x"] == 2)
+        assert len(user.find(marker="probe-body:var:x").elements) == 1
+        assert _one(user, "probe-body:var:x").text == "built 2"
+        user.find(marker="probe-close:var:x").click()
+        await _settled(lambda: _none(user, "probe-body:var:x"))
+        await asyncio.sleep(0.1)
+        dialog = bars[0].dialog
+        assert not [
+            e
+            for e in dialog.descendants()
+            if isinstance(e, ui.label) and e.text == "probe var:x"
+        ]

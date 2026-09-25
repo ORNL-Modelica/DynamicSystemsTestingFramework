@@ -59,6 +59,11 @@ OBSERVE = """
 NOT_A_TEST = "{} is not a test of this project"
 
 
+def _raw(node: dict | None) -> str:
+    """A raw node as the form row records it, to tell whether it moved."""
+    return json.dumps(node, sort_keys=True, default=str)
+
+
 class TestPage:
     def __init__(self, shell: Shell) -> None:
         self.shell = shell
@@ -194,9 +199,8 @@ class TestPage:
 
     # -- the one open form row --------------------------------------------------
 
-    def _node_json(self, node: str) -> str:
-        tree = self.shell.session.tree(self.model_id)
-        return json.dumps(node_or_none(tree, node), sort_keys=True, default=str)
+    def _node(self, path: str) -> dict | None:
+        return node_or_none(self.shell.session.tree(self.model_id), path)
 
     def open_row(self, target: RowTarget, title: str, build: RowBuild) -> None:
         """A form row under ``target``'s row (the 2026-09-21 board, 1A-1D).
@@ -214,7 +218,7 @@ class TestPage:
                 .mark(f"form-row:{target.key}")
             )
         target.row.classes(add="dstf-row-open")
-        self.form = (target, title, build, column, self._node_json(target.node))
+        self.form = (target, title, build, column, _raw(self._node(target.node)))
         self._build_row()
 
     def _build_row(self) -> None:
@@ -237,20 +241,33 @@ class TestPage:
         if not target.row.is_deleted:
             target.row.classes(remove="dstf-row-open")
 
+    def drop_row(self, target: RowTarget) -> None:
+        """Close the open form if it hangs under ``target``: a host being
+        cleared — rebuilt, dropped with its row, hidden — takes its form
+        with it. Any other form is not this host's to close."""
+        if self.form is not None and self.form[0] is target:
+            self._close_row()
+
     def _follow_row(self) -> None:
         """The open row after a sync: gone with the rows it hung under (a
         shape change rebuilt them), or rebuilt when an edit staged ELSEWHERE
         moved its node — the criterion editor's rule, applied to a node: a
         form showing a value the node no longer has would stage it straight
         back. Anything else leaves it alone, so a field being typed in
-        survives every unrelated sync."""
+        survives every unrelated sync. A node that is gone closes the row:
+        its ``build`` over a path that names nothing drew a form for no
+        node (the Task 5 review's probe built twice for one)."""
         if self.form is None:
             return
         target, title, build, column, built = self.form
         if column.is_deleted or target.row.is_deleted:
             self.form = None
             return
-        now = self._node_json(target.node)
+        node = self._node(target.node)
+        if node is None:
+            self._close_row()
+            return
+        now = _raw(node)
         if now != built:
             self.form = (target, title, build, column, now)
             self._build_row()
@@ -437,6 +454,13 @@ class TestPage:
             # edits from drags on a plot that is not on screen. The other
             # direction of `open_criterion`'s, which ends the focus instead.
             self.close_editor()
+        if self.focused is not None:
+            # A form under a criteria row of a card Focus hides goes the
+            # same way (the Task 5 review).
+            for card in self.cards:
+                if card.index != self.focused:
+                    for row in card.rows.values():
+                        self.drop_row(row.target)
         self._paint_focus()
 
     def show_all(self) -> None:
