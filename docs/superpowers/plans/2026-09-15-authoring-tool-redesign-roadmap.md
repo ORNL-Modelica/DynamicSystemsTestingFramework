@@ -341,6 +341,35 @@ listing were byte-identical before and after. It found one defect, an error
 axis zoomed while hidden showing a stale range when chosen, fixed on both
 tiers: a new error series scales its axis afresh.
 
+**3c scoped (2026-09-25).** The owner ruled 3c's scope in chat, the UI
+questions on a rendered board, taking every recommendation. The roadmap's
+3c splits in two. **3c** is layout only: the 40 px labelled rail with the
+Tests and Variables drawers, one open at a time. The Tests drawer is the
+Suite page's list with no checkboxes, the current test highlighted; a click
+opens the test and pending edits survive the switch. The Variables drawer
+(DESIGN.md) acts on the plot you CLICKED: a click on a plot card's toolbar
+or margin selects it, Add series selects its plot and opens the drawer, and
+the first plot is selected until then. The drawer does every layout edit:
+unchecking removes a series from the selected plot; "+ new plot" adds a plot
+below the selected one holding that variable and leaves it where it was;
+the plot toolbar gains only Remove plot. This drops DESIGN.md's scheduled
+series chips. An array folds into one row that opens to its elements, each
+with its own checkbox. A variable a criterion scores cannot leave its last
+plot: its checkbox greys and says why. The first layout edit writes the
+default layout out as explicit plots; "Reset layout" in the tree card's line,
+shown only while the test has a `plots` key, stages removing it. Save names
+a `test_spec.json` entry it creates. The array rule folds on the last
+single-integer index, whatever comes before it (`massPorts[4, 1].C[]` is a
+family; `x[2,3]` is not). The header gains a ⋮ menu at every width, holding
+Export, Open in another backend…, dashboard and Stop server; Save and
+Discard stay. This reverses DESIGN.md's header line. **3d** follows: the
+slice field and save-time expansion of a folded row into one criterion per
+index (ruling §3.10). Deferred to docs/ideas.md: moving plots up and down,
+and plot titles. The earlier builds' small residuals wait for the owner's
+hands-on look, except the 900 px header, which 3c's ⋮ menu fixes. The
+~70 read-only trees were closed by D132, measured the same day: 330 of 331
+TRANSFORM trees edit, and the one without a tree is the known timeout.
+
 **Settles.** The `plots` schema and its validation; the series model
 (`{"var": ...}` now, expression and unit later); how the report renders a
 `plots` layout; the in-place redraw per plot.

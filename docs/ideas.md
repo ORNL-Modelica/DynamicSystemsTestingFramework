@@ -1555,10 +1555,11 @@ planning.
   - For the drawers plan: a layout staged on a test that is tracked only by
     its `.mo` annotation creates that test's FIRST `test_spec.json` entry
     (`model` + `plots`, no `variables`); it scored the same in the TRANSFORM
-    gate, but the drawer should say it is creating an entry. TRANSFORM
-    baseline names carry newlines inside brackets
-    (`massPorts[\n        4, 1].C[1]`): the Variables filter and the family
-    rule meet them. `family_of` refuses a name with a comma index anywhere
+    gate, but the drawer should say it is creating an entry. (TRANSFORM's
+    newlines inside brackets, `massPorts[\n        4, 1].C[1]`, are gone:
+    D132 names the variable `unitTests.x[i]` and `normalize_expression`
+    collapses the expression's whitespace — 0 newlines in any baseline or
+    the spec on 2026-09-25.) `family_of` refuses a name with a comma index anywhere
     (`x[1,2].y[3]` has a single last index and does not fold); `[007]` parses
     to 7. `discovery/scan_cache._to_json` guards `metric_tree_spec` but not
     `plots` (unreachable today: a scanned test has no layout).
@@ -1586,6 +1587,10 @@ planning.
     tree` will not materialize an implicit tree whose names differ from what
     was scored, so every criterion there is read-only. Mapping a label back
     to its raw name by index in `_materialization` is the likely fix.
+    CLOSED by D132 (measured 2026-09-25 over a copy of TRANSFORM at
+    6d9bb52): 330 of 331 trees editable, the one without a tree is the
+    SIM_FAIL timeout; the 147 tests with `cat(`/multi-line expressions all
+    edit, since every scored name is now `unitTests.x[i]`.
   - Layout at 1280 px: the shared header's first row wraps to two lines and
     the sub-header's Accept / Rerun stack; the tube editor (455 px) plus its
     320 px plot does not fit a 900 px screen, so the control-points table is
@@ -1669,3 +1674,10 @@ planning.
     "weighted".
   - No multi-series plot exists in TRANSFORM, so the gate could not exercise
     one. The fixture's seven-plot page is the only coverage.
+- **Deferred from 3c's scoping (owner, 2026-09-25)**: two plot-layout
+  controls with no asker yet, each additive later.
+  - Moving a plot up or down. In 3c a new plot is placed below the selected
+    one, which is the only control over order.
+  - A plot title you write ("Temperatures"). It would be a new field on a
+    `plots` entry in `test_spec.json`, a surface TRANSFORM-UnitTests relies
+    on, though additive. Until then the toolbar names the series.
