@@ -20,6 +20,7 @@ from nicegui import ui
 
 from ..capabilities import Placement
 from ..session import Selection
+from ..tree_text import leaf_name, leaves_of, node_text, nodes_of
 from .actions import InlineHost, RowTarget
 from .widgets import Pill
 
@@ -27,24 +28,6 @@ if TYPE_CHECKING:
     from .test_page import TestPage
 
 NAMED = 2  #: failures the closed line names; the rest are counted
-
-
-def leaves_of(view: dict | None) -> list[dict]:
-    """The leaf nodes of a `tree_view`, in tree order."""
-    if view is None:
-        return []
-    if view.get("kind") == "leaf":
-        return [view]
-    return [leaf for child in view.get("children") or [] for leaf in leaves_of(child)]
-
-
-def nodes_of(view: dict | None) -> list[dict]:
-    """Every node of a `tree_view`, combinators included, in tree order."""
-    if view is None:
-        return []
-    return [view] + [
-        node for child in view.get("children") or [] for node in nodes_of(child)
-    ]
 
 
 def shape_of(view: dict | None) -> tuple[tuple[str, str, str], ...]:
@@ -82,14 +65,6 @@ def node_status(node: dict) -> str:
     return leaf_status(node) if node.get("kind") == "leaf" else root_status(node)
 
 
-def leaf_name(leaf: dict) -> str:
-    """``metric · label`` — what a criterion's row READS. The label is the
-    expression the model wrote for the variable (`nrmse · pipe.T[1]`), which
-    the tree view carries beside the `variable` a patch op targets; a
-    variable with no expression reads as its name, as it always did."""
-    return f"{leaf.get('metric')} · {leaf.get('label') or leaf.get('variable')}"
-
-
 def leaf_readout(leaf: dict) -> str:
     """The CLI's own words for the score: the criterion the leaf was held
     to — which ALREADY carries the score ("NRMSE 1.531e-01 vs tolerance
@@ -108,16 +83,6 @@ def root_text(node: dict) -> str:
     only jump — and a combinator names itself and counts the LEAVES under
     it, however deep: `and[k-of-n[l, l], l]` is 3 criteria, not 2."""
     return "1 criterion" if node.get("kind") == "leaf" else node_text(node)
-
-
-def node_text(node: dict) -> str:
-    if node.get("kind") == "leaf":
-        return leaf_name(node)
-    n = len(leaves_of(node))
-    text = f"{node.get('combinator')} · {n} {'criterion' if n == 1 else 'criteria'}"
-    if node.get("combinator") == "k-of-n" and node.get("k") is not None:
-        text += f" · k={node['k']}"
-    return text
 
 
 def summary_text(view: dict) -> tuple[str, list[dict], int]:

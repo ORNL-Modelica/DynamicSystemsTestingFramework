@@ -17,7 +17,6 @@ pytest.importorskip("nicegui")
 from nicegui import ui  # noqa: E402
 from nicegui.testing.user_simulation import user_simulation  # noqa: E402
 
-from capability_host import open_menu  # noqa: E402
 from dstf.authoring import capabilities  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.capabilities import Artifact, Job, Patch, Placement  # noqa: E402
@@ -27,8 +26,8 @@ from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
 from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
-from dstf.authoring.shell.tree_card import leaves_of  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from dstf.authoring.tree_text import leaves_of  # noqa: E402
 from test_handles import TREE  # noqa: E402
 from test_session import LOOSEN, A, B, C, D, _Gate, _two_var_project  # noqa: E402
 
@@ -557,11 +556,12 @@ def _plot(*names):
     return {"series": [{"var": n} for n in names]}
 
 
-async def _menu(user, marker: str, within: str) -> None:
-    """Open the cluster's menu marked ``marker`` and wait for its content:
-    an Edit tree menu is built when the menu opens, which under the user
-    simulation is `menu.open()` — a click moves no menu's value."""
-    open_menu(user, marker, within=within)
+async def _open_form(user, marker: str, within: str) -> None:
+    """Click the cluster's icon marked ``marker`` and wait for its form: an
+    Edit tree form is built on the icon's click, into a row under its host's
+    row. The row sits OUTSIDE the host, so its buttons are found without
+    ``within`` — there is one open form on the page."""
+    _click_in(user, marker, within=within)
     kind, path = marker.split(":", 1)
     await _settled(lambda: not _none(user, f"apply-{kind}:{path}"))
 
@@ -737,8 +737,8 @@ async def test_a_wrap_from_the_tree_restages_the_rows(shell):
         user.find(marker="tree:toggle").click()
         await _settled(lambda: page.tree.rows.visible)
         host = "node:/metrics/children/1"
-        await _menu(user, "wrap:/metrics/children/1", within=host)
-        _click_in(user, "apply-wrap:/metrics/children/1", within=host)
+        await _open_form(user, "wrap:/metrics/children/1", within=host)
+        user.find(marker="apply-wrap:/metrics/children/1").click()
         await _settled(
             lambda: not _none(user, "tree-row:/metrics/children/1/children/0")
         )
@@ -763,8 +763,8 @@ async def test_the_rows_are_rebuilt_only_when_the_tree_s_shape_moved(shell):
         assert _one(user, "tree-row:/metrics/children/0") is row
         assert _one(user, "tree-pill:/metrics/children/0") is pill
         host = "node:/metrics/children/1"
-        await _menu(user, "wrap:/metrics/children/1", within=host)
-        _click_in(user, "apply-wrap:/metrics/children/1", within=host)
+        await _open_form(user, "wrap:/metrics/children/1", within=host)
+        user.find(marker="apply-wrap:/metrics/children/1").click()
         await _settled(
             lambda: not _none(user, "tree-row:/metrics/children/1/children/0")
         )
@@ -1364,7 +1364,7 @@ async def test_a_variable_keeps_its_card_when_its_last_criterion_goes(shell):
             if _one(user, "variable-actions:1:y") in list(_ancestors(e))
         ]
         assert button.text == "Add a criterion for y"
-        await _menu(user, f"add:{T0}", within=f"node:0:{T0}")
+        await _open_form(user, f"add:{T0}", within=f"node:0:{T0}")
         # Dict options: name → what to read it as (neither has an
         # expression here, so the two agree).
         assert _one(user, f"apply-add:{T0}:variable").options == {"x": "x", "y": "y"}
@@ -1557,17 +1557,18 @@ async def test_painting_the_header_never_loads_the_baseline(shell, monkeypatch):
         assert _one(user, "meta").text == "Python · ref_0001"
 
 
-async def test_a_closed_menus_form_is_gone_from_the_page(shell):
-    """A node's forms are built when their menu opens (Task 6) and dropped
-    when it closes: a page holding a form per node of every row is what that
-    replaced."""
+async def test_a_cancelled_forms_row_is_gone_from_the_page(shell):
+    """A node's forms are built on the icon's click and dropped on Cancel
+    (a menu's close, before the forms were rows): a page holding a form per
+    node of every row is what that replaced."""
     async with user_simulation(root=shell.index) as user:
-        await _test_page(shell, user)
-        await _menu(user, f"wrap:{T0}", within=f"node:0:{T0}")
-        (apply,) = user.find(marker=f"apply-wrap:{T0}").elements
-        menu = next(a for a in apply.ancestors() if isinstance(a, ui.menu))
-        menu.close()
+        page = await _test_page(shell, user)
+        await _open_form(user, f"wrap:{T0}", within=f"node:0:{T0}")
+        user.find(marker=f"cancel:{T0}").click()
         await _settled(lambda: _none(user, f"apply-wrap:{T0}"))
+        assert _none(user, f"form-row:crit:0:{T0}")
+        assert page.form is None
+        assert shell.session.spec.pending == []
 
 
 async def test_a_rebuilt_card_gives_up_its_hook(shell):
@@ -3808,3 +3809,102 @@ async def test_a_dialogs_form_row_opens_while_its_panel_is_built(shell):
             for e in dialog.descendants()
             if isinstance(e, ui.label) and e.text == "probe var:x"
         ]
+
+
+# -- Edit tree's forms as rows on the page (board 1A-1D) --------------------
+
+
+async def test_a_wrap_form_opens_under_the_criteria_row_and_applies(page_shell):
+    """Board 1D: Wrap on a criteria row opens its form in that row's slot,
+    titled for the node; `warn` and Wrap stage the wrap, and the row goes."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, f"wrap:{TUBE}", within=f"node:0:{TUBE}")
+        await user.should_see(marker=f"form-row:crit:0:{TUBE}")
+        form = _one(user, f"form-row:crit:0:{TUBE}")
+        assert form.parent_slot.parent is page.cards[0].rows[TUBE].slot
+        assert _one(user, f"form-title:crit:0:{TUBE}").text == (
+            "Wrap tube · x in a combinator"
+        )
+        (kind,) = [
+            e
+            for e in user.find(kind=ui.select).elements
+            if e.props.get("label") == "Combinator"
+        ]
+        with page.client:
+            kind.set_value("warn")
+        await user.should_see(
+            "A failure of this criterion becomes a warning; the test still passes."
+        )
+        user.find(marker=f"apply-wrap:{TUBE}").click()
+        await _settled(
+            lambda: any(
+                op.path == TUBE and (op.value or {}).get("combinator") == "warn"
+                for op in shell.session.spec.pending
+            )
+        )
+        await _settled(lambda: _none(user, f"form-row:crit:0:{TUBE}"))
+        assert page.form is None
+
+
+async def test_a_discarded_edit_reopens_on_the_nodes_value(tmp_path):
+    """The 3b stale-form probe, for the row: a k-of-n root edited to k=2 and
+    then Discarded opens Edit on the k it has — and a form left OPEN over
+    the Discard is rebuilt on it, so an Apply from it stages nothing stale."""
+    from test_session import _page_project
+
+    cfg, work = _page_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"] = {**entry["metrics"], "combinator": "k-of-n", "k": 1}
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    shell = Shell(cfg, work_dir=work)
+    shell.session.open(cfg, work_dir=work)
+    shell.load.phase = "done"
+    within = "tree-row:/metrics"
+
+    def k_field():
+        (k,) = [
+            e
+            for e in user.find(kind=ui.number).elements
+            if e.props.get("label") == "k — how many must pass"
+        ]
+        return k
+
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        user.find(marker="tree:toggle").click()
+        await user.should_see(marker=within)
+        _click_in(user, "edit:/metrics", within=within)
+        await user.should_see(marker="form-row:tree:/metrics")
+        assert k_field().value == 1
+        with page.client:
+            k_field().set_value(2)
+        user.find(marker="apply-edit:/metrics").click()
+        await _settled(lambda: shell.session.tree(A).get("k") == 2)
+        # The header enables Discard when the Session's event reaches it.
+        await _settled(lambda: _one(user, "discard").enabled)
+        user.find(marker="discard").click()
+        await _settled(lambda: shell.session.spec.pending == [])
+        await _settled(lambda: not _none(user, "edit:/metrics"))
+        _click_in(user, "edit:/metrics", within=within)
+        await user.should_see(marker="form-row:tree:/metrics")
+        assert k_field().value == 1  # the node's, not the discarded 2
+        # Now with the form OPEN across the edit and its Discard.
+        with page.client:
+            k_field().set_value(2)
+        user.find(marker="apply-edit:/metrics").click()
+        await _settled(lambda: shell.session.tree(A).get("k") == 2)
+        _click_in(user, "edit:/metrics", within=within)
+        await _settled(lambda: not _none(user, "form-row:tree:/metrics"))
+        assert k_field().value == 2
+        # The header enables Discard when the Session's event reaches it.
+        await _settled(lambda: _one(user, "discard").enabled)
+        user.find(marker="discard").click()
+        await _settled(lambda: k_field().value == 1)
+        user.find(marker="apply-edit:/metrics").click()
+        await _settled(lambda: bool(shell.session.spec.pending))
+        assert shell.session.tree(A)["k"] == 1  # not the stale 2

@@ -27,9 +27,10 @@ from ...discovery.plots import ResolvedPlot
 from ...figures.plotly import _LABELS, Visibility
 from ..capabilities import Placement
 from ..session import Selection
+from ..tree_text import leaf_name, leaves_of
 from .actions import ActionBar, InlineHost, RowTarget
 from .figure_hook import FigureHook
-from .tree_card import leaf_name, leaf_readout, leaf_status, leaves_of
+from .tree_card import leaf_readout, leaf_status
 from .widgets import Pill
 
 if TYPE_CHECKING:

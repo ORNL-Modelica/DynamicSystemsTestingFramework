@@ -376,7 +376,8 @@ def test_the_test_page_stacks_its_header_draws_on_scroll_and_jumps(
         assert page.evaluate("() => window.scrollY") > first_card["height"]
 
         # 3. The tree line's tally, the rows it opens to, and a node's wrap
-        #    form in a menu — which is not a click on the row that hosts it.
+        #    form in a row under it — which is not a click on the row that
+        #    hosts it.
         page.evaluate("() => window.scrollTo(0, 0)")
         line = page.locator(".dstf-tree-line")
         expect(line).to_contain_text(
@@ -393,17 +394,19 @@ def test_the_test_page_stacks_its_header_draws_on_scroll_and_jumps(
             .filter(has=page.locator("i:text-is('data_array')"))
         )
         wrap.click()
-        apply_wrap = page.get_by_role("button", name="apply wrap")
+        form = page.locator(".dstf-form-row")
+        apply_wrap = form.get_by_role("button", name="Wrap", exact=True)
         expect(apply_wrap).to_be_visible(timeout=EXPECT_TIMEOUT)
         # Retrying reads: an editor the click opened arrives on the NEXT
-        # round trip, and a bare count() the moment the menu appeared would
+        # round trip, and a bare count() the moment the row appeared would
         # have said zero either way.
         expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
         expect(page.locator(".dstf-crit-open")).to_have_count(0, timeout=EXPECT_TIMEOUT)
         # 8. The top of the page, the tree open, the wrap form showing.
         _shot(page, tmp_path, "tree")
-        page.keyboard.press("Escape")
-        expect(apply_wrap).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        # The form row's Cancel (a menu closed on Escape; a row does not).
+        form.get_by_role("button", name="Cancel").click()
+        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
         # The same node's controls are drawn again on the criteria row under
         # the plot, and THAT row is the way into its editor: a click on the
         # controls inside it must not also be a click on the row. (A tree
@@ -415,15 +418,11 @@ def test_the_test_page_stacks_its_header_draws_on_scroll_and_jumps(
             .filter(has=page.locator("i:text-is('data_array')"))
         )
         crit_wrap.click()
-        expect(page.get_by_role("button", name="apply wrap")).to_be_visible(
-            timeout=EXPECT_TIMEOUT
-        )
+        expect(apply_wrap).to_be_visible(timeout=EXPECT_TIMEOUT)
         assert page.locator(".dstf-editor").count() == 0
         assert page.locator(".dstf-crit-open").count() == 0
-        page.keyboard.press("Escape")
-        expect(page.get_by_role("button", name="apply wrap")).to_have_count(
-            0, timeout=EXPECT_TIMEOUT
-        )
+        form.get_by_role("button", name="Cancel").click()
+        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
 
         # 3b. The closed line's jump opens that criterion where it lives —
         #     on the card of the variable it scores — and brings it on screen.
@@ -990,3 +989,121 @@ def test_a_swatch_answers_the_keyboard(tmp_path, playwright_browser):
         expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(500)
         assert _range_lines_shown(page) == 0
+
+
+# -- a node's forms as a row under it (board 1A-1D) ------------------------
+
+
+def _icon(row, name: str):
+    """A node's control on ``row`` by its Material icon's name."""
+    return row.locator(".dstf-node-controls button").filter(
+        has=row.page.locator(f"i:text-is('{name}')")
+    )
+
+
+def _choose(page, form, label: str) -> None:
+    """Pick ``label`` in the form row's Combinator select."""
+    form.locator(".q-select").first.click()
+    page.locator(".q-menu .q-item").filter(has_text=label).first.click()
+
+
+def test_a_form_row_opens_under_its_node_and_nothing_covers_it(
+    tmp_path, playwright_browser
+):
+    with _served(tmp_path, playwright_browser) as page:
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.locator(".dstf-tree-line").get_by_role("button", name="Show tree").click()
+        rows = page.locator(".dstf-tree-row")
+        expect(rows).to_have_count(4, timeout=EXPECT_TIMEOUT)
+        tube_row, next_row = rows.nth(1), rows.nth(2)
+        before = next_row.bounding_box()
+        assert before is not None
+
+        # (a) Wrap under the tube's tree row, `k-of-n` chosen: only k shows.
+        _icon(tube_row, "data_array").click()
+        form = page.locator(".dstf-form-row")
+        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(form).to_contain_text("Wrap tube · x in a combinator")
+        _choose(page, form, "k-of-n")
+        expect(form).to_contain_text(
+            "The criterion becomes the only child of a new k-of-n; add siblings "
+            "to it with its +.",
+            timeout=EXPECT_TIMEOUT,
+        )
+        expect(form.get_by_label("k — how many must pass")).to_be_visible()
+        for gone in ("Weights, one per child", "Threshold", "Direction"):
+            assert form.get_by_label(gone).count() == 0, gone
+        page.wait_for_timeout(300)
+        row_box, form_box = tube_row.bounding_box(), form.bounding_box()
+        after = next_row.bounding_box()
+        assert row_box is not None and form_box is not None and after is not None
+        # BELOW its node's row, and the next node's row moved down for it.
+        assert form_box["y"] >= row_box["y"] + row_box["height"] - 1, (
+            row_box,
+            form_box,
+        )
+        assert after["y"] >= form_box["y"] + form_box["height"] - 1, (form_box, after)
+        assert after["y"] > before["y"], (before, after)
+        page.mouse.move(5, 5)
+        _shot(page, tmp_path, "form-row-k-of-n")
+
+        # The tube's criteria row opens its editor: the form row goes.
+        _open_crit(page, 0, "tube · x")
+        expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
+
+        # (b) Edit on the root: Unwrap, Cancel, Apply.
+        page.evaluate("() => window.scrollTo(0, 0)")
+        _icon(rows.nth(0), "tune").click()
+        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        expect(form).to_contain_text("Edit this combinator")
+        expect(form).to_contain_text(
+            "Changes this node's kind and fields; its children stay."
+        )
+        buttons = form.locator("button").all_inner_texts()
+        assert [b.strip() for b in buttons] == ["Unwrap", "Cancel", "Apply"], buttons
+        page.mouse.move(5, 5)
+        page.wait_for_timeout(300)
+        _shot(page, tmp_path, "form-row-edit-root")
+        form.get_by_role("button", name="Cancel").click()
+        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
+
+        # (c) Wrap under the tube's CRITERIA row, `warn` chosen.
+        crit = _crit(page, 0, "tube · x")
+        crit.scroll_into_view_if_needed()
+        _icon(crit, "data_array").click()
+        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        _choose(page, form, "warn")
+        expect(form).to_contain_text(
+            "A failure of this criterion becomes a warning; the test still passes.",
+            timeout=EXPECT_TIMEOUT,
+        )
+        crit_box, form_box = crit.bounding_box(), form.bounding_box()
+        assert crit_box is not None and form_box is not None
+        assert form_box["y"] >= crit_box["y"] + crit_box["height"] - 1
+        # The row opens below a criteria row near the viewport's foot, so
+        # the picture brings the whole form on screen first.
+        form.scroll_into_view_if_needed()
+        page.mouse.move(5, 5)
+        page.wait_for_timeout(300)
+        _shot(page, tmp_path, "form-row-warn")
+        form.get_by_role("button", name="Wrap", exact=True).click()
+        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-header-row")).to_contain_text(
+            "1 pending edit", timeout=EXPECT_TIMEOUT
+        )
+
+        # Under the warn it now sits in, the tube's `+` is grey and says
+        # why — read from the tooltip a real mouse raises.
+        crit = _crit(page, 0, "tube · x")
+        crit.scroll_into_view_if_needed()
+        plus = _icon(crit, "add")
+        expect(plus).to_be_disabled(timeout=EXPECT_TIMEOUT)
+        box = plus.bounding_box()
+        assert box is not None
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        tip = page.locator(".q-tooltip")
+        expect(tip).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        assert tip.inner_text().strip() == "a warn takes exactly one child"
+        _shot(page, tmp_path, "plus-under-warn")

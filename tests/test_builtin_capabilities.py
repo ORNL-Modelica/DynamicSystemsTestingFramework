@@ -12,7 +12,7 @@ pytest.importorskip("nicegui")
 
 from nicegui import ui  # noqa: E402
 
-from capability_host import host, open_menu  # noqa: E402
+from capability_host import host  # noqa: E402
 from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.builtin.accept import Accept  # noqa: E402
@@ -346,6 +346,46 @@ async def _settled(predicate, tries: int = 40) -> None:
     assert predicate()
 
 
+#: The k-of-n field's label (the board's words).
+K = "k — how many must pass"
+#: Every per-kind field of a combinator form.
+FIELDS = {K, "Weights, one per child", "Threshold", "Direction"}
+
+
+def _labelled(user, kind, label):
+    return [e for e in user.find(kind=kind).elements if e.props.get("label") == label]
+
+
+def _labels_shown(user) -> set[str]:
+    """The labels of every field on the page — a kind's fields that are not
+    shown are not built at all."""
+    out: set[str] = set()
+    for kind in (ui.select, ui.number, ui.input):
+        try:
+            elements = user.find(kind=kind).elements
+        except AssertionError:
+            continue
+        out |= {str(e.props.get("label")) for e in elements}
+    return out
+
+
+def _one(user, marker: str):
+    (element,) = user.find(marker=marker).elements
+    return element
+
+
+def _none(user, marker: str) -> bool:
+    try:
+        user.find(marker=marker)
+    except AssertionError:
+        return True
+    return False
+
+
+def _tips(element) -> list[str]:
+    return [e.text for e in element.descendants() if isinstance(e, ui.tooltip)]
+
+
 def test_edit_tree_needs_one_test_and_a_node_or_a_variable(session):
     cap = EditTree()
     assert cap.available(SessionView(session, Selection(tests=frozenset({A})))) == (
@@ -496,24 +536,25 @@ async def test_the_node_panel_is_the_cluster_and_its_forms_stage(session):
         for marker in (f"add:{leaf}", f"wrap:{leaf}", f"remove:{leaf}"):
             await user.should_see(marker=marker)
         await user.should_not_see(marker=f"edit:{leaf}")  # a leaf has no combinator
-        open_menu(user, f"wrap:{leaf}")  # the menu's content is lazy
+        user.find(marker=f"wrap:{leaf}").click()  # the row is built on the click
         user.find(marker=f"apply-wrap:{leaf}").click()
         await _settled(lambda: "combinator" in session.tree(D)["children"][1])
         assert errors == {}
 
 
-async def test_a_cluster_builds_a_menus_content_when_it_opens(session):
+async def test_a_cluster_builds_a_form_only_when_its_icon_is_clicked(session):
     """Cost (the executing review): a cluster whose three forms are built
     with it is ~28 elements, and a tree row holds one per node — 40 leaves
-    made a 2387-element page with the tree open. Nothing inside a menu
-    exists until that menu opens, which is its value going True."""
+    made a 2387-element page with the tree open. No form exists until its
+    icon is clicked; the click opens it as a row (moved from the menu,
+    whose content was built when the menu opened)."""
     session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
     leaf = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
         await user.should_see(marker=f"add:{leaf}")
         await user.should_not_see(kind=ui.select)  # no form is built yet
         await user.should_not_see(marker=f"apply-add:{leaf}")
-        open_menu(user, f"add:{leaf}")
+        user.find(marker=f"add:{leaf}").click()
         await user.should_see(marker=f"apply-add:{leaf}")
         await user.should_see(kind=ui.select)  # the add form's two selects
         assert len(user.find(marker=f"apply-add:{leaf}").elements) == 1
@@ -538,25 +579,32 @@ async def test_remove_stages_at_once(session):
         await _settled(lambda: len(session.tree(D)["children"]) == n - 1)
 
 
-async def test_unwrap_is_offered_only_on_a_one_child_combinator(session):
-    """`unwrap` replaces a combinator with its ONE child; on the k-of-n of
-    two it would have to drop a child, so it is not drawn."""
+async def test_unwrap_lives_inside_edit(session):
+    """Board 1C: no unwrap icon of its own (it was drawn on a one-child
+    combinator only); Unwrap is a button of the Edit row, and on the k-of-n
+    of two it is enabled — its children take its place in its parent."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _figure):
         await user.should_see(marker=f"edit:{k_of_n}")
         await user.should_not_see(marker=f"unwrap:{k_of_n}")
+        user.find(marker=f"edit:{k_of_n}").click()
+        (unwrap,) = user.find(marker=f"unwrap-in-edit:{k_of_n}").elements
+        assert unwrap.enabled
 
 
-async def test_unwrap_stages_at_once(session):
-    """Like remove, it has no form: the icon is the act."""
+async def test_unwrap_in_edit_stages_and_closes_the_row(session):
+    """Unwrap is the Edit row's button now, not an icon that acted at once;
+    it stages the unwrap and the row goes."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     warn = "/metrics/children/2"
     async with host(session, EditTree(), _node(D, warn)) as (user, errors, _figure):
-        user.find(marker=f"unwrap:{warn}").click()
+        user.find(marker=f"edit:{warn}").click()
+        user.find(marker=f"unwrap-in-edit:{warn}").click()
         await _settled(lambda: "combinator" not in session.tree(D)["children"][2])
         assert session.tree(D)["children"][2]["max_value"] == 5.0  # the child kept
         assert errors == {}
+        await _settled(lambda: _none(user, f"unwrap-in-edit:{warn}"))
 
 
 async def test_the_edit_form_is_prefilled_and_stages_an_edit(session):
@@ -565,16 +613,10 @@ async def test_the_edit_form_is_prefilled_and_stages_an_edit(session):
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
-        open_menu(user, f"edit:{k_of_n}")
+        user.find(marker=f"edit:{k_of_n}").click()
         await user.should_see(marker=f"apply-edit:{k_of_n}")
-        (kind,) = [
-            e
-            for e in user.find(kind=ui.select).elements
-            if e.props.get("label") == "combinator"
-        ]
-        (k,) = [
-            e for e in user.find(kind=ui.number).elements if e.props.get("label") == "k"
-        ]
+        (kind,) = _labelled(user, ui.select, "Combinator")
+        (k,) = _labelled(user, ui.number, K)
         assert (kind.value, k.value) == ("k-of-n", 2)
         kind.set_value("or")
         user.find(marker=f"apply-edit:{k_of_n}").click()
@@ -593,7 +635,7 @@ async def test_the_cluster_add_form_starts_from_the_leafs_own_variable(
     leaf = "/metrics/children/1"
     assert session.tree(A)["children"][1]["variable"] == "y"
     async with host(session, EditTree(), _node(A, leaf)) as (user, errors, _figure):
-        open_menu(user, f"add:{leaf}")
+        user.find(marker=f"add:{leaf}").click()
         (var,) = user.find(marker=f"apply-add:{leaf}:variable").elements
         assert var.value == "y"
         user.find(marker=f"apply-add:{leaf}").click()
@@ -614,7 +656,7 @@ async def test_the_add_form_offers_a_variable_whose_criterion_was_removed(
     assert [c["variable"] for c in session.tree(A)["children"]] == ["x"]
     leaf = "/metrics/children/0"
     async with host(session, EditTree(), _node(A, leaf)) as (user, _errors, _figure):
-        open_menu(user, f"add:{leaf}")
+        user.find(marker=f"add:{leaf}").click()
         (var,) = user.find(marker=f"apply-add:{leaf}:variable").elements
         # Dict options: the VALUE a leaf is written against is the name, the
         # text is what a person reads — here the same, neither has an
@@ -669,45 +711,27 @@ async def test_the_cluster_add_form_on_a_nested_leaf_lands_under_its_parent(sess
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     leaf = "/metrics/children/1/children/0"
     async with host(session, EditTree(), _node(D, leaf)) as (user, errors, _figure):
-        open_menu(user, f"add:{leaf}")
+        user.find(marker=f"add:{leaf}").click()
         user.find(marker=f"apply-add:{leaf}").click()
         await _settled(lambda: len(session.tree(D)["children"][1]["children"]) == 3)
         assert len(session.tree(D)["children"]) == 3  # the root is untouched
         assert errors == {}
 
 
-async def test_the_form_is_built_by_the_menu_opening_not_the_anchors_click(session):
-    """The menu's value is the one hook: whatever opens a QMenu — a click
-    on the anchor in a browser, a keyboard, `menu.open()` — reaches the
-    server as that change. The anchor's click builds nothing, so no flag
-    can be left standing by a close the simulation never sends."""
-    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(TREE))])
-    leaf = "/metrics/children/1"
-    async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
-        user.find(marker=f"add:{leaf}").click()
-        await user.should_not_see(marker=f"apply-add:{leaf}")
-        open_menu(user, f"add:{leaf}")
-        await user.should_see(marker=f"apply-add:{leaf}")
-
-
-async def test_a_menu_opened_after_the_session_moved_shows_the_node_as_it_is(session):
+async def test_a_form_opened_after_the_session_moved_shows_the_node_as_it_is(session):
     """The cluster stands while the Session moves under it (the Task 4
-    review's probe): a form built on the anchor's click showed the k the
-    node had then, and an apply from it staged that k back over the one
-    already staged."""
+    review's probe): a form built when the cluster was drawn showed the k
+    the node had then, and an apply from it staged that k back over the one
+    already staged. The row is built on the icon's click, from the tree as
+    it is at that click."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     assert session.tree(D)["children"][1]["k"] == 2
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _figure):
-        # A browser's open sends both the anchor's click and the value
-        # change; the content comes from the second.
-        user.find(marker=f"edit:{k_of_n}").click()
         session.stage([PatchOp(D, "replace", f"{k_of_n}/k", 1)])
-        open_menu(user, f"edit:{k_of_n}")
+        user.find(marker=f"edit:{k_of_n}").click()
         await user.should_see(marker=f"apply-edit:{k_of_n}")
-        (k,) = [
-            e for e in user.find(kind=ui.number).elements if e.props.get("label") == "k"
-        ]
+        (k,) = _labelled(user, ui.number, K)
         assert k.value == 1  # the node as it is now
         staged = len(session.spec.pending)
         user.find(marker=f"apply-edit:{k_of_n}").click()
@@ -716,9 +740,9 @@ async def test_a_menu_opened_after_the_session_moved_shows_the_node_as_it_is(ses
         assert errors == {}
 
 
-async def test_a_menu_opened_on_a_node_that_is_gone_says_so_and_offers_no_form(session):
-    """The node was removed under a cluster that is still drawn: the menu
-    reads the tree at THIS open, so it carries the sentence `available`
+async def test_a_form_opened_on_a_node_that_is_gone_says_so_and_offers_no_form(session):
+    """The node was removed under a cluster that is still drawn: the row
+    reads the tree at THIS click, so it carries the sentence `available`
     would give rather than a form staging against a path that names
     nothing."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(TREE))])
@@ -727,29 +751,27 @@ async def test_a_menu_opened_on_a_node_that_is_gone_says_so_and_offers_no_form(s
     leaf = f"/metrics/children/{len(TREE['children']) - 1}"
     async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
         session.stage([PatchOp(D, "remove", leaf)])
-        open_menu(user, f"wrap:{leaf}")
+        user.find(marker=f"wrap:{leaf}").click()
         await user.should_see(f"{leaf} names no node of {D}")
         await user.should_not_see(marker=f"apply-wrap:{leaf}")
 
 
-async def test_a_menus_form_has_a_width_and_its_controls_fill_it(session):
-    """Chromium (the review): a menu at a row's right end came out 88 px
-    wide with its select labels cropped — the column asks for a width and
-    every dense control fills it."""
+async def test_a_forms_controls_fill_its_row(session):
+    """Every dense control fills the row it is drawn in. (A menu at a row's
+    right end came out 88 px wide with its labels cropped, and its column
+    asked for a width; a row under the node's row is the page's width.)"""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(TREE))])
     leaf = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
-        open_menu(user, f"add:{leaf}")
-        (apply,) = user.find(marker=f"apply-add:{leaf}").elements
-        column = next(a for a in apply.ancestors() if isinstance(a, ui.column))
-        assert dict(column.style).get("min-width") == "220px"
+        user.find(marker=f"add:{leaf}").click()
         (var,) = user.find(marker=f"apply-add:{leaf}:variable").elements
         assert "dense" in var.props and "w-full" in var.classes
 
 
 async def test_a_cluster_tooltip_sits_above_its_button(session):
     """Chromium (the review): the default tooltip opens below the icon, over
-    the first control of the menu the same click opened."""
+    what the same click opened below the row (a menu then, a form row
+    now)."""
     async with host(session, EditTree(), _node(A, ROOT)) as (user, _errors, _figure):
         (button,) = user.find(marker=f"add:{ROOT}").elements
         (tip,) = [e for e in button.descendants() if isinstance(e, ui.tooltip)]
@@ -757,29 +779,23 @@ async def test_a_cluster_tooltip_sits_above_its_button(session):
         assert tip.props.get("self") == "bottom middle"
 
 
-async def test_a_menu_is_rebuilt_on_every_open(session):
+async def test_a_form_is_rebuilt_on_every_open(session):
     """A form built once carries the values the node had then: a combinator
-    edited and then Discarded reopened on the k that is no longer there."""
+    edited and then Discarded reopened on the k that is no longer there.
+    Each open is the icon's click; each close, Cancel."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     k_of_n = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _figure):
-        (button,) = user.find(marker=f"edit:{k_of_n}").elements
-        menu = next(e for e in button.descendants() if isinstance(e, ui.menu))
-        # Each open and close as the browser sends it: Quasar's own value
-        # change. (The anchor's click is the other hook; the laziness test
-        # drives that one, which never moves the value without a browser.)
-        menu.open()
+        user.find(marker=f"edit:{k_of_n}").click()
         (first,) = user.find(marker=f"apply-edit:{k_of_n}").elements
-        menu.close()
-        menu.open()
+        user.find(marker=f"cancel:{k_of_n}").click()
+        user.find(marker=f"edit:{k_of_n}").click()
         (second,) = user.find(marker=f"apply-edit:{k_of_n}").elements
         assert second is not first  # one apply button, and a new one
         session.stage([PatchOp(D, "replace", f"{k_of_n}/k", 1)])
-        menu.close()
-        menu.open()
-        (k,) = [
-            e for e in user.find(kind=ui.number).elements if e.props.get("label") == "k"
-        ]
+        user.find(marker=f"cancel:{k_of_n}").click()
+        user.find(marker=f"edit:{k_of_n}").click()
+        (k,) = _labelled(user, ui.number, K)
         assert k.value == 1  # the node as it is now, not as it was
 
 
@@ -813,19 +829,18 @@ async def test_a_node_and_a_variable_together_draw_the_nodes_controls(session):
         await user.should_not_see(marker="apply-add:x")
 
 
-async def test_applying_a_form_closes_its_menu(session):
-    """The act is staged and the menu is gone — left open it would cover the
-    row whose criterion just changed."""
+async def test_applying_a_form_closes_its_row(session):
+    """The act is staged and the row is gone — a menu then, a row now: left
+    open it would offer a form for a node that has just changed."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(TREE))])
     leaf = "/metrics/children/1"
     async with host(session, EditTree(), _node(D, leaf)) as (user, _errors, _figure):
-        open_menu(user, f"wrap:{leaf}")
-        (apply,) = user.find(marker=f"apply-wrap:{leaf}").elements
-        menu = next(a for a in apply.ancestors() if isinstance(a, ui.menu))
-        menu.open()
-        assert menu.value is True
+        user.find(marker=f"wrap:{leaf}").click()
+        await user.should_see(marker=f"apply-wrap:{leaf}")
         user.find(marker=f"apply-wrap:{leaf}").click()
-        assert menu.value is False
+        await _settled(lambda: "combinator" in session.tree(D)["children"][1])
+        assert _none(user, f"apply-wrap:{leaf}")
+        assert _none(user, "host-row:title")
 
 
 async def test_the_variable_panel_adds_a_criterion_for_it(two_var_session):
@@ -833,7 +848,7 @@ async def test_the_variable_panel_adds_a_criterion_for_it(two_var_session):
     sel = Selection(tests=frozenset({A}), variable="y")
     n = len(session.tree(A)["children"])
     async with host(session, EditTree(), sel) as (user, errors, _figure):
-        # The VARIABLE panel is the add form itself, drawn open: no menu.
+        # The VARIABLE panel is the add form itself, drawn open: no row.
         user.find(marker="apply-add:y").click()
         await _settled(lambda: len(session.tree(A)["children"]) == n + 1)
         assert errors == {}
@@ -914,8 +929,245 @@ def test_edit_tree_unwraps_a_single_child_combinator(session):
         "variable": "x",
         "tolerance": 0.3,
     }
-    with pytest.raises(ValueError, match="unwrap needs one"):
+    # The root's two children have no parent to move into (several
+    # children take their node's place since the form-row plan's Task 6).
+    with pytest.raises(ValueError, match="the root has no parent"):
         EditTree().act(view, action="unwrap", model_id=A, path="/metrics")
+
+
+# -- the forms as rows under the node (board 1A-1D) -------------------------
+
+
+async def test_wrap_opens_a_row_titled_for_the_node_with_only_its_kinds_fields(
+    session,
+):
+    leaf = "/metrics/children/0"
+    async with host(session, EditTree(), _node(A, leaf)) as (user, _errors, _f):
+        user.find(marker=f"wrap:{leaf}").click()
+        await user.should_see(marker="host-row:title")
+        assert _one(user, "host-row:title").text == "Wrap nrmse · x in a combinator"
+        (kind,) = _labelled(user, ui.select, "Combinator")
+        assert kind.value == "and"
+        assert not _labels_shown(user) & FIELDS
+        await user.should_see(
+            "The criterion becomes the only child of a new and; add siblings to "
+            "it with its +."
+        )
+        kind.set_value("k-of-n")
+        await _settled(lambda: K in _labels_shown(user))
+        assert _labels_shown(user) & FIELDS == {K}
+        await user.should_see(
+            "The criterion becomes the only child of a new k-of-n; add siblings "
+            "to it with its +."
+        )
+        kind.set_value("weighted")
+        await _settled(lambda: "Threshold" in _labels_shown(user))
+        assert _labels_shown(user) & FIELDS == FIELDS - {K}
+        await user.should_see(
+            "The criterion becomes the only child of a new weighted node, with "
+            "the one weight above."
+        )
+        kind.set_value("or")
+        await user.should_see(
+            "The criterion becomes the only child of a new or; add siblings to "
+            "it with its +."
+        )
+        kind.set_value("warn")
+        await user.should_see(
+            "A failure of this criterion becomes a warning; the test still passes."
+        )
+        assert not _labels_shown(user) & FIELDS
+
+
+async def test_a_kinds_typed_value_is_kept_for_a_return_to_it(session):
+    """Changing the select rebuilds the fields column; a value typed for a
+    kind is there again when the user comes back to that kind."""
+    leaf = "/metrics/children/0"
+    async with host(session, EditTree(), _node(A, leaf)) as (user, _errors, _f):
+        user.find(marker=f"wrap:{leaf}").click()
+        (kind,) = _labelled(user, ui.select, "Combinator")
+        kind.set_value("k-of-n")
+        await _settled(lambda: K in _labels_shown(user))
+        (k,) = _labelled(user, ui.number, K)
+        k.set_value(3)
+        kind.set_value("and")
+        await _settled(lambda: K not in _labels_shown(user))
+        kind.set_value("k-of-n")
+        await _settled(lambda: K in _labels_shown(user))
+        (k,) = _labelled(user, ui.number, K)
+        assert k.value == 3
+
+
+async def test_a_wrapped_combinator_reads_as_a_node(session):
+    """For a combinator being wrapped, "criterion" reads "node"."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    k_of_n = "/metrics/children/1"
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _f):
+        user.find(marker=f"wrap:{k_of_n}").click()
+        await user.should_see(
+            "The node becomes the only child of a new and; add siblings to it "
+            "with its +."
+        )
+        assert _one(user, "host-row:title").text == (
+            "Wrap k-of-n · 2 criteria · k=2 in a combinator"
+        )
+
+
+async def test_edit_carries_unwrap_and_the_nodes_direction(session):
+    weighted = {
+        "combinator": "weighted",
+        "weights": [1.0, 1.0],
+        "threshold": 0.5,
+        "direction": "greater",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {"metric": "range", "variable": "x", "max_value": 9.0},
+        ],
+    }
+    session.stage(
+        [PatchOp(D, "add", ROOT, {"combinator": "and", "children": [weighted]})]
+    )
+    node = "/metrics/children/0"
+    async with host(session, EditTree(), _node(D, node)) as (user, errors, _f):
+        user.find(marker=f"edit:{node}").click()
+        await user.should_see(marker=f"unwrap-in-edit:{node}")
+        assert _one(user, "host-row:title").text == "Edit this combinator"
+        (direction,) = _labelled(user, ui.select, "Direction")
+        assert direction.options[direction.value] == "higher is better"
+        await user.should_see("Changes this node's kind and fields; its children stay.")
+        direction.set_value("less")
+        staged = len(session.spec.pending)
+        user.find(marker=f"apply-edit:{node}").click()
+        await _settled(lambda: len(session.spec.pending) > staged)
+        ops = session.spec.pending[staged:]
+        assert any(
+            op.op == "replace" and op.path == f"{node}/direction" and op.value == "less"
+            for op in ops
+        ), ops
+        assert errors == {}
+
+
+async def test_the_edit_rows_buttons_read_unwrap_cancel_apply(session):
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    k_of_n = "/metrics/children/1"
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, _errors, _f):
+        user.find(marker=f"edit:{k_of_n}").click()
+        await user.should_see(marker=f"apply-edit:{k_of_n}")
+        row = _one(user, f"apply-edit:{k_of_n}").parent_slot.parent
+        assert [b.text for b in row.default_slot.children] == [
+            "Unwrap",
+            "Cancel",
+            "Apply",
+        ]
+
+
+def test_unwrap_of_several_children_moves_them_into_the_parent(session):
+    a = {"metric": "nrmse", "variable": "x"}
+    b = {"metric": "range", "variable": "x", "max_value": 9.0}
+    c = {"metric": "range", "variable": "x", "max_value": 5.0}
+    tree = {
+        "combinator": "and",
+        "children": [{"combinator": "k-of-n", "k": 1, "children": [a, b]}, c],
+    }
+    session.stage([PatchOp(D, "add", ROOT, tree)])
+    node = "/metrics/children/0"
+    outcome = EditTree().act(
+        SessionView(session, _node(D, node)), action="unwrap", model_id=D, path=node
+    )
+    assert [(op.op, op.path, op.value) for op in outcome.ops] == [
+        ("remove", node, None),
+        ("add", "/metrics/children/0", a),
+        ("add", "/metrics/children/1", b),
+    ]
+    session.apply(outcome)
+    assert session.tree(D) == {"combinator": "and", "children": [a, b, c]}
+
+
+async def test_unwrap_is_disabled_on_a_root_with_several_children(session):
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    async with host(session, EditTree(), _node(D, ROOT)) as (user, _errors, _f):
+        user.find(marker=f"edit:{ROOT}").click()
+        await user.should_see(marker=f"unwrap-in-edit:{ROOT}")
+        button = _one(user, f"unwrap-in-edit:{ROOT}")
+        assert not button.enabled
+        assert _tips(button) == ["the root has no parent to take its children"]
+
+
+async def test_plus_is_grey_under_warn_and_weighted(session):
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    for path in ("/metrics/children/2", "/metrics/children/2/children/0"):
+        async with host(session, EditTree(), _node(D, path)) as (user, _errors, _f):
+            plus = _one(user, f"add:{path}")
+            assert not plus.enabled
+            assert _tips(plus) == ["a warn takes exactly one child"]
+    # Beside a leaf under an `and`, and under a k-of-n: `+` works.
+    for path in ("/metrics/children/0", "/metrics/children/1"):
+        async with host(session, EditTree(), _node(D, path)) as (user, _errors, _f):
+            assert _one(user, f"add:{path}").enabled
+    weighted = {
+        "combinator": "weighted",
+        "weights": [1.0],
+        "threshold": 0.5,
+        "children": [{"metric": "nrmse", "variable": "x"}],
+    }
+    session.stage(
+        [PatchOp(D, "add", ROOT, {"combinator": "and", "children": [weighted]})]
+    )
+    for path in ("/metrics/children/0", "/metrics/children/0/children/0"):
+        async with host(session, EditTree(), _node(D, path)) as (user, _errors, _f):
+            plus = _one(user, f"add:{path}")
+            assert not plus.enabled
+            assert _tips(plus) == [
+                "a weighted node has one weight per child; a child cannot be "
+                "added alone"
+            ]
+
+
+async def test_add_reveals_the_new_criterion(session):
+    three = {
+        "combinator": "and",
+        "children": [
+            {"metric": "nrmse", "variable": "x"},
+            {"metric": "range", "variable": "x", "max_value": 9.0},
+            {"metric": "range", "variable": "x", "max_value": 5.0},
+        ],
+    }
+    session.stage([PatchOp(D, "add", ROOT, three)])
+    reveals: list[str] = []
+    async with host(session, EditTree(), _node(D, ROOT), reveals) as (user, e, _f):
+        user.find(marker=f"add:{ROOT}").click()
+        await user.should_see(marker=f"apply-add:{ROOT}")
+        assert _one(user, "host-row:title").text == (
+            "Add a criterion under and · 3 criteria"
+        )
+        await user.should_see(
+            "Added with the metric's defaults as the last child; its editor "
+            "opens under its plot."
+        )
+        user.find(marker=f"apply-add:{ROOT}").click()
+        await _settled(lambda: len(session.tree(D)["children"]) == 4)
+        assert reveals == ["/metrics/children/3"] and e == {}
+    # Beside a ROOT leaf: the root becomes an `and` of both.
+    session.stage([PatchOp(D, "add", ROOT, {"metric": "nrmse", "variable": "x"})])
+    reveals.clear()
+    async with host(session, EditTree(), _node(D, ROOT), reveals) as (user, e, _f):
+        user.find(marker=f"add:{ROOT}").click()
+        await user.should_see(marker=f"apply-add:{ROOT}")
+        assert _one(user, "host-row:title").text == ("Add a criterion beside nrmse · x")
+        user.find(marker=f"apply-add:{ROOT}").click()
+        await _settled(lambda: "combinator" in session.tree(D))
+        assert reveals == ["/metrics/children/1"] and e == {}
+
+
+async def test_cancel_stages_nothing(session):
+    leaf = "/metrics/children/0"
+    async with host(session, EditTree(), _node(A, leaf)) as (user, _errors, _f):
+        user.find(marker=f"wrap:{leaf}").click()
+        await user.should_see(marker=f"cancel:{leaf}")
+        user.find(marker=f"cancel:{leaf}").click()
+        await _settled(lambda: _none(user, f"cancel:{leaf}"))
+        assert _none(user, "host-row:title")  # `close` emptied the row
+        assert session.spec.pending == []
 
 
 # -- Accept (§4.6 table, §4.7) --------------------------------------------

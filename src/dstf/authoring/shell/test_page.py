@@ -22,11 +22,12 @@ from ...storage.ref_index import RefIndex
 from ..capabilities import Placement, plural
 from ..session import Selection
 from ..tree_pointer import node_or_none
+from ..tree_text import leaves_of, nodes_of
 from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
 from .plot_card import UNREAD, PlotCard
 from .tabstate import tab_state
-from .tree_card import TreeCard, leaves_of, nodes_of
+from .tree_card import TreeCard
 
 if TYPE_CHECKING:
     from .shell import Shell

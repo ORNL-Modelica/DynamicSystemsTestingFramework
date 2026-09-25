@@ -1,7 +1,8 @@
 """Edit tree (§4.6 table, §4.7): the NODE and VARIABLE placements, exactly
 one test selected. At NODE the panel IS that node's controls — add, wrap,
-and on a combinator edit and unwrap, and remove — each form in a menu
-anchored to its button; at VARIABLE it is the "Add a criterion for x" form.
+and on a combinator edit (Unwrap inside it), and remove — each form a ROW
+under the node's row (`Panel.row`); at VARIABLE it is the "Add a criterion
+for x" form.
 Every control stages one structural change against the paths the report's
 tree already shows. The D66 validator's refusal reaches the page through
 ``Panel.submit`` — the Session is what it was.
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from ..session import SessionView
 from ..spec_document import PatchOp
 from ..tree_pointer import node_or_none
+from ..tree_text import node_text, nodes_of
 
 # NO module-level `nicegui` import: `import dstf.authoring` runs
 # register_builtins(), and the Session must import without the extra.
@@ -27,8 +29,7 @@ from ..tree_pointer import node_or_none
 ROOT = "/metrics"
 
 #: The combinator-only raw keys each kind carries (``tree_spec``); every
-#: other one is removed when a node changes kind. ``direction`` has no
-#: control — a weighted node keeps the one it has.
+#: other one is removed when a node changes kind.
 _KIND_KEYS: dict[str, tuple[str, ...]] = {
     "k-of-n": ("k",),
     "weighted": ("weights", "threshold", "direction"),
@@ -48,8 +49,43 @@ def _kind_fields(kind: str, inputs: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(
                 f"weights: {text!r} is not a comma-separated list of numbers"
             ) from None
-        return {"weights": weights, "threshold": float(inputs["threshold"] or 0.0)}
+        return {
+            "weights": weights,
+            "threshold": float(inputs["threshold"] or 0.0),
+            "direction": str(inputs.get("direction") or "less"),
+        }
     return {}
+
+
+#: What each Wrap does to the tree, one sentence per kind (the 2026-09-21
+#: board, 1C). ``{what}`` is "criterion" for a leaf, "node" for a
+#: combinator.
+_WRAP_SENTENCES = {
+    "and": "The {what} becomes the only child of a new and; add siblings to it "
+    "with its +.",
+    "or": "The {what} becomes the only child of a new or; add siblings to it "
+    "with its +.",
+    "k-of-n": "The {what} becomes the only child of a new k-of-n; add siblings "
+    "to it with its +.",
+    "warn": "A failure of this {what} becomes a warning; the test still passes.",
+    "weighted": "The {what} becomes the only child of a new weighted node, with "
+    "the one weight above.",
+}
+_EDIT_SENTENCE = "Changes this node's kind and fields; its children stay."
+_ADD_SENTENCE = (
+    "Added with the metric's defaults as the last child; its editor opens under "
+    "its plot."
+)
+#: Why ``+`` is grey where a child cannot be added alone: the validator
+#: refuses it by name whatever the form says, so the form is not offered.
+_NO_ADD = {
+    "warn": "a warn takes exactly one child",
+    "weighted": "a weighted node has one weight per child; a child cannot be "
+    "added alone",
+}
+_ROOT_UNWRAP = "the root has no parent to take its children"
+#: A weighted node's ``direction``, as the Direction select reads it.
+_DIRECTIONS = {"less": "lower is better", "greater": "higher is better"}
 
 
 class EditTree:
@@ -107,7 +143,7 @@ class EditTree:
         if sel.node_path is not None:
             _cluster(ui, s, ui_panel, model_id, sel.node_path)
         else:
-            # The variable's footer: the form itself, no menu to open — the
+            # The variable's footer: the form itself, no row to open — the
             # dialog the VARIABLE placement draws is its frame.
             _add_form(
                 ui,
@@ -147,12 +183,23 @@ class EditTree:
             # A single-child combinator gives way to its child (the browser
             # editor's unwrap): `warn(leaf)` becomes `leaf`, params kept.
             children = node.get("children") or []
-            if len(children) != 1:
-                raise ValueError(
-                    f"{path} has {len(children)} children; unwrap needs one"
-                )
-            op = "add" if path == ROOT else "replace"
-            return Patch(ops=[PatchOp(model_id, op, path, children[0])])
+            if len(children) == 1:
+                op = "add" if path == ROOT else "replace"
+                return Patch(ops=[PatchOp(model_id, op, path, children[0])])
+            # Several children take the node's place in its parent, in
+            # order. A `warn` or `weighted` parent refuses that by name, in
+            # the validator, like any other op.
+            if path == ROOT:
+                raise ValueError(_ROOT_UNWRAP)
+            if not children:
+                raise ValueError(f"{path} has no children to take its place")
+            parent, index = path.rsplit("/children/", 1)
+            ops = [PatchOp(model_id, "remove", path)]
+            ops += [
+                PatchOp(model_id, "add", f"{parent}/children/{int(index) + j}", child)
+                for j, child in enumerate(children)
+            ]
+            return Patch(ops=ops)
         kind = inputs["kind"]
         fields = _kind_fields(kind, inputs)
         if action == "wrap":
@@ -183,42 +230,68 @@ class EditTree:
         raise ValueError(f"unknown action {action!r}")
 
 
-def _combinator_controls(ui: Any, node: dict | None) -> Callable[[], dict[str, Any]]:
-    """The kind select and the fields every kind may take; the returned
-    callable reads them at apply time."""
+def _combinator_fields(
+    ui: Any, node: dict | None, sentence: Callable[[str], str]
+) -> Callable[[], dict[str, Any]]:
+    """The kind select and ONLY the chosen kind's fields (board 1B), in a
+    column rebuilt on the select's change; a value typed for a kind is kept
+    for when the user returns to it. Under them, ``sentence(kind)`` — what
+    the action does for that kind (`dstf-why`). The returned callable reads
+    them at apply time. ``node`` prefills them: the node's own kind and
+    fields for Edit, none for Wrap."""
     names = [c.name for c in combinators()]
-    current = (node or {}).get("combinator")
+    node = node or {}
+    current = node.get("combinator")
+    values: dict[str, Any] = {
+        "k": node.get("k") or 1,
+        "weights": ", ".join(str(w) for w in node.get("weights") or []),
+        "threshold": node.get("threshold") or 0.0,
+        "direction": node.get("direction") or "less",
+    }
     kind = (
         ui.select(
-            names, label="combinator", value=current if current in names else names[0]
+            names, label="Combinator", value=current if current in names else names[0]
         )
         .props("dense")
         .classes("w-full")
     )
-    k = (
-        ui.number(label="k", value=(node or {}).get("k") or 1)
-        .props("dense")
-        .classes("w-full")
-    )
-    weights = (
-        ui.input(
-            label="weights",
-            value=", ".join(str(w) for w in (node or {}).get("weights") or []),
-        )
-        .props("dense")
-        .classes("w-full")
-    )
-    threshold = (
-        ui.number(label="threshold", value=(node or {}).get("threshold") or 0.0)
-        .props("dense")
-        .classes("w-full")
-    )
-    return lambda: {
-        "kind": kind.value,
-        "k": k.value,
-        "weights": weights.value,
-        "threshold": threshold.value,
-    }
+    fields = ui.column().classes("w-full gap-1")
+    why = ui.label("").classes("dstf-why")
+
+    def keep(key: str) -> Callable[[Any], None]:
+        return lambda e: values.__setitem__(key, e.value)
+
+    def rebuild() -> None:
+        fields.clear()
+        with fields:
+            if kind.value == "k-of-n":
+                ui.number(
+                    label="k — how many must pass",
+                    value=values["k"],
+                    on_change=keep("k"),
+                ).props("dense").classes("w-full")
+            elif kind.value == "weighted":
+                ui.input(
+                    label="Weights, one per child",
+                    value=values["weights"],
+                    on_change=keep("weights"),
+                ).props("dense").classes("w-full")
+                ui.number(
+                    label="Threshold",
+                    value=values["threshold"],
+                    on_change=keep("threshold"),
+                ).props("dense").classes("w-full")
+                ui.select(
+                    _DIRECTIONS,
+                    label="Direction",
+                    value=values["direction"],
+                    on_change=keep("direction"),
+                ).props("dense").classes("w-full")
+        why.set_text(sentence(str(kind.value)))
+
+    kind.on_value_change(lambda _e: rebuild())
+    rebuild()
+    return lambda: {"kind": kind.value, **values}
 
 
 def _add_form(
@@ -230,10 +303,14 @@ def _add_form(
     under: str,
     variable: str | None,
     mark: str,
-    done: Callable[[], None] | None = None,
+    close: Callable[[], None] | None = None,
+    added: str | None = None,
 ) -> None:
-    """Variable and metric selects and the apply button (marked ``mark``);
-    ``done`` runs first when the form sits in a menu that must close.
+    """Variable and metric selects and the apply button (marked ``mark``).
+    In a form row (``close`` given) it is the row's: the sentence, Cancel
+    and Add, which closes the row, stages, and reveals ``added`` — the new
+    criterion's path. The variable's footer (no ``close``) is the form
+    alone, its button still ``apply add``: its dialog is its frame.
 
     The variable select's VALUES are result-file names — a leaf is written
     against the name — and its option TEXT reads the label, with the name
@@ -262,8 +339,8 @@ def _add_form(
     )
 
     def apply() -> None:
-        if done is not None:
-            done()
+        if close is not None:
+            close()
         ui_panel.submit(
             model_id=model_id,
             action="add",
@@ -271,76 +348,107 @@ def _add_form(
             variable=var.value,
             metric=met.value,
         )
+        if added is not None:
+            ui_panel.reveal(added)
 
-    ui.button("apply add", on_click=apply).props("dense no-caps").mark(mark)
+    if close is None:
+        ui.button("apply add", on_click=apply).props("dense no-caps").mark(mark)
+        return
+    ui.label(_ADD_SENTENCE).classes("dstf-why")
+    with ui.row().classes("items-center gap-2"):
+        _cancel(ui, close, under)
+        ui.button("Add", on_click=apply).props("dense no-caps").mark(mark)
 
 
-def _lazy_menu(ui: Any, button: Any, build: Callable[[Any], None]) -> None:
-    """The menu anchored to ``button``, its CONTENT built when the menu
-    OPENS — its value going True — and cleared when it closes.
+def _cancel(ui: Any, close: Callable[[], None], path: str) -> None:
+    """A form row's Cancel: the row goes, nothing is staged."""
+    ui.button("Cancel", on_click=close).props("flat dense no-caps").mark(
+        f"cancel:{path}"
+    )
 
-    Nothing but an empty column exists inside a menu that is not open: a
-    cluster whose three forms are built with it is ~28 elements, and a tree
-    row holds one per node — 40 leaves made a 2387-element page with the
-    tree open, and every sync re-sent them. Each open builds the column
-    again, from the tree as it is at that moment, so a form never shows a
-    value the node no longer has (a combinator edited and then Discarded
-    reopened on its old ``k``).
 
-    The menu's value is the ONE hook: whatever opens it in a browser — a
-    click on the anchor, a keyboard — reaches the server as that change,
-    and so does ``menu.open()``. The anchor's click is not a second hook;
-    building there needed a once-per-open flag that the user simulation
-    never cleared (a click moves no value), which is how a form went stale
-    and an apply from it staged the node's old value back (the Task 4
-    review's probe). The column carries the menu's width: with none, Quasar
-    takes the anchor's, and an icon button's is 88 px with every select
-    label cropped.
-    """
-    with button:
-        menu = ui.menu()
-    with menu:
-        column = ui.column().classes("q-pa-sm gap-1").style("min-width: 220px")
+def _parent_of(path: str) -> str | None:
+    return path.rsplit("/children/", 1)[0] if "/children/" in path else None
 
-    def rebuild() -> None:
-        column.clear()
-        with column:
-            build(menu)
 
-    menu.on_value_change(lambda e: rebuild() if e.value else column.clear())
+def _added_path(tree: dict | None, path: str) -> str:
+    """Where an Add from ``path``'s row lands, read from the tree as it is
+    when the row is built — after the add the count has moved by one:
+    under a combinator its next child; beside the root leaf the root's
+    second (the root becomes an ``and`` of both); beside any other leaf
+    its parent's next child."""
+    node = node_or_none(tree, path) or {}
+    if "combinator" in node:
+        return f"{path}/children/{len(node.get('children') or [])}"
+    if path == ROOT:
+        return f"{ROOT}/children/1"
+    parent = _parent_of(path) or ROOT
+    siblings = (node_or_none(tree, parent) or {}).get("children") or []
+    return f"{parent}/children/{len(siblings)}"
 
 
 def _cluster(
     ui: Any, s: SessionView, ui_panel: Panel, model_id: str, path: str
 ) -> None:
-    """One node's controls: flat round icon buttons, each form in its
-    menu."""
-    node = node_or_none(s.tree(model_id), path)
+    """One node's controls: flat round icon buttons, each form a ROW under
+    the node's row (`Panel.row`, the 2026-09-21 board, 1A-1D).
+
+    A form is built on its icon's CLICK, from the tree as it is then, and
+    cleared on Cancel, on its action, or when the page closes the row; the
+    page rebuilds an open one when an edit staged elsewhere moves its node
+    (`Panel.row`'s contract), so a form never shows a value the node no
+    longer has — a combinator edited and then Discarded reopened on its old
+    ``k``. Nothing but the icons exists until then: a cluster whose three
+    forms were built with it was ~28 elements, and a tree row holds one per
+    node — 40 leaves made a 2387-element page with the tree open, and every
+    sync re-sent them. The title is read inside the click too: a
+    `tree_view` read per cluster at build cost one read per node on every
+    rebuild of the rows (the page's cost tests)."""
+    tree = s.tree(model_id)
+    node = node_or_none(tree, path)
     if node is None:  # `available` already says so; a job may race
         return
     is_combinator = "combinator" in node
+    # `+` adds under a combinator and beside a leaf: the combinator that
+    # would take the child decides whether one can be added alone.
+    parent = _parent_of(path)
+    taker = node if is_combinator else node_or_none(tree, parent or "")
+    no_add = _NO_ADD.get(str((taker or {}).get("combinator")))
 
-    def icon(name: str, tip: str, mark: str, on_click: Any = None) -> Any:
+    def icon(
+        name: str, tip: str, mark: str, on_click: Any = None, enabled: bool = True
+    ) -> Any:
         button = ui.button(icon=name, on_click=on_click)
         button.props("flat dense round size=sm")
         with button:
             # Above the icon: below it (Quasar's default) the tooltip covers
-            # the first control of the menu the same click opens.
+            # the title of the form row the same click opens under the row.
             ui.tooltip(tip).props('anchor="top middle" self="bottom middle"')
+        if not enabled:
+            button.disable()
         return button.mark(mark)
+
+    def text() -> str:
+        """What the node's row reads, for a form's title — read at the
+        icon's click, never while the cluster is built."""
+        seen = next(
+            (n for n in nodes_of(s.tree_view(model_id)) if n.get("path") == path),
+            None,
+        )
+        return path if seen is None else node_text(seen)
 
     def act_now(action: str) -> None:
         ui_panel.submit(model_id=model_id, action=action, path=path)
 
     def fresh() -> dict | None:
-        """The node as it is at THIS open; the sentence in the menu when the
+        """The node as it is at THIS build; the sentence in the row when the
         tree has moved out from under the path since the cluster was drawn."""
         at_open = node_or_none(s.tree(model_id), path)
         if at_open is None:
             ui.label(f"{path} names no node of {model_id}").classes("text-negative")
         return at_open
 
-    def build_add(menu: Any) -> None:
+    def build_add(close: Callable[[], None]) -> None:
         at_open = fresh()
         if at_open is None:
             return
@@ -352,68 +460,87 @@ def _cluster(
             under=path,
             variable=s.selection.variable or at_open.get("variable"),
             mark=f"apply-add:{path}",
-            done=menu.close,
+            close=close,
+            # From the tree as it is NOW, before the add moves the count.
+            added=_added_path(s.tree(model_id), path),
         )
 
-    def build_wrap(menu: Any) -> None:
+    def build_wrap(close: Callable[[], None]) -> None:
         if fresh() is None:
             return
-        values = _combinator_controls(ui, None)
-
-        def apply() -> None:
-            menu.close()
-            ui_panel.submit(model_id=model_id, action="wrap", path=path, **values())
-
-        ui.button("apply wrap", on_click=apply).props("dense no-caps").mark(
-            f"apply-wrap:{path}"
+        what = "node" if is_combinator else "criterion"
+        values = _combinator_fields(
+            ui, None, lambda kind: _WRAP_SENTENCES.get(kind, "").format(what=what)
         )
 
-    def build_edit(menu: Any) -> None:
+        def apply() -> None:
+            close()
+            ui_panel.submit(model_id=model_id, action="wrap", path=path, **values())
+
+        with ui.row().classes("items-center gap-2"):
+            _cancel(ui, close, path)
+            ui.button("Wrap", on_click=apply).props("dense no-caps").mark(
+                f"apply-wrap:{path}"
+            )
+
+    def build_edit(close: Callable[[], None]) -> None:
         at_open = fresh()
         if at_open is None:
             return
-        values = _combinator_controls(ui, at_open)
+        values = _combinator_fields(ui, at_open, lambda _kind: _EDIT_SENTENCE)
 
         def apply() -> None:
-            menu.close()
+            close()
             ui_panel.submit(model_id=model_id, action="edit", path=path, **values())
 
-        ui.button("apply edit", on_click=apply).props("dense no-caps").mark(
-            f"apply-edit:{path}"
-        )
+        def unwrap() -> None:
+            close()
+            act_now("unwrap")
+
+        with ui.row().classes("items-center gap-2"):
+            unwrap_button = (
+                ui.button("Unwrap", on_click=unwrap)
+                .props("flat dense no-caps")
+                .mark(f"unwrap-in-edit:{path}")
+            )
+            if path == ROOT and len(at_open.get("children") or []) > 1:
+                # Several children take the node's place in its parent; the
+                # root has none to take them.
+                unwrap_button.disable()
+                with unwrap_button:
+                    ui.tooltip(_ROOT_UNWRAP)
+            _cancel(ui, close, path)
+            ui.button("Apply", on_click=apply).props("dense no-caps").mark(
+                f"apply-edit:{path}"
+            )
 
     with ui.row().classes("dstf-node-controls items-center no-wrap gap-0"):
-        _lazy_menu(
-            ui,
-            icon(
-                "add",
+        where = "under" if is_combinator else "beside"
+        icon(
+            "add",
+            no_add
+            or (
                 "Add a criterion under this node"
                 if is_combinator
-                else "Add a criterion beside this one",
-                f"add:{path}",
+                else "Add a criterion beside this one"
             ),
-            build_add,
+            f"add:{path}",
+            lambda: ui_panel.row(f"Add a criterion {where} {text()}", build_add),
+            enabled=no_add is None,
         )
-        _lazy_menu(
-            ui,
-            icon(
-                "data_array",
-                "Wrap in a combinator (and / or / k-of-n / warn / weighted)",
-                f"wrap:{path}",
-            ),
-            build_wrap,
+        icon(
+            "data_array",
+            "Wrap in a combinator (and / or / k-of-n / warn / weighted)",
+            f"wrap:{path}",
+            lambda: ui_panel.row(f"Wrap {text()} in a combinator", build_wrap),
         )
         if is_combinator:
-            _lazy_menu(
-                ui, icon("tune", "Change this combinator", f"edit:{path}"), build_edit
+            icon(
+                "tune",
+                "Change this combinator",
+                f"edit:{path}",
+                lambda: ui_panel.row("Edit this combinator", build_edit),
             )
-            if len(node.get("children") or []) == 1:
-                icon(
-                    "unfold_less",
-                    "Replace this combinator with its one child",
-                    f"unwrap:{path}",
-                    lambda: act_now("unwrap"),
-                )
         if path != ROOT:  # the root has nothing to be removed from
             icon(
                 "remove",
