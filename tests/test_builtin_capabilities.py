@@ -1217,6 +1217,11 @@ async def test_an_untouched_weighted_wrap_waits_for_a_typed_threshold(session):
         wrap = _one(user, f"apply-wrap:{leaf}")
         assert not wrap.enabled
         assert _shown_tips(wrap) == ["enter a threshold"]
+        # 0 is a threshold like any other (with `greater`, a real one).
+        threshold.set_value(0)
+        await _settled(lambda: wrap.enabled)
+        threshold.set_value(None)
+        await _settled(lambda: not wrap.enabled)
         threshold.set_value(0.25)
         await _settled(lambda: wrap.enabled)
         assert _shown_tips(wrap) == []
@@ -1332,6 +1337,8 @@ def test_an_edit_stages_only_the_fields_that_moved(session):
     assert [(op.op, op.path, op.value) for op in outcome.ops] == [
         ("replace", f"{node}/threshold", 0.75)
     ]
+    # Nothing moved: no outcome at all, not an empty patch.
+    assert EditTree().act(view, **common, direction="less") is None
 
 
 def test_unwrap_at_a_later_index_lands_its_children_there(session):
@@ -1677,3 +1684,47 @@ def test_rerun_caption_names_count_backend_and_the_selections_unsaved_edits(sess
     # Another model's edits are not this selection's.
     other = SessionView(session, Selection(tests=frozenset({D})))
     assert Rerun().caption(other) == "Rerun 1 selected test (Python)"
+
+
+async def test_a_refused_form_keeps_its_row_and_what_was_typed(session):
+    """A form closes when its act went through, never before it submits: a
+    refused Wrap or Edit keeps its row open with what was typed, and the
+    refusal is the host's to show. Typed right, it stages and the row
+    goes."""
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    leaf, k_of_n = "/metrics/children/0", "/metrics/children/1"
+    async with host(session, EditTree(), _node(D, leaf)) as (user, errors, _f):
+        user.find(marker=f"wrap:{leaf}").click()
+        (kind,) = _labelled(user, ui.select, "Combinator")
+        kind.set_value("weighted")
+        await _settled(lambda: "Threshold" in _labels_shown(user))
+        (weights,) = _labelled(user, ui.input, "Weights, one per child")
+        (threshold,) = _labelled(user, ui.number, "Threshold")
+        weights.set_value("1, 2")  # two weights for the one child
+        threshold.set_value(0.5)
+        await _settled(lambda: _one(user, f"apply-wrap:{leaf}").enabled)
+        staged = len(session.spec.pending)
+        user.find(marker=f"apply-wrap:{leaf}").click()
+        await _settled(lambda: "edit-tree" in errors)
+        assert "weights" in errors["edit-tree"]
+        assert not _none(user, "host-row:title")
+        assert weights.value == "1, 2" and len(session.spec.pending) == staged
+        weights.set_value("1")
+        user.find(marker=f"apply-wrap:{leaf}").click()
+        await _settled(lambda: _none(user, "host-row:title"))
+        assert "combinator" in session.tree(D)["children"][0]
+    async with host(session, EditTree(), _node(D, k_of_n)) as (user, errors, _f):
+        user.find(marker=f"edit:{k_of_n}").click()
+        (kind,) = _labelled(user, ui.select, "Combinator")
+        kind.set_value("weighted")
+        await _settled(lambda: "Threshold" in _labels_shown(user))
+        (weights,) = _labelled(user, ui.input, "Weights, one per child")
+        (threshold,) = _labelled(user, ui.number, "Threshold")
+        weights.set_value("1")  # one weight for two children
+        threshold.set_value(0.5)
+        await _settled(lambda: _one(user, f"apply-edit:{k_of_n}").enabled)
+        user.find(marker=f"apply-edit:{k_of_n}").click()
+        await _settled(lambda: "edit-tree" in errors)
+        assert not _none(user, "host-row:title")
+        assert weights.value == "1"
+        assert session.tree(D)["children"][1]["combinator"] == "k-of-n"

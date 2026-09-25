@@ -3975,49 +3975,6 @@ async def test_the_grey_plus_follows_the_parents_kind(shell):
             await _settled(lambda p=path, w=within: _plus(user, p, w).enabled)
 
 
-async def test_a_rows_error_goes_when_a_row_opens_or_closes(page_shell):
-    """A refused act's error stayed up after its form was reopened, and
-    after later edits in other rows: opening or closing any form row takes
-    it away."""
-    shell = page_shell
-    probe = _RowProbe()
-    # A leaf holds no children: the validator refuses the add by its path.
-    probe.stage = [
-        PatchOp(
-            A,
-            "add",
-            "/metrics/children/0/children/-",
-            {"metric": "tube", "variable": "x"},
-        )
-    ]
-    _only(probe)
-    async with user_simulation(root=shell.index) as user:
-        page = await _test_page(shell, user, A)
-        error = page.cards[0].rows[TUBE].host.errors["row-probe"]
-
-        async def refused() -> None:
-            _click_in(user, f"probe-act:{TUBE}", within=f"criterion:0:{TUBE}")
-            await _settled(lambda: error.visible)
-
-        await refused()
-        # Reopened on the same row: the error goes.
-        _click_in(user, f"probe-open:{TUBE}", within=f"criterion:0:{TUBE}")
-        await user.should_see(marker=f"form-row:crit:0:{TUBE}")
-        assert not error.visible
-        user.find(marker=f"probe-close:{TUBE}").click()
-        await _settled(lambda: page.form is None)
-        await refused()
-        # A row opened on ANOTHER criterion: the error goes too.
-        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
-        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
-        assert not error.visible
-        # And a row closing takes an error shown while it was open.
-        await refused()
-        user.find(marker=f"probe-close:{RANGE_X}").click()
-        await _settled(lambda: page.form is None)
-        assert not error.visible
-
-
 async def test_a_rows_error_sits_on_its_own_line_under_the_row(page_shell):
     """In the row's own slot, not beside the icons: drawn in the host, a
     long refusal widened the host and pushed its icons left of every other
@@ -4046,3 +4003,131 @@ async def test_a_rows_error_sits_on_its_own_line_under_the_row(page_shell):
         assert not [
             e for e in row.slot.descendants() if isinstance(e, ui.label) and e.visible
         ]
+
+
+# -- the review of item 17 and Task 7 ------------------------------------------
+
+
+def _field(user, kind, label: str):
+    (field,) = [
+        e for e in user.find(kind=kind).elements if e.props.get("label") == label
+    ]
+    return field
+
+
+async def _refused_weighted_wrap(user, page, path: str) -> None:
+    """Open ``path``'s Wrap on plot 0's criteria row, choose weighted and
+    type two weights for its one child: the validator refuses it by name."""
+    _click_in(user, f"wrap:{path}", within=f"node:0:{path}")
+    await user.should_see(marker=f"form-row:crit:0:{path}")
+    with page.client:
+        _field(user, ui.select, "Combinator").set_value("weighted")
+    await _settled(lambda: not _none(user, f"apply-wrap:{path}"))
+    with page.client:
+        _field(user, ui.input, "Weights, one per child").set_value("1, 2")
+        _field(user, ui.number, "Threshold").set_value(0.5)
+    await _settled(lambda: _one(user, f"apply-wrap:{path}").enabled)
+    user.find(marker=f"apply-wrap:{path}").click()
+
+
+async def test_closing_an_editor_keeps_its_rows_errors(page_shell):
+    """`close_editor` cleared the row's whole slot, and the row's host keeps
+    its error labels there: after an editor opened and closed, a refused
+    Wrap on that row staged nothing and SHOWED nothing (the review, in
+    process and in Chromium). The editor keeps a column of its own, and
+    closing it deletes only that."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        row = page.cards[0].rows[TUBE]
+        user.find(marker=f"criterion:0:{TUBE}").click()
+        await _settled(lambda: page.open == (0, TUBE))
+        user.find(marker=f"editor-done:0:{TUBE}").click()
+        await _settled(lambda: page.open is None)
+        await _refused_weighted_wrap(user, page, TUBE)
+        await _settled(lambda: bool(_errors_under(user, row)))
+        assert "weights" in _errors_under(user, row)[0]
+        assert shell.session.spec.pending == []
+
+
+def _errors_under(user, row) -> list[str]:
+    """The texts of the edit-tree errors SHOWN in ``row``'s slot, found on
+    the page: a label deleted from it is not found, whatever it says."""
+    if _none(user, "error:edit-tree"):
+        return []
+    return [
+        e.text
+        for e in user.find(marker="error:edit-tree").elements
+        if e.visible and row.slot in list(_ancestors(e))
+    ]
+
+
+async def test_a_refused_wrap_keeps_its_row_and_what_was_typed(page_shell):
+    """A form closes on SUCCESS: it closed before it submitted, so a refused
+    Wrap took the typed weights with it and the refusal showed under a row
+    with no form. Now the row stays open with what was typed and the
+    refusal under it, as the criterion editor does; typed right, the Wrap
+    stages and the row goes."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        row = page.cards[0].rows[TUBE]
+        await _refused_weighted_wrap(user, page, TUBE)
+        await _settled(lambda: bool(_errors_under(user, row)))
+        assert page.form is not None and page.form[0].key == f"crit:0:{TUBE}"
+        assert _field(user, ui.input, "Weights, one per child").value == "1, 2"
+        assert shell.session.spec.pending == []
+        with page.client:
+            _field(user, ui.input, "Weights, one per child").set_value("1")
+        user.find(marker=f"apply-wrap:{TUBE}").click()
+        await _settled(lambda: page.form is None)
+        assert any(
+            op.path == TUBE and (op.value or {}).get("combinator") == "weighted"
+            for op in shell.session.spec.pending
+        )
+        assert not _errors_under(user, page.cards[0].rows[TUBE])
+
+
+async def test_an_error_belongs_to_its_row(page_shell):
+    """A row's error is hidden when THAT row's form opens or closes, or its
+    host rebuilds — not when another row's form opens and is cancelled. A
+    page-wide hide took an error off the row it was about for a Cancel on
+    another plot's row."""
+    shell = page_shell
+    probe = _RowProbe()
+    # A leaf holds no children: the validator refuses the add by its path.
+    probe.stage = [
+        PatchOp(
+            A,
+            "add",
+            "/metrics/children/0/children/-",
+            {"metric": "tube", "variable": "x"},
+        )
+    ]
+    _only(probe)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        error = page.cards[0].rows[TUBE].host.errors["row-probe"]
+
+        async def refused() -> None:
+            _click_in(user, f"probe-act:{TUBE}", within=f"criterion:0:{TUBE}")
+            await _settled(lambda: error.visible)
+
+        await refused()
+        # Another row's form opens and is cancelled: the error stays.
+        _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
+        await user.should_see(marker=f"form-row:crit:0:{RANGE_X}")
+        assert error.visible
+        user.find(marker=f"probe-close:{RANGE_X}").click()
+        await _settled(lambda: page.form is None)
+        assert error.visible
+        # Its own row's form opening takes it.
+        _click_in(user, f"probe-open:{TUBE}", within=f"criterion:0:{TUBE}")
+        await user.should_see(marker=f"form-row:crit:0:{TUBE}")
+        assert not error.visible
+        # Refused while its own form is open, then that form closes: gone.
+        await refused()
+        assert page.form is not None
+        user.find(marker=f"probe-close:{TUBE}").click()
+        await _settled(lambda: page.form is None)
+        assert not error.visible

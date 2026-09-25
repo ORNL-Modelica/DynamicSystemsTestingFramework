@@ -1106,15 +1106,46 @@ def test_a_form_row_opens_under_its_node_and_nothing_covers_it(
         _shot(page, tmp_path, "plus-under-warn")
 
 
+def _header_bottom(page) -> float:
+    """Where the fixed header ends in the viewport: a row scrolled into view
+    must not sit under it."""
+    box = page.locator(".q-header").bounding_box()
+    assert box is not None
+    return box["y"] + box["height"]
+
+
 def test_a_form_row_scrolls_into_view_and_a_weighted_wrap_waits_for_a_threshold(
     tmp_path, playwright_browser
 ):
     """A row opened from a criteria row at the viewport's foot scrolls
-    itself into view, just enough to show all of it (the owner's ruling;
-    the review measured such a row at 882-1052 px in a 900 px viewport).
-    A weighted Wrap is grey, saying why under a real mouse, until its
-    threshold is typed."""
+    itself into view, just enough to show all of it and clear of the fixed
+    header (the owner's ruling; the review measured such a row at 882-1052
+    px in a 900 px viewport, and with `block: "start"` it sat at y=70 under
+    a header ending at 106). A row that opens already in view does not move
+    the page. A weighted Wrap is grey, saying why under a real mouse, until
+    its threshold is typed; refused, the row stays with what was typed."""
     with _served(tmp_path, playwright_browser) as page:
+        # Already in view: the root's tree row at the top of the page, its
+        # form opening right under it. Nothing scrolls.
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.locator(".dstf-tree-line").get_by_role("button", name="Show tree").click()
+        rows = page.locator(".dstf-tree-row")
+        expect(rows).to_have_count(4, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(300)
+        before = page.evaluate("() => window.scrollY")
+        _icon(rows.nth(0), "data_array").click()
+        form = page.locator(".dstf-form-row")
+        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(600)
+        form_box = form.bounding_box()
+        assert form_box is not None
+        assert form_box["y"] + form_box["height"] <= VIEWPORT["height"], form_box
+        assert page.evaluate("() => window.scrollY") == before
+        form.get_by_role("button", name="Cancel", exact=True).click()
+        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        page.locator(".dstf-tree-line").get_by_role("button", name="Hide tree").click()
+        expect(rows.first).to_be_hidden(timeout=EXPECT_TIMEOUT)
+
         # Plot 1's row starts below the fold; brought up until its foot is
         # 4 px above the viewport's — twice, since the plot it scrolls into
         # view is drawn and may move it.
@@ -1132,15 +1163,17 @@ def test_a_form_row_scrolls_into_view_and_a_weighted_wrap_waits_for_a_threshold(
         foot = box["y"] + box["height"]
         assert VIEWPORT["height"] - 40 < foot <= VIEWPORT["height"], box
         _icon(crit, "data_array").click()
-        form = page.locator(".dstf-form-row")
         expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
         page.wait_for_timeout(600)
         form_box = form.bounding_box()
         assert form_box is not None
         assert form_box["y"] + form_box["height"] <= VIEWPORT["height"], form_box
-        # Just enough: the row it opened under is still on screen above it.
+        # Just enough: the row it opened under is still on screen above it,
+        # and neither is under the fixed header.
+        head = _header_bottom(page)
         crit_box = crit.bounding_box()
-        assert crit_box is not None and crit_box["y"] >= 0, crit_box
+        assert crit_box is not None and crit_box["y"] >= head, (crit_box, head)
+        assert form_box["y"] >= head, (form_box, head)
         page.mouse.move(5, 5)
         page.wait_for_timeout(300)
         _shot(page, tmp_path, "form-row-scrolled-into-view")
@@ -1171,14 +1204,21 @@ def test_a_form_row_scrolls_into_view_and_a_weighted_wrap_waits_for_a_threshold(
         _shot(page, tmp_path, "wrap-weighted-typed")
 
         # Two weights for one child: refused by the validator, by name. The
-        # error sits on its own line under the row, and the row's icons
-        # stay where every other row's are.
+        # row stays with what was typed; the error sits on its own line
+        # under the criteria row, and the row's icons stay where every
+        # other row's are.
         icons = _icon(crit, "add").bounding_box()
         form.get_by_label("Weights, one per child").fill("1, 2")
         wrap.click()
-        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
-        error = page.locator(".dstf-plot").nth(1).locator(".text-negative")
-        expect(error).to_contain_text("weights", timeout=EXPECT_TIMEOUT)
+        error = (
+            page.locator(".dstf-plot")
+            .nth(1)
+            .locator(".text-negative")
+            .filter(has_text="weights")
+        )
+        expect(error).to_be_visible(timeout=EXPECT_TIMEOUT)
+        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        assert form.get_by_label("Weights, one per child").input_value() == "1, 2"
         row_box, error_box = crit.bounding_box(), error.bounding_box()
         assert row_box is not None and error_box is not None and icons is not None
         assert error_box["y"] >= row_box["y"] + row_box["height"] - 1, (
@@ -1189,17 +1229,54 @@ def test_a_form_row_scrolls_into_view_and_a_weighted_wrap_waits_for_a_threshold(
         page.mouse.move(5, 5)
         page.wait_for_timeout(300)
         _shot(page, tmp_path, "wrap-refused-error")
-        # The row reopened: the error goes with it; typed right, it stages.
-        _icon(crit, "data_array").click()
-        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
-        expect(error).to_be_hidden(timeout=EXPECT_TIMEOUT)
-        _choose(page, form, "weighted")
-        form.get_by_label("Threshold").fill("0.5")
+        # Typed right, it stages; the row and its error go.
+        form.get_by_label("Weights, one per child").fill("1")
         wrap.click()
         expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        expect(error).to_be_hidden(timeout=EXPECT_TIMEOUT)
         expect(page.locator(".dstf-header-row")).to_contain_text(
             "1 pending edit", timeout=EXPECT_TIMEOUT
         )
+
+
+def test_a_refused_wrap_after_the_editor_closed_shows_its_error(
+    tmp_path, playwright_browser
+):
+    """Closing a criterion's editor cleared its row's whole slot, and the
+    row's host keeps its error labels there: a refused Wrap on that row
+    then staged nothing and showed nothing, and NiceGUI logged an element
+    deleted but still used (the review, in Chromium). The editor now goes
+    alone, and the refusal shows under the row with the form still open and
+    the typed weights in it."""
+    with _served(tmp_path, playwright_browser) as page:
+        page.wait_for_timeout(700)
+        crit = _crit(page, 0, "tube · x")
+        _open_crit(page, 0, "tube · x")
+        expect(page.locator(".dstf-editor")).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        page.locator(".dstf-editor").get_by_role("button", name="Done").click()
+        expect(page.locator(".dstf-editor")).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        _icon(crit, "data_array").click()
+        form = page.locator(".dstf-form-row")
+        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        _choose(page, form, "weighted")
+        expect(form.get_by_label("Threshold")).to_be_visible(timeout=EXPECT_TIMEOUT)
+        form.get_by_label("Weights, one per child").fill("1, 2")
+        form.get_by_label("Threshold").fill("0.5")
+        form.get_by_role("button", name="Wrap", exact=True).click()
+        error = (
+            page.locator(".dstf-plot")
+            .nth(0)
+            .locator(".text-negative")
+            .filter(has_text="weights")
+        )
+        expect(error).to_be_visible(timeout=EXPECT_TIMEOUT)
+        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        assert form.get_by_label("Weights, one per child").input_value() == "1, 2"
+        assert _pending(page).strip().startswith("0 "), _pending(page)
+        form.scroll_into_view_if_needed()
+        page.mouse.move(5, 5)
+        page.wait_for_timeout(400)
+        _shot(page, tmp_path, "wrap-refused-after-editor")
 
 
 # -- the page as one piece: the legend holds the signals, above the plot ---

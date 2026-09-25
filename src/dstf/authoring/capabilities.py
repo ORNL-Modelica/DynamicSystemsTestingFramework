@@ -154,24 +154,29 @@ class Panel(Protocol):
 
     figure: FigureHook
 
-    def submit(self, **inputs: Any) -> None:
+    def submit(self, **inputs: Any) -> bool:
         """Hand the capability's inputs to the shell, which calls ``act`` and
         applies the outcome; an exception shows with the panel — above an
-        inline one, in the dialog of a placement that is a button."""
+        inline one, in the dialog of a placement that is a button. Returns
+        whether it went through: ``False`` when ``act`` or the apply
+        raised. A form row closes on ``True`` and only then — refused, it
+        stays open with what was typed and the refusal shows under it."""
         ...
 
     def row(self, title: str, build: Callable[[Callable[[], None]], None]) -> None:
         """Open a form row below the row this panel is drawn in, titled
         ``title``. ``build(close)`` draws its content — fields, a sentence,
-        its buttons; ``close`` takes the row away. ONE thing is open at a
-        time on a page: this closes any other row and the criterion editor.
-        While it is open, ``build`` is called AGAIN, into an emptied row, when
-        an edit staged elsewhere moves the node the panel is for — a form
-        never shows a value the node no longer has — and it closes with the
-        host, when its row is hidden, and when its node is gone. In a
-        dialog (a placement that is a button) the form is drawn in the
-        dialog, below the panel. A panel with no row to open one under —
-        the criterion editor — raises."""
+        its buttons; ``close`` takes the row away — after a ``submit`` that
+        went through, never before it (a refused act keeps the row and
+        what was typed in it). ONE thing is open at a time on a page: this
+        closes any other row and the criterion editor. While it is open,
+        ``build`` is called AGAIN, into an emptied row, when an edit staged
+        elsewhere moves the node the panel is for — a form never shows a
+        value the node no longer has — and it closes with the host, when
+        its row is hidden, and when its node is gone. In a dialog (a
+        placement that is a button) the form is drawn in the dialog, below
+        the panel. A panel with no row to open one under — the criterion
+        editor — raises."""
         ...
 
     def reveal(self, leaf_path: str) -> None:

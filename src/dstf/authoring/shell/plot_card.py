@@ -251,6 +251,9 @@ class PlotCard:
         self.pills: dict[str, Pill] = {}
         self.bars: list[ActionBar] = []
         self.editor: InlineHost | None = None  # the open criterion's, if it is here
+        #: The open editor's own column in its row's slot: the slot also
+        #: holds the row host's error labels, so closing takes only this.
+        self.editor_box: ui.column | None = None
         self.open_path: str | None = None
         self._drawn: str | None = None  # the signature of what the plot shows
         #: Whether this card has been asked to draw. A plot that raised is
@@ -657,7 +660,9 @@ class PlotCard:
         model, variable = self.page.model_id, row.variable
         self.open_path = path
         row.row.classes(add="dstf-crit-open")
-        with row.slot, ui.column().classes("dstf-editor w-full gap-2"):
+        with row.slot:
+            self.editor_box = ui.column().classes("dstf-editor w-full gap-2")
+        with self.editor_box:
             with ui.row().classes("items-center no-wrap gap-3 w-full"):
                 ui.label(
                     "Drag a ring on the plot, or edit the fields. Edits are "
@@ -685,14 +690,20 @@ class PlotCard:
 
     def close_editor(self) -> None:
         """The editor goes, and its subscriptions with it: a panel nobody
-        can see must not go on staging edits from drags."""
+        can see must not go on staging edits from drags. Only the editor's
+        own column: the row's slot also holds its host's error labels, and
+        a close that cleared the slot deleted them — a refused Wrap on that
+        row then staged nothing and showed nothing (the review, in
+        Chromium)."""
         if self.editor is not None:
             self.editor.clear()
+        if self.editor_box is not None and not self.editor_box.is_deleted:
+            self.editor_box.delete()
         row = self.rows.get(self.open_path or "")
         if row is not None:
-            row.slot.clear()
             row.row.classes(remove="dstf-crit-open")
-        self.editor, self.open_path, self._edited = None, None, None
+        self.editor, self.editor_box = None, None
+        self.open_path, self._edited = None, None
 
     def _applied(self, name: str) -> None:
         """What a successful submit from the editor leaves to do. A drag

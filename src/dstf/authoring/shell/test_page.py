@@ -87,8 +87,6 @@ class TestPage:
         self.form: tuple[RowTarget, str, RowBuild, ui.column, str] | None = None
         #: A criterion to open at the end of the next sync (`reveal`).
         self.pending_reveal: str | None = None
-        #: The rows whose host is showing an error (`erred`).
-        self._erred: list[RowTarget] = []
         self.focused: int | None = None  # the one plot Focus is showing
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
@@ -212,7 +210,9 @@ class TestPage:
         view = self._view()
         self._close()
         self._close_row()
-        self._hush()
+        # Its own row's error goes as its form opens; any other row's
+        # stays with that row (`RowTarget.hush`).
+        target.hush()
         self._redraw_moved(view)
         assert target.slot is not None  # set by the row's owner at build
         with target.slot:
@@ -243,32 +243,18 @@ class TestPage:
 
     def _close_row(self) -> None:
         """Take the open form row away, if there is one; nothing is redrawn
-        — a row draws on no plot."""
+        — a row draws on no plot. The error its row's host shows goes with
+        it, and no other row's: a page-wide hide took an error off the row
+        it was about for a Cancel on another plot's row (the review)."""
         if self.form is None:
             return
         target, _, _, column, _ = self.form
         self.form = None
-        self._hush()
+        target.hush()
         if not column.is_deleted:
             column.delete()
         if not target.row.is_deleted:
             target.row.classes(remove="dstf-row-open")
-
-    def erred(self, target: RowTarget) -> None:
-        """A row's host is showing a refused act's error: it goes when a
-        form row next opens or closes (`_hush`)."""
-        if target not in self._erred:
-            self._erred.append(target)
-
-    def _hush(self) -> None:
-        """A row's error goes with the row: every error a row's host shows
-        is hidden when any form row opens or closes. A refused act's error
-        stayed up after its form was reopened, and after later edits in
-        other rows (the Task 6 review). An act from a row runs after the
-        row has closed, so its own error is not hushed by its closing."""
-        for target in self._erred:
-            target.hush()
-        self._erred = []
 
     def drop_row(self, target: RowTarget) -> None:
         """Close the open form if it hangs under ``target``: a host being

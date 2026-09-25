@@ -59,7 +59,7 @@ class ShellPanel:
 
     def __init__(
         self,
-        submit: Callable[..., None],
+        submit: Callable[..., bool],
         figure: FigureHookProtocol,
         row: Callable[[str, RowBuild], None] | None = None,
         reveal: Callable[[str], None] | None = None,
@@ -67,8 +67,8 @@ class ShellPanel:
         self._submit, self.figure = submit, figure
         self._row, self._reveal = row, reveal
 
-    def submit(self, **inputs: Any) -> None:
-        self._submit(**inputs)
+    def submit(self, **inputs: Any) -> bool:
+        return self._submit(**inputs)
 
     def row(self, title: str, build: RowBuild) -> None:
         # Loud, like `_NoFigure`: a placement that draws no row asked for
@@ -96,7 +96,8 @@ class RowTarget:
         #: the host is built INSIDE the row, before the slot below it is.
         self.slot: ui.column | None = None
         #: Hides the errors the host drawn in this row shows; set by that
-        #: host. The page calls it when a form row opens or closes.
+        #: host. The page calls it when a form row opens or closes under
+        #: THIS row, and for no other row's.
         self.hush: Callable[[], None] = lambda: None
 
     def open(self, title: str, build: RowBuild) -> None:
@@ -200,7 +201,7 @@ class ActionBar:
             # 5 review).
             form = ui.column().classes("w-full gap-2")
 
-            def submit(**inputs: Any) -> None:
+            def submit(**inputs: Any) -> bool:
                 try:
                     outcome = cap.act(view, **inputs)
                     self.shell.session.apply(outcome)
@@ -208,7 +209,7 @@ class ActionBar:
                     self.errors[cap.name] = f"{type(e).__name__}: {e}"
                     error.set_text(self.errors[cap.name])
                     error.set_visibility(True)
-                    return
+                    return False
                 self.errors.pop(cap.name, None)
                 if outcome is not None:
                     # Like `InlineHost.on_applied`: an act returning None
@@ -216,6 +217,7 @@ class ActionBar:
                     # at mount, and a subscribing panel answering it with
                     # None must not close the dialog it sits in.
                     close()
+                return True
 
             def row(title: str, build: RowBuild) -> None:
                 """A dialog has no row to open one under: the form is drawn
@@ -249,14 +251,16 @@ class InlineHost:
     the column and drops this host's figure handlers and the form row its
     panels opened. A raising act shows above that capability's panel — in
     a host drawn in a row, on a line of its own under the row — and
-    changes nothing; the next success hides it in place, and so does a
-    form row opening or closing (`hush`). The panel is not rebuilt, so a
-    field being typed in survives. `on_applied` is called with that capability's name when its
-    act returned an outcome, and only then: an act returning ``None``
-    changed nothing, and the rebuild it would trigger discards a half-typed
-    row for nothing. `follow()` is how a host that is never rebuilt keeps
-    up with `available`: a job's lock comes and goes without the tree's
-    shape moving."""
+    changes nothing. The error belongs to that row: the next success
+    hides it in place, and so does a form row opening or closing under
+    THAT row (`hush`), or the host rebuilding; another row's form does
+    not. The panel is not rebuilt, so a field being typed in survives.
+    `on_applied` is called with that capability's name when its act
+    returned an outcome, and only then: an act returning ``None`` changed
+    nothing, and the rebuild it would trigger discards a half-typed row
+    for nothing. `follow()` is how a host that is never rebuilt keeps up
+    with `available`: a job's lock comes and goes without the tree's shape
+    moving."""
 
     def __init__(
         self,
@@ -288,9 +292,10 @@ class InlineHost:
         return f"{self.marker}:{name}"
 
     def hush(self) -> None:
-        """Hide every error this host shows: a row's error goes with the
-        row. A refused act's error stayed up after its form was reopened,
-        and after later edits in other rows (the Task 6 review)."""
+        """Hide every error this host shows, as a form row opens or closes
+        under this host's row: a row's error goes with the row. A refused
+        act's error stayed up after its form was reopened (the Task 6
+        review)."""
         for label in self.errors.values():
             if not label.is_deleted:
                 label.set_visibility(False)
@@ -375,21 +380,18 @@ class InlineHost:
             ui.label(sentence).classes("dstf-why").mark(f"why:{cap.name}")
             return
 
-        def submit(**inputs: Any) -> None:
+        def submit(**inputs: Any) -> bool:
             try:
                 outcome = cap.act(view, **inputs)
                 self.shell.session.apply(outcome)
             except Exception as e:  # shown, and changes nothing
                 error.set_text(f"{type(e).__name__}: {e}")
                 error.set_visibility(True)
-                if self.row is not None:
-                    # For the page to hush when a form row next opens or
-                    # closes, whichever row that is.
-                    self.row.page.erred(self.row)
-                return
+                return False
             error.set_visibility(False)
             if outcome is not None and self.on_applied is not None:
                 self.on_applied(cap.name)
+            return True
 
         figure: FigureHookProtocol = _NoFigure()
         if self.figure is not None:

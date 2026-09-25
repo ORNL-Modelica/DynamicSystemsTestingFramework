@@ -37,7 +37,7 @@ class HostPanel:
 
     def __init__(
         self,
-        submit: Callable[..., None],
+        submit: Callable[..., bool],
         figure: RecordingFigure,
         reveals: list[str] | None = None,
     ) -> None:
@@ -48,8 +48,8 @@ class HostPanel:
         self.slot: ui.column | None = None
         self.closed = 0
 
-    def submit(self, **inputs: Any) -> None:
-        self._submit(**inputs)
+    def submit(self, **inputs: Any) -> bool:
+        return self._submit(**inputs)
 
     def row(self, title: str, build: Callable[[Callable[[], None]], None]) -> None:
         slot = self.slot
@@ -82,12 +82,14 @@ async def host(
     figure = RecordingFigure()
     view = SessionView(session, selection)
 
-    def submit(**inputs: Any) -> None:
+    def submit(**inputs: Any) -> bool:
         try:
             session.apply(cap.act(view, **inputs))
             errors.pop(cap.name, None)
         except Exception as e:  # a shell shows this; the host records it
             errors[cap.name] = f"{type(e).__name__}: {e}"
+            return False
+        return True
 
     def root() -> None:
         avail = cap.available(view)

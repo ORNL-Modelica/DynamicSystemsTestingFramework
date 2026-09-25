@@ -353,9 +353,10 @@ def _add_form(
 ) -> None:
     """Variable and metric selects and the apply button (marked ``mark``).
     In a form row (``close`` given) it is the row's: the sentence, Cancel
-    and Add, which closes the row, stages, and reveals ``added`` — the new
-    criterion's path. The variable's footer (no ``close``) is the form
-    alone, its button still ``apply add``: its dialog is its frame.
+    and Add, which stages and, once that went through, closes the row and
+    reveals ``added`` — the new criterion's path; a refused Add keeps the
+    row. The variable's footer (no ``close``) is the form alone, its button
+    still ``apply add``: its dialog is its frame.
 
     The variable select's VALUES are result-file names — a leaf is written
     against the name — and its option TEXT reads the label, with the name
@@ -382,15 +383,16 @@ def _add_form(
     )
 
     def apply() -> None:
-        if close is not None:
-            close()
-        ui_panel.submit(
+        if not ui_panel.submit(
             model_id=model_id,
             action="add",
             path=under,
             variable=var.value,
             metric=met.value,
-        )
+        ):
+            return  # refused: the row stays, with what was chosen
+        if close is not None:
+            close()
         if added is not None:
             ui_panel.reveal(added)
 
@@ -437,7 +439,9 @@ def _cluster(
     the node's row (`Panel.row`, the 2026-09-21 board, 1A-1D).
 
     A form is built on its icon's CLICK, from the tree as it is then, and
-    cleared on Cancel, on its action, or when the page closes the row; the
+    cleared on Cancel, on an action that went through (a refused one keeps
+    the row and what was typed, with the refusal under it), or when the
+    page closes the row; the
     page rebuilds an open one when an edit staged elsewhere moves its node
     (`Panel.row`'s contract), so a form never shows a value the node no
     longer has — a combinator edited and then Discarded reopened on its old
@@ -480,8 +484,8 @@ def _cluster(
         )
         return path if seen is None else node_text(seen)
 
-    def act_now(action: str) -> None:
-        ui_panel.submit(model_id=model_id, action=action, path=path)
+    def act_now(action: str) -> bool:
+        return ui_panel.submit(model_id=model_id, action=action, path=path)
 
     def fresh() -> dict | None:
         """The node as it is at THIS build; the sentence in the row when the
@@ -521,8 +525,8 @@ def _cluster(
         )
 
         def apply() -> None:
-            close()
-            ui_panel.submit(model_id=model_id, action="wrap", path=path, **values())
+            if ui_panel.submit(model_id=model_id, action="wrap", path=path, **values()):
+                close()
 
         with ui.row().classes("items-center gap-2"):
             _cancel(ui, close, path)
@@ -544,12 +548,12 @@ def _cluster(
         )
 
         def apply() -> None:
-            close()
-            ui_panel.submit(model_id=model_id, action="edit", path=path, **values())
+            if ui_panel.submit(model_id=model_id, action="edit", path=path, **values()):
+                close()
 
         def unwrap() -> None:
-            close()
-            act_now("unwrap")
+            if act_now("unwrap"):
+                close()
 
         with ui.row().classes("items-center gap-2"):
             unwrap_button = (
