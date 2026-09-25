@@ -160,7 +160,9 @@ class CriterionRow:
             # known only from the figure (`PlotCard.drawable`).
             self.swatch.set_visibility(False)
             self.pill = Pill(leaf_status(leaf), f"criterion-pill:{index}:{path}")
-            self.name = ui.label().classes("text-body2 text-weight-medium")
+            self.name = ui.label().classes(
+                "dstf-crit-name text-body2 text-weight-medium"
+            )
             self.readout = ui.label().classes("dstf-mono text-xs")
             self.readout.mark(f"criterion-readout:{index}:{path}")
             ui.space()

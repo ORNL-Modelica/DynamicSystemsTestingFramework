@@ -27,7 +27,11 @@ class VarRow:
     #: expressions are ``pipe.T[i]`` keys ``pipe.T[]`` as the result file's
     #: own ``pipe.T[i]`` do — ``id`` is.
     key: str
-    id: str  #: ``<group title>/<key>``, unique within the drawer
+    #: ``<group rank>/<group title>/<key>``, unique within the drawer. The
+    #: rank is in it because a title is not unique: a tracked family whose
+    #: expressions read ``Tracked.a[i]`` and the untracked ``Tracked.a[i]``
+    #: beside it are both "Tracked" and both key ``Tracked.a[]``.
+    id: str
     members: tuple[str, ...]  #: names, by index; one for a lone variable
     text: str  #: what it reads as: the family label, or the label
     name: str | None  #: the muted name beside ``text``, when they differ
@@ -134,7 +138,7 @@ def variable_groups(
             rows.append(
                 VarRow(
                     key=key,
-                    id=f"{title}/{key}",
+                    id=f"{rank}/{title}/{key}",
                     members=tuple(members),
                     text=text,
                     name=lone if lone is not None and text != lone else None,

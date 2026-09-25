@@ -56,8 +56,19 @@ def test_remove_plot():
         lambda layout: remove_plot(layout, len(layout)),
         lambda layout: add_series(layout, -1, ["z"]),
         lambda layout: add_series(layout, len(layout), ["z"]),
+        lambda layout: new_plot(layout, -1, ["z"]),
+        lambda layout: new_plot(layout, -2, ["z"]),
+        lambda layout: new_plot(layout, len(layout), ["z"]),
     ],
-    ids=["remove_plot-1", "remove_plot-len", "add_series-1", "add_series-len"],
+    ids=[
+        "remove_plot-1",
+        "remove_plot-len",
+        "add_series-1",
+        "add_series-len",
+        "new_plot-1",
+        "new_plot-2",
+        "new_plot-len",
+    ],
 )
 def test_an_index_outside_the_layout_is_refused(edit):
     """A negative index would count from the end and one past it would

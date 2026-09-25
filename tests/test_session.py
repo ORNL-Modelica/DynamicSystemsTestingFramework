@@ -263,6 +263,35 @@ def _page_project(tmp_path: Path) -> tuple[Path, Path]:
     return cfg, work
 
 
+#: A model in a sub-package of FakeLib: the one id `_two_package_project` adds.
+CASES_X = "FakeLib.Cases.X"
+
+
+def _two_package_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_project` with a second package: `FakeLib.Cases.X` (tracks x, no
+    result, so SIM_FAIL). The project lists its tests by model id, so X
+    stands between C and D; a grouped list sorts by package first, so X
+    comes last under its own label. Every other id shares FakeLib, which is
+    why only this fixture tells the two orders apart: grouped reads A, B, C,
+    D, G, Cases.X; flat reads A, B, C, Cases.X, D, G."""
+    cfg, work = _project(tmp_path)
+    (cfg.parent.parent / "Examples" / "X.py").write_text(
+        "def simulate(stop_time, tolerance):\n    return {}\n", encoding="utf-8"
+    )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    spec["tests"].append(
+        {
+            "model": CASES_X,
+            "source": "../Examples/X.py",
+            "variables": ["x"],
+            "simulation": {"stop_time": 1.0, "tolerance": 1e-6},
+        }
+    )
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
 #: The expression that used to cost its variable its identity: the text a
 #: Modelica ``x={cat(1, a, b)}`` writes beside ``unitTests.x[1]``. No result
 #: file ever carried it as a NAME — the comparison relabelled the variable

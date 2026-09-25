@@ -89,6 +89,10 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   border-top: 1px solid var(--dstf-border-hairline);
 }
 .dstf-crit:hover { background: var(--dstf-surface-hover); }
+/* A row's name (metric · variable) is one line: beside an open drawer a
+   card is ~540 px at 900 px, and it broke inside itself ("tube" over
+   "· x"). The readout beside it may wrap. */
+.dstf-crit-name { white-space: nowrap; }
 /* The open criterion's row, and a row with a form open under it, stay
    lit. */
 .dstf-crit-open, .dstf-row-open { background: var(--dstf-selection); }

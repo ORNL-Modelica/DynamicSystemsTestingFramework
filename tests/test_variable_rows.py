@@ -169,7 +169,28 @@ def test_a_row_id_is_unique_where_its_key_is_not():
     )
     rows = [r for g in groups for r in g.rows]
     assert [r.key for r in rows] == ["pipe.T[]", "pipe.T[]"]
-    assert [r.id for r in rows] == ["Tracked/pipe.T[]", "pipe/pipe.T[]"]
+    assert [r.id for r in rows] == ["0/Tracked/pipe.T[]", "1/pipe/pipe.T[]"]
+
+
+def test_a_row_id_is_unique_where_group_title_and_key_are_not():
+    """A tracked family whose expressions read ``Tracked.a[i]`` beside the
+    result file's own ``Tracked.a[i]``, untracked: both groups are titled
+    "Tracked" and both rows key ``Tracked.a[]``; only the rank tells them
+    apart."""
+    unit = {f"unitTests.x[{i}]": f"Tracked.a[{i}]" for i in (1, 2)}
+    groups = _groups(
+        names=[*unit, *unit.values()],
+        tracked=list(unit),
+        labels=unit,
+        texts=unit,
+        layout=(),
+        selected=None,
+        scored={},
+    )
+    assert [(g.rank, g.title) for g in groups] == [(0, "Tracked"), (1, "Tracked")]
+    rows = [r for g in groups for r in g.rows]
+    assert [r.key for r in rows] == ["Tracked.a[]", "Tracked.a[]"]
+    assert len({r.id for r in rows}) == 2
 
 
 def _reference(names, layout, selected, scored):

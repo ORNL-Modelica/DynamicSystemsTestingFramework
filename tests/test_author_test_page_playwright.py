@@ -1543,3 +1543,34 @@ def test_the_rail_narrows_the_plots_and_nothing_scrolls_sideways(
             _shot(page, tmp_path, f"rail-{width}")
             tests.click()
             _plot_width_is(page, w0)
+
+
+#: Every criteria row's name (metric · variable), measured: its height
+#: against its own line height. "normal" is 1.2 of the font size.
+CRIT_NAME_LINES = """
+() => [...document.querySelectorAll('.dstf-crit .dstf-crit-name')]
+  .filter((e) => e.offsetParent !== null)
+  .map((e) => {
+    const s = getComputedStyle(e);
+    const line = s.lineHeight === 'normal'
+      ? 1.2 * parseFloat(s.fontSize) : parseFloat(s.lineHeight);
+    return {text: e.textContent, lines: e.getBoundingClientRect().height / line};
+  })
+"""
+
+
+def test_a_criteria_rows_name_stays_on_one_line_beside_an_open_drawer(
+    tmp_path, playwright_browser
+):
+    """At 900 px with the Tests drawer open a card is ~540 px wide, and a
+    row's name broke inside itself ("tube" over "· x"). The name keeps to one
+    line; the readout beside it may wrap."""
+    with _served(tmp_path, playwright_browser) as page:
+        page.set_viewport_size({"width": 900, "height": 900})
+        w0 = _steady_width(page)
+        page.locator(".dstf-rail").get_by_text("Tests", exact=True).click()
+        _plot_width_is(page, w0 - 320)
+        _steady_width(page)
+        names = page.evaluate(CRIT_NAME_LINES)
+        assert names, "no criteria row is drawn"
+        assert [n for n in names if n["lines"] > 1.5] == []

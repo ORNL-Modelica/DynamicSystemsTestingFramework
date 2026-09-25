@@ -114,8 +114,9 @@ class TestList:
                     )
                     # `color=None`: a Quasar badge otherwise carries
                     # `bg-primary`, whose `!important` beats the inline
-                    # status fill and paints every verdict blue (the Task 4
-                    # review, in Chromium).
+                    # status fill and paints every verdict blue (the review
+                    # of Task 4 of the 2026-09-20 Test page plan, in
+                    # Chromium).
                     badge = ui.badge("", color=None).classes("dstf-badge")
                 if model_id == self.current:
                     container.classes(add="dstf-row-current")
@@ -131,7 +132,7 @@ class TestList:
     def paint(self, model_id: str) -> None:
         """One row's verdict: the badge's word and fill, the row's tint.
         `…` while unscored; `scoring failed` for a model the open announced
-        with `error=True` (Task 1)."""
+        with `error=True` (Task 1 of the 2026-09-16 Suite page plan)."""
         row = self.rows.get(model_id)
         if row is None:
             return
@@ -147,7 +148,8 @@ class TestList:
         row.badge.style(f"background-color: var(--dstf-{css}-fill)")
         # Add and remove, never replace: NiceGUI hides an element by appending
         # a `hidden` class, and a replaced list dropped it — every filtered-out
-        # row came back on a rescore (the Task 6 review's probe).
+        # row came back on a rescore (the review's probe of Task 6 of the
+        # 2026-09-16 Suite page plan).
         row.container.classes(
             remove=" ".join(f"dstf-tint-{s}" for s in STATUS), add=f"dstf-tint-{css}"
         )

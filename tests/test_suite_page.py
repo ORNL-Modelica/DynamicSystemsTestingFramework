@@ -22,7 +22,16 @@ from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.suite import SuitePage  # noqa: E402
 from dstf.reporting.status import count_by_status  # noqa: E402
-from test_session import A, B, C, D, G, _project  # noqa: E402
+from test_session import (  # noqa: E402
+    CASES_X,
+    A,
+    B,
+    C,
+    D,
+    G,
+    _project,
+    _two_package_project,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -94,6 +103,53 @@ async def test_the_list_is_grouped_with_short_names_and_every_status(shell):
             assert _one(user, model_id).text == short(model_id)
             assert page.rows[model_id].badge.text == verdict
             assert page.rows[model_id].verdict == verdict
+
+
+async def test_no_suite_row_is_marked_current(shell):
+    """`dstf-row-current` is the Tests drawer's mark for the open test; the
+    Suite page has no open test, so none of its rows carries it."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        rows = _suite(shell, user).rows
+        assert set(rows) == {A, B, C, D, G}
+        assert not [
+            m for m, r in rows.items() if "dstf-row-current" in r.container.classes
+        ]
+
+
+@pytest.fixture
+def two_packages(tmp_path):
+    cfg, work = _two_package_project(tmp_path)
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.load.phase = "done"
+    return s
+
+
+async def test_grouped_sorts_by_package_and_flat_keeps_the_project_order(
+    two_packages,
+):
+    async with user_simulation(root=two_packages.index) as user:
+        await _open(user)
+        page = _suite(two_packages, user)
+        assert list(page.rows) == [A, B, C, D, G, CASES_X]
+        assert _one(user, "group:FakeLib.Cases").text == "FakeLib.Cases"
+        _one(user, "grouping").set_value(False)
+        await user.should_not_see(marker="group:FakeLib", retries=20)
+        assert list(_suite(two_packages, user).rows) == [A, B, C, CASES_X, D, G]
+
+
+async def test_a_group_label_hides_with_the_last_of_its_rows(two_packages):
+    async with user_simulation(root=two_packages.index) as user:
+        await _open(user)
+        page = _suite(two_packages, user)
+        _one(user, "needle").set_value("d")  # FakeLib.D only
+        assert page.rows[D].container.visible
+        assert not page.rows[CASES_X].container.visible
+        assert page.list.groups["FakeLib"].visible
+        assert not page.list.groups["FakeLib.Cases"].visible
+        _one(user, "needle").set_value("")
+        assert page.list.groups["FakeLib.Cases"].visible
 
 
 async def test_flat_and_full_names_are_a_toggle_away(shell):

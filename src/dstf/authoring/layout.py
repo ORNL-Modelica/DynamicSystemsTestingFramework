@@ -50,7 +50,12 @@ def new_plot(
     layout: Layout, after: int | None, names: Sequence[str]
 ) -> tuple[Layout, int]:
     """A plot of ``names`` below plot ``after`` (at the end when None), and
-    its index — the page selects it, so the next checkbox lands on it."""
+    its index — the page selects it, so the next checkbox lands on it.
+    An ``after`` outside the layout is refused, as `remove_plot` refuses
+    one: -1 would land the plot at the top and -2 count from the end, and
+    one at or past the end would append and return an index nothing has."""
+    if after is not None and not 0 <= after < len(layout):
+        raise IndexError(after)
     at = len(layout) if after is None else after + 1
     plot = PlotSpec(series=tuple(SeriesSpec(n) for n in dict.fromkeys(names)))
     return layout[:at] + (plot,) + layout[at:], at
