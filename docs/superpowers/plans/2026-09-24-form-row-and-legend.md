@@ -146,6 +146,19 @@
      - `tests/test_axes_js_playwright.py`'s docstrings no longer describe the tool ("The tool has no select", "The tool's page: NiceGUI…", "the tool's update_figure").
      - The roadmap's "variable identity BUILT" paragraph keeps the migration run on the owner's tree. The owner ran it on 2026-09-22 over TRANSFORM-UnitTests' 899 reference files, and committing them there is the owner's. Say that, without an internal id.
 
+20. **From the TRANSFORM gate (Task 9, 2026-09-25), and the leftovers of item 19's review, as one cleanup batch:**
+   - **The gate's result:**
+     - 331 tests, 873 plots, all single-series. 873 of 873 legends shrank to signals only: max 8 → 5, mean 6.67 → 3.67.
+     - 0 plots changed their trace count (5823 both) or shape count.
+     - 0 verdict flips: 330 pass and 1 known error, before (4b96973) and after (3518738).
+     - Browser checks (a)–(f) passed on `MSLFluid.InverseParameterization` with a staged tube and range, discarded after.
+     - The owner's 902 reference files, the work dir and the library listing were byte-identical before and after.
+   - **Defect: an error axis zoomed while hidden shows a stale range.** A 2-D box zoom made BEFORE any error series has been shown zooms the hidden `yaxis3` too (it overlays `y`): its default [−1, 4] became [−0.49, 3.51]. `uirevision: "keep"` then preserved that range, so choosing Abs error showed ticks `0, 1, 2, 3` and a flat line. It reproduced on a fresh load; a double-click reset it. Fix, tool: in the figure built with a Visibility, each error axis's `uirevision` is the chosen error's id (or a fixed "none" when none is chosen). Choosing a series then autoranges its axis fresh, and a zoom made while it shows is still kept. Fix, report: reproduce it first (zoom, then choose an error with the select or a legend click). If it reproduces, axes.js sets that axis's `autorange: true` in the same relayout that makes it visible. Tests: a browser test per tier (a box zoom, then an error chosen, then the axis's range covers the error data's extent). Mutation: `uirevision` left "keep" / the autorange removed.
+   - **LOW cleanup:**
+     - Delete `window.dstfFollowSecondaryAxes` from axes.js; nothing calls it.
+     - Rewrap the 130-character docstring line in `edit_tree.py` and the 124-character line in `DESIGN.md`.
+     - The roadmap's migration sentence reads "898 stored baselines and the spec (899 files)".
+
 ## Conventions for every task
 
 The "Conventions for every task" block of `docs/superpowers/plans/2026-09-20-the-test-page.md` holds verbatim (gates and how to read them; red before green, shown; named mutations run in a `git archive` copy with an ABSOLUTE exported `PYTHONPATH`, `PYTHONDONTWRITEBYTECODE=1`, the module's `__file__` printed and ASSERTED under the archive first; commit by path with `-F <own msg file>`, never `--amend`, never `git stash` — not even inside a one-liner; never run `dstf` against `testing_output/` or a real work dir; done-checks are predicates; locate code by content; no internal record id in a tracked file; `docs/ideas.md` and `.soul/` untouched), and so do its "Corrections" items 2, 3, 6 and 8 where they still apply (the user simulation's rules; mypy/ruff idioms; the review harness; the NiceGUI facts). `docs/decisions.md` gains exactly one entry, D133, in Task 8. Additionally:
