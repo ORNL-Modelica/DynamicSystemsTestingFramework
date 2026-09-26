@@ -2,10 +2,10 @@
 drawer"), as data: the page draws them and knows none of the rules.
 
 Every variable of the last result, in groups — the tracked ones first, then
-by the first dot component of the NAME ("(top level)" for a name with
-none), the diagnostics last — with arrays folded into one row
-(`figures.families`, the one family rule both tiers use), filtered, and
-each row's state against the selected plot."""
+by the first dot component of the NAME, inside any ``der(...)`` ("(top
+level)" for a name with none), the diagnostics last — with arrays folded
+into one row (`figures.families`, the one family rule both tiers use),
+filtered, and each row's state against the selected plot."""
 
 from __future__ import annotations
 
@@ -115,6 +115,10 @@ def _group(name: str, tracked: set[str], diagnostics: set[str]) -> tuple[int, st
         return 0, "Tracked"
     if name in diagnostics:
         return 3, "Diagnostics"
+    # a derivative is in the group of what it differentiates:
+    # `der(pipe.T[1])` is in "pipe", never "der(pipe"
+    while name.startswith("der("):
+        name = name[4:]
     # found in the mask: `'a.b'.c` is in "'a.b'", never "'a"
     masked = mask_quoted(name)
     dot = masked.find(".")

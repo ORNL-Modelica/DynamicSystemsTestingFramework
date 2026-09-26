@@ -356,3 +356,23 @@ def test_prefix_groups_sort_without_case():
 def test_a_dot_or_bracket_inside_a_quoted_identifier_is_not_a_separator(name, group):
     """`'a.b'.c` is component `'a.b'`'s `c`: it was grouped under `'a`."""
     assert variable_rows._group(name, set(), set()) == group
+
+
+@pytest.mark.parametrize(
+    ("name", "group"),
+    [
+        ("der(pipe.T[1])", (1, "pipe")),
+        ("der(der(x.v))", (1, "x")),
+        ("der(x)", (2, "(top level)")),
+        ("der('a.b'.c)", (1, "'a.b'")),
+    ],
+)
+def test_a_derivative_is_grouped_under_the_component_it_differentiates(name, group):
+    """A result file names a derivative `der(pipe.T[1])`: it was grouped
+    under a prefix `der(pipe`."""
+    assert variable_rows._group(name, set(), set()) == group
+
+
+def test_a_tracked_derivative_is_tracked_by_its_full_name():
+    assert variable_rows._group("der(x.v)", {"der(x.v)"}, set()) == (0, "Tracked")
+    assert variable_rows._group("der(x.v)", {"x.v"}, set()) == (1, "x")
