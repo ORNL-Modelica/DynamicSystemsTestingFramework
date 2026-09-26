@@ -370,6 +370,39 @@ hands-on look, except the 900 px header, which 3c's ⋮ menu fixes. The
 ~70 read-only trees were closed by D132, measured the same day: 330 of 331
 TRANSFORM trees edit, and the one without a tree is the known timeout.
 
+**3c BUILT (2026-09-25 to 2026-09-26; D134)**, task by task on `v1.0-prep`
+from the plan `2026-09-25-rail-and-drawers.md` (e7c2b6b), commits
+`1600105..b68ca92`. The plan had an executing review first (17
+corrections), and every task and every batch of review fixes had its own
+mutation-running review, nine batches in all. What was built: the 40 px
+rail with the Tests and Variables drawers; the selected plot, Add series,
+Remove plot and Reset layout; every layout gesture staged as one op on
+`/plots`, a run of them collapsed by `Session.stage`; the family rule that
+folds on the last single-integer index; the header's ⋮ menu, and later the
+backend select moved into it as "Change backend…" (the owner's Q13, after
+the build: the header overflowed in two real states). The screenshots each
+UI task had to take caught defects no simulation test saw: rail labels
+clipped by NiceGUI's drawer padding, a selection ring that never painted, a
+criteria name broken over two lines, a target line that read as an empty
+checkbox. **The gate over a COPY of TRANSFORM** (at 00f8fa7) counted what
+the feature did. The owner's 901 reference files, both TRANSFORM repos'
+status and `testing_output` were identical before and after. The family
+rule changed `family_of` for 9,341 result-file names and 6 expressions, all
+of the comma-before-last-index shape and all from no family to a family;
+tracked expressions kept 123 array groups before and after, so no new fold
+in TRANSFORM's `.mo` text. The drawer's rows over the largest result
+(`HumTest`, 76,992 names) built in 0.43 s warm. On `MSLFluid.HeatingSystem`
+(4,327 names) in Chromium: the drawer opened its first rows in 1.5 s; a
+glob narrowed it to one folded row; "+ new plot" gave a ringed card with one
+legend entry; Save wrote only that entry's `plots` key, the report drew the
+same three plots, verdicts were 330 pass and 1 known error before and after,
+and Reset plus Save restored the spec byte for byte. 119 tests have a
+folded tracked array in the drawer and none starts greyed. The gate found
+one defect the fixture's short names had hidden: at 900 px with a drawer
+open the page scrolled sideways, fixed in batch 9 (card headers and
+criteria rows wrap). Residuals are in `docs/ideas.md` (2026-09-25 entry);
+3d (the slice field, save-time expansion, the folded criteria row) is next.
+
 **Settles.** The `plots` schema and its validation; the series model
 (`{"var": ...}` now, expression and unit later); how the report renders a
 `plots` layout; the in-place redraw per plot.
