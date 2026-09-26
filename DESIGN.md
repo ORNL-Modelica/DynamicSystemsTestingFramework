@@ -129,11 +129,13 @@ button carries `no-caps`.
 (`unelevated color=primary`): the one action the page exists for, at most
 one per header, usually Save. Outlined secondary (`outline`): actions on a
 selection (Rerun, Accept). Flat tertiary (`flat`): navigation and
-housekeeping (Export, Discard, the dashboard link). Destructive actions are
-outlined in `fail` and confirm.
+housekeeping (Discard; the header's ⋮ menu holds Export, the dashboard and
+Stop server as menu items). Destructive actions are outlined in `fail` and
+confirm.
 
 A button's label names its object, its effect and a count: "Save 3 spec
-edits (2 tests) to test_spec.json", "Rerun 2 selected tests (Dymola)",
+edits (2 tests) to test_spec.json" — "(2 tests, 1 new entry)" when a save
+creates an entry — "Rerun 2 selected tests (Dymola)",
 "Accept 2 results as baselines". A tooltip says when to use it. A count of
 zero disables the button and the label still says what it would do.
 

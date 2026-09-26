@@ -1664,7 +1664,8 @@ planning.
   - `.dstf-form-row` and `.dstf-editor` overflow their row by 16 px; one rule
     for both.
   - At 900 px the tool's header cuts off "dashboard" and "Stop server". This
-    predates the build.
+    predates the build. FIXED by 3c (D134): they moved into the header's ⋮
+    menu; nothing is cut off at 900 px.
   - Plotly's "Double-click to zoom back out" notice covers the header's Export
     and dashboard buttons for a few seconds after a zoom.
   - A row taller than the viewport scrolls its title to the header's edge, so
