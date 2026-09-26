@@ -4806,13 +4806,15 @@ left to right, where the leftmost place leaves the most text for the rest.
 `test_the_glob_means_what_the_specs_regex_means` holds it identical to the
 anchored regex over every glob and text of up to four characters, both case
 settings. A typed regex (`.*` on) is the `regex` package's, not `re`'s:
-`re` holds the GIL for a whole match (a 1.25 s search froze another thread
-1.25 s, measured 2026-09-26), so no thread can bound it, and the owner
-chose `regex` (in `[author]`), whose `timeout=` does, under one 1 s budget
-per filter. Not bounded: `regex.compile` of nested fixed-count repeats
-(`(a{5000}){5000}`) can take seconds or exhaust memory before any budget
-applies, where `re` compiled it at once; accepted as contrived, on the
-user's own local tool.
+`re` has no timeout, so nothing can stop a pattern that backtracks (both
+hold the GIL for a search, `regex` because `concurrent=False` asks it to),
+and the owner chose `regex` (in `[author]`), whose `timeout=` does, under
+one budget per filter: 1 s of the searching thread's CPU (`thread_time`),
+so the filter's waits for the GIL between searches, behind a busy thread
+of the tool, do not count against it. Not bounded: `regex.compile` of
+nested fixed-count repeats (`(a{5000}){5000}`) can take seconds or exhaust
+memory before any budget applies, where `re` compiled it at once;
+accepted as contrived, on the user's own local tool.
 
 *A row acts on the layout as it is now.* A check or "+ new plot" re-reads
 the layout when clicked, decides on or off from what the selected plot holds

@@ -205,8 +205,11 @@ def test_a_regex_that_backtracks_finishes_within_the_budget():
     stops fails on the timeout: without one this search was killed at 736 s
     and would have run for days. The timeout is generous because the
     child's import alone takes ~2 s here. The child times the filter in
-    process-CPU seconds, the unit `regex` counts a search's timeout in: on
-    2 loaded cores its wall time passed 1.5 budgets in 7 runs of 20."""
+    process-CPU seconds: the budget is the searching thread's CPU, and
+    `regex` times a search's timeout with C `clock()` — on Linux and macOS
+    the CPU of the whole process, every thread summed, which in a child of
+    one thread is the same seconds; on Windows, wall time. On 2 loaded
+    cores its wall time passed 1.5 budgets in 7 runs of 20."""
     pytest.importorskip("regex")
     import subprocess
     import sys
@@ -221,7 +224,8 @@ def test_a_regex_that_backtracks_finishes_within_the_budget():
         check=False,
     )
     assert done.returncode == 0, done.stderr
-    assert float(done.stdout) < 1.5 * variable_rows.REGEX_BUDGET
+    # the floor: a child timed on two clocks printed a negative number
+    assert 0 <= float(done.stdout) < 1.5 * variable_rows.REGEX_BUDGET
 
 
 def test_a_plain_regex_over_a_big_result_does_not_run_out_of_time():
@@ -234,11 +238,20 @@ def test_a_plain_regex_over_a_big_result_does_not_run_out_of_time():
     assert len(kept) == 5_000 and kept[0] == "pipe3.T[3]"
 
 
-def test_a_plain_regex_keeps_its_time_while_another_thread_is_busy():
-    """With the GIL released on every search, a search waits on whatever
-    else the tool runs (its overlay index json.loads TRANSFORM's refs for
-    ~15 s after a page opens): ~1 ms a name, not ~2.5 us, and `T` over
-    TRANSFORM's names ran out of time after ~2,000 of them."""
+def test_a_regex_is_timed_in_its_own_cpu_while_another_thread_holds_the_gil(
+    monkeypatch,
+):
+    """The budget counts the searching thread's CPU, not the time it waits
+    for the GIL between searches: beside a thread that holds the GIL ~0.2 s
+    at a time (the overlay index json.loads-ing TRANSFORM's refs for ~15 s
+    after a page opens), this filter over 10,000 names took 1.3-5.7 s of
+    wall time and 0.04-0.14 s of its own CPU (medians 1.4 s and 0.045 s,
+    two CPU burners beside it). A 0.3 s budget is 7x above the median CPU
+    and 4x below the fastest wall time: timed on `monotonic` it ran out,
+    timed on `thread_time` it keeps every name. And each search holds the
+    GIL (``concurrent=False``): released, a search waits on the busy thread
+    every time, up to ~0.2 s a name, and failed here in 17-23 s — `regex`'s
+    own timeout counts the busy thread's CPU — or at the 30 s bound."""
     pytest.importorskip("regex")
     import threading
 
@@ -246,18 +259,24 @@ def test_a_plain_regex_keeps_its_time_while_another_thread_is_busy():
 
     def spin() -> None:
         while not stop.is_set():
-            sum(range(1000))
+            sum(range(20_000_000))  # one call holds the GIL ~0.2 s
 
-    busy = threading.Thread(target=spin, daemon=True)
-    names = [f"pipe{i}.T[{i % 20}]" for i in range(50_000)]
+    monkeypatch.setattr(variable_rows, "REGEX_BUDGET", 0.3)
+    names = [f"pipe{i}.T[{i % 20}]" for i in range(10_000)]
     keep = matcher(r"pipe\d+\.T\[3\]$", regex=True, case=False)
+    kept = []
+    busy = threading.Thread(target=spin, daemon=True)
     busy.start()
     try:
-        kept = [n for n in names if keep(n)]
+        start = time.perf_counter()
+        for name in names:
+            if keep(name):
+                kept.append(name)
+            assert time.perf_counter() - start < 30, f"waiting after {len(kept)} kept"
     finally:
         stop.set()
         busy.join()
-    assert len(kept) == 2_500 and kept[0] == "pipe3.T[3]"
+    assert len(kept) == 500 and kept[0] == "pipe3.T[3]"
 
 
 def test_the_budget_is_one_for_every_name_of_a_filter(monkeypatch):
@@ -269,7 +288,7 @@ def test_the_budget_is_one_for_every_name_of_a_filter(monkeypatch):
     pytest.importorskip("regex")
     b = variable_rows.REGEX_BUDGET
     ticks = iter([0.0, 0.4 * b, 0.8 * b, 1.2 * b, 1.2 * b])
-    monkeypatch.setattr(variable_rows, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(variable_rows, "thread_time", lambda: next(ticks))
     keep = matcher("x", regex=True, case=False)
     assert [keep("x") for _ in range(3)] == [True, True, True]
     with pytest.raises(TimeoutError):
@@ -280,11 +299,11 @@ def test_the_budget_is_one_for_every_name_of_a_filter(monkeypatch):
 def test_a_search_is_given_the_time_left_not_the_whole_budget(monkeypatch):
     """The first name took 96% of the budget: the second search stops at
     the 4% left, well before a whole budget would. 32 a's, in this process:
-    given no timeout the search runs ~0.8 s, 4x the bound, and ends — 60
-    a's would run for days."""
+    given no timeout the search runs 0.83-0.90 s here (case-insensitive,
+    as below), 4x the bound, and ends — 60 a's would run for days."""
     pytest.importorskip("regex")
     ticks = iter([0.0, 0.96 * variable_rows.REGEX_BUDGET])
-    monkeypatch.setattr(variable_rows, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(variable_rows, "thread_time", lambda: next(ticks))
     keep = matcher(r"^(a|aa)+$", regex=True, case=False)
     assert keep("aa")
     start = time.perf_counter()
