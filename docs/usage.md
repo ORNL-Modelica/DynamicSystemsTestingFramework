@@ -695,7 +695,8 @@ uv run dstf --config testing.json add MyLib.Examples.NewTest
 `dstf author` opens a local browser tool over the same project every other
 command reads: the test list, the figures the report page draws, the scored
 metric tree, and the capabilities that edit `test_spec.json`. It needs the
-`[author]` extra (NiceGUI); without it the command exits with the install hint.
+`[author]` extra (NiceGUI and `regex`); without either the command exits with
+the install hint.
 
 ```bash
 uv sync --extra dev --extra author --locked

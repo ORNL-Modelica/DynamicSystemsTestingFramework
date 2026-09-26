@@ -247,6 +247,23 @@ def test_author_without_the_extra_says_how_to_install_it(monkeypatch, capsys, tm
     assert "--extra author" in capsys.readouterr().err
 
 
+def test_author_without_regex_says_how_to_install_it(monkeypatch, capsys, tmp_path):
+    """`regex` is of the extra too, and only a Test page imports it (the
+    Variables drawer, per request): a venv synced before it joined the extra
+    started, drew the Suite page, and failed every Test page. `run_app` is
+    replaced so a check that lets it through records the call instead of
+    serving."""
+    shell = pytest.importorskip("dstf.authoring.shell")
+    served = []
+    monkeypatch.setattr(shell, "run_app", lambda *a, **k: served.append(a))
+    monkeypatch.setitem(sys.modules, "regex", None)  # `import regex` raises
+    rc = main(["--config", str(tmp_path / "testing.json"), "author"])
+    assert served == []
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--extra author" in err and "regex" in err
+
+
 # ---------------------------------------------------------------------------
 # --tolerance 0 survives _build_config
 # ---------------------------------------------------------------------------

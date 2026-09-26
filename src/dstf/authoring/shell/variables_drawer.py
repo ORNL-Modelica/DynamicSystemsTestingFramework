@@ -246,7 +246,7 @@ class VariablesDrawer:
         )
         try:
             keep = matcher(self.needle.value or "", regex=self.regex, case=self.case)
-        except (regex.error, re.error) as e:
+        except regex.error as e:
             self._say(f"not a regular expression: {e}")
             return
         self.why.set_visibility(False)

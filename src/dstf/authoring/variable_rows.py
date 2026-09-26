@@ -20,8 +20,12 @@ from ..figures.families import family_label, group_families, mask_quoted
 
 TOP_LEVEL = "(top level)"
 
-#: Seconds ONE typed regex may search, over every name of one filter.
-REGEX_BUDGET = 0.25
+#: Seconds ONE typed regex may search, over every name of one filter. An
+#: ordinary search costs ~2.5 us a name, wall time, while the session's own
+#: threads share the GIL: TRANSFORM's largest result (76,992 names) takes
+#: ~0.19 s, and 0.25 s timed out a plain `T` over 100,000. 1 s leaves ~5x,
+#: and bounds a pattern that backtracks to a ~1 s freeze.
+REGEX_BUDGET = 1.0
 
 
 @dataclass(frozen=True)
@@ -79,6 +83,7 @@ def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
     if regex:
         import regex as regex_package
 
+        # unbounded: `(a{5000}){5000}` compiles for seconds, or out of memory
         pattern = regex_package.compile(needle, 0 if case else regex_package.IGNORECASE)
         deadline: list[float] = []  # set at the first name, not at compile
 

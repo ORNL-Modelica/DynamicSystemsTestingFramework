@@ -52,6 +52,7 @@ def test_family_of_is_the_last_integer_index(name, expected):
         ("a.'x[5]'.T[2]", ("a.'x[5]'.T[]", 2)),
         ("a.'it\\'s[2]'.T[4]", ("a.'it\\'s[2]'.T[]", 4)),
         ("a.'it\\'s[2]'", None),
+        ("'a[1]'[2].'a.b'", ("'a[1]'[].'a.b'", 2)),
     ],
 )
 def test_a_bracket_inside_a_quoted_identifier_is_not_an_index(
@@ -568,13 +569,16 @@ def _family_of_after_quoting(name: str):
     return name[: m.start()] + "[]" + name[m.end() :], int(m.group(1))
 
 
-def test_family_of_over_names_changed_only_where_3c_ruled():
+def test_family_of_over_names_changed_only_where_3c_and_quoting_ruled():
     """A differential over generated names, not a hand-list (the b147918
     review fuzzed 300k names against 2ac8c8c's copy). The current rule
     agrees with 2ac8c8c's everywhere except names whose multi-dimensional
     index precedes the last single one — and those it now folds — and
     names with a bracket or comma inside a quoted identifier, which it
-    reads as the characters they are."""
+    reads as the characters they are. The bound finds each identifier as
+    Modelica's Q-IDENT spells it, to the next unescaped quote: a bound of
+    "brackets between two quotes" also matched `'[2].'` BETWEEN
+    `'a[1]'` and `'a.b'`, and passed a greedy `'.*'` mask in both copies."""
     import re
 
     names = _generated_result_file_names(25000)
@@ -589,7 +593,11 @@ def test_family_of_over_names_changed_only_where_3c_ruled():
         assert multi.search(key[: key.index("[]")])
     quoted = [n for n in names if _family_of_after_quoting(n) != _family_of_after_3c(n)]
     assert quoted  # the generator does produce `'a[1]'` and `'a,b'`
-    assert all(re.search(r"'[^']*[\[\],][^']*'", n) for n in quoted)
+    # its own, not the copy's: the greedy mutant edits the copy too
+    q_ident = re.compile(r"'(?:[^'\\]|\\.)*'")
+    assert all(
+        any(re.search(r"[\[\],]", q) for q in q_ident.findall(n)) for n in quoted
+    )
 
 
 def test_an_expression_may_index_with_an_integer_list_before_its_last_index():

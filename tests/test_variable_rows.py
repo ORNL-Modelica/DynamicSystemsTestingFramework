@@ -181,26 +181,65 @@ def test_a_regex_searches_with_case_on_and_off():
     assert matcher(r"C\[1\]$", regex=True, case=True)(name)
 
 
-def test_a_regex_that_backtracks_stops_at_the_budget():
+_BACKTRACK = """
+import sys, time
+import dstf
+from dstf.authoring.variable_rows import matcher
+assert dstf.__file__ == sys.argv[1], (dstf.__file__, sys.argv[1])
+keep = matcher(r"^(a|aa)+$", regex=True, case=False)
+start = time.perf_counter()
+try:
+    for _ in range(3):
+        keep("a" * 60 + "b")
+except TimeoutError:
+    pass
+print(time.perf_counter() - start)
+"""
+
+
+def test_a_regex_that_backtracks_finishes_within_the_budget():
     """`^(a|aa)+$` over a name that almost matches backtracks exponentially:
-    the filter gives up at its budget instead of freezing the tool."""
+    the filter FINISHES near its budget — timed out, or answered if a later
+    `regex` optimises the pattern away (it already does `(a+)+$`) — instead
+    of freezing the tool. In a child process, so a filter that no longer
+    stops fails on the timeout: without one this search ran 736 s. The
+    timeout is generous because the child's import alone takes ~2 s here."""
     pytest.importorskip("regex")
-    keep = matcher(r"^(a|aa)+$", regex=True, case=False)
-    start = time.perf_counter()
-    with pytest.raises(TimeoutError):
-        for _ in range(3):
-            keep("a" * 60 + "b")
-    assert time.perf_counter() - start < 1.0
+    import subprocess
+    import sys
+
+    import dstf
+
+    done = subprocess.run(
+        [sys.executable, "-c", _BACKTRACK, dstf.__file__],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert float(done.stdout) < 1.5 * variable_rows.REGEX_BUDGET
+
+
+def test_a_plain_regex_over_a_big_result_does_not_run_out_of_time():
+    """A search costs ~2.5 us a name: at a 0.25 s budget, 100,000 names
+    timed out `T` itself, and TRANSFORM's largest result has 76,992."""
+    pytest.importorskip("regex")
+    names = [f"pipe{i}.T[{i % 20}]" for i in range(100_000)]
+    keep = matcher(r"pipe\d+\.T\[3\]$", regex=True, case=False)
+    kept = [n for n in names if keep(n)]
+    assert len(kept) == 5_000 and kept[0] == "pipe3.T[3]"
 
 
 def test_the_budget_is_one_for_every_name_of_a_filter(monkeypatch):
-    """ONE budget from the filter's first name, not one per name: 0.25 s a
-    name over 6,093 names is 25 minutes. The clock is faked to read 0.1 s
-    later at each name while every search is instant, so a budget per name
-    would never run out; the one total budget runs out at the 4th name,
-    which a fresh filter keeps."""
+    """ONE budget from the filter's first name, not one per name: 1 s a
+    name over 6,093 names is 100 minutes. The clock is faked to read 0.4
+    budgets later at each name while every search is instant, so a budget
+    per name would never run out; the one total budget runs out at the 4th
+    name, which a fresh filter keeps."""
     pytest.importorskip("regex")
-    ticks = iter([0.0, 0.1, 0.2, 0.3, 0.3])
+    b = variable_rows.REGEX_BUDGET
+    ticks = iter([0.0, 0.4 * b, 0.8 * b, 1.2 * b, 1.2 * b])
     monkeypatch.setattr(variable_rows, "monotonic", lambda: next(ticks))
     keep = matcher("x", regex=True, case=False)
     assert [keep("x") for _ in range(3)] == [True, True, True]
@@ -210,10 +249,10 @@ def test_the_budget_is_one_for_every_name_of_a_filter(monkeypatch):
 
 
 def test_a_search_is_given_the_time_left_not_the_whole_budget(monkeypatch):
-    """The first name took 0.24 s of the 0.25: the second search stops at
-    the 0.01 s left, well before a whole budget would."""
+    """The first name took 96% of the budget: the second search stops at
+    the 4% left, well before a whole budget would."""
     pytest.importorskip("regex")
-    ticks = iter([0.0, 0.24])
+    ticks = iter([0.0, 0.96 * variable_rows.REGEX_BUDGET])
     monkeypatch.setattr(variable_rows, "monotonic", lambda: next(ticks))
     keep = matcher(r"^(a|aa)+$", regex=True, case=False)
     assert keep("aa")
@@ -403,6 +442,7 @@ def test_prefix_groups_sort_without_case():
         ("'a.b'", (2, "(top level)")),
         ("port[2, 1].C[1]", (1, "port")),
         ("'it\\'s.x'.c", (1, "'it\\'s.x'")),
+        ("'a.b'.'c.d'.x", (1, "'a.b'")),
     ],
 )
 def test_a_dot_or_bracket_inside_a_quoted_identifier_is_not_a_separator(name, group):

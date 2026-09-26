@@ -30,9 +30,15 @@ def cmd_author(args: argparse.Namespace) -> int:
             "would save to a different file than it shows"
         )
     try:
+        # Every package of the extra, not only what starting imports: the
+        # Variables drawer's `regex` is reached only when a Test page is
+        # (per request), so a venv synced before it joined the extra served
+        # the Suite page and failed every Test page.
+        import regex  # noqa: F401
+
         from ..authoring.shell import run_app
     except ImportError as e:
-        # The shell needs NiceGUI, which is an optional extra — say how to
+        # The tool needs NiceGUI and regex, the optional extra — say how to
         # get it as one clean "Config error: ..." line, never a traceback.
         raise ConfigError(
             "the authoring tool needs the [author] extra: "
