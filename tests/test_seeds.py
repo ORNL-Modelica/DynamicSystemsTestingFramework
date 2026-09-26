@@ -9,8 +9,9 @@ import numpy as np
 import pytest
 
 from dstf.backends.types import VariableResult
+from dstf.comparison.algorithms import _compute_fft_spectrum
 from dstf.comparison.modes import resolve_mode
-from dstf.comparison.seeds import SeedData, seeded_leaf
+from dstf.comparison.seeds import SeedData, _outward, seeded_leaf
 from dstf.comparison.tree_eval import PRIMARY_BASELINE, BaselineView, evaluate_spec
 from dstf.comparison.tree_spec import parse_metric_tree
 
@@ -76,10 +77,10 @@ def test_dominant_frequency_seed_is_the_strongest_peak():
 
 
 def test_a_peak_seeded_on_one_span_matches_on_another():
-    """Bins follow the span: 0.184 Hz lands on 0.200 Hz over a 10 s
-    reference and on 0.222 Hz over a 9 s result. A 5% window around the
+    """Bins follow the span: 0.52 Hz lands on 0.500 Hz over a 10 s
+    reference and on 0.555 Hz over a 9 s result. A 5% window around the
     reference's bin holds no bin of the result; two bins wide, it does."""
-    f0 = 0.184
+    f0 = 0.52
     rt = np.linspace(0.0, 10.0, 1001)
     at = np.linspace(0.0, 9.0, 901)
     rv = np.sin(2 * np.pi * f0 * rt)
@@ -88,14 +89,39 @@ def test_a_peak_seeded_on_one_span_matches_on_another():
     assert _score(leaf, act=(at, av), ref=(rt, rv)).passed, leaf
 
 
-def test_a_peak_at_the_first_bin_is_not_seeded_wider_than_half():
-    """Two bins around bin 1 is +-200%: a window from below zero to three
-    times the peak, which matches anything."""
-    v = np.sin(2 * np.pi * 0.1 * T)  # one period: the peak is bin 1
+def test_a_peak_is_two_bins_wide():
+    """0.5 Hz over 10 s is FFT bin 5: two bins either side is 2/5."""
+    freqs, _ = _compute_fft_spectrum(*DATA.ref)
+    (peak,) = seeded_leaf("dominant-frequency", "x", DATA)["peaks"]
+    assert round(peak["freq"] / (freqs[1] - freqs[0])) == 5
+    assert peak["tolerance"] == pytest.approx(0.4)
+
+
+@pytest.mark.parametrize(
+    "v",
+    [
+        np.sin(2 * np.pi * 0.1 * T),  # one period: the peak is bin 1
+        np.sin(2 * np.pi * 0.3 * T),  # bin 3: two bins is +-67%
+        300.0 + 10.0 * T,  # a pure trend: its leakage peaks at bin 1
+    ],
+    ids=["bin-1", "bin-3", "ramp"],
+)
+def test_a_peak_in_the_lowest_four_bins_is_not_seeded(v):
+    """Over TRANSFORM, 281 of 322 varying variables seeded a peak at the
+    tolerance cap: a trend's leakage at ~1/span, not a frequency. Two bins
+    around such a peak is wider than `MAX_PEAK_TOLERANCE`; the leaf stays
+    bare, and scoring says to declare a peak."""
+    leaf = seeded_leaf("dominant-frequency", "x", SeedData(ref=(T, v), act=None))
+    assert leaf == {"metric": "dominant-frequency", "variable": "x"}
+
+
+def test_a_peak_at_the_fourth_bin_is_seeded():
+    """Bin 4 is the first whose two bins, +-50%, fit the cap."""
+    v = np.sin(2 * np.pi * 0.4 * T)
     (peak,) = seeded_leaf("dominant-frequency", "x", SeedData(ref=(T, v), act=None))[
         "peaks"
     ]
-    assert peak["tolerance"] == 0.5
+    assert peak["tolerance"] == pytest.approx(0.5)
 
 
 def test_nrmse_points_event_timing_are_not_seeded():
@@ -111,7 +137,20 @@ def test_no_data_leaves_the_bare_leaf():
 
 
 @pytest.mark.parametrize(
-    "offset, amp", [(101325.0, 1e-3), (1.2345678e7, 0.5), (573.15, 1e-4), (0.0, 1e-9)]
+    "offset, amp",
+    [
+        (101325.0, 1e-3),
+        (1.2345678e7, 0.5),
+        (573.15, 1e-4),
+        (0.0, 1e-9),
+        # A margin below 12 significant digits of the value: the short
+        # form of `lo - m` rounded back INTO the data (1e5 +- 1e-11 seeded
+        # min == max == 100000.0).
+        (1e5, 1e-11),
+        (293.15, 1e-12),
+        (101325.0, 1e-7),
+        (1.2345678e7, 1e-9),
+    ],
 )
 @pytest.mark.parametrize("name", ["range", "tube", "scalar"])
 def test_a_seed_on_a_large_offset_and_a_small_span_passes(name, offset, amp):
@@ -123,6 +162,27 @@ def test_a_seed_on_a_large_offset_and_a_small_span_passes(name, offset, amp):
     assert _score(with_ref, act=(T, v), ref=(T, v)).passed, with_ref
     act_only = seeded_leaf(name, "x", SeedData(ref=None, act=(T, v)))
     assert _score(act_only, act=(T, v), ref=(T, v)).passed, act_only
+
+
+@pytest.mark.parametrize("name", ["range", "tube", "scalar"])
+def test_a_seed_from_a_seven_digit_reference_holds_a_float32_result(name):
+    """TRANSFORM's OilWater_PTHX ``STHX.tube.mediums[2].h``: a range seeded
+    from a reference stored at 7 significant digits, [130450.58, 130451.02],
+    excluded its float32 result at 130451.03125. 5% of a 0.4 span is below
+    the storage's own rounding; the margin is never under 1e-6 of the value."""
+    x = 130450.81 + 0.23 * np.sin(2 * np.pi * 0.5 * T)  # 130450.58..130451.04
+    ref = np.round(x, 1)  # 7 significant digits: 130450.6..130451.0
+    act = x.astype(np.float32).astype(np.float64)
+    assert act.max() > 130451.02
+    leaf = seeded_leaf(name, "x", SeedData(ref=(T, ref), act=(T, act)))
+    assert _score(leaf, act=(T, act), ref=(T, ref)).passed, leaf
+
+
+@pytest.mark.parametrize("x, up", [(1e5 - 2e-11, False), (1e5 + 2e-11, True)])
+def test_a_margin_below_twelve_digits_is_never_rounded_back_inward(x, up):
+    """The 12-digit short form of 1e5 -+ 2e-11 is 100000.0, inside ``x``."""
+    y = _outward(x, 1e-12, up=up)
+    assert (y >= x) if up else (y <= x)
 
 
 def test_a_seeds_numbers_are_short_and_rounded_away_from_the_data():
@@ -151,3 +211,82 @@ def test_a_scalar_seeded_without_a_reference_has_bounds_and_needs_none():
         base_tolerance=1e-4,
     )
     assert result.passed, result
+
+
+def test_a_seed_brackets_the_reference_not_the_actual():
+    ref, act = 1.0 * T / 10.0, 10.0 + T / 10.0  # 0..1 against 10..11
+    data = SeedData(ref=(T, ref), act=(T, act))
+    rng = seeded_leaf("range", "x", data)
+    assert rng["min_value"] < 0.0 and 1.0 < rng["max_value"] < 10.0
+    assert seeded_leaf("tube", "x", data)["tube_abs"] < 1.0
+
+
+def test_a_reference_with_no_finite_value_falls_back_to_the_actual():
+    data = SeedData(ref=(T, np.full_like(T, np.nan)), act=(T, 10.0 + T / 10.0))
+    rng = seeded_leaf("range", "x", data)
+    assert 9.0 < rng["min_value"] < 10.0 and rng["max_value"] > 11.0
+
+
+def test_a_scalar_with_a_reference_is_its_final_value_within_one_percent():
+    assert seeded_leaf("scalar", "x", DATA) == {
+        "metric": "scalar",
+        "variable": "x",
+        "quantity": {"reduce": "final"},
+        "tolerance_mode": "rel",
+        "tolerance": 0.01,
+    }
+
+
+def test_a_scalars_bounds_are_around_its_final_value_not_its_first():
+    v = 100.0 + 10.0 * T  # 100 -> 200
+    leaf = seeded_leaf("scalar", "x", SeedData(ref=None, act=(T, v)))
+    assert (leaf["min_value"], leaf["max_value"]) == (190.0, 210.0)
+
+
+@pytest.mark.parametrize("with_ref", [True, False], ids=["ref", "act-only"])
+@pytest.mark.parametrize("name", SEEDED)
+def test_flat_zero_data_seeds_without_raising(name, with_ref):
+    """A flat zero series has neither a span nor a magnitude: the margin
+    falls back to 1, and each seeded leaf passes on it (a
+    dominant-frequency has no peak to seed and stays bare)."""
+    z = np.zeros_like(T)
+    leaf = seeded_leaf(
+        name, "x", SeedData(ref=(T, z) if with_ref else None, act=(T, z))
+    )
+    if name == "dominant-frequency":
+        assert leaf == {"metric": name, "variable": "x"}
+        return
+    assert _score(leaf, act=(T, z), ref=(T, z)).passed, leaf
+
+
+#: A ramp 300 -> 400 over 0..10 s, scored only over 2..5 s (320..350).
+RAMP = 300.0 + 10.0 * T
+WINDOW = {"start": 2.0, "end": 5.0}
+
+
+def test_a_windowed_scalar_is_seeded_from_its_windows_final_value():
+    data = SeedData(ref=None, act=(T, RAMP)).within(WINDOW)
+    leaf = {**seeded_leaf("scalar", "x", data), "window": WINDOW}
+    assert (leaf["min_value"], leaf["max_value"]) == (330.0, 370.0)
+    assert _score(leaf, act=(T, RAMP), ref=(T, RAMP)).passed, leaf
+
+
+def test_a_windowed_range_brackets_only_its_window():
+    data = SeedData(ref=(T, RAMP), act=(T, RAMP)).within(WINDOW)
+    leaf = {**seeded_leaf("range", "x", data), "window": WINDOW}
+    assert (leaf["min_value"], leaf["max_value"]) == (318.0, 352.0)
+    assert _score(leaf, act=(T, RAMP), ref=(T, RAMP)).passed, leaf
+
+
+@pytest.mark.parametrize(
+    "window, first, last",
+    [
+        (None, 0.0, 10.0),
+        ({}, 0.0, 10.0),
+        ({"start": 2.0}, 2.0, 10.0),
+        ({"end": 5.0}, 0.0, 5.0),
+    ],
+)
+def test_a_window_may_leave_either_end_open(window, first, last):
+    t, _ = SeedData(ref=(T, RAMP), act=None).within(window).ref
+    assert (t[0], t[-1]) == (first, last)

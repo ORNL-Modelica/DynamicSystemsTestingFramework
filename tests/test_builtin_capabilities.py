@@ -228,6 +228,32 @@ async def test_a_mode_switch_starts_from_the_new_modes_seed(session):
         assert leaf == {**seeded, "max_value": 2.0}
 
 
+async def test_a_windowed_criterion_is_seeded_from_its_window(session):
+    """The window stays across a mode switch, so the seed reads the samples
+    the window scores: A's baseline is x = t, and over [0.5, 1] a range
+    brackets 0.5..1, not 0..1."""
+    async with host(session, EditCriteria(), LEAF0) as (user, errors, _):
+        await user.should_see("mode")
+        numbers = {c.props.get("label"): c for c in user.find(ui.number).elements}
+        numbers["window start"].set_value(0.5)
+        numbers["window end"].set_value(1.0)
+        mode = next(
+            c for c in user.find(ui.select).elements if c.props.get("label") == "mode"
+        )
+        mode.set_value("range")
+        await user.should_see("Upper bound")
+        leaf = session.spec.pending[-1].value
+        window = {"start": 0.5, "end": 1.0}
+        assert leaf["window"] == window
+        expected = seeded_leaf(
+            "range", "x", seed_data(_view(session), A, "x", window=window)
+        )
+        assert {k: leaf[k] for k in ("min_value", "max_value")} == {
+            k: expected[k] for k in ("min_value", "max_value")
+        }
+        assert 0.4 < leaf["min_value"] < 0.5, leaf
+
+
 def _session_with_soft_check(tmp_path, *ops):
     """A fresh Session per simulation (a page cannot outlive its client):
     A has a soft_check `om_cross`, plus whatever ops are staged."""

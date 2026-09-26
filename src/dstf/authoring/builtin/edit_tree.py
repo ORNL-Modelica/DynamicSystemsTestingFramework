@@ -104,8 +104,12 @@ _DEFAULT_DIRECTION = "less"
 _DIRECTIONS = {"less": "lower is better", "greater": "higher is better"}
 
 
-def seed_data(s: SessionView, model_id: str, variable: str) -> SeedData:
-    """The series a new criterion on ``variable`` will score, for its seed.
+def seed_data(
+    s: SessionView, model_id: str, variable: str, window: dict | None = None
+) -> SeedData:
+    """The series a new criterion on ``variable`` will score, for its seed:
+    only the samples inside ``window`` (a leaf's ``start`` / ``end``) when
+    it has one.
 
     Read from the variable's view, so a variable no criterion scores has no
     reference there even when the baseline file holds one: it seeds from
@@ -127,7 +131,7 @@ def seed_data(s: SessionView, model_id: str, variable: str) -> SeedData:
         if view.act_time is not None and view.act_values is not None
         else None
     )
-    return SeedData(ref=ref, act=act)
+    return SeedData(ref=ref, act=act).within(window)
 
 
 class EditTree:

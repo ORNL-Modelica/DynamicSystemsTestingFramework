@@ -111,10 +111,10 @@ class EditCriteria:
         def set_metric(name: str) -> None:
             state["metric"] = name
             # A new mode starts from its seed, else its defaults: a range
-            # switched to with no bound does not resolve.
-            seeded = seeded_leaf(
-                name, state["variable"], seed_data(s, model_id, state["variable"])
-            )
+            # switched to with no bound does not resolve. The window stays,
+            # so the seed reads the samples it scores.
+            data = seed_data(s, model_id, state["variable"], window=state["window"])
+            seeded = seeded_leaf(name, state["variable"], data)
             state["params"] = {
                 k: v for k, v in seeded.items() if k not in ("metric", "variable")
             }
