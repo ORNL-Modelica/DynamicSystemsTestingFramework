@@ -94,10 +94,15 @@ def _suite(shell, user):
 
 
 async def test_the_header_names_the_product_the_library_and_the_backend(shell):
+    """The backend is text in the row, with its OS partition; its select is
+    in the Change backend dialog (the owner's ruling, Q13 A)."""
+    os_name = shell.session.project.config.os_name
+    assert os_name
     async with user_simulation(root=shell.index) as user:
         await _open(user)
         assert _one(user, "wordmark").text == "DSTF"
         assert _one(user, "project").text == "FakeLib"  # config.library_name
+        assert _one(user, "backend-name").text == f"Python · {os_name}"
         backend = _one(user, "backend")
         assert backend.value == "Python" and backend.options == ["Python"]
         assert _one(user, "runs").text == "idle"
@@ -378,8 +383,8 @@ async def test_a_rescore_after_the_open_does_not_put_the_shell_back_to_loading(s
         )
         await user.should_see("stored 1", retries=20)
         assert not shell.load.in_progress and shell.busy_reason() is None
-        backend = _one(user, "backend")
-        await _settled(lambda: backend.enabled)
+        change = _one(user, "change-backend")
+        await _settled(lambda: change.enabled)
         shell.session.stage([LOOSEN])  # a backend change then waits on the edits
         save = _one(user, "save")
         await _settled(lambda: save.enabled)
@@ -686,6 +691,9 @@ def _with_alt_backend(cfg) -> None:
 
 
 async def test_changing_the_backend_reopens_the_project_on_it(tmp_path):
+    """Change backend… in the ⋮ menu opens a dialog holding the select
+    (the owner's ruling, Q13 A); choosing reopens as the row's select did,
+    closes the dialog and renames the backend in the row."""
     cfg, work = _project(tmp_path)
     _with_alt_backend(cfg)
     shell = Shell(cfg, work_dir=work)
@@ -693,7 +701,12 @@ async def test_changing_the_backend_reopens_the_project_on_it(tmp_path):
     shell.load.phase = "done"
     async with user_simulation(root=shell.index) as user:
         await _open(user)
+        dialog = _suite(shell, user).header.backend_dialog
+        assert not dialog.value
+        user.find(marker="change-backend").click()
+        await _settled(lambda: dialog.value)
         backend = _one(user, "backend")
+        assert dialog in list(_ancestors(backend))
         assert backend.options == ["Python", "Python (alt)"]
         backend.set_value("Python (alt)")
         await _settled(
@@ -704,24 +717,35 @@ async def test_changing_the_backend_reopens_the_project_on_it(tmp_path):
         )
         await _settled(lambda: backend.value == "Python (alt)")
         assert shell.load.error is None
+        assert not dialog.value
+        name = _one(user, "backend-name")
+        await _settled(lambda: name.text.startswith("Python (alt) · "))
         # The same family reads the same partition: the verdicts are the old ones.
         assert classify(shell.session.comparisons[A]) == FAIL
 
 
-async def test_the_backend_select_is_greyed_with_its_sentence_while_edits_are_pending(
+async def test_change_backend_is_greyed_with_its_sentence_while_edits_are_pending(
     shell,
 ):
+    """The menu item is disabled with the reason as its second line, as
+    Export shows "no pending edits"; the dialog's select is disabled too."""
     async with user_simulation(root=shell.index) as user:
         await _open(user)
-        assert _one(user, "backend").enabled
+        change = _one(user, "change-backend")
+        assert change.enabled and _one(user, "backend").enabled
+        header = _suite(shell, user).header
+        assert not header.backend_why.visible
         shell.session.stage([LOOSEN])
-        await _settled(lambda: not _one(user, "backend").enabled)
+        await _settled(lambda: not change.enabled)
+        assert not _one(user, "backend").enabled
         assert (
             _one(user, "backend:why").text
             == "backend change waits: save or discard 2 pending edits first"
         )
+        assert change in list(_ancestors(_one(user, "backend:why")))
         shell.session.discard()
-        await _settled(lambda: _one(user, "backend").enabled)
+        await _settled(lambda: change.enabled)
+        assert _one(user, "backend").enabled and not header.backend_why.visible
 
 
 async def test_a_backend_that_cannot_be_built_leaves_the_project_and_says_why(shell):
@@ -820,17 +844,20 @@ async def test_the_header_is_one_row_unless_a_page_asks_for_a_second(shell):
         order = [
             m
             for m in marks
-            if m in ("wordmark", "project", "backend", "runs", "pending", "header-menu")
+            if m
+            in ("wordmark", "project", "backend-name", "runs", "pending", "header-menu")
         ]
-        # Stop server is in the menu at the row's end (3c).
+        # Stop server is in the menu at the row's end (3c); the backend is
+        # text, its select in the menu's Change backend dialog (Q13 A).
         assert order == [
             "wordmark",
             "project",
-            "backend",
+            "backend-name",
             "runs",
             "pending",
             "header-menu",
         ]
+        assert not [e for e in row.descendants() if isinstance(e, ui.select)]
         with pytest.raises(AssertionError):
             user.find(marker="subheader")
 
@@ -887,8 +914,9 @@ def _ancestors(element):
 
 
 async def test_the_header_menu_holds_the_rarely_used_actions(shell):
-    """Export, Open in another backend…, dashboard and Stop server are in
-    the ⋮ menu at the row's end (the owner's ruling, Q10 A); Save and
+    """Export, Change backend…, Open in another backend…, dashboard and Stop
+    server are in the ⋮ menu at the row's end (the owner's rulings, Q10 A
+    and Q13 A); Save and
     Discard stay in the row. Asked through the element tree, this is what
     sees Export left in the row (the 900 px browser test did not: the
     row's buttons wrapped their text and still fitted)."""
@@ -905,8 +933,12 @@ async def test_the_header_menu_holds_the_rarely_used_actions(shell):
             if isinstance(e, ui.menu)
         ]
         assert not menu.value
-        for m in ("export", "other-backend", "dashboard", "stop"):
+        for m in ("export", "change-backend", "other-backend", "dashboard", "stop"):
             assert menu in list(_ancestors(_one(user, m))), m
+        # Change backend… sits directly above Open in another backend….
+        items = [next(iter(c._markers), None) for c in menu.default_slot.children]
+        at = items.index("change-backend")
+        assert items[at + 1] == "other-backend", items
         assert not _one(user, "export").enabled
         assert _one(user, "export:why").text == "no pending edits"
         # The ⋮ button says what it holds and that it opens a menu.

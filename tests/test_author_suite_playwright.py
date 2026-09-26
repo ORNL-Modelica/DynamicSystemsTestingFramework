@@ -241,7 +241,8 @@ HEADER_PAST = """() => {
 #: heights: `k` 1.5 finds a label wrapped to a second line, 2.5 one wrapped
 #: to a third. At 900 px the row's buttons wrapped their labels and still
 #: fitted, which is how Export left in the row passed; with an edit pending,
-#: "1 pending edit" wrapped to three lines.
+#: "1 pending edit" wrapped to three lines, and with a rerun running too and
+#: the backend select still in the row, Save took four.
 HEADER_TALL = """(k) => {
   const out = [];
   for (const b of document.querySelectorAll('.dstf-header-row .q-btn')) {
@@ -268,14 +269,34 @@ def _keep(page, tmp_path: Path, name: str) -> None:
         shutil.copy(path, Path(keep) / path.name)
 
 
-def _fits(page, width: int) -> None:
+#: Save's longest one-edit caption. FakeLib cannot stage it (every test of
+#: it has an entry), so the test writes it into the button's label in the
+#: browser; the caption does not change while the header is measured, so no
+#: refresh puts the server's back (asserted after).
+NEW_ENTRY = "Save 1 spec edit (1 test, 1 new entry) to test_spec.json"
+SAVE_TEXT = """(text) => {
+  for (const b of document.querySelectorAll('.dstf-header-row .q-btn')) {
+    const span = b.querySelector('.q-btn__content span.block');
+    if (span && span.textContent.startsWith('Save ')) {
+      if (text !== null) span.textContent = text;
+      return span.textContent;
+    }
+  }
+  return null;
+}"""
+
+
+def _fits(page, width: int, save: str | None = None) -> None:
     """Nothing in the header is cut off at `width`: the page does not scroll
     sideways and every child of the header row ends inside the viewport.
-    At 1280 px no header button's label wraps either; at 900 px the pending
-    count, Save and Discard may take two lines and no more (the owner's
-    ruling, 2026-09-25: one line needs ~950 px once the backend select, the
-    run indicator and Save's why-sentence are in the row)."""
+    At 1280 px no header button's label wraps; at 900 px a button may take
+    two lines and no more (the owner's ruling, 2026-09-25, which Q13 A
+    meets: one line at 900 needs 960 px even with the run indicator and
+    Save's why-sentence hidden). ``save`` is written into Save's label
+    first."""
     page.set_viewport_size({"width": width, "height": 900})
+    if save is not None:
+        assert page.evaluate(SAVE_TEXT, save) == save
     page.wait_for_function(
         "document.documentElement.scrollWidth == window.innerWidth",
         timeout=EXPECT_TIMEOUT,
@@ -290,17 +311,17 @@ def _fits(page, width: int) -> None:
         assert box is not None and box["x"] + box["width"] <= width, (width, box)
     assert page.evaluate(HEADER_PAST) == [], width
     assert page.evaluate(HEADER_TALL, 1.5 if width >= 1280 else 2.5) == [], width
+    if save is not None:
+        assert page.evaluate(SAVE_TEXT, None) == save  # no refresh undid it
 
 
-def _count_lines(page) -> float:
-    """The pending count's label height in line heights. It keeps one line
-    at 900 px (`no-wrap`): squeezed, it took three beside Save's longest
-    one-edit caption, "(1 test, 1 new entry)", which FakeLib cannot stage
-    (every test of it has an entry), so this pins it instead."""
-    return page.locator(".dstf-header-row .q-btn", has_text="pending edit").evaluate(
-        """b => { const c = b.querySelector('.q-btn__content');
-                  return c.getBoundingClientRect().height
-                         / parseFloat(getComputedStyle(c).lineHeight); }"""
+def _sleeping(cfg: Path) -> None:
+    """D's simulation sleeps, so a rerun of D stays running while the
+    header is measured; the process is terminated on the way out."""
+    (cfg.parent.parent / "Examples" / "D.py").write_text(
+        "import time\n\n\ndef simulate(stop_time, tolerance):\n"
+        "    time.sleep(120)\n    return {}\n",
+        encoding="utf-8",
     )
 
 
@@ -310,12 +331,15 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
     and "Stop server"; now nothing passes the viewport at 1280 or 900, no
     label wraps at 1280 and none takes a third line at 900, on the Suite
     page and on a Test page with its Variables drawer open, with nothing
-    pending and again with one edit pending (the row then carries the
-    backend's why-sentence, and "1 pending edit" took three lines at 900).
-    Export left in the row is killed by
-    `test_the_header_menu_holds_the_rarely_used_actions` (its ancestor
-    check), not here: at 900 px the row's buttons may wrap and still fit."""
+    pending, with one edit pending, and in the busiest header: a rerun
+    running, an edit pending and Save's caption naming a new entry. There,
+    with the backend select in the row, Save took four lines at 900 px and
+    two at 1280, which is why the select moved into the menu (the owner's
+    ruling, Q13 A). Export left in the
+    row is killed by `test_the_header_menu_holds_the_rarely_used_actions`
+    (its ancestor check), not here."""
     cfg, work = _project(tmp_path)
+    _sleeping(cfg)
     log = tmp_path / "author.log"
     proc, url = _start(cfg, work, log)
     try:
@@ -370,16 +394,27 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
         for width in (1280, 900):
             _fits(page, width)
             _keep(page, tmp_path, f"test-{width}-pending")
-        assert _count_lines(page) <= 1.5
+
+        # The busiest header: a rerun of D running as well.
         page.goto(url)
         expect(page.locator("div.dstf-tests .dstf-row")).to_have_count(
             5, timeout=EXPECT_TIMEOUT
         )
-        expect(header).to_contain_text("1 pending edit", timeout=EXPECT_TIMEOUT)
+        _row(page, D.rsplit(".", 1)[-1]).get_by_role("checkbox").click()
+        rerun = re.compile(r"^Rerun 1 selected test \(Python\)")
+        page.get_by_role("button", name=rerun).first.click()
+        page.locator(".q-dialog").get_by_role("button", name=rerun).click()
+        expect(header).to_contain_text("1 running", timeout=EXPECT_TIMEOUT)
+        expect(header).to_contain_text("1 pending edit")
         for width in (1280, 900):
-            _fits(page, width)
-            _keep(page, tmp_path, f"suite-{width}-pending")
-        assert _count_lines(page) <= 1.5
+            _fits(page, width, NEW_ENTRY)
+            _keep(page, tmp_path, f"suite-{width}-busy")
+        page.goto(f"{url}test/{A}")
+        expect(header).to_contain_text("1 running", timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-var-target")).to_be_visible(timeout=EXPECT_TIMEOUT)
+        for width in (1280, 900):
+            _fits(page, width, NEW_ENTRY)
+            _keep(page, tmp_path, f"test-{width}-busy")
         context.close()
     finally:
         if proc.poll() is None:

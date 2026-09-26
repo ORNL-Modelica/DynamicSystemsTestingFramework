@@ -1,13 +1,17 @@
 """The header both pages share (DESIGN.md "Header"; brief §3.3): "DSTF", the
-library and the backend on the left; the run indicator in the centre; the
-pending count with Save and Discard on the right, and a ⋮ menu at the end
-holding the rarely used actions — Export, Open in another backend…, the
-dashboard and Stop server, each with its full label. At 900 px the row cut
-off "dashboard" and "Stop server", and the owner chose one layout at every
-width (3c, Q10 A) over a row that changes with it. Every button's label
-says its object, effect and count; a disabled one carries the sentence
-that says why (DESIGN.md "Disabled states explain themselves"). Off-white
-with a hairline below, never an accent bar.
+library and the backend's name on the left; the run indicator in the
+centre; the pending count with Save and Discard on the right, and a ⋮ menu
+at the end holding the rarely used actions — Export, Change backend…, Open
+in another backend…, the dashboard and Stop server, each with its full
+label. At 900 px the row cut off "dashboard" and "Stop server", and the
+owner chose one layout at every width (3c, Q10 A) over a row that changes
+with it. The backend was a select in the row until a rerun running, an
+edit pending and a caption naming a new entry put Save on four lines at
+900 px: the owner moved it into the menu (Q13 A), and the row names the
+backend as text. A button may take two lines at 900 px and one at 1280.
+Every button's label says its object, effect and count; a disabled one
+carries the sentence that says why (DESIGN.md "Disabled states explain
+themselves"). Off-white with a hairline below, never an accent bar.
 
 A page may ask for a second row of its own (``below``): it is drawn INSIDE
 this fixed header, which is what makes it sticky without offset arithmetic
@@ -53,17 +57,30 @@ class Header:
         self.shell = shell
         self.drawer = PendingDrawer(shell)
         self.dialog = ui.dialog()  # the header's dialogs, one element rebuilt per use
-        with ui.header().classes("dstf-header column no-wrap gap-0") as bar:
-            row = ui.row().classes("dstf-header-row items-center no-wrap gap-3 w-full")
-        with row:
-            ui.label("DSTF").classes("dstf-wordmark").mark("wordmark")
-            self.library = ui.label().classes("text-secondary").mark("project")
+        # The backend's own dialog, built once: `refresh` keeps its select's
+        # options and value as the row's text, open or closed.
+        with ui.dialog() as self.backend_dialog, ui.card():
+            ui.label("Change backend").classes("text-h6")
+            ui.label(
+                "Reopens this project on the chosen backend, in this tab; its "
+                "results and baselines are that backend's."
+            ).classes("text-xs text-secondary")
             self.backend = (
                 ui.select([], label="backend", on_change=self._change_backend)
                 .props("dense outlined options-dense")
                 .mark("backend")
             )
-            self.backend_why = ui.label().classes("dstf-why").mark("backend:why")
+            ui.button("Close", on_click=self.backend_dialog.close).props(
+                "flat dense no-caps"
+            )
+        with ui.header().classes("dstf-header column no-wrap gap-0") as bar:
+            row = ui.row().classes("dstf-header-row items-center no-wrap gap-3 w-full")
+        with row:
+            ui.label("DSTF").classes("dstf-wordmark").mark("wordmark")
+            self.library = ui.label().classes("text-secondary").mark("project")
+            self.backend_name = (
+                ui.label().classes("text-secondary").mark("backend-name")
+            )
             ui.space()
             self.runs = ui.label().classes("text-secondary").mark("runs")
             ui.space()
@@ -99,6 +116,18 @@ class Header:
                         self.export_why = (
                             ui.item_label().props("caption").mark("export:why")
                         )
+                # Changed rarely, and refused while anything is pending or
+                # running: in the row, its select and why-sentence pushed
+                # Save onto four lines at 900 px (the owner's ruling, Q13 A).
+                with ui.menu_item(on_click=self.backend_dialog.open).mark(
+                    "change-backend"
+                ) as change:
+                    self.change = change
+                    with ui.item_section():
+                        ui.item_label("Change backend…")
+                        self.backend_why = (
+                            ui.item_label().props("caption").mark("backend:why")
+                        )
                 self.other = ui.menu_item(
                     "Open in another backend…", on_click=self._open_other
                 ).mark("other-backend")
@@ -133,6 +162,10 @@ class Header:
         project, load = s.project, shell.load
         if project is not None:
             self.library.set_text(project.config.library_name or "")
+            config = project.config
+            self.backend_name.set_text(
+                " · ".join(t for t in (config.backend_name, config.os_name) if t)
+            )
             if not load.in_progress:
                 # Not while a reopen runs: the select shows the user's choice
                 # until the Session commits it.
@@ -143,7 +176,9 @@ class Header:
                 self.backend.set_options(options, value=current)
         else:
             self.library.set_text("opening…" if load.in_progress else "no project")
+            self.backend_name.set_text("")
         why = self._backend_why()
+        self.change.set_enabled(why is None)
         self.backend.set_enabled(why is None)
         self.backend_why.set_text(why or "")
         self.backend_why.set_visibility(why is not None)
@@ -195,6 +230,7 @@ class Header:
             ui.notify(why, type="warning")
             self.backend.set_value(project.config.backend_name)
             return
+        self.backend_dialog.close()
         self.shell.open_async(e.value)
         self.refresh()
 

@@ -129,8 +129,8 @@ button carries `no-caps`.
 (`unelevated color=primary`): the one action the page exists for, at most
 one per header, usually Save. Outlined secondary (`outline`): actions on a
 selection (Rerun, Accept). Flat tertiary (`flat`): navigation and
-housekeeping (Discard; the header's ⋮ menu holds Export, the dashboard and
-Stop server as menu items). Destructive actions are outlined in `fail` and
+housekeeping (Discard; the header's ⋮ menu holds Export, Change backend…,
+the dashboard and Stop server as menu items). Destructive actions are outlined in `fail` and
 confirm.
 
 A button's label names its object, its effect and a count: "Save 3 spec
@@ -303,16 +303,23 @@ window" is scheduled with the rest of the gesture work.
 stroke SVG on a 16px grid. Never emoji.
 
 **Header.** Off-white, 1px `border` below, sticky. Left: "DSTF" wordmark,
-library name, backend. Centre: the queue indicator. Right: pending-edit count
-with Save and Discard, then a ⋮ menu holding Export (grey, with "no pending
-edits" under it, while nothing is pending), Open in another backend…,
-dashboard (a link into a new tab) and Stop server, each with its full label —
-one layout at every width. Save's caption counts the entries it creates: a
+library name, and the backend as plain text with its OS partition ("Python ·
+linux"). Centre: the queue indicator. Right: pending-edit count with Save and
+Discard, then a ⋮ menu holding Export (grey, with "no pending edits" under it,
+while nothing is pending), Change backend… (a dialog holding the backend
+select; grey, with the sentence that says why under it, while an edit is
+pending or a run is in flight), Open in another backend…, dashboard (a link
+into a new tab) and Stop server, each with its full label — one layout at
+every width. The backend was a select in the header's left side; the owner
+moved it into the menu (Q13) when a rerun running, an edit pending and a
+caption naming a new entry put Save on four lines at 900px and two at 1280px. Save's caption counts the entries it creates: a
 pending edit to a test with no entry in the file as loaded writes one, "Save 2
-spec edits (2 tests, 1 new entry) to test_spec.json". At 900px, with an edit
-pending, Save and Discard may wrap to two lines and no more, the count keeps
-one, the backend's why-sentence gives way first, and nothing is cut off; at
-1280px no header button's label wraps. The header is never a solid accent bar.
+spec edits (2 tests, 1 new entry) to test_spec.json". In every state,
+including the busiest (a rerun running, an edit pending and a caption naming a
+new entry), a header button takes at most two lines at 900px and one at
+1280px, the count keeps one, and nothing is cut off or scrolls sideways. One
+line at 900px is not the rule: it needs 960px. The header is never a solid
+accent bar.
 
 ## Do / don't
 

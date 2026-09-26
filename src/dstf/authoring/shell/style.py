@@ -50,12 +50,6 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   flex-direction: column; flex-wrap: nowrap; align-items: stretch;
 }
 .dstf-header-row { padding: 4px 24px; min-height: 40px; }
-/* At 900 px with an edit pending the row needs ~950 px on one line. Its
-   buttons may take two lines and no more (the owner's ruling, 2026-09-25):
-   the backend's why-sentence gives way first, down to 120 px (four lines of
-   "backend change waits: save or discard 1 pending edit first"), and the
-   pending count keeps one line (`no-wrap`, header.py), where it took three. */
-.dstf-header-row > .dstf-why { flex-shrink: 4; min-width: 120px; }
 .dstf-subheader {
   border-top: 1px solid var(--dstf-border); padding: 4px 24px; min-height: 40px;
 }
