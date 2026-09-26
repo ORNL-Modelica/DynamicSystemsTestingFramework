@@ -99,7 +99,10 @@ class TestWeightedSpecParsing:
             )
 
     def test_weights_length_mismatch(self):
-        with pytest.raises(MetricSpecError, match="length .* must match children"):
+        with pytest.raises(
+            MetricSpecError,
+            match=r"weights: 1 weight for 2 criteria: a weighted node takes one weight",
+        ):
             parse_metric_tree(
                 {
                     "combinator": "weighted",

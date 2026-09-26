@@ -139,12 +139,18 @@ def validate_entry_metric_tree(
     if entry is None or "metrics" not in entry:
         return
 
-    from ..comparison.tree_spec import parse_metric_tree
+    from ..comparison.tree_spec import MetricSpecError, parse_metric_tree
     from ..comparison.validator import role_lookup_from_store, validate_tree
     from ..storage.reference_store import ReferenceStore
 
     try:
         tree = parse_metric_tree(entry["metrics"])
+    except MetricSpecError as e:
+        # The reason drops the path ("metrics.window: The window must end
+        # after ..."): the tool shows the reason beside the row it names.
+        raise PatchError(
+            f"patched metric tree is invalid: {e}", reason=e.message
+        ) from e
     except Exception as e:
         raise PatchError(f"patched metric tree is invalid: {e}", reason=str(e)) from e
 
@@ -156,7 +162,8 @@ def validate_entry_metric_tree(
         msg = "; ".join(str(e) for e in errors)
         raise PatchError(
             f"validator rejected the patched tree: {msg}",
-            reason="; ".join(e.message for e in errors),
+            # Each message is a sentence that ends in its own full stop.
+            reason=" ".join(e.message for e in errors),
         )
 
 

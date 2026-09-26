@@ -4090,7 +4090,9 @@ async def test_closing_an_editor_keeps_its_rows_errors(page_shell):
         await _settled(lambda: page.open is None)
         await _refused_weighted_wrap(user, page, TUBE)
         await _settled(lambda: bool(_errors_under(user, row)))
-        assert "weights" in _errors_under(user, row)[0]
+        assert _errors_under(user, row)[0] == (
+            "2 weights for 1 criterion: a weighted node takes one weight per criterion."
+        )
         assert shell.session.spec.pending == []
 
 
@@ -4496,10 +4498,11 @@ class TestLayoutControls:
     async def test_a_patch_error_from_a_layout_edit_is_said_not_raised(
         self, page_shell, monkeypatch
     ):
+        """Said as its reason, without the location its ``str()`` leads with."""
         from dstf.discovery.patch_apply import PatchError
 
         shell = page_shell
-        error = PatchError("probe: the document refused it")
+        error = PatchError("probe: the document refused it", reason="it refused")
 
         def refuse(ops):
             raise error
@@ -4510,7 +4513,7 @@ class TestLayoutControls:
             with page.client:
                 assert page.stage_layout(shell.session.layout(A)) is False
             await _settled(lambda: user.notify.messages != [])
-            assert user.notify.messages == [str(error)]
+            assert user.notify.messages == ["it refused"]
             assert shell.session.spec.pending == [] and len(page.cards) == 7
 
 

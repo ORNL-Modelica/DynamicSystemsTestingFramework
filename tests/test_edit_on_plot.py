@@ -306,6 +306,55 @@ def test_a_drag_on_a_peak_window_box_stages_nothing(session):
     )
 
 
+@pytest.mark.parametrize(
+    "leaf, handle",
+    [
+        (
+            {
+                "metric": "scalar",
+                "variable": "x",
+                "quantity": {"reduce": "final"},
+                "tolerance_mode": "rel",
+                "tolerance": 0.01,
+            },
+            "/metrics/scalar/actual",
+        ),
+        (
+            {
+                "metric": "scalar",
+                "variable": "x",
+                "quantity": {"reduce": "final"},
+                "tolerance_mode": "rel",
+                "tolerance": 0.01,
+            },
+            "/metrics/scalar/reference",
+        ),
+        (
+            {
+                "metric": "dominant-frequency",
+                "variable": "x",
+                "peaks": [{"freq": 1.0, "tolerance": 0.5, "tolerance_mode": "rel"}],
+            },
+            "/metrics/peaks/detected/0",
+        ),
+    ],
+    ids=["scalar-actual", "scalar-reference", "detected-peak"],
+)
+def test_a_drag_on_a_result_line_or_marker_stages_nothing(session, leaf, handle):
+    """An HLine or a Marker is dragged only when it is `kind="handle"`: a
+    result line or a detected peak is drawn, not edited."""
+    _root_leaf_on_a(session, copy.deepcopy(leaf))
+    kinds = {
+        p.id: (type(p).__name__, p.kind)
+        for lv in session.view(A, "x").leaves
+        for p in lv.geometry
+    }
+    assert kinds[handle][0] in ("HLine", "Marker") and kinds[handle][1] != "handle"
+    # A move for either type: a Marker's anchors, an HLine's y0.
+    shape = {"xanchor": 0.3, "yanchor": 0.9, "y0": 0.9}
+    assert _drag(session, handle, shape, model_id=A) is None
+
+
 def test_another_leafs_box_snaps_back_while_one_is_open(session):
     """What is not a handle snaps back whichever criterion is open: it is
     resolved before the open-leaf check, which refuses only a handle of

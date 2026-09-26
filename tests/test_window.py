@@ -95,7 +95,10 @@ class TestWindowParsing:
         assert tree.window_end is None
 
     def test_window_end_before_start_rejected(self):
-        with pytest.raises(MetricSpecError, match="must be > start"):
+        with pytest.raises(
+            MetricSpecError,
+            match=r"metrics\.window: The window must end after it starts",
+        ):
             parse_metric_tree(
                 {
                     "metric": "nrmse",

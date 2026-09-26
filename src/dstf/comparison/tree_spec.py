@@ -29,7 +29,15 @@ from .registry import DEFAULT_METRIC, combinator_names, metric, metric_names
 
 
 class MetricSpecError(ValueError):
-    """Raised on malformed MetricTree spec input. Message includes the path."""
+    """Raised on malformed MetricTree spec input: ``path`` says where,
+    ``message`` what is wrong. ``str()`` is ``"path: message"`` for the CLI,
+    as a validator's ``ValidationError`` reads; the tool shows ``message``
+    alone, beside the row it came from."""
+
+    def __init__(self, path: str, message: str) -> None:
+        self.path = path
+        self.message = message
+        super().__init__(f"{path}: {message}" if path else message)
 
 
 @dataclass
@@ -83,18 +91,20 @@ class CombinatorSpec:
     def __post_init__(self):
         if self.combinator == "k-of-n" and self.k <= 0:
             raise MetricSpecError(
-                f"k-of-n combinator requires positive 'k'; got {self.k}"
+                "", f"k-of-n combinator requires positive 'k'; got {self.k}"
             )
         if self.combinator == "weighted":
             if len(self.weights) != len(self.children):
                 raise MetricSpecError(
+                    "",
                     f"weighted combinator: weights ({len(self.weights)}) "
-                    f"must match children ({len(self.children)})"
+                    f"must match children ({len(self.children)})",
                 )
             if self.direction not in ("less", "greater"):
                 raise MetricSpecError(
+                    "",
                     f"weighted combinator: direction must be 'less' or 'greater', "
-                    f"got {self.direction!r}"
+                    f"got {self.direction!r}",
                 )
 
 
@@ -374,17 +384,18 @@ def parse_metric_tree(raw: dict, _path: str = "metrics") -> SpecNode:
     or semantic problem (unknown combinator, missing field, wrong type).
     """
     if not isinstance(raw, dict):
-        raise MetricSpecError(f"{_path}: expected an object, got {type(raw).__name__}")
+        raise MetricSpecError(_path, f"expected an object, got {type(raw).__name__}")
 
     has_combinator = "combinator" in raw
     has_metric = "metric" in raw
     if has_combinator and has_metric:
         raise MetricSpecError(
-            f"{_path}: node has both 'combinator' and 'metric' keys; pick one"
+            _path, "node has both 'combinator' and 'metric' keys; pick one"
         )
     if not has_combinator and not has_metric:
         raise MetricSpecError(
-            f"{_path}: node must have either 'combinator' (internal) or 'metric' (leaf)"
+            _path,
+            "node must have either 'combinator' (internal) or 'metric' (leaf)",
         )
 
     if has_combinator:
@@ -396,20 +407,20 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
     name = raw["combinator"]
     if not isinstance(name, str) or name not in combinator_names():
         raise MetricSpecError(
-            f"{path}.combinator: unknown combinator {name!r}; "
-            f"valid: {sorted(combinator_names())}"
+            f"{path}.combinator",
+            f"unknown combinator {name!r}; valid: {sorted(combinator_names())}",
         )
 
     children_raw = raw.get("children")
     if not isinstance(children_raw, list) or not children_raw:
         raise MetricSpecError(
-            f"{path}.children: combinator must have a non-empty 'children' list"
+            f"{path}.children", "combinator must have a non-empty 'children' list"
         )
 
     if name == "warn" and len(children_raw) != 1:
         raise MetricSpecError(
-            f"{path}.children: 'warn' combinator requires exactly 1 child, "
-            f"got {len(children_raw)}"
+            f"{path}.children",
+            f"'warn' combinator requires exactly 1 child, got {len(children_raw)}",
         )
 
     children = [
@@ -420,15 +431,17 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
     k = 0
     if name == "k-of-n":
         if "k" not in raw:
-            raise MetricSpecError(f"{path}.k: 'k-of-n' combinator requires 'k'")
+            raise MetricSpecError(f"{path}.k", "'k-of-n' combinator requires 'k'")
         if not isinstance(raw["k"], int) or raw["k"] <= 0:
             raise MetricSpecError(
-                f"{path}.k: must be a positive integer, got {raw['k']!r}"
+                f"{path}.k", f"must be a positive integer, got {raw['k']!r}"
             )
         k = raw["k"]
         if k > len(children):
+            left = "criterion is" if len(children) == 1 else "criteria are"
             raise MetricSpecError(
-                f"{path}.k: k={k} exceeds number of children ({len(children)})"
+                f"{path}.k",
+                f"k is {k} but only {len(children)} {left} left under this k-of-n.",
             )
 
     weights: list[float] = []
@@ -438,33 +451,36 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
         weights_raw = raw.get("weights")
         if not isinstance(weights_raw, list):
             raise MetricSpecError(
-                f"{path}.weights: 'weighted' combinator requires a list of weights"
+                f"{path}.weights", "'weighted' combinator requires a list of weights"
             )
         if len(weights_raw) != len(children):
+            n_w, n_c = len(weights_raw), len(children)
             raise MetricSpecError(
-                f"{path}.weights: length ({len(weights_raw)}) must match "
-                f"children ({len(children)})"
+                f"{path}.weights",
+                f"{n_w} weight{'' if n_w == 1 else 's'} for {n_c} "
+                f"{'criterion' if n_c == 1 else 'criteria'}: a weighted node "
+                f"takes one weight per criterion.",
             )
         try:
             weights = [float(w) for w in weights_raw]
         except (TypeError, ValueError) as exc:
             raise MetricSpecError(
-                f"{path}.weights: all weights must be numeric ({exc})"
+                f"{path}.weights", f"all weights must be numeric ({exc})"
             ) from exc
         if "threshold" not in raw:
             raise MetricSpecError(
-                f"{path}.threshold: 'weighted' combinator requires 'threshold'"
+                f"{path}.threshold", "'weighted' combinator requires 'threshold'"
             )
         try:
             threshold = float(raw["threshold"])
         except (TypeError, ValueError) as exc:
             raise MetricSpecError(
-                f"{path}.threshold: must be numeric, got {raw['threshold']!r}"
+                f"{path}.threshold", f"must be numeric, got {raw['threshold']!r}"
             ) from exc
         direction = raw.get("direction", "less")
         if direction not in ("less", "greater"):
             raise MetricSpecError(
-                f"{path}.direction: must be 'less' or 'greater', got {direction!r}"
+                f"{path}.direction", f"must be 'less' or 'greater', got {direction!r}"
             )
 
     return CombinatorSpec(
@@ -481,8 +497,8 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
     metric_name = raw["metric"]
     if not isinstance(metric_name, str) or metric_name not in metric_names():
         raise MetricSpecError(
-            f"{path}.metric: unknown metric {metric_name!r}; "
-            f"valid: {sorted(metric_names())}"
+            f"{path}.metric",
+            f"unknown metric {metric_name!r}; valid: {sorted(metric_names())}",
         )
 
     variable = raw.get("variable")
@@ -503,14 +519,14 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
         # still requires ``variable``.
         variable = quantity
     if not isinstance(variable, str) or not variable:
-        raise MetricSpecError(f"{path}.variable: required string field")
+        raise MetricSpecError(f"{path}.variable", "required string field")
 
     # ``against`` picks which named baseline the leaf scores against.
     # Defaults to "primary"; must be a non-empty string if present.
     against = raw.get("against", "primary")
     if not isinstance(against, str) or not against:
         raise MetricSpecError(
-            f"{path}.against: must be a non-empty string, got {against!r}"
+            f"{path}.against", f"must be a non-empty string, got {against!r}"
         )
 
     # ``window`` scopes the leaf to a sub-interval [start, end] (idea #46).
@@ -523,8 +539,9 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
     if window_raw is not None:
         if not isinstance(window_raw, dict):
             raise MetricSpecError(
-                f"{path}.window: expected an object with 'start'/'end', "
-                f"got {type(window_raw).__name__}"
+                f"{path}.window",
+                f"expected an object with 'start'/'end', "
+                f"got {type(window_raw).__name__}",
             )
         if "start" in window_raw:
             window_start = float(window_raw["start"])
@@ -536,7 +553,9 @@ def _parse_leaf(raw: dict, path: str) -> LeafSpec:
             and window_end <= window_start
         ):
             raise MetricSpecError(
-                f"{path}.window: end ({window_end}) must be > start ({window_start})"
+                f"{path}.window",
+                f"The window must end after it starts: it starts at {window_start} "
+                f"and ends at {window_end}.",
             )
 
     # Everything else is metric-specific params (tolerance, tube_rel, ...).

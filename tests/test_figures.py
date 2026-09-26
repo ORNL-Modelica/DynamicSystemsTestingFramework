@@ -685,6 +685,36 @@ class TestSpectrumRange:
         above = _dominant_view(SINE_2HZ, [{"freq": 60.0, "tolerance": 0.05}])
         assert _spectrum_x(above)[1] >= 63.0
 
+    def test_an_empty_spectrum_has_no_nyquist_and_does_not_raise(self):
+        """A spectrum Series with no samples (a result too short for an FFT)
+        gives no Nyquist to clamp to: the axis runs to the declared peak's
+        headroom."""
+        from dstf.figures.plotly import _spectrum_range
+
+        view = _spectrum_view()
+        empty = np.array([])
+        leaves = [
+            replace(
+                leaf,
+                geometry=tuple(
+                    replace(p, x=empty, y=empty)
+                    if isinstance(p, Series) and p.panel == "spectrum"
+                    else p
+                    for p in leaf.geometry
+                ),
+            )
+            for leaf in view.leaves
+        ]
+        assert any(
+            isinstance(p, Series) and p.panel == "spectrum"
+            for leaf in leaves
+            for p in leaf.geometry
+        )
+        assert _spectrum_range(replace(view, leaves=leaves)) == [
+            0.0,
+            pytest.approx(3 * 2.1),
+        ]
+
     def test_nothing_to_range_to_keeps_the_autorange(self):
         flat = np.zeros(1001)
         assert _spectrum_x(_dominant_view(flat, [])) is None

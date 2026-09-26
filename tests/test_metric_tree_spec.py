@@ -194,7 +194,9 @@ class TestCombinatorSpec:
             )
 
     def test_k_of_n_k_exceeding_children_rejected(self):
-        with pytest.raises(MetricSpecError, match="k=5 exceeds"):
+        with pytest.raises(
+            MetricSpecError, match=r"metrics\.k: k is 5 but only 1 criterion is left"
+        ):
             parse_metric_tree(
                 {
                     "combinator": "k-of-n",

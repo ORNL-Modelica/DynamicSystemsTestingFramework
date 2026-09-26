@@ -4874,12 +4874,19 @@ its left edge. The rest of that board waits for the steps that rebuild it.
 2. *A metric may seed a new leaf* (`MetricDescriptor.seed`,
    `comparison/seeds.py`): a pure function of the reference series, else the
    actual one, giving the params a leaf needs. Edit tree calls it on add and
-   Edit criteria on a metric switch (`seed_data` reads the variable's view).
+   Edit criteria on a metric switch (`seed_data` reads the variable's view,
+   cut to the leaf's window when it keeps one across the switch).
    `range` brackets the data with a 5% margin, `tube` a band 5% of the span
-   wide, `scalar` the final value (within 1% of the baseline's, or between
-   bounds when there is no reference), `dominant-frequency` the strongest
-   peak, 5% or two FFT bins wide and at most +-50%. A bound or width is
-   rounded AWAY from the data at the margin's leading digit: rounded to 6
+   wide — either margin at least 1e-6 of the data's magnitude, since a
+   reference stored at 7 significant digits excluded its float32 result
+   (TRANSFORM OilWater_PTHX `STHX.tube.mediums[2].h`) — `scalar` the final
+   value (within 1% of the baseline's, or between bounds when there is no
+   reference), `dominant-frequency` the strongest peak, 5% or two FFT bins
+   wide; a peak whose two bins exceed +-50% (the lowest four bins) is a
+   trend's leakage, not a frequency — 281 of TRANSFORM's 322 varying
+   variables seeded one — and is not seeded. A bound or width is
+   rounded AWAY from the data at the margin's leading digit, or left
+   unrounded where that would land on the data: rounded to 6
    significant digits, 101325 +- 0.001 seeded `min_value == max_value` and
    the leaf failed on its own data. `nrmse`, `points` and `event-timing` are
    valid bare and have no seed.
@@ -4894,7 +4901,9 @@ its left edge. The rest of that board waits for the steps that rebuild it.
    log whatever is not a `USER_ERRORS`. The validator's five messages are
    sentences ("Every tree needs at least one criterion scored against the
    primary baseline outside a 'warn': a tree of warnings alone can never
-   fail.").
+   fail."), joined by a space. A tree the parser refuses carries its
+   location apart too: `MetricSpecError` has a `path` and a `message`, as
+   `ValidationError` does, and the reason is the message alone.
 4. *The spectrum is ranged to its peaks* (`figures/plotly.py::
    _spectrum_range`). Autoranged, `xaxis2` ran 0..Nyquist, and Nyquist
    follows the sample count, not the physics: TRANSFORM's peaks near
