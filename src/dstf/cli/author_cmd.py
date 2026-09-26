@@ -1,9 +1,17 @@
 """`dstf author`: the authoring tool (§4.7 "Launch")."""
 
 import argparse
+import importlib
 from pathlib import Path
 
 from ..config import ConfigError
+
+#: Every module the ``[author]`` extra installs, checked before serving:
+#: the Variables drawer's `regex` is reached only when a Test page is (per
+#: request), so a venv synced before it joined the extra served the Suite
+#: page and failed every Test page. The extra's distributions are these
+#: names (`test_author_checks_every_package_of_the_extra`).
+_AUTHOR_MODULES = ("nicegui", "regex")
 
 
 def cmd_author(args: argparse.Namespace) -> int:
@@ -30,12 +38,8 @@ def cmd_author(args: argparse.Namespace) -> int:
             "would save to a different file than it shows"
         )
     try:
-        # Every package of the extra, not only what starting imports: the
-        # Variables drawer's `regex` is reached only when a Test page is
-        # (per request), so a venv synced before it joined the extra served
-        # the Suite page and failed every Test page.
-        import regex  # noqa: F401
-
+        for module in _AUTHOR_MODULES:
+            importlib.import_module(module)
         from ..authoring.shell import run_app
     except ImportError as e:
         # The tool needs NiceGUI and regex, the optional extra — say how to

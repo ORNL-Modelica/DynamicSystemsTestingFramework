@@ -21,10 +21,16 @@ from ..figures.families import family_label, group_families, mask_quoted
 TOP_LEVEL = "(top level)"
 
 #: Seconds ONE typed regex may search, over every name of one filter. An
-#: ordinary search costs ~2.5 us a name, wall time, while the session's own
-#: threads share the GIL: TRANSFORM's largest result (76,992 names) takes
-#: ~0.19 s, and 0.25 s timed out a plain `T` over 100,000. 1 s leaves ~5x,
-#: and bounds a pattern that backtracks to a ~1 s freeze.
+#: ordinary search costs ~2.5 us a name: TRANSFORM's largest result (76,992
+#: names) takes ~0.19 s, and 0.25 s timed out a plain `T` over 100,000. 1 s
+#: leaves ~5x, and bounds a pattern that backtracks to a ~1 s freeze. Each
+#: search holds the GIL (``concurrent=False``), which is what keeps a
+#: filter's time its own: released, a search waited ~1 ms on any busy
+#: thread of the tool (its overlay index json.loads for ~15 s after a page
+#: opens) and `T` ran out of time after ~2,000 names. The cost is that a
+#: backtracking search holds the GIL up to the budget — the freeze above.
+#: The package counts each search's ``timeout`` in process-CPU seconds; the
+#: budget's deadline is `monotonic` wall time.
 REGEX_BUDGET = 1.0
 
 
@@ -94,7 +100,7 @@ def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
             left = deadline[0] - now
             if left <= 0:
                 raise TimeoutError("the pattern took too long")
-            return pattern.search(text, timeout=left) is not None
+            return pattern.search(text, timeout=left, concurrent=False) is not None
 
         return search
     if is_glob_pattern(needle):

@@ -264,6 +264,27 @@ def test_author_without_regex_says_how_to_install_it(monkeypatch, capsys, tmp_pa
     assert "--extra author" in err and "regex" in err
 
 
+def test_author_checks_every_package_of_the_extra():
+    """The install check imports `_AUTHOR_MODULES`, and nothing else ties
+    it to pyproject.toml's ``author`` extra: a package added there and not
+    here serves the Suite page and fails wherever it is first imported."""
+    tomllib = pytest.importorskip("tomllib")
+    import re
+
+    from dstf.cli.author_cmd import _AUTHOR_MODULES
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    extra = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
+        "optional-dependencies"
+    ]["author"]
+    names = {
+        re.sub(r"[-_.]+", "-", re.match(r"[A-Za-z0-9._-]+", req).group()).lower()
+        for req in extra
+    }
+    assert "nicegui" in names  # the parse read the extra
+    assert names <= set(_AUTHOR_MODULES)
+
+
 # ---------------------------------------------------------------------------
 # --tolerance 0 survives _build_config
 # ---------------------------------------------------------------------------
