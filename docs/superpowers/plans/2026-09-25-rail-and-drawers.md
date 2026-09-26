@@ -25,7 +25,7 @@
 5. The Tests drawer has its own filter, always grouped with short names. The Suite page's chips and toggles stay on the Suite page.
 6. Which drawer is open, and the Tests drawer's filter, are remembered per browser tab, so the drawer stays open across a switch of test.
 7. **The folded CRITERIA row (3b's plan listed it for 3c) moves to 3d**, beside the expansion that writes one criterion per index: in 3c a family's criteria stay one row per member. The board drew a folded criteria row on plot 2 as decoration; 3c does not build it. **Owner ruling, 2026-09-25: it stays in 3d.**
-8. A click anywhere in a plot card outside its plot area selects the plot, criteria rows included. The plot area is left alone: it takes zooms and handle drags.
+8. A click anywhere in a plot card outside its plot area selects the plot. A criteria row's own click bubbles to its card and selects it; its swatch and its node controls (+ / wrap / −) stop the click in the browser (`plot_card.py`'s swatch, `actions.py`'s `InlineHost` column) and do not select, as they stopped it before 3c so that a click on them does not also open the row's editor. The plot area is left alone: it takes zooms and handle drags. That matches the owner's ruling (Q5 A): a click on a card's toolbar or margin selects it.
 9. Remove plot obeys the same rule as the checkbox (Q7): it is grey, with the reason, when the plot is the last one showing a scored variable.
 10. A layout edit refused by the Session (a job holds the test; a patch error) is a notification with the Session's sentence. Nothing else changes.
 
