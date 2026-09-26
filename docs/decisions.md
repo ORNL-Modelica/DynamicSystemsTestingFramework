@@ -4843,3 +4843,85 @@ either collapse is wrong for one of the two starting states.
 expansion and the folded criteria row (3d); moving plots up and down, and
 plot titles (`docs/ideas.md`); tracking a variable from the drawer, so
 `/variables` stays outside the patch whitelist (D130).
+
+## D135 — A new criterion is valid when it is added; errors read as their reason; only a handle's drag is staged (2026-09-26)
+
+**Context.** The owner's first hands-on look at `dstf author` (the feedback
+board's settled block, 2026-09-26) found four defects that no later redesign
+step rebuilds, ruled "these bugs get fixed whatever you choose": a criterion
+with a time window could not be dragged; a new `range`, `tube`, `scalar` or
+`dominant-frequency` criterion arrived misconfigured; errors showed raw
+exception text; and the dominant-frequency spectrum squeezed real peaks into
+its left edge. The rest of that board waits for the steps that rebuild it.
+
+**Decision.** Four fixes.
+
+1. *Area shapes under lines; a drag on what is not a handle snaps back*
+   (`figures/plotly.py::_layout`, `authoring/builtin/edit_on_plot.py`).
+   Under `edits.shapePosition` every shape takes a drag and the topmost wins.
+   A real-mouse spike in Chromium on the tool's plotly.js 3.1.1: the window's
+   rect, drawn after the bound, took every drag on the bound inside the
+   window; `layer: "below"` restacks the drawing but does NOT change what a
+   grab takes, and a per-shape `editable: false` has no effect. So `_layout`
+   draws every rect before every line, on both tiers. The bound's dotted
+   `<id>/outside` continuation is full width, so inside the window it lies
+   over the bound and a grab there arrives under its name: it resolves to the
+   bound. A drag on a primitive that is not a `Marker` or `HLine` of
+   `kind="handle"` — a window, a box (`points/box/i` and `peaks/window/i`
+   are `kind="handle"` Boxes, so the check is by type), a result line —
+   returns nothing, before the open-leaf check; the figure hook's redraw
+   snaps it back. A rect still takes a drag: only a handle's is staged.
+2. *A metric may seed a new leaf* (`MetricDescriptor.seed`,
+   `comparison/seeds.py`): a pure function of the reference series, else the
+   actual one, giving the params a leaf needs. Edit tree calls it on add and
+   Edit criteria on a metric switch (`seed_data` reads the variable's view).
+   `range` brackets the data with a 5% margin, `tube` a band 5% of the span
+   wide, `scalar` the final value (within 1% of the baseline's, or between
+   bounds when there is no reference), `dominant-frequency` the strongest
+   peak, 5% or two FFT bins wide and at most +-50%. A bound or width is
+   rounded AWAY from the data at the margin's leading digit: rounded to 6
+   significant digits, 101325 +- 0.001 seeded `min_value == max_value` and
+   the leaf failed on its own data. `nrmse`, `points` and `event-timing` are
+   valid bare and have no seed.
+3. *Errors carry a reason* (`PatchError.reason`, `HandleEditError.reason`,
+   `authoring/errors.py::user_text`). `str()` keeps the location the CLI
+   prints — `validator rejected the patched tree: metrics: ...`,
+   `/metrics/children/1: range/max: ...` — and the tool shows the reason,
+   since the location is already on the screen beside the row or plot it
+   came from. A person's own error (the five `USER_ERRORS`) or a ValueError
+   reads as its reason; anything else keeps its class name. A ValueError can
+   also be a bug (a JSONDecodeError is one), so the two act `submit` sites
+   log whatever is not a `USER_ERRORS`. The validator's five messages are
+   sentences ("Every tree needs at least one criterion scored against the
+   primary baseline outside a 'warn': a tree of warnings alone can never
+   fail.").
+4. *The spectrum is ranged to its peaks* (`figures/plotly.py::
+   _spectrum_range`). Autoranged, `xaxis2` ran 0..Nyquist, and Nyquist
+   follows the sample count, not the physics: TRANSFORM's peaks near
+   1.2e-5 Hz sat in the leftmost ~10 px of an axis to ~1.7e-3 Hz. The axis
+   now runs to 3x the highest declared or matched peak (its window's upper
+   edge), else the strongest detected one, clamped to Nyquist but never
+   short of a declared peak; with no peak above zero it keeps its autorange.
+
+Nothing in the pre-release seams moves: the CLI, `testing.json`, the
+reference-JSON layout and the `test_spec.json` format are unchanged. A seeded
+leaf is ordinary spec data.
+
+**Consequences.** A figure's shape ORDER changed (`figure_event_timing.json`
+re-blessed: its window rect comes first); the figure hook resolves a dragged
+shape's index through the current figure, and nothing in the report
+addresses a shape by index. Every seeded leaf is tested to pass when scored
+on the data it came from, through `evaluate_spec`: `resolve_mode` alone
+accepts a bare `tube` and a bare `dominant-frequency`. A variable no
+criterion scores has no reference in its view even when the baseline file
+holds it, so it seeds from its actual result (a scalar then gets bounds).
+
+**Alternatives considered.** `layer: "below"` on the rects and
+`editable: false` per shape: measured, neither stops a grab. Ranging the
+spectrum to the highest detected peak: the reference's ten detected peaks
+include leakage sidelobes, and on a 2 Hz sine that put the axis at 40.8 Hz.
+
+**Not built here**, so nobody looks for it: the "Add a criterion for x"
+dialog not opening its editor, the tree `+` wording and placement and the
+weighted-combinator hint (the Test page step); rows waiting for the scan
+(the Suite table step); the squeezed tolerance column (the tolerance step).

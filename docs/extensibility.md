@@ -441,17 +441,36 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    `None` for an axis that did not move) and `reference` (the primary
    baseline's `(time, values)` at full resolution, or `None`) — and returns
    the new raw leaf, or raises `HandleEditError` naming the handle and the
-   reason for a drag the leaf cannot take. The tool stages what comes back as
+   reason for a drag the leaf cannot take — with the reason alone as its
+   `reason` (`handles._refuse` builds both), which is what the tool shows in
+   the open criterion's editor. The tool stages what comes back as
    ONE `replace` of the whole leaf, so an editor rewrites the leaf, never a
    field path, and a leaf equal to the input stages nothing. The builtin
    editors round every float they write to 12 significant digits
    (`handles._written`), so drag arithmetic never lands float noise in the
    author's spec file. Leave it `None`
-   and a drag of the metric's handles is refused ("has no on-plot handles");
-   the builtins `nrmse` and `event-timing` do. The builtin editors are the
-   worked examples: `tube`, `points` and `dominant-frequency` move a list
-   entry, `range` and `scalar` a bound.
-8. A config field holding a list of row dicts declares `columns` in its
+   and a drag of the metric's handle markers and lines is refused ("has no
+   on-plot handles"); the builtins `nrmse` and `event-timing` do. Only a
+   `Marker` or an `HLine` of `kind="handle"` reaches the editor: a drag of
+   anything else on the plot — a window, a box, a result line — snaps back
+   and stages nothing. The builtin editors are the worked examples: `tube`,
+   `points` and `dominant-frequency` move a list entry, `range` and `scalar`
+   a bound.
+8. `seed` (default `None`) gives a new leaf its first values, from the data
+   it will score: the authoring tool calls it when a criterion of this
+   metric is added and when a criterion's metric is switched to it
+   (`comparison/seeds.py`). It takes a `SeedData` — `ref` and `act`, each a
+   `(time, values)` pair or `None` (`SeedData.series()` is the reference,
+   else the actual) — and returns the params to add to
+   `{"metric", "variable"}`, or `{}` when there is nothing to seed from. It
+   is pure, like `compare`. Leave it `None` for a metric valid bare: the
+   builtins `nrmse`, `points` and `event-timing` do. The builtin seeds are
+   the worked examples: `range` brackets the data, `tube` a band around the
+   reference, `scalar` the final value and `dominant-frequency` the
+   strongest peak. A bound or a width is rounded AWAY from the data at the
+   leading digit of the margin it leaves, so the spec file reads short and
+   the seeded leaf still passes on the data it came from.
+9. A config field holding a list of row dicts declares `columns` in its
    metadata — `(key, type)` pairs, one per row key, where `type` is
    `"float"` (a key the metric indexes: required, a blank cell is never staged),
    `"float?"` (read with `.get`: optional, a blank cell omits the key) or a
@@ -463,14 +482,14 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    is read from `dataclasses.fields`, not through `derive_schema`, so it
    never reaches `export-schema`. A list field without `columns` gets no
    table; Edit criteria shows every list field read-only either way.
-9. `drawn_by_default` (default `True`) says whether the authoring tool's
-   Test page draws a closed criterion of this metric on its plot before the
-   swatch on its row is touched. Set it `False` for a metric whose drawing
-   crosses the whole plot — the builtins `range` and `scalar` draw bounds
-   from edge to edge, which would cover every plot they sit on. It is only
-   the default: a failing criterion draws whatever it says, the open one
-   always draws, and the swatch overrides it either way. The report does
-   not read it.
+10. `drawn_by_default` (default `True`) says whether the authoring tool's
+    Test page draws a closed criterion of this metric on its plot before the
+    swatch on its row is touched. Set it `False` for a metric whose drawing
+    crosses the whole plot — the builtins `range` and `scalar` draw bounds
+    from edge to edge, which would cover every plot they sit on. It is only
+    the default: a failing criterion draws whatever it says, the open one
+    always draws, and the swatch overrides it either way. The report does
+    not read it.
 
 ### Currently registered
 
