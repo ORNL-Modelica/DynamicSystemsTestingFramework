@@ -28,7 +28,7 @@ from ..tree_pointer import node_or_none
 from ..tree_text import leaves_of, nodes_of
 from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
-from .plot_card import UNREAD, PlotCard
+from .plot_card import UNREAD, PlotCard, folded
 from .rail import Rail
 from .tabstate import tab_state
 from .tree_card import TreeCard
@@ -578,10 +578,10 @@ class TestPage:
         if focused is None or self.focus_all is None:
             return
         plots = plural(len(self.cards), "plot")
-        # The card's own title text, so the bar names the plot the way the
-        # plot names itself — its labels, not the keys underneath them.
+        # The plot named the way it names itself — its texts, not the keys
+        # underneath them, and a family folded as on its title.
         card = self.cards[focused]
-        name = ", ".join(card.texts.get(n, n) for n in card.resolved.series)
+        name = folded(card.resolved.series, card.texts)
         self.focus_text.set_text(f"Showing 1 of {plots}: {name}")
         self.focus_all.set_text(f"Show all {plots}")
         self.cards[focused].show(view)

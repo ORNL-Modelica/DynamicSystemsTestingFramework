@@ -26,6 +26,7 @@ from dstf.authoring.shell.actions import ActionBar, InlineHost  # noqa: E402
 from dstf.authoring.shell.figure_hook import FigureHook  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
 from dstf.authoring.shell.test_page import TestPage  # noqa: E402
+from dstf.authoring.shell.variables_drawer import marker as var_marker  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from dstf.authoring.tree_text import leaves_of  # noqa: E402
 from test_handles import TREE  # noqa: E402
@@ -4427,6 +4428,69 @@ class TestLayoutControls:
             assert page.selected == 4
             assert shell.session.spec.pending == []
 
+    async def test_reset_layout_follows_the_effective_entry(self, shell):
+        """B has no ``plots`` key: Remove plot stages the key's add, Reset
+        stages its removal after it — two ops, since a remove after an add
+        is kept as two — and the button goes again, because the EFFECTIVE
+        entry has no key, whatever the pending list still holds."""
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user, B)
+            assert _none(user, "tree:reset-layout")
+            user.find(marker="remove-plot:0").click()
+            assert shell.session.spec.pending == [
+                PatchOp(B, "add", "/plots", _raw(["y"]))
+            ]
+            await _settled(lambda: not _none(user, "tree:reset-layout"))
+            user.find(marker="tree:reset-layout").click()
+            assert [
+                (op.model_id, op.op, op.path) for op in shell.session.spec.pending
+            ] == [
+                (B, "add", "/plots"),
+                (B, "remove", "/plots"),
+            ]
+            await _settled(lambda: _none(user, "tree:reset-layout"))
+            await _settled(lambda: len(page.cards) == 2)
+
+    async def test_a_refused_reset_is_said_and_changes_nothing(
+        self, page_shell, monkeypatch
+    ):
+        from dstf.authoring.session import LockedError
+
+        shell = page_shell
+        error = LockedError([A], "Rerun")
+
+        def refuse(ops):
+            raise error
+
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            monkeypatch.setattr(shell.session, "stage", refuse)
+            user.find(marker="tree:reset-layout").click()
+            await _settled(lambda: user.notify.messages != [])
+            assert user.notify.messages == [str(error)]
+            assert shell.session.spec.pending == []
+            assert len(page.cards) == 7 and not _none(user, "tree:reset-layout")
+
+    async def test_a_patch_error_from_a_layout_edit_is_said_not_raised(
+        self, page_shell, monkeypatch
+    ):
+        from dstf.discovery.patch_apply import PatchError
+
+        shell = page_shell
+        error = PatchError("probe: the document refused it")
+
+        def refuse(ops):
+            raise error
+
+        async with user_simulation(root=shell.index) as user:
+            page = await _test_page(shell, user)
+            monkeypatch.setattr(shell.session, "stage", refuse)
+            with page.client:
+                assert page.stage_layout(shell.session.layout(A)) is False
+            await _settled(lambda: user.notify.messages != [])
+            assert user.notify.messages == [str(error)]
+            assert shell.session.spec.pending == [] and len(page.cards) == 7
+
 
 # -- 3c: the Variables drawer ---------------------------------------------------
 
@@ -4438,6 +4502,10 @@ ROW_PIPE = "1/pipe/pipe.T[]"
 ROW_PORT = "1/port/port[2, 1].C[]"
 PIPE = ["pipe.T[1]", "pipe.T[2]", "pipe.T[3]"]
 PORT = ["port[2, 1].C[1]", "port[2, 1].C[2]", "port[2, 1].C[3]"]
+#: A second port family whose id holds the first's words and more (the
+#: marker test's own copy of the fixture adds it).
+ROW_PORT3 = "1/port/port[2, 3, 1].C[]"
+PORT3 = ["port[2, 3, 1].C[1]", "port[2, 3, 1].C[2]"]
 
 
 def _raw(*plots):
@@ -4476,7 +4544,7 @@ def _groups_shown(user) -> list[str]:
 
 
 def _checked(user, row_id: str) -> str:
-    return str(_one(user, f"var-check:{row_id}").props["aria-checked"])
+    return str(_one(user, var_marker("var-check", row_id)).props["aria-checked"])
 
 
 def _op_value(shell) -> list:
@@ -4509,8 +4577,12 @@ class TestVariablesDrawer:
                 "var-group:3-Diagnostics",
             ]
             assert _one(user, "var-target").text == "Checkboxes act on plot 1 of 2"
-            assert "pipe.T[1:3]" in _labels_in(_one(user, f"var-row:{ROW_PIPE}"))
-            assert "port[2, 1].C[1:3]" in _labels_in(_one(user, f"var-row:{ROW_PORT}"))
+            assert "pipe.T[1:3]" in _labels_in(
+                _one(user, var_marker("var-row", ROW_PIPE))
+            )
+            assert "port[2, 1].C[1:3]" in _labels_in(
+                _one(user, var_marker("var-row", ROW_PORT))
+            )
             assert _checked(user, ROW_X) == "true"
             assert _checked(user, ROW_Y) == "false"
 
@@ -4520,10 +4592,10 @@ class TestVariablesDrawer:
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
-            user.find(marker=f"var-check:{ROW_Z}").click()
+            user.find(marker=var_marker("var-check", ROW_Z)).click()
             assert _op_value(shell) == _raw(["x", "z"], ["y"])
             await _settled(lambda: _checked(user, ROW_Z) == "true")
-            user.find(marker=f"var-check:{ROW_PIPE}").click()
+            user.find(marker=var_marker("var-check", ROW_PIPE)).click()
             assert _op_value(shell) == _raw(["x", "z", *PIPE], ["y"])
             await _settled(lambda: len(page.cards[0].resolved.series) == 5)
             await _settled(lambda: _checked(user, ROW_PIPE) == "true")
@@ -4542,7 +4614,7 @@ class TestVariablesDrawer:
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
             assert _checked(user, ROW_PIPE) == "mixed"
-            user.find(marker=f"var-check:{ROW_PIPE}").click()
+            user.find(marker=var_marker("var-check", ROW_PIPE)).click()
             assert _op_value(shell) == _raw(["x", PIPE[1], PIPE[0], PIPE[2]], ["y"])
 
     async def test_unchecking_removes_and_a_scored_last_plot_refuses(
@@ -4551,18 +4623,18 @@ class TestVariablesDrawer:
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             await _drawer(shell, user)
-            user.find(marker=f"var-check:{ROW_Z}").click()
+            user.find(marker=var_marker("var-check", ROW_Z)).click()
             await _settled(lambda: _checked(user, ROW_Z) == "true")
-            user.find(marker=f"var-check:{ROW_Z}").click()
+            user.find(marker=var_marker("var-check", ROW_Z)).click()
             assert _op_value(shell) == _raw(["x"], ["y"])
             await _settled(lambda: _checked(user, ROW_Z) == "false")
-            assert not _one(user, f"var-check:{ROW_X}").enabled
-            assert _tooltip_text(_one(user, f"var-why:{ROW_X}")) == (
+            assert not _one(user, var_marker("var-check", ROW_X)).enabled
+            assert _tooltip_text(_one(user, var_marker("var-why", ROW_X))) == (
                 "x is scored by 1 criterion and this is the only plot that shows "
                 "it. Add it to another plot first, or remove its criteria."
             )
             # A row with nothing to strand says nothing.
-            assert _one(user, f"var-check:{ROW_Z}").enabled
+            assert _one(user, var_marker("var-check", ROW_Z)).enabled
 
     async def test_new_plot_goes_below_the_selected_one_and_is_selected(
         self, drawer_shell
@@ -4570,7 +4642,7 @@ class TestVariablesDrawer:
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
-            user.find(marker=f"var-new:{ROW_PORT}").click()
+            user.find(marker=var_marker("var-new", ROW_PORT)).click()
             assert _op_value(shell) == _raw(["x"], PORT, ["y"])
             await _settled(lambda: len(page.cards) == 3)
             assert page.selected == 1 and _ringed(page) == [1]
@@ -4601,20 +4673,20 @@ class TestVariablesDrawer:
     async def test_a_family_opens_to_its_members(self, drawer_shell):
         async with user_simulation(root=drawer_shell.index) as user:
             await _drawer(drawer_shell, user)
-            assert _none(user, f"var-row:{ROW_PIPE}/{PIPE[0]}")
-            user.find(marker=f"var-open:{ROW_PIPE}").click()
+            assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
+            user.find(marker=var_marker("var-open", ROW_PIPE)).click()
             for name in PIPE:
                 member = f"{ROW_PIPE}/{name}"
-                assert name in _labels_in(_one(user, f"var-row:{member}"))
+                assert name in _labels_in(_one(user, var_marker("var-row", member)))
                 assert _checked(user, member) == "false"
-                assert not _none(user, f"var-new:{member}")
-            user.find(marker=f"var-check:{ROW_PIPE}/{PIPE[1]}").click()
+                assert not _none(user, var_marker("var-new", member))
+            user.find(marker=var_marker("var-check", f"{ROW_PIPE}/{PIPE[1]}")).click()
             await _settled(lambda: _checked(user, f"{ROW_PIPE}/{PIPE[1]}") == "true")
             # Still open after the rebuild the stage caused.
             assert _checked(user, f"{ROW_PIPE}/{PIPE[0]}") == "false"
             assert _checked(user, ROW_PIPE) == "mixed"
-            user.find(marker=f"var-open:{ROW_PIPE}").click()
-            assert _none(user, f"var-row:{ROW_PIPE}/{PIPE[0]}")
+            user.find(marker=var_marker("var-open", ROW_PIPE)).click()
+            assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[0]}"))
 
     async def test_the_drawer_follows_the_selected_plot(self, drawer_shell):
         """`select` moves the drawer's target and its checks, and a repaint
@@ -4630,8 +4702,8 @@ class TestVariablesDrawer:
             assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
             assert _checked(user, ROW_Y) == "true"
             assert _checked(user, ROW_X) == "false"
-            assert not _one(user, f"var-check:{ROW_Y}").enabled
-            assert _one(user, f"var-check:{ROW_X}").enabled
+            assert not _one(user, var_marker("var-check", ROW_Y)).enabled
+            assert _one(user, var_marker("var-check", ROW_X)).enabled
             assert shell.session.spec.pending == []
             assert user.notify.messages == []
 
@@ -4705,6 +4777,79 @@ class TestVariablesDrawer:
                 f"Showing 200 of {total:,} rows — narrow the filter"
             )
 
+    async def test_the_open_drawer_rebuilds_only_when_what_it_draws_moved(
+        self, drawer_shell
+    ):
+        """`TestPage.sync` ends by refreshing the rail, and a Rerun's five
+        job events rebuilt an open drawer five times over rows that had not
+        moved. A build clears the body first: that is what is counted."""
+        shell = drawer_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            drawer = page.rail.variables
+            assert drawer is not None
+            built = []
+            clear = drawer.body.clear
+            drawer.body.clear = lambda: (built.append(1), clear())[1]
+            with page.client:
+                for state in ("started", "running", "finished"):
+                    page.handle({"event": "job", "state": state})
+            assert built == []
+            shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z"], ["y"]))])
+            await _settled(lambda: _checked(user, ROW_Z) == "true")
+            await asyncio.sleep(0.3)  # the rescore the stage started, and its events
+            assert built == [1]
+            with page.client:
+                page.select(1)
+            assert built == [1, 1]
+            assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
+
+    async def test_a_marker_names_one_row_whatever_its_spaces(self, tmp_path):
+        """NiceGUI splits a marker on whitespace: `port[2, 1].C[]`'s marker
+        was three words that `port[2, 3, 1].C[]`'s also carried, so a find
+        for the first found both."""
+        from test_session import _drawer_project
+
+        cfg, work = _drawer_project(tmp_path)
+        path = work / "test_0001" / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for k, name in enumerate(PORT3, start=40):
+            payload["variables"][name] = [k * v for v in payload["time"]]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        shell = Shell(cfg, work_dir=work)
+        shell.session.open(cfg, work_dir=work)
+        shell.load.phase = "done"
+        async with user_simulation(root=shell.index) as user:
+            await _drawer(shell, user)
+            for row, label in (
+                (ROW_PORT, "port[2, 1].C[1:3]"),
+                (ROW_PORT3, "port[2, 3, 1].C[1:2]"),
+            ):
+                assert (
+                    len(user.find(marker=var_marker("var-check", row)).elements) == 1
+                ), row
+                assert label in _labels_in(_one(user, var_marker("var-row", row)))
+
+    async def test_a_gone_page_leaves_the_open_drawer_empty(self, drawer_shell, caplog):
+        """The drawer reads nothing on a page whose test is gone (`_read`):
+        every read raises for a model the open project does not have."""
+        shell = drawer_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            assert not _none(user, var_marker("var-row", ROW_X))
+            with caplog.at_level(logging.ERROR, logger="dstf"):
+                shell.session.close()
+                await _settled(lambda: page.gone)
+                with page.client:
+                    page.rail.refresh()
+            assert [
+                r for r in caplog.records if "a page failed" in r.getMessage()
+            ] == []
+            assert _none(user, var_marker("var-row", ROW_X)) and _none(
+                user, "var-group:0-Tracked"
+            )
+            assert _one(user, "var-target").text == ""
+
 
 @pytest.mark.parametrize(
     ("second", "title"),
@@ -4733,3 +4878,18 @@ async def test_a_card_folds_a_family_of_expressions_and_its_names(
         await _test_page(shell, user)
         assert _one(user, "plot-title:0").text == title
         assert _one(user, "plot-name:0").text == "unitTests.x[1:2]"
+
+
+async def test_the_focus_bar_names_the_plot_as_its_title_does(drawer_shell):
+    """The bar names the focused plot "the way the plot names itself": a
+    family folds there as on the card's title (the executing review's
+    correction 8)."""
+    shell = drawer_shell
+    shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z", *PIPE], ["y"]))])
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user)
+        assert _one(user, "plot-title:0").text == "x, z, pipe.T[1:3]"
+        user.find(marker="focus:0").click()
+        assert _one(user, "focus-bar:text").text == (
+            "Showing 1 of 2 plots: x, z, pipe.T[1:3]"
+        )

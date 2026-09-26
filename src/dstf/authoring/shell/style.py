@@ -173,7 +173,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    row only (the owner's ruling, Q6 A) — `visibility`, so the row does not
    reflow as the mouse moves down the list. A family's members hang under
    it, indented; a family carries the ramp its members are drawn in. The
-   target line wears the selected plot's ring. */
+   target line is a tag on the accent tint with the selected plot's ring
+   inside it, as the owner's board drew it: a bare ring beside the text
+   read as an empty checkbox. */
 .dstf-var-row { min-height: 28px; }
 .dstf-var-row:hover { background: var(--dstf-surface-hover); }
 .dstf-var-row .dstf-var-new { visibility: hidden; }
@@ -181,10 +183,13 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-var-member { padding-left: 24px; }
 .dstf-var-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dstf-var-ramp { width: 16px; height: 8px; border-radius: 2px; flex: none; }
-.dstf-var-target { cursor: pointer; font-size: 12px; color: var(--dstf-text-secondary); }
+.dstf-var-target {
+  cursor: pointer; font-size: 12px; padding: 4px 8px; border-radius: 3px;
+  background: var(--dstf-selection); color: var(--dstf-accent);
+}
 .dstf-var-ring {
-  width: 12px; height: 12px; border-radius: 2px; flex: none;
-  box-shadow: inset 0 0 0 2px var(--dstf-accent);
+  width: 12px; height: 9px; border-radius: 2px; flex: none;
+  border: 2px solid var(--dstf-accent); box-sizing: content-box;
 }
 .dstf-chip-active { outline: 2px solid var(--dstf-accent); }
 .dstf-card {

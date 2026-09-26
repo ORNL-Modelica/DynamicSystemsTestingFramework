@@ -97,6 +97,25 @@ def drawn(leaf: dict, choice: bool | None, is_open: bool) -> bool:
     return desc is None or desc.drawn_by_default
 
 
+def folded(
+    names: Sequence[str],
+    labels: Mapping[str, str] | None = None,
+    by: Mapping[str, str] | None = None,
+) -> str:
+    """``names`` as a plot names them, the way the report's plot titles do
+    (`report_suite`): each array family one entry, READ through ``labels``
+    (``pipe.T[1:3]``), the fold taken over ``by`` — ``labels`` when not
+    given — so two series whose texts collide are no family. The card's
+    title, its muted names line, its plot-only line and the focus bar all
+    name a plot through this, so they fold alike: the focus bar read the
+    unfolded texts while the title above it folded them."""
+    fold_over = labels if by is None else by
+    return ", ".join(
+        family_label(key, members, labels)
+        for key, members in group_families(names, fold_over)
+    )
+
+
 #: The swatch's tooltip: what a click on it would do, or why it does nothing.
 _SWATCH_TIPS = {
     "open": "the open criterion always draws",
@@ -336,19 +355,13 @@ class PlotCard:
                 # labels' slice (`pipe.T[1:3]`), and the muted line folds
                 # the names the same way.
                 series = list(resolved.series)
-                ui.label(
-                    ", ".join(
-                        family_label(key, members, labels)
-                        for key, members in group_families(series, self.texts)
-                    )
-                ).classes("text-subtitle2").mark(f"plot-title:{index}")
+                ui.label(folded(series, labels, self.texts)).classes(
+                    "text-subtitle2"
+                ).mark(f"plot-title:{index}")
                 if any(labels[n] != n for n in series):
-                    ui.label(
-                        ", ".join(
-                            family_label(key, members)
-                            for key, members in group_families(series)
-                        )
-                    ).classes("dstf-varname").mark(f"plot-name:{index}")
+                    ui.label(folded(series)).classes("dstf-varname").mark(
+                        f"plot-name:{index}"
+                    )
                 for variable in self.tracked:
                     if self._leaves(view, variable):
                         pill = Pill("queued", f"plot-pill:{index}:{variable}")
@@ -394,10 +407,7 @@ class PlotCard:
                 # tracked one's expression must not read the same as the
                 # criteria row above it. A family is one entry, as in the
                 # report's plot-only lines.
-                texts = ", ".join(
-                    family_label(key, members, self.texts)
-                    for key, members in group_families(only, self.texts)
-                )
+                texts = folded(only, self.texts)
                 ui.label(f"{texts} {verb} no criteria.").classes("dstf-why").mark(
                     f"plot-only:{index}"
                 )
@@ -451,12 +461,14 @@ class PlotCard:
             )
             if stuck:
                 button.disable()
+                # Wrapped at 320 px: unbounded, the sentence ran as one line
+                # across the plot area (3c's LOOK, at 1280 px).
                 ui.tooltip(
                     stranded_sentence(
                         [self.texts.get(v, v) for v in stuck],
                         sum(scored[v] for v in stuck),
                     )
-                )
+                ).props("max-width=320px")
 
     def _add_series(self) -> None:
         """Select this plot and open the Variables drawer on it (Q5 A)."""

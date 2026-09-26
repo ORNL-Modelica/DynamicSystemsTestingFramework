@@ -7,23 +7,26 @@ plot of their own below it. The rules are not here: the rows are data
 (`authoring.variable_rows`), the edits pure functions (`authoring.layout`),
 and the page stages what they return (`TestPage.stage_layout`).
 
-Rebuilt whole when it opens and whenever the page it sits on moves
-(`Rail.refresh`: a select, a sync), never while closed. So its check is a
-button with `role=checkbox`, not a `ui.checkbox`: a checkbox's `set_value`
-fires its own `on_change`, and a repaint of one would stage an edit."""
+Rebuilt whole when it opens, and when what it draws moved under the page
+it sits on (`Rail.refresh`: a select, a sync), never while closed. So its
+check is a button with `role=checkbox`, not a `ui.checkbox`: a checkbox's
+`set_value` fires its own `on_change`, and a repaint of one would stage an
+edit."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING
 
 from nicegui import ui
 
+from ...backends.types import VariableText
 from ...figures.families import HUES
 from ..layout import (
+    Layout,
     add_series,
     new_plot,
     remove_series,
@@ -43,6 +46,29 @@ ROWS, MEMBERS = 200, 50
 #: A family's swatch: the ramp its members are drawn in, the first hue's
 #: four stops (`figures.families`), light to dark.
 _RAMP = f"background: linear-gradient(90deg, {', '.join(HUES[0])})"
+
+
+_SPACE = re.compile(r"\s+")
+
+
+def marker(kind: str, row_id: str) -> str:
+    """A row's ``var-*`` marker: ``kind:row_id`` with ALL whitespace taken
+    out. NiceGUI splits a marker on whitespace, so ``port[2, 1].C[]``'s was
+    two words that ``port[2, 3, 1].C[]``'s marker also carried, and a find
+    for the one found both. Every row marker is built here; a test looks one
+    up through it."""
+    return f"{kind}:{_SPACE.sub('', row_id)}"
+
+
+@dataclass(frozen=True)
+class _Reads:
+    """The Session's reads one build draws from, taken once."""
+
+    names: list[str]
+    tracked: list[str]
+    scope: dict[str, VariableText]
+    layout: Layout
+    scored: dict[str, int]
 
 
 def _slug(title: str) -> str:
@@ -71,6 +97,9 @@ class VariablesDrawer:
         self.case = False
         #: What the last rebuild read, for the clicks on the rows it drew.
         self.texts: dict[str, str] = {}
+        #: What the drawn rows were built from (`_signature`): `refresh`
+        #: builds again only when it moved.
+        self.drawn: object = None
         with panel:
             ui.label("Variables").classes("text-subtitle2")
             with ui.row().classes("items-center no-wrap gap-1 w-full"):
@@ -134,10 +163,64 @@ class VariablesDrawer:
 
     def rebuild(self) -> None:
         """Every row from the Session as it is now, against the selected
-        plot. ONE read of each: the names, the texts, the layout, the tree."""
+        plot, whether it moved or not: the drawer opening, its filter, a
+        family opened."""
+        self._draw(self._read())
+
+    def refresh(self) -> None:
+        """The page moved (`Rail.refresh`: a select, a sync): build again
+        only when what the rows are drawn from did. `TestPage.sync` ends
+        here, and a Rerun's five job events rebuilt every row of an open
+        drawer five times over a list that had not changed."""
+        reads = self._read()
+        if self._signature(reads) != self.drawn:
+            self._draw(reads)
+
+    def _read(self) -> _Reads | None:
+        """ONE read of each — the names, the texts, the layout, the tree —
+        or None on a page whose test is gone: every read raises for a model
+        the open project does not have."""
         page = self.page
-        self.body.clear()
         if page.gone:
+            return None
+        session, model_id = page.shell.session, page.model_id
+        return _Reads(
+            names=session.variable_names(model_id),
+            tracked=session.tracked(model_id),
+            scope=session.variable_texts(model_id),
+            layout=session.layout(model_id),
+            scored=page.scored(session.tree_view(model_id)),
+        )
+
+    def _signature(self, reads: _Reads | None) -> object:
+        """Everything a build draws from: the reads, the selected plot and
+        the number of plots, the filter, the families opened, and the
+        reason an empty result gives."""
+        page = self.page
+        head = (
+            page.selected,
+            len(page.cards),
+            self.needle.value or "",
+            self.regex,
+            self.case,
+            frozenset(self.opened),
+        )
+        if reads is None:
+            return head, None
+        return head, (
+            tuple(reads.names),
+            tuple(reads.tracked),
+            tuple((n, t.label, t.text) for n, t in reads.scope.items()),
+            reads.layout,
+            tuple(reads.scored.items()),
+            "" if reads.names else page.unscored_reason(),
+        )
+
+    def _draw(self, reads: _Reads | None) -> None:
+        page = self.page
+        self.drawn = self._signature(reads)
+        self.body.clear()
+        if reads is None:
             self.target.set_text("")
             return
         n = len(page.cards)
@@ -153,8 +236,8 @@ class VariablesDrawer:
             self.why.set_visibility(True)
             return
         self.why.set_visibility(False)
-        session, model_id = page.shell.session, page.model_id
-        names = session.variable_names(model_id)
+        names = reads.names
+        project = page.shell.session.project
         with self.body:
             if not names:
                 reason = page.unscored_reason()
@@ -164,21 +247,20 @@ class VariablesDrawer:
                     else "the result has no variables"
                 ).classes("dstf-why").mark("var-empty")
                 return
-            scope = session.variable_texts(model_id)
-            project = session.project
+            scope = reads.scope
             self.texts = {name: t.text for name, t in scope.items()}
             # Everything but the names and the filter, for the members too.
             groups_of = partial(
                 variable_groups,
-                tracked=session.tracked(model_id),
+                tracked=reads.tracked,
                 diagnostics=(
                     project.config.diagnostic_variables if project is not None else ()
                 ),
                 labels={name: t.label for name, t in scope.items()},
                 texts=self.texts,
-                layout=session.layout(model_id),
+                layout=reads.layout,
                 selected=page.selected if n else None,
-                scored=page.scored(session.tree_view(model_id)),
+                scored=reads.scored,
             )
             groups, shown, total = cap(groups_of(names=names, keep=keep), ROWS)
             for group in groups:
@@ -215,29 +297,32 @@ class VariablesDrawer:
                 "dstf-var-row items-center no-wrap gap-1 w-full"
                 + (" dstf-var-member" if member else "")
             )
-            .mark(f"var-row:{key}")
+            .mark(marker("var-row", key))
         ):
             if len(row.members) > 1:
                 ui.button(
                     icon="expand_more" if key in self.opened else "chevron_right",
                     on_click=partial(self._open, key),
-                ).props("flat dense round size=sm").mark(f"var-open:{key}")
+                ).props("flat dense round size=sm").mark(marker("var-open", key))
             checked, icon = _state(row)
             # A disabled Quasar button takes no pointer events: the reason's
             # tooltip is on a span around it, as on Remove plot.
-            with ui.element("span").mark(f"var-why:{key}"):
+            with ui.element("span").mark(marker("var-why", key)):
                 check = (
                     ui.button(icon=icon, on_click=partial(self._check, row))
                     .props(
                         f'flat dense round size=sm role="checkbox" aria-checked="{checked}"'
                     )
-                    .mark(f"var-check:{key}")
+                    .mark(marker("var-check", key))
                 )
                 if not page.cards:
                     check.disable()  # no plot to act on: "+ new plot" makes one
                 elif row.stranded:
                     check.disable()
-                    ui.tooltip(self._sentence(row.stranded, row.criteria))
+                    # Wrapped, as Remove plot's: one line ran over the plots.
+                    ui.tooltip(self._sentence(row.stranded, row.criteria)).props(
+                        "max-width=320px"
+                    )
             if len(row.members) > 1:
                 ui.element("span").classes("dstf-var-ramp").style(_RAMP)
             ui.label(row.text).classes("dstf-var-text dstf-mono text-xs")
@@ -250,7 +335,7 @@ class VariablesDrawer:
                 ).classes("dstf-why")
             ui.button("+ new plot", on_click=partial(self._new, row)).props(
                 "flat dense no-caps size=sm"
-            ).classes("dstf-var-new").mark(f"var-new:{key}")
+            ).classes("dstf-var-new").mark(marker("var-new", key))
 
     def _sentence(self, names: tuple[str, ...] | list[str], criteria: int) -> str:
         return stranded_sentence([self.texts.get(n, n) for n in names], criteria)

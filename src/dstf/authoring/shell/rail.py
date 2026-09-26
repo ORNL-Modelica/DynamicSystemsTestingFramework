@@ -146,11 +146,12 @@ class Rail:
 
     def refresh(self) -> None:
         """The open Variables drawer follows the page — the plot selected,
-        the layout staged, the result read. The ONE way the page's changes
-        reach it: `TestPage.select` and the end of `TestPage.sync` call
-        this. A closed one is left alone; it is rebuilt when it opens."""
+        the layout staged, the result read — and builds again only when one
+        of those moved (`VariablesDrawer.refresh`). The ONE way the page's
+        changes reach it: `TestPage.select` and the end of `TestPage.sync`
+        call this. A closed one is left alone; it is rebuilt when it opens."""
         if self.page.state.drawer == "variables" and self.variables is not None:
-            self.variables.rebuild()
+            self.variables.refresh()
 
     def handle(self, event: dict[str, Any]) -> None:
         if self.tests is not None:

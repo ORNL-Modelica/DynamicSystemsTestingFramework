@@ -1730,3 +1730,58 @@ def test_the_variables_drawer_edits_the_layout_with_a_real_mouse(
         ).click()
         expect(cards).to_have_count(2, timeout=EXPECT_TIMEOUT)
         _ring_is(page, 1)
+
+
+#: An element's computed background, and the selection token's as the
+#: browser resolves it on a probe element.
+BACKGROUNDS = """e => {
+  const probe = document.createElement('div');
+  probe.style.background = 'var(--dstf-selection)';
+  document.body.appendChild(probe);
+  const token = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  return [getComputedStyle(e).backgroundColor, token];
+}"""
+
+
+def _tooltip_width(page, hover, text: str) -> float:
+    """Hover ``hover`` and measure the tooltip that says ``text``."""
+    hover.hover()
+    tip = page.locator(".q-tooltip").filter(has_text=text)
+    expect(tip).to_be_visible(timeout=EXPECT_TIMEOUT)
+    box = tip.bounding_box()
+    assert box is not None
+    return box["width"]
+
+
+def test_a_stranded_sentence_wraps_and_the_target_is_a_tag(
+    tmp_path, playwright_browser
+):
+    """The sentence a grey Remove plot or a grey check carries wraps at
+    320 px: unbounded, it ran as one line across the plot area at 1280 px.
+    The drawer's target line is a tag on the accent tint with the ring
+    inside it, as the owner's board drew it: a bare ring beside the text
+    read as an empty checkbox."""
+    with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
+        cards = page.locator(".dstf-plot")
+        remove = cards.nth(0).get_by_role("button", name="Remove plot")
+        expect(remove).to_be_disabled()
+        width = _tooltip_width(page, remove.locator(".."), "x is scored by 1")
+        _shot(page, tmp_path, "stranded-remove-plot")
+        assert width <= 330, width
+        page.mouse.move(5, 895)
+
+        cards.nth(0).get_by_role("button", name="Add series").click()
+        target = page.locator(".dstf-var-target")
+        expect(target).to_have_text(
+            "Checkboxes act on plot 1 of 2", timeout=EXPECT_TIMEOUT
+        )
+        background, token = target.evaluate(BACKGROUNDS)
+        assert background == token and token != "rgba(0, 0, 0, 0)", background
+        assert target.locator(".dstf-var-ring").count() == 1
+
+        check = _var_row(page, "x").locator('[role="checkbox"]')
+        expect(check).to_be_disabled()
+        width = _tooltip_width(page, check.locator(".."), "x is scored by 1")
+        _shot(page, tmp_path, "stranded-check")
+        assert width <= 330, width
