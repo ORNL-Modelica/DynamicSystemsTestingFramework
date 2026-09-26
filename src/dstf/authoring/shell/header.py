@@ -166,9 +166,7 @@ class Header:
             # no offset arithmetic and no dependence on the first row's
             # height. The Test page's own header is what `below` draws.
             with bar:
-                sub = ui.row().classes(
-                    "dstf-subheader items-center no-wrap gap-3 w-full"
-                )
+                sub = ui.row().classes("dstf-subheader items-center gap-3 w-full")
             with sub.mark("subheader"):
                 below()
         self.refresh()

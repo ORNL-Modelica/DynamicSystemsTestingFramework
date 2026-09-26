@@ -142,10 +142,10 @@ class CriterionRow:
         self.taker = taker
         self.path, self.variable = path, str(leaf.get("variable"))
         model, variable = card.page.model_id, self.variable
-        # The row WRAPS: the stylesheet's `.dstf-crit { flex-wrap: wrap }`,
-        # emitted after Quasar's, overrides the `no-wrap` class below (a
-        # long name keeps one line; the readout and controls move under it).
-        self.row = ui.row().classes("dstf-crit items-center no-wrap gap-3 w-full")
+        # The row WRAPS, as a Quasar row does unless told not to: a long
+        # name keeps one line, and the readout and the node's controls move
+        # under it.
+        self.row = ui.row().classes("dstf-crit items-center gap-3 w-full")
         # The row IS the way in: its editor opens below it, and a second
         # click closes it — or closes a form row open under it and opens
         # nothing (board 1A). A click on the node's controls inside the row
@@ -189,7 +189,6 @@ class CriterionRow:
             )
             self.readout = ui.label().classes("dstf-mono text-xs")
             self.readout.mark(f"criterion-readout:{index}:{path}")
-            ui.space()
             self.target = RowTarget(card.page, f"crit:{index}:{path}", self.row, path)
             self.host = InlineHost(
                 card.page.shell,
@@ -206,7 +205,10 @@ class CriterionRow:
             )
             # A host drawn inside a row keeps to its own width, or the
             # cluster takes the rest of the row and sits left of the end
-            # (the 3b review, in Chromium).
+            # (the 3b review, in Chromium). The stylesheet's margin puts it
+            # at the row's right end, on the name's line or, the row
+            # wrapped, on the next — a spacer before it did that only when
+            # it wrapped together with the readout.
             self.host.column.classes(remove="w-full", add="dstf-node-host")
         # The row's slot: its editor, or a form row — one at a time. The
         # host is built once its panels have somewhere to open a row.

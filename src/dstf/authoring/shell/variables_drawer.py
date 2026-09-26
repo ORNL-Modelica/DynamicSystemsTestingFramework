@@ -367,14 +367,15 @@ class VariablesDrawer:
             if row.name is not None:
                 ui.label(row.name).classes("dstf-varname")
             ui.space()
-            # These two never wrap: squeezed by a long name, "+ new plot"
-            # took two lines and "plot 2, 3" broke after "plot".
+            # These two never wrap (the stylesheet's `.dstf-var-where` rule
+            # keeps each to one line and unshrunk): squeezed by a long name,
+            # "+ new plot" took two lines and "plot 2, 3" broke after "plot".
             if row.elsewhere:
                 ui.label(
                     "plot " + ", ".join(str(i + 1) for i in row.elsewhere)
                 ).classes("dstf-why dstf-var-where")
             ui.button("+ new plot", on_click=partial(self._new, row)).props(
-                "flat dense no-caps no-wrap size=sm"
+                "flat dense no-caps size=sm"
             ).classes("dstf-var-new").mark(marker("var-new", key))
 
     def _sentence(self, names: tuple[str, ...] | list[str], criteria: int) -> str:

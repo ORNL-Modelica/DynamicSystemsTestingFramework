@@ -156,13 +156,12 @@ class TestPage:
         # One line: beside a long model id and Rerun's caption with an edit
         # pending, "← Suite" broke after the arrow at 1280 px.
         ui.link("← Suite", "/").classes("text-no-wrap").mark("back")
-        ui.label(model_id).classes("text-subtitle1 dstf-mono").mark("model")
+        ui.label(model_id).classes("dstf-model text-subtitle1 dstf-mono").mark("model")
         # `color=None`: a Quasar badge otherwise carries `bg-primary`, whose
         # `!important` beats the inline status fill and paints every verdict
         # blue (the Task 4 review, in Chromium).
         self.badge = ui.badge("", color=None).classes("dstf-badge").mark("status")
         self.meta = ui.label().classes("text-secondary text-xs").mark("meta")
-        ui.space()
         self.actions = ActionBar(
             self.shell,
             Placement.TEST,

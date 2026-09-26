@@ -53,6 +53,14 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-subheader {
   border-top: 1px solid var(--dstf-border); padding: 4px 24px; min-height: 40px;
 }
+/* The Test page's subheader WRAPS: kept to one line beside a real
+   library's model id, it put Accept and Rerun past a 900 px window (wholly
+   off it on a TRANSFORM-length id) and squeezed Rerun to seven lines. The
+   id breaks at any character when a line cannot hold it; the TEST actions
+   keep to the right, on the id's line when they fit and below it, as one
+   group, when not. */
+.dstf-subheader .dstf-model { min-width: 0; overflow-wrap: anywhere; }
+.dstf-subheader > .dstf-actions { margin-left: auto; }
 .dstf-pill {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .03em; padding: 1px 6px; border-radius: 3px; border: 1px solid;
@@ -72,10 +80,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    beside a drawer, a long title, its pills and the toolbar in one row
    that neither wrapped nor shrank scrolled the page sideways). The title
    and its pills take what is left and wrap inside it, a long name at any
-   character; the toolbar wraps as one unit, pushed to the right. */
+   character; the toolbar wraps as one unit, pushed to the right. No
+   `no-wrap` on the row: kept to one line, the title shrank instead (to
+   three and four lines at 900 px beside a drawer). */
 .dstf-card-head { row-gap: 4px; }
-.dstf-card-title { flex: 1 1 auto; min-width: 0; }
-.dstf-card-title > .text-subtitle2 { min-width: 0; overflow-wrap: anywhere; }
+.dstf-card-title { flex: 1 1 auto; }
+.dstf-card-title > .text-subtitle2 { overflow-wrap: anywhere; }
 .dstf-card-tools { flex: none; margin-left: auto; }
 .dstf-plot-slot { min-height: 320px; --toolbar-gutter: 34px; }
 /* The plot's vertical toolbar stands in a gutter of its own, right of the
@@ -103,10 +113,9 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    "· x"). The readout beside it may wrap. */
 .dstf-crit-name { white-space: nowrap; }
 /* A long criterion name keeps its one line, so at narrow widths the row
-   wraps: the readout and the node's controls move to a second line, the
-   controls at its right end, instead of pushing the page sideways (3c's
-   gate over a real library, 900 px beside a drawer). */
-.dstf-crit { flex-wrap: wrap; }
+   wraps (it carries no `no-wrap`): the readout and the node's controls move
+   to a second line, the controls at its right end, instead of pushing the
+   page sideways (3c's gate over a real library, 900 px beside a drawer). */
 .dstf-crit > .dstf-node-host { margin-left: auto; }
 /* The open criterion's row, and a row with a form open under it, stay
    lit. */

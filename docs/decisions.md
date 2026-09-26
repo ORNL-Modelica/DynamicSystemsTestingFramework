@@ -4715,11 +4715,31 @@ that cut off "dashboard" and "Stop server" (Q10 A).
    `TabState` gains `drawer` and `tests_needle`, so the open drawer and the
    Tests drawer's filter survive a switch of test within the tab.
 5. *The header* (`shell/header.py`): Save and Discard stay in the row, and a
-   ⋮ menu at its end holds Export, Open in another backend…, dashboard and
-   Stop server at every width. `save_caption` counts the entries a Save
-   creates over the document as LOADED, since in the effective one the
-   pending op has already made the entry; `plural` takes an irregular
-   plural.
+   ⋮ menu at its end holds Export, Change backend…, Open in another
+   backend…, dashboard and Stop server at every width. The row names the
+   backend as plain text; Change backend… opens the dialog that holds the
+   select, and while it is grey its item carries the sentence that says
+   why. The backend select had stayed in the row after Q10, and in two real
+   states — a rerun running with an edit pending, and a Save caption naming
+   a new entry, the usual one on TRANSFORM — Save took three lines at 800 to
+   900 px and two at 1280; so the select left the row (the owner's ruling,
+   Q13 A), which reverses DESIGN.md's header line that drew the backend as a
+   select. The board said A holds the longest Save caption on one line at
+   900 px; that was never measured, and it is false (corrected 2026-09-26):
+   the new-entry caption alone is 357 px, and one line needs 960 px even with
+   the run indicator and Save's why-sentence hidden. Measured with A built,
+   in that busiest state: at 900 px Save and Discard take two lines, nothing
+   is cut off and nothing scrolls sideways; at 1280 px every button is one
+   line. That meets the owner's earlier ruling (2026-09-25) — at most two
+   lines at 900 px, one at 1280, nothing cut off — and not one line at 900.
+   The Test page's subheader wraps: kept to one line, it put Accept and
+   Rerun past a 900 px window beside a real library's model id, wholly off
+   it beside a TRANSFORM-length one, with Rerun squeezed to seven lines. Now
+   the id breaks inside itself only when no line holds it, and the TEST
+   actions keep to the right, below the id as one group when they do not
+   fit beside it. `save_caption` counts the entries a Save creates over the
+   document as LOADED, since in the effective one the pending op has already
+   made the entry; `plural` takes an irregular plural.
 
 Nothing in the pre-release seams moves: the CLI, `testing.json`, the
 reference-JSON layout and the `test_spec.json` format are unchanged. The tool

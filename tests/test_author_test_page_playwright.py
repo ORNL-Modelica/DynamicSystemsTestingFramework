@@ -1843,9 +1843,70 @@ LINES = """(sel) => [...document.querySelectorAll(sel)].map(e => {
   return [e.textContent.trim(), e.getBoundingClientRect().height / line];
 })"""
 
+#: Each plot card's title: it wraps inside the card's header row rather
+#: than shrinking in it.
+TITLES = ".dstf-card-title .text-subtitle2"
+
+#: How far short of its row's right end each card's toolbar and each
+#: criteria row's node controls stop: both are pushed to that end, on the
+#: title's or the name's line or, their row wrapped, on the next.
+RIGHT_GAPS = """() => {
+  const gap = (row, el) => {
+    const r = row.getBoundingClientRect(), s = getComputedStyle(row);
+    return r.right - parseFloat(s.paddingRight) - el.getBoundingClientRect().right;
+  };
+  const tools = [...document.querySelectorAll('.dstf-card-head')].map(
+    h => gap(h, h.querySelector(':scope > .dstf-card-tools')));
+  const nodes = [...document.querySelectorAll('.dstf-crit')].map(
+    r => gap(r, r.querySelector(':scope > .dstf-node-host')));
+  return [tools, nodes];
+}"""
+
+
+def _pushed_right(page, cards: int) -> None:
+    tools, nodes = page.evaluate(RIGHT_GAPS)
+    assert len(tools) == cards and all(abs(g) <= 4 for g in tools), tools
+    assert nodes and all(abs(g) <= 4 for g in nodes), nodes
+
+
+#: One element's height in its own line heights.
+LINES_OF = """e => { const s = getComputedStyle(e);
+  return e.getBoundingClientRect().height / parseFloat(s.lineHeight); }"""
+
 #: A model id as long as a real library's: FakeLib's `FakeLib.A` left the
 #: Test page's header room enough that nothing beside it wrapped.
 LONG_MODEL = "FakeLib.HeatExchangers.GenericDistributed.Examples.CounterFlowWithWall"
+#: Longer still, the length of a TRANSFORM example's id: with the subheader
+#: kept to one line, Accept and Rerun ended wholly past a 900 px window.
+TRANSFORM_MODEL = (
+    "TRANSFORM.HeatExchangers.GenericDistributed_HX.Examples."
+    "GenericDistributed_HX_withMass"
+)
+#: Longer than a 900 px window's line: the id breaks inside itself.
+OVERLONG_MODEL = TRANSFORM_MODEL.replace("Examples.", "Examples.Variants.WithWall.")
+
+#: The Test page's subheader: each child that ends past the window's right
+#: edge, each of its buttons whose label is taller than `k` line heights
+#: (1.5 finds a second line, 2.5 a third), and how far short of its right
+#: edge the TEST actions stop.
+SUBHEADER_PAST = """(k) => {
+  const past = [], tall = [];
+  const sub = document.querySelector('.dstf-subheader');
+  for (const el of sub.children) {
+    const r = el.getBoundingClientRect();
+    if (r.width && r.right > window.innerWidth) past.push([el.textContent, r.right]);
+  }
+  const pad = parseFloat(getComputedStyle(sub).paddingRight);
+  const act = sub.querySelector(':scope > .dstf-actions').getBoundingClientRect();
+  for (const b of sub.querySelectorAll('.q-btn')) {
+    const c = b.querySelector('.q-btn__content') || b;
+    const s = getComputedStyle(c);
+    const line = parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.2;
+    const h = c.getBoundingClientRect().height;
+    if (h > k * line) tall.push([b.textContent, h, line]);
+  }
+  return [past, tall, sub.getBoundingClientRect().right - pad - act.right];
+}"""
 
 
 def _no_sideways_scroll(page) -> None:
@@ -1862,10 +1923,19 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
     Remove plot — neither wrapped nor shrank, on names as long as `LONG`;
     with that fixed, a criteria row's one-line name still pushed its node
     controls 54 px past the edge. Both rows now wrap, before and after an
-    edit. In the Variables drawer a long
-    name is cut, and "+ new plot" and "plot 2, 3" keep one line; at 1280 px
-    with an edit pending, "← Suite" keeps one line beside a long model id
-    and Rerun's caption."""
+    edit, and a card's title wraps rather than shrinks: with the header row
+    kept to one line it squeezed to three and four lines at 900 px. In the
+    Variables drawer a long name is cut, and "+ new plot" and "plot 2, 3"
+    keep one line. With an edit pending and a model id as long as a real
+    library's, a TRANSFORM example's, or longer than a line, nothing in the
+    Test page's subheader is cut off at 1280 or 900 px: kept to one line, it
+    put Accept and Rerun past the window's edge. Its buttons keep one line
+    at 1280 and at most two at 900 (the owner's ruling for the header), the
+    TEST actions end at its right edge, and "← Suite" keeps one line. The
+    row wraps rather than squeezing the id: a subheader kept to one line
+    fitted by breaking the id over lines it did not need. A
+    card's toolbar and a criteria row's node controls end at their row's
+    right edge, wrapped or not."""
     with _served(tmp_path, playwright_browser, project=_long_names_project) as page:
         page.set_viewport_size({"width": 900, "height": 900})
         cards = page.locator(".dstf-plot")
@@ -1879,6 +1949,12 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
             _no_sideways_scroll(page)
             rights = page.evaluate(REMOVE_RIGHTS)
             assert len(rights) == 3 and max(rights) <= 900, (drawer, rights)
+            titles = page.evaluate(LINES, TITLES)
+            assert len(titles) == 3 and all(n <= 2.5 for _, n in titles), (
+                drawer,
+                titles,
+            )
+            _pushed_right(page, 3)
             _shot(page, tmp_path, f"cards-900-{drawer}")
 
         # The Variables drawer at 320 px, on names longer than it.
@@ -1900,19 +1976,30 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
         _no_sideways_scroll(page)
         rights = page.evaluate(REMOVE_RIGHTS)
         assert len(rights) == 4 and max(rights) <= 900, rights
+        titles = page.evaluate(LINES, TITLES)
+        assert len(titles) == 4 and all(n <= 2.5 for _, n in titles), titles
+        _pushed_right(page, 4)
         _shot(page, tmp_path, "cards-900-edit")
 
-        page.set_viewport_size({"width": 1280, "height": 900})
         model = page.locator(".dstf-subheader").locator(".dstf-mono").first
-        model.evaluate("(e, text) => { e.textContent = text; }", LONG_MODEL)
-        expect(model).to_have_text(LONG_MODEL)
         back = page.get_by_role("link", name="← Suite")
-        (lines,) = back.evaluate(
-            "e => { const s = getComputedStyle(e);"
-            " return [e.getBoundingClientRect().height / parseFloat(s.lineHeight)]; }"
-        )
-        assert lines <= 1.5, lines
-        _shot(page, tmp_path, "back-1280-edit")
+        for text in (LONG_MODEL, TRANSFORM_MODEL, OVERLONG_MODEL):
+            model.evaluate("(e, text) => { e.textContent = text; }", text)
+            expect(model).to_have_text(text)
+            for width in (1280, 900):
+                page.set_viewport_size({"width": width, "height": 900})
+                _no_sideways_scroll(page)
+                past, tall, gap = page.evaluate(
+                    SUBHEADER_PAST, 1.5 if width >= 1280 else 2.5
+                )
+                assert past == [] and tall == [], (text, width, past, tall)
+                assert abs(gap) <= 4, (text, width, gap)
+                assert back.evaluate(LINES_OF) <= 1.5, (text, width)
+                # The row wraps rather than squeezing the id: an id a line
+                # holds keeps one line, and the one no line holds two.
+                most = 2.5 if text == OVERLONG_MODEL and width < 1280 else 1.5
+                assert model.evaluate(LINES_OF) <= most, (text, width)
+        _shot(page, tmp_path, "subheader-900-edit")
         page.locator(".dstf-header-row").get_by_role(
             "button", name=re.compile(r"^Discard")
         ).click()
