@@ -52,6 +52,10 @@ def save_caption(pending: Sequence[PatchOp], loaded: dict, file_name: str) -> st
     return f"Save {plural(len(pending), 'spec edit')} ({what}) to {file_name}"
 
 
+#: The role every item of the header's menu carries (see `Header`).
+MENUITEM = 'role="menuitem"'
+
+
 class Header:
     def __init__(self, shell: Shell, below: Callable[[], None] | None = None) -> None:
         self.shell = shell
@@ -97,19 +101,29 @@ class Header:
             self.discard = Action(
                 self._discard, props="flat dense no-caps", marker="discard", why=False
             )
-            with (
+            # The ⋮ button says it opens a menu and whether it is open; the
+            # items are `menuitem`s of that menu (Quasar draws a `q-item` as
+            # a `listitem`, and the attribute given here is what the browser
+            # keeps).
+            self.more = (
                 ui.button(icon="more_vert")
                 .props(
-                    'flat dense round aria-label="More actions" aria-haspopup="menu"'
+                    'flat dense round aria-label="More actions" aria-haspopup="menu" '
+                    'aria-expanded="false"'
                 )
                 .classes("dstf-header-menu")
-                .mark("header-menu"),
-                ui.menu(),
-            ):
+                .mark("header-menu")
+            )
+            with self.more, ui.menu() as menu:
+                menu.on_value_change(self._menu_toggled)
                 # A `ui.menu_item` has no text of its own to set: Export's
                 # caption is a label in it, and the reason it is disabled a
                 # second line under that.
-                with ui.menu_item(on_click=self._export).mark("export") as export:
+                with (
+                    ui.menu_item(on_click=self._export)
+                    .props(MENUITEM)
+                    .mark("export") as export
+                ):
                     self.export = export
                     with ui.item_section():
                         self.export_text = ui.item_label()
@@ -119,26 +133,31 @@ class Header:
                 # Changed rarely, and refused while anything is pending or
                 # running: in the row, its select and why-sentence pushed
                 # Save onto four lines at 900 px (the owner's ruling, Q13 A).
-                with ui.menu_item(on_click=self.backend_dialog.open).mark(
-                    "change-backend"
-                ) as change:
+                with (
+                    ui.menu_item(on_click=self.backend_dialog.open)
+                    .props(MENUITEM)
+                    .mark("change-backend") as change
+                ):
                     self.change = change
                     with ui.item_section():
                         ui.item_label("Change backend…")
                         self.backend_why = (
                             ui.item_label().props("caption").mark("backend:why")
                         )
-                self.other = ui.menu_item(
-                    "Open in another backend…", on_click=self._open_other
-                ).mark("other-backend")
+                self.other = (
+                    ui.menu_item("Open in another backend…", on_click=self._open_other)
+                    .props(MENUITEM)
+                    .mark("other-backend")
+                )
                 # A link the browser follows into a new tab: a `window.open`
                 # sent from the server (`ui.navigate.to(..., new_tab=True)`)
                 # is what a popup blocker may refuse.
                 ui.menu_item("dashboard").props(
-                    'href="/dashboard/dashboard.html" target="_blank"'
+                    f'href="/dashboard/dashboard.html" target="_blank" {MENUITEM}'
                 ).mark("dashboard")
                 self.stop = (
                     ui.menu_item("Stop server", on_click=self._stop)
+                    .props(MENUITEM)
                     .classes("text-negative")
                     .mark("stop")
                 )
@@ -156,6 +175,9 @@ class Header:
 
     def handle(self, event: dict[str, Any]) -> None:
         self.refresh()
+
+    def _menu_toggled(self, e: Any) -> None:
+        self.more.props(f'aria-expanded="{"true" if e.value else "false"}"')
 
     def refresh(self) -> None:
         shell, s = self.shell, self.shell.session

@@ -4994,6 +4994,28 @@ class TestVariablesDrawer:
             (row,) = [r for r in rows if "a.Q" in _labels_in(r)]
             assert _labels_in(row)[:2] == ["a.Q", UT1]
 
+    async def test_a_rows_text_carries_its_full_text_and_name_as_its_title(
+        self, tmp_path
+    ):
+        """At 320 px a real library's names are cut with an ellipsis (3c's
+        gate): the row's text carries all of it as its title, and the name
+        beside it when it shows one."""
+        from test_session import UT1, UT2, _unit_tests_project, with_expressions
+
+        cfg, work = _unit_tests_project(tmp_path)
+        shell = Shell(cfg, work_dir=work)
+        shell.session.open(cfg, work_dir=work)
+        with_expressions(shell.session, A, {UT1: "a.Q"})
+        shell.load.phase = "done"
+        async with user_simulation(root=shell.index) as user:
+            await _drawer(shell, user)
+            titles = {
+                e.text: e.props.get("title")
+                for e in _one(user, "drawer:variables").descendants()
+                if isinstance(e, ui.label) and "dstf-var-text" in e.classes
+            }
+            assert titles == {"a.Q": f"a.Q ({UT1})", UT2: UT2}
+
     async def test_an_opened_family_shows_its_first_members_and_counts_the_rest(
         self, drawer_shell, monkeypatch
     ):

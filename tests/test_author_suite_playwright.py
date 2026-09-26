@@ -427,8 +427,10 @@ def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
 ):
     """dashboard in the ⋮ menu is a link the browser follows into a new tab,
     not a `window.open` sent from the server, which a popup blocker may
-    refuse (NiceGUI's `ui.navigate.to` says so). The ⋮ button names itself
-    and says it opens a menu."""
+    refuse (NiceGUI's `ui.navigate.to` says so), and the menu closes behind
+    it. The ⋮ button names itself, says it opens a menu and whether the
+    menu is open, and the menu's items are `menuitem`s (Quasar draws a
+    `q-item` as a `listitem`)."""
     cfg, work = _project(tmp_path)
     (work / "dashboard.html").write_text("<h1>the dashboard</h1>", encoding="utf-8")
     log = tmp_path / "author.log"
@@ -446,9 +448,19 @@ def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
         more = page.locator(".dstf-header-menu")
         expect(more).to_have_attribute("aria-label", "More actions")
         expect(more).to_have_attribute("aria-haspopup", "menu")
+        expect(more).to_have_attribute("aria-expanded", "false")
         more.click()
-        item = page.locator(".q-menu").get_by_text("dashboard", exact=True)
+        menu = page.locator(".q-menu")
+        item = menu.get_by_text("dashboard", exact=True)
         expect(item).to_be_visible(timeout=EXPECT_TIMEOUT)
+        expect(more).to_have_attribute("aria-expanded", "true", timeout=EXPECT_TIMEOUT)
+        expect(menu).to_have_attribute("role", "menu")
+        items = menu.locator(".q-item")
+        expect(items).to_have_count(5)
+        assert (
+            items.evaluate_all("es => es.map(e => e.getAttribute('role'))")
+            == ["menuitem"] * 5
+        )
         with context.expect_page(timeout=EXPECT_TIMEOUT) as opened:
             item.click()
         tab = opened.value
@@ -456,6 +468,8 @@ def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
         assert tab.url.endswith("/dashboard/dashboard.html"), tab.url
         expect(tab.locator("h1")).to_have_text("the dashboard")
         assert page.url == url  # the tool's own tab stays where it was
+        expect(menu).to_be_hidden(timeout=EXPECT_TIMEOUT)
+        expect(more).to_have_attribute("aria-expanded", "false", timeout=EXPECT_TIMEOUT)
         context.close()
     finally:
         if proc.poll() is None:

@@ -142,6 +142,9 @@ class CriterionRow:
         self.taker = taker
         self.path, self.variable = path, str(leaf.get("variable"))
         model, variable = card.page.model_id, self.variable
+        # The row WRAPS: the stylesheet's `.dstf-crit { flex-wrap: wrap }`,
+        # emitted after Quasar's, overrides the `no-wrap` class below (a
+        # long name keeps one line; the readout and controls move under it).
         self.row = ui.row().classes("dstf-crit items-center no-wrap gap-3 w-full")
         # The row IS the way in: its editor opens below it, and a second
         # click closes it — or closes a form row open under it and opens
@@ -332,7 +335,12 @@ class PlotCard:
                     "(e) => { if (!e.target.closest('.dstf-plot-slot')) emit(); }"
                 ),
             )
-            with ui.row().classes("items-center no-wrap gap-3 w-full"):
+            # The card's header row WRAPS: the title with its pills, and the
+            # toolbar as one unit, right-aligned on the title's line when it
+            # fits and on a line of its own when not. A row that neither
+            # wrapped nor shrank put Remove plot at 1140-1202 px of a 900 px
+            # window beside a drawer, on a real library's long names.
+            with ui.row().classes("dstf-card-head items-center gap-3 w-full"):
                 # The title READS the plain labels (the expressions the
                 # model wrote); the names it is keyed by ride beside it,
                 # muted, and only when one of them differs — a card for
@@ -355,34 +363,35 @@ class PlotCard:
                 # labels' slice (`pipe.T[1:3]`), and the muted line folds
                 # the names the same way.
                 series = list(resolved.series)
-                ui.label(folded(series, labels, self.texts)).classes(
-                    "text-subtitle2"
-                ).mark(f"plot-title:{index}")
-                if any(labels[n] != n for n in series):
-                    ui.label(folded(series)).classes("dstf-varname").mark(
-                        f"plot-name:{index}"
-                    )
-                for variable in self.tracked:
-                    if self._leaves(view, variable):
-                        pill = Pill("queued", f"plot-pill:{index}:{variable}")
-                        if self.named_pills:
-                            # The name keeps its own case: the pill's text is
-                            # uppercased by the stylesheet, and `X FAIL` names
-                            # no variable of this test.
-                            pill.label.classes(add="dstf-pill-named")
-                        self.pills[variable] = pill
-                ui.space()
+                with ui.row().classes("dstf-card-title items-center gap-3"):
+                    ui.label(folded(series, labels, self.texts)).classes(
+                        "text-subtitle2"
+                    ).mark(f"plot-title:{index}")
+                    if any(labels[n] != n for n in series):
+                        ui.label(folded(series)).classes("dstf-varname").mark(
+                            f"plot-name:{index}"
+                        )
+                    for variable in self.tracked:
+                        if self._leaves(view, variable):
+                            pill = Pill("queued", f"plot-pill:{index}:{variable}")
+                            if self.named_pills:
+                                # The name keeps its own case: the pill's
+                                # text is uppercased by the stylesheet, and
+                                # `X FAIL` names no variable of this test.
+                                pill.label.classes(add="dstf-pill-named")
+                            self.pills[variable] = pill
                 # The plot's whole toolbar (decision 9): the legend toggles
                 # the signals and the overlays; the criteria are toggled
                 # from their rows (legend b) and the errors from this select,
                 # built once the plot is drawn.
-                self.error_slot = ui.row().classes("items-center gap-0")
-                self.focus = ui.button("Focus", on_click=partial(page.focus, index))
-                self.focus.props("flat dense no-caps").mark(f"focus:{index}")
-                ui.button("Add series", on_click=self._add_series).props(
-                    "flat dense no-caps"
-                ).mark(f"add-series:{index}")
-                self._remove_button(index, tuple(layout), scored)
+                with ui.row().classes("dstf-card-tools items-center no-wrap gap-3"):
+                    self.error_slot = ui.row().classes("items-center gap-0")
+                    self.focus = ui.button("Focus", on_click=partial(page.focus, index))
+                    self.focus.props("flat dense no-caps").mark(f"focus:{index}")
+                    ui.button("Add series", on_click=self._add_series).props(
+                        "flat dense no-caps"
+                    ).mark(f"add-series:{index}")
+                    self._remove_button(index, tuple(layout), scored)
             if resolved.missing:
                 ui.label(f"Not in this result: {', '.join(resolved.missing)}").classes(
                     "dstf-why"

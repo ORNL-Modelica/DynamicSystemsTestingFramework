@@ -41,7 +41,13 @@ from test_author_suite_playwright import (  # noqa: E402
     _wait_until_serving,
 )
 from test_interactive_figures import UNDER_TOOLBAR  # noqa: E402
-from test_session import A, _drawer_project, _page_project  # noqa: E402
+from test_session import (  # noqa: E402
+    LONG,
+    A,
+    _drawer_project,
+    _long_names_project,
+    _page_project,
+)
 
 VIEWPORT = {"width": 1280, "height": 900}
 #: The zoom set before a criterion opens and read back after: the tool's
@@ -1823,3 +1829,91 @@ def test_a_drawer_row_answers_the_keyboard_and_a_screen_reader(
         expect(new).to_be_focused(timeout=EXPECT_TIMEOUT)
         expect(new).to_be_visible()
         _shot(page, tmp_path, "var-keyboard")
+
+
+#: Every plot card's Remove plot: where its right edge is.
+REMOVE_RIGHTS = """() => [...document.querySelectorAll('.dstf-plot')].map(c =>
+  [...c.querySelectorAll('.q-btn')].find(b => b.textContent.includes('Remove plot'))
+    .getBoundingClientRect().right)"""
+
+#: Each element matching the selector: its height in its own line heights.
+LINES = """(sel) => [...document.querySelectorAll(sel)].map(e => {
+  const s = getComputedStyle(e);
+  const line = parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.2;
+  return [e.textContent.trim(), e.getBoundingClientRect().height / line];
+})"""
+
+#: A model id as long as a real library's: FakeLib's `FakeLib.A` left the
+#: Test page's header room enough that nothing beside it wrapped.
+LONG_MODEL = "FakeLib.HeatExchangers.GenericDistributed.Examples.CounterFlowWithWall"
+
+
+def _no_sideways_scroll(page) -> None:
+    page.wait_for_function(
+        "document.documentElement.scrollWidth == window.innerWidth",
+        timeout=EXPECT_TIMEOUT,
+    )
+
+
+def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser):
+    """3c's gate over a real library: at 900 px with either drawer open the
+    page scrolled sideways (1030 px, 1202 after an edit), because a card's
+    header row — its title, pill(s), error select, Focus, Add series and
+    Remove plot — neither wrapped nor shrank, on names as long as `LONG`;
+    with that fixed, a criteria row's one-line name still pushed its node
+    controls 54 px past the edge. Both rows now wrap, before and after an
+    edit. In the Variables drawer a long
+    name is cut, and "+ new plot" and "plot 2, 3" keep one line; at 1280 px
+    with an edit pending, "← Suite" keeps one line beside a long model id
+    and Rerun's caption."""
+    with _served(tmp_path, playwright_browser, project=_long_names_project) as page:
+        page.set_viewport_size({"width": 900, "height": 900})
+        cards = page.locator(".dstf-plot")
+        expect(cards).to_have_count(3, timeout=EXPECT_TIMEOUT)
+        rail = page.locator(".dstf-rail .q-btn")
+        for i, drawer in enumerate(("tests", "variables")):
+            rail.nth(i).click()
+            expect(rail.nth(i)).to_have_class(
+                re.compile(r"dstf-rail-on"), timeout=EXPECT_TIMEOUT
+            )
+            _no_sideways_scroll(page)
+            rights = page.evaluate(REMOVE_RIGHTS)
+            assert len(rights) == 3 and max(rights) <= 900, (drawer, rights)
+            _shot(page, tmp_path, f"cards-900-{drawer}")
+
+        # The Variables drawer at 320 px, on names longer than it.
+        rows = page.locator(".dstf-var-row")
+        expect(rows).to_have_count(2, timeout=EXPECT_TIMEOUT)
+        for text in LONG:
+            expect(_var_row(page, text).locator(".dstf-var-text")).to_have_attribute(
+                "title", text
+            )
+        for sel in (".dstf-var-row .dstf-var-new", ".dstf-var-where"):
+            lines = page.evaluate(LINES, sel)
+            assert lines and all(n <= 1.5 for _, n in lines), (sel, lines)
+
+        # After an edit: a fourth plot.
+        second = _var_row(page, LONG[1])
+        second.hover()
+        second.locator(".dstf-var-new").click()
+        expect(cards).to_have_count(4, timeout=EXPECT_TIMEOUT)
+        _no_sideways_scroll(page)
+        rights = page.evaluate(REMOVE_RIGHTS)
+        assert len(rights) == 4 and max(rights) <= 900, rights
+        _shot(page, tmp_path, "cards-900-edit")
+
+        page.set_viewport_size({"width": 1280, "height": 900})
+        model = page.locator(".dstf-subheader").locator(".dstf-mono").first
+        model.evaluate("(e, text) => { e.textContent = text; }", LONG_MODEL)
+        expect(model).to_have_text(LONG_MODEL)
+        back = page.get_by_role("link", name="← Suite")
+        (lines,) = back.evaluate(
+            "e => { const s = getComputedStyle(e);"
+            " return [e.getBoundingClientRect().height / parseFloat(s.lineHeight)]; }"
+        )
+        assert lines <= 1.5, lines
+        _shot(page, tmp_path, "back-1280-edit")
+        page.locator(".dstf-header-row").get_by_role(
+            "button", name=re.compile(r"^Discard")
+        ).click()
+        expect(cards).to_have_count(3, timeout=EXPECT_TIMEOUT)

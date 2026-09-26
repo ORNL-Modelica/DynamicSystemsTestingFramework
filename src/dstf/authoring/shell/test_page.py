@@ -153,7 +153,9 @@ class TestPage:
         the way back, the test, its verdict and where it was scored, then
         the TEST-placement buttons."""
         model_id = self.model_id
-        ui.link("← Suite", "/").mark("back")
+        # One line: beside a long model id and Rerun's caption with an edit
+        # pending, "← Suite" broke after the arrow at 1280 px.
+        ui.link("← Suite", "/").classes("text-no-wrap").mark("back")
         ui.label(model_id).classes("text-subtitle1 dstf-mono").mark("model")
         # `color=None`: a Quasar badge otherwise carries `bg-primary`, whose
         # `!important` beats the inline status fill and paints every verdict

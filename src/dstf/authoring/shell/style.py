@@ -68,6 +68,15 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 /* A plot card: its title row, its plot, its criteria rows and its footers
    at the card's own spacing (the brief's "col gap 10px"). */
 .dstf-plot { gap: 10px; }
+/* A card's header row wraps (3c's gate over a real library: at 900 px
+   beside a drawer, a long title, its pills and the toolbar in one row
+   that neither wrapped nor shrank scrolled the page sideways). The title
+   and its pills take what is left and wrap inside it, a long name at any
+   character; the toolbar wraps as one unit, pushed to the right. */
+.dstf-card-head { row-gap: 4px; }
+.dstf-card-title { flex: 1 1 auto; min-width: 0; }
+.dstf-card-title > .text-subtitle2 { min-width: 0; overflow-wrap: anywhere; }
+.dstf-card-tools { flex: none; margin-left: auto; }
 .dstf-plot-slot { min-height: 320px; --toolbar-gutter: 34px; }
 /* The plot's vertical toolbar stands in a gutter of its own, right of the
    figure, instead of over the error axis's tick labels and title: a margin
@@ -93,6 +102,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    card is ~540 px at 900 px, and it broke inside itself ("tube" over
    "· x"). The readout beside it may wrap. */
 .dstf-crit-name { white-space: nowrap; }
+/* A long criterion name keeps its one line, so at narrow widths the row
+   wraps: the readout and the node's controls move to a second line, the
+   controls at its right end, instead of pushing the page sideways (3c's
+   gate over a real library, 900 px beside a drawer). */
+.dstf-crit { flex-wrap: wrap; }
+.dstf-crit > .dstf-node-host { margin-left: auto; }
 /* The open criterion's row, and a row with a form open under it, stay
    lit. */
 .dstf-crit-open, .dstf-row-open { background: var(--dstf-selection); }
@@ -185,6 +200,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-var-row:focus-within .dstf-var-new { visibility: visible; }
 .dstf-var-member { padding-left: 24px; }
 .dstf-var-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dstf-var-where, .dstf-var-row .dstf-var-new { flex: none; white-space: nowrap; }
 .dstf-var-ramp { display: inline-flex; flex: none; }
 .dstf-var-ramp > span { width: 5px; height: 9px; }
 .dstf-var-target {

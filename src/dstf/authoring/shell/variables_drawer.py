@@ -357,16 +357,24 @@ class VariablesDrawer:
                 with ui.element("span").classes("dstf-var-ramp"):
                     for stop in _RAMP:
                         ui.element("span").style(f"background: {stop}")
-            ui.label(row.text).classes("dstf-var-text dstf-mono text-xs")
+            # A real library's names outrun 320 px and are cut with an
+            # ellipsis: the text carries all of it, and the name, as its
+            # title (on the props dict: a name can hold a `"`).
+            text = ui.label(row.text).classes("dstf-var-text dstf-mono text-xs")
+            text.props["title"] = (
+                row.text if row.name is None else f"{row.text} ({row.name})"
+            )
             if row.name is not None:
                 ui.label(row.name).classes("dstf-varname")
             ui.space()
+            # These two never wrap: squeezed by a long name, "+ new plot"
+            # took two lines and "plot 2, 3" broke after "plot".
             if row.elsewhere:
                 ui.label(
                     "plot " + ", ".join(str(i + 1) for i in row.elsewhere)
-                ).classes("dstf-why")
+                ).classes("dstf-why dstf-var-where")
             ui.button("+ new plot", on_click=partial(self._new, row)).props(
-                "flat dense no-caps size=sm"
+                "flat dense no-caps no-wrap size=sm"
             ).classes("dstf-var-new").mark(marker("var-new", key))
 
     def _sentence(self, names: tuple[str, ...] | list[str], criteria: int) -> str:

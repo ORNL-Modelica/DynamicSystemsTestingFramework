@@ -2320,6 +2320,58 @@ def _drawer_project(tmp_path: Path, extra: int = 0) -> tuple[Path, Path]:
     return cfg, work
 
 
+#: Two tracked names as long as a real library's (TRANSFORM's), which
+#: FakeLib's `x` and `y` are not: a card's header row and a drawer row
+#: that fitted every short name overflowed on these at 900 px.
+LONG = ("heater.flowModel.states[1].T", "condenser.heatTransfer.Q_flow_total")
+
+
+def _long_names_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_project` with A tracking the two `LONG` names, both with a
+    baseline (one nrmse each; the first fails, so its card has a pill and
+    an error select), drawn as three plots: one per name, then both."""
+    cfg, work = _project(tmp_path)
+    t = [i / 4 for i in range(5)]
+    first, second = LONG
+    (work / "test_0001" / "result.json").write_text(
+        json.dumps(
+            {
+                "success": True,
+                "time": t,
+                "variables": {
+                    first: [v * 1.25 for v in t],
+                    second: [2 * v for v in t],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["variables"] = [first, second]
+            entry["plots"] = [
+                {"kind": "time", "series": [{"var": first}]},
+                {"kind": "time", "series": [{"var": second}]},
+                {"kind": "time", "series": [{"var": first}, {"var": second}]},
+            ]
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    tt = np.asarray(t)
+    ReferenceStore(Config(config_file=cfg, work_dir=work)).store_reference(
+        make_test_model(A, variable_patterns=[first, second]),
+        TestResult(
+            model_id=A,
+            success=True,
+            variables=[
+                VariableResult(index=1, time=tt, values=tt, name=first),
+                VariableResult(index=2, time=tt, values=2 * tt, name=second),
+            ],
+        ),
+    )
+    return cfg, work
+
+
 LAYOUT = [{"kind": "time", "series": [{"var": "x"}, {"var": "z"}]}]
 
 
