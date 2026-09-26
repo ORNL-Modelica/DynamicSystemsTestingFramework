@@ -59,7 +59,7 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    id breaks at any character when a line cannot hold it; the TEST actions
    keep to the right, on the id's line when they fit and below it, as one
    group, when not. */
-.dstf-subheader .dstf-model { min-width: 0; overflow-wrap: anywhere; }
+.dstf-subheader .dstf-model { overflow-wrap: anywhere; }
 .dstf-subheader > .dstf-actions { margin-left: auto; }
 .dstf-pill {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase;

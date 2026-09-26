@@ -1886,7 +1886,8 @@ TRANSFORM_MODEL = (
 OVERLONG_MODEL = TRANSFORM_MODEL.replace("Examples.", "Examples.Variants.WithWall.")
 
 #: The Test page's subheader: each child that ends past the window's right
-#: edge, each of its buttons whose label is taller than `k` line heights
+#: edge or whose text overflows its own box (cut off, as an id that cannot
+#: break is inside a box that fits), each of its buttons whose label is taller than `k` line heights
 #: (1.5 finds a second line, 2.5 a third), and how far short of its right
 #: edge the TEST actions stop.
 SUBHEADER_PAST = """(k) => {
@@ -1895,6 +1896,7 @@ SUBHEADER_PAST = """(k) => {
   for (const el of sub.children) {
     const r = el.getBoundingClientRect();
     if (r.width && r.right > window.innerWidth) past.push([el.textContent, r.right]);
+    if (el.scrollWidth > el.clientWidth + 1) past.push([el.textContent, el.scrollWidth]);
   }
   const pad = parseFloat(getComputedStyle(sub).paddingRight);
   const act = sub.querySelector(':scope > .dstf-actions').getBoundingClientRect();
@@ -1956,6 +1958,17 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
             )
             _pushed_right(page, 3)
             _shot(page, tmp_path, f"cards-900-{drawer}")
+
+        # A title with no place to break: it breaks inside itself rather
+        # than scrolling the page sideways (1477 px without that).
+        title = page.locator(TITLES).first
+        kept = title.text_content()
+        title.evaluate("(e, text) => { e.textContent = text; }", "Q" + "x" * 149)
+        _no_sideways_scroll(page)
+        rights = page.evaluate(REMOVE_RIGHTS)
+        assert len(rights) == 3 and max(rights) <= 900, rights
+        title.evaluate("(e, text) => { e.textContent = text; }", kept)
+        expect(title).to_have_text(kept)
 
         # The Variables drawer at 320 px, on names longer than it.
         rows = page.locator(".dstf-var-row")
