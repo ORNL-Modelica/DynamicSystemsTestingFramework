@@ -244,14 +244,17 @@ def test_a_regex_is_timed_in_its_own_cpu_while_another_thread_holds_the_gil(
     """The budget counts the searching thread's CPU, not the time it waits
     for the GIL between searches: beside a thread that holds the GIL ~0.2 s
     at a time (the overlay index json.loads-ing TRANSFORM's refs for ~15 s
-    after a page opens), this filter over 10,000 names took 1.3-5.7 s of
-    wall time and 0.04-0.14 s of its own CPU (medians 1.4 s and 0.045 s,
-    two CPU burners beside it). A 0.3 s budget is 7x above the median CPU
-    and 4x below the fastest wall time: timed on `monotonic` it ran out,
-    timed on `thread_time` it keeps every name. And each search holds the
-    GIL (``concurrent=False``): released, a search waits on the busy thread
-    every time, up to ~0.2 s a name, and failed here in 17-23 s — `regex`'s
-    own timeout counts the busy thread's CPU — or at the 30 s bound."""
+    after a page opens), this filter over 10,000 names took 1.3-1.6 s of
+    wall time and 0.044-0.050 s of its own CPU here in 22 runs, idle and
+    beside two CPU burners on 8 cores; a loaded host saw up to 8.4 s and
+    0.17 s. Without the busy thread it takes ~0.04 s, so a wall time over
+    3 budgets proves the thread contended. A 0.3 s budget is 6x above that
+    CPU and 4x below the fastest wall time: timed on `monotonic` it ran
+    out, timed on `thread_time` it keeps every name. And each search holds
+    the GIL (``concurrent=False``): released, a search waits on the busy
+    thread every time, up to ~0.2 s a name, and failed here in 3 runs of 3
+    at ~30 s: twice on the 30 s bound, once on `regex`'s own timeout, which
+    counts the busy thread's CPU."""
     pytest.importorskip("regex")
     import threading
 
@@ -262,6 +265,8 @@ def test_a_regex_is_timed_in_its_own_cpu_while_another_thread_holds_the_gil(
             sum(range(20_000_000))  # one call holds the GIL ~0.2 s
 
     monkeypatch.setattr(variable_rows, "REGEX_BUDGET", 0.3)
+    # the wall backstop would end the slow runs this test measures the CPU of
+    monkeypatch.setattr(variable_rows, "REGEX_WALL_BACKSTOP", 60.0)
     names = [f"pipe{i}.T[{i % 20}]" for i in range(10_000)]
     keep = matcher(r"pipe\d+\.T\[3\]$", regex=True, case=False)
     kept = []
@@ -273,9 +278,13 @@ def test_a_regex_is_timed_in_its_own_cpu_while_another_thread_holds_the_gil(
             if keep(name):
                 kept.append(name)
             assert time.perf_counter() - start < 30, f"waiting after {len(kept)} kept"
+        wall = time.perf_counter() - start
     finally:
         stop.set()
         busy.join()
+    assert wall > 3 * variable_rows.REGEX_BUDGET, (
+        f"{wall:.2f} s: the spinner never contended"
+    )
     assert len(kept) == 500 and kept[0] == "pipe3.T[3]"
 
 
@@ -304,6 +313,37 @@ def test_a_search_is_given_the_time_left_not_the_whole_budget(monkeypatch):
     pytest.importorskip("regex")
     ticks = iter([0.0, 0.96 * variable_rows.REGEX_BUDGET])
     monkeypatch.setattr(variable_rows, "thread_time", lambda: next(ticks))
+    keep = matcher(r"^(a|aa)+$", regex=True, case=False)
+    assert keep("aa")
+    start = time.perf_counter()
+    with pytest.raises(TimeoutError):
+        keep("a" * 32 + "b")
+    assert time.perf_counter() - start < 0.2
+
+
+def test_the_wall_backstop_stops_a_filter_its_own_cpu_would_not(monkeypatch):
+    """The filter runs on the UI event loop, so every tab is frozen for its
+    WALL time: beside threads holding the GIL a plain `T` took 10.7-20.5 s
+    with 1 s of its own CPU unspent. The wall clock is faked to read 0.4
+    backstops later at each name while the thread's CPU stays real, and
+    near nothing: the backstop runs out at the 4th name."""
+    pytest.importorskip("regex")
+    w = variable_rows.REGEX_WALL_BACKSTOP
+    ticks = iter([0.0, 0.4 * w, 0.8 * w, 1.2 * w])
+    monkeypatch.setattr(variable_rows, "monotonic", lambda: next(ticks))
+    keep = matcher("x", regex=True, case=False)
+    assert [keep("x") for _ in range(3)] == [True, True, True]
+    with pytest.raises(TimeoutError):
+        keep("x")
+
+
+def test_a_search_is_given_the_wall_time_left_when_that_is_less(monkeypatch):
+    """The first name took 99% of the backstop's wall time and none of the
+    CPU budget: the second search stops at the wall time left, not at the
+    whole CPU budget (32 a's run 0.83-0.90 s given no timeout, above)."""
+    pytest.importorskip("regex")
+    ticks = iter([0.0, 0.99 * variable_rows.REGEX_WALL_BACKSTOP])
+    monkeypatch.setattr(variable_rows, "monotonic", lambda: next(ticks))
     keep = matcher(r"^(a|aa)+$", regex=True, case=False)
     assert keep("aa")
     start = time.perf_counter()

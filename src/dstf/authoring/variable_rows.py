@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
-from time import thread_time
+from time import monotonic, thread_time
 
 from ..backends.types import is_glob_pattern
 from ..discovery.plots import PlotSpec
@@ -21,23 +21,35 @@ from ..figures.families import family_label, group_families, mask_quoted
 TOP_LEVEL = "(top level)"
 
 #: Seconds of the searching thread's CPU (`thread_time`) ONE typed regex
-#: may search, over every name of one filter. An ordinary search costs
-#: ~2.5 us a name and reading that clock ~0.85 us more (a system call here;
-#: `monotonic` is ~0.05 us): TRANSFORM's largest result (76,992 names)
+#: may search, over every name of one filter: the verdict "the pattern took
+#: too long" is the filter's own CPU, so waits for the GIL never make a
+#: plain pattern too long. An ordinary search costs ~2.5 us a name and
+#: reading that clock ~0.85 us more (a system call here; `monotonic` is
+#: ~0.075 us): on an idle machine TRANSFORM's largest result (76,992 names)
 #: takes ~0.27 s, and 0.25 s timed out a plain `T` over 100,000. 1 s leaves
-#: ~3.5x, and bounds a pattern that backtracks to a ~1 s freeze. The clock
-#: is the thread's own because between searches the filter waits for the
-#: GIL on any busy thread of the tool (its overlay index json.loads for
-#: ~15 s after a page opens): in wall time those names took 0.4-0.9 s
-#: beside one or two such threads, two to three times their own CPU. Each
-#: search holds the GIL (``concurrent=False``): released, every search
-#: waited on a busy thread again, 0.3-0.9 ms a name beside one, and `T` on
-#: a wall-clock budget ran out after 1,200-3,600 names. The cost is that a
-#: backtracking search holds the GIL up to the budget — the freeze above.
+#: ~3.5x there; a loaded WSL2 host measured up to 0.99 s of thread CPU for
+#: the same filter, its `thread_time` counting time the host took the vCPU
+#: away. The clock is the thread's own because between searches the filter
+#: waits for the GIL on any busy thread of the tool (its overlay index
+#: json.loads for ~15 s after a page opens): in wall time those names took
+#: 0.4-0.9 s beside one or two such threads, two to three times their own
+#: CPU. Each search holds the GIL (``concurrent=False``): released, every
+#: search waited on a busy thread again, 0.3-0.9 ms a name beside one, and
+#: `T` on a wall-clock budget ran out after 1,200-3,600 names.
 #: The package times each search's ``timeout`` with C ``clock()``: on
 #: Linux and macOS the CPU time of the whole process, every thread summed;
 #: on Windows, wall time.
 REGEX_BUDGET = 1.0
+#: Seconds of WALL time (`monotonic`) the same filter may take. It runs on
+#: the UI event loop, so every tab is frozen for its wall time, which the
+#: CPU budget does not bound: beside a thread holding the GIL ~0.2 s at a
+#: time, a backtracking pattern froze the tool 17.4 s on 1 s of its own
+#: CPU, and a plain `T` over TRANSFORM's largest result took 10.7-20.5 s
+#: and never ran out. This is what bounds the freeze every tab sees. It is
+#: checked between searches: a search is given the smaller time left, but
+#: `regex` counts it on ``clock()`` — the process's CPU on Linux and macOS —
+#: so one search is bounded by the CPU left and can pass the wall time left.
+REGEX_WALL_BACKSTOP = 5 * REGEX_BUDGET
 
 
 @dataclass(frozen=True)
@@ -86,8 +98,10 @@ def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
     timeout, so a pattern that backtracks runs to its end (`^(a|aa)+$` over
     60 a's and a ``b``: days), and `regex` stops a search at its
     ``timeout``. Both hold the GIL for a whole search, `regex` because
-    ``concurrent=False`` asks it to, so the budget is what bounds the freeze
-    every tab sees, not a worker thread. It is imported here, not at the
+    ``concurrent=False`` asks it to, and the filter runs on the UI event
+    loop, so what bounds the freeze every tab sees is
+    `REGEX_WALL_BACKSTOP`'s wall time, not a worker thread; `REGEX_BUDGET`,
+    the filter's own CPU, decides a pattern that took too long. It is imported here, not at the
     top: it comes with the ``[author]`` extra, and this module imports
     without it. A glob is not left to a regex either — compiled to one,
     ``*a*a*a*a*a*a*a*b`` over one 60-character name took over 20 s on the
@@ -100,13 +114,16 @@ def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
 
         # unbounded: `(a{5000}){5000}` compiles for seconds, or out of memory
         pattern = regex_package.compile(needle, 0 if case else regex_package.IGNORECASE)
-        deadline: list[float] = []  # set at the first name, not at compile
+        # CPU, then wall; set at the first name, not at compile. The closure
+        # is one thread's: `thread_time` readings from two threads cannot be
+        # compared, and the drawer builds and uses it within one `_build`.
+        deadlines: list[float] = []
 
         def search(text: str) -> bool:
-            now = thread_time()
-            if not deadline:
-                deadline.append(now + REGEX_BUDGET)
-            left = deadline[0] - now
+            cpu, wall = thread_time(), monotonic()
+            if not deadlines:
+                deadlines.extend((cpu + REGEX_BUDGET, wall + REGEX_WALL_BACKSTOP))
+            left = min(deadlines[0] - cpu, deadlines[1] - wall)
             if left <= 0:
                 raise TimeoutError("the pattern took too long")
             return pattern.search(text, timeout=left, concurrent=False) is not None

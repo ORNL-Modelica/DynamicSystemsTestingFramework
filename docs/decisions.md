@@ -4811,7 +4811,11 @@ hold the GIL for a search, `regex` because `concurrent=False` asks it to),
 and the owner chose `regex` (in `[author]`), whose `timeout=` does, under
 one budget per filter: 1 s of the searching thread's CPU (`thread_time`),
 so the filter's waits for the GIL between searches, behind a busy thread
-of the tool, do not count against it. Not bounded: `regex.compile` of
+of the tool, never make a plain pattern "too long". That budget does not
+bound the freeze, since the filter runs on the UI event loop and every tab
+waits out its wall time (17.4 s for a backtracking pattern beside a thread
+holding the GIL), so a second limit of 5 s of wall time (`monotonic`),
+checked between searches, does. Not bounded: `regex.compile` of
 nested fixed-count repeats (`(a{5000}){5000}`) can take seconds or exhaust
 memory before any budget applies, where `re` compiled it at once;
 accepted as contrived, on the user's own local tool.
