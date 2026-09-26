@@ -13,7 +13,7 @@ from dstf.comparison.algorithms import (
     _compare_trajectories,
     _compare_tube,
 )
-from dstf.comparison.geometry import Band, Box, HLine, Marker, Window
+from dstf.comparison.geometry import Band, Box, HLine, Marker, Series, Window
 from dstf.comparison.metric_tree import leaf_from_variable, stamp_leaf_path
 from dstf.figures.decimate import decimate_band
 from dstf.figures.plotly import PLOT_CONFIG, variable_figure
@@ -625,6 +625,70 @@ def _spectrum_view():
         ref_values=sig,
         leaves=[_stamped(vc)],
     )
+
+
+def _dominant_view(sig, peaks):
+    """A dominant-frequency leaf declaring ``peaks`` over ``sig`` on
+    `_spectrum_view`'s grid (t 0..10 s, 1001 samples: Nyquist near 50 Hz)."""
+    t = np.linspace(0.0, 10.0, 1001)
+    vc = _compare_dominant_frequency(t, sig, t, sig, peaks=peaks)
+    vc.name = "x"
+    return build_view(
+        "x",
+        act_time=t,
+        act_values=sig,
+        ref_time=t,
+        ref_values=sig,
+        leaves=[_stamped(vc)],
+    )
+
+
+def _spectrum_x(view) -> list[float] | None:
+    return variable_figure(view)["layout"]["xaxis2"].get("range")
+
+
+SINE_2HZ = np.sin(2 * np.pi * 2.0 * np.linspace(0.0, 10.0, 1001))
+
+
+class TestSpectrumRange:
+    """Autoranged, the spectrum ran 0..Nyquist, and Nyquist follows the
+    sample count, not the physics: TRANSFORM's peaks near 1.2e-5 Hz sat in
+    the leftmost ~10 px of an axis to ~1.7e-3 Hz (2026-09-26)."""
+
+    def test_it_runs_to_three_times_the_declared_peaks_window(self):
+        layout = variable_figure(_spectrum_view())["layout"]
+        lo, hi = layout["xaxis2"]["range"]
+        assert lo == 0.0
+        assert hi == pytest.approx(3 * 2.1)  # the 2 Hz peak's window, +-5%
+        assert layout["xaxis2"]["uirevision"] == "keep"
+        wide = _dominant_view(SINE_2HZ, [{"freq": 2.0, "tolerance": 0.5}])
+        assert _spectrum_x(wide) == [0.0, pytest.approx(9.0)]
+
+    def test_with_nothing_declared_it_runs_to_the_strongest_detected_peak(self):
+        """The reference's ten detected peaks include leakage sidelobes to
+        13.6 Hz: ranged to the highest of them the axis ran to 40.8 Hz."""
+        lo, hi = _spectrum_x(_dominant_view(SINE_2HZ, []))
+        assert lo == 0.0 and 2.0 < hi <= 7.2, hi
+
+    def test_it_stops_at_nyquist_but_keeps_a_declared_peak_on_the_axis(self):
+        t = np.linspace(0.0, 10.0, 1001)
+        high = _dominant_view(
+            np.sin(2 * np.pi * 30.0 * t), [{"freq": 30.0, "tolerance": 0.05}]
+        )
+        nyquist = max(
+            float(p.x.max())
+            for leaf in high.leaves
+            for p in leaf.geometry
+            if p.panel == "spectrum" and isinstance(p, Series)
+        )
+        assert _spectrum_x(high) == [0.0, pytest.approx(nyquist)]
+        above = _dominant_view(SINE_2HZ, [{"freq": 60.0, "tolerance": 0.05}])
+        assert _spectrum_x(above)[1] >= 63.0
+
+    def test_nothing_to_range_to_keeps_the_autorange(self):
+        flat = np.zeros(1001)
+        assert _spectrum_x(_dominant_view(flat, [])) is None
+        assert _spectrum_x(_dominant_view(flat, [{"freq": 0.0}])) is None
 
 
 # -- legend b: what the page chose to show (the form-row + legend plan, Task 1) --

@@ -25,6 +25,8 @@ import html
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 
+import numpy as np
+
 from ..comparison.geometry import (
     Band,
     Box,
@@ -636,6 +638,51 @@ def _time_span(view: VariableView) -> tuple[float, float]:
 _Y_LABELS = {"exponentformat": "e", "hoverformat": ".4~g"}
 
 
+#: How far past its peak of interest the spectrum's x axis runs.
+SPECTRUM_HEADROOM = 3.0
+
+
+def _spectrum_range(view: VariableView) -> list[float] | None:
+    """``[0, 3 x the peak of interest]``, clamped to Nyquist but never short
+    of the peak. The peak of interest is the highest declared or matched
+    peak (its window's upper edge where it has one), else the STRONGEST
+    detected one: the reference's ten detected peaks include leakage
+    sidelobes, and on a 2 Hz sine the highest of them put the axis at
+    40.8 Hz. None — autorange — with no peak above zero.
+
+    Autoranged, the axis ran 0..Nyquist, and Nyquist follows the sample
+    count, not the physics: TRANSFORM's peaks near 1.2e-5 Hz sat in the
+    leftmost ~10 px of an axis to ~1.7e-3 Hz (2026-09-26)."""
+    declared: list[float] = []
+    detected: list[tuple[float, float]] = []  # (frequency, magnitude)
+    nyquist = 0.0
+    for leaf in view.leaves:
+        for p in leaf.geometry:
+            if p.panel != "spectrum":
+                continue
+            if isinstance(p, Series):
+                if len(p.x):
+                    nyquist = max(nyquist, float(np.nanmax(p.x)))
+            elif isinstance(p, Marker):
+                if p.kind == "detected":
+                    detected.append((float(p.x), float(p.y)))
+                else:
+                    declared.append(float(p.x))
+            elif isinstance(p, Box):
+                declared.append(float(p.t1))
+    if declared:
+        top = max(declared)
+    elif detected:
+        top = max(detected, key=lambda d: d[1])[0]
+    else:
+        return None
+    if not top > 0:
+        return None
+    hi = SPECTRUM_HEADROOM * top
+    # A declared peak above Nyquist stays on the axis.
+    return [0.0, max(min(hi, nyquist), top) if nyquist > 0 else hi]
+
+
 def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
     # Area shapes under lines: under `edits.shapePosition` every shape takes
     # a drag and plotly.js has no per-shape switch that works (`layer` only
@@ -670,7 +717,16 @@ def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
     }
     if view.has_spectrum:
         layout["yaxis"]["domain"] = list(TIME_DOMAIN)
-        layout["xaxis2"] = {"title": {"text": "Frequency [Hz]"}, "anchor": "y2"}
+        layout["xaxis2"] = {
+            "title": {"text": "Frequency [Hz]"},
+            "anchor": "y2",
+            # A zoom into the spectrum survives the page's redraws, like
+            # the time axis's.
+            "uirevision": "keep",
+        }
+        spectrum_range = _spectrum_range(view)
+        if spectrum_range is not None:
+            layout["xaxis2"]["range"] = spectrum_range
         layout["yaxis2"] = {
             "title": {"text": "Magnitude"},
             **_Y_LABELS,
