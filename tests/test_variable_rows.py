@@ -341,3 +341,18 @@ def test_the_filter_asks_the_label_not_the_text():
 def test_prefix_groups_sort_without_case():
     groups = _groups(names=["alpha.x", "Zeta.y", "$DER.z"], tracked=[])
     assert [g.title for g in groups] == ["$DER", "alpha", "Zeta"]
+
+
+@pytest.mark.parametrize(
+    ("name", "group"),
+    [
+        ("'a.b'.c", (1, "'a.b'")),
+        ("'a[1]'.c", (1, "'a[1]'")),
+        ("'a.b'", (2, "(top level)")),
+        ("port[2, 1].C[1]", (1, "port")),
+        ("'it\\'s.x'.c", (1, "'it\\'s.x'")),
+    ],
+)
+def test_a_dot_or_bracket_inside_a_quoted_identifier_is_not_a_separator(name, group):
+    """`'a.b'.c` is component `'a.b'`'s `c`: it was grouped under `'a`."""
+    assert variable_rows._group(name, set(), set()) == group

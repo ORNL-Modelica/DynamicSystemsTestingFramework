@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 
 from ..backends.types import is_glob_pattern
 from ..discovery.plots import PlotSpec
-from ..figures.families import family_label, group_families
+from ..figures.families import family_label, group_families, mask_quoted
 
 TOP_LEVEL = "(top level)"
 
@@ -115,9 +115,14 @@ def _group(name: str, tracked: set[str], diagnostics: set[str]) -> tuple[int, st
         return 0, "Tracked"
     if name in diagnostics:
         return 3, "Diagnostics"
-    head, dot, _ = name.partition(".")
+    # found in the mask: `'a.b'.c` is in "'a.b'", never "'a"
+    masked = mask_quoted(name)
+    dot = masked.find(".")
+    if dot == -1:
+        return 2, TOP_LEVEL
     # the component, not its index: `port[2, 1].C[1]` is in "port"
-    return (1, head.split("[", 1)[0]) if dot else (2, TOP_LEVEL)
+    bracket = masked.find("[", 0, dot)
+    return 1, name[: dot if bracket == -1 else bracket]
 
 
 def variable_groups(

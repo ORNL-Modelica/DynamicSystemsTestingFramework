@@ -43,6 +43,36 @@ def test_family_of_is_the_last_integer_index(name, expected):
     assert family_of(name) == expected
 
 
+@pytest.mark.parametrize("expression", [False, True])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("a.'x[5]'", None),
+        ("x[3].'p[1,2]'", ("x[].'p[1,2]'", 3)),
+        ("a.'x[5]'.T[2]", ("a.'x[5]'.T[]", 2)),
+        ("a.'it\\'s[2]'.T[4]", ("a.'it\\'s[2]'.T[]", 4)),
+        ("a.'it\\'s[2]'", None),
+    ],
+)
+def test_a_bracket_inside_a_quoted_identifier_is_not_an_index(
+    name, expected, expression
+):
+    """A Modelica quoted identifier (`'x[5]'`, with `\\'` escaping a quote)
+    is ONE name: its brackets and commas are characters, not an index. They
+    folded `a.'x[5]'` on 5 and refused `x[3].'p[1,2]'` as two-dimensional."""
+    assert family_of(name, expression=expression) == expected
+
+
+def test_a_family_label_slices_the_index_outside_the_quotes():
+    """The fold marker `[]` of the key, not the first `[]` in it: that one
+    was inside `'b[]'`, and the label read `a.'b[1:2]'.x[]`."""
+    from dstf.figures.families import family_label
+
+    names = ["a.'b[]'.x[1]", "a.'b[]'.x[2]"]
+    ((key, members),) = group_families(names)
+    assert family_label(key, members) == "a.'b[]'.x[1:2]"
+
+
 def test_group_families_keeps_first_appearance_order_and_sorts_members():
     names = ["pipe.T[11]", "m", "pipe.T[1]", "pipe.p[2]", "pipe.T[6]"]
     assert group_families(names) == [
@@ -520,23 +550,46 @@ def _family_of_after_3c(name: str):
     return name[: m.start()] + "[]" + name[m.end() :], int(m.group(1))
 
 
+def _family_of_after_quoting(name: str):
+    """`_family_of_after_3c` searching a copy of the name whose quoted
+    identifiers are masked, the key cut from the name itself: a bracket or
+    a comma inside `'...'` is a character, not an index. Copied, not
+    imported."""
+    import re
+
+    masked = re.sub(
+        r"'(?:[^'\\]|\\.)*'", lambda m: "'" + "q" * (len(m[0]) - 2) + "'", name
+    )
+    m = re.compile(r"\[(\d+)\](?!.*\[\d+\])").search(masked)
+    if m is None:
+        return None
+    if re.compile(r"\[[^\]]*,[^\]]*\]").search(masked, m.end()):
+        return None
+    return name[: m.start()] + "[]" + name[m.end() :], int(m.group(1))
+
+
 def test_family_of_over_names_changed_only_where_3c_ruled():
     """A differential over generated names, not a hand-list (the b147918
     review fuzzed 300k names against 2ac8c8c's copy). The current rule
     agrees with 2ac8c8c's everywhere except names whose multi-dimensional
-    index precedes the last single one — and those it now folds."""
+    index precedes the last single one — and those it now folds — and
+    names with a bracket or comma inside a quoted identifier, which it
+    reads as the characters they are."""
     import re
 
     names = _generated_result_file_names(25000)
     assert len(set(names)) > 1000
-    assert [n for n in names if family_of(n) != _family_of_after_3c(n)] == []
+    assert [n for n in names if family_of(n) != _family_of_after_quoting(n)] == []
     changed = [n for n in names if _family_of_after_3c(n) != _family_of_at_2ac8c8c(n)]
     assert changed  # the generator does produce the ruled shape
     multi = re.compile(r"\[[^\]]*,[^\]]*\]")
     for n in changed:
         assert _family_of_at_2ac8c8c(n) is None
-        key, _ = family_of(n)
+        key, _ = _family_of_after_3c(n)
         assert multi.search(key[: key.index("[]")])
+    quoted = [n for n in names if _family_of_after_quoting(n) != _family_of_after_3c(n)]
+    assert quoted  # the generator does produce `'a[1]'` and `'a,b'`
+    assert all(re.search(r"'[^']*[\[\],][^']*'", n) for n in quoted)
 
 
 def test_an_expression_may_index_with_an_integer_list_before_its_last_index():

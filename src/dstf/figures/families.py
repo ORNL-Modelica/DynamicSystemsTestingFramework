@@ -34,7 +34,9 @@ _MULTI_INDEX = re.compile(r"\[[^\]]*,[^\]]*\]")
 #: identifier (``a.'b c'[2]``) is collapsed to one letter first, so its
 #: spaces and punctuation do not have to be allowed everywhere.
 _PLAIN_NAME = re.compile(r"^[^\W\d][\w.\[\]]*$")
-_QUOTED_ID = re.compile(r"'[^']*'")
+#: Modelica's Q-IDENT: a backslash escapes the next character, so
+#: ``'it\'s'`` is one identifier, not ``'it\'`` and a stray ``s'``.
+_QUOTED_ID = re.compile(r"'(?:[^'\\]|\\.)*'")
 #: An index of integers only, one or several (`[3]`, `[4, 1]`): a position
 #: in an array, however many dimensions. Collapsed before `_PLAIN_NAME`, so
 #: an expression that indexes a port two-dimensionally is still a plain name
@@ -61,6 +63,15 @@ HUES: tuple[tuple[str, str, str, str], ...] = (
     ("#a5d6a7", "#66bb6a", "#388e3c", "#1b5e20"),
     ("#ce93d8", "#ab47bc", "#7b1fa2", "#4a148c"),
 )
+
+
+def mask_quoted(text: str) -> str:
+    """``text`` with every character inside a quoted identifier replaced by
+    a letter, quotes kept, and the SAME length — so a position found in the
+    mask slices ``text``. A quoted identifier is one name: the ``[5]`` of
+    ``a.'x[5]'`` is no index and the dot of ``'a.b'.c`` no separator, and
+    a search that reads the mask cannot mistake them for either."""
+    return _QUOTED_ID.sub(lambda m: "'" + "q" * (len(m[0]) - 2) + "'", text)
 
 
 def _names_an_element(text: str) -> bool:
@@ -107,14 +118,15 @@ def family_of(text: str, *, expression: bool = False) -> tuple[str, int] | None:
     """
     if expression and not _names_an_element(text):
         return None
-    m = _LAST_INDEX.search(text)
+    masked = mask_quoted(text)  # `a.'x[5]'` has no index; the key is `text`'s
+    m = _LAST_INDEX.search(masked)
     if m is None:
         return None
     # Multi-dimensional AFTER the last single index (`a[1].b[2,3]`): the
     # element's own position is two-dimensional, so it is no member of an
     # `a` array. BEFORE it (`massPorts[4, 1].C[3]`) it is where the array
     # sits, and the element is C's 3rd (3c ruling).
-    if _MULTI_INDEX.search(text, m.end()):
+    if _MULTI_INDEX.search(masked, m.end()):
         return None
     return text[: m.start()] + "[]" + text[m.end() :], int(m.group(1))
 
@@ -175,7 +187,11 @@ def family_label(
     indices = [
         fam[1] for m in members if (fam := _family_of_member(m, labels)) is not None
     ]
-    return key.replace("[]", f"[{slice_text(indices)}]", 1) if "[]" in key else key
+    # the fold marker, never a `[]` inside a quoted identifier (`a.'b[]'.x[]`)
+    at = mask_quoted(key).find("[]")
+    if at == -1:
+        return key
+    return key[:at] + f"[{slice_text(indices)}]" + key[at + 2 :]
 
 
 def _rgb(hex_color: str) -> tuple[int, int, int]:
