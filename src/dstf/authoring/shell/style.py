@@ -171,15 +171,18 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 .dstf-drawer-panel { width: 320px; min-width: 0; }
 /* The Variables drawer's rows (3c): "+ new plot" is there on the hovered
    row only (the owner's ruling, Q6 A) — `visibility`, so the row does not
-   reflow as the mouse moves down the list. A family's members hang under
-   it, indented; a family carries the ramp its members are drawn in. The
-   target line is a tag on the accent tint with the selected plot's ring
-   inside it, as the owner's board drew it: a bare ring beside the text
-   read as an empty checkbox. */
+   reflow as the mouse moves down the list — and on a row with focus in
+   it: a hidden button takes no focus, and Tab from a check skipped its
+   own. A family's members hang under it, indented; a family's swatch marks
+   an array, in the accent ramp (a plot picks a family's hue by its order
+   on that plot, not this). The target line is a tag on the accent tint
+   with the selected plot's ring inside it, as the owner's board drew it: a
+   bare ring beside the text read as an empty checkbox. */
 .dstf-var-row { min-height: 28px; }
 .dstf-var-row:hover { background: var(--dstf-surface-hover); }
 .dstf-var-row .dstf-var-new { visibility: hidden; }
-.dstf-var-row:hover .dstf-var-new { visibility: visible; }
+.dstf-var-row:hover .dstf-var-new,
+.dstf-var-row:focus-within .dstf-var-new { visibility: visible; }
 .dstf-var-member { padding-left: 24px; }
 .dstf-var-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dstf-var-ramp { width: 16px; height: 8px; border-radius: 2px; flex: none; }

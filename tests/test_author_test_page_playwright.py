@@ -1785,3 +1785,41 @@ def test_a_stranded_sentence_wraps_and_the_target_is_a_tag(
         width = _tooltip_width(page, check.locator(".."), "x is scored by 1")
         _shot(page, tmp_path, "stranded-check")
         assert width <= 330, width
+
+
+def test_a_drawer_row_answers_the_keyboard_and_a_screen_reader(
+    tmp_path, playwright_browser
+):
+    """A check is named by its row's text — its only text was the icon's
+    ligature, ``check_box_outline_blank`` — and a family's chevron says
+    what it opens and whether it is open. "+ new plot" shows on the hovered
+    row only (the owner's ruling, Q6 A), and a `visibility: hidden` button
+    takes no focus: Tab from a check skipped its own "+ new plot". It shows
+    while anything in its row has focus, so Tab reaches it."""
+    with _served(tmp_path, playwright_browser, project=_drawer_project) as page:
+        page.locator(".dstf-plot").nth(0).get_by_role(
+            "button", name="Add series"
+        ).click()
+        expect(page.locator(".dstf-var-target")).to_have_text(
+            "Checkboxes act on plot 1 of 2", timeout=EXPECT_TIMEOUT
+        )
+        drawer = page.locator(".dstf-drawer-panel")
+        check = drawer.get_by_role("checkbox", name="z", exact=True)
+        expect(check).to_have_count(1)
+        chevron = drawer.get_by_role("button", name="Open pipe.T[1:3]", exact=True)
+        expect(chevron).to_have_attribute("aria-expanded", "false")
+        chevron.click()
+        chevron = drawer.get_by_role("button", name="Close pipe.T[1:3]", exact=True)
+        expect(chevron).to_have_attribute(
+            "aria-expanded", "true", timeout=EXPECT_TIMEOUT
+        )
+
+        z = _var_row(page, "z")
+        new = z.locator(".dstf-var-new")
+        page.mouse.move(5, 895)
+        expect(new).to_be_hidden()
+        check.focus()
+        page.keyboard.press("Tab")
+        expect(new).to_be_focused(timeout=EXPECT_TIMEOUT)
+        expect(new).to_be_visible()
+        _shot(page, tmp_path, "var-keyboard")

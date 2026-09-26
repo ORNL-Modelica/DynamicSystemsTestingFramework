@@ -43,8 +43,10 @@ if TYPE_CHECKING:
 #: ``MEMBERS`` of its own.
 ROWS, MEMBERS = 200, 50
 
-#: A family's swatch: the ramp its members are drawn in, the first hue's
-#: four stops (`figures.families`), light to dark.
+#: A family's swatch marks the row as an array, in the accent ramp (the
+#: first hue's four stops, `figures.families`), light to dark. It is not
+#: the ramp its members are drawn in: a row is tied to no plot, and a plot
+#: gives a family its hue by the family's order on that plot.
 _RAMP = f"background: linear-gradient(90deg, {', '.join(HUES[0])})"
 
 
@@ -217,8 +219,17 @@ class VariablesDrawer:
         )
 
     def _draw(self, reads: _Reads | None) -> None:
+        """Build the rows, and record what they were built from only once
+        they are: a draw that raised had recorded it first, and every later
+        refresh then saw nothing moved and left the cleared body empty. A
+        bad regex is a draw that completed — it is drawn as its reason."""
+        signature = self._signature(reads)
+        self.drawn = None
+        self._build(reads)
+        self.drawn = signature
+
+    def _build(self, reads: _Reads | None) -> None:
         page = self.page
-        self.drawn = self._signature(reads)
         self.body.clear()
         if reads is None:
             self.target.set_text("")
@@ -299,11 +310,23 @@ class VariablesDrawer:
             )
             .mark(marker("var-row", key))
         ):
+            # Names go on the props dict, never through a props string: a
+            # name can hold a `"`. A check's only text was its icon's
+            # ligature, `check_box_outline_blank`.
             if len(row.members) > 1:
-                ui.button(
-                    icon="expand_more" if key in self.opened else "chevron_right",
-                    on_click=partial(self._open, key),
-                ).props("flat dense round size=sm").mark(marker("var-open", key))
+                opened = key in self.opened
+                chevron = (
+                    ui.button(
+                        icon="expand_more" if opened else "chevron_right",
+                        on_click=partial(self._open, key),
+                    )
+                    .props("flat dense round size=sm")
+                    .mark(marker("var-open", key))
+                )
+                chevron.props["aria-label"] = (
+                    f"{'Close' if opened else 'Open'} {row.text}"
+                )
+                chevron.props["aria-expanded"] = "true" if opened else "false"
             checked, icon = _state(row)
             # A disabled Quasar button takes no pointer events: the reason's
             # tooltip is on a span around it, as on Remove plot.
@@ -315,6 +338,7 @@ class VariablesDrawer:
                     )
                     .mark(marker("var-check", key))
                 )
+                check.props["aria-label"] = row.text
                 if not page.cards:
                     check.disable()  # no plot to act on: "+ new plot" makes one
                 elif row.stranded:
@@ -353,13 +377,22 @@ class VariablesDrawer:
         """All of the row on the selected plot: take it off, unless that
         leaves a scored variable on no plot (the owner's ruling, Q7 A — the
         row is already grey then; this is the belt to its braces). Otherwise
-        add what is missing."""
+        add what is missing.
+
+        ``row`` was drawn before the last change, and the selection may name
+        a plot the layout no longer has: a real double-click on the last
+        plot's only series raised IndexError on its second click. So the
+        layout is read NOW, a selection outside it does nothing, and on or
+        off is what that plot holds now — never ``row.on_selected``."""
         page = self.page
         if not page.cards:
             return
         session = page.shell.session
         layout = session.layout(page.model_id)
-        if row.on_selected == len(row.members):
+        if not 0 <= page.selected < len(layout):
+            return
+        holds = {s.var for s in layout[page.selected].series}
+        if all(m in holds for m in row.members):
             new = remove_series(layout, page.selected, row.members)
             scored = page.scored(session.tree_view(page.model_id))
             stuck = stranded(layout, new, list(scored))
@@ -375,8 +408,11 @@ class VariablesDrawer:
 
     def _new(self, row: VarRow) -> None:
         """A plot of the row's members below the selected one, selected
-        (planner's choice 1); the members stay where they were."""
+        (planner's choice 1); the members stay where they were. A selection
+        the layout no longer has does nothing, as in `_check`."""
         page = self.page
         layout = page.shell.session.layout(page.model_id)
+        if page.cards and not 0 <= page.selected < len(layout):
+            return
         new, at = new_plot(layout, page.selected if page.cards else None, row.members)
         page.stage_layout(new, select=at)

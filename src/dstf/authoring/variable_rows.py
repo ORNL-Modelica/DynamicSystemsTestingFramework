@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from ..backends.types import _pattern_to_regex, is_glob_pattern
+from ..backends.types import is_glob_pattern
 from ..discovery.plots import PlotSpec
 from ..figures.families import family_label, group_families
 
@@ -57,8 +57,13 @@ def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
     """What the filter box keeps. A regex (``.*`` on) searches; a glob (a
     ``*`` or ``?`` in it) matches the WHOLE text with ``[ ]`` literal — the
     rule a spec's ``variables`` list uses, so what you type here means what
-    it means there; anything else is a substring. ``re.error`` for a bad
-    regex, for the drawer to say."""
+    it means there (`_glob`); anything else is a substring. ``re.error`` for
+    a bad regex, for the drawer to say.
+
+    A typed regex is Python's `re`, backtracking and all: it is the user's
+    own pattern on their own local tool. A glob is not left to it — a glob
+    compiled to one regex, ``*a*a*a*a*a*a*a*b`` over one 60-character name,
+    took over 20 s on the UI event loop, blocking every tab."""
     flags = 0 if case else re.IGNORECASE
     if not needle:
         return lambda text: True
@@ -66,10 +71,43 @@ def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
         pattern = re.compile(needle, flags)
         return lambda text: pattern.search(text) is not None
     if is_glob_pattern(needle):
-        glob = re.compile(_pattern_to_regex(needle).pattern, flags)
-        return lambda text: glob.fullmatch(text) is not None
+        return _glob(needle, flags)
     folded = needle if case else needle.lower()
     return lambda text: folded in (text if case else text.lower())
+
+
+def _glob(needle: str, flags: int) -> Callable[[str], bool]:
+    """``needle`` matched against the whole text as `_pattern_to_regex`'s
+    anchored regex matches it, without backtracking. Split on ``*``, each
+    piece is a fixed-length regex (``?`` is ``.``, everything else literal)
+    with no quantifier: the first must match at the start, the last at the
+    end, and each middle one is found left to right — the leftmost place
+    leaves the most text for the rest, so no other place is ever tried. A
+    ``*`` spans no newline and ``?`` matches none, as the regex's ``.``
+    does not (`test_the_glob_means_what_the_specs_regex_means`)."""
+    pieces = [
+        re.compile("".join("." if ch == "?" else re.escape(ch) for ch in p), flags)
+        for p in needle.split("*")
+    ]
+    if len(pieces) == 1:  # a ``?`` and no ``*``
+        (only,) = pieces
+        return lambda text: only.fullmatch(text) is not None
+    head, *middle, tail = pieces
+    width = len(needle.rsplit("*", 1)[1])  # the last piece's, one per character
+
+    def keep(text: str) -> bool:
+        start, end = head.match(text), len(text) - width
+        if start is None or end < start.end() or tail.fullmatch(text, end) is None:
+            return False
+        at = start.end()
+        for piece in middle:
+            found = piece.search(text, at, end)
+            if found is None or text.find("\n", at, found.start()) != -1:
+                return False
+            at = found.end()
+        return text.find("\n", at, end) == -1
+
+    return keep
 
 
 def _group(name: str, tracked: set[str], diagnostics: set[str]) -> tuple[int, str]:

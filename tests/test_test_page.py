@@ -4497,7 +4497,7 @@ class TestLayoutControls:
 #: The rows of `_drawer_project`'s A, by `VarRow.id` (`<rank>/<group>/<key>`):
 #: the markers are the ids, never the keys, which are not unique.
 ROW_X, ROW_Y = "0/Tracked/x", "0/Tracked/y"
-ROW_Z = "2/(top level)/z"
+ROW_Z, ROW_A0 = "2/(top level)/z", "2/(top level)/a0"
 ROW_PIPE = "1/pipe/pipe.T[]"
 ROW_PORT = "1/port/port[2, 1].C[]"
 PIPE = ["pipe.T[1]", "pipe.T[2]", "pipe.T[3]"]
@@ -4551,6 +4551,12 @@ def _op_value(shell) -> list:
     (op,) = shell.session.spec.pending
     assert (op.model_id, op.op, op.path) == (A, "add", "/plots")
     return op.value
+
+
+def _raised(caplog) -> list[str]:
+    """The exceptions a click's handler raised: NiceGUI logs them and the
+    click returns as if nothing happened."""
+    return [r.getMessage() for r in caplog.records if r.exc_info]
 
 
 async def _drawer(shell, user, model=A) -> TestPage:
@@ -4650,6 +4656,66 @@ class TestVariablesDrawer:
                 lambda: _one(user, "var-target").text == "Checkboxes act on plot 2 of 3"
             )
             assert _checked(user, ROW_PORT) == "true"
+
+    async def test_a_double_click_on_the_last_plots_only_series(
+        self, drawer_shell, caplog
+    ):
+        """A real double-click: the second click lands on the row drawn
+        BEFORE the first one's edit, while the selection names a plot the
+        layout no longer has. It raised IndexError; it does nothing."""
+        shell = drawer_shell
+        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x"], ["y"], ["z"]))])
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            with page.client:
+                page.select(2)
+            await _settled(lambda: _checked(user, ROW_Z) == "true")
+            check = user.find(marker=var_marker("var-check", ROW_Z))
+            check.click()
+            assert _op_value(shell) == _raw(["x"], ["y"])
+            with caplog.at_level(logging.ERROR):
+                check.click()  # the same row, before any rebuild
+            assert _raised(caplog) == []
+            assert _op_value(shell) == _raw(["x"], ["y"])
+
+    async def test_a_stale_check_acts_on_what_the_selected_plot_holds_now(
+        self, drawer_shell
+    ):
+        """ "+ new plot" selects its plot at once; the rows follow on the
+        next cycle. A click on z's check in between read "all on" from the
+        row drawn for plot 1 and took z off plot 2, which never had it; it
+        reads plot 2 as it is, and adds z there."""
+        shell = drawer_shell
+        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x", "z"], ["y"]))])
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            await _settled(lambda: _checked(user, ROW_Z) == "true")
+            check = user.find(marker=var_marker("var-check", ROW_Z))
+            user.find(marker=var_marker("var-new", ROW_A0)).click()
+            assert page.selected == 1
+            assert _op_value(shell) == _raw(["x", "z"], ["a0"], ["y"])
+            check.click()  # drawn for plot 1, which shows z
+            assert _op_value(shell) == _raw(["x", "z"], ["a0", "z"], ["y"])
+
+    async def test_new_plot_from_a_stale_row_after_its_plot_went(
+        self, drawer_shell, caplog
+    ):
+        """ "+ new plot" clicked after a check removed the selected plot, and
+        before the page caught up: the selection names no plot, and
+        `new_plot` raised IndexError for it. Nothing is staged instead."""
+        shell = drawer_shell
+        shell.session.stage([PatchOp(A, "add", "/plots", _raw(["x"], ["y"], ["z"]))])
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            with page.client:
+                page.select(2)
+            await _settled(lambda: _checked(user, ROW_Z) == "true")
+            new = user.find(marker=var_marker("var-new", ROW_PORT))
+            user.find(marker=var_marker("var-check", ROW_Z)).click()
+            with caplog.at_level(logging.ERROR):
+                new.click()
+            assert _raised(caplog) == []
+            assert _op_value(shell) == _raw(["x"], ["y"])
 
     async def test_the_filter_globs_regexes_and_says_a_bad_regex(self, drawer_shell):
         async with user_simulation(root=drawer_shell.index) as user:
@@ -4804,6 +4870,151 @@ class TestVariablesDrawer:
             assert built == [1, 1]
             assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
 
+    async def test_a_draw_that_raised_is_drawn_again_by_the_next_refresh(
+        self, drawer_shell, monkeypatch
+    ):
+        """`drawn` is what the rows ON SCREEN were built from. A draw that
+        raised had recorded it first, so every later refresh saw nothing
+        moved and left the body it had cleared empty. (A bad regex is a
+        draw that completed: it is drawn as its reason, and the filter test
+        shows a fixed regex drawing rows again.)"""
+        from dstf.authoring.shell import variables_drawer
+
+        shell = drawer_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            drawer = page.rail.variables
+            assert drawer is not None
+            real = variables_drawer.variable_groups
+
+            def boom(**kwargs):
+                raise RuntimeError("boom")
+
+            monkeypatch.setattr(variables_drawer, "variable_groups", boom)
+            with page.client, pytest.raises(RuntimeError):
+                drawer.rebuild()
+            assert _none(user, var_marker("var-row", ROW_X))
+            monkeypatch.setattr(variables_drawer, "variable_groups", real)
+            with page.client:
+                drawer.refresh()
+            assert not _none(user, var_marker("var-row", ROW_X))
+
+    async def test_a_select_or_an_add_series_builds_the_open_drawer_at_most_once(
+        self, drawer_shell
+    ):
+        """Add series with the drawer open built it more than once — the
+        select's refresh, then `Rail.open`'s own rebuild of a drawer that
+        was already open — and a click on the selected card went through a
+        refresh too. A build clears the body first: that is what is
+        counted."""
+        shell = drawer_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            drawer = page.rail.variables
+            assert drawer is not None
+            built = []
+            clear = drawer.body.clear
+            drawer.body.clear = lambda: (built.append(1), clear())[1]
+            with page.client:
+                page.select(0)  # the selected card, clicked again
+            assert built == []
+            user.find(marker="add-series:1").click()
+            assert page.selected == 1 and built == [1]
+            assert _one(user, "var-target").text == "Checkboxes act on plot 2 of 2"
+            user.find(marker="add-series:1").click()  # its plot, selected
+            assert built == [1]
+
+    async def test_a_row_names_the_other_plots_that_show_it_counting_from_1(
+        self, drawer_shell
+    ):
+        async with user_simulation(root=drawer_shell.index) as user:
+            await _drawer(drawer_shell, user)
+            assert "plot 2" in _labels_in(_one(user, var_marker("var-row", ROW_Y)))
+            assert not any(
+                t.startswith("plot ")
+                for t in _labels_in(_one(user, var_marker("var-row", ROW_X)))
+            )
+
+    async def test_a_lone_row_reads_its_label_with_its_name_muted_beside(
+        self, tmp_path
+    ):
+        from test_session import UT1, _unit_tests_project, with_expressions
+
+        cfg, work = _unit_tests_project(tmp_path)
+        shell = Shell(cfg, work_dir=work)
+        shell.session.open(cfg, work_dir=work)
+        with_expressions(shell.session, A, {UT1: "a.Q"})
+        shell.load.phase = "done"
+        async with user_simulation(root=shell.index) as user:
+            await _drawer(shell, user)
+            rows = [
+                _one(user, m)
+                for m in _marks(_one(user, "drawer:variables"))
+                if m.startswith("var-row:")
+            ]
+            (row,) = [r for r in rows if "a.Q" in _labels_in(r)]
+            assert _labels_in(row)[:2] == ["a.Q", UT1]
+
+    async def test_an_opened_family_shows_its_first_members_and_counts_the_rest(
+        self, drawer_shell, monkeypatch
+    ):
+        """At most `MEMBERS` of a family's own rows (50; 2 here, for the
+        fixture's three-member family), and a line counting the rest."""
+        from dstf.authoring.shell import variables_drawer
+
+        monkeypatch.setattr(variables_drawer, "MEMBERS", 2)
+        async with user_simulation(root=drawer_shell.index) as user:
+            await _drawer(drawer_shell, user)
+            user.find(marker=var_marker("var-open", ROW_PIPE)).click()
+            for name in PIPE[:2]:
+                assert not _none(user, var_marker("var-row", f"{ROW_PIPE}/{name}"))
+            assert _none(user, var_marker("var-row", f"{ROW_PIPE}/{PIPE[2]}"))
+            assert "… 1 more" in _labels_in(_one(user, "drawer:variables"))
+
+    async def test_match_case_is_honoured(self, drawer_shell):
+        async with user_simulation(root=drawer_shell.index) as user:
+            await _drawer(drawer_shell, user)
+            user.find(marker="var-needle").type("Z")
+            await _settled(lambda: _groups_shown(user) == ["var-group:2-top-level"])
+            user.find(marker="var-case").click()
+            assert _one(user, "var-case").props["aria-pressed"] == "true"
+            assert _groups_shown(user) == []
+            user.find(marker="var-case").click()
+            assert _groups_shown(user) == ["var-group:2-top-level"]
+
+    async def test_with_no_plot_the_checks_are_grey_and_new_plot_makes_plot_1(
+        self, drawer_shell
+    ):
+        """An empty ``plots`` key: nothing for a check to act on, so each is
+        disabled; "+ new plot" makes the first plot and selects it."""
+        shell = drawer_shell
+        shell.session.stage([PatchOp(A, "add", "/plots", [])])
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            assert page.cards == []
+            assert _one(user, "var-target").text == "No plot yet: + new plot adds one"
+            assert not _one(user, var_marker("var-check", ROW_Z)).enabled
+            user.find(marker=var_marker("var-new", ROW_Z)).click()
+            assert _op_value(shell) == _raw(["z"])
+            await _settled(lambda: len(page.cards) == 1)
+            assert page.selected == 0 and _ringed(page) == [0]
+            await _settled(lambda: _checked(user, ROW_Z) == "true")
+
+    async def test_a_result_with_no_variables_says_so(self, tmp_path):
+        from test_session import _drawer_project
+
+        cfg, work = _drawer_project(tmp_path)
+        path = work / "test_0001" / "result.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["variables"] = {}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        shell = Shell(cfg, work_dir=work)
+        shell.session.open(cfg, work_dir=work)
+        shell.load.phase = "done"
+        async with user_simulation(root=shell.index) as user:
+            await _drawer(shell, user)
+            assert _one(user, "var-empty").text == "the result has no variables"
+
     async def test_a_marker_names_one_row_whatever_its_spaces(self, tmp_path):
         """NiceGUI splits a marker on whitespace: `port[2, 1].C[]`'s marker
         was three words that `port[2, 3, 1].C[]`'s also carried, so a find
@@ -4831,8 +5042,11 @@ class TestVariablesDrawer:
                 assert label in _labels_in(_one(user, var_marker("var-row", row)))
 
     async def test_a_gone_page_leaves_the_open_drawer_empty(self, drawer_shell, caplog):
-        """The drawer reads nothing on a page whose test is gone (`_read`):
-        every read raises for a model the open project does not have."""
+        """The page going empties an open drawer by itself: `sync` returned
+        right after `_gone`, never reaching `rail.refresh`, and the drawer
+        kept the old test's rows, whose checks read the Session for a model
+        it no longer has. The drawer reads nothing on a gone page (`_read`):
+        every read raises for it."""
         shell = drawer_shell
         async with user_simulation(root=shell.index) as user:
             page = await _drawer(shell, user)
@@ -4840,8 +5054,6 @@ class TestVariablesDrawer:
             with caplog.at_level(logging.ERROR, logger="dstf"):
                 shell.session.close()
                 await _settled(lambda: page.gone)
-                with page.client:
-                    page.rail.refresh()
             assert [
                 r for r in caplog.records if "a page failed" in r.getMessage()
             ] == []

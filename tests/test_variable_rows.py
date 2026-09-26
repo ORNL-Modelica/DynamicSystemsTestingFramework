@@ -4,7 +4,9 @@ selected plot — computed without a page."""
 
 from __future__ import annotations
 
+import itertools
 import re
+import time
 
 import pytest
 
@@ -121,6 +123,47 @@ def test_the_filter_keeps_members_and_folds_over_what_it_kept():
 )
 def test_matcher(needle, regex, case, text, hit):
     assert matcher(needle, regex=regex, case=case)(text) is hit
+
+
+def _regex_glob(needle: str, case: bool):
+    """The glob as a spec's ``variables`` list reads it (`_pattern_to_regex`,
+    anchored): what the drawer's glob must mean, exactly."""
+    from dstf.backends.types import _pattern_to_regex
+
+    glob = re.compile(_pattern_to_regex(needle).pattern, 0 if case else re.IGNORECASE)
+    return lambda text: glob.fullmatch(text) is not None
+
+
+def test_the_glob_means_what_the_specs_regex_means():
+    """Every glob of up to four characters over a small alphabet against
+    every text of up to four: the drawer's glob, which cannot backtrack,
+    keeps exactly what the spec's anchored regex keeps — a case toggle, a
+    ``.`` literal, a ``?`` that is one character but never a newline and a
+    ``*`` that never spans one, as the regex's ``.`` does not."""
+    needles = [
+        "".join(p)
+        for n in range(1, 5)
+        for p in itertools.product("aA.?*\n", repeat=n)
+        if "*" in p or "?" in p
+    ]
+    texts = [
+        "".join(p) for n in range(5) for p in itertools.product("aAb.\n", repeat=n)
+    ]
+    for case in (False, True):
+        for needle in needles:
+            ours = matcher(needle, regex=False, case=case)
+            theirs = _regex_glob(needle, case)
+            for text in texts:
+                assert ours(text) is theirs(text), (needle, text, case)
+
+
+def test_a_glob_cannot_backtrack():
+    """``*a*a*a*a*a*a*a*b`` over one 60-character name took over 20 s as a
+    regex, on the UI event loop, blocking every tab."""
+    keep = matcher("*a*a*a*a*a*a*a*b", regex=False, case=False)
+    start = time.perf_counter()
+    assert not keep("a" * 60)
+    assert time.perf_counter() - start < 0.5
 
 
 def test_a_bad_regex_raises_for_the_drawer_to_say_so():

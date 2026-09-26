@@ -710,6 +710,11 @@ class TestPage:
             ui.label(NOT_A_TEST.format(self.model_id)).classes("text-negative").mark(
                 "gone"
             )
+        # `sync` returns right after this, never reaching its own refresh:
+        # an open Variables drawer kept the old test's rows, their checks
+        # reading the Session for a model it no longer has. Its gone guard
+        # (`VariablesDrawer._read`) empties it.
+        self.rail.refresh()
 
     def handle(self, event: dict[str, Any]) -> None:
         self.header.handle(event)

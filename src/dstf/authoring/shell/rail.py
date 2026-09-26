@@ -124,7 +124,11 @@ class Rail:
 
     def open(self, kind: str | None) -> None:
         """Show ``kind``'s panel and hide the other; None closes both. The
-        drawer widens to hold the panel, which is what narrows the plots."""
+        drawer widens to hold the panel, which is what narrows the plots.
+        The Variables drawer is built again only when it was not the one
+        open: an open one follows the page by `refresh`, and Add series
+        (a select, then this) built it twice."""
+        was = self.page.state.drawer
         for name, panel in self.panels.items():
             panel.set_visibility(name == kind)
         for name, button in self.buttons.items():
@@ -138,7 +142,7 @@ class Rail:
         elif kind == "variables":
             if self.variables is None:
                 self.variables = VariablesDrawer(self.page, self.panels["variables"])
-            else:
+            elif was != "variables":
                 self.variables.rebuild()  # it was not followed while closed
 
     def toggle(self, kind: str) -> None:
