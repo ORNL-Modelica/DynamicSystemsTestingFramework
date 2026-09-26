@@ -1710,3 +1710,18 @@ planning.
     (`variable_rows._group` splits the name at its first dot).
   - A bracket inside a quoted identifier is read as an index by the family
     rule: `a.'x[5]'` folds on 5, name or expression. Pre-existing.
+- **Watch-only from the rail and drawers build's last reviews and its gate
+  (2026-09-26)**:
+  - The header menu's items claim `role="menuitem"`, but Quasar's menu has
+    no arrow-key navigation; Tab moves through them. Arrow keys, or no menu
+    roles.
+  - A Plotly page error, "Resize must be passed a displayed plot div
+    element.", fires when the rail is clicked right after a Test page loads
+    (3 of 3, before and after the build). Nothing visible breaks.
+  - At 900 px the header's plain labels ("Python · linux", "1 running ·
+    rerun") break mid-phrase; the two-line rule covers buttons only.
+  - A multi-series plot's title lists its series in layout order in the
+    tool; the report puts the scored variable first.
+  - Over a whole result file, an expression and its own result-file name
+    would fold into one group with a doubled index (`[1,1]`); the drawer
+    never shows it, because it groups before folding.
