@@ -44,15 +44,24 @@ class HandleEdit:
 
 
 class HandleEditError(ValueError):
-    """A drag the leaf cannot take; the message names the handle and why."""
+    """A drag the leaf cannot take; the message names the handle and why,
+    ``reason`` only why — the tool shows it in the open criterion's editor,
+    which already says which handle it is."""
+
+    def __init__(self, message: str, *, reason: str | None = None):
+        self.reason = reason if reason is not None else message
+        super().__init__(message)
 
 
 def _refuse(edit: HandleEdit, reason: str) -> HandleEditError:
-    return HandleEditError(f"{edit.local}: {reason}")
+    return HandleEditError(f"{edit.local}: {reason}", reason=reason)
 
 
 def _unnamed(edit: HandleEdit) -> HandleEditError:
-    return HandleEditError(f"{edit.local} cannot be moved on the plot")
+    return HandleEditError(
+        f"{edit.local} cannot be moved on the plot",
+        reason="this cannot be moved on the plot",
+    )
 
 
 def _num(value: float) -> str:
@@ -276,8 +285,9 @@ def edit_tube_handle(edit: HandleEdit) -> dict:
     except HandleEditError as err:
         if t == _written(x):
             raise
+        clamp = f"(x={_num(x)} was clamped to t={_num(t)})"
         raise HandleEditError(
-            f"{err} (x={_num(x)} was clamped to t={_num(t)})"
+            f"{err} {clamp}", reason=f"{err.reason} {clamp}"
         ) from None
 
 

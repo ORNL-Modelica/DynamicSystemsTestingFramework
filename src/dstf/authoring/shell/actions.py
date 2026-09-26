@@ -21,6 +21,7 @@ draws a panel's row inside the dialog, below the panel."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,7 @@ from nicegui import ui
 
 from ..capabilities import Capability, Placement
 from ..capabilities import FigureHook as FigureHookProtocol
+from ..errors import USER_ERRORS, user_text
 from ..session import Selection
 from .figure_hook import FigureHook
 from .widgets import Action
@@ -36,7 +38,18 @@ from .widgets import Action
 if TYPE_CHECKING:
     from .shell import Shell
 
+logger = logging.getLogger(__name__)
+
 LOADING = "batch actions unlock when loading finishes"
+
+
+def _log_unless_users(e: BaseException, name: str) -> None:
+    """Log a failed act unless a person's own edit raised it: `user_text`
+    shows a ValueError's text alone, and a JSONDecodeError or a numpy shape
+    error from a bug is one — it must still reach the log."""
+    if not isinstance(e, USER_ERRORS):
+        logger.exception("%s failed", name)
+
 
 #: A form row's content: ``build(close)`` draws it; ``close`` takes it away.
 RowBuild = Callable[[Callable[[], None]], None]
@@ -206,7 +219,8 @@ class ActionBar:
                     outcome = cap.act(view, **inputs)
                     self.shell.session.apply(outcome)
                 except Exception as e:  # shown here; a raising act changes nothing
-                    self.errors[cap.name] = f"{type(e).__name__}: {e}"
+                    _log_unless_users(e, cap.name)
+                    self.errors[cap.name] = user_text(e)
                     error.set_text(self.errors[cap.name])
                     error.set_visibility(True)
                     return False
@@ -385,7 +399,8 @@ class InlineHost:
                 outcome = cap.act(view, **inputs)
                 self.shell.session.apply(outcome)
             except Exception as e:  # shown, and changes nothing
-                error.set_text(f"{type(e).__name__}: {e}")
+                _log_unless_users(e, cap.name)
+                error.set_text(user_text(e))
                 error.set_visibility(True)
                 return False
             error.set_visibility(False)

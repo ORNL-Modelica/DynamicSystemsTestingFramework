@@ -36,8 +36,14 @@ logger = logging.getLogger(__name__)
 class PatchError(Exception):
     """Raised when a patch cannot be applied cleanly."""
 
-    def __init__(self, message: str, path: str | None = None):
+    def __init__(
+        self, message: str, path: str | None = None, *, reason: str | None = None
+    ):
         self.path = path
+        #: The plain sentence a person reads: ``str()`` keeps the op and the
+        #: pointer for the CLI, the tool shows this beside the edit it came
+        #: from (`authoring.errors.user_text`).
+        self.reason = reason if reason is not None else message
         super().__init__(f"{path}: {message}" if path else message)
 
 
@@ -68,6 +74,7 @@ def apply_patch_to_document(
             raise PatchError(
                 f"patch_ops[{i}] ({op!r}): {e}",
                 path=e.path,
+                reason=e.reason,
             ) from None
     return data
 

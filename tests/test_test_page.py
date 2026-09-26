@@ -228,6 +228,16 @@ def _barred(shell, figure):
     return bars, root
 
 
+def _logged(caplog, text: str) -> bool:
+    """Whether the shell logged a failed act whose exception says ``text``."""
+    return any(
+        r.name == "dstf.authoring.shell.actions"
+        and r.exc_info is not None
+        and text in str(r.exc_info[1])
+        for r in caplog.records
+    )
+
+
 async def test_an_inline_host_builds_every_placed_panel_without_a_button(shell):
     _only(
         _Probe("one", {Placement.CRITERION}),
@@ -254,7 +264,11 @@ async def test_an_unavailable_inline_capability_says_why_in_place(shell):
         assert _none(user, "probe:one")
 
 
-async def test_an_act_error_shows_above_its_panel_and_a_success_clears_it(shell):
+async def test_an_act_error_shows_above_its_panel_and_a_success_clears_it(
+    shell, caplog
+):
+    """A ValueError reads as its text alone, but it may be a bug rather than
+    a person's edit (a JSONDecodeError is one), so it is also logged."""
     probe = _Probe("one", {Placement.CRITERION}, raises="no")
     _only(probe, _Probe("two", {Placement.CRITERION}))
     box, root = _hosted(shell)
@@ -262,8 +276,9 @@ async def test_an_act_error_shows_above_its_panel_and_a_success_clears_it(shell)
         await user.open("/")
         go = _one(user, "go:one")
         user.find(marker="go:one").click()
-        await _settled(lambda: box[0].errors["one"].text == "ValueError: no")
+        await _settled(lambda: box[0].errors["one"].text == "no")
         assert box[0].errors["one"].visible
+        assert _logged(caplog, "no")
         marks = _marks(_one(user, "editor"))
         assert marks.index("error:one") < marks.index("panel:one")
         probe.raises = None
@@ -456,7 +471,7 @@ async def test_an_action_bars_dialog_closes_only_for_an_act_that_applied(shell):
         await _settled(lambda: bars[0].dialog.value is False)
 
 
-async def test_an_action_bars_dialog_stays_open_on_a_refused_act(shell):
+async def test_an_action_bars_dialog_stays_open_on_a_refused_act(shell, caplog):
     """A raising act changed nothing: the dialog stays open with the error
     above its panel and what was chosen in it, so the person can correct
     it there. Once the act goes through, the dialog closes."""
@@ -469,7 +484,8 @@ async def test_an_action_bars_dialog_stays_open_on_a_refused_act(shell):
         await user.should_see(marker="probe:one")
         user.find(marker="go:one").click()
         await _settled(lambda: _one(user, "error:one").visible)
-        assert _one(user, "error:one").text == "ValueError: no"
+        assert _one(user, "error:one").text == "no"
+        assert _logged(caplog, "no")
         await asyncio.sleep(0.1)
         assert bars[0].dialog.value is True
         probe.raises = None
@@ -1886,10 +1902,13 @@ async def test_a_drag_stages_one_replace_and_the_plot_follows(shell):
         )
 
 
-async def test_a_refused_drag_is_said_in_the_editor_and_the_plot_snaps_back(shell):
+async def test_a_refused_drag_is_said_in_the_editor_and_the_plot_snaps_back(
+    shell, caplog
+):
     """Only the open criterion gets rings, but every leaf's bound LINES are
-    on the plot and Plotly lets them be dragged: one of those is refused by
-    name, stages nothing, and the plot is re-sent so the line goes back."""
+    on the plot and Plotly lets them be dragged: one of those is refused
+    with a sentence saying to open its criterion, stages nothing, and the
+    plot is re-sent so the line goes back."""
     _stage_tree(shell)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, D)
@@ -1909,7 +1928,10 @@ async def test_a_refused_drag_is_said_in_the_editor_and_the_plot_snaps_back(shel
         assert shell.session.spec.pending == pending
         error = card.editor.errors["edit-on-plot"]
         assert error.visible
-        assert error.text == f"HandleEditError: {other} is not a handle of {T1}"
+        # Its reason alone: the error sits in that criterion's editor, and a
+        # person's own drag is not a bug to log.
+        assert error.text == "Open that criterion to drag its lines."
+        assert not _logged(caplog, other)
         assert sent[0] == 1  # the snap-back, once
 
 

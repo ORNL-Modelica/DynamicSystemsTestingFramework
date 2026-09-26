@@ -5,7 +5,7 @@ header stacks under the shared one instead of beside it, a card's plot is
 drawn when it is scrolled to and not before, a criterion's editor opens
 BELOW its row with the plot above it as its editing surface, a ring dragged
 there stages an edit while the zoom stays, a drag of another leaf's bound
-line is refused by name and the picture snaps back, and Focus shows one
+line is refused in the editor and the picture snaps back, and Focus shows one
 plot of seven.
 
 Selectors: NiceGUI's `.mark()` is server-side only, so elements are located
@@ -535,8 +535,8 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         assert after["stamp"] == "before-open", after
 
         # 5b. Another leaf's bound line is on the same plot and Plotly lets
-        #     it be dragged: the open editor refuses it BY NAME, stages
-        #     nothing, and the picture goes back.
+        #     it be dragged: the open editor refuses it, says to open that
+        #     criterion, stages nothing, and the picture goes back.
         # A closed range starts hidden (legend b): its swatch draws it.
         _swatch(page, 0, "range · x").click()
         page.wait_for_function(
@@ -552,7 +552,9 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         line = page.evaluate(FIND_LINE, MAX_LINE)
         assert line is not None, page.evaluate(READ_PLOT)
         _drag(page, line["cx"], line["cy"], 30)
-        expect(editor).to_contain_text("is not a handle of", timeout=EXPECT_TIMEOUT)
+        expect(editor).to_contain_text(
+            "Open that criterion to drag its lines.", timeout=EXPECT_TIMEOUT
+        )
         assert _pending(page) == "2 pending edits"
         page.wait_for_function(SHAPE_IS, arg=[MAX_LINE, 2.0, 1e-9], timeout=2_000)
         back = page.evaluate(READ_LINE, MAX_LINE)

@@ -22,6 +22,7 @@ from ...discovery.patch_apply import PatchError
 from ...reporting.status import classify_with_class
 from ...storage.ref_index import RefIndex
 from ..capabilities import Placement, plural
+from ..errors import user_text
 from ..layout import Layout, layout_op, reset_op
 from ..session import JobRunningError, LockedError, Selection
 from ..tree_pointer import node_or_none
@@ -516,7 +517,7 @@ class TestPage:
             session.stage([op])
         except (LockedError, PatchError, ConfigError, JobRunningError) as e:
             self.selected = before
-            ui.notify(str(e), type="warning")
+            ui.notify(user_text(e), type="warning")
             return False
         return True
 
@@ -533,7 +534,7 @@ class TestPage:
         try:
             self.shell.session.stage([reset_op(self.model_id)])
         except (LockedError, PatchError, ConfigError, JobRunningError) as e:
-            ui.notify(str(e), type="warning")
+            ui.notify(user_text(e), type="warning")
 
     # -- Focus -----------------------------------------------------------------
 

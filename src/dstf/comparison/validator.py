@@ -65,8 +65,9 @@ def validate_tree(
         errors.append(
             ValidationError(
                 _path,
-                "tree has no leaf targeting 'primary' outside a 'warn' combinator — "
-                "every tree must carry at least one hard regression anchor",
+                "Every tree needs at least one criterion scored against the "
+                "primary baseline outside a 'warn': a tree of warnings alone "
+                "can never fail.",
             )
         )
     return errors
@@ -121,10 +122,9 @@ def _check_weighted_directions(
         errors.append(
             ValidationError(
                 path,
-                f"'weighted' mixes score directions ({parts}) — a single "
-                f"threshold cannot compare a sum of lower-is-better and "
-                f"higher-is-better scores; split them into separate "
-                f"weighted nodes",
+                f"A 'weighted' node cannot mix lower-is-better and "
+                f"higher-is-better scores ({parts}); split them into separate "
+                f"weighted nodes.",
             )
         )
 
@@ -141,9 +141,9 @@ def _check_leaf(
         errors.append(
             ValidationError(
                 path,
-                f"leaf targets unknown baseline {leaf.against!r}; "
-                f"ensure the baseline exists as primary, a registered soft_check, "
-                f"or check for a typo",
+                f"This criterion scores against {leaf.against!r}, which is not "
+                f"a baseline of this test (the primary or a soft check); check "
+                f"the name.",
             )
         )
         return
@@ -151,10 +151,9 @@ def _check_leaf(
         errors.append(
             ValidationError(
                 path,
-                f"leaf targets companion {leaf.against!r}; companions are "
-                f"plot-only overlays and cannot be scored against. Use a "
-                f"soft_check (via import-baseline) if you need cross-check "
-                f"semantics",
+                f"This criterion scores against the companion {leaf.against!r}, "
+                f"and companions are only drawn; import it as a soft check "
+                f"(dstf import-baseline) to score against it.",
             )
         )
         return
@@ -162,9 +161,8 @@ def _check_leaf(
         errors.append(
             ValidationError(
                 path,
-                f"leaf targets soft_check {leaf.against!r} without a 'warn' "
-                f"ancestor; soft_checks are advisory only and must be "
-                f"warn-wrapped so they cannot hard-fail the test",
+                f"This criterion scores against the soft check {leaf.against!r}, "
+                f"which must sit under a 'warn' so it can only warn.",
             )
         )
         return

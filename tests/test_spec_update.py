@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from dstf.comparison.tree_spec import parse_metric_tree
+from dstf.comparison.validator import role_lookup_from_names, validate_tree
 from dstf.config import Config
 from dstf.discovery.patch_apply import PatchError, apply_patch_to_document
 from dstf.discovery.spec_update import (
@@ -165,13 +167,18 @@ class TestApplyValidatedPatches:
             "combinator": "warn",
             "children": [{"metric": "nrmse", "variable": "x"}],
         }
-        with pytest.raises(PatchError, match="validator rejected"):
+        with pytest.raises(PatchError, match="validator rejected") as box:
             apply_validated_patches(
                 spec,
                 [("M", [{"op": "add", "path": "/metrics", "value": all_warn}])],
                 _config(tmp_path),
             )
         assert spec.read_bytes() == before
+        # The CLI prints the location; the tool shows the validator's own
+        # sentence, which is the whole reason.
+        (err,) = validate_tree(parse_metric_tree(all_warn), role_lookup_from_names())
+        assert str(box.value) == f"validator rejected the patched tree: {err}"
+        assert box.value.reason == err.message
 
     def test_the_result_equals_applying_to_the_document_in_memory(self, tmp_path):
         spec = _spec(tmp_path, dict(FLAT))

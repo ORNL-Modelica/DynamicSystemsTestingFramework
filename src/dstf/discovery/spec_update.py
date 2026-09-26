@@ -146,7 +146,7 @@ def validate_entry_metric_tree(
     try:
         tree = parse_metric_tree(entry["metrics"])
     except Exception as e:
-        raise PatchError(f"patched metric tree is invalid: {e}") from e
+        raise PatchError(f"patched metric tree is invalid: {e}", reason=str(e)) from e
 
     if store is None:
         store = ReferenceStore(config)
@@ -154,7 +154,10 @@ def validate_entry_metric_tree(
     errors = validate_tree(tree, lookup)
     if errors:
         msg = "; ".join(str(e) for e in errors)
-        raise PatchError(f"validator rejected the patched tree: {msg}")
+        raise PatchError(
+            f"validator rejected the patched tree: {msg}",
+            reason="; ".join(e.message for e in errors),
+        )
 
 
 def validate_entry_plots(data: dict, model_id: str) -> None:
@@ -167,7 +170,7 @@ def validate_entry_plots(data: dict, model_id: str) -> None:
     try:
         parse_plots(entry["plots"], path=f"tests[{model_id}].plots")
     except PlotsSpecError as e:
-        raise PatchError(f"patched plots are invalid: {e}") from e
+        raise PatchError(f"patched plots are invalid: {e}", reason=str(e)) from e
 
 
 def apply_validated_patches(

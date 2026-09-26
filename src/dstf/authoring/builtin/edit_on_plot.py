@@ -311,7 +311,10 @@ class EditOnPlot:
             # `editing`), but every leaf's bound LINES are on the plot and
             # Plotly lets them be dragged: one of those is not this
             # editor's.
-            raise HandleEditError(f"{handle} is not a handle of {open_leaf}")
+            raise HandleEditError(
+                f"{handle} is not a handle of {open_leaf}",
+                reason="Open that criterion to drag its lines.",
+            )
         tree = s.tree(model_id)
         if tree is None:
             raise ValueError(f"{model_id} has no tree to edit")
@@ -319,7 +322,10 @@ class EditOnPlot:
         name = raw.get("metric", DEFAULT_METRIC)
         desc = metric(name)
         if desc is None or desc.edit_handle is None:
-            raise HandleEditError(f"{path}: {name} has no on-plot handles")
+            raise HandleEditError(
+                f"{path}: {name} has no on-plot handles",
+                reason=f"{name} has no on-plot handles",
+            )
         # Several leaves on one variable can refuse the same local id: every
         # refusal below names its leaf.
         try:
@@ -341,7 +347,7 @@ class EditOnPlot:
                 )
             )
         except HandleEditError as e:
-            raise HandleEditError(f"{path}: {e}") from None
+            raise HandleEditError(f"{path}: {e}", reason=e.reason) from None
         if new == raw:
             return None
         return Patch(ops=[PatchOp(model_id, "replace", path, new)])

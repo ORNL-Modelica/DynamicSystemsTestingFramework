@@ -287,6 +287,11 @@ class TestTube:
             _edit(leaf, "tube/upper/0", 1.3, 1.2)
         assert "control points 0 and 1 share time 1" in str(err.value)
         assert "x=1.3 was clamped to t=1" in str(err.value)
+        # The tool shows the reason alone: the clamp is part of it, the
+        # handle's id is not.
+        assert "x=1.3 was clamped to t=1" in err.value.reason
+        assert "control points 0 and 1 share time 1" in err.value.reason
+        assert "tube/upper/0" not in err.value.reason
         # An unclamped refusal does not claim a clamp.
         with pytest.raises(HandleEditError) as err:
             _edit(leaf, "tube/upper/0", 1.0, 1.2)

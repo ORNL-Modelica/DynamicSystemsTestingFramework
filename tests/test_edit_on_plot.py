@@ -229,6 +229,35 @@ def test_metrics_without_an_editor_snap_back_before_reading_a_position(session):
     )
 
 
+def test_a_refused_drag_reads_its_reason_without_a_location(session):
+    """Several leaves on one variable can refuse the same local id, so the
+    error names its leaf; the editor it is shown in already does."""
+    from dstf.authoring.errors import user_text
+
+    _tree_on_d(session)
+    with pytest.raises(HandleEditError) as box:
+        _drag(session, "/metrics/children/1/range/max", {"y0": -1.0, "y1": -1.0})
+    assert str(box.value).startswith("/metrics/children/1: range/max: ")
+    assert user_text(box.value) == "min_value -0.5 would exceed max_value -1"
+
+
+def test_a_local_no_editor_knows_reads_a_plain_reason():
+    from dstf.comparison.handles import HandleEdit, edit_range_handle
+
+    with pytest.raises(HandleEditError) as box:
+        edit_range_handle(
+            HandleEdit(
+                leaf={"metric": "range", "variable": "x", "max_value": 1.0},
+                local="range/nope",
+                x=None,
+                y=1.0,
+                reference=None,
+            )
+        )
+    assert str(box.value) == "range/nope cannot be moved on the plot"
+    assert box.value.reason == "this cannot be moved on the plot"
+
+
 #: A bound drawn solid inside its window and dotted (`<id>/outside`, full
 #: width) beyond it.
 WINDOWED_RANGE = {

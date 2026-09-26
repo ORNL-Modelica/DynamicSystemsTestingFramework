@@ -499,8 +499,8 @@ async def test_an_act_that_raises_shows_in_the_dialog_and_changes_nothing(
         await _open(user)
         before = _effects(shell, tmp_path)
         await _submit(user, cap)
-        await user.should_see("ValueError: nope", retries=20)
-        assert _suite(shell, user).actions.errors == {"bad": "ValueError: nope"}
+        await user.should_see("nope", retries=20)
+        assert _suite(shell, user).actions.errors == {"bad": "nope"}
         assert _one(user, "error:bad").visible
         assert _changed(before, _effects(shell, tmp_path)) == []
 
