@@ -630,6 +630,113 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         )
 
 
+#: The range on x's window: its bound is solid inside it, dotted outside.
+WINDOW = {"start": 0.3, "end": 0.7}
+
+
+def _windowed_page_project(tmp_path: Path) -> tuple[Path, Path]:
+    """`_page_project` with the range on x scored inside `WINDOW` only."""
+    cfg, work = _page_project(tmp_path)
+    spec_path = cfg.parent / "test_spec.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    for entry in spec["tests"]:
+        if entry["model"] == A:
+            entry["metrics"]["children"][1]["window"] = dict(WINDOW)
+    spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+    return cfg, work
+
+
+#: The shape the mouse at data (x, y) would grab, by name. Plotly's hit
+#: target is the `g[data-index][drag-helper]` around a shape's path, not the
+#: path; a line is 1.5 px, so a few pixels either side of y are tried.
+HIT_AT = """
+([x, y]) => {
+  const gd = document.querySelectorAll('.js-plotly-plot')[0];
+  const fl = gd._fullLayout, rect = gd.getBoundingClientRect();
+  const xa = fl.xaxis, ya = fl.yaxis;
+  const cx = rect.left + xa._offset + xa.l2p(x);
+  const cy0 = rect.top + ya._offset + ya.l2p(y);
+  for (const dy of [0, -1, 1, -2, 2]) {
+    const el = document.elementFromPoint(cx, cy0 + dy);
+    const hit = el && el.closest('g.shapelayer') && el.closest('[data-index]');
+    if (hit) {
+      const i = parseInt(hit.getAttribute('data-index'), 10);
+      return {cx: cx, cy: cy0 + dy, name: (fl.shapes[i] || {}).name || null};
+    }
+  }
+  return {cx: cx, cy: cy0, name: null};
+}
+"""
+
+
+def test_a_windowed_bound_drags_inside_and_outside_its_window(
+    tmp_path, playwright_browser
+):
+    """The window's rect was drawn over the bound and swallowed every drag
+    on it; the `/outside` line was refused by name (measured in Chromium on
+    plotly.js 3.1.1, 2026-09-26). Now both move the bound, and the window's
+    interior takes a drag that snaps back with no error."""
+    with _served(tmp_path, playwright_browser, project=_windowed_page_project) as page:
+        page.wait_for_timeout(700)
+        _open_crit(page, 0, "range · x")
+        editor = page.locator(".dstf-editor")
+        expect(editor).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        upper = (
+            page.locator(".dstf-editor .q-field")
+            .filter(has_text="Upper bound")
+            .locator("input")
+        )
+        expect(upper).to_have_value("2", timeout=EXPECT_TIMEOUT)
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.evaluate(RELAYOUT_Y, LINE_Y)
+        page.wait_for_timeout(400)
+        error = page.locator(".dstf-editor .text-negative")
+
+        # 1. Inside the window. The full-width dotted continuation comes
+        #    after the bound, so a grab here takes it or the bound: both are
+        #    the bound. The window's rect, drawn first, takes neither.
+        hit = page.evaluate(HIT_AT, [0.5, 2.0])
+        assert hit["name"] in (MAX_LINE, f"{MAX_LINE}/outside"), hit
+        _drag(page, hit["cx"], hit["cy"], -15)
+        expect(
+            page.locator(".dstf-header-row").get_by_role(
+                "button", name="1 pending edit"
+            )
+        ).to_be_visible(timeout=EXPECT_TIMEOUT)
+        expect(upper).not_to_have_value("2", timeout=EXPECT_TIMEOUT)
+        assert [t for t in error.all_inner_texts() if t.strip()] == []
+
+        # 2. Outside the window: the dotted line moves the same bound.
+        line = page.evaluate(
+            "(n) => document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
+            ".shapes.find(s => s.name === n).y0",
+            MAX_LINE,
+        )
+        dragged_to = upper.input_value()
+        hit = page.evaluate(HIT_AT, [0.1, line])
+        assert hit["name"] == f"{MAX_LINE}/outside", hit
+        _drag(page, hit["cx"], hit["cy"], 30)
+        page.wait_for_function(
+            "([n, v]) => document.querySelectorAll('.js-plotly-plot')[0]._fullLayout"
+            ".shapes.find(s => s.name === n).y0 < v - 1e-6",
+            arg=[MAX_LINE, line],
+            timeout=EXPECT_TIMEOUT,
+        )
+        expect(upper).not_to_have_value(dragged_to, timeout=EXPECT_TIMEOUT)
+        assert _pending(page) == "1 pending edit"  # the same leaf, collapsed
+        assert [t for t in error.all_inner_texts() if t.strip()] == []
+
+        # 3. The window's interior, away from every line: nothing staged,
+        #    no error.
+        pending = _pending(page)
+        hit = page.evaluate(HIT_AT, [0.45, 0.2])
+        assert hit["name"] == f"{RANGE_X}/window", hit
+        _drag(page, hit["cx"], hit["cy"], 40)
+        page.wait_for_timeout(800)
+        assert _pending(page) == pending
+        assert [t for t in error.all_inner_texts() if t.strip()] == []
+
+
 #: A pixel at the x of one point of a drawn trace, on the VISIBLE card's
 #: drag layer. `hovermode` is `x unified`, so the hover is decided by the x
 #: alone and the y only has to be somewhere the mouse reaches the plot: the

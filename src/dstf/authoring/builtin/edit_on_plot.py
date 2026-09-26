@@ -119,7 +119,7 @@ def _leaf_path_of(handle: str, paths: list[str]) -> str | None:
 
 
 def _position(
-    primitive: object, shape: dict
+    primitive: Marker | HLine, shape: dict
 ) -> tuple[float | None, float | None] | None:
     """The dragged position the hook's per-shape payload means for the
     handle's PRIMITIVE TYPE, or None when it is no move. A Marker's ring
@@ -127,19 +127,16 @@ def _position(
     RESIZE (an off-centre grab), never a position. An HLine moves by
     ``y0``/``y1``: both when the whole line was dragged, the one present
     when one end was, neither (a horizontal-only drag) is no move. Any
-    other primitive, or none: no position — the editor refuses its local
-    by name."""
+    other primitive never gets here: `_act_handle` snaps it back."""
     if isinstance(primitive, Marker):
         x, y = shape.get("xanchor"), shape.get("yanchor")
         if x is None and y is None:
             return None
         return x, y
-    if isinstance(primitive, HLine):
-        y0, y1 = shape.get("y0"), shape.get("y1")
-        if y0 is None and y1 is None:
-            return None
-        return None, (y0 if y0 is not None else y1)
-    return None, None
+    y0, y1 = shape.get("y0"), shape.get("y1")
+    if y0 is None and y1 is None:
+        return None
+    return None, (y0 if y0 is not None else y1)
 
 
 def _is_number(value: object) -> bool:
@@ -193,6 +190,16 @@ def _new_row(
     if keys == ["time", "upper", "lower"]:  # tube_points
         row.update(upper=0.0, lower=0.0)
     return row
+
+
+_OUTSIDE = "/outside"
+
+
+def _handle_id(shape_name: str) -> str:
+    """The primitive a dragged shape stands for: a bound's dotted
+    continuation outside its window (`_hline`'s ``<id>/outside``, full
+    width, so it also covers the bound inside the window) is the bound."""
+    return shape_name[: -len(_OUTSIDE)] if shape_name.endswith(_OUTSIDE) else shape_name
 
 
 class EditOnPlot:
@@ -280,10 +287,24 @@ class EditOnPlot:
     ) -> Patch | None:
         if not handle:
             return None
+        handle = _handle_id(handle)
         paths = [p for p, _ in _leaf_paths(s, model_id, variable)]
         path = _leaf_path_of(handle, paths)
         if path is None:
             raise ValueError(f"{handle} names no leaf on {variable} of {model_id}")
+        view = s.view(model_id, variable)  # full resolution, not the figure
+        leaf = next((lv for lv in view.leaves if lv.path == path), None)
+        primitive = next(
+            (p for p in (leaf.geometry if leaf else ()) if p.id == handle), None
+        )
+        # By TYPE, not only by kind: a box (`points/box/i`, `peaks/window/i`)
+        # is `kind="handle"` too, and no editor moves one. A window, a box, a
+        # result line is drawn, not editable; Plotly lets it be dragged all
+        # the same, and the figure hook's redraw snaps it back. Resolved
+        # before the open-leaf check: whichever criterion is open, such a
+        # drag is not an error the user made.
+        if not isinstance(primitive, (Marker, HLine)) or primitive.kind != "handle":
+            return None
         open_leaf = s.selection.leaf_path
         if open_leaf is not None and path != open_leaf:
             # Only the open leaf's rings are drawn (`Session.figure`'s
@@ -302,11 +323,6 @@ class EditOnPlot:
         # Several leaves on one variable can refuse the same local id: every
         # refusal below names its leaf.
         try:
-            view = s.view(model_id, variable)  # full resolution, not the figure
-            leaf = next((lv for lv in view.leaves if lv.path == path), None)
-            primitive = next(
-                (p for p in (leaf.geometry if leaf else ()) if p.id == handle), None
-            )
             position = _position(primitive, shape if isinstance(shape, dict) else {})
             if position is None:
                 return None

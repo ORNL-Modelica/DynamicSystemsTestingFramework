@@ -174,17 +174,20 @@ def test_a_baseline_following_checkpoint_dragged_vertically_stages_nothing(sessi
     )
 
 
-def test_ids_that_name_no_movable_handle_are_refused(session):
+def test_ids_that_name_no_movable_handle_snap_back(session):
+    """A box, a window, a result line: drawn, not editable. Plotly lets
+    every shape be dragged (`edits.shapePosition` has no per-shape switch),
+    so such a drag snaps back and is not an error the user made."""
     _tree_on_d(session)
-    with pytest.raises(HandleEditError) as box:
+    assert (
         _drag(session, "/metrics/children/2/points/box/0", {"y0": 0.3, "y1": 0.4})
-    # Several leaves on one variable can refuse the same local: the leaf
-    # path comes first.
-    assert str(box.value) == (
-        "/metrics/children/2: points/box/0 cannot be moved on the plot"
+        is None
     )
-    with pytest.raises(HandleEditError, match="range/max/outside"):
+    # A bound's dotted continuation outside its window is the bound.
+    op = _only_op(
         _drag(session, "/metrics/children/1/range/max/outside", {"y0": 1.0, "y1": 1.0})
+    )
+    assert op.value["max_value"] == 1.0
     with pytest.raises(ValueError, match="/metrics/children/9/tube/upper/0") as none:
         _drag(
             session, "/metrics/children/9/tube/upper/0", {"xanchor": 0.5, "yanchor": 1}
@@ -211,20 +214,83 @@ def test_a_single_leaf_root_is_its_own_leaf_path(session):
     )
 
 
-def test_metrics_without_an_editor_refuse_before_reading_a_position(session):
-    with pytest.raises(
-        HandleEditError, match="^/metrics/children/0: nrmse has no on-plot handles"
-    ):
-        _drag(session, "/metrics/children/0/anything", {"y0": 1.0}, model_id=A)
+def test_metrics_without_an_editor_snap_back_before_reading_a_position(session):
+    assert (
+        _drag(session, "/metrics/children/0/anything", {"y0": 1.0}, model_id=A) is None
+    )
     _root_leaf_on_a(
         session, {"metric": "event-timing", "variable": "x", "events": [{"time": 0.5}]}
     )
     ids = {p.id for leaf in session.view(A, "x").leaves for p in leaf.geometry}
     assert "/metrics/events/window/0" in ids  # measured: the leaf's handle Box
-    with pytest.raises(
-        HandleEditError, match="^/metrics: event-timing has no on-plot handles"
-    ):
+    assert (
         _drag(session, "/metrics/events/window/0", {"x0": 0.4, "x1": 0.6}, model_id=A)
+        is None
+    )
+
+
+#: A bound drawn solid inside its window and dotted (`<id>/outside`, full
+#: width) beyond it.
+WINDOWED_RANGE = {
+    "metric": "range",
+    "variable": "x",
+    "max_value": 0.9,
+    "window": {"start": 0.25, "end": 0.75},
+}
+
+
+def test_a_drag_on_a_bounds_outside_line_moves_the_bound(session):
+    """The `/outside` line is full width, so inside the window it lies over
+    the bound too: a grab there arrives under its name (measured in
+    Chromium, 2026-09-26) and must move the bound."""
+    _root_leaf_on_a(session, copy.deepcopy(WINDOWED_RANGE))
+    op = _only_op(
+        _drag(session, "/metrics/range/max/outside", {"y0": 1.2, "y1": 1.2}, model_id=A)
+    )
+    assert op.op == "replace" and op.path == "/metrics"
+    assert op.value["max_value"] == 1.2
+
+
+def test_a_drag_on_a_window_stages_nothing(session):
+    _root_leaf_on_a(session, copy.deepcopy(WINDOWED_RANGE))
+    ids = {p.id for leaf in session.view(A, "x").leaves for p in leaf.geometry}
+    assert "/metrics/window" in ids
+    assert _drag(session, "/metrics/window", {"x0": 0.3, "x1": 0.9}, model_id=A) is None
+
+
+def test_a_drag_on_a_peak_window_box_stages_nothing(session):
+    """A peak's window is a `kind="handle"` Box: the check is by primitive
+    type, not by kind."""
+    _root_leaf_on_a(
+        session,
+        {
+            "metric": "dominant-frequency",
+            "variable": "x",
+            "peaks": [{"freq": 1.0, "tolerance": 0.5, "tolerance_mode": "rel"}],
+        },
+    )
+    ids = {p.id for leaf in session.view(A, "x").leaves for p in leaf.geometry}
+    assert "/metrics/peaks/window/0" in ids
+    assert (
+        _drag(session, "/metrics/peaks/window/0", {"x0": 0.3, "x1": 0.9}, model_id=A)
+        is None
+    )
+
+
+def test_another_leafs_box_snaps_back_while_one_is_open(session):
+    """What is not a handle snaps back whichever criterion is open: it is
+    resolved before the open-leaf check, which refuses only a handle of
+    another criterion."""
+    _tree_on_d(session)
+    outcome = EditOnPlot().act(
+        SessionView(session, ON_D),  # the tube at children/0 is open
+        kind="handle",
+        model_id=D,
+        variable="x",
+        handle="/metrics/children/2/points/box/0",
+        shape={"x0": 0.3, "x1": 0.4},
+    )
+    assert outcome is None
 
 
 # -- act: a table -----------------------------------------------------------

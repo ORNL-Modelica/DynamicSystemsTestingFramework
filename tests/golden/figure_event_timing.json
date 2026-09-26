@@ -48,14 +48,14 @@
   ],
   "shapes": [
     {
-      "type": "line",
-      "name": "/metrics/children/0/events/ref/0",
+      "type": "rect",
+      "name": "/metrics/children/0/events/window/0",
       "xref": "x",
       "yref": "paper"
     },
     {
-      "type": "rect",
-      "name": "/metrics/children/0/events/window/0",
+      "type": "line",
+      "name": "/metrics/children/0/events/ref/0",
       "xref": "x",
       "yref": "paper"
     },

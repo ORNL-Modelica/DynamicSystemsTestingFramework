@@ -242,6 +242,29 @@ class TestFigure:
             for tr in fig["data"]
         )
 
+    @pytest.mark.parametrize("editable", [False, True])
+    def test_area_shapes_come_before_every_line_so_a_bound_takes_its_drag(
+        self, editable
+    ):
+        """Under `edits.shapePosition` the topmost shape takes a drag. The
+        window's rect came last and swallowed every drag on the bound inside
+        it, which `edit_on_plot` then refused (measured in Chromium on
+        plotly.js 3.1.1, 2026-09-26)."""
+        t = np.linspace(0.0, 10.0, 101)
+        vc = _compare_range(t, t, min_value=None, max_value=0.9)
+        vc.name = "x"
+        vc.geometry = vc.geometry + (Window(id="window", start=2.0, end=8.0),)
+        view = build_view("x", act_time=t, act_values=t, leaves=[_stamped(vc)])
+        shapes = variable_figure(view, editable=editable)["layout"]["shapes"]
+        kinds = [s["type"] for s in shapes]
+        first_line = next(i for i, k in enumerate(kinds) if k != "rect")
+        assert all(k != "rect" for k in kinds[first_line:]), kinds
+        names = [s.get("name") for s in shapes]
+        leaf_path = "/metrics/children/0"
+        assert names.index(f"{leaf_path}/window") < names.index(
+            f"{leaf_path}/range/max"
+        )
+
     def test_spectrum_primitives_open_a_second_panel(self):
         fig = variable_figure(_spectrum_view())
         assert fig["layout"]["xaxis2"]["title"]["text"] == "Frequency [Hz]"

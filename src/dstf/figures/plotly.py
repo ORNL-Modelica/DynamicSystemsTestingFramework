@@ -13,9 +13,10 @@ carries it as ``name``. Those are the handles on-plot editing attaches to.
 The editable figure (``editable=True``, the tool's; never the report's) adds
 one pixel-sized ring shape per ``kind="handle"`` marker, turns on
 ``config.edits.shapePosition`` and turns OFF ``scrollZoom`` (:func:`_config`). That makes every shape draggable — plotly.js
-offers no per-shape switch that works (measured on plotly.js 3.8.2, the
-build NiceGUI 3.16 bundles) — and the rings are what an editor attaches to,
-since Plotly drags shapes, not trace points.
+offers no per-shape switch that works (measured on plotly.js 3.1.1, the
+build NiceGUI 3.16 bundles; the bundle's "3.8.2" string is d3's) — and the
+rings are what an editor attaches to, since Plotly drags shapes, not trace
+points.
 """
 
 from __future__ import annotations
@@ -636,6 +637,14 @@ _Y_LABELS = {"exponentformat": "e", "hoverformat": ".4~g"}
 
 
 def _layout(view: VariableView, shapes: list[dict], has_errors: bool) -> dict:
+    # Area shapes under lines: under `edits.shapePosition` every shape takes
+    # a drag and plotly.js has no per-shape switch that works (`layer` only
+    # restacks — measured in Chromium on 3.1.1, 2026-09-26), so the one that
+    # is on top wins. A window's or a box's rect drawn after a bound line
+    # swallowed every drag on the bound inside it.
+    shapes = [s for s in shapes if s.get("type") == "rect"] + [
+        s for s in shapes if s.get("type") != "rect"
+    ]
     layout: dict = {
         "xaxis": {
             "title": {"text": "Time"},
