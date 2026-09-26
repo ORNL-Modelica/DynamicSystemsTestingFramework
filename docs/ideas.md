@@ -1716,3 +1716,20 @@ planning.
   - Over a whole result file, an expression and its own result-file name
     would fold into one group with a doubled index (`[1,1]`); the drawer
     never shows it, because it groups before folding.
+- **From the feedback bug batch's review and TRANSFORM gate (2026-09-26)**:
+  - A seeded `tube` FAILS on 22 of 873 TRANSFORM variables, all event or
+    step signals (IntegratorWithReset, LatchHold_Test, MFBS_Test, OffTimer,
+    …; worst violation 0.95 at the event t=0.2), where `nrmse` passes on the
+    same pair. The cause is the tube check itself, not the seed: it compares
+    the float32 actual's times against the float64 reference at duplicate
+    event instants. A tube authored by hand on those signals fails the same
+    way.
+  - A drag stages the value where the mouse let go, unrounded
+    (`610.947435897`). For the on-plot editing step: snap a dragged value to
+    a precision the axis can show.
+  - On a plot with a spectrum panel, the top plot's "Time" axis title is
+    drawn inside the spectrum subplot, over the spectrum near its centre.
+  - `comparison/handles.py` refusals still name fields and Python reprs
+    (`tube_points[0].time is None, not a number`, `tube_width_mode None has
+    no draggable widths`); reachable only through hand-authored values or a
+    stale figure.
