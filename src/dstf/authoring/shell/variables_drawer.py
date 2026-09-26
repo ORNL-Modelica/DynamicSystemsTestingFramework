@@ -21,6 +21,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING
 
+import regex
 from nicegui import ui
 
 from ...backends.types import VariableText
@@ -224,7 +225,8 @@ class VariablesDrawer:
         """Build the rows, and record what they were built from only once
         they are: a draw that raised had recorded it first, and every later
         refresh then saw nothing moved and left the cleared body empty. A
-        bad regex is a draw that completed — it is drawn as its reason."""
+        bad regex, or one that ran out of time, is a draw that completed —
+        it is drawn as its reason."""
         signature = self._signature(reads)
         self.drawn = None
         self._build(reads)
@@ -244,9 +246,8 @@ class VariablesDrawer:
         )
         try:
             keep = matcher(self.needle.value or "", regex=self.regex, case=self.case)
-        except re.error as e:
-            self.why.set_text(f"not a regular expression: {e}")
-            self.why.set_visibility(True)
+        except (regex.error, re.error) as e:
+            self._say(f"not a regular expression: {e}")
             return
         self.why.set_visibility(False)
         names = reads.names
@@ -275,7 +276,14 @@ class VariablesDrawer:
                 selected=page.selected if n else None,
                 scored=reads.scored,
             )
-            groups, shown, total = cap(groups_of(names=names, keep=keep), ROWS)
+            # `keep` is only ever asked here: a typed regex that ran out of
+            # its budget has drawn nothing yet, and draws nothing
+            try:
+                found = groups_of(names=names, keep=keep)
+            except TimeoutError:
+                self._say("the pattern took too long; simplify it")
+                return
+            groups, shown, total = cap(found, ROWS)
             for group in groups:
                 ui.label(group.title).classes("dstf-group").mark(
                     f"var-group:{group.rank}-{_slug(group.title)}"
@@ -288,6 +296,11 @@ class VariablesDrawer:
                 ui.label(
                     f"Showing {shown} of {total:,} rows — narrow the filter"
                 ).classes("dstf-why").mark("var-cap")
+
+    def _say(self, why: str) -> None:
+        """Why the filter drew no rows, in place of them."""
+        self.why.set_text(why)
+        self.why.set_visibility(True)
 
     def _members(self, row: VarRow, groups_of: Callable[..., list[VarGroup]]) -> None:
         """An opened family's members, each a row of its own under it. Each

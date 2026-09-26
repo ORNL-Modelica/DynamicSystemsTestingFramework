@@ -12,12 +12,16 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
+from time import monotonic
 
 from ..backends.types import is_glob_pattern
 from ..discovery.plots import PlotSpec
 from ..figures.families import family_label, group_families, mask_quoted
 
 TOP_LEVEL = "(top level)"
+
+#: Seconds ONE typed regex may search, over every name of one filter.
+REGEX_BUDGET = 0.25
 
 
 @dataclass(frozen=True)
@@ -57,19 +61,37 @@ def matcher(needle: str, *, regex: bool, case: bool) -> Callable[[str], bool]:
     """What the filter box keeps. A regex (``.*`` on) searches; a glob (a
     ``*`` or ``?`` in it) matches the WHOLE text with ``[ ]`` literal — the
     rule a spec's ``variables`` list uses, so what you type here means what
-    it means there (`_glob`); anything else is a substring. ``re.error`` for
-    a bad regex, for the drawer to say.
+    it means there (`_glob`); anything else is a substring. ``regex.error``
+    for a bad regex, and ``TimeoutError`` from the returned closure once the
+    regex has searched `REGEX_BUDGET` seconds in all, for the drawer to say.
 
-    A typed regex is Python's `re`, backtracking and all: it is the user's
-    own pattern on their own local tool. A glob is not left to it — a glob
-    compiled to one regex, ``*a*a*a*a*a*a*a*b`` over one 60-character name,
-    took over 20 s on the UI event loop, blocking every tab."""
+    A typed regex is the `regex` package's, never `re`'s: `re` holds the GIL
+    for a whole match (a 1.25 s search froze another thread 1.25 s), so no
+    worker thread could keep a backtracking pattern from freezing every tab,
+    and `regex` stops a search at its ``timeout``. It is imported here, not
+    at the top: it comes with the ``[author]`` extra, and this module
+    imports without it. A glob is not left to a regex either — compiled to
+    one, ``*a*a*a*a*a*a*a*b`` over one 60-character name took over 20 s on
+    the UI event loop."""
     flags = 0 if case else re.IGNORECASE
     if not needle:
         return lambda text: True
     if regex:
-        pattern = re.compile(needle, flags)
-        return lambda text: pattern.search(text) is not None
+        import regex as regex_package
+
+        pattern = regex_package.compile(needle, 0 if case else regex_package.IGNORECASE)
+        deadline: list[float] = []  # set at the first name, not at compile
+
+        def search(text: str) -> bool:
+            now = monotonic()
+            if not deadline:
+                deadline.append(now + REGEX_BUDGET)
+            left = deadline[0] - now
+            if left <= 0:
+                raise TimeoutError("the pattern took too long")
+            return pattern.search(text, timeout=left) is not None
+
+        return search
     if is_glob_pattern(needle):
         return _glob(needle, flags)
     folded = needle if case else needle.lower()

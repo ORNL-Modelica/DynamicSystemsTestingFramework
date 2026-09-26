@@ -22,12 +22,14 @@ dev = [
     "mypy>=1.10",
     "pytest-cov>=5.0",
     "pytest-asyncio>=0.24",
+    "types-regex>=2026.9.10",
 ]
 # The authoring shell (`dstf author`). NiceGUI serves the browser UI; the
 # figure layer hands it plain figure dicts, so plotly.py stays out of the
-# install (tests/test_author_extra.py pins that).
+# install (tests/test_author_extra.py pins that). regex runs the Variables
+# drawer's typed filter with a timeout (`authoring/variable_rows.matcher`).
 # Install with: uv sync --extra dev --extra author --locked --inexact
-author = ["nicegui>=3.16"]
+author = ["nicegui>=3.16", "regex>=2026.9.10"]
 # FMPy backend (Phase 2). Install with: uv sync --extra fmpy --locked --inexact
 # Or with the dev tools:  uv sync --extra dev --extra fmpy --locked
 fmpy = ["fmpy>=0.3"]

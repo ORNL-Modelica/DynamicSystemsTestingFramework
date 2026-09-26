@@ -1698,18 +1698,9 @@ planning.
     lines (owner-accepted). For the owner's hands-on look: hiding Save's
     why-sentence while nothing is pending and dropping the centre run
     indicator would likely fit the row on one line.
-  - A regex typed into the Variables drawer's filter runs on the UI event
-    loop with Python's `re`: `(a+)+$` over a 25-character name took 1.4 s and
-    2.0 s in two measurements, blocking every tab meanwhile. Only the user
-    can type it, on their own local tool; a timeout or a worker thread would
-    close it. (A glob cannot backtrack: `variable_rows._glob`.)
   - The drawer's family swatch is always the accent ramp, while a plot may
     draw that family in its second hue (a plot picks a family's hue by its
     order there).
-  - `der(pipe.T[1])` groups under the prefix `der(pipe`
-    (`variable_rows._group` splits the name at its first dot).
-  - A bracket inside a quoted identifier is read as an index by the family
-    rule: `a.'x[5]'` folds on 5, name or expression. Pre-existing.
 - **Watch-only from the rail and drawers build's last reviews and its gate
   (2026-09-26)**:
   - The header menu's items claim `role="menuitem"`, but Quasar's menu has

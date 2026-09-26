@@ -4736,6 +4736,32 @@ class TestVariablesDrawer:
             await _settled(lambda: _groups_shown(user) == ["var-group:1-port"])
             assert _none(user, "var-filter:why")
 
+    async def test_a_regex_that_takes_too_long_says_so_and_draws_no_rows(
+        self, drawer_shell, monkeypatch, caplog
+    ):
+        """A typed regex that outruns its budget is a draw that completed:
+        the drawer says so where it says a bad regex, and draws no row —
+        never a traceback, never a half-built list. A budget of 0 runs out
+        at the first name."""
+        from dstf.authoring import variable_rows
+
+        monkeypatch.setattr(variable_rows, "REGEX_BUDGET", 0.0)
+        async with user_simulation(root=drawer_shell.index) as user:
+            await _drawer(drawer_shell, user)
+            assert _groups_shown(user) != []
+            user.find(marker="var-regex").click()
+            with caplog.at_level(logging.ERROR):
+                user.find(marker="var-needle").type("x")
+                await _settled(lambda: not _none(user, "var-filter:why"))
+            assert _raised(caplog) == []
+            assert (
+                _one(user, "var-filter:why").text
+                == "the pattern took too long; simplify it"
+            )
+            assert _groups_shown(user) == []
+            drawer = _marks(_one(user, "drawer:variables"))
+            assert [m for m in drawer if m.startswith("var-row:")] == []
+
     async def test_a_familys_swatch_is_four_blocks_of_the_accent_ramp(
         self, drawer_shell
     ):

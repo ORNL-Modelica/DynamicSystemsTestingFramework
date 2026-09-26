@@ -12,6 +12,8 @@ real = builtins.__import__
 def no_ui(name, *a, **k):
     if name == "nicegui" or name.startswith("nicegui."):
         raise ImportError("nicegui is not installed here")
+    if name == "regex":  # the drawer's regex filter, also of the extra
+        raise ImportError("regex is not installed here")
     return real(name, *a, **k)
 builtins.__import__ = no_ui
 import dstf.authoring  # registers the builtins, imports the Session and the contract

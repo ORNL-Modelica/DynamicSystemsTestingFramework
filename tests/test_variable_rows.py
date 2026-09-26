@@ -117,7 +117,6 @@ def test_the_filter_keeps_members_and_folds_over_what_it_kept():
         ("pipe", False, True, "PIPE.t[1]", False),
         ("pipe.T[*]", False, False, "pipe.T[12]", True),  # brackets literal
         ("pipe.T*", False, False, "a.pipe.T[1]", False),  # a glob is anchored
-        ("^port", True, False, "port[2, 1].C[1]", True),
         ("", False, False, "anything", True),
     ],
 )
@@ -167,8 +166,61 @@ def test_a_glob_cannot_backtrack():
 
 
 def test_a_bad_regex_raises_for_the_drawer_to_say_so():
-    with pytest.raises(re.error):
+    regex = pytest.importorskip("regex")
+    with pytest.raises(regex.error):
         matcher("(", regex=True, case=False)
+
+
+def test_a_regex_searches_with_case_on_and_off():
+    pytest.importorskip("regex")
+    name = "port[2, 1].C[1]"
+    assert matcher("^port", regex=True, case=False)(name)
+    assert matcher("^PORT", regex=True, case=False)(name)
+    assert not matcher("^PORT", regex=True, case=True)(name)
+    assert not matcher("^port", regex=True, case=True)("a.port")
+    assert matcher(r"C\[1\]$", regex=True, case=True)(name)
+
+
+def test_a_regex_that_backtracks_stops_at_the_budget():
+    """`^(a|aa)+$` over a name that almost matches backtracks exponentially:
+    the filter gives up at its budget instead of freezing the tool."""
+    pytest.importorskip("regex")
+    keep = matcher(r"^(a|aa)+$", regex=True, case=False)
+    start = time.perf_counter()
+    with pytest.raises(TimeoutError):
+        for _ in range(3):
+            keep("a" * 60 + "b")
+    assert time.perf_counter() - start < 1.0
+
+
+def test_the_budget_is_one_for_every_name_of_a_filter(monkeypatch):
+    """ONE budget from the filter's first name, not one per name: 0.25 s a
+    name over 6,093 names is 25 minutes. The clock is faked to read 0.1 s
+    later at each name while every search is instant, so a budget per name
+    would never run out; the one total budget runs out at the 4th name,
+    which a fresh filter keeps."""
+    pytest.importorskip("regex")
+    ticks = iter([0.0, 0.1, 0.2, 0.3, 0.3])
+    monkeypatch.setattr(variable_rows, "monotonic", lambda: next(ticks))
+    keep = matcher("x", regex=True, case=False)
+    assert [keep("x") for _ in range(3)] == [True, True, True]
+    with pytest.raises(TimeoutError):
+        keep("x")
+    assert matcher("x", regex=True, case=False)("x")
+
+
+def test_a_search_is_given_the_time_left_not_the_whole_budget(monkeypatch):
+    """The first name took 0.24 s of the 0.25: the second search stops at
+    the 0.01 s left, well before a whole budget would."""
+    pytest.importorskip("regex")
+    ticks = iter([0.0, 0.24])
+    monkeypatch.setattr(variable_rows, "monotonic", lambda: next(ticks))
+    keep = matcher(r"^(a|aa)+$", regex=True, case=False)
+    assert keep("aa")
+    start = time.perf_counter()
+    with pytest.raises(TimeoutError):
+        keep("a" * 60 + "b")
+    assert time.perf_counter() - start < 0.2
 
 
 def test_cap_counts_top_level_rows_and_says_what_it_left_out():
