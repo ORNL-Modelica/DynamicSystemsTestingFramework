@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from .handles import HandleEdit
     from .metric_tree import Combinator
     from .modes import ComparisonMode
+    from .seeds import SeedData
     from .tree_spec import CombinatorSpec
 
 #: The metric a leaf/override falls back to when none is named. Also the
@@ -72,6 +73,12 @@ class MetricDescriptor:
     the leaf cannot take; see :mod:`.handles`. ``None`` for a metric no drag
     edits (the builtins ``nrmse`` and ``event-timing``).
 
+    ``seed`` gives a new leaf its first values from the data it will score
+    (the reference / actual series in, the params to add out), so a leaf
+    added with only a metric and a variable is valid and sensible; ``None``
+    for a metric valid bare (``nrmse``, ``points``, ``event-timing``). See
+    :mod:`.seeds`.
+
     ``drawn_by_default`` says whether the Test page draws a closed criterion
     of this metric that is not failing before its swatch is touched
     (``range`` and ``scalar`` do not); a failing one draws regardless.
@@ -94,6 +101,8 @@ class MetricDescriptor:
     #: — which would otherwise cover every plot they sit on. The open
     #: criterion always draws, and a failing one draws by default.
     drawn_by_default: bool = True
+    #: A new leaf's first values from the data it will score.
+    seed: Callable[[SeedData], dict] | None = None
 
 
 @dataclass(frozen=True)

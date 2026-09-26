@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ...comparison.registry import DEFAULT_METRIC, combinators, metrics
+from ...comparison.seeds import SeedData, seeded_leaf
 from ...discovery.plots import tracked_names
 from ..capabilities import Panel, Patch, Placement
 
@@ -83,8 +84,7 @@ _WRAP_SENTENCES = {
 }
 _EDIT_SENTENCE = "Changes this node's kind and fields; its children stay."
 _ADD_SENTENCE = (
-    "Added with the metric's defaults as the last child; its editor opens under "
-    "its plot."
+    "Added as the last child, with values from the data where the metric needs them."
 )
 #: Why ``+`` is grey where a child cannot be added alone: the validator
 #: refuses it by name whatever the form says, so the form is not offered.
@@ -102,6 +102,32 @@ _NO_THRESHOLD = "enter a threshold"
 _DEFAULT_DIRECTION = "less"
 #: A weighted node's ``direction``, as the Direction select reads it.
 _DIRECTIONS = {"less": "lower is better", "greater": "higher is better"}
+
+
+def seed_data(s: SessionView, model_id: str, variable: str) -> SeedData:
+    """The series a new criterion on ``variable`` will score, for its seed.
+
+    Read from the variable's view, so a variable no criterion scores has no
+    reference there even when the baseline file holds one: it seeds from
+    its actual result (a scalar then gets bounds, not a tolerance). A
+    variable without a result gives neither, and the leaf stays bare. Only
+    an unknown test raises (``KeyError``); an unknown variable is an empty
+    view."""
+    try:
+        view = s.view(model_id, variable)
+    except KeyError:
+        return SeedData(ref=None, act=None)
+    ref = (
+        (view.ref_time, view.ref_values)
+        if view.ref_time is not None and view.ref_values is not None
+        else None
+    )
+    act = (
+        (view.act_time, view.act_values)
+        if view.act_time is not None and view.act_values is not None
+        else None
+    )
+    return SeedData(ref=ref, act=act)
 
 
 class EditTree:
@@ -182,7 +208,13 @@ class EditTree:
         if node is None:
             raise ValueError(f"{path} names no node of {model_id}")
         if action == "add":
-            leaf = {"metric": inputs["metric"], "variable": inputs["variable"]}
+            # Seeded: a bare range, tube or scalar does not resolve, and a
+            # bare dominant-frequency always fails "no peaks declared".
+            leaf = seeded_leaf(
+                inputs["metric"],
+                inputs["variable"],
+                seed_data(s, model_id, inputs["variable"]),
+            )
             if "combinator" in node:
                 under = path
             elif path == ROOT:

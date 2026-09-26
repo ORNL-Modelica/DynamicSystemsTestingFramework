@@ -11,12 +11,14 @@ from typing import TYPE_CHECKING, Any
 
 from ...comparison.mode_schema import derive_schema
 from ...comparison.registry import metric, metrics
+from ...comparison.seeds import seeded_leaf
 from ...comparison.tree_spec import LeafSpec, spec_to_raw
 from ..capabilities import Panel, Patch, Placement
 
 if TYPE_CHECKING:
     from ..session import SessionView
 from ..spec_document import PatchOp
+from .edit_tree import seed_data
 
 # NO module-level `nicegui` or `..forms` import: `import dstf.authoring` runs
 # register_builtins(), and the Session must import without the extra.
@@ -108,7 +110,14 @@ class EditCriteria:
 
         def set_metric(name: str) -> None:
             state["metric"] = name
-            state["params"] = {}  # a new mode starts from its defaults
+            # A new mode starts from its seed, else its defaults: a range
+            # switched to with no bound does not resolve.
+            seeded = seeded_leaf(
+                name, state["variable"], seed_data(s, model_id, state["variable"])
+            )
+            state["params"] = {
+                k: v for k, v in seeded.items() if k not in ("metric", "variable")
+            }
             build_form()
             emit()
 

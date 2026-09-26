@@ -18,10 +18,11 @@ from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.builtin.accept import Accept  # noqa: E402
 from dstf.authoring.builtin.edit_criteria import EditCriteria  # noqa: E402
-from dstf.authoring.builtin.edit_tree import EditTree  # noqa: E402
+from dstf.authoring.builtin.edit_tree import EditTree, seed_data  # noqa: E402
 from dstf.authoring.builtin.rerun import Rerun  # noqa: E402
 from dstf.authoring.session import Selection, Session, SessionView  # noqa: E402
 from dstf.authoring.spec_document import PatchOp  # noqa: E402
+from dstf.comparison.seeds import seeded_leaf  # noqa: E402
 from test_handles import TREE  # noqa: E402
 from test_session import (  # noqa: E402
     LOOSEN,
@@ -195,9 +196,10 @@ def test_edit_criteria_is_greyed_while_the_test_is_locked(session):
     assert EditCriteria().available(view) is True
 
 
-async def test_a_mode_switch_starts_from_the_new_modes_defaults(session):
+async def test_a_mode_switch_starts_from_the_new_modes_seed(session):
     """Set a tolerance, switch to range, set a bound: the leaf carries no
-    stale nrmse tolerance."""
+    stale nrmse tolerance, and the bound not typed is the seed's — a range
+    with neither bound does not resolve."""
     async with host(session, EditCriteria(), LEAF0) as (user, errors, _):
         await user.should_see("Tolerance")
         tol = next(
@@ -212,6 +214,9 @@ async def test_a_mode_switch_starts_from_the_new_modes_defaults(session):
         )
         mode.set_value("range")
         await user.should_see("Upper bound")
+        seeded = session.spec.pending[-1].value
+        assert seeded == seeded_leaf("range", "x", seed_data(_view(session), A, "x"))
+        assert set(seeded) == {"metric", "variable", "min_value", "max_value"}
         upper = next(
             c
             for c in user.find(ui.number).elements
@@ -219,7 +224,8 @@ async def test_a_mode_switch_starts_from_the_new_modes_defaults(session):
         )
         upper.set_value(2.0)
         leaf = session.spec.pending[-1].value
-        assert leaf == {"metric": "range", "variable": "x", "max_value": 2.0}
+        assert "tolerance" not in leaf, leaf
+        assert leaf == {**seeded, "max_value": 2.0}
 
 
 def _session_with_soft_check(tmp_path, *ops):
@@ -542,6 +548,45 @@ def test_add_under_a_combinator_is_unchanged(session):
     )
     (op,) = outcome.ops
     assert (op.op, op.path) == ("add", "/metrics/children/-")
+
+
+def _view(session) -> SessionView:
+    return SessionView(session, Selection(tests=frozenset({A}), variable="x"))
+
+
+def _added(session, variable: str, metric: str) -> dict:
+    """The leaf `add` stages beside D's child 1."""
+    session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
+    outcome = EditTree().act(
+        SessionView(session, _node(D, "/metrics/children/1")),
+        action="add",
+        model_id=D,
+        path="/metrics/children/1",
+        variable=variable,
+        metric=metric,
+    )
+    (op,) = outcome.ops
+    return op.value
+
+
+def test_an_added_range_is_seeded_from_the_data(session):
+    """A bare range does not resolve ("requires at least one of min_value /
+    max_value"): it arrives bracketing the variable's data."""
+    leaf = _added(session, "x", "range")
+    view = session.view(D, "x")
+    data = view.ref_values if view.ref_values is not None else view.act_values
+    assert data is not None and len(data)
+    assert set(leaf) == {"metric", "variable", "min_value", "max_value"}
+    assert leaf["min_value"] < min(data) and leaf["max_value"] > max(data)
+
+
+def test_an_added_nrmse_is_bare(session):
+    assert _added(session, "x", "nrmse") == {"metric": "nrmse", "variable": "x"}
+
+
+def test_an_added_criterion_on_a_variable_without_data_is_bare(session):
+    """An unknown variable has an empty view: nothing to seed from."""
+    assert _added(session, "nope", "range") == {"metric": "range", "variable": "nope"}
 
 
 async def test_the_node_panel_is_the_cluster_and_its_forms_stage(session):
@@ -1167,8 +1212,8 @@ async def test_add_reveals_the_new_criterion(session):
             "Add a criterion under and · 3 criteria"
         )
         await user.should_see(
-            "Added with the metric's defaults as the last child; its editor "
-            "opens under its plot."
+            "Added as the last child, with values from the data where the "
+            "metric needs them."
         )
         user.find(marker=f"apply-add:{ROOT}").click()
         await _settled(lambda: len(session.tree(D)["children"]) == 4)

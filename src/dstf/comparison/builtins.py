@@ -49,6 +49,7 @@ from .registry import (
     register_combinator,
     register_metric,
 )
+from .seeds import seed_dominant_frequency, seed_range, seed_scalar, seed_tube
 from .summaries import (
     summarize_dominant_frequency,
     summarize_event_timing,
@@ -152,6 +153,7 @@ def register_builtins() -> None:
             score_direction="higher",
             summarize=summarize_tube,
             edit_handle=edit_tube_handle,
+            seed=seed_tube,
         )
     )
     register_metric(
@@ -173,6 +175,7 @@ def register_builtins() -> None:
             summarize=summarize_range,
             edit_handle=edit_range_handle,
             drawn_by_default=False,
+            seed=seed_range,
         )
     )
     register_metric(
@@ -192,6 +195,7 @@ def register_builtins() -> None:
             score_direction="lower",
             summarize=summarize_dominant_frequency,
             edit_handle=edit_peaks_handle,
+            seed=seed_dominant_frequency,
         )
     )
     register_metric(
@@ -209,6 +213,7 @@ def register_builtins() -> None:
             summarize=summarize_scalar,
             edit_handle=edit_scalar_handle,
             drawn_by_default=False,
+            seed=seed_scalar,
         )
     )
 
