@@ -1,10 +1,13 @@
 """The header both pages share (DESIGN.md "Header"; brief §3.3): "DSTF", the
 library and the backend on the left; the run indicator in the centre; the
-pending count with Save / Discard / Export, the dashboard link and Stop
-server on the right. Every button's label says its object, effect and
-count; a disabled one carries the sentence that says why (DESIGN.md
-"Disabled states explain themselves"). Off-white with a hairline below,
-never an accent bar.
+pending count with Save and Discard on the right, and a ⋮ menu at the end
+holding the rarely used actions — Export, Open in another backend…, the
+dashboard and Stop server, each with its full label. At 900 px the row cut
+off "dashboard" and "Stop server", and the owner chose one layout at every
+width (3c, Q10 A) over a row that changes with it. Every button's label
+says its object, effect and count; a disabled one carries the sentence
+that says why (DESIGN.md "Disabled states explain themselves"). Off-white
+with a hairline below, never an accent bar.
 
 A page may ask for a second row of its own (``below``): it is drawn INSIDE
 this fixed header, which is what makes it sticky without offset arithmetic
@@ -13,7 +16,7 @@ this fixed header, which is what makes it sticky without offset arithmetic
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
@@ -21,10 +24,28 @@ from nicegui import ui
 from ...storage.ref_index import _atomic_write_text
 from ..capabilities import plural
 from ..session import StaleSpecError
+from ..spec_document import PatchOp
 from .widgets import Action
 
 if TYPE_CHECKING:
     from .shell import Shell
+
+
+def save_caption(pending: Sequence[PatchOp], loaded: dict, file_name: str) -> str:
+    """The Save button's caption (brief §3.3: object, effect, count). A
+    pending edit to a model with no entry in the file as LOADED creates
+    that entry on Save, and the caption says so (the owner's ruling,
+    2026-09-25): a layout staged for a test tracked only by its `.mo`
+    annotation writes that test's first entry. Counted over ``loaded``,
+    never the effective document, where the pending op has already made
+    the entry."""
+    from ...discovery.spec_update import spec_entry
+
+    models = list(dict.fromkeys(op.model_id for op in pending))
+    new = sum(1 for m in models if spec_entry(loaded, m) is None)
+    tests = plural(len(models), "test")
+    what = f"{tests}, {plural(new, 'new entry', 'new entries')}" if new else tests
+    return f"Save {plural(len(pending), 'spec edit')} ({what}) to {file_name}"
 
 
 class Header:
@@ -43,11 +64,6 @@ class Header:
                 .mark("backend")
             )
             self.backend_why = ui.label().classes("dstf-why").mark("backend:why")
-            self.other = (
-                ui.button("Open in another backend…", on_click=self._open_other)
-                .props("flat dense no-caps")
-                .mark("other-backend")
-            )
             ui.space()
             self.runs = ui.label().classes("text-secondary").mark("runs")
             ui.space()
@@ -64,15 +80,37 @@ class Header:
             self.discard = Action(
                 self._discard, props="flat dense no-caps", marker="discard", why=False
             )
-            self.export = Action(
-                self._export, props="flat dense no-caps", marker="export", why=False
-            )
-            ui.link("dashboard", "/dashboard/dashboard.html", new_tab=True)
-            self.stop = (
-                ui.button("Stop server", on_click=self._stop)
-                .props("outline dense no-caps color=negative")
-                .mark("stop")
-            )
+            with (
+                ui.button(icon="more_vert")
+                .props('flat dense round aria-label="More actions"')
+                .classes("dstf-header-menu")
+                .mark("header-menu"),
+                ui.menu(),
+            ):
+                # A `ui.menu_item` has no text of its own to set: Export's
+                # caption is a label in it, and the reason it is disabled a
+                # second line under that.
+                with ui.menu_item(on_click=self._export).mark("export") as export:
+                    self.export = export
+                    with ui.item_section():
+                        self.export_text = ui.item_label()
+                        self.export_why = (
+                            ui.item_label().props("caption").mark("export:why")
+                        )
+                self.other = ui.menu_item(
+                    "Open in another backend…", on_click=self._open_other
+                ).mark("other-backend")
+                ui.menu_item(
+                    "dashboard",
+                    on_click=lambda: ui.navigate.to(
+                        "/dashboard/dashboard.html", new_tab=True
+                    ),
+                ).mark("dashboard")
+                self.stop = (
+                    ui.menu_item("Stop server", on_click=self._stop)
+                    .classes("text-negative")
+                    .mark("stop")
+                )
         if below is not None:
             # A second row INSIDE the fixed header (decision 8): sticky with
             # no offset arithmetic and no dependence on the first row's
@@ -113,19 +151,16 @@ class Header:
             f"1 running · {running.label}" if running is not None else "idle"
         )
         n = len(s.spec.pending)
-        models = len({op.model_id for op in s.spec.pending})
         self.pending.set_text(plural(n, "pending edit"))
         reason = "no pending edits" if n == 0 else shell.busy_reason()
         self.save.set(
-            f"Save {plural(n, 'spec edit')} ({plural(models, 'test')}) to "
-            f"{s.spec.path.name}",
-            reason,
+            save_caption(s.spec.pending, s.spec.loaded, s.spec.path.name), reason
         )
         self.discard.set(f"Discard {plural(n, 'edit')}", reason)
-        self.export.set(
-            f"Export {plural(n, 'edit')} to spec_patch.json",
-            "no pending edits" if n == 0 else None,
-        )
+        self.export_text.set_text(f"Export {plural(n, 'edit')} to spec_patch.json")
+        self.export.set_enabled(n > 0)
+        self.export_why.set_text("no pending edits" if n == 0 else "")
+        self.export_why.set_visibility(n == 0)
         self.drawer.refresh()
 
     # -- the backend -------------------------------------------------------------

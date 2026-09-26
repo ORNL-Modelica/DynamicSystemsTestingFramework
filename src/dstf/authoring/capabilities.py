@@ -46,10 +46,13 @@ class Placement(Enum):
     NODE = "node"
 
 
-def plural(count: int, noun: str) -> str:
-    """``"2 tests"``, ``"1 test"``: the count and its noun for a caption.
-    Regular plurals only — every noun a caption uses here is one."""
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+def plural(count: int, noun: str, many: str | None = None) -> str:
+    """``"2 tests"``, ``"1 test"``: the count and its noun for a caption. A
+    regular plural adds ``s``; ``many`` spells one that does not
+    (``plural(2, "new entry", "new entries")``)."""
+    if count == 1:
+        return f"{count} {noun}"
+    return f"{count} {many}" if many is not None else f"{count} {noun}s"
 
 
 @dataclass(frozen=True)

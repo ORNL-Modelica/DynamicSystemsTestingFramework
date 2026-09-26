@@ -23,6 +23,7 @@ from dstf.authoring import capabilities as caps  # noqa: E402
 from dstf.authoring.builtin import register_builtins  # noqa: E402
 from dstf.authoring.capabilities import Job  # noqa: E402
 from dstf.authoring.shell.shell import Shell  # noqa: E402
+from dstf.authoring.spec_document import PatchOp  # noqa: E402
 from dstf.reporting.status import FAIL, classify  # noqa: E402
 from test_session import LOOSEN, A, B, C, D, G, _Gate, _project  # noqa: E402
 
@@ -117,7 +118,12 @@ async def test_save_discard_and_export_say_their_object_effect_and_count(shell):
         await _settled(lambda: save.enabled)
         assert save.text == "Save 2 spec edits (1 test) to test_spec.json"
         assert discard.text == "Discard 2 edits" and discard.enabled
-        assert export.text == "Export 2 edits to spec_patch.json" and export.enabled
+        # Export is an item of the header's menu (3c): a `ui.menu_item` has
+        # no `.text`, and its caption is a label of its own.
+        assert _suite(shell, user).header.export_text.text == (
+            "Export 2 edits to spec_patch.json"
+        )
+        assert export.enabled
         assert _one(user, "pending").text == "2 pending edits"
         # Hidden elements are not found by `find`; the why-line is read
         # through the page object.
@@ -814,8 +820,88 @@ async def test_the_header_is_one_row_unless_a_page_asks_for_a_second(shell):
         order = [
             m
             for m in marks
-            if m in ("wordmark", "project", "backend", "runs", "pending", "stop")
+            if m in ("wordmark", "project", "backend", "runs", "pending", "header-menu")
         ]
-        assert order == ["wordmark", "project", "backend", "runs", "pending", "stop"]
+        # Stop server is in the menu at the row's end (3c).
+        assert order == [
+            "wordmark",
+            "project",
+            "backend",
+            "runs",
+            "pending",
+            "header-menu",
+        ]
         with pytest.raises(AssertionError):
             user.find(marker="subheader")
+
+
+def test_save_caption_counts_new_entries():
+    from dstf.authoring.shell.header import save_caption
+
+    loaded = {"tests": [{"model": "M"}]}
+    edit = PatchOp("M", "replace", "/plots", [])
+    new = PatchOp("N", "add", "/plots", [])
+    assert save_caption([], loaded, "test_spec.json") == (
+        "Save 0 spec edits (0 tests) to test_spec.json"
+    )
+    assert save_caption([edit], loaded, "test_spec.json") == (
+        "Save 1 spec edit (1 test) to test_spec.json"
+    )
+    assert save_caption([edit, new], loaded, "test_spec.json") == (
+        "Save 2 spec edits (2 tests, 1 new entry) to test_spec.json"
+    )
+
+
+async def test_save_names_a_new_entry(tmp_path):
+    """A layout staged for a test tracked only by its `.mo` annotation
+    writes that test's first entry, and Save says so (the owner's ruling,
+    round 1 Q4). The Header hands `save_caption` the LOADED document: over
+    the effective one the pending op has already made the entry."""
+    from dstf.discovery.spec_update import spec_entry
+    from test_session import _add_bar, _modelica_project
+
+    cfg = _modelica_project(tmp_path)
+    _add_bar(tmp_path)
+    shell = Shell(cfg)
+    shell.session.open(cfg)
+    shell.load.phase = "done"
+    bar = "MyLib.Bar"
+    assert bar in shell.visible_tests()
+    assert spec_entry(shell.session.spec.loaded, bar) is None
+    shell.session.stage([PatchOp(bar, "add", "/plots", [{"series": [{"var": "y"}]}])])
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        assert _one(user, "save").text == (
+            "Save 1 spec edit (1 test, 1 new entry) to test_spec.json"
+        )
+
+
+def _ancestors(element):
+    while element.parent_slot is not None:
+        element = element.parent_slot.parent
+        yield element
+
+
+async def test_the_header_menu_holds_the_rarely_used_actions(shell):
+    """Export, Open in another backend…, dashboard and Stop server are in
+    the ⋮ menu at the row's end (the owner's ruling, Q10 A); Save and
+    Discard stay in the row. Asked through the element tree, this is what
+    sees Export left in the row (the 900 px browser test did not: the
+    row's buttons wrapped their text and still fitted)."""
+    from nicegui import ui
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        row = _one(user, "wordmark").parent_slot.parent
+        for m in ("save", "discard", "header-menu"):
+            assert row in list(_ancestors(_one(user, m))), m
+        (menu,) = [
+            e
+            for e in _one(user, "header-menu").default_slot.children
+            if isinstance(e, ui.menu)
+        ]
+        assert not menu.value
+        for m in ("export", "other-backend", "dashboard", "stop"):
+            assert menu in list(_ancestors(_one(user, m))), m
+        assert not _one(user, "export").enabled
+        assert _one(user, "export:why").text == "no pending edits"

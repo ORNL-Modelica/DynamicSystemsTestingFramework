@@ -128,6 +128,12 @@ def test_plural_counts_its_noun():
     assert plural(2, "spec edit") == "2 spec edits"
 
 
+def test_plural_takes_an_irregular_plural():
+    assert plural(1, "new entry", "new entries") == "1 new entry"
+    assert plural(2, "new entry", "new entries") == "2 new entries"
+    assert plural(0, "new entry", "new entries") == "0 new entries"
+
+
 def test_outcomes_take_keywords_only():
     """`models` was inserted between the spec's positional fields; a caller
     following the spec's order would silently swap it with reloads_results."""

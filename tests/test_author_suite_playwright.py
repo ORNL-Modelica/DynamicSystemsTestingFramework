@@ -212,7 +212,10 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
         assert errors == []
 
         # Stop server ends the process (no confirm: nothing pending, no job).
-        page.get_by_role("button", name="Stop server").click()
+        # It is an item of the header's ⋮ menu (3c), which is not role
+        # `menuitem`: it is found by its text inside the open menu.
+        page.locator(".dstf-header-menu").click()
+        page.locator(".q-menu").get_by_text("Stop server", exact=True).click()
         proc.wait(15)
         assert proc.returncode is not None
         context.close()
@@ -222,3 +225,124 @@ def test_the_suite_page_fills_in_keeps_its_checks_across_a_click_and_stops(
             proc.wait(10)
 
     assert spec_file.read_bytes() == before  # nothing was saved
+
+
+#: Every child of the header's row whose right edge passes the viewport.
+HEADER_PAST = """() => {
+  const out = [];
+  for (const el of document.querySelector('.dstf-header-row').children) {
+    const r = el.getBoundingClientRect();
+    if (r.width && r.right > window.innerWidth) out.push([el.textContent, r.right]);
+  }
+  return out;
+}"""
+
+#: Every button in the header's row whose label wraps to a second line (its
+#: height above 1.5 line heights). At 900 px the row's buttons wrapped their
+#: labels and still fitted, which is how Export left in the row passed.
+HEADER_WRAPS = """() => {
+  const out = [];
+  for (const b of document.querySelectorAll('.dstf-header-row .q-btn')) {
+    const c = b.querySelector('.q-btn__content') || b;
+    const s = getComputedStyle(c);
+    const line = parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.2;
+    const h = c.getBoundingClientRect().height;
+    if (h > 1.5 * line) out.push([b.textContent, h, line]);
+  }
+  return out;
+}"""
+
+
+def _keep(page, tmp_path: Path, name: str) -> None:
+    """A viewport screenshot, copied where the gate can read it when
+    `DSTF_KEEP_SHOTS` is set."""
+    path = tmp_path / f"task9-{name}.png"
+    page.screenshot(path=str(path))
+    keep = os.environ.get("DSTF_KEEP_SHOTS")
+    if keep:
+        import shutil
+
+        Path(keep).mkdir(parents=True, exist_ok=True)
+        shutil.copy(path, Path(keep) / path.name)
+
+
+def _fits(page, width: int) -> None:
+    """Nothing in the header is cut off at `width`: the page does not scroll
+    sideways and every child of the header row ends inside the viewport.
+    At 1280 px no header button's label wraps either; at 900 px the pending
+    count, Save and Discard may take two lines (the owner's ruling,
+    2026-09-25: one line needs ~950 px once the backend select, the run
+    indicator and Save's why-sentence are in the row)."""
+    page.set_viewport_size({"width": width, "height": 900})
+    page.wait_for_function(
+        "document.documentElement.scrollWidth == window.innerWidth",
+        timeout=EXPECT_TIMEOUT,
+    )
+    row = page.locator(".dstf-header-row")
+    for loc in (
+        row.get_by_role("button", name=re.compile(r"^Save ")),
+        row.get_by_role("button", name=re.compile(r"^Discard ")),
+        page.locator(".dstf-header-menu"),
+    ):
+        box = loc.bounding_box()
+        assert box is not None and box["x"] + box["width"] <= width, (width, box)
+    assert page.evaluate(HEADER_PAST) == [], width
+    if width >= 1280:
+        assert page.evaluate(HEADER_WRAPS) == [], width
+
+
+def test_the_header_fits_900_px(tmp_path, playwright_browser):
+    """The owner's ruling Q10 A: one header at every width, the rarely used
+    actions in a ⋮ menu at its end. At 900 px the row cut off "dashboard"
+    and "Stop server"; now nothing passes the viewport at 1280 or 900, and
+    no label wraps at 1280, on the Suite page and on a Test page with its
+    Variables drawer open. Export left in the row is killed by
+    `test_the_header_menu_holds_the_rarely_used_actions` (its ancestor
+    check), not here: at 900 px the row's buttons may wrap and still fit."""
+    cfg, work = _project(tmp_path)
+    log = tmp_path / "author.log"
+    proc, url = _start(cfg, work, log)
+    try:
+        _wait_until_serving(url, proc, log)
+        context = playwright_browser.new_context(
+            viewport={"width": 1280, "height": 900}
+        )
+        page = context.new_page()
+        page.goto(url)
+        expect(page.locator("div.dstf-tests .dstf-row")).to_have_count(
+            5, timeout=EXPECT_TIMEOUT
+        )
+        for width in (1280, 900):
+            _fits(page, width)
+            _keep(page, tmp_path, f"suite-{width}")
+        page.locator(".dstf-header-menu").click()
+        menu = page.locator(".q-menu")
+        for text in ("Export 0 edits to spec_patch.json", "no pending edits"):
+            expect(menu.get_by_text(text, exact=True)).to_be_visible(
+                timeout=EXPECT_TIMEOUT
+            )
+        for text in ("Open in another backend…", "dashboard", "Stop server"):
+            expect(menu.get_by_text(text, exact=True)).to_be_visible()
+        _keep(page, tmp_path, "suite-900-menu")
+        page.keyboard.press("Escape")
+        expect(menu).to_be_hidden(timeout=EXPECT_TIMEOUT)
+
+        page.goto(f"{url}test/{A}")
+        expect(page.locator(".dstf-subheader")).to_contain_text(
+            A, timeout=EXPECT_TIMEOUT
+        )
+        page.locator(".dstf-rail .q-btn").nth(1).click()
+        expect(page.locator(".dstf-var-target")).to_be_visible(timeout=EXPECT_TIMEOUT)
+        for width in (1280, 900):
+            _fits(page, width)
+            _keep(page, tmp_path, f"test-{width}")
+        page.locator(".dstf-header-menu").click()
+        expect(menu.get_by_text("Stop server", exact=True)).to_be_visible(
+            timeout=EXPECT_TIMEOUT
+        )
+        _keep(page, tmp_path, "test-900-menu")
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
