@@ -8,7 +8,7 @@
 
 **Forward direction**: [docs/vision.md](docs/vision.md) lays out the six-layer plug-in architecture (Source → Discovery → Backend → Dataset → Metric → MetricTree). See [docs/architecture.md](docs/architecture.md) for the layer ↔ code mapping and [docs/extensibility.md](docs/extensibility.md) for plug-in contracts.
 
-**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
+**Project history**: [docs/decisions.md](docs/decisions.md) is the authoritative log (D44–D79 covers the work summarized above: Phase 1 abstractions, Phase 2 FMPy, Phase 3 MetricTree, Phase 4 multi-baseline + cross-backend + weighted, Phase 5 PTA recognizers, Phase 6 interactive reporter MVP + baseline-role split, D69–D70 OpenModelica, D77–D79 Julia/MTK, D80 Python-driven tests, D81 rename to DSTF, D125 the two-tier split, D131 the Test page, D132 variable identity, D133 the form row and legend, D134 the rail and drawers). Do not re-summarize past phases in this file — grep `decisions.md` or `git log` when context is needed.
 
 ## Project Structure
 
@@ -33,7 +33,10 @@ DynamicSystemsTestingFramework/
 │   ├── storage/                  # ReferenceStore + roles mixin, RefIndex, Baseline, accept (the one accept path),
 │   │                             #      migrate_names.py (the `migrate-variable-names` rewrite; deleted at the v1.0 tag)
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
-│   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages, tree_card + plot_card,
+│   │                             #      layout.py (the plot layout's edits as pure functions, one op on /plots),
+│   │                             #      variable_rows.py (the Variables drawer's rows as data),
+│   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages, test_list, tree_card + plot_card,
+│   │                             #      rail.py + variables_drawer.py (the Test page's Tests and Variables drawers),
 │   │                             #      the header, actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
 │   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + LTTB decimate; both tiers draw from it
@@ -106,6 +109,8 @@ uv run dstf --config testing.json spec-update spec_patch.json
 # "Add a criterion for x" under its plot, Focus to show one plot alone. A plot's legend holds its
 # signals, above the plot; a swatch on each criteria row shows or hides that criterion's drawing;
 # one Error select per plot that draws one series picks the error series shown.
+# A rail down the left opens the Tests drawer (switch test) or the Variables drawer (add a series
+# to the selected plot, or a new plot); Remove plot and Reset layout take them away.
 uv run dstf --config testing.json author [--port N] [--no-browser]
 
 # Baseline-role CLIs

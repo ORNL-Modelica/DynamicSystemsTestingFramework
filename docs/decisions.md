@@ -4658,3 +4658,156 @@ leaving its legend (a later change, on the board's table); the "Add a
 criterion for x" footer stays a dialog; the choices a card keeps reset when a
 criterion is added or removed, because paths shift then; a tooltip can stay
 up after its icon is clicked.
+
+## D134 — The layout is edited on the plot you selected, one op on `/plots`; the rail holds two drawers (2026-09-25)
+
+**Context.** D130 made a test's plot layout spec data — the `plots` key — but
+the tool could only draw it; nothing in `dstf author` edited it. The owner's
+3c rulings (2026-09-25, in chat and on a rendered board) scoped the editing:
+3c is layout only, and 3d adds the slice field and the save-time expansion of
+a folded row into one criterion per index. The Variables drawer's checkboxes
+act on the plot you CLICKED, the first until then, and the drawer names its
+target (Q5 A). The drawer does the layout edits: a check adds a series to the
+selected plot or takes it off, "+ new plot" puts a row on a plot of its own
+below it, and the plot toolbar gains only Add series and Remove plot — the
+series chips DESIGN.md had scheduled are dropped (Q6 A). A variable a
+criterion scores cannot leave its last plot (Q7 A). Reset layout sits in the
+tree card's line while the entry has a `plots` key (Q8 A). A Tests drawer
+shows the Suite page's list and switches test (Q9). A name folds on its last
+index whenever that index is a single integer, whatever comes before it
+(`massPorts[4, 1].C[]` is a family). Save says when it creates an entry. The
+header's rarely used actions go into a ⋮ menu, which fixes a 900 px header
+that cut off "dashboard" and "Stop server" (Q10 A).
+
+**Decision.** Five moves.
+
+1. *The family rule* (`figures/families.py`, `family_of`): a
+   multi-dimensional index refuses a family only when it comes AFTER the last
+   single-integer index (`a[1].b[2,3]` has none), and an expression may index
+   with an integer list (`_INT_INDEX`, `[4, 1]`, no space just inside the
+   brackets); a slice (`[6, :]`) still refuses it.
+2. *The layout is data, edited by pure functions* (`authoring/layout.py`,
+   UI-free): `current_layout` (the key, else one plot per tracked variable),
+   `add_series`, `remove_series` (a plot left empty goes), `new_plot` (below
+   the selected one, returning its index), `remove_plot`, `stranded` and its
+   one sentence `stranded_sentence`, and `layout_op` — the ONE op a gesture
+   stages, `add /plots` when the effective entry has no key, `replace` when it
+   has — with `reset_op`, the `remove`. `Session.layout` is the layout a
+   gesture edits: unlike `Session.plots` it keeps a series the result lacks.
+   `Session.stage` collapses a run of such ops into one pending op.
+3. *The drawer's rows are data too* (`authoring/variable_rows.py`, UI-free):
+   `variable_groups` groups the result's names (Tracked, then the first dot
+   component of the name, "(top level)", Diagnostics), folds families over the
+   test's texts and reads each row through its labels, filters by `matcher`,
+   and gives each row its state on the selected plot; `cap` keeps the first
+   rows, 200 in the drawer, and counts the rest for the drawer to say.
+4. *The rail* (`shell/rail.py`): `Rail` puts 40 px of labelled buttons in a
+   `ui.left_drawer` with `behavior=desktop`, so an open 320 px drawer pushes
+   the plots narrower at every width instead of covering them. `TestsDrawer`
+   draws a `TestList` (`shell/test_list.py`, extracted from the Suite page in
+   its own refactor commit) without checkboxes; `VariablesDrawer`
+   (`shell/variables_drawer.py`) draws the rows. The Test page owns the
+   selection (`TestPage.selected`, `select`), the one way an edit is staged
+   (`stage_layout`: the selection set before the stage, put back on a
+   refusal, which is a notification), `remove_plot` and `reset_layout`.
+   `PlotCard`'s toolbar gains Add series and Remove plot, and a click on the
+   card outside `.dstf-plot-slot` selects it; `TreeCard` gains Reset layout.
+   `TabState` gains `drawer` and `tests_needle`, so the open drawer and the
+   Tests drawer's filter survive a switch of test within the tab.
+5. *The header* (`shell/header.py`): Save and Discard stay in the row, and a
+   ⋮ menu at its end holds Export, Open in another backend…, dashboard and
+   Stop server at every width. `save_caption` counts the entries a Save
+   creates over the document as LOADED, since in the effective one the
+   pending op has already made the entry; `plural` takes an irregular
+   plural.
+
+Nothing in the pre-release seams moves: the CLI, `testing.json`, the
+reference-JSON layout and the `test_spec.json` format are unchanged. The tool
+writes the `plots` key `parse_plots` already defined; a layout staged for a
+test that only its `.mo` annotation declares creates that test's first entry,
+and Save's caption says "1 new entry".
+
+**Consequences.**
+
+*The collapse rules* (`Session.stage`, its Convention 8 block; the tests in
+`TestStageCollapses`). Every layout gesture stages the whole `/plots` list,
+so without a collapse five clicks read "5 spec edits". When a single staged
+op lands on the model and path of the last pending one: a `replace` after an
+`add` or a `replace` is that op with the new value, and a `remove` after a
+`replace` is the `remove` — the `replace` needed the member to exist, and
+the `remove` takes it. Both hold in RFC 6902 for any path. A `remove` after
+an `add` is NOT collapsed: when the member existed before, the `add` replaced
+it, so dropping both would leave it in place, and keeping only the `remove`
+would fail when it did not exist. Nothing collapses at an append path
+(`/-`), which names no member and is left for the effective document to
+refuse, and a batch never collapses, into the last pending op or through its
+own last op: its ops belong together. A refused stage keeps the op a
+collapse would have replaced.
+
+*The family rule changed, and a differential pins the change.*
+`test_family_of_over_names_changed_only_where_3c_ruled`
+(`tests/test_plot_figure.py`) runs 25,000 generated result-file names
+through `family_of` and through `_family_of_after_3c`, a copy of the earlier
+rule with only the ruled change: they agree on every name, and every name
+the change touched belonged to no family before and now folds with a
+multi-dimensional index before its `[]`. The plan's review of this task
+parsed all 332 of TRANSFORM's `.mo` files read-only: six expressions change
+their `family_of` (the `massPorts[4, 1].C[1]` expressions of `pipe_single` and
+`pipe_nParallel`, in three models), and the families of two or more stay ten
+before and after, because each such port carries one species — a family of
+one. So TRANSFORM's expressions gain no new family of two or more.
+
+*The folded criteria row moved to 3d* (the owner's ruling, 2026-09-25). In
+3c a family's criteria stay one row per member; the folded row belongs with
+the save-time expansion that writes one criterion per index.
+
+*What the drawer costs.* `TestPage.rebuild` reads the layout and the scored
+counts ONCE and hands both to every `PlotCard`: a card that read them itself
+cost one layout and one tree read per plot, and the page's existing cost
+tests (`test_a_rebuild_reads_the_tree_and_the_tracked_names_once`,
+`test_the_page_costs_the_same_whether_it_has_five_cards_or_forty`) hold
+unedited. The Variables drawer reads each of the Session's facts once per
+build (`VariablesDrawer._read`). `Rail.refresh` is the one way the page's
+changes reach it, and the open drawer builds again only when its inputs —
+the reads, the selection, the number of plots, the filter, the opened
+families — moved (`VariablesDrawer.refresh`, `_signature`): a rerun's job
+events that change none of them build nothing. A closed drawer is not
+followed; it is rebuilt when it opens. `variable_groups` indexes the layout
+once rather than scanning every plot per name, which cost 395 ms over 6,093
+names and 300 plots.
+
+*The glob cannot backtrack.* The drawer's glob means what a spec's
+`variables` list means (`_pattern_to_regex`: anchored, `[ ]` literal), but
+compiled to that one regex, `*a*a*a*a*a*a*a*b` over one 60-character name
+took over 20 s on the UI event loop, which blocks every tab. `matcher`'s
+`_glob` splits the needle on `*` into quantifier-free pieces: the first
+must match at the start, the last at the end, and each middle one is found
+left to right, where the leftmost place leaves the most text for the rest.
+`test_the_glob_means_what_the_specs_regex_means` holds it identical to the
+anchored regex over every glob and text of up to four characters, both case
+settings. A typed regex (`.*` on) stays Python's `re`: the user's own
+pattern, on their own local tool.
+
+*A row acts on the layout as it is now.* A check or "+ new plot" re-reads
+the layout when clicked, decides on or off from what the selected plot holds
+then, and does nothing for a selection outside it: a row is drawn before the
+last change, and a double-click on the last plot's only series raised on its
+second click. The check is a button with `role=checkbox` and
+`aria-checked`, not a `ui.checkbox`, whose `set_value` fires its own
+`on_change`: a repaint would stage an edit. Row markers carry no whitespace
+(`variables_drawer.marker`), because NiceGUI splits a marker on it.
+
+*The gate.* The TRANSFORM gate's numbers: see the roadmap's 3c BUILT
+paragraph.
+
+**Alternatives considered.** Series chips on each plot (DESIGN.md's earlier
+plan): the owner ruled the drawer the one place for adding and removing
+series. A drawer that overlays the plots: below Quasar's 1024 px breakpoint
+that is what a drawer without `behavior=desktop` does, and it would cover the
+plots it edits. Collapsing a `remove` after an `add`: the case above, where
+either collapse is wrong for one of the two starting states.
+
+**Not built here**, so nobody looks for it: the slice field, the save-time
+expansion and the folded criteria row (3d); moving plots up and down, and
+plot titles (`docs/ideas.md`); tracking a variable from the drawer, so
+`/variables` stays outside the patch whitelist (D130).

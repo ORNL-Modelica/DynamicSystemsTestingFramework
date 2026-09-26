@@ -1681,3 +1681,31 @@ planning.
   - A plot title you write ("Temperatures"). It would be a new field on a
     `plots` entry in `test_spec.json`, a surface TRANSFORM-UnitTests relies
     on, though additive. Until then the toolbar names the series.
+- **Follow-ups from the rail and drawers build (2026-09-25)**: residuals the
+  reviews found and the build did not fix (D134).
+  - Adding a criterion and then editing it stays two pending ops: the add is
+    at `<parent>/children/-` (`edit_tree.py`) and the edit a replace under
+    `<parent>/children/N`, so `Session.stage` sees two paths. Merging them
+    would need the add staged at its index. Owner call.
+  - A disabled Remove plot is out of the tab order, so the sentence saying
+    why is reachable by hover only.
+  - Remove plot and then Reset layout, on a test with no `plots` key, leaves
+    two pending edits (`add /plots`, `remove /plots`) that together change
+    nothing. The collapse keeps a remove after an add as two on purpose
+    (D134).
+  - At 900 px the header wraps the pending count, Save and Discard to two
+    lines (owner-accepted). For the owner's hands-on look: hiding Save's
+    why-sentence while nothing is pending and dropping the centre run
+    indicator would likely fit the row on one line.
+  - A regex typed into the Variables drawer's filter runs on the UI event
+    loop with Python's `re`: `(a+)+$` over a 25-character name took 1.4 s and
+    2.0 s in two measurements, blocking every tab meanwhile. Only the user
+    can type it, on their own local tool; a timeout or a worker thread would
+    close it. (A glob cannot backtrack: `variable_rows._glob`.)
+  - The drawer's family swatch is always the accent ramp, while a plot may
+    draw that family in its second hue (a plot picks a family's hue by its
+    order there).
+  - `der(pipe.T[1])` groups under the prefix `der(pipe`
+    (`variable_rows._group` splits the name at its first dot).
+  - A bracket inside a quoted identifier is read as an index by the family
+    rule: `a.'x[5]'` folds on 5, name or expression. Pre-existing.
