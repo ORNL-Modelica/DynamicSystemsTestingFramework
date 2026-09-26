@@ -237,17 +237,19 @@ HEADER_PAST = """() => {
   return out;
 }"""
 
-#: Every button in the header's row whose label wraps to a second line (its
-#: height above 1.5 line heights). At 900 px the row's buttons wrapped their
-#: labels and still fitted, which is how Export left in the row passed.
-HEADER_WRAPS = """() => {
+#: Every button in the header's row whose label is taller than `k` line
+#: heights: `k` 1.5 finds a label wrapped to a second line, 2.5 one wrapped
+#: to a third. At 900 px the row's buttons wrapped their labels and still
+#: fitted, which is how Export left in the row passed; with an edit pending,
+#: "1 pending edit" wrapped to three lines.
+HEADER_TALL = """(k) => {
   const out = [];
   for (const b of document.querySelectorAll('.dstf-header-row .q-btn')) {
     const c = b.querySelector('.q-btn__content') || b;
     const s = getComputedStyle(c);
     const line = parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.2;
     const h = c.getBoundingClientRect().height;
-    if (h > 1.5 * line) out.push([b.textContent, h, line]);
+    if (h > k * line) out.push([b.textContent, h, line]);
   }
   return out;
 }"""
@@ -270,9 +272,9 @@ def _fits(page, width: int) -> None:
     """Nothing in the header is cut off at `width`: the page does not scroll
     sideways and every child of the header row ends inside the viewport.
     At 1280 px no header button's label wraps either; at 900 px the pending
-    count, Save and Discard may take two lines (the owner's ruling,
-    2026-09-25: one line needs ~950 px once the backend select, the run
-    indicator and Save's why-sentence are in the row)."""
+    count, Save and Discard may take two lines and no more (the owner's
+    ruling, 2026-09-25: one line needs ~950 px once the backend select, the
+    run indicator and Save's why-sentence are in the row)."""
     page.set_viewport_size({"width": width, "height": 900})
     page.wait_for_function(
         "document.documentElement.scrollWidth == window.innerWidth",
@@ -287,16 +289,30 @@ def _fits(page, width: int) -> None:
         box = loc.bounding_box()
         assert box is not None and box["x"] + box["width"] <= width, (width, box)
     assert page.evaluate(HEADER_PAST) == [], width
-    if width >= 1280:
-        assert page.evaluate(HEADER_WRAPS) == [], width
+    assert page.evaluate(HEADER_TALL, 1.5 if width >= 1280 else 2.5) == [], width
+
+
+def _count_lines(page) -> float:
+    """The pending count's label height in line heights. It keeps one line
+    at 900 px (`no-wrap`): squeezed, it took three beside Save's longest
+    one-edit caption, "(1 test, 1 new entry)", which FakeLib cannot stage
+    (every test of it has an entry), so this pins it instead."""
+    return page.locator(".dstf-header-row .q-btn", has_text="pending edit").evaluate(
+        """b => { const c = b.querySelector('.q-btn__content');
+                  return c.getBoundingClientRect().height
+                         / parseFloat(getComputedStyle(c).lineHeight); }"""
+    )
 
 
 def test_the_header_fits_900_px(tmp_path, playwright_browser):
     """The owner's ruling Q10 A: one header at every width, the rarely used
     actions in a ⋮ menu at its end. At 900 px the row cut off "dashboard"
-    and "Stop server"; now nothing passes the viewport at 1280 or 900, and
-    no label wraps at 1280, on the Suite page and on a Test page with its
-    Variables drawer open. Export left in the row is killed by
+    and "Stop server"; now nothing passes the viewport at 1280 or 900, no
+    label wraps at 1280 and none takes a third line at 900, on the Suite
+    page and on a Test page with its Variables drawer open, with nothing
+    pending and again with one edit pending (the row then carries the
+    backend's why-sentence, and "1 pending edit" took three lines at 900).
+    Export left in the row is killed by
     `test_the_header_menu_holds_the_rarely_used_actions` (its ancestor
     check), not here: at 900 px the row's buttons may wrap and still fit."""
     cfg, work = _project(tmp_path)
@@ -341,6 +357,70 @@ def test_the_header_fits_900_px(tmp_path, playwright_browser):
             timeout=EXPECT_TIMEOUT
         )
         _keep(page, tmp_path, "test-900-menu")
+        page.keyboard.press("Escape")
+        expect(menu).to_be_hidden(timeout=EXPECT_TIMEOUT)
+
+        # One edit pending: x on a plot of its own.
+        page.set_viewport_size({"width": 1280, "height": 900})
+        x = page.locator(".dstf-var-row").filter(has_text="x").first
+        x.hover()
+        x.locator(".dstf-var-new").click()
+        header = page.locator(".dstf-header-row")
+        expect(header).to_contain_text("1 pending edit", timeout=EXPECT_TIMEOUT)
+        for width in (1280, 900):
+            _fits(page, width)
+            _keep(page, tmp_path, f"test-{width}-pending")
+        assert _count_lines(page) <= 1.5
+        page.goto(url)
+        expect(page.locator("div.dstf-tests .dstf-row")).to_have_count(
+            5, timeout=EXPECT_TIMEOUT
+        )
+        expect(header).to_contain_text("1 pending edit", timeout=EXPECT_TIMEOUT)
+        for width in (1280, 900):
+            _fits(page, width)
+            _keep(page, tmp_path, f"suite-{width}-pending")
+        assert _count_lines(page) <= 1.5
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
+def test_the_dashboard_item_opens_the_dashboard_in_a_new_tab(
+    tmp_path, playwright_browser
+):
+    """dashboard in the ⋮ menu is a link the browser follows into a new tab,
+    not a `window.open` sent from the server, which a popup blocker may
+    refuse (NiceGUI's `ui.navigate.to` says so). The ⋮ button names itself
+    and says it opens a menu."""
+    cfg, work = _project(tmp_path)
+    (work / "dashboard.html").write_text("<h1>the dashboard</h1>", encoding="utf-8")
+    log = tmp_path / "author.log"
+    proc, url = _start(cfg, work, log)
+    try:
+        _wait_until_serving(url, proc, log)
+        context = playwright_browser.new_context(
+            viewport={"width": 1280, "height": 900}
+        )
+        page = context.new_page()
+        page.goto(url)
+        expect(page.locator("div.dstf-tests .dstf-row")).to_have_count(
+            5, timeout=EXPECT_TIMEOUT
+        )
+        more = page.locator(".dstf-header-menu")
+        expect(more).to_have_attribute("aria-label", "More actions")
+        expect(more).to_have_attribute("aria-haspopup", "menu")
+        more.click()
+        item = page.locator(".q-menu").get_by_text("dashboard", exact=True)
+        expect(item).to_be_visible(timeout=EXPECT_TIMEOUT)
+        with context.expect_page(timeout=EXPECT_TIMEOUT) as opened:
+            item.click()
+        tab = opened.value
+        tab.wait_for_load_state()
+        assert tab.url.endswith("/dashboard/dashboard.html"), tab.url
+        expect(tab.locator("h1")).to_have_text("the dashboard")
+        assert page.url == url  # the tool's own tab stays where it was
         context.close()
     finally:
         if proc.poll() is None:

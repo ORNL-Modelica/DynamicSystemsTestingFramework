@@ -223,19 +223,21 @@ inside it; a click on it scrolls that card into view. With no plot it reads
 "No plot yet: + new plot adds one" and the checks are grey. Groups: Tracked,
 then each dot prefix (the component before any bracket: `port[2, 1].C[1]` is
 in "port"), then "(top level)", then Diagnostics. A family is one row reading
-`pipe.T[1:3]` with a swatch of the accent ramp — whatever hue a plot draws it
-in — and a chevron that opens it to its members, each a row with its own
-check, at most 50, then "… N more". A row's check is a button with
-`role=checkbox`, `aria-checked` `true` / `mixed` / `false` for all, some or
-none of its members on the selected plot, and the row's text as its
-`aria-label`; it is not a checkbox, whose repaint would stage an edit. A click
-adds whatever the plot lacks (a mixed row adds), or takes the row off when the
-plot holds all of it; taking off a plot's last series removes the plot. "+ new
-plot" shows on the row's hover and while focus is in the row; it puts the row
-on a new plot below the selected one, selects that plot, and leaves the
-variable where it was. Other plots holding the row read "plot 1, 3" at its
-right. A variable a criterion scores cannot leave its last plot: the check
-greys, and its tooltip is the one sentence Remove plot uses too — "x is scored
+`pipe.T[1:3]` with a swatch of four blocks, one per stop of the accent ramp,
+light to dark and never a gradient — whatever hue a plot draws it in — and a
+chevron that opens it to its members, each a row with its own check, at most
+50, then "… N more". A row's check is a button with `role=checkbox`,
+`aria-checked` `true` / `mixed` / `false` for all, some or none of its members
+on the selected plot, and the row's text as its `aria-label`, with the muted
+name after it in parentheses when the row shows one (`a.Q (x)`); it is not a
+checkbox, whose repaint would stage an edit. A click adds whatever the plot
+lacks (a mixed row adds), or takes the row off when the plot holds all of it;
+taking off a plot's last series removes the plot. "+ new plot" shows on the
+row's hover and while focus is in the row; it puts the row on a new plot below
+the selected one, selects that plot, and leaves the variable where it was.
+Other plots holding the row read "plot 1, 3" at its right. A variable a
+criterion scores cannot leave its last plot: the check greys, and its tooltip
+is the one sentence Remove plot uses too — "x is scored
 by 1 criterion and this is the only plot that shows it. Add it to another plot
 first, or remove its criteria." (in the plural for several). The filter keeps
 a variable whose name or label matches: a substring; with `*` or `?`, a glob
@@ -304,12 +306,13 @@ stroke SVG on a 16px grid. Never emoji.
 library name, backend. Centre: the queue indicator. Right: pending-edit count
 with Save and Discard, then a ⋮ menu holding Export (grey, with "no pending
 edits" under it, while nothing is pending), Open in another backend…,
-dashboard (a new tab) and Stop server, each with its full label — one layout
-at every width. Save's caption counts the entries it creates: a pending edit
-to a test with no entry in the file as loaded writes one, "Save 2 spec edits
-(2 tests, 1 new entry) to test_spec.json". At 900px the count, Save and
-Discard may wrap to two lines and nothing is cut off; at 1280px no header
-button's label wraps. The header is never a solid accent bar.
+dashboard (a link into a new tab) and Stop server, each with its full label —
+one layout at every width. Save's caption counts the entries it creates: a
+pending edit to a test with no entry in the file as loaded writes one, "Save 2
+spec edits (2 tests, 1 new entry) to test_spec.json". At 900px, with an edit
+pending, Save and Discard may wrap to two lines and no more, the count keeps
+one, the backend's why-sentence gives way first, and nothing is cut off; at
+1280px no header button's label wraps. The header is never a solid accent bar.
 
 ## Do / don't
 

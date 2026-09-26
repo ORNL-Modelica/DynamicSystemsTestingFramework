@@ -69,7 +69,7 @@ class Header:
             ui.space()
             self.pending = (
                 ui.button(on_click=self.drawer.toggle)
-                .props("flat dense no-caps")
+                .props("flat dense no-caps no-wrap")
                 .mark("pending")
             )
             self.save = Action(
@@ -82,7 +82,9 @@ class Header:
             )
             with (
                 ui.button(icon="more_vert")
-                .props('flat dense round aria-label="More actions"')
+                .props(
+                    'flat dense round aria-label="More actions" aria-haspopup="menu"'
+                )
                 .classes("dstf-header-menu")
                 .mark("header-menu"),
                 ui.menu(),
@@ -100,11 +102,11 @@ class Header:
                 self.other = ui.menu_item(
                     "Open in another backend…", on_click=self._open_other
                 ).mark("other-backend")
-                ui.menu_item(
-                    "dashboard",
-                    on_click=lambda: ui.navigate.to(
-                        "/dashboard/dashboard.html", new_tab=True
-                    ),
+                # A link the browser follows into a new tab: a `window.open`
+                # sent from the server (`ui.navigate.to(..., new_tab=True)`)
+                # is what a popup blocker may refuse.
+                ui.menu_item("dashboard").props(
+                    'href="/dashboard/dashboard.html" target="_blank"'
                 ).mark("dashboard")
                 self.stop = (
                     ui.menu_item("Stop server", on_click=self._stop)

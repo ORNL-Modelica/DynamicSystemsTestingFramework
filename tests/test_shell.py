@@ -850,6 +850,10 @@ def test_save_caption_counts_new_entries():
     assert save_caption([edit, new], loaded, "test_spec.json") == (
         "Save 2 spec edits (2 tests, 1 new entry) to test_spec.json"
     )
+    other = PatchOp("P", "add", "/plots", [])
+    assert save_caption([new, other], loaded, "test_spec.json") == (
+        "Save 2 spec edits (2 tests, 2 new entries) to test_spec.json"
+    )
 
 
 async def test_save_names_a_new_entry(tmp_path):
@@ -905,3 +909,12 @@ async def test_the_header_menu_holds_the_rarely_used_actions(shell):
             assert menu in list(_ancestors(_one(user, m))), m
         assert not _one(user, "export").enabled
         assert _one(user, "export:why").text == "no pending edits"
+        # The ⋮ button says what it holds and that it opens a menu.
+        more = _one(user, "header-menu")
+        assert more.props["aria-label"] == "More actions"
+        assert more.props["aria-haspopup"] == "menu"
+        # dashboard is a real link the browser opens in a new tab, never a
+        # `window.open` from the server, which a popup blocker may refuse.
+        dashboard = _one(user, "dashboard")
+        assert dashboard.props["href"] == "/dashboard/dashboard.html"
+        assert dashboard.props["target"] == "_blank"

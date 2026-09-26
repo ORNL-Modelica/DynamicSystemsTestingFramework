@@ -4736,6 +4736,45 @@ class TestVariablesDrawer:
             await _settled(lambda: _groups_shown(user) == ["var-group:1-port"])
             assert _none(user, "var-filter:why")
 
+    async def test_a_familys_swatch_is_four_blocks_of_the_accent_ramp(
+        self, drawer_shell
+    ):
+        """DESIGN.md: no gradients. The owner-approved board drew a family's
+        swatch as four discrete blocks, one per stop of the accent ramp,
+        light to dark; a `linear-gradient` over the stops was built."""
+        async with user_simulation(root=drawer_shell.index) as user:
+            await _drawer(drawer_shell, user)
+            row = _one(user, var_marker("var-row", ROW_PIPE))
+            (swatch,) = [e for e in row.descendants() if "dstf-var-ramp" in e.classes]
+            assert "gradient" not in str(dict(swatch.style))
+            assert [
+                dict(block.style).get("background")
+                for block in swatch.default_slot.children
+            ] == ["#90caf9", "#42a5f5", "#1976d2", "#0d47a1"]
+            assert not [
+                e
+                for e in _one(user, var_marker("var-row", ROW_Z)).descendants()
+                if "dstf-var-ramp" in e.classes
+            ]  # a lone variable is no family
+
+    async def test_two_rows_sharing_a_label_are_told_apart_by_their_checks_name(
+        self, drawer_shell
+    ):
+        """`x={a.Q, a.Q}`: two rows read "a.Q", each with its name muted
+        beside it. A check named by the row's text alone read the same for
+        both to a screen reader; it says the muted name too."""
+        from test_session import with_expressions
+
+        shell = drawer_shell
+        with_expressions(shell.session, A, {"x": "a.Q", "y": "a.Q"})
+        shell.session._score(A)
+        async with user_simulation(root=shell.index) as user:
+            await _drawer(shell, user)
+            assert [
+                _one(user, var_marker("var-check", r)).props["aria-label"]
+                for r in (ROW_X, ROW_Y, ROW_Z)
+            ] == ["a.Q (x)", "a.Q (y)", "z"]
+
     async def test_a_family_opens_to_its_members(self, drawer_shell):
         async with user_simulation(root=drawer_shell.index) as user:
             await _drawer(drawer_shell, user)

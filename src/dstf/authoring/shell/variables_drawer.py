@@ -43,11 +43,13 @@ if TYPE_CHECKING:
 #: ``MEMBERS`` of its own.
 ROWS, MEMBERS = 200, 50
 
-#: A family's swatch marks the row as an array, in the accent ramp (the
-#: first hue's four stops, `figures.families`), light to dark. It is not
-#: the ramp its members are drawn in: a row is tied to no plot, and a plot
-#: gives a family its hue by the family's order on that plot.
-_RAMP = f"background: linear-gradient(90deg, {', '.join(HUES[0])})"
+#: A family's swatch marks the row as an array: four blocks, one per stop
+#: of the accent ramp (the first hue's, `figures.families`), light to dark,
+#: as the owner-approved board drew it — discrete, never a gradient
+#: (DESIGN.md "Don't use gradients"). It is not the ramp its members are
+#: drawn in: a row is tied to no plot, and a plot gives a family its hue by
+#: the family's order on that plot.
+_RAMP = HUES[0]
 
 
 _SPACE = re.compile(r"\s+")
@@ -338,7 +340,11 @@ class VariablesDrawer:
                     )
                     .mark(marker("var-check", key))
                 )
-                check.props["aria-label"] = row.text
+                # A row that shows a muted name says it too: two rows
+                # reading "a.Q" had two checks a screen reader read alike.
+                check.props["aria-label"] = (
+                    row.text if row.name is None else f"{row.text} ({row.name})"
+                )
                 if not page.cards:
                     check.disable()  # no plot to act on: "+ new plot" makes one
                 elif row.stranded:
@@ -348,7 +354,9 @@ class VariablesDrawer:
                         "max-width=320px"
                     )
             if len(row.members) > 1:
-                ui.element("span").classes("dstf-var-ramp").style(_RAMP)
+                with ui.element("span").classes("dstf-var-ramp"):
+                    for stop in _RAMP:
+                        ui.element("span").style(f"background: {stop}")
             ui.label(row.text).classes("dstf-var-text dstf-mono text-xs")
             if row.name is not None:
                 ui.label(row.name).classes("dstf-varname")
