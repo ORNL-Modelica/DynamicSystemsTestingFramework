@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.10+, numpy, NiceGUI 3.16 (`[author]`; its plotly.js is **3.1.1** — measured `Plotly.version` in Chromium 2026-09-26; the "3.8.2" in `figures/plotly.py`'s docstring is a d3 version string inside the bundle), the report's vendored plotly.js 2.35.0, pytest, Playwright + Chromium, uv.
 
-**Owner rulings this plan implements:** DSTF-060 (2026-09-26) — "These bugs get fixed whatever you choose" on the feedback board (https://claude.ai/artifact/88WhEgGHtSjT3pkiJTJ4Sm, settled block). Deferred to later steps because those steps rebuild the code: the "Add a criterion for x" dialog not opening its editor, the tree `+` wording and placement, the weighted-combinator hint (Test page step, Q3); rows waiting for the scan (Suite table step); the squeezed "t…" column (tolerance step, Q5).
+**Owner rulings this plan implements:** the owner's ruling of 2026-09-26 — "These bugs get fixed whatever you choose" on the feedback board (https://claude.ai/artifact/88WhEgGHtSjT3pkiJTJ4Sm, settled block). Deferred to later steps because those steps rebuild the code: the "Add a criterion for x" dialog not opening its editor, the tree `+` wording and placement, the weighted-combinator hint (Test page step, Q3); rows waiting for the scan (Suite table step); the squeezed "t…" column (tolerance step, Q5).
 
 **Evidence behind each fix (measured 2026-09-26, not argued):**
 - Window drag: a real-mouse spike in Chromium over the tool's plotly.js 3.1.1 (`scratchpad/spike-window/`): today `layout.shapes` is `[range/max, range/max/outside, window]`; a drag on the bound inside the window moves the window rect, a drag outside it moves the `/outside` line — both then refused by `comparison/handles.py::_unnamed`. `layer: "below"` changes stacking but NOT what can be grabbed; per-shape `editable: false` has no effect under `edits.shapePosition`. Order `[window, outside, bound]` makes the bound win inside the window (V2b). The full-width `/outside` line covers the bound inside the window, so it must resolve to the bound.
@@ -193,7 +193,7 @@ Adjust `resolve_mode`'s import and the override-dict shape to how `tree_eval._le
 - [ ] **Step 2: Implement `src/dstf/comparison/seeds.py`:**
 
 ```python
-"""A new criterion's first values, from the data it will score (DSTF-060).
+"""A new criterion's first values, from the data it will score.
 
 A leaf of `range`, `tube`, `scalar` or `dominant-frequency` with only a
 `metric` and a `variable` is misconfigured or always fails, so the tool
@@ -301,7 +301,7 @@ def seeded_leaf(metric: str, variable: str, data: SeedData) -> dict:
 Check `_compute_fft_spectrum`'s and `_find_top_n_peaks`'s real signatures and return shapes (algorithms.py:1296-1359) and adapt the two calls; if they are private names that another module must not import, make them public in `algorithms.py` in this commit (a rename tied to code you touch). (`registry.metric(name)` is the lookup, registry.py:140.) Add to `MetricDescriptor` (registry.py, after `drawn_by_default`):
 
 ```python
-    #: A new leaf's first values from the data it will score (DSTF-060):
+    #: A new leaf's first values from the data it will score:
     #: the reference / actual series in, the params to add out; ``None`` for
     #: a metric valid bare (nrmse, points, event-timing). See :mod:`.seeds`.
     seed: Callable[[SeedData], dict] | None = None
@@ -336,7 +336,7 @@ def _seed_data(s: SessionView, model_id: str, variable: str) -> SeedData:
     return SeedData(ref=ref, act=act)
 ```
 
-(check which exceptions `s.view` actually raises for an unknown variable / no result and catch exactly those). In `edit_criteria.py`'s `set_metric`: `state["params"] = {k: v for k, v in seeded_leaf(name, <the leaf's variable>, _seed_data(s, model_id, <variable>)).items() if k not in ("metric", "variable")}` and change the comment to "a new mode starts from its seed (DSTF-060), else its defaults". Update `_ADD_SENTENCE` (edit_tree.py:85-88) so it no longer says "the metric's defaults": "Added as the last child, with values from the data where the metric needs them." (the test at tests/test_builtin_capabilities.py:1170 changes with it). Run Step 3: PASS; `uv run pytest tests/test_builtin_capabilities.py tests/test_seeds.py -q`: PASS.
+(check which exceptions `s.view` actually raises for an unknown variable / no result and catch exactly those). In `edit_criteria.py`'s `set_metric`: `state["params"] = {k: v for k, v in seeded_leaf(name, <the leaf's variable>, _seed_data(s, model_id, <variable>)).items() if k not in ("metric", "variable")}` and change the comment to "a new mode starts from its seed, else its defaults". Update `_ADD_SENTENCE` (edit_tree.py:85-88) so it no longer says "the metric's defaults": "Added as the last child, with values from the data where the metric needs them." (the test at tests/test_builtin_capabilities.py:1170 changes with it). Run Step 3: PASS; `uv run pytest tests/test_builtin_capabilities.py tests/test_seeds.py -q`: PASS.
 
 - [ ] **Step 5: Commit** "criteria: a new range, tube, scalar or dominant-frequency criterion is seeded from its data".
 
@@ -398,7 +398,7 @@ The errors a person can cause — a patch the validator refuses, a drag a
 criterion cannot take, a value out of range, a locked spec, a running job —
 read as their plain reason; the location is already on the screen, beside
 the row or the plot it came from. Anything else is a bug and keeps its class
-name, so it can be reported (DSTF-060)."""
+name, so it can be reported."""
 
 from __future__ import annotations
 
