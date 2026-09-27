@@ -84,8 +84,8 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
 }
 .dstf-tree-row:hover { background: var(--dstf-surface-hover); }
-/* A plot card: its title row, its plot, its criteria rows and its footers
-   at the card's own spacing (the brief's "col gap 10px"). */
+/* A plot card: its title row, its plot, its criteria header and rows at
+   the card's own spacing (the brief's "col gap 10px"). */
 .dstf-plot { gap: 10px; }
 /* A card's header row wraps (3c's gate over a real library: at 900 px
    beside a drawer, a long title, its pills and the toolbar in one row
@@ -128,6 +128,11 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    to a second line, the controls at its right end, instead of pushing the
    page sideways (3c's gate over a real library, 900 px beside a drawer). */
 .dstf-crit > .dstf-node-host { margin-left: auto; }
+/* A plot's criteria header: a muted "Criteria" and, at its right end, what
+   attaches at VARIABLE (the plot's +), level with the criteria rows'
+   controls below it. */
+.dstf-criteria-head { min-height: 32px; padding: 0 8px; }
+.dstf-criteria-head > .dstf-node-host { margin-left: auto; }
 /* The open criterion's row, and a row with a form open under it, stay
    lit. */
 .dstf-crit-open, .dstf-row-open { background: var(--dstf-selection); }

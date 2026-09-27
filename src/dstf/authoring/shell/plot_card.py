@@ -1,8 +1,9 @@
 """One plot of the Test page (brief §3.2; DESIGN.md "Plots are modular",
 "Criteria rows"): its title and status pills, the slot the plot is drawn
-into when it scrolls into view, the criteria rows of its tracked series
-with each row's node controls, the one open criterion's editor below its
-row, and what attaches at the VARIABLE placement below. A card owns its
+into when it scrolls into view, a criteria header holding what attaches
+at the VARIABLE placement (the plot's `+`), the criteria rows of its
+tracked series with each row's node controls, and the one open
+criterion's editor below its row. A card owns its
 `ui.plotly`, its `FigureHook` and its snap-back; the card knows no
 capability by name.
 
@@ -30,7 +31,7 @@ from ..capabilities import Placement
 from ..layout import Layout, remove_plot, stranded, stranded_sentence
 from ..session import Selection
 from ..tree_text import leaf_name, leaves_of, parent_kinds
-from .actions import ActionBar, InlineHost, RowTarget
+from .actions import InlineHost, RowTarget
 from .figure_hook import FigureHook
 from .tree_card import leaf_readout, leaf_status
 from .widgets import Pill
@@ -126,6 +127,17 @@ _SWATCH_STATES = " ".join(
     f"dstf-swatch-{s}"
     for s in ("on", "off", "locked", "pass", "fail", "warn", "queued")
 )
+
+
+#: The node the criteria header's forms act on: the tree's root, which a
+#: plot's `+` adds under.
+TREE_ROOT = "/metrics"
+
+
+def _root_kind(view: dict | None) -> str | None:
+    """The root's combinator (None for a root leaf or no tree): what the
+    header's `+` reads — it is grey under a warn or a weighted root."""
+    return None if view is None else view.get("combinator")
 
 
 class CriterionRow:
@@ -280,7 +292,12 @@ class PlotCard:
         self.hook = FigureHook(on_shape_moved=self.redraw)
         self.rows: dict[str, CriterionRow] = {}
         self.pills: dict[str, Pill] = {}
-        self.bars: list[ActionBar] = []
+        #: The criteria header's host: what attaches at VARIABLE, inline
+        #: (Q3 A: the plot's `+`), and the root's kind it was built under.
+        #: The card's shape does not hold the root's kind, so `paint`
+        #: rebuilds the host when it moves.
+        self.variable_host: InlineHost | None = None
+        self.root_kind: str | None = None
         self.editor: InlineHost | None = None  # the open criterion's, if it is here
         #: The open editor's own column in its row's slot: the slot also
         #: holds the row host's error labels, so closing takes only this.
@@ -311,9 +328,10 @@ class PlotCard:
         model = page.model_id
         known = set(tracked)
         #: This plot's TRACKED series — the ones that carry criteria rows and
-        #: an "Add a criterion for x" footer. Not "scored": a tracked variable
-        #: no criterion covers is still the test's, and the footer is the way
-        #: back to one. The rest of the series are drawn and nothing more.
+        #: the header's "Add a criterion for x" `+`. Not "scored": a tracked
+        #: variable no criterion covers is still the test's, and the `+` is
+        #: the way back to one. The rest of the series are drawn and nothing
+        #: more.
         self.tracked = [name for name in resolved.series if name in known]
         #: A card drawing ONE series has its variable in its title, so its
         #: pill is the bare status; several pills side by side read "FAIL
@@ -354,7 +372,7 @@ class PlotCard:
                 }
                 #: What each of this card's series READS as everywhere the
                 #: name is NOT beside it — its pill, the focus bar, its
-                #: plot-only line, its "Add a criterion for x" button.
+                #: plot-only line, its "Add a criterion for x" `+`.
                 #: Disambiguated over the whole TEST, so all of those agree.
                 self.texts = {
                     n: scope[n].text if n in scope else n for n in resolved.series
@@ -400,6 +418,8 @@ class PlotCard:
                 ).mark(f"plot-missing:{index}")
             self.slot = ui.element("div").classes("dstf-plot-slot w-full")
             self.slot.props(f'data-plot="{index}"').mark(f"plot-slot:{index}")
+            if self.tracked:
+                self._criteria_header(index, model, scope, view)
             criteria = ui.column().classes("dstf-criteria w-full gap-0")
             takers = parent_kinds(view)
             with criteria.mark(f"criteria:{index}"):
@@ -422,30 +442,51 @@ class PlotCard:
                 ui.label(f"{texts} {verb} no criteria.").classes("dstf-why").mark(
                     f"plot-only:{index}"
                 )
-            if self.tracked:
-                # ONE wrapping row for every variable's footer: one full-width
-                # row each pushed the next plot off the screen (the board).
-                with ui.row().classes("items-center gap-2 wrap"):
-                    for variable in self.tracked:
-                        self.bars.append(
-                            ActionBar(
-                                page.shell,
-                                Placement.VARIABLE,
-                                partial(
-                                    Selection,
-                                    tests=frozenset({model}),
-                                    variable=variable,
-                                    # The page's one read of the scope, so
-                                    # the footer's caption reads this
-                                    # variable's text without building it
-                                    # per card (`Selection.texts`).
-                                    texts=scope,
-                                ),
-                                marker=f"variable-actions:{index}:{variable}",
-                                figure=self.hook,
-                            )
-                        )
         self.paint(view)
+
+    def _criteria_header(
+        self,
+        index: int,
+        model: str,
+        scope: Mapping[str, VariableText],
+        view: dict | None,
+    ) -> None:
+        """A muted "Criteria" and, at its right, whatever attaches at
+        VARIABLE — inline, for the plot's FIRST tracked variable, its forms
+        opening as a row under the header (Q3 A; the dialog and the footer
+        per variable are gone: one per line pushed the next plot off the
+        screen, and a form's select offers the test's other variables)."""
+        head = (
+            ui.row()
+            .classes("dstf-criteria-head items-center no-wrap gap-3 w-full")
+            .mark(f"criteria-header:{index}")
+        )
+        with head:
+            ui.label("Criteria").classes("text-secondary text-xs")
+            target = RowTarget(self.page, f"plot:{index}", head, TREE_ROOT)
+            self.variable_host = InlineHost(
+                self.page.shell,
+                Placement.VARIABLE,
+                partial(
+                    Selection,
+                    tests=frozenset({model}),
+                    variable=self.tracked[0],
+                    # The page's one read of the scope, so the `+` reads
+                    # this variable's text without building it per card
+                    # (`Selection.texts`).
+                    texts=scope,
+                ),
+                figure=self.hook,
+                marker=f"variable:{index}",
+                row=target,
+            )
+            # Its own width, pushed to the header's right end (style.py).
+            self.variable_host.column.classes(remove="w-full", add="dstf-node-host")
+        # The form row's slot, between the header and the criteria rows; the
+        # host is built once its panels have somewhere to open a row.
+        target.slot = ui.column().classes("w-full gap-0")
+        self.root_kind = _root_kind(view)
+        self.variable_host.build()
 
     def _remove_button(
         self, index: int, layout: Layout, scored: Mapping[str, int]
@@ -514,7 +555,7 @@ class PlotCard:
         )
 
     def paint(self, view: dict | None) -> None:
-        """Pills, rows and footers in place, from the page's one `tree_view`
+        """Pills, rows and the criteria header in place, from the page's one `tree_view`
         read: a verdict that flips must not cost the card it sits in."""
         for variable, pill in self.pills.items():
             status = worst([leaf_status(leaf) for leaf in self._leaves(view, variable)])
@@ -553,8 +594,18 @@ class PlotCard:
                 # The editor is not rebuilt while it is open, so a lock that
                 # greys its panels has to reach them here.
                 self.editor.follow()
-        for bar in self.bars:
-            bar.refresh()
+        if self.variable_host is not None:
+            kind = _root_kind(view)
+            if kind != self.root_kind:
+                # The `+` reads the root's kind when it is built — grey
+                # under a warn or a weighted root — and the card's shape
+                # does not hold it, so the card stands and the host is
+                # rebuilt.
+                self.root_kind = kind
+                self.variable_host.build()
+            else:
+                # What it MAY do moves too (a job's lock comes and goes).
+                self.variable_host.follow()
 
     def _paint_rows(self, view: dict | None) -> None:
         for leaf in leaves_of(view):
@@ -831,4 +882,6 @@ class PlotCard:
             self.editor.clear()
         for row in self.rows.values():
             row.host.clear()
+        if self.variable_host is not None:
+            self.variable_host.clear()
         self.hook.clear()

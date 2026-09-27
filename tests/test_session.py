@@ -2444,7 +2444,7 @@ class TestPlots:
         the rest of the result's — never the file's, where `a0` sits before
         `x`. The result's names are the union's second half because a test
         keeps its variables while an edit is staged: a tree scoring x alone
-        must not take y's card, its footer and every way back to it."""
+        must not take y's card, its `+` and every way back to it."""
         s = self._open(tmp_path)
         assert s.tracked(A) == ["x", "y"]
         assert s.tracked(B) == ["x", "y"]  # nothing scored: the result's names

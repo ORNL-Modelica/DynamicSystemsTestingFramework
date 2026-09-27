@@ -26,18 +26,20 @@ if TYPE_CHECKING:
 
 class Placement(Enum):
     """Where a capability attaches (brief §3.2; D129): the Suite page's
-    batch bar, the Test page's status strip, a plot card's variable footer, the
-    open criterion's editor, a tree node's place in the tree. A capability
+    batch bar, the Test page's status strip, a plot card's criteria header,
+    the open criterion's editor, a tree node's place in the tree. A capability
     names the frozenset it attaches at; the shell draws it at each and knows
     no capability by name. The tab strip this replaces listed one tab per
     ``Scope``; the scopes' selection rules (TESTS needs a selection, LEAF a
     leaf) are now what ``available`` answers for the page's selection.
 
-    SUITE, TEST and VARIABLE are a button carrying the capability's
-    ``caption``, its panel in a dialog; CRITERION and NODE are inline — the
-    panel is built straight into the criterion's editor, or beside a tree
-    node as that node's controls, with no button and no heading. At VARIABLE
-    and CRITERION ``Panel.figure`` is the plot's hook; elsewhere a
+    SUITE and TEST are a button carrying the capability's ``caption``, its
+    panel in a dialog; VARIABLE, CRITERION and NODE are inline — the panel
+    is built straight into the plot's criteria header (for the plot's first
+    tracked variable, its rows opening under the header), the criterion's
+    editor, or beside a tree node as that node's controls, with no button
+    and no heading. At VARIABLE and CRITERION ``Panel.figure`` is the
+    plot's hook, subscribed for as long as the panel is drawn; elsewhere a
     subscription raises."""
 
     SUITE = "suite"
@@ -136,8 +138,8 @@ Outcome = Patch | StoreWrite | Job | Artifact | OpenProject | None
 
 class FigureHook(Protocol):
     """ONE plot card's figure, as a capability may subscribe to it. There is
-    a hook per card — the plot a VARIABLE footer's panel or a CRITERION
-    editor sits under — not one figure for the page.
+    a hook per card — the plot a VARIABLE panel (its criteria header) or a
+    CRITERION editor sits under — not one figure for the page.
 
     ``on(kind, handler)`` calls ``handler(primitive_id, payload)``:
 
@@ -213,7 +215,7 @@ class Panel(Protocol):
     def reveal(self, leaf_path: str) -> None:
         """Show that criterion's editor once the page has drawn it — after
         an add, the new criterion. A no-op where no page reveals criteria:
-        a dialog, the criterion editor, the variable's footer."""
+        a dialog, the criterion editor."""
         ...
 
 

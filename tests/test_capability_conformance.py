@@ -547,9 +547,10 @@ async def test_a_capability_registered_through_the_plugin_hook_attaches(
 # -- the Test page's three placements (D131) ------------------------------
 #
 # NODE, VARIABLE and CRITERION are the placements the Test page draws, each
-# a different way of hosting the same contract: a node's controls inline in
-# every row that names that node, a captioned button with a dialog under the
-# plot, and the criterion's whole editor. One dummy per placement, alone.
+# a different way of hosting the same contract, all inline: a node's
+# controls in every row that names that node, a panel in the plot's
+# criteria header, and the criterion's whole editor. One dummy per
+# placement, alone.
 
 
 def _page_of(shell, user) -> TestPage:
@@ -593,10 +594,14 @@ async def test_a_node_capability_is_the_controls_of_every_row_naming_that_node(
         assert _none(user, "action:node")  # inline, never a button with a dialog
 
 
-async def test_a_variable_capability_is_a_captioned_button_under_the_plot(shell):
-    """Placement.VARIABLE: the card's footer row, drawn the way SUITE and
-    TEST are — a caption, a dialog, and a real figure hook behind
-    `panel.figure`, so a panel that subscribes to the plot does not raise."""
+async def test_a_variable_capability_is_an_inline_panel_in_the_criteria_header(
+    shell,
+):
+    """Placement.VARIABLE (Q3 A): inline in the plot's criteria header, no
+    button and no dialog, with the card's real figure hook behind
+    `panel.figure` — `_NoFigure.on` raises, and a raising panel is drawn as
+    its exception INSTEAD of the panel, so the submit button being there
+    says the hook is real; a dispatch on the card's hook reaches it."""
 
     class _Subscribing(_Dummy):
         def __init__(self, *args, **kwargs) -> None:
@@ -611,15 +616,15 @@ async def test_a_variable_capability_is_a_captioned_button_under_the_plot(shell)
     only(cap)
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, A)
-        footer = _one(user, "variable-actions:0:x")
-        (button,) = _inside(user, "action:variable", footer)
-        assert button.text == "Dummy variable on 1 tests" and button.enabled
-        user.find(marker="action:variable").click()
-        # `_NoFigure.on` raises and `ActionBar` draws a raising panel's
-        # exception in the slot INSTEAD of the panel: the submit button is
-        # there, so `panel.figure` was a real hook, and the card's own — a
-        # dispatch on it reaches this panel's handler.
+        header = _one(user, "criteria-header:0")
+        (panel,) = _inside(user, "panel:variable", header)
+        assert _none(user, "action:variable")  # inline, never a button
         await user.should_see("submit variable", retries=20)
+        assert [
+            e
+            for e in panel.descendants()
+            if isinstance(e, ui.button) and e.text == "submit variable"
+        ]
         page.cards[0].hook._dispatch("plotly_relayout", {"shapes[0].y0": 1.0})
         assert cap.seen == [("", {"y0": 1.0})]
 

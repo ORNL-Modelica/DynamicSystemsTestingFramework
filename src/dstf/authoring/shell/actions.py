@@ -1,20 +1,21 @@
 """Capabilities at a placement (brief §3.2; DESIGN.md "Buttons", "Disabled
-states explain themselves"): one outlined button per registered capability
-whose `placements` names this one, labelled by the capability's `caption`,
-disabled with the sentence `available` gave beside it; a click opens the
-bar's dialog hosting the capability's `panel`, whose `submit` runs `act`
-and hands the outcome to the Session. The bar knows no capability by name.
-The dialog is not rebuilt while open (decision 4): a confirm list belongs
-to the moment of the click; an act that applied something closes it, a
-raising one shows the error in it and changes nothing, and one that
-returned nothing leaves it open — it changed nothing to close over. A bar built with `figure=`
-lends that hook to the open panel alone, and takes it back however the
-dialog closes.
+states explain themselves"). `ActionBar` hosts SUITE and TEST: one button
+per registered capability whose `placements` names this one, labelled by
+the capability's `caption`, disabled with the sentence `available` gave
+beside it; a click opens the bar's dialog hosting the capability's
+`panel`, whose `submit` runs `act` and hands the outcome to the Session.
+The bar knows no capability by name. The dialog is not rebuilt while open
+(decision 4): a confirm list belongs to the moment of the click; an act
+that applied something closes it, a raising one shows the error in it and
+changes nothing, and one that returned nothing leaves it open — it changed
+nothing to close over. There is no plot at either placement: a dialog's
+`panel.figure` raises on a subscription.
 
 `InlineHost` hosts the same contract the other way (brief §3.2): no button
 and no dialog — every capability placed here has its panel built straight
-into a slot the page owns, which is how the criterion editor and a tree
-node's controls are drawn without the shell knowing a capability by name.
+into a slot the page owns, which is how the criterion editor, a tree
+node's controls and a plot's criteria header (VARIABLE) are drawn without
+the shell knowing a capability by name.
 A host given a `RowTarget` lends its panels the page's form row under the
 row it is drawn in (`Panel.row`) and the page's `reveal`; a bar's dialog
 draws a panel's row inside the dialog, below the panel."""
@@ -56,8 +57,8 @@ RowBuild = Callable[[Callable[[], None]], None]
 
 
 class _NoFigure:
-    """`Panel.figure` where there is no plot (SUITE, TEST): a subscription
-    here is a contract misuse, and loud (decision 3)."""
+    """`Panel.figure` where there is no plot (SUITE, TEST, a tree row): a
+    subscription here is a contract misuse, and loud (decision 3)."""
 
     def on(self, kind: str, handler: Callable[[str, dict], None]) -> None:
         raise RuntimeError(f"no figure at this placement to subscribe {kind!r} to")
@@ -131,11 +132,7 @@ class RowTarget:
 
 
 class ActionBar:
-    """The bar and its one dialog. A `figure=` hook is lent to the panel a
-    click opens, under that capability's owner key, and `_release` takes it
-    back on every way the dialog can close — Close, a successful submit, a
-    dismissal (Esc, the backdrop), and the next open, whichever capability's.
-    An invisible panel must not go on staging edits from drags."""
+    """The bar and its one dialog, at SUITE or TEST."""
 
     def __init__(
         self,
@@ -144,12 +141,11 @@ class ActionBar:
         selection_of: Callable[[], Selection],
         *,
         marker: str,
-        figure: FigureHook | None = None,
         icons: bool = False,
         emphasis: Callable[[Capability], Emphasis | None] | None = None,
     ) -> None:
         self.shell, self.placement, self.selection_of = shell, placement, selection_of
-        self.marker, self.figure = marker, figure
+        self.marker = marker
         #: Draw each capability that declares an ``icon`` (a Material icon
         #: name) as an icon button; one that declares none keeps its text.
         self.icons = icons
@@ -164,10 +160,7 @@ class ActionBar:
         #: What the buttons were built from: each placed capability's name
         #: and its emphasis. A move in either rebuilds them.
         self.built: list[tuple[str, Emphasis | None]] = []
-        self._owner: str | None = None  # the open panel's key on the hook
         self.dialog = ui.dialog()  # one element, rebuilt per open
-        # Esc and a backdrop click close the dialog without reaching `close`.
-        self.dialog.on_value_change(lambda e: None if e.value else self._release())
         self.container = (
             ui.row().classes("dstf-actions items-center gap-3 wrap").mark(marker)
         )
@@ -249,27 +242,12 @@ class ActionBar:
                             marker=f"menu-action:{cap.name}",
                         )
 
-    def _release(self) -> None:
-        """Take the figure back from the panel that had it: its handlers go
-        with it, so a dialog that is no longer shown delivers nothing."""
-        if self.figure is not None and self._owner is not None:
-            self.figure.clear(self._owner)
-        self._owner = None
-
     def open(self, cap: Capability) -> None:
         """The capability's panel, in the dialog, over the selection as it is
-        at this click. The panel that had the figure — this capability's on a
-        second open, another's on a switch — gives it back first."""
-        self._release()
+        at this click."""
         view = self.shell.view_for(self.selection_of())
-        owner = f"{self.marker}:{cap.name}"
-        figure: FigureHookProtocol = _NoFigure()
-        if self.figure is not None:
-            figure = self.figure.owned(owner)
-        self._owner = owner
 
         def close() -> None:
-            self._release()
             self.dialog.close()
 
         self.dialog.clear()
@@ -318,7 +296,7 @@ class ActionBar:
 
             with slot:
                 try:
-                    cap.panel(view, ShellPanel(submit, figure, row=row))
+                    cap.panel(view, ShellPanel(submit, _NoFigure(), row=row))
                 except Exception as e:  # shown in the slot, never breaks the page
                     ui.label(f"{type(e).__name__}: {e}").classes("text-negative")
             ui.button("Close", on_click=close).props("flat dense no-caps").mark(

@@ -2,8 +2,10 @@
 one test selected. At NODE the panel IS that node's controls — add, wrap,
 edit on a k-of-n or weighted node, and remove — each form a ROW under the
 node's row (`Panel.row`), and on a combinator its kind as a dropdown in
-the row's lead place (`Panel.lead`), unwrap its last entry; at VARIABLE it
-is the "Add a criterion for x" form.
+the row's lead place (`Panel.lead`), unwrap its last entry; at VARIABLE —
+a plot's criteria header — it is one `+` whose "Add a criterion for x"
+form is a row under the header, the new criterion's editor open after
+Add.
 Every control stages one structural change against the paths the report's
 tree already shows. The D66 validator's refusal reaches the page through
 ``Panel.submit`` — the Session is what it was.
@@ -176,23 +178,7 @@ class EditTree:
     placements = frozenset({Placement.NODE, Placement.VARIABLE})
 
     def caption(self, s: SessionView) -> str:
-        sel = s.selection
-        if sel.node_path is None and sel.variable:
-            # Read as what the PAGE reads for the variable — the scope it
-            # handed down with the selection (`Selection.texts`: the
-            # expression its model wrote, with the name beside it when
-            # another variable of that test shares it), the same text as
-            # its criteria row above. The form the button opens still
-            # writes the leaf against the NAME.
-            #
-            # The scope is not derived here: a caption per card that built
-            # it for itself was the page's whole rebuild cost. A selection
-            # that carries none reads the name — and since no test is read
-            # to find a label, a selection of two (refused at VARIABLE by
-            # `available`) cannot show one of them's expression either.
-            entry = sel.texts.get(sel.variable)
-            text = sel.variable if entry is None else entry.text
-            return f"Add a criterion for {text}"
+        # NODE and VARIABLE are inline: no button reads a caption there.
         return self.label
 
     def available(self, s: SessionView) -> bool | str:
@@ -222,17 +208,9 @@ class EditTree:
         if sel.node_path is not None:
             _cluster(ui, s, ui_panel, model_id, sel.node_path)
         else:
-            # The variable's footer: the form itself, no row to open — the
-            # dialog the VARIABLE placement draws is its frame.
-            _add_form(
-                ui,
-                s,
-                ui_panel,
-                model_id,
-                under=ROOT,
-                variable=sel.variable,
-                mark=f"apply-add:{sel.variable}",
-            )
+            # The plot's criteria header (Q3 A): one `+`, its form a row
+            # under the header, the new criterion's editor open after Add.
+            _variable_plus(ui, s, ui_panel, model_id, str(sel.variable))
 
     def act(self, s: SessionView, **inputs: Any) -> Patch | None:
         action, model_id, path = inputs["action"], inputs["model_id"], inputs["path"]
@@ -440,15 +418,13 @@ def _add_form(
     under: str,
     variable: str | None,
     mark: str,
-    close: Callable[[], None] | None = None,
-    added: str | None = None,
+    close: Callable[[], None],
+    added: str,
 ) -> None:
-    """Variable and metric selects and the apply button (marked ``mark``).
-    In a form row (``close`` given) it is the row's: the sentence, Cancel
-    and Add, which stages and, once that went through, closes the row and
-    reveals ``added`` — the new criterion's path; a refused Add keeps the
-    row. The variable's footer (no ``close``) is the form alone, its button
-    still ``apply add``: its dialog is its frame.
+    """A form row's variable and metric selects, the sentence, Cancel and
+    Add (marked ``mark``), which stages and, once that went through, closes
+    the row and reveals ``added`` — the new criterion's path; a refused Add
+    keeps the row.
 
     The variable select's VALUES are result-file names — a leaf is written
     against the name — and its option TEXT reads the label, with the name
@@ -483,14 +459,9 @@ def _add_form(
             metric=met.value,
         ):
             return  # refused: the row stays, with what was chosen
-        if close is not None:
-            close()
-        if added is not None:
-            ui_panel.reveal(added)
+        close()
+        ui_panel.reveal(added)
 
-    if close is None:
-        ui.button("apply add", on_click=apply).props("dense no-caps").mark(mark)
-        return
     ui.label(_ADD_SENTENCE).classes("dstf-why")
     with ui.row().classes("items-center gap-2"):
         _cancel(ui, close, under)
@@ -712,6 +683,55 @@ def _cluster(
                 f"remove:{path}",
                 lambda: act_now("remove"),
             )
+
+
+def _variable_plus(
+    ui: Any, s: SessionView, ui_panel: Panel, model_id: str, variable: str
+) -> None:
+    """The plot's `+`: an Add row for ``variable`` (its select offers the
+    test's other variables too), landing at the end of the root combinator
+    — or, under a root leaf, as ``and[leaf, new]`` — and revealing the new
+    criterion's editor. Grey, with the reason, under a root that takes no
+    child alone.
+
+    It reads the variable as the PAGE does — the scope handed down with
+    the selection (`Selection.texts`: the expression its model wrote, with
+    the name beside it when another variable of that test shares it). The
+    scope is not derived here: a caption per card that built it for itself
+    was the page's whole rebuild cost. A selection carrying none reads the
+    name; the form still writes the leaf against the NAME."""
+    entry = s.selection.texts.get(variable)
+    text = variable if entry is None else entry.text
+    no_add = _NO_ADD.get(str((s.tree(model_id) or {}).get("combinator")))
+    tip = no_add or f"Add a criterion for {text}"
+
+    def build_add(close: Callable[[], None]) -> None:
+        _add_form(
+            ui,
+            s,
+            ui_panel,
+            model_id,
+            under=ROOT,
+            variable=variable,
+            mark=f"apply-add:{variable}",
+            close=close,
+            # From the tree as it is NOW, before the add moves the count.
+            added=_added_path(s.tree(model_id), ROOT),
+        )
+
+    button = ui.button(
+        icon="add",
+        on_click=lambda: ui_panel.row(f"Add a criterion for {text}", build_add),
+    )
+    button.props("flat dense round size=sm")
+    # Its accessible name is the sentence: the icon's ligature says "add".
+    # Set as an item, not through the props string, whose parser a quote
+    # in an expression would break.
+    button.props["aria-label"] = tip
+    with button.mark(f"add-for:{variable}"):
+        ui.tooltip(tip).props('anchor="top middle" self="bottom middle"')
+    if no_add is not None:
+        button.disable()
 
 
 def _kind_select(

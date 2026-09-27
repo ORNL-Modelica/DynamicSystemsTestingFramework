@@ -594,10 +594,10 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         idle = page.evaluate(READ_LINE, MAX_LINE)
         assert idle["drawn"] is not None and abs(idle["drawn"] - 2.0) < 0.02, idle
 
-        # 5d. Adding a criterion from a variable's footer changes the tree's
-        #     SHAPE, which rebuilds every card. The slots are NEW elements,
-        #     so the page's IntersectionObserver has to be told about them
-        #     or nothing below the fold ever draws again — and the rebuild
+        # 5d. Adding a criterion from a plot's `+` changes the tree's SHAPE,
+        #     which rebuilds every card. The slots are NEW elements, so the
+        #     page's IntersectionObserver has to be told about them or
+        #     nothing below the fold ever draws again — and the rebuild
         #     must not throw the page back to the top.
         page.evaluate("() => window.scrollTo(0, 500)")
         page.wait_for_timeout(400)
@@ -609,7 +609,7 @@ def test_a_criterion_opens_below_its_row_and_the_plot_stages_and_refuses(
         page.locator(".dstf-plot").nth(1).get_by_role(
             "button", name="Add a criterion for y"
         ).click()
-        apply_add = page.get_by_role("button", name="apply add")
+        apply_add = page.get_by_role("button", name="Add", exact=True)
         expect(apply_add).to_be_visible(timeout=EXPECT_TIMEOUT)
         apply_add.click()
         expect(page.locator(".dstf-crit")).not_to_have_count(
@@ -2231,3 +2231,62 @@ def test_a_combinators_kind_dropdown_opens_with_a_real_mouse(
         )
         expect(root.get_by_label("Combinator kind")).to_contain_text("and")
         expect(page.locator(".dstf-header-row")).to_contain_text("0 pending edits")
+
+
+# -- the plot's +, inline; the editor opens after Add (Q3 A) ----------------
+
+
+def test_the_plots_plus_opens_its_row_and_the_new_editor_is_in_view(
+    tmp_path, playwright_browser
+):
+    """The plot's `+` in its criteria header opens the Add row under the
+    header with a real click — no dialog — and after Add the new
+    criterion's editor is open and inside the viewport, at 1280 and at
+    900 px."""
+    with _served(tmp_path, playwright_browser) as page:
+        for width in (1280, 900):
+            page.set_viewport_size({"width": width, "height": VIEWPORT["height"]})
+            page.evaluate("() => window.scrollTo(0, 0)")
+            card = page.locator(".dstf-plot").first
+            head = card.locator(".dstf-criteria-head")
+            expect(head).to_contain_text("Criteria", timeout=EXPECT_TIMEOUT)
+            plus = head.get_by_role("button", name="Add a criterion for x")
+            head_box, plus_box = head.bounding_box(), plus.bounding_box()
+            assert head_box is not None and plus_box is not None
+            # At the header's right end, inside the viewport.
+            assert plus_box["x"] + plus_box["width"] <= width, (width, plus_box)
+            assert plus_box["x"] > head_box["x"] + head_box["width"] / 2, (
+                head_box,
+                plus_box,
+            )
+            plus.click()
+            add = page.get_by_role("button", name="Add", exact=True)
+            expect(add).to_be_visible(timeout=EXPECT_TIMEOUT)
+            assert page.locator(".q-dialog").count() == 0
+            form = page.locator(".dstf-form-row")
+            expect(form).to_contain_text("Add a criterion for x")
+            head_box, row = head.bounding_box(), form.bounding_box()
+            assert head_box is not None and row is not None
+            assert row["y"] >= head_box["y"] + head_box["height"] - 1, (head_box, row)
+            page.mouse.move(5, 5)
+            page.wait_for_timeout(300)
+            _shot(page, tmp_path, f"plus-row-{width}")
+            editors = page.locator(".dstf-editor")
+            add.click()
+            expect(editors).to_have_count(1, timeout=EXPECT_TIMEOUT)
+            expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
+            page.wait_for_timeout(600)
+            box = editors.bounding_box()
+            assert box is not None, width
+            assert _header_bottom(page) - 1 <= box["y"] < VIEWPORT["height"], (
+                width,
+                box,
+            )
+            page.mouse.move(5, 5)
+            page.wait_for_timeout(300)
+            _shot(page, tmp_path, f"plus-editor-{width}")
+            editors.get_by_role("button", name="Done").click()
+            expect(editors).to_have_count(0, timeout=EXPECT_TIMEOUT)
+        # Two criteria added, none saved: the spec is untouched on the way
+        # out (`_served`).
+        expect(page.locator(".dstf-header-row")).to_contain_text("2 pending edits")

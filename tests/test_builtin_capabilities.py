@@ -480,46 +480,38 @@ def test_available_answers_the_lock_and_the_missing_tree_first(session):
         gate.release.set()
 
 
-def test_the_caption_at_a_variable_names_it(session):
-    view = SessionView(session, Selection(tests=frozenset({A}), variable="x"))
-    assert EditTree().caption(view) == "Add a criterion for x"
-    assert EditTree().caption(SessionView(session, _node(A, ROOT))) == "Edit tree"
-
-
-def test_the_caption_reads_the_scope_the_selection_carries(two_var_session):
-    """The caption reads `Selection.texts` — the page's one read of the
-    test's label scope, handed down with the selection — and derives
-    nothing: a caption that built the scope for itself did it twice per
-    card, which was the Test page's whole rebuild cost (40 cards: 82 scope
-    builds, 0.37 s).
-
-    A selection carrying no scope says the NAME. That also settles what a
-    label off `next(iter(sel.tests))` used to do: A and B both track `x`
-    here, each with its own expression, and a frozenset has no order to
-    pick by — VARIABLE placement is single-test anyway (`available`
-    refuses anything else)."""
+async def test_the_plot_plus_reads_the_scope_the_selection_carries(two_var_session):
+    """The `+` reads `Selection.texts` — the page's one read of the test's
+    label scope, handed down with the selection — and derives nothing: a
+    caption that built the scope for itself did it twice per card, which
+    was the Test page's whole rebuild cost (40 cards: 82 scope builds,
+    0.37 s). A selection carrying no scope says the NAME. A selection of
+    two tests is refused at VARIABLE by `available`."""
     from test_session import with_expressions
 
     with_expressions(two_var_session, A, {"x": "a.Q"})
     with_expressions(two_var_session, B, {"x": "b.Q"})
     scope = two_var_session.variable_texts(A)
-    one = SessionView(
-        two_var_session,
-        Selection(tests=frozenset({A}), variable="x", texts=scope),
-    )
-    assert EditTree().caption(one) == "Add a criterion for a.Q"
-    bare = SessionView(two_var_session, Selection(tests=frozenset({A}), variable="x"))
-    assert EditTree().caption(bare) == "Add a criterion for x"
+    one = Selection(tests=frozenset({A}), variable="x", texts=scope)
+    async with host(two_var_session, EditTree(), one) as (user, _e, _f):
+        plus = _one(user, "add-for:x")
+        assert _tips(plus) == ["Add a criterion for a.Q"]
+        assert plus.props["aria-label"] == "Add a criterion for a.Q"
+    bare = Selection(tests=frozenset({A}), variable="x")
+    async with host(two_var_session, EditTree(), bare) as (user, _e, _f):
+        assert _tips(_one(user, "add-for:x")) == ["Add a criterion for x"]
     two = SessionView(two_var_session, Selection(tests=frozenset({A, B}), variable="x"))
     assert EditTree().available(two) == "select exactly one test"
-    assert EditTree().caption(two) == "Add a criterion for x"
 
 
-def test_the_caption_at_a_node_is_the_label_even_with_a_variable(session):
-    """A criteria row's selection carries both: at a node the panel is that
-    node's controls, so the caption is the plain label."""
-    view = SessionView(session, _node(A, ROOT, variable="x"))
-    assert EditTree().caption(view) == "Edit tree"
+def test_the_caption_is_the_label(session):
+    """NODE and VARIABLE are inline: nothing reads a caption there, and the
+    capability's is its label."""
+    for sel in (
+        _node(A, ROOT, variable="x"),
+        Selection(tests=frozenset({A}), variable="x"),
+    ):
+        assert EditTree().caption(SessionView(session, sel)) == "Edit tree"
 
 
 def test_add_beside_a_root_leaf_wraps_the_root_in_and(session):
@@ -900,7 +892,9 @@ async def test_the_add_form_offers_a_variable_with_an_awkward_expression(tmp_pat
     assert session.tracked(A) == ["y", UT1]
     sel = Selection(tests=frozenset({A}), variable="y")
     async with host(session, EditTree(), sel) as (user, _errors, _figure):
-        # The VARIABLE panel is the add form itself, drawn open.
+        # The VARIABLE panel is the plot's `+`; its form a row.
+        user.find(marker="add-for:y").click()
+        await user.should_see(marker="apply-add:y:variable")
         (var,) = user.find(marker="apply-add:y:variable").elements
         # The option's VALUE is the result-file name — what the leaf is
         # written against — and its TEXT is the expression the model wrote,
@@ -1035,6 +1029,7 @@ async def test_a_node_and_a_variable_together_draw_the_nodes_controls(session):
     ):
         await user.should_see(marker=f"add:{leaf}")
         await user.should_not_see(marker="apply-add:x")
+        await user.should_not_see(marker="add-for:x")
 
 
 async def test_applying_a_form_closes_its_row(session):
@@ -1055,13 +1050,62 @@ async def test_the_variable_panel_adds_a_criterion_for_it(two_var_session):
     session = two_var_session
     sel = Selection(tests=frozenset({A}), variable="y")
     n = len(session.tree(A)["children"])
-    async with host(session, EditTree(), sel) as (user, errors, _figure):
-        # The VARIABLE panel is the add form itself, drawn open: no row.
+    reveals: list[str] = []
+    async with host(session, EditTree(), sel, reveals) as (user, errors, _figure):
+        # The VARIABLE panel is the plot's `+`: its form is a row, titled
+        # for the variable, and a successful Add closes it and reveals the
+        # new criterion — the two causes of "the editor does not open".
+        await user.should_not_see(marker="apply-add:y")
+        user.find(marker="add-for:y").click()
+        await user.should_see(marker="apply-add:y")
+        assert _one(user, "host-row:title").text == "Add a criterion for y"
+        await user.should_see("Values come from the data where the metric needs them.")
         user.find(marker="apply-add:y").click()
         await _settled(lambda: len(session.tree(A)["children"]) == n + 1)
         assert errors == {}
-        # The variable the footer belongs to, not the first tracked name.
+        # The variable the `+` belongs to, not the first tracked name, at
+        # the end of the root.
         assert session.tree(A)["children"][-1]["variable"] == "y"
+        assert reveals == [f"/metrics/children/{n}"]
+        await _settled(lambda: _none(user, "apply-add:y"))
+
+
+async def test_the_variable_plus_under_a_root_leaf_makes_the_root_an_and(session):
+    session.stage([PatchOp(D, "add", ROOT, {"metric": "nrmse", "variable": "x"})])
+    reveals: list[str] = []
+    sel = Selection(tests=frozenset({D}), variable="x")
+    async with host(session, EditTree(), sel, reveals) as (user, errors, _figure):
+        user.find(marker="add-for:x").click()
+        await user.should_see(marker="apply-add:x")
+        user.find(marker="apply-add:x").click()
+        await _settled(lambda: "combinator" in session.tree(D))
+        assert session.tree(D)["combinator"] == "and"
+        assert len(session.tree(D)["children"]) == 2
+        assert reveals == ["/metrics/children/1"] and errors == {}
+
+
+async def test_the_variable_plus_is_grey_under_a_weighted_root(session):
+    """The validator refuses a child added alone to a weighted node, so the
+    `+` is not offered: grey, and its tooltip says why."""
+    weighted = {
+        "combinator": "weighted",
+        "weights": [1.0, 1.0],
+        "threshold": 0.5,
+        "children": [
+            {"metric": "range", "variable": "x", "max_value": 9.0},
+            {"metric": "range", "variable": "x", "max_value": 5.0},
+        ],
+    }
+    session.stage([PatchOp(D, "add", ROOT, weighted)])
+    sel = Selection(tests=frozenset({D}), variable="x")
+    async with host(session, EditTree(), sel) as (user, _errors, _figure):
+        plus = _one(user, "add-for:x")
+        assert not plus.enabled
+        reason = (
+            "a weighted node has one weight per child; a child cannot be added alone"
+        )
+        assert _tips(plus) == [reason]
+        assert plus.props["aria-label"] == reason
 
 
 def test_edit_tree_needs_exactly_one_test(session):

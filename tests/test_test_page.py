@@ -209,19 +209,19 @@ def _applying(shell, on_applied):
     return box, root
 
 
-def _barred(shell, figure):
-    """A bare page holding one ActionBar over a variable; `bars[0]` once
-    built."""
+def _barred(shell):
+    """A bare page holding one ActionBar at TEST (the placements a bar
+    hosts: SUITE and TEST); `bars[0]` once built. Its selection carries a
+    variable so a probe's panel can name what it was built for."""
     bars: list[ActionBar] = []
 
     def root() -> None:
         bars.append(
             ActionBar(
                 shell,
-                Placement.VARIABLE,
+                Placement.TEST,
                 lambda: Selection(tests=frozenset({A}), variable="x"),
-                marker="variable-actions",
-                figure=figure,
+                marker="test-actions",
             )
         )
 
@@ -456,9 +456,9 @@ async def test_an_action_bars_dialog_closes_only_for_an_act_that_applied(shell):
     """Like `InlineHost.on_applied`: every plot sends `{"autosize": true}`
     at mount, and a panel that answers such a relayout with None changed
     nothing — the dialog it sits in must stay open."""
-    probe = _Probe("one", {Placement.VARIABLE})  # its act returns None
+    probe = _Probe("one", {Placement.TEST})  # its act returns None
     _only(probe)
-    bars, root = _barred(shell, None)
+    bars, root = _barred(shell)
     async with user_simulation(root=root) as user:
         await user.open("/")
         user.find(marker="action:one").click()
@@ -475,9 +475,9 @@ async def test_an_action_bars_dialog_stays_open_on_a_refused_act(shell, caplog):
     """A raising act changed nothing: the dialog stays open with the error
     above its panel and what was chosen in it, so the person can correct
     it there. Once the act goes through, the dialog closes."""
-    probe = _Probe("one", {Placement.VARIABLE}, raises="no", outcome=OUTCOME)
+    probe = _Probe("one", {Placement.TEST}, raises="no", outcome=OUTCOME)
     _only(probe)
-    bars, root = _barred(shell, None)
+    bars, root = _barred(shell)
     async with user_simulation(root=root) as user:
         await user.open("/")
         user.find(marker="action:one").click()
@@ -491,74 +491,6 @@ async def test_an_action_bars_dialog_stays_open_on_a_refused_act(shell, caplog):
         probe.raises = None
         user.find(marker="go:one").click()
         await _settled(lambda: bars[0].dialog.value is False)
-
-
-async def test_an_action_bar_hands_its_figure_to_the_dialog_panel(shell):
-    probe = _Probe("one", {Placement.VARIABLE}, subscribe=True)
-    _only(probe)
-    hook = FigureHook()
-
-    def root() -> None:
-        ActionBar(
-            shell,
-            Placement.VARIABLE,
-            lambda: Selection(tests=frozenset({A}), variable="x"),
-            marker="variable-actions",
-            figure=hook,
-        )
-
-    async with user_simulation(root=root) as user:
-        await user.open("/")
-        user.find(marker="action:one").click()
-        await user.should_see(marker="probe:one")
-        hook._dispatch("plotly_relayout", {"shapes[0].y0": 1})
-        assert len(probe.seen) == 1
-        user.find(marker="close:one").click()
-        hook._dispatch("plotly_relayout", {"shapes[0].y0": 1})
-        assert len(probe.seen) == 1  # Close dropped the subscription
-        user.find(marker="action:one").click()
-        user.find(marker="action:one").click()
-        await asyncio.sleep(0.1)
-        hook._dispatch("plotly_relayout", {"shapes[0].y0": 1})
-        assert len(probe.seen) == 2  # opened twice, delivered once
-
-
-async def test_a_dismissed_dialog_drops_its_handlers(shell):
-    """Esc and a click on the backdrop close the dialog without going
-    through Close: a panel nobody can see must not stage an edit from a
-    drag."""
-    probe = _Probe("one", {Placement.VARIABLE}, subscribe=True)
-    _only(probe)
-    hook = FigureHook()
-    bars, root = _barred(shell, hook)
-    async with user_simulation(root=root) as user:
-        await user.open("/")
-        user.find(marker="action:one").click()
-        await user.should_see(marker="probe:one")
-        hook._dispatch("plotly_relayout", RELAYOUT)
-        assert len(probe.seen) == 1
-        bars[0].dialog.close()  # what a dismissal amounts to: no Close click
-        await _settled(lambda: not bars[0].dialog.value)
-        hook._dispatch("plotly_relayout", RELAYOUT)
-        assert len(probe.seen) == 1
-
-
-async def test_opening_another_capability_takes_the_figure_from_the_first(shell):
-    one = _Probe("one", {Placement.VARIABLE}, subscribe=True)
-    two = _Probe("two", {Placement.VARIABLE}, subscribe=True)
-    _only(one, two)
-    hook = FigureHook()
-    bars, root = _barred(shell, hook)
-    async with user_simulation(root=root) as user:
-        await user.open("/")
-        user.find(marker="action:one").click()
-        await user.should_see(marker="probe:one")
-        user.find(marker="action:two").click()
-        await user.should_see(marker="probe:two")
-        hook._dispatch("plotly_relayout", RELAYOUT)
-        assert one.seen == [] and len(two.seen) == 1
-        owners = {o for entries in hook._handlers.values() for o, _ in entries}
-        assert owners == {"variable-actions:two"}
 
 
 # -- the page's frame: the sticky test header and the criteria tree ---------
@@ -1091,14 +1023,20 @@ async def test_an_awkward_expression_gets_one_card_not_two(awkward_expression_sh
     """The tracked list read the scored names and the result's names under
     two spellings: the variable appeared under both, so the page drew a
     third card with no criteria row and its own "Add a criterion for …"
-    footer, over a trajectory already on the card above it (the 3b review).
-    One name, one card."""
+    button, over a trajectory already on the card above it (the 3b review).
+    One name, one card: one criteria header, and one `+` for the name."""
     shell = awkward_expression_shell
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         assert [c.resolved.series for c in page.cards] == [("unitTests.x[1]",), ("y",)]
         assert _one(user, "plots:count").text == "2 plots · one per tracked variable"
-        assert _none(user, "variable-actions:2:unitTests.x[1]")
+        # Two cards, each with its header; one `+` for the name, not two.
+        assert [c.variable_host.marker for c in page.cards] == [
+            "variable:0",
+            "variable:1",
+        ]
+        assert len(user.find(marker="add-for:unitTests.x[1]").elements) == 1
+        assert _inside(user, "add-for:unitTests.x[1]", "criteria-header:0")
         with page.client:
             page.cards[0].show()
         kinds = [tr["meta"]["kind"] for tr in page.cards[0].plot.figure["data"]]
@@ -1120,15 +1058,12 @@ async def test_a_card_reads_the_label_and_is_keyed_by_the_name(
         assert _one(user, "plot-name:0").text == "unitTests.x[1]"
         assert _one(user, "plot-title:1").text == "y"
         assert _none(user, "plot-name:1")
-        # Every key is the name: the card's markers, and the footer's.
+        # Every key is the name: the card's markers, and the `+`'s; the `+`
+        # READS the label, and a screen reader hears what its tooltip says.
         assert _one(user, "plot:0") and _one(user, "plot-slot:0")
-        footer = _one(user, "variable-actions:0:unitTests.x[1]")
-        (button,) = [
-            e
-            for e in user.find(marker="action:edit-tree").elements
-            if footer in list(_ancestors(e))
-        ]
-        assert button.text == "Add a criterion for cat(1, a, b)[1]"
+        (plus,) = _inside(user, "add-for:unitTests.x[1]", "criteria-header:0")
+        assert _plus_tips(plus) == ["Add a criterion for cat(1, a, b)[1]"]
+        assert plus.props["aria-label"] == "Add a criterion for cat(1, a, b)[1]"
 
 
 async def test_a_criteria_row_reads_the_label(awkward_expression_shell):
@@ -1260,22 +1195,21 @@ async def test_the_card_pill_is_the_worst_of_its_variables_criteria(shell):
         assert page.cards[0] is card  # painted in place, not rebuilt
 
 
-async def test_the_footer_adds_a_criterion_for_the_variable(shell):
+async def test_the_plus_adds_a_criterion_for_the_variable(shell):
+    """The plot's `+` opens its form as a row under the criteria header;
+    Add stages the criterion, the row goes, and the new one's editor is
+    open (the flat test's tree is materialized by the same stage)."""
     async with user_simulation(root=shell.index) as user:
-        page = await _test_page(shell, user)
-        footer = _one(user, "variable-actions:0:x")
-        (button,) = [
-            e
-            for e in user.find(marker="action:edit-tree").elements
-            if footer in list(_ancestors(e))
-        ]
-        assert button.text == "Add a criterion for x"
-        _click_in(user, "action:edit-tree", within="variable-actions:0:x")
-        # A dialog hangs off the client's layout, not off the bar that opened
-        # it: the marker carries the variable, so a plain find is unique.
+        await _test_page(shell, user)
+        (plus,) = _inside(user, "add-for:x", "criteria-header:0")
+        assert _plus_tips(plus) == ["Add a criterion for x"]
+        _click_in(user, "add-for:x", within="criteria-header:0")
         await user.should_see(marker="apply-add:x")
         user.find(marker="apply-add:x").click()
         await _settled(lambda: len(_page(shell, user).cards[0].rows) == 2)
+        page = _page(shell, user)
+        await _settled(lambda: page.open == (0, "/metrics/children/2"))
+        assert page.form is None
 
 
 async def test_a_test_with_no_result_has_no_cards(shell):
@@ -1350,12 +1284,7 @@ async def test_a_no_baseline_test_draws_its_result(shell):
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user, B)
         assert len(page.cards) == 2 and all(not c.rows for c in page.cards)
-        footer = _one(user, "variable-actions:0:x")
-        (why,) = [
-            e
-            for e in user.find(marker="action:edit-tree:why").elements
-            if footer in list(_ancestors(e))
-        ]
+        (why,) = _inside(user, "why:edit-tree", "criteria-header:0")
         assert why.text == "no tree to edit (nothing scored)"
         with page.client:
             page.cards[0].show()
@@ -1389,9 +1318,9 @@ async def test_a_plot_that_could_not_draw_says_so_once_and_retries(shell, monkey
 
 
 async def test_a_variable_keeps_its_card_when_its_last_criterion_goes(shell):
-    """A one-way door (the review): the cards, the footers and the add forms
+    """A one-way door (the review): the cards, the `+`s and the add forms
     all came from what was SCORED, so removing y's only criterion took y's
-    card, its footer and every way to add a criterion back — until Discard.
+    card, its `+` and every way to add a criterion back — until Discard.
     A tracked variable is the test's, staged edit or not."""
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
@@ -1400,12 +1329,8 @@ async def test_a_variable_keeps_its_card_when_its_last_criterion_goes(shell):
         card = page.cards[1]
         assert card.resolved.series == ("y",) and card.rows == {}
         assert card.pills == {} and _none(user, "plot-pill:1:y")
-        (button,) = [
-            e
-            for e in user.find(marker="action:edit-tree").elements
-            if _one(user, "variable-actions:1:y") in list(_ancestors(e))
-        ]
-        assert button.text == "Add a criterion for y"
+        (plus,) = _inside(user, "add-for:y", "criteria-header:1")
+        assert _plus_tips(plus) == ["Add a criterion for y"] and plus.enabled
         await _open_form(user, f"add:{T0}", within=f"node:0:{T0}")
         # Dict options: name → what to read it as (neither has an
         # expression here, so the two agree).
@@ -1434,22 +1359,21 @@ async def test_a_multi_series_card_names_the_variable_of_each_pill(shell):
         assert _one(user, "plot-pill:0:x").text == "fail"  # one series: the status
 
 
-async def test_the_variable_footers_share_one_wrapping_row(shell):
-    """Board: one footer per line pushed the next plot off the screen. They
-    sit in ONE row that wraps."""
+async def test_a_card_of_two_variables_has_one_plus_whose_form_offers_both(shell):
+    """Q3 A: ONE `+` in the criteria header, for the plot's first tracked
+    variable — one per variable pushed the next plot off the screen (the
+    board) — and its form's select offers the test's others."""
     shell.session.stage(
         [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}, {"var": "y"}]}])]
     )
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
-        bars = page.cards[0].bars
-        assert [b.marker for b in bars] == [
-            "variable-actions:0:x",
-            "variable-actions:0:y",
-        ]
-        parents = {b.container.parent_slot.parent for b in bars}
-        (row,) = parents
-        assert isinstance(row, ui.row) and "wrap" in row.classes
+        assert page.cards[0].variable_host.marker == "variable:0"
+        assert _inside(user, "add-for:y", "criteria-header:0") == []
+        _click_in(user, "add-for:x", within="criteria-header:0")
+        await _settled(lambda: not _none(user, "apply-add:x:variable"))
+        assert _one(user, "apply-add:x:variable").value == "x"
+        assert set(_one(user, "apply-add:x:variable").options) == {"x", "y"}
 
 
 def test_worst_is_fail_then_warn_then_pass_then_queued():
@@ -1472,11 +1396,11 @@ async def test_every_slot_names_its_own_index(shell):
         assert _one(user, "plot-slot:1").props["data-plot"] == "1"
 
 
-async def test_two_plot_only_series_say_so_in_the_plural_and_get_no_footer(
+async def test_two_plot_only_series_say_so_in_the_plural_and_get_no_plus(
     plots_shell,
 ):
     """A plot-only series has no criteria and no "Add a criterion for it"
-    footer — the footers are the SCORED series'."""
+    `+` — the header's `+` is the plot's first TRACKED series'."""
     shell = plots_shell
     layout = [{"series": [{"var": "x"}, {"var": "z"}, {"var": "a0"}]}]
     shell.session.stage([PatchOp(A, "add", "/plots", layout)])
@@ -1486,7 +1410,10 @@ async def test_two_plot_only_series_say_so_in_the_plural_and_get_no_footer(
             _one(user, "plot-only:0").text
             == "z, a0 are plot only: they have no criteria."
         )
-        assert [b.marker for b in page.cards[0].bars] == ["variable-actions:0:x"]
+        assert page.cards[0].variable_host.marker == "variable:0"
+        assert len(_inside(user, "add-for:x", "criteria-header:0")) == 1
+        for name in ("z", "a0"):
+            assert _none(user, f"add-for:{name}"), name
 
 
 async def test_a_variable_with_no_criteria_has_no_header_pill(shell):
@@ -1549,24 +1476,26 @@ async def test_a_leaf_that_changes_variable_moves_to_the_other_card(shell):
         await _settled(lambda: [list(c.rows) for c in page.cards] == [[], [T0, T1]])
 
 
-async def test_the_variable_footer_follows_the_job_that_locked_the_test(shell):
-    """The footers are painted, never rebuilt, so what they MAY do has to be
-    re-read on every Session event: a rerun greys them and says so, and the
-    end of the job brings them back."""
+async def test_the_plots_plus_follows_the_job_that_locked_the_test(shell):
+    """The criteria header is painted, not rebuilt, so what its `+` MAY do
+    has to be re-read on every Session event: a rerun takes it and says
+    why, and the end of the job brings it back."""
     gate = _Gate()
-    footer = "variable-actions:0:x"
+    header = "criteria-header:0"
 
     def why(user) -> str:
-        found = _inside(user, "action:edit-tree:why", footer)
+        found = _inside(user, "why:edit-tree", header)
         return found[0].text if found else ""
 
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user)
-        assert why(user) == ""
+        assert why(user) == "" and _inside(user, "add-for:x", header)
         shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
         await _settled(lambda: why(user) == f"rerun is running on {A}")
+        assert _inside(user, "add-for:x", header) == []
         gate.release.set()
         await _settled(lambda: why(user) == "")
+        assert _inside(user, "add-for:x", header)
 
 
 async def test_showing_a_plot_attaches_the_hook_to_it(shell):
@@ -1616,14 +1545,14 @@ async def test_a_cancelled_forms_row_is_gone_from_the_page(shell):
 async def test_a_rebuilt_card_gives_up_its_hook(shell):
     """A rebuild drops the cards, and a dropped card's hook must not go on
     delivering drags: the editor's panels give theirs back when it closes,
-    but a footer's OPEN dialog holds the same hook and the rebuild does not
-    reach it. `dispose` is what takes it back."""
+    but the criteria header's inline VARIABLE panel holds the same hook for
+    as long as it is drawn, and the rebuild does not reach it. `dispose` is
+    what takes it back."""
     _only(_Probe("sub", {Placement.VARIABLE}, subscribe=True))
     async with user_simulation(root=shell.index) as user:
         page = await _test_page(shell, user)
         old = page.cards[0]
-        _click_in(user, "action:sub", within="variable-actions:0:x")
-        await user.should_see(marker="probe:sub")
+        assert _inside(user, "probe:sub", "criteria-header:0")
         assert [o for entries in old.hook._handlers.values() for o, _ in entries]
         shell.session.stage(
             [PatchOp(A, "add", "/plots", [{"series": [{"var": "x"}]}] * 3)]
@@ -1664,8 +1593,8 @@ async def test_a_rebuild_reads_the_tree_and_the_tracked_names_once(shell):
         with page.column:
             page.rebuild(view)
         # The page reads no view of its own, and the label scope ONCE — not
-        # once per card. The captions of the cards' "Add a criterion for x"
-        # bars read the scope the page hands down with their selection
+        # once per card. The cards' "Add a criterion for x" `+`s read the
+        # scope the page hands down with their selection
         # (`Selection.texts`); deriving it in the caption instead was 2
         # scope builds per card, each re-resolving the test's plots and
         # tracked names (80 of them on a 40-card page).
@@ -3099,17 +3028,21 @@ async def test_two_variables_sharing_one_expression_stay_tellable_apart(shell):
             if tr.get("meta", {}).get("kind") == "act"
         ]
         assert names == ["a.Q (x)", "a.Q (y)"]
-        # The criteria rows and the footers too — the disambiguation is
-        # scoped to the TEST, so every surface of its page agrees.
+        # The criteria rows and the `+` too — the disambiguation is scoped
+        # to the TEST, so every surface of its page agrees; the `+`'s form
+        # offers both, told apart the same way.
         assert [r.name.text for r in page.cards[0].rows.values()] == [
             "nrmse · a.Q (x)",
             "nrmse · a.Q (y)",
         ]
-        assert sorted(
-            e.text
-            for e in user.find(marker="action:edit-tree").elements
-            if e.text.startswith("Add a criterion")
-        ) == ["Add a criterion for a.Q (x)", "Add a criterion for a.Q (y)"]
+        (plus,) = _inside(user, "add-for:x", "criteria-header:0")
+        assert _plus_tips(plus) == ["Add a criterion for a.Q (x)"]
+        _click_in(user, "add-for:x", within="criteria-header:0")
+        await _settled(lambda: not _none(user, "apply-add:x:variable"))
+        assert _one(user, "apply-add:x:variable").options == {
+            "x": "a.Q (x)",
+            "y": "a.Q (y)",
+        }
 
 
 # -- legend b: a swatch per criterion, one error select -----------------------
@@ -3447,14 +3380,14 @@ async def test_a_redraw_that_gains_error_traces_gains_the_select(page_shell):
 
 
 class _RowProbe:
-    """At NODE (and VARIABLE, for the dialog): one button that opens a row
+    """At NODE (and TEST, for the dialog): one button that opens a row
     under its host's row, whose content counts how many times it was built
     and carries a close button; and one that runs `act` — staging ``stage``
     — then reveals ``reveal``, recording anything the reveal raised."""
 
     name = "row-probe"
     label = "Row probe"
-    placements = frozenset({Placement.NODE, Placement.VARIABLE})
+    placements = frozenset({Placement.NODE, Placement.TEST})
 
     def __init__(self):
         self.built: dict[str, int] = {}
@@ -3512,7 +3445,7 @@ async def test_a_panel_row_opens_in_a_dialogs_slot(shell):
     dialog is no page, so ``reveal`` does nothing and raises nothing."""
     probe = _RowProbe()
     _only(probe)
-    bars, root = _barred(shell, None)
+    bars, root = _barred(shell)
     async with user_simulation(root=root) as user:
         await user.open("/")
         user.find(marker="action:row-probe").click()
@@ -3842,7 +3775,7 @@ async def test_a_dialogs_form_row_opens_while_its_panel_is_built(shell):
     probe = _RowProbe()
     probe.open_at_build = True
     _only(probe)
-    bars, root = _barred(shell, None)
+    bars, root = _barred(shell)
     async with user_simulation(root=root) as user:
         await user.open("/")
         user.find(marker="action:row-probe").click()
@@ -5590,3 +5523,106 @@ async def test_a_locked_test_reads_its_kind_in_the_row_text(page_shell):
         gate.release.set()
         await _settled(lambda: _one(user, "tree-text:/metrics").text == "3 criteria")
         assert not _none(user, "kind:/metrics")
+
+
+# -- the plot's +, inline; the editor opens after Add (Q3 A) ----------------
+
+
+async def test_the_plots_plus_opens_the_add_row_inline_and_the_editor_after_add(
+    page_shell,
+):
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        header = _one(user, "criteria-header:0")
+        assert _one(user, "plot:0") in list(_ancestors(header))
+        assert "Criteria" in [
+            e.text for e in header.descendants() if isinstance(e, ui.label)
+        ]
+        (plus,) = _inside(user, "add-for:x", "criteria-header:0")
+        assert _plus_tips(plus) == ["Add a criterion for x"]
+        assert _inside(user, "variable:0", "criteria-header:0")
+        _click_in(user, "add-for:x", within="criteria-header:0")
+        await _settled(lambda: not _none(user, "form-row:plot:0"))
+        assert _one(user, "form-title:plot:0").text == "Add a criterion for x"
+        # A row under the header, above the criteria — not a dialog.
+        form = _one(user, "form-row:plot:0")
+        assert _one(user, "plot:0") in list(_ancestors(form))
+        assert not [
+            e
+            for e in page.client.elements.values()
+            if isinstance(e, ui.dialog) and e.value
+        ]
+        assert _one(user, "apply-add:x:variable").value == "x"
+        user.find(marker="apply-add:x").click()
+        await _settled(lambda: len(shell.session.spec.pending) == 1)
+        (op,) = shell.session.spec.pending
+        assert (op.op, op.path) == ("add", "/metrics/children/-")
+        await _settled(lambda: page.open == (0, "/metrics/children/3"))
+        editor = _one(user, "editor:0:/metrics/children/3")
+        assert any("dstf-editor" in e.classes for e in [editor, *_ancestors(editor)])
+        assert _none(user, "form-row:plot:0")
+
+
+WEIGHTED_ROOT = {
+    "combinator": "weighted",
+    "weights": [1.0, 1.0],
+    "threshold": 0.5,
+    "children": [_range(-1), _range(5)],
+}
+
+
+async def test_the_plots_plus_is_grey_under_a_weighted_root(page_shell):
+    """A weighted root takes no child alone: the `+` is grey with the
+    reason. (A `warn` root cannot be staged at all — the validator: a tree
+    of warnings alone can never fail.)"""
+    shell = page_shell
+    _stage_tree(shell, A, WEIGHTED_ROOT)
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        (plus,) = _inside(user, "add-for:x", "criteria-header:0")
+        assert not plus.enabled
+        assert _plus_tips(plus) == [WEIGHTED_TIP]
+        assert plus.props["aria-label"] == WEIGHTED_TIP
+
+
+async def test_the_plots_plus_follows_the_roots_kind(page_shell):
+    """The `+` reads the root's kind when it is drawn, and the card's shape
+    does not hold the root's kind: staged to weighted elsewhere, the `+`
+    greys without the card being rebuilt, and back to `and` it returns."""
+    shell = page_shell
+    _stage_tree(shell, A, {"combinator": "and", "children": [_range(-1), _range(5)]})
+    to_weighted = [
+        PatchOp(A, "replace", "/metrics/combinator", "weighted"),
+        PatchOp(A, "add", "/metrics/weights", [1.0, 1.0]),
+        PatchOp(A, "add", "/metrics/threshold", 0.5),
+    ]
+    to_and = [
+        PatchOp(A, "replace", "/metrics/combinator", "and"),
+        PatchOp(A, "remove", "/metrics/weights"),
+        PatchOp(A, "remove", "/metrics/threshold"),
+    ]
+
+    def plus(user):
+        (found,) = _inside(user, "add-for:x", "criteria-header:0")
+        return found
+
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        card = page.cards[0]
+        assert plus(user).enabled
+        shell.session.apply(Patch(ops=to_weighted))
+        await _settled(lambda: not plus(user).enabled)
+        assert _plus_tips(plus(user)) == [WEIGHTED_TIP]
+        shell.session.apply(Patch(ops=to_and))
+        await _settled(lambda: plus(user).enabled)
+        assert page.cards[0] is card  # repainted, never rebuilt
+
+
+async def test_a_plot_of_plot_only_series_has_no_criteria_header(plots_shell):
+    shell = plots_shell
+    shell.session.stage([PatchOp(A, "add", "/plots", [{"series": [{"var": "z"}]}])])
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        assert _none(user, "criteria-header:0") and _none(user, "add-for:z")
+        assert page.cards[0].variable_host is None

@@ -105,8 +105,8 @@ class Selection:
 
     ``texts`` is the page's ONE read of the selected test's label scope
     (:meth:`Session.variable_texts`), handed down with the selection so a
-    caption can say what the variable READS as without deriving the scope
-    for itself. A page with forty cards did exactly that once per card:
+    plot's ``+`` can say what the variable READS as without deriving the
+    scope for itself. A page with forty cards did exactly that once per card:
     eighty scope builds per rebuild, each re-resolving the test's plots and
     its tracked names — 0.37 s at forty cards against 0.03 s at five. A
     selection carrying no texts reads the variable's NAME; nothing here
@@ -599,7 +599,7 @@ class Session:
 
         The union, not the scored names alone: removing a variable's LAST
         criterion would otherwise take its card, its "Add a criterion for
-        it" footer and every way to add one back — a one-way door out of
+        it" ``+`` and every way to add one back — a one-way door out of
         which only Discard leads (the Task 5-6 review). The report's
         default layout is the same list, through the same function."""
         comp = self.comparisons.get(model_id)
