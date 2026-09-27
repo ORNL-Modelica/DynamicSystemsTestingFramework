@@ -41,6 +41,11 @@ class Page(Protocol):
 
     def handle(self, event: dict[str, Any]) -> None: ...
 
+    def flush(self) -> None:
+        """After every event of one tick: send what the page coalesced (the
+        Suite table sends one transaction per tick, not one per event)."""
+        ...
+
 
 @dataclass
 class LoadState:
@@ -153,7 +158,8 @@ class Shell:
 
     def tick(self) -> None:
         """Run what worker threads posted, then hand every queued Session
-        event to every live page — a page whose client is gone is dropped.
+        event to every live page, then let each flush what it coalesced — a
+        page whose client is gone is dropped.
         Once a second while a job runs, a `poll` event, so the runs card
         re-reads `status.json` (§4.7)."""
         while True:
@@ -183,6 +189,11 @@ class Shell:
                     page.handle(event)
                 except Exception:  # one page's failure is not another's
                     logger.exception("a page failed on %r", event.get("event"))
+        for page in list(self.pages):
+            try:
+                page.flush()
+            except Exception:
+                logger.exception("a page failed to flush")
 
     def _absorb(self, event: dict[str, Any]) -> None:
         """`LoadState` from the events (decision 9)."""

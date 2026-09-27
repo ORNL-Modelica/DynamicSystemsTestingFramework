@@ -114,7 +114,7 @@ def _column_defs() -> list[dict[str, Any]]:
             del d["width"]
         elif key == "edits":
             d[":cellRenderer"] = "DstfSuite.cell.edits"
-            d["width"] = 100
+            d["width"] = 120  # "1 unsaved" in its tag: 100 cut it
         defs.append(d)
     return defs
 
@@ -190,6 +190,25 @@ class SuiteGrid(ui.aggrid):
     def seal(self) -> None:
         self._sealed = True
 
+    def transaction(
+        self,
+        *,
+        add: Sequence[TestRow] = (),
+        update: Sequence[TestRow] = (),
+        remove: Iterable[str] = (),
+        select: Iterable[str] = (),
+    ) -> None:
+        """One AG Grid transaction, through the table's script (which then
+        regroups and recounts): rows to add, rows to repaint, ids to drop,
+        and the added ids the tab has selected."""
+        tx = {
+            "add": [row_json(r) for r in add],
+            "update": [row_json(r) for r in update],
+            "remove": list(remove),
+            "select": list(select),
+        }
+        self.client.run_javascript(f"DstfSuite.apply({json.dumps(tx)})")
+
     def update(self) -> None:
         if self._sealed:
             raise RuntimeError(
@@ -234,8 +253,13 @@ GRID_CSS = """
   border-radius: 2px; padding: 1px 4px; }
 .dstf-ff.bad { border-color: var(--dstf-fail-fill); outline: 1px solid var(--dstf-fail-fill); }
 .dstf-ff-status { font-size: 11px; color: var(--dstf-text-muted); }
-#dstf-suite-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
-#dstf-suite-selection { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+/* The pills and the view icons wrap at a narrow width; the selection and
+   the actions at the right keep their line. */
+#dstf-suite-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  flex: 1 1 auto; min-width: 0; }
+#dstf-suite-selection { display: inline-flex; align-items: center; gap: 4px; font-size: 13px;
+  white-space: nowrap; flex: none; }
+.dstf-suite-toolbar > .dstf-actions { flex-wrap: nowrap; flex: none; }
 .dstf-pills, .dstf-views { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .dstf-tb { border: 1px solid var(--dstf-border); background: var(--dstf-surface);
   color: var(--dstf-text); border-radius: 4px; min-height: 28px; padding: 0 6px;

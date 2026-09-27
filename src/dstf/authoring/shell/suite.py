@@ -32,6 +32,12 @@ class SuitePage:
         self.client: Any = None
         #: The tests the grid holds, in the order Python sent them.
         self.ids: list[str] = []
+        #: What this tick's events touched, sent by `flush` as one
+        #: transaction: the models to add (in order) and to repaint, and
+        #: the ids to drop.
+        self._add: list[str] = []
+        self._update: set[str] = set()
+        self._remove: list[str] = []
 
     async def build(self) -> None:
         self.client = ui.context.client
@@ -51,7 +57,9 @@ class SuitePage:
             with ui.column().classes("gap-1") as self.hint:
                 ui.label("No project is open. Start the tool on one:")
                 ui.code("dstf author --config <path/to/testing.json>")
-            with ui.row().classes("items-center w-full gap-3 no-wrap"):
+            with ui.row().classes(
+                "dstf-suite-toolbar items-center w-full gap-3 no-wrap"
+            ):
                 # Both drawn by `suite_grid.js`; Python never updates them.
                 ui.element("div").props("id=dstf-suite-tools").mark("tools")
                 ui.space()
@@ -110,9 +118,10 @@ class SuitePage:
 
     def handle(self, event: dict[str, Any]) -> None:
         """Every Session event, from the shell's tick. No early return: the
-        card and the actions are independent regions, and a `spec` (a close,
-        an `OpenProject`) is exactly the event after which the card must not
-        show the previous project's outcome."""
+        card, the actions and the rows are independent regions, and a
+        `spec` (a close, an `OpenProject`) is exactly the event after which
+        the card must not show the previous project's outcome. The rows an
+        event touches are collected; `flush` sends them."""
         self.header.handle(event)
         kind = event["event"]
         if kind in ("job", "poll", "opened", "spec"):
@@ -121,4 +130,45 @@ class SuitePage:
             kind == "loading" and event.get("phase") == "done"
         ):
             self.actions.refresh()
+        if kind == "spec":
+            # The event names only the CHANGED models (an open's names all,
+            # before the CLI's filter; a close's none): what to add and drop
+            # is the visible tests against the grid's.
+            now = self.shell.visible_tests()
+            have, keep = set(self.ids), set(now)
+            self._add += [m for m in now if m not in have]
+            gone = [m for m in self.ids if m not in keep]
+            self._remove += gone
+            self._update -= set(gone)
+            self.ids = now
+        self._update |= self._touched(event) & set(self.ids)
         self.refresh()
+
+    def _touched(self, event: dict[str, Any]) -> set[str]:
+        """The models whose row an event may have changed."""
+        kind = event["event"]
+        if kind in ("spec", "results"):
+            return {str(m) for m in event.get("models", ())}
+        if kind == "loading" and event.get("phase") == "results":
+            return {str(event["model"])}
+        job = event.get("job") if kind == "job" else None
+        return set(job.models) if job is not None else set()
+
+    def flush(self) -> None:
+        """This tick's rows, as ONE transaction: the Accept path queues N + 2
+        events in a tick, and one transaction per event was 333 over 331
+        rows. An added row is sent once, with the tab's selection."""
+        held = set(self.ids)
+        add = [m for m in self._add if m in held]
+        remove = self._remove
+        repaint = self._update - set(add)
+        update = [m for m in self.ids if m in repaint]
+        self._add, self._update, self._remove = [], set(), []
+        if not (add or update or remove):
+            return
+        self.grid.transaction(
+            add=self._rows(add),
+            update=self._rows(update),
+            remove=remove,
+            select=[m for m in add if m in self.state.checked],
+        )

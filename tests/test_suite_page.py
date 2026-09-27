@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
 
 import pytest
 
@@ -186,3 +188,258 @@ async def test_a_sealed_grid_refuses_an_element_update(shell):
         assert page.grid.id not in outbox.updates
         with pytest.raises(RuntimeError, match="driven by run_grid_method"):
             page.grid.update()
+
+
+# -- rows repaint live: one transaction per tick ------------------------------
+
+
+@pytest.fixture
+def sent(monkeypatch) -> list[dict]:
+    """Every transaction the Suite grid sends, as model ids / (id, status,
+    edits) — what reached the browser, not what the Session holds."""
+    from dstf.authoring.shell.suite_grid import SuiteGrid
+
+    out: list[dict] = []
+
+    def record(self, *, add=(), update=(), remove=(), select=()):
+        out.append(
+            {
+                "add": [r.model_id for r in add],
+                "added": [(r.model_id, r.status, r.edits) for r in add],
+                "update": [(r.model_id, r.status, r.edits) for r in update],
+                "remove": sorted(remove),
+                "select": sorted(select),
+            }
+        )
+
+    monkeypatch.setattr(SuiteGrid, "transaction", record)
+    return out
+
+
+def _tx(update=(), remove=()) -> dict:
+    """A transaction that adds nothing."""
+    return {
+        "add": [],
+        "added": [],
+        "update": list(update),
+        "remove": sorted(remove),
+        "select": [],
+    }
+
+
+def _loaded(model_id: str) -> dict:
+    return {"event": "loading", "phase": "results", "model": model_id, "done": 1}
+
+
+async def test_a_scored_model_sends_its_row_alone(shell, sent):
+    """Not the table: one row, in one transaction."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell._events.put(_loaded(D))
+        shell.tick()
+        assert sent == [_tx(update=[(D, "PASS", 0)])]
+        sent.clear()
+        shell._events.put({"event": "results", "models": {A, B}})
+        shell.tick()
+        assert sent == [_tx(update=[(A, "FAIL", 0), (B, "NO_REF", 0)])]
+        shell.tick()  # nothing queued, nothing sent
+        assert len(sent) == 1
+
+
+async def test_a_staged_edit_sends_its_rescored_row_once(shell, sent):
+    """`stage` emits `spec` then `results` for A in one tick: ONE
+    transaction, A's row with its edits and its rescored verdict. The
+    Accept path queues N + 2 events in a tick; per event, 333
+    transactions over 331 rows."""
+    from test_session import LOOSEN
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.stage([LOOSEN])
+        shell.tick()
+        assert sent == [_tx(update=[(A, "PASS", 2)])]
+
+
+async def test_a_spec_event_adds_and_removes_rows(shell, sent):
+    """A `spec` event names only the CHANGED models (a close names none):
+    the rows to add and remove are the visible tests against the grid's."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _suite(shell, user)
+        page.state.checked = {D}
+        shell.session.close()
+        shell.tick()
+        assert sent == [_tx(remove=[A, B, C, D, G])]
+        assert page.ids == []
+        sent.clear()
+        shell.session.open(shell.config_path, work_dir=shell.work_dir)
+        shell.tick()
+        # The rows come back in the project's order; the tab's selection
+        # rides with them.
+        assert sent[0]["add"] == [A, B, C, D, G] and sent[0]["select"] == [D]
+        assert page.ids == [A, B, C, D, G]
+
+
+async def test_a_new_test_in_the_spec_gets_a_row(shell, sent):
+    """A model the spec newly names (by editing the file and reloading,
+    the rescan's and Save's path) is added; the others are only updated."""
+    spec_path = shell.session.spec.path
+    (spec_path.parent.parent / "Examples" / "E.py").write_text(
+        "def simulate(stop_time, tolerance):\n    return {}\n", encoding="utf-8"
+    )
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        spec["tests"].append(
+            {
+                "model": "FakeLib.E",
+                "source": "../Examples/E.py",
+                "variables": ["x"],
+                "simulation": {"stop_time": 1.0, "tolerance": 1e-6},
+            }
+        )
+        spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+        shell.session.reload()
+        shell.tick()
+        assert len(sent) == 1
+        assert sent[0]["add"] == ["FakeLib.E"] and sent[0]["remove"] == []
+        assert ("FakeLib.E", "SIM_FAIL", 0) not in sent[0]["update"]  # added, once
+        assert "FakeLib.E" in _suite(shell, user).ids
+
+
+async def test_a_job_paints_its_rows_running_then_their_verdicts(shell, sent):
+    from dstf.authoring.session import RunningJob
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        job = RunningJob(label="rerun", models=frozenset({A, D}))
+        shell.session.running = job
+        shell._events.put({"event": "job", "state": "started", "job": job})
+        shell.tick()
+        assert sent == [_tx(update=[(A, "RUNNING", 0), (D, "RUNNING", 0)])]
+        sent.clear()
+        shell.session.running = None
+        shell._events.put({"event": "job", "state": "finished", "job": job})
+        shell.tick()
+        assert sent == [_tx(update=[(A, "FAIL", 0), (D, "PASS", 0)])]
+
+
+def _gate_per_model(monkeypatch) -> dict[str, threading.Event]:
+    """Each result is handed on when ITS gate is set, so rows can be seen
+    filling in one at a time. The reader hands its results on in its thread
+    pool's completion order (`Backend.read_results` iterates `as_completed`),
+    which is not this test's order, so the results are collected first and
+    released, on the reader's thread, as their gates open."""
+    from dstf.backends.base import Backend
+
+    real = Backend.read_last_results
+    gates: dict[str, threading.Event] = {m: threading.Event() for m in (A, B, C, D, G)}
+
+    def gated(self, tests, on_result=None):
+        held: dict[str, object] = {}
+        results = real(self, tests, lambda m, r: held.__setitem__(m, r))
+        deadline = time.monotonic() + 10
+        while held:
+            assert time.monotonic() < deadline
+            for model_id in list(held):
+                if gates[model_id].is_set():
+                    result = held.pop(model_id)
+                    if on_result is not None:
+                        on_result(model_id, result)
+            time.sleep(0.01)
+        return results
+
+    monkeypatch.setattr(Backend, "read_last_results", gated)
+    return gates
+
+
+async def test_rows_fill_in_as_results_are_scored(tmp_path, monkeypatch, sent):
+    """Brief §3.8: the rows fill in as results are scored — per `loading`
+    event, not at the end. A page drawn before the open has no rows; the
+    merge adds them waiting, each result repaints its own."""
+    gates = _gate_per_model(monkeypatch)
+    cfg, work = _project(tmp_path)
+    shell = Shell(cfg, work_dir=work)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _suite(shell, user)
+        shell.open_async()
+        await _settled(lambda: page.ids == [A, B, C, D, G])
+        added = [tx for tx in sent if tx["add"]]
+        assert added[0]["add"] == [A, B, C, D, G]
+        gates[A].set()
+        await _settled(lambda: (A, "FAIL", 0) in _updates(sent))
+        assert (D, "PASS", 0) not in _updates(sent)  # still gated
+        for gate in gates.values():
+            gate.set()
+        await _settled(lambda: shell.load.phase == "done")
+        await _settled(lambda: (D, "PASS", 0) in _updates(sent))
+        assert (C, "SIM_FAIL", 0) in _updates(sent)
+
+
+def _updates(sent: list[dict]) -> list[tuple]:
+    """Every row sent, added or repainted, in order."""
+    return [row for tx in sent for row in (*tx["added"], *tx["update"])]
+
+
+async def test_a_model_whose_scoring_raised_reads_scoring_failed(
+    tmp_path, monkeypatch, sent
+):
+    import dstf.authoring.session as session_mod
+    from dstf.authoring.suite_rows import suite_row
+
+    real = session_mod.compare_one
+
+    def failing(test, *args, **kwargs):
+        if test.model_id == D:
+            raise ValueError("boom")
+        return real(test, *args, **kwargs)
+
+    monkeypatch.setattr(session_mod, "compare_one", failing)
+    cfg, work = _project(tmp_path)
+    shell = Shell(cfg, work_dir=work)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.open_async()
+        await _settled(lambda: shell.load.phase == "done")
+        await _settled(lambda: (D, "SIM_FAIL", 0) in _updates(sent))
+        assert (A, "FAIL", 0) in _updates(sent)
+        row = suite_row(shell.session, D, failed=shell.load.failed_models)
+        assert row.message.startswith("scoring failed")
+
+
+async def test_a_transaction_is_one_call_to_the_tables_script(shell):
+    from dstf.authoring.shell.suite_grid import row_json
+    from dstf.authoring.suite_rows import suite_row
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _suite(shell, user)
+        calls: list[str] = []
+        page.client.run_javascript = lambda code, **kw: calls.append(code)
+        row = suite_row(shell.session, A)
+        page.grid.transaction(update=[row], remove=[B], select=[A])
+        (code,) = calls
+        assert code.startswith("DstfSuite.apply(") and code.endswith(")")
+        tx = json.loads(code[len("DstfSuite.apply(") : -1])
+        assert tx == {
+            "add": [],
+            "update": [json.loads(json.dumps(row_json(row)))],
+            "remove": [B],
+            "select": [A],
+        }
+
+
+async def test_rows_dropped_and_named_again_in_one_tick_are_repainted(shell, sent):
+    """A close and an open in one tick: a `spec` event is diffed against the
+    visible tests as they are when the tick handles it — after both — so
+    the grid keeps its rows and they are repainted, not removed and added
+    again in one transaction."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.close()
+        shell.session.open(shell.config_path, work_dir=shell.work_dir)
+        shell.tick()
+        assert len(sent) == 1
+        assert sent[0]["add"] == [] and sent[0]["remove"] == []
+        assert [m for m, _, _ in sent[0]["update"]] == [A, B, C, D, G]

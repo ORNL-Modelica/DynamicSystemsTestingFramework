@@ -541,6 +541,50 @@ def test_an_edited_test_has_its_pill_and_its_cell(tmp_path, playwright_browser):
             proc.wait(10)
 
 
+def test_a_rescore_repaints_its_row_and_keeps_the_view(tmp_path, playwright_browser):
+    """A staged edit rescores A while the page is open: its row repaints —
+    PASS, "2 unsaved", the EDITED pill counts it — in one transaction, and
+    the sort, the filter and the selection stay (the grid is not rebuilt)."""
+    proc, url, page, context, errors, _ = _served(
+        tmp_path, playwright_browser, hooks=True
+    )
+    try:
+        page.evaluate(
+            "() => { window.__readies = 0; const r = DstfSuite.ready;"
+            " DstfSuite.ready = (...a) => { window.__readies++; return r(...a); }; }"
+        )
+        page.locator(".ag-header-cell[col-id='nrmse'] .ag-header-cell-label").click()
+        _filter(page, "nrmse").fill(">1e-5")
+        _box(page, D).click()
+        _box(page, G).click()
+        _shown(page, "G:FakeLib D G A")
+        with urllib.request.urlopen(url + "__stage?model=FakeLib.A") as r:
+            assert json.loads(r.read())["pending"] == 2
+        row = ".ag-row[row-id='FakeLib.A'] .ag-cell"
+        expect(page.locator(f"{row}[col-id='status']")).to_have_text(
+            "PASS", timeout=EXPECT_TIMEOUT
+        )
+        expect(page.locator(f"{row}[col-id='edits']")).to_have_text("2 unsaved")
+        expect(page.locator("button[data-pill='edited']")).to_have_text("EDITED 1")
+        expect(page.locator("button[data-pill='pass']")).to_have_text("PASS 3")
+        _shown(page, "G:FakeLib D G A")
+        expect(_filter(page, "nrmse")).to_have_value(">1e-5")
+        expect(
+            page.locator(".ag-header-cell[col-id='nrmse'][role='columnheader']")
+        ).to_have_attribute("aria-sort", "ascending")
+        assert sorted(
+            page.evaluate("() => DstfSuite.api.getSelectedRows().map(r => r.id)")
+        ) == [D, G]
+        expect(page.locator("#dstf-suite-selection")).to_contain_text("2 selected")
+        assert page.evaluate("() => window.__readies") == 0
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
 def test_a_python_side_touch_does_not_rebuild_the_grid(tmp_path, playwright_browser):
     """NiceGUI's aggrid re-creates the grid on ANY element update: the
     selection, the sort and every row patched since the build would be
@@ -556,6 +600,12 @@ def test_a_python_side_touch_does_not_rebuild_the_grid(tmp_path, playwright_brow
         )
         _box(page, G).click()
         expect(page.locator("#dstf-suite-selection")).to_contain_text("1 selected")
+        # A row a staged edit repainted after the build (Task 5's path).
+        with urllib.request.urlopen(url + "__stage?model=FakeLib.A") as r:
+            assert json.loads(r.read())["pending"] == 2
+        expect(
+            page.locator(".ag-row[row-id='FakeLib.A'] .ag-cell[col-id='edits']")
+        ).to_have_text("2 unsaved", timeout=EXPECT_TIMEOUT)
         # A row patched after the build, as a transaction from Python does.
         page.evaluate(
             "() => { const r = {...DstfSuite.api.getRowNode('FakeLib.B').data,"
@@ -570,6 +620,10 @@ def test_a_python_side_touch_does_not_rebuild_the_grid(tmp_path, playwright_brow
         assert (
             page.evaluate("() => DstfSuite.api.getRowNode('FakeLib.B').data.detail")
             == "patched"
+        )
+        assert (
+            page.evaluate("() => DstfSuite.api.getRowNode('FakeLib.A').data.status")
+            == "PASS"
         )
         assert page.evaluate("() => window.__readies") == 0  # never rebuilt
         context.close()

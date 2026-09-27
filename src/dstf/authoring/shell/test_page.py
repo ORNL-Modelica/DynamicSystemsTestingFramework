@@ -718,6 +718,9 @@ class TestPage:
         # (`VariablesDrawer._read`) empties it.
         self.rail.refresh()
 
+    def flush(self) -> None:
+        """Nothing coalesced: every event is handled as it comes."""
+
     def handle(self, event: dict[str, Any]) -> None:
         self.header.handle(event)
         self.rail.handle(event)
