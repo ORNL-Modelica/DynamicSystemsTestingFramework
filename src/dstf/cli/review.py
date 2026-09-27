@@ -138,7 +138,9 @@ def _interactive_review(
                     test_key = _find_test_key(model_id, config)
                     if test_key:
                         backend = _get_backend(config)
-                        result = backend.read_result(test, test_key, None)
+                        # The run's statistics and timing come back
+                        # from the file it kept beside the result.
+                        result = backend.read_run_result(test, test_key, None)
 
                 # The one accept path: `accept_run_results` refuses here
                 # exactly what `compare --accept` refuses — a poisoned

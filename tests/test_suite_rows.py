@@ -89,3 +89,23 @@ def test_waiting_before_a_comparison(session):
 def test_rows_in_the_given_order(session):
     rows = suite_rows(session, [D, A, B], failed=set())
     assert [r.model_id for r in rows] == [D, A, B]
+
+
+def test_the_suite_table_shows_sim_after_a_reload(tmp_path):
+    """A Session opened over a work dir a run left, holding no run results:
+    each row's Sim (s) and Total (s) come from the run statistics kept beside
+    the result (``run_stats.json``)."""
+    from conftest import python_example_copy
+    from dstf.backends import get_backend
+    from dstf.pipeline import run_pipeline
+    from dstf.storage.reference_store import ReferenceStore
+
+    config, tests = python_example_copy(tmp_path)
+    backend = get_backend(config)
+    backend.quiet = True
+    run_pipeline(config, tests, backend=backend, store=ReferenceStore(config))
+    s = Session()
+    s.open(config.config_file, work_dir=config.work_dir)
+    rows = suite_rows(s, [t.model_id for t in tests], failed=set())
+    assert len(rows) == len(tests)
+    assert all(r.sim_wall is not None and r.total_wall is not None for r in rows)

@@ -25,6 +25,7 @@ import numpy as np
 from ..config import Config
 from ..discovery.test_registry import TestModel
 from ..storage.batch_manifest import RECORDED_RUN_STATUSES, BatchManifest
+from ..storage.run_stats import read_run_stats
 from .common.result_variables import merge_timing_stats, run_timing
 from .types import Capability, DatasetType, TestResult, TestRunResult
 
@@ -206,6 +207,32 @@ def _with_run_timing(stats: dict | None, rr: TestRunResult) -> dict | None:
     out = dict(stats or {})
     out["timing"] = dict(out.get("timing") or {})
     return merge_timing_stats(out, timing)
+
+
+def kept_run_result(
+    test_dir: Path, model_id: str, test_key: str
+) -> TestRunResult | None:
+    """The run result a past run kept in *test_dir* (``run_stats.json``,
+    :mod:`dstf.storage.run_stats`), rebuilt so ``read_result`` and
+    :func:`run_timing` read it as they read an in-process one; ``None`` when
+    none was kept.
+
+    ``success=True`` whatever that run's verdict: the verdict is the
+    manifest's (:func:`run_verdicts`), applied after the read, exactly as for
+    a reload without the file.
+    """
+    kept = read_run_stats(test_dir, model_id)
+    if kept is None:
+        return None
+    return TestRunResult(
+        model_id=model_id,
+        test_key=test_key,
+        success=True,
+        elapsed=kept["elapsed"],
+        statistics=kept["statistics"],
+        translation_wall=kept["translation_wall"],
+        sim_wall=kept["sim_wall"],
+    )
 
 
 def run_verdicts(work_dir: Path, manifests: list[BatchManifest]) -> dict[str, str]:
@@ -709,10 +736,7 @@ class Backend(ABC):
         def _read_one(item):
             test_key, model_id, test_model, rr = item
             t0 = time.monotonic()
-            res = self.read_result(test_model, test_key, rr)
-            if rr is not None:
-                # The one timing block, for every backend (run_timing).
-                res.statistics = _with_run_timing(res.statistics, rr)
+            res = self.read_run_result(test_model, test_key, rr)
             return test_key, model_id, res, time.monotonic() - t0
 
         # Parallelize reads with thread pool
@@ -740,6 +764,30 @@ class Backend(ABC):
                 f"{speedup:.1f}x parallel speedup (avg {avg:.1f}s/test, slowest {slowest:.1f}s)"
             )
         return results
+
+    def read_run_result(
+        self,
+        test: TestModel,
+        test_key: str,
+        run_result: TestRunResult | None,
+    ) -> TestResult:
+        """:meth:`read_result` with the run's timing block (:func:`run_timing`)
+        merged into the result's statistics — the one place it is built, for
+        every backend.
+
+        With no run result in hand (a reload, a ``compare``, a test ``--merge``
+        did not re-run), the one the test's last run kept beside the result
+        (:func:`kept_run_result`): its walls, and the statistics the backend
+        parsed from the run, which a reload otherwise loses.
+        """
+        if run_result is None:
+            run_result = kept_run_result(
+                self.config.work_dir / test_key, test.model_id, test_key
+            )
+        res = self.read_result(test, test_key, run_result)
+        if run_result is not None:
+            res.statistics = _with_run_timing(res.statistics, run_result)
+        return res
 
     def read_last_results(
         self,

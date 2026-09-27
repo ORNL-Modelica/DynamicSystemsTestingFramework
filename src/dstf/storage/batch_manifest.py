@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .ref_index import _atomic_write_text
+from .run_stats import write_run_stats
 
 if TYPE_CHECKING:
     from ..backends.types import TestRunResult
@@ -100,6 +101,10 @@ class BatchManifest:
                 if entry["model_id"] == result.model_id:
                     entry["last_run_status"] = status
             self.save()
+        # The run's walls and statistics, beside the result they describe
+        # (storage.run_stats). After the verdict is saved and outside its
+        # lock: the file is the test's own, and its write never raises.
+        write_run_stats(self.test_dir(result.test_key), result)
 
     def mark_pending(self, model_ids: set[str]) -> None:
         """Stamp :data:`PENDING_RUN_STATUS` on the entries a run is about to
