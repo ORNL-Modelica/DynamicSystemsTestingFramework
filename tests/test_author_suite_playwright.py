@@ -267,25 +267,32 @@ def test_the_suite_page_fills_in_keeps_its_selection_across_a_click_and_stops(
 
 def _served(tmp_path, playwright_browser, *, hooks: bool = False, width: int = 1280):
     """`dstf author` over the two-package FakeLib and a page on its Suite
-    table, drawn: (proc, url, page, context, errors). The caller stops
-    the process."""
+    table, drawn: (proc, url, page, context, errors, work). The caller
+    stops the process — this does when the table never draws."""
     cfg, work = _two_package_project(tmp_path)
     log = tmp_path / "author.log"
     proc, url = _start(cfg, work, log, hooks=hooks)
-    _wait_until_serving(url, proc, log)
-    context = playwright_browser.new_context(viewport={"width": width, "height": 900})
-    page = context.new_page()
-    errors: list[str] = []
-    page.on("pageerror", lambda exc: errors.append(str(exc)))
-    page.on(
-        "console",
-        lambda m: errors.append(m.text) if m.type in ("error", "warning") else None,
-    )
-    page.goto(url)
-    expect(page.locator(ROWS)).to_have_count(6, timeout=EXPECT_TIMEOUT)
-    expect(page.locator(".dstf-badge-cell", has_text="NO_REF")).to_have_count(
-        1, timeout=EXPECT_TIMEOUT
-    )
+    try:
+        _wait_until_serving(url, proc, log)
+        context = playwright_browser.new_context(
+            viewport={"width": width, "height": 900}
+        )
+        page = context.new_page()
+        errors: list[str] = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        page.on(
+            "console",
+            lambda m: errors.append(m.text) if m.type in ("error", "warning") else None,
+        )
+        page.goto(url)
+        expect(page.locator(ROWS)).to_have_count(6, timeout=EXPECT_TIMEOUT)
+        expect(page.locator(".dstf-badge-cell", has_text="NO_REF")).to_have_count(
+            1, timeout=EXPECT_TIMEOUT
+        )
+    except BaseException:
+        proc.terminate()
+        proc.wait(10)
+        raise
     return proc, url, page, context, errors, work
 
 
