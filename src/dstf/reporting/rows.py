@@ -244,14 +244,19 @@ def row_from_status(entry: Mapping[str, Any]) -> TestRow:
     report_dir = entry.get("report_dir") or ""
     raw = entry.get("status", "queued")
     message = entry.get("detail")
-    if raw not in LIVE_STATES:
-        # status.json is data: a state no surface has a word for has no
-        # verdict, and says what it was rather than reading SIMULATED.
+    status = None
+    if isinstance(raw, str) and raw in LIVE_STATES:
+        status = live_status(raw)
+    elif raw is not None:
+        # status.json is data: a state no surface has a word for — or no
+        # word at all (a list would not even hash) — has no verdict, and
+        # says what it was rather than reading SIMULATED. A null says
+        # nothing, so the row has no verdict and nothing to add.
         message = f"status {raw!r}" + (f": {message}" if message else "")
     return TestRow(
         model_id=entry.get("model_id") or "",
         test_key=entry.get("test_key"),
-        status=live_status(raw),
+        status=status,
         # A live ref_id follows the "ref_NNNN" naming of a report_dir the run
         # pre-populated (backend.ref_id_map); a test with no baseline yet has
         # its test_key there, and no ref_id.
@@ -319,12 +324,17 @@ def enrich_row(
     changes: dict[str, Any] = {
         dst: summary[src] for src, dst in _SUMMARY_TO_ROW if src in summary
     }
+    # An empty provenance says nothing: the live row's stands.
+    if not changes.get("field_sources", True):
+        del changes["field_sources"]
     # The compare phase's verdict replaces the live state. A sidecar written
     # before ``status`` existed carries only the word a person reads. A
-    # status outside the vocabulary is ignored: the row keeps its own.
-    status = summary.get("status") or _STATUS_BY_LABEL.get(
-        summary.get("status_text") or ""
-    )
+    # status outside the vocabulary, or not a word at all, is ignored: the
+    # row keeps its own.
+    status = summary.get("status")
+    if not isinstance(status, str) or not status:
+        text = summary.get("status_text")
+        status = _STATUS_BY_LABEL.get(text) if isinstance(text, str) else None
     if status in STATUS_LABELS:
         changes["status"] = status
     return replace(row, **changes)

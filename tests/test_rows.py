@@ -298,3 +298,62 @@ def test_a_live_ref_id_is_only_a_ref_report_dir():
     )
     assert row.ref_id is None and row.report_dir == "test_0003"
     assert {c.key: c.text(row) for c in COLUMNS}["ref"] == "—"
+
+
+def test_an_entry_without_a_status_is_queued():
+    """ProgressReporter registers every test queued; an entry that names no
+    state has not started, and has nothing to explain."""
+    row = row_from_status({"test_key": "t", "model_id": "Lib.A"})
+    assert (row.status, row.message) == ("QUEUED", None)
+
+
+def test_a_status_that_is_not_a_word_is_unknown():
+    """status.json is data: a list, a number or a null is no state. A list
+    is unhashable and used to raise out of the page."""
+    for raw in (["passed"], 3, {"a": 1}):
+        row = row_from_status(
+            {"test_key": "t", "model_id": "Lib.A", "status": raw, "detail": "d"}
+        )
+        assert row.status is None
+        assert row.message == f"status {raw!r}: d"
+    # A null says nothing: no verdict, and no "status None" message.
+    row = row_from_status({"test_key": "t", "model_id": "Lib.A", "status": None})
+    assert (row.status, row.message) == (None, None)
+    row = row_from_status(
+        {"test_key": "t", "model_id": "Lib.A", "status": None, "detail": "d"}
+    )
+    assert (row.status, row.message) == (None, "d")
+
+
+def test_a_sidecar_status_that_is_not_a_word_is_ignored():
+    row = row_from_status({"test_key": "t", "model_id": "Lib.A", "status": "running"})
+    for bad in (
+        {"status": ["PASS"]},
+        {"status": {"a": 1}},
+        {"status_text": ["PASS"]},
+        {"status": None, "status_text": {"a": 1}},
+    ):
+        rich = enrich_row(row, {"model_id": "Lib.A", **bad}, start_wall=None)
+        assert rich.status == "RUNNING", bad
+
+
+def test_an_empty_provenance_does_not_erase_the_live_rows():
+    row = row_from_status(
+        {
+            "test_key": "t",
+            "model_id": "Lib.A",
+            "status": "passed",
+            "field_sources": {"stop_time": "annotation"},
+        }
+    )
+    for empty in ({}, None):
+        rich = enrich_row(
+            row, {"model_id": "Lib.A", "field_sources": empty}, start_wall=None
+        )
+        assert rich.resolution == "annotation"
+    rich = enrich_row(
+        row,
+        {"model_id": "Lib.A", "field_sources": {"stop_time": "test_spec"}},
+        start_wall=None,
+    )
+    assert rich.resolution == "test_spec"

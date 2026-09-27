@@ -1192,3 +1192,97 @@ def test_a_sidecar_with_an_unknown_status_does_not_break_the_page(tmp_path):
     # The row keeps its own state; the sidecar's numbers still land.
     assert _attrs(tr)["data-status"] == "pending"
     assert _attrs(tr)["data-vars"] == "1/2"
+
+
+def _passing_sidecar(ref_id: str) -> dict:
+    return {
+        "model_id": "Lib.A",
+        "written_at": 2.0,
+        "status": "PASS",
+        "worst_nrmse": 1e-6,
+        "n_unscored": 0,
+        "n_vars": 1,
+        "n_vars_passed": 1,
+        "n_warnings": 0,
+        "ref_id": ref_id,
+        "ref_file": f"file:///refs/{ref_id}.json",
+        "total_wall": 4.0,
+    }
+
+
+def _sidecar_in(work_dir: Path, report_dir: str, summary: dict) -> None:
+    d = work_dir / "reports" / report_dir
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "comparison_data.json").write_text(json.dumps({"summary": summary}))
+
+
+def test_the_comparisons_reference_wins_over_the_sidecars(tmp_path):
+    """`compare --backend <other>` on another backend's work dir: the run
+    pre-populated report_dir ref_0005 and its sidecar names ref_0005, but
+    this command scored against ref_0007. The row names the baseline its
+    verdict came from, and links to no other one."""
+    from dstf.comparison.types import TestComparison
+
+    snapshot = _one_test_snapshot()
+    snapshot["start_wall"] = 1.0
+    snapshot["tests"][0]["report_dir"] = "ref_0005"
+    _write_status_json(tmp_path, snapshot)
+    _sidecar_in(tmp_path, "ref_0005", _passing_sidecar("ref_0005"))
+    comp = TestComparison(
+        model_id="Lib.A", passed=False, variables=[_failing_var()], test_id="0007"
+    )
+    (row,) = build_dashboard_context(tmp_path, mode="final", comparisons=[comp])[
+        "tests"
+    ]
+    assert (row.ref_id, row.ref_file) == ("ref_0007", None)
+    assert row.total_wall == 4.0  # what only the sidecar knows survives
+    render_final(tmp_path, comparisons=[comp])
+    (tr,) = _body_rows((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert _attrs(tr)["data-ref"] == "ref_0007"
+    assert "ref_0005.json" not in tr
+    # No sidecar: the report_dir's ref_0005 loses to the comparison's too.
+    (tmp_path / "reports" / "ref_0005" / "comparison_data.json").unlink()
+    (row,) = build_dashboard_context(tmp_path, mode="final", comparisons=[comp])[
+        "tests"
+    ]
+    assert (row.ref_id, row.ref_file) == ("ref_0007", None)
+
+
+def test_a_sidecar_that_agrees_with_the_comparison_keeps_its_link(tmp_path):
+    from dstf.comparison.types import TestComparison
+
+    snapshot = _one_test_snapshot()
+    snapshot["start_wall"] = 1.0
+    snapshot["tests"][0]["report_dir"] = "ref_0005"
+    _write_status_json(tmp_path, snapshot)
+    _sidecar_in(tmp_path, "ref_0005", _passing_sidecar("ref_0005"))
+    comp = TestComparison(model_id="Lib.A", passed=True, test_id="0005")
+    (row,) = build_dashboard_context(tmp_path, mode="final", comparisons=[comp])[
+        "tests"
+    ]
+    assert (row.ref_id, row.ref_file) == ("ref_0005", "file:///refs/ref_0005.json")
+
+
+def test_the_comparisons_numbers_replace_the_sidecars(tmp_path):
+    """Every number the comparison has replaces the sidecar's: a sidecar
+    with 2 unscored leaves over 3 variables, a comparison with 1 scored."""
+    from dstf.comparison.types import TestComparison
+
+    snapshot = _one_test_snapshot()
+    snapshot["start_wall"] = 1.0
+    _write_status_json(tmp_path, snapshot)
+    _write_sidecar(
+        tmp_path,
+        {
+            **_passing_sidecar("ref_0042"),
+            "worst_nrmse": None,
+            "n_unscored": 2,
+            "n_vars": 3,
+            "n_vars_passed": 3,
+        },
+    )
+    comp = TestComparison(model_id="Lib.A", passed=False, variables=[_failing_var()])
+    (row,) = build_dashboard_context(tmp_path, mode="final", comparisons=[comp])[
+        "tests"
+    ]
+    assert (row.n_unscored, row.n_vars, row.n_vars_passed) == (0, 1, 0)

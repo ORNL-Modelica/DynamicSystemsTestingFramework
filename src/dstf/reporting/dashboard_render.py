@@ -135,12 +135,23 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     Applied AFTER a sidecar's enrichment: the comparison held in hand is
     this invocation's verdict, and a sidecar from an earlier ``--report``
     (fresh against this run's start, because nothing re-ran) says what the
-    spec said then. Only the verdict and its numbers are the comparison's;
-    what only the sidecar knows (the reference link, the phase walls) and
-    what only the live row knows (its provenance) survive, and the
-    ref_id is the comparison's only where neither names one.
+    spec said then. The verdict, its numbers and the baseline it was scored
+    against are the comparison's; what only the sidecar knows (the phase
+    walls) and what only the live row knows (its provenance) survive.
+
+    The ref_id is the comparison's when it names one — ``compare --backend
+    <other>`` on another backend's work dir scores against a baseline the
+    report_dir and the sidecar do not name. The sidecar's reference link
+    survives only when its ref_id is the comparison's: otherwise it opens
+    the other baseline. A comparison with no stored baseline names none,
+    and the row keeps whatever it had.
     """
     summary = summary_fields(comp)
+    ref_id, ref_file = row.ref_id, row.ref_file
+    if comp.test_id:
+        ref_id = f"ref_{comp.test_id}"
+        if ref_id != row.ref_id:
+            ref_file = None
     return replace(
         row,
         status=summary["status"],
@@ -149,7 +160,8 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
         n_vars=summary["n_vars"],
         n_vars_passed=summary["n_vars_passed"],
         n_warnings=summary["n_warnings"],
-        ref_id=row.ref_id or (f"ref_{comp.test_id}" if comp.test_id else None),
+        ref_id=ref_id,
+        ref_file=ref_file,
     )
 
 

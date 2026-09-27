@@ -154,94 +154,111 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     config.work_dir.mkdir(parents=True, exist_ok=True)
     render_live(config.work_dir, rerun_prefix=build_rerun_prefix(config))
-    open_in_browser(config.work_dir / "dashboard.html")
-
+    # A path that scores renders the final page itself, with its
+    # comparisons, before the work that follows (the review, the report
+    # suite), and sets ``final_rendered``. Every other way out ends in the
+    # ``finally``: an aborted run, ``--accept`` (accepted without scoring:
+    # the rows read SIMULATED, which is true), and any exception after the
+    # page went live — Ctrl+C mid-simulation or in the compare phase, an
+    # error in read_results, compare_all or the accept — which renders
+    # with whatever comparisons exist and lets the exception propagate.
+    final_rendered = False
+    comparisons = None
     try:
-        outcome = run_pipeline(
-            config,
-            tests,
-            backend=backend,
-            store=store,
-            merge=getattr(args, "merge", False),
-            candidates=all_tests,
-        )
-    except RuntimeError as exc:
-        # Backends raise on unrecoverable startup conditions (e.g. all persistent
-        # workers failed to spawn). Convert to a clean exit instead of dumping a
-        # traceback — the backend has typically already printed the cause.
-        print(f"\nRun aborted: {exc}", file=sys.stderr)
-        render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
-        return 1
+        open_in_browser(config.work_dir / "dashboard.html")
 
-    for line in outcome.notices:
-        print(line)
-    results, scope_tests = outcome.results, outcome.scope_tests
+        try:
+            outcome = run_pipeline(
+                config,
+                tests,
+                backend=backend,
+                store=store,
+                merge=getattr(args, "merge", False),
+                candidates=all_tests,
+            )
+        except RuntimeError as exc:
+            # Backends raise on unrecoverable startup conditions (e.g. all persistent
+            # workers failed to spawn). Convert to a clean exit instead of dumping a
+            # traceback — the backend has typically already printed the cause.
+            print(f"\nRun aborted: {exc}", file=sys.stderr)
+            return 1
 
-    if args.accept:
-        # review 2026-07-06 finding 30 (part 2): accept ONLY the tests
-        # simulated in THIS run (`tests`), never the merged --rerun/--merge
-        # scope (`scope_tests`) — the merged scope's results for
-        # out-of-scope tests are stale on-disk artifacts from older runs,
-        # and stale results must never become baselines.
-        from ..storage.accept import accept_run_results
+        for line in outcome.notices:
+            print(line)
+        results, scope_tests = outcome.results, outcome.scope_tests
 
-        stored, skipped = accept_run_results(store, tests, results, config.work_dir)
-        # Accepted without scoring: the rows read SIMULATED, which is true.
-        render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
-        return _report_accept(config, stored, skipped)
-    elif args.interactive is not None:
-        from ..comparison.comparator import compare_all
+        if args.accept:
+            # review 2026-07-06 finding 30 (part 2): accept ONLY the tests
+            # simulated in THIS run (`tests`), never the merged --rerun/--merge
+            # scope (`scope_tests`) — the merged scope's results for
+            # out-of-scope tests are stale on-disk artifacts from older runs,
+            # and stale results must never become baselines.
+            from ..storage.accept import accept_run_results
 
-        comparisons = compare_all(
-            scope_tests,
-            results,
-            store,
-            config.tolerance,
-            config.default_points,
-            dataset_kind=dataset_kind_for(backend),
-        )
-        render_final(
-            config.work_dir,
-            rerun_prefix=build_rerun_prefix(config),
-            comparisons=comparisons,
-        )
-        return _interactive_review(
-            scope_tests,
-            results,
-            comparisons,
-            store,
-            config,
-            review_filter=args.interactive,
-        )
-    else:
-        from ..comparison.comparator import compare_all
+            stored, skipped = accept_run_results(store, tests, results, config.work_dir)
+            return _report_accept(config, stored, skipped)
+        elif args.interactive is not None:
+            from ..comparison.comparator import compare_all
 
-        comparisons = compare_all(
-            scope_tests,
-            results,
-            store,
-            config.tolerance,
-            config.default_points,
-            dataset_kind=dataset_kind_for(backend),
-        )
+            comparisons = compare_all(
+                scope_tests,
+                results,
+                store,
+                config.tolerance,
+                config.default_points,
+                dataset_kind=dataset_kind_for(backend),
+            )
+            render_final(
+                config.work_dir,
+                rerun_prefix=build_rerun_prefix(config),
+                comparisons=comparisons,
+            )
+            final_rendered = True
+            return _interactive_review(
+                scope_tests,
+                results,
+                comparisons,
+                store,
+                config,
+                review_filter=args.interactive,
+            )
+        else:
+            from ..comparison.comparator import compare_all
 
-        # Always refresh the unified dashboard before any --report work.
-        # Without --report the per-test sidecars don't exist: each row's
-        # verdict, Worst NRMSE, Variables and Warnings come from its
-        # comparison; the Translate / Sim / Total walls and the Reference
-        # link are the sidecar's, and stay empty.
-        render_final(
-            config.work_dir,
-            rerun_prefix=build_rerun_prefix(config),
-            comparisons=comparisons,
-        )
-
-        if args.report:
-            return _generate_report_suite(
-                comparisons, results, scope_tests, store, config
+            comparisons = compare_all(
+                scope_tests,
+                results,
+                store,
+                config.tolerance,
+                config.default_points,
+                dataset_kind=dataset_kind_for(backend),
             )
 
-        return _output_report(comparisons, args, config)
+            # Always refresh the unified dashboard before any --report work.
+            # Without --report the per-test sidecars don't exist: each row's
+            # verdict, Worst NRMSE, Variables and Warnings come from its
+            # comparison; the Translate / Sim / Total walls and the Reference
+            # link are the sidecar's, and stay empty.
+            render_final(
+                config.work_dir,
+                rerun_prefix=build_rerun_prefix(config),
+                comparisons=comparisons,
+            )
+            final_rendered = True
+
+            if args.report:
+                return _generate_report_suite(
+                    comparisons, results, scope_tests, store, config
+                )
+
+            return _output_report(comparisons, args, config)
+    finally:
+        if not final_rendered:
+            render_final(
+                config.work_dir,
+                rerun_prefix=build_rerun_prefix(config),
+                comparisons=comparisons or (),
+            )
 
 
 def cmd_compare(args: argparse.Namespace) -> int:

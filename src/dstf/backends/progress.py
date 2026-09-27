@@ -77,6 +77,8 @@ class ProgressReporter:
         # meta-refresh ticks (otherwise the header elapsed appears frozen at
         # whatever it was when the last test state-change wrote the snapshot).
         self._start_wall = time.time()
+        # Set by finalize: the run is over, and nothing writes again.
+        self._closed = False
 
     def update_metadata(self, **fields: object) -> None:
         """Patch run-level metadata after the fact (e.g. a backend that only
@@ -171,7 +173,7 @@ class ProgressReporter:
             "metadata": metadata,
         }
 
-    def _write(self) -> None:
+    def _write(self, *, closing: bool = False) -> None:
         # Serialize all file writes — without this, two threads can race on
         # the same tmp filename and `replace` fails on Windows when the file
         # is still open by another thread.
@@ -179,9 +181,16 @@ class ProgressReporter:
         # a snapshot taken outside could be written after a newer one,
         # regressing status.json / the live dashboard.
         with self._write_lock:
+            # After finalize, the command that ended the run owns the page:
+            # an event from an exec thread the backend abandoned (a timed-out
+            # worker) would render it live and unscored again. Checked under
+            # the lock, so no write can land after finalize's.
+            if self._closed:
+                return
             snapshot = self._snapshot()
             self._write_json(snapshot)
             self._render_dashboard()
+            self._closed = closing
 
     def _atomic_write(self, path: Path, text: str) -> None:
         # Unique tmp name per write so concurrent writers never share a tmp
@@ -235,9 +244,10 @@ class ProgressReporter:
         command that ends the run renders the final page: with the
         comparisons it holds (``run``, ``run -i``, ``compare``), or
         without them when it scores nothing (``run --accept``, an aborted
-        run, the tool's Rerun).
+        run, the tool's Rerun). Nothing this reporter hears after it is
+        written.
         """
-        self._write()
+        self._write(closing=True)
 
 
 def read_status(work_dir: Path) -> dict | None:

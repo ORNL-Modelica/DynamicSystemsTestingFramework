@@ -702,6 +702,60 @@ class TestEveryRunEndsOnAStaticPage:
         html = (run_env.work_dir / "dashboard.html").read_text(encoding="utf-8")
         assert _REFRESH not in html
 
+    # Any other way out after the page goes live — Ctrl+C, an error in the
+    # compare phase or the accept — still ends on a static page, and the
+    # exception still propagates.
+
+    def _page(self, run_env) -> str:
+        return (run_env.work_dir / "dashboard.html").read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize(
+        "exc", [KeyboardInterrupt(), ValueError("bad metric config")]
+    )
+    def test_an_exception_in_the_compare_phase_leaves_a_static_page(
+        self, run_env, monkeypatch, exc
+    ):
+        run_env.make([_mk_test("Lib.T1")], results={"Lib.T1": _mk_result("Lib.T1")})
+
+        def compare_all(*a, **k):
+            assert _REFRESH in self._page(run_env)  # live until the compare
+            raise exc
+
+        monkeypatch.setattr("dstf.comparison.comparator.compare_all", compare_all)
+        with pytest.raises(type(exc)):
+            cmd_run(_run_args(run_env))
+        assert _REFRESH not in self._page(run_env)
+
+    @pytest.mark.parametrize("exc", [OSError("disk full"), KeyboardInterrupt()])
+    def test_an_exception_from_the_backend_leaves_a_static_page(self, run_env, exc):
+        """An OSError after the simulations, or Ctrl+C mid-simulation: the
+        backend's page is live when it raises."""
+        from dstf.reporting.dashboard_render import render_live
+
+        backend = run_env.make([_mk_test("Lib.T1")], results={})
+
+        def run_tests(tests):
+            render_live(run_env.work_dir)
+            raise exc
+
+        backend.run_tests = run_tests
+        with pytest.raises(type(exc)):
+            cmd_run(_run_args(run_env))
+        assert _REFRESH not in self._page(run_env)
+
+    def test_an_accept_that_raises_leaves_a_static_page(self, run_env, monkeypatch):
+        run_env.make([_mk_test("Lib.T1")], results={"Lib.T1": _mk_result("Lib.T1")})
+
+        def accept_run_results(*a, **k):
+            raise OSError("reference dir read-only")
+
+        monkeypatch.setattr(
+            "dstf.storage.accept.accept_run_results", accept_run_results
+        )
+        with pytest.raises(OSError, match="read-only"):
+            cmd_run(_run_args(run_env, "--accept"))
+        assert _REFRESH not in self._page(run_env)
+
 
 # ---------------------------------------------------------------------------
 # Finding 30 — --accept exit code + this-run-only scope

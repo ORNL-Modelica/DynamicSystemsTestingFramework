@@ -36,6 +36,28 @@ def test_finalize_leaves_the_page_live(tmp_path):
     assert '<meta http-equiv="refresh" content="5">' in html
 
 
+def test_a_late_event_after_finalize_writes_nothing(tmp_path):
+    """An exec thread the backend abandoned (a timed-out worker) can still
+    report after the run finished. By then the command that ended the run
+    has rendered the final page; a late write would make it live, and
+    unscored, again."""
+    from dstf.reporting.dashboard_render import render_final
+
+    pr = ProgressReporter(tmp_path, total=1)
+    pr.register("test_0001", "Lib.A")
+    pr.on_start("test_0001", worker_id=0)
+    pr.finalize()
+    render_final(tmp_path)
+    page = (tmp_path / "dashboard.html").read_bytes()
+    status = (tmp_path / "status.json").read_bytes()
+
+    pr.on_phase("test_0001", "simulating")
+    pr.on_finish("test_0001", success=True, elapsed=1.0)
+    pr.on_start("test_0001", worker_id=1)
+    assert (tmp_path / "dashboard.html").read_bytes() == page
+    assert (tmp_path / "status.json").read_bytes() == status
+
+
 def test_metadata_absent_by_default(tmp_path):
     """No metadata passed → status.json carries metadata=None (backward compat)."""
     pr = ProgressReporter(tmp_path, total=1)

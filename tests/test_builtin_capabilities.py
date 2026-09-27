@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from types import SimpleNamespace
 
 import pytest
 
@@ -1735,6 +1736,33 @@ def test_rerun_act_returns_a_job_over_the_selection(session, monkeypatch):
     assert backend is built and store is project.store
     assert [t.model_id for t in tests] == [A, D]  # project order
     assert kwargs == {}  # no merge, no candidates: the scope is the run
+
+
+def test_a_rerun_that_raises_still_ends_on_a_static_page(session, monkeypatch):
+    """The backend leaves the work dir's page live; a run that raises after
+    it did (a worker died) still ends on a static one, and the error
+    reaches the job."""
+    from dstf.authoring.builtin import rerun as rerun_mod
+    from dstf.authoring.capabilities import JobContext
+    from dstf.reporting.dashboard_render import render_live
+
+    work_dir = session.project.config.work_dir
+
+    def _run_pipeline(config, tests, *, backend, store):
+        render_live(work_dir)
+        raise RuntimeError("worker died")
+
+    monkeypatch.setattr(
+        rerun_mod, "select_backend", lambda c, *, persistent: SimpleNamespace()
+    )
+    monkeypatch.setattr(rerun_mod, "run_pipeline", _run_pipeline)
+
+    view = SessionView(session, Selection(tests=frozenset({A})))
+    job = Rerun().act(view)
+    with pytest.raises(RuntimeError, match="worker died"):
+        job.run(JobContext(project=session.project, models=frozenset({A})))
+    page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
+    assert '<meta http-equiv="refresh"' not in page
 
 
 def test_rerun_job_run_propagates_an_unbuildable_backend(session, monkeypatch):
