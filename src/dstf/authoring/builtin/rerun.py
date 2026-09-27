@@ -19,7 +19,8 @@ from ...reporting.dashboard_render import render_final
 from ..capabilities import Job, JobContext, Panel, Placement, plural
 
 if TYPE_CHECKING:
-    from ..session import SessionView
+    from ...comparison.types import TestComparison
+    from ..session import Project, SessionView
 
 # NO module-level `nicegui` import: `import dstf.authoring` runs
 # register_builtins(), and the Session must import without the extra.
@@ -98,8 +99,18 @@ class Rerun:
                 run_pipeline(config, tests, backend=backend, store=ctx.project.store)
             finally:
                 # The backend leaves the work dir's dashboard live; the run
-                # ends on a static one, unscored (the Session scores the
-                # results it reloads, not this page).
+                # ends on a static one, unscored: the Session scores the
+                # results it reloads. A run that fails before the reload
+                # ends here.
                 render_final(work_dir)
 
-        return Job(label="rerun", models=selection, run=run)
+        def scored(project: Project, comparisons: dict[str, TestComparison]) -> None:
+            # Once the Session has rescored the reload: the same static page,
+            # with its verdicts. On the UI loop: ~7 ms over FakeLib's five
+            # tests (measured 2026-09-27; the plan's review read 44 ms over
+            # 331 rows without sidecars).
+            work_dir = project.config.work_dir
+            assert work_dir is not None  # resolved in Config.__post_init__
+            render_final(work_dir, comparisons=list(comparisons.values()))
+
+        return Job(label="rerun", models=selection, run=run, after_reload=scored)

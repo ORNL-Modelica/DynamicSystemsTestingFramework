@@ -1691,6 +1691,60 @@ class TestOutcomes:
         assert session.notices == ["stored 1"] and session.artifacts == [art]
         assert session.project is not None
 
+    def test_after_reload_gets_the_rescored_comparisons(self, session):
+        """A job that wrote a run finishes its artifacts with the verdicts
+        (a rerun's dashboard): `after_reload` is called once the reload has
+        rescored, with the project and the Session's comparisons."""
+        seen: list[tuple] = []
+        jobs = _started(session)
+        session.apply(
+            Job(
+                run=lambda ctx: None,
+                label="rerun",
+                models=frozenset({A}),
+                after_reload=lambda project, comps: seen.append((project, comps)),
+            )
+        )
+        assert jobs[0].done.wait(5) and jobs[0].reloaded
+        ((project, comps),) = seen
+        assert project is session.project
+        assert comps == session.comparisons and comps is not session.comparisons
+
+    def test_a_raising_after_reload_does_not_fail_a_good_reload(self, session, caplog):
+        def boom(project, comps):
+            raise OSError("disk full")
+
+        jobs = _started(session)
+        session.apply(
+            Job(
+                run=lambda ctx: None,
+                label="rerun",
+                models=frozenset({A}),
+                after_reload=boom,
+            )
+        )
+        assert jobs[0].done.wait(5)
+        assert jobs[0].error is None and jobs[0].reloaded
+        assert "after_reload" in caplog.text
+
+    def test_no_after_reload_for_a_failed_job(self, session):
+        seen: list[object] = []
+
+        def fail(ctx):
+            raise RuntimeError("the run broke")
+
+        jobs = _started(session)
+        session.apply(
+            Job(
+                run=fail,
+                label="rerun",
+                models=frozenset({A}),
+                after_reload=lambda p, c: seen.append(p),
+            )
+        )
+        assert jobs[0].done.wait(5) and jobs[0].error is not None
+        assert seen == []
+
     def test_open_drops_the_last_job(self, session):
         """The outcome line is project-scoped like a notice: a swap calls
         open, never close, so LibA's `finished:` would otherwise sit in the

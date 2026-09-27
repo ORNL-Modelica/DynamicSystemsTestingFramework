@@ -144,3 +144,44 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
 
     # 5. Nothing printed at any point in the scenario.
     _assert_silent(capsys)
+
+
+def test_a_tool_rerun_ends_on_a_dashboard_with_the_sessions_verdicts(tmp_path):
+    """The run's own last render is static and unscored (the Session scores
+    what it reloads); once the Session has rescored, the rerun renders the
+    same page with its verdicts: the rerun test the staged edit makes fail
+    reads fail, the other pass — not pending."""
+    import re
+
+    config, _tests = python_example_copy(tmp_path)
+    work_dir = tmp_path / "work"
+    session = Session()
+    session.open(config.config_file, work_dir=work_dir)
+    # 1.0 is outside [0.99, 0.5]: the rerun of ConstantCsv fails.
+    session.stage(
+        [
+            PatchOp(
+                CONSTANT_CSV,
+                "replace",
+                "/comparison/variable_overrides/x/max_value",
+                0.5,
+            )
+        ]
+    )
+    view = SessionView(
+        session, Selection(tests=frozenset({CONSTANT_CSV, POINTS_CHECK}))
+    )
+    session.apply(Rerun().act(view))
+    job = session.running
+    assert job is not None and job.done.wait(60) and job.error is None
+    page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
+    assert '<meta http-equiv="refresh"' not in page
+
+    def status(model_id: str) -> str:
+        (row,) = re.findall(
+            r'<tr[^>]*data-model="' + re.escape(model_id) + r'"[^>]*>', page
+        )
+        return re.search(r'data-status="([^"]*)"', row).group(1)
+
+    assert status(CONSTANT_CSV) == "fail"
+    assert status(POINTS_CHECK) == "pass"

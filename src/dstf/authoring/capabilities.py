@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from ..comparison.types import TestComparison
     from ..storage.reference_store import ReferenceStore
     from .session import Project, SessionView
     from .spec_document import PatchOp
@@ -96,6 +97,12 @@ class Job:
     label: str
     models: frozenset[str]
     reloads_results: bool = True
+    #: Called on the UI loop once the reload has rescored, with the project
+    #: and a copy of the Session's comparisons, so a job that wrote a run
+    #: can finish its artifacts with the verdicts (a rerun's dashboard). Not
+    #: called for a failed job or one that reloads nothing; one that raises
+    #: is logged and the job stays good.
+    after_reload: Callable[[Project, dict[str, TestComparison]], None] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

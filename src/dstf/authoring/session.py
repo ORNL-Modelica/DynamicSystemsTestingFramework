@@ -935,7 +935,7 @@ class Session:
             ) as e:  # a job's failure is reported, not raised on its thread
                 job.error = e
             finally:
-                finish = lambda: self._finish_job(job, outcome.reloads_results)  # noqa: E731
+                finish = lambda: self._finish_job(job, outcome)  # noqa: E731
                 try:
                     self._post(finish)
                 except BaseException as e:  # the loop is gone: finish here, never wedge
@@ -946,7 +946,7 @@ class Session:
             target=work, name=f"dstf-job-{outcome.label}", daemon=True
         ).start()
 
-    def _finish_job(self, job: RunningJob, reloads_results: bool) -> None:
+    def _finish_job(self, job: RunningJob, outcome: Job) -> None:
         """Release the lock, record the job as this project's last, reload if
         the job asked and succeeded, tell the listeners, mark done — the last
         two whatever the reload or a listener does, so a waiting shell never
@@ -959,9 +959,18 @@ class Session:
             for model_id in job.models:
                 self._reads.pop(model_id, None)
         try:
-            if reloads_results and job.error is None and self.project is not None:
+            if (
+                outcome.reloads_results
+                and job.error is None
+                and self.project is not None
+            ):
                 self._reload_results()
                 job.reloaded = True
+                if outcome.after_reload is not None:
+                    try:
+                        outcome.after_reload(self.project, dict(self.comparisons))
+                    except Exception:  # the reload stands; the hook is the job's
+                        logger.exception("%s: after_reload failed", job.label)
         except BaseException as e:
             job.error = e
         finally:
