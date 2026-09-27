@@ -5019,3 +5019,81 @@ layout are unchanged; the sidecar gains a field.
 build `TestRow`s from its Session and give the same `COLUMNS` and
 `filters.js` to its grid in S2, whose gate renders the dashboard over a copy
 of TRANSFORM's work dir.
+
+## D137 — The Suite page is an AG Grid table over the row model (2026-09-27)
+
+**Context.** The owner ruled on the feedback board (2026-09-26, v2): the
+Suite page keeps its name and becomes a table over the row model D136 made
+for both surfaces. Q1 A — group rows inside the table, collapsible, a sort
+ordering the rows within each group. Q1a B — "2 selected · Clear", Rerun and
+Accept as icon buttons with tooltips (their confirm dialogs stay), and no
+"(Dymola)" in Rerun's caption: the header shows the backend. Q1b A —
+column filters only, typed (status by the count pills, numbers by `>1e-4` /
+`1..10`, text by glob), with `.*` and `Aa` once in the toolbar; icons with
+tooltips for the view controls; an EDITED pill and an Edits column. Before,
+the page was a list of NiceGUI rows (`TestList`) with a filter box, chips
+and checkboxes, rebuilt from Python on a layout toggle.
+
+**Decision.**
+
+1. *AG Grid Community, as NiceGUI bundles it* (`ui.aggrid`, AG Grid 34.2).
+   The spike (2026-09-26) measured every requirement without Enterprise:
+   a one-row `applyTransaction` in 24–66 ms and ~190 B; a filter keystroke
+   22–25 ms with nothing sent to the server; 331 rows first drawn in ~1.1 s
+   cold and 2,000 in ~0.8 s. Row grouping is Enterprise, so group rows are
+   emulated: a full-width row per package, an external filter (which also
+   hides collapsed and, flat, every group row) and `postSortRows` (each
+   package's rows under its header, in the sort's order). Enter or Space on
+   a focused group row collapses it too. `ui.table` (Quasar) was rejected: it
+   worked only through four NiceGUI private APIs, gave screen readers no grid
+   and sorted by mouse only.
+2. *The browser filters, sorts and groups; Python sends rows.* The toolbar's
+   pills and view icons and the selection's label are drawn by
+   `shell/suite_grid.js` into two `div`s Python never updates; it filters
+   through D136's `filters.js`, the file the dashboard inlines (one module,
+   two surfaces), and both scripts are served from `/_dstf/` and put in the
+   page's FIRST HTML — after the handshake NiceGUI inserts head HTML with
+   `insertAdjacentHTML`, which never runs a script. A number filter reads a
+   row's sort value, never its text; a text filter reads a cell's text only
+   when the row has a value. The pills count every row, whatever the
+   filters; EDITED is OR'd with the status pills. Each row is the row
+   model's `TestRow` built from the Session (`authoring/suite_rows.py`: its
+   comparison through `summary_fields`, the result's timing, the staged ops,
+   a running job — running beats the comparison, which beats the open's
+   scoring failure, else the row waits and reads "…").
+3. *The no-update rule and its guard.* NiceGUI's aggrid re-creates the whole
+   grid on ANY Python-side update of the element (its `update_grid`): sort,
+   selection and every row patched since are lost. `SuiteGrid` is sealed
+   after the page's build and its `update()` raises; `.classes` / `.props`
+   reach `update()` through an observable whose handler logs, so such a
+   caller is blocked and sees only the log. After the build, rows reach the
+   grid only as transactions — `SuitePage` collects what each Session event
+   touches and `Shell.tick` has every page `flush` once per tick, so the
+   Accept path's N + 2 events are one transaction, not 333.
+4. *Where the state lives.* The view — pills, filters, `.*` / `Aa`,
+   grouping, names, sort, columns, closed groups — is the viewer's, in
+   `localStorage` under `dstf-suite-v1:<work dir>` (per project; two tabs on
+   one project share it; a storage that refuses leaves the table working).
+   The selection is the tab's (D129): sent to Python on `selectionChanged`,
+   selected again when a grid is ready, and carried with rows added later.
+   `TabState` keeps only the selection and the Test page's drawer state.
+5. *Rows before the scan.* `Session.open` emits `known` after the spec
+   document loads: the models its entries and the last run's
+   `batch_manifest.json` name, read without the scan or the spec parser
+   (which validates trees). The shell filters them as it filters the
+   project's tests and keeps them until the merge's `spec` event (a close
+   clears them too; an open that fails takes them back); the Suite page draws
+   them waiting — during a reopen the Session's comparisons are still the
+   previous project's.
+6. *A tool Rerun ends on a scored dashboard.* A `Job` may carry
+   `after_reload`, called once the Session has reloaded and rescored; Rerun's
+   renders `dashboard.html` with the Session's verdicts (the run's own
+   `finally` render stays, for a run that fails before the reload). The
+   Session renders nothing itself: a plug-in's job writes no file.
+
+**Consequences.** The row model's labels: the model column reads "Test" and
+the work-dir key column "Key" on both surfaces (keys unchanged). A capability
+may declare an `icon`; a bar that draws icons draws it, and the shell still
+names no capability. `TestList` is the Tests drawer's alone. Nothing in the
+pre-release seams moves. Not measured here: TRANSFORM's time to first row
+through the grid, cold and warm — the plan's gate over a copy measures it.

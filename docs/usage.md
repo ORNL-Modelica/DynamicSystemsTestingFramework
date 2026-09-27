@@ -736,12 +736,44 @@ backend, the open's progress, the pending-op count (click it for the drawer of
 staged ops, grouped by model), Save, Discard, Export, a link to the dashboard
 and Stop server.
 
-The **Suite page** is the test list: a filter box, grouped-or-flat and
-short-or-full name toggles, one chip per verdict that filters the list to it, a
-checkbox per test for multi-select, the name as a link to that test's page, and
-its status badge. Below the list are the actions over the checked tests —
-Accept, Rerun — each labelled with its object, effect and count, and greyed
-with the sentence saying what would enable it.
+The **Suite page** is a table of the tests, with the dashboard's columns and
+words (one row model, D136): Status, Test, Worst NRMSE, Variables, Sim (s),
+Warnings, Message and Edits (a test's staged edits, "2 unsaved") are shown;
+the column chooser (the columns icon) shows or hides the rest — Key,
+Reference, Resolution, Worker, Elapsed, Translate (s), Total (s). One toolbar
+row above it holds:
+
+- **count pills** — `PASS n · FAIL n · SIM_FAIL n · NO_REF n · EDITED n`, and
+  `RUNNING n` while a job runs. A pill filters the table to its status; several
+  pills show any of them, and EDITED adds the edited tests. The counts are over
+  every test, whatever the filters; a pill with nothing to count is greyed.
+- **view icons**, each with a tooltip — group by package / show flat, short /
+  full names, choose columns — and the **`.*`** and **`Aa`** toggles, which make
+  every column filter a regex and case-sensitive.
+- at the right, **"N selected · ✕"** (✕ clears the selection; "(M hidden)"
+  when a filter or a closed group hides selected tests — the actions still act
+  on all of them), then **Accept** and **Rerun** as icons whose tooltip is the
+  caption, "Rerun 2 selected tests", or the sentence saying what would enable
+  it. A click opens the same confirm dialog.
+
+Under the header row, each column has a filter: status by the pills, numbers
+by `>1e-4`, `<=3`, `=0` or a range `1..10` (read from the value, not its
+display text), text by substring or `*glob*` — the Test column filters on the
+full test name, so `*.B` finds `FakeLib.B`. A filter the table cannot read is
+outlined red, says why in its tooltip and filters nothing. A click on a header
+sorts, within each package while the table is grouped; empty cells sort last
+both ways. Grouped, each package is a row of its own that a click, Enter or
+Space collapses. The checkbox column selects (its header checkbox selects every
+test the filters show); the test's name opens its page.
+
+The table's view — pills, filters, `.*` / `Aa`, grouping, names, sort, columns
+and closed groups — is the viewer's: the browser keeps it (per project, by
+work dir) across reloads and restarts. The selection is the tab's and comes
+back when you return from a test. Rows repaint in place as results are scored,
+edits staged and jobs run, keeping the sort, filters and selection. On a cold
+library scan the rows the spec and the last run name appear at once, reading
+"…" until the scan and the scoring reach them. A Rerun from the tool ends, like
+`dstf run`, on a static `dashboard.html` — with the tool's verdicts.
 
 The **Test page** is one test. A second header row carries the way back to the
 Suite, the model id, its verdict, the backend and baseline it was scored

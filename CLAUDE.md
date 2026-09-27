@@ -35,7 +35,10 @@ DynamicSystemsTestingFramework/
 │   ├── authoring/                # Session, capability contract, spec document — the tool's core;
 │   │                             #      layout.py (the plot layout's edits as pure functions, one op on /plots),
 │   │                             #      variable_rows.py (the Variables drawer's rows as data),
-│   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages, test_list, tree_card + plot_card,
+│   │                             #      suite_rows.py (a Suite row — the row model's TestRow — from the Session),
+│   │                             #      shell/ (the NiceGUI tier: the process, the Suite and Test pages,
+│   │                             #      suite_grid.py + suite_grid.js (the Suite table: AG Grid, driven only by transactions),
+│   │                             #      test_list (the Tests drawer's list), tree_card + plot_card,
 │   │                             #      rail.py + variables_drawer.py (the Test page's Tests and Variables drawers),
 │   │                             #      the header, actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
 │   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
@@ -104,7 +107,8 @@ uv run dstf --config testing.json compare --report-format html --output report.h
 uv run dstf --config testing.json spec-update spec_patch.json
 
 # The authoring tool: a browser shell over the last run (needs the [author] extra).
-# The Suite page lists the tests; Accept the selection's results as baselines, Rerun the selection.
+# The Suite page is a table of the tests (count pills, typed column filters with .* / Aa, package
+# group rows, a column chooser); Accept the selection's results as baselines, Rerun the selection.
 # Open a test: its criteria tree closed to one line naming what failed, its plots stacked and drawn
 # as they scroll into view, a criterion's editor under its row (drag its handles on the plot above),
 # +/wrap/− on every tree node and edit on a combinator, each form opening as a row under its node,
