@@ -5032,13 +5032,21 @@ by model id for a test the manifest does not key. Such a row takes its
 work-dir key and baseline from the manifest (its report dir, as a run's
 row does: `ref_NNNN`, else the key), then goes the way every final row
 goes — a fresh sidecar, else the timing its run kept, then its comparison's
-verdict. "Fresh" is against the test's OWN last run — its `run_stats.json`
-mtime, written as that run recorded its verdict — not the last run's
-`start_wall`, which every sidecar outside the last run's scope predates (a
-first cut did that: 638 stale warnings and no Reference link over a
-331-test tool session). No `run_stats.json`, no guard, as for a
-`status.json` without `start_wall`. The page's test count is its rows; its
-status bar names the last run's count beside it when they differ. A LIVE page is unchanged: the
+verdict. "Fresh" is against the test's OWN last run — its manifest
+entry's `last_run_at`, which `assign_test_keys` stamps with `time.time()`
+as that run starts: the clock a sidecar's `written_at` uses, with the
+meaning of `status.json`'s `start_wall` (every one of TRANSFORM's 331
+entries carries it, ~13 ms after its run's `start_wall`) — not the last
+run's `start_wall`, which every sidecar outside the last run's scope
+predates (a first cut did that: 638 stale warnings and no Reference link
+over a 331-test tool session). A refused sidecar's warning names the clock
+it was held to (`last_run_at=` for such a row). An entry without a number
+there is no guard, as for a `status.json` without `start_wall`. (A second
+cut anchored on `run_stats.json`'s mtime, on the premise that the manifest
+kept no per-test time; it does, and a test that kept no `run_stats.json`
+went unguarded.) The page's test count is its rows; its status bar names
+the last run's count beside it when they differ, and no last run when
+there is no `status.json` to name one. A LIVE page is unchanged: the
 running run's scope. So `compare`, a `--merge` and the tool's Rerun list
 every test (its Save, Discard and Reload write no page: D137 §6); a plain `--filter` run without
 `--merge` still lists only its own, because the comparisons it holds are
@@ -5135,7 +5143,15 @@ and checkboxes, rebuilt from Python on a layout toggle.
    the comparisons its reload scored — 1.6 s over TRANSFORM's work dir
    with `--report` sidecars; the next job's run waits for it (it must not
    land on that run's live page), and so does the app's shutdown (a daemon
-   thread would die mid-write).
+   thread would die mid-write). Both waits are bounded — 60 s for a job,
+   5 s at shutdown — and one that runs out goes on with a warning in the
+   log: the render writes `dashboard.html` atomically, so what an
+   unfinished render leaves is at most a stray `.tmp` beside the last
+   whole page, never a torn one. Known limits, not built around: a job
+   whose run waits on a render still starts when that render lands inside
+   the shutdown's wait, and the process then ends under it; and an
+   `after_reload` that itself waits on the background thread waits on
+   itself until the 60 s bound runs out.
 
 **Consequences.** The row model's labels: the model column reads "Test" and
 the work-dir key column "Key" on both surfaces (keys unchanged). The tool
@@ -5225,8 +5241,9 @@ into the baseline, as `run --accept` always did.
 
 **Cost.** A final render reads each row's `run_stats.json` once, whether or
 not its walls are shown: ~135 ms over TRANSFORM's 331 files on `/tmp`,
-per render (the tool renders after every Save, Discard and Reload, off its
-UI loop). Not cached: the file is as fresh as the result beside it.
+per render (the tool renders once per Rerun, off its UI loop; Save, Discard
+and Reload render nothing, D137 §6). Not cached: the file is as fresh as
+the result beside it.
 
 **Not built here**, so nobody looks for it: nothing. The gap this entry
 first named here — a no-`--report` dashboard of a `--filter` run showing

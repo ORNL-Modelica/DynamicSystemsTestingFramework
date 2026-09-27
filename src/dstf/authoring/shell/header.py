@@ -30,6 +30,7 @@ from ..capabilities import plural
 from ..errors import user_text
 from ..session import StaleSpecError
 from ..spec_document import PatchOp
+from .actions import log_unless_users
 from .widgets import Action
 
 if TYPE_CHECKING:
@@ -309,6 +310,7 @@ class Header:
                     try:
                         self.shell.session.reload()
                     except Exception as e:  # refused while a job runs
+                        log_unless_users(e, "reload")
                         ui.notify(user_text(e), type="warning")
                         return
                     self.dialog.close()
@@ -329,6 +331,7 @@ class Header:
         try:
             self.shell.session.discard()
         except Exception as e:
+            log_unless_users(e, "discard")
             ui.notify(user_text(e), type="warning")
 
     def _export(self) -> None:

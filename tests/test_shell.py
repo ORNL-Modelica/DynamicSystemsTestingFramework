@@ -397,6 +397,73 @@ async def test_a_reload_clicked_while_a_job_runs_is_a_notification(shell):
             gate.release.set()
 
 
+def _failure_records(caplog) -> list:
+    return [r for r in caplog.records if r.exc_info is not None]
+
+
+async def test_a_discard_that_fails_on_a_bug_is_logged_and_notified(
+    shell, monkeypatch, caplog
+):
+    """Discard's refusal is a person's (a job running): notified, never
+    logged. Anything else it raises is a bug: notified AND logged, by the
+    rule the action bars use (`log_unless_users`)."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.stage([LOOSEN])
+        header = _suite(shell, user).header
+        gate = _Gate()
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        try:
+            header._discard()
+            await user.should_see("rerun is still running", retries=20)
+            assert _failure_records(caplog) == []
+        finally:
+            gate.release.set()
+
+        def broken() -> None:
+            raise KeyError("a bug's")
+
+        monkeypatch.setattr(shell.session, "discard", broken)
+        header._discard()
+        await user.should_see("KeyError", retries=20)
+        (record,) = _failure_records(caplog)
+        assert isinstance(record.exc_info[1], KeyError)
+
+
+async def test_a_dialog_reload_that_fails_on_a_bug_is_logged_and_notified(
+    shell, monkeypatch, caplog
+):
+    """The Reload a refused Save offers: a JobRunningError is notified only
+    (`test_a_reload_clicked_while_a_job_runs_is_a_notification`); a bug is
+    notified and logged."""
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.session.stage([LOOSEN])
+        p = shell.session.spec.path
+        p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        header = _suite(shell, user).header
+        header._save()
+        await user.should_see("Keep my edits", retries=20)
+        gate = _Gate()
+        shell.session.apply(Job(run=gate, label="rerun", models=frozenset({A})))
+        try:
+            user.find("Reload").click()
+            await user.should_see("rerun is still running", retries=20)
+            assert _failure_records(caplog) == []
+        finally:
+            gate.release.set()
+        await _settled(lambda: shell.session.running is None)
+
+        def broken() -> None:
+            raise KeyError("a bug's")
+
+        monkeypatch.setattr(shell.session, "reload", broken)
+        user.find("Reload").click()
+        await user.should_see("KeyError", retries=20)
+        (record,) = _failure_records(caplog)
+        assert isinstance(record.exc_info[1], KeyError)
+
+
 def test_shutdown_waits_for_a_rerun_render_still_queued(shell):
     """A Rerun's dashboard render runs on a daemon thread after the job has
     finished: a Stop server or a Ctrl-C right after the rerun must not end

@@ -217,3 +217,26 @@ class TestRefusedWhileAJobRuns:
             assert len(s.spec.pending) == 2  # nothing saved, nothing dropped
         finally:
             release.set()
+
+
+def test_the_background_runs_what_it_is_handed_in_order():
+    """Two renders queued behind a running one land in the order handed —
+    the later Rerun's page is the one left on disk."""
+    from dstf.authoring.session import _Background
+
+    bg = _Background()
+    first_running, release = threading.Event(), threading.Event()
+    ran: list[str] = []
+
+    def first() -> None:
+        first_running.set()
+        release.wait(5)
+        ran.append("first")
+
+    bg.submit("first", first)
+    assert first_running.wait(5)
+    bg.submit("second", lambda: ran.append("second"))
+    bg.submit("third", lambda: ran.append("third"))
+    release.set()
+    assert bg.wait(5)
+    assert ran == ["first", "second", "third"]

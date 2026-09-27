@@ -352,3 +352,117 @@ async def test_a_row_that_never_builds_is_not_added_and_is_tried_again_when_touc
         shell._events.put({"event": "results", "models": {B}})
         shell.tick()
         _check(shell, page, grid, "B added once touched")
+
+
+async def test_rows_dropped_by_a_failure_of_every_row_come_back_once_it_passes(
+    shell, grid, monkeypatch
+):
+    """A failure that is no one row's (every build raises) lasting two ticks
+    drops every row the open added: the retrying tick builds each and each
+    raises. The next flush that builds tries the dropped rows once more, so
+    the grid holds every visible row within a few idle ticks of healing."""
+    import dstf.authoring.shell.suite as suite_mod
+
+    real = suite_mod.suite_rows
+    broken = {"yes": False}
+
+    def flaky(session, ids, **kw):
+        if broken["yes"] and list(ids):
+            raise RuntimeError("every row is broken")
+        return real(session, ids, **kw)
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _page(shell, user)
+        _init(page, grid)
+        monkeypatch.setattr(suite_mod, "suite_rows", flaky)
+        shell.session.close()
+        shell.tick()
+        assert grid.rows == {}
+        broken["yes"] = True
+        shell.session.open(shell.config_path, work_dir=shell.work_dir)
+        shell.tick()  # raises: the shell logs it
+        shell.tick()  # row by row: every row raises and is dropped
+        assert grid.rows == {}
+        broken["yes"] = False
+        for _ in range(3):
+            shell.tick()
+        _check(shell, page, grid, "every row back, untouched")
+
+
+async def test_a_retried_row_that_still_fails_stays_out_without_a_log_line(
+    shell, grid, monkeypatch, caplog
+):
+    """The one retry of the dropped rows builds each: a row whose own build
+    still raises stays dropped, and is not logged a third time."""
+    import dstf.authoring.shell.suite as suite_mod
+
+    real = suite_mod.suite_rows
+    broken = {"all": False}
+
+    def flaky(session, ids, **kw):
+        ids = list(ids)
+        if ids and (broken["all"] or B in ids):
+            raise RuntimeError("broken")
+        return real(session, ids, **kw)
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _page(shell, user)
+        _init(page, grid)
+        monkeypatch.setattr(suite_mod, "suite_rows", flaky)
+        shell.session.close()
+        shell.tick()
+        broken["all"] = True
+        shell.session.open(shell.config_path, work_dir=shell.work_dir)
+        with caplog.at_level("WARNING"):
+            shell.tick()
+            shell.tick()
+            n = len([r for r in caplog.records if r.levelno >= logging.WARNING])
+            broken["all"] = False
+            for _ in range(3):
+                shell.tick()
+            assert len([r for r in caplog.records if r.levelno >= logging.WARNING]) == n
+        assert set(grid.rows) == set(shell.visible_tests()) - {B}
+        assert not grid.errors
+
+
+async def test_a_failure_after_a_successful_flush_gets_its_own_traceback(
+    shell, grid, monkeypatch, caplog
+):
+    """The row-by-row retry is for the ONE flush after a failure: once a
+    flush succeeds, the next failure raises again and the shell logs its
+    traceback, rather than a one-line "left out"."""
+    import dstf.authoring.shell.suite as suite_mod
+
+    real = suite_mod.suite_rows
+    broken = {"yes": False}
+
+    def flaky(session, ids, **kw):
+        if broken["yes"] and list(ids):
+            raise RuntimeError("every row is broken")
+        return real(session, ids, **kw)
+
+    def tracebacks() -> int:
+        return len(
+            [r for r in caplog.records if r.getMessage() == "a page failed to flush"]
+        )
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _page(shell, user)
+        _init(page, grid)
+        monkeypatch.setattr(suite_mod, "suite_rows", flaky)
+        with caplog.at_level("WARNING"):
+            broken["yes"] = True
+            shell._events.put({"event": "results", "models": {A}})
+            shell.tick()
+            assert tracebacks() == 1
+            shell.tick()  # row by row
+            broken["yes"] = False
+            shell._events.put({"event": "results", "models": {A}})
+            shell.tick()  # succeeds
+            broken["yes"] = True
+            shell._events.put({"event": "results", "models": {A}})
+            shell.tick()
+            assert tracebacks() == 2

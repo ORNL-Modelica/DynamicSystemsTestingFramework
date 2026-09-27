@@ -37,14 +37,14 @@ def test_a_config_error_is_not_logged_and_a_bare_value_error_is(caplog):
     """A ConfigError is a ValueError, so `user_text` alone cannot tell it
     from a bug's; `USER_ERRORS` is what keeps it out of the log."""
     pytest.importorskip("nicegui")
-    from dstf.authoring.shell.actions import _log_unless_users
+    from dstf.authoring.shell.actions import log_unless_users
     from dstf.config import ConfigError
 
     for e in (ConfigError("mine"), ValueError("a bug's")):
         try:
             raise e
         except ValueError as raised:
-            _log_unless_users(raised, "probe")
+            log_unless_users(raised, "probe")
     assert [r.exc_info[1] for r in caplog.records if r.exc_info] == [e]
 
 

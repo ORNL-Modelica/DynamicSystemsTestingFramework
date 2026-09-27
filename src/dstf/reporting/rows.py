@@ -311,7 +311,11 @@ _STATUS_BY_LABEL = {label: s for s, label in STATUS_LABELS.items()}
 
 
 def enrich_row(
-    row: TestRow, summary: Mapping[str, Any], *, start_wall: float | None
+    row: TestRow,
+    summary: Mapping[str, Any],
+    *,
+    start_wall: float | None,
+    anchor: str = "start_wall",
 ) -> TestRow:
     """*row* with a ``summary``'s fields, or *row* unchanged when the summary
     is not this run's verdict on this test. Two guards (D91 — see
@@ -319,9 +323,12 @@ def enrich_row(
 
     1. **model_id mismatch** — the sidecar belongs to another test
        (bookkeeping drift between batch_manifest and reports/).
-    2. **Stale timestamp** — its ``written_at`` is older than the run's
-       ``start_wall``: a prior run's sidecar the wipe did not clear, whose
-       verdict must not override this run's.
+    2. **Stale timestamp** — its ``written_at`` is older than
+       ``start_wall``, when the run that produced this test's result
+       started: a prior run's sidecar the wipe did not clear, whose verdict
+       must not override this run's. ``anchor`` names that clock in the
+       warning — status.json's ``start_wall``, or the manifest entry's
+       ``last_run_at`` for a test the last run did not run.
 
     Both guards print a one-line warning to stderr, so a skipped
     enrichment is visible.
@@ -338,7 +345,7 @@ def enrich_row(
     if start_wall is not None and written_at is not None and written_at < start_wall:
         print(
             f"# WARN: stale sidecar for {row.model_id!r} "
-            f"(written_at={written_at} < start_wall={start_wall}); "
+            f"(written_at={written_at} < {anchor}={start_wall}); "
             f"ignoring enrichment.",
             file=sys.stderr,
         )

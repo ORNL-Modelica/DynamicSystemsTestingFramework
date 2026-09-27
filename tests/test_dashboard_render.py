@@ -1555,9 +1555,9 @@ def test_a_corrupt_manifest_lists_the_scored_tests_by_model_id(tmp_path):
 
 # ---------------------------------------------------------------------------
 # A row the final page adds beyond status.json is judged against its OWN
-# run: its sidecar is stale when written before that test's last run ended
-# (its run_stats.json), not before the last run's start — which every
-# sidecar outside the last run's scope was.
+# run: its sidecar is stale when written before that test's last run started
+# (its ``batch_manifest.json`` entry's ``last_run_at``), not before the last
+# run's start — which every sidecar outside the last run's scope was.
 # ---------------------------------------------------------------------------
 
 
@@ -1571,12 +1571,28 @@ def _sidecar_at(work_dir: Path, report_dir: str, model_id: str, written_at: floa
                     "model_id": model_id,
                     "written_at": written_at,
                     "status": "PASS",
-                    "ref_file": "../../refs/ref_0007.json",
+                    "ref_file": f"../../refs/{report_dir}.json",
                 }
             }
         ),
         encoding="utf-8",
     )
+
+
+def _last_run_at(work_dir: Path, **by_key: float) -> None:
+    """Stamp manifest entries' ``last_run_at``, as ``assign_test_keys`` does
+    at a run's start."""
+    path = work_dir / "batch_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    for key, at in by_key.items():
+        manifest[key]["last_run_at"] = at
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _final_row(work_dir: Path, comps, model_id: str):
+    ctx = build_dashboard_context(work_dir, mode="final", comparisons=comps)
+    (row,) = [r for r in ctx["tests"] if r.model_id == model_id]
+    return row
 
 
 def test_an_added_rows_sidecar_is_judged_against_its_own_run(tmp_path, capsys):
@@ -1585,30 +1601,64 @@ def test_an_added_rows_sidecar_is_judged_against_its_own_run(tmp_path, capsys):
     from dstf.comparison.types import TestComparison
 
     _scoped_run(tmp_path)  # status.json: B alone, started at 100.0
-    # A's own run ended at 50.0 (its run_stats.json); its sidecar at 60.0.
-    os.utime(tmp_path / "test_0001" / "run_stats.json", (50.0, 50.0))
+    # A's own run started at 50.0; its sidecar was written at 60.0. Its
+    # run_stats.json's mtime (now) is not the anchor.
+    _last_run_at(tmp_path, test_0001=50.0)
     _sidecar_at(tmp_path, "ref_0007", "Lib.A", 60.0)
     comps = [TestComparison(model_id="Lib.A", passed=True)]
-    (a,) = [
-        r
-        for r in build_dashboard_context(tmp_path, mode="final", comparisons=comps)[
-            "tests"
-        ]
-        if r.model_id == "Lib.A"
-    ]
+    a = _final_row(tmp_path, comps, "Lib.A")
     assert a.ref_file == "../../refs/ref_0007.json"  # fresh against its own run
     assert "stale sidecar" not in capsys.readouterr().err
-    # A ran again at 70.0: the sidecar written at 60.0 is its earlier run's.
-    os.utime(tmp_path / "test_0001" / "run_stats.json", (70.0, 70.0))
-    (a,) = [
-        r
-        for r in build_dashboard_context(tmp_path, mode="final", comparisons=comps)[
-            "tests"
-        ]
-        if r.model_id == "Lib.A"
-    ]
+    # A ran again at 70.0: the sidecar written at 60.0 is its earlier run's,
+    # whatever its run_stats.json's mtime says.
+    _last_run_at(tmp_path, test_0001=70.0)
+    os.utime(tmp_path / "test_0001" / "run_stats.json", (10.0, 10.0))
+    a = _final_row(tmp_path, comps, "Lib.A")
     assert a.ref_file is None
-    assert "stale sidecar for 'Lib.A'" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "stale sidecar for 'Lib.A'" in err
+    assert "last_run_at=70.0" in err and "start_wall" not in err
+
+
+def test_added_rows_without_run_stats_refuse_sidecars_older_than_their_run(
+    tmp_path, capsys
+):
+    """The review's scenario b4: a one-test run, the others' tests keeping
+    no run_stats.json. A sidecar written before its test's ``last_run_at``
+    is refused; one written after is taken — per test, not per page."""
+    from dstf.comparison.types import TestComparison
+
+    _scoped_run(tmp_path)  # B alone in status.json; only A keeps run_stats
+    _last_run_at(tmp_path, test_0003=50.0, test_0004=50.0)
+    _sidecar_at(tmp_path, "test_0003", "Lib.C", 40.0)  # before C's run: stale
+    _sidecar_at(tmp_path, "test_0004", "Lib.D", 60.0)  # after D's run: fresh
+    comps = [TestComparison(model_id=m, passed=True) for m in ("Lib.C", "Lib.D")]
+    ctx = build_dashboard_context(tmp_path, mode="final", comparisons=comps)
+    rows = {r.model_id: r for r in ctx["tests"]}
+    assert rows["Lib.C"].ref_file is None
+    assert rows["Lib.D"].ref_file == "../../refs/test_0004.json"
+    err = capsys.readouterr().err
+    assert "stale sidecar for 'Lib.C'" in err
+    assert "Lib.D" not in err
+
+
+def test_an_added_row_whose_manifest_entry_has_no_last_run_at_is_not_guarded(
+    tmp_path, capsys
+):
+    """A manifest entry without ``last_run_at`` (or with a value that is not
+    a number) is no guard, as for a status.json without ``start_wall``."""
+    from dstf.comparison.types import TestComparison
+
+    _scoped_run(tmp_path)
+    _last_run_at(tmp_path, test_0004="yesterday")
+    _sidecar_at(tmp_path, "test_0003", "Lib.C", 1.0)
+    _sidecar_at(tmp_path, "test_0004", "Lib.D", 1.0)
+    comps = [TestComparison(model_id=m, passed=True) for m in ("Lib.C", "Lib.D")]
+    ctx = build_dashboard_context(tmp_path, mode="final", comparisons=comps)
+    rows = {r.model_id: r for r in ctx["tests"]}
+    assert rows["Lib.C"].ref_file == "../../refs/test_0003.json"
+    assert rows["Lib.D"].ref_file == "../../refs/test_0004.json"
+    assert "stale sidecar" not in capsys.readouterr().err
 
 
 def test_a_merge_run_keeps_the_other_tests_reference_links(
@@ -1674,4 +1724,16 @@ def test_a_final_page_of_the_last_run_alone_says_ran_for(tmp_path):
     _scoped_run(tmp_path)
     render_final(tmp_path, comparisons=[TestComparison(model_id="Lib.B", passed=True)])
     bar = _status_bar((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
-    assert bar.startswith("Final report · 1 tests · ran for 1s")
+    assert bar.startswith("Final report · 1 test · ran for 1s")
+
+
+def test_a_final_page_with_no_status_names_no_last_run(tmp_path):
+    """No status.json (a `compare` over a work dir whose run kept none): the
+    page lists the tests scored and says nothing of a run it cannot see —
+    not "last run: 0 tests in 0.0s", nor a finish at the epoch."""
+    from dstf.comparison.types import TestComparison
+
+    comps = [TestComparison(model_id=m, passed=True) for m in ("Lib.A", "Lib.B")]
+    render_final(tmp_path, comparisons=comps)
+    bar = _status_bar((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
+    assert bar == "Final report · 2 tests"

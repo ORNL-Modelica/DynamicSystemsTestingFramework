@@ -45,9 +45,13 @@ class SuitePage:
         #: by one and leaves out the ones that raise.
         self._retrying = False
         #: Visible tests whose row failed to build when they were to be
-        #: added: not in the grid, and added again only once an event
-        #: touches them.
+        #: added: not in the grid, and added again once an event touches
+        #: them — or by the one retry below.
         self._dropped: set[str] = set()
+        #: A retrying flush dropped rows: the next flush that builds tries
+        #: them once more, one by one. The failure may have been no one
+        #: row's (every build raising for two ticks dropped every row).
+        self._redo = False
 
     async def build(self) -> None:
         self.client = ui.context.client
@@ -188,7 +192,10 @@ class SuitePage:
         that always raises froze the grid (a traceback per tick, no update
         sent). A row left out keeps its last painted state; one that was to
         be added is not in the grid, and is added again once an event
-        touches it."""
+        touches it, or by the next flush that builds: that one tries every
+        dropped row once more, one by one, and leaves out without a log
+        line the ones that still raise — a failure of every row for two
+        ticks dropped them all, and none came back until touched."""
         held, sent = set(self.ids), set(self._sent)
         self._dropped &= held
         add = [
@@ -198,9 +205,15 @@ class SuitePage:
         ]
         remove = [m for m in self._sent if m not in held]
         update = [m for m in self.ids if m in sent and m in self._update]
+        retrying = self._retrying
+        redo = (
+            [m for m in self.ids if m in self._dropped and m not in add]
+            if self._redo and not retrying
+            else []
+        )
         added = set(add)
-        if add or update or remove:
-            if self._retrying:
+        if add or update or remove or redo:
+            if retrying:
                 add_rows, bad_add = self._rows_each(add)
                 update_rows, bad_update = self._rows_each(update)
                 if bad_add or bad_update:
@@ -210,19 +223,27 @@ class SuitePage:
                         "its row failed to build again",
                     )
                 added -= set(bad_add)
+                self._redo = self._redo or bool(bad_add)
             else:
                 try:
                     add_rows, update_rows = self._rows(add), self._rows(update)
                 except Exception:
                     self._retrying = True
                     raise  # the shell logs it; the next tick goes row by row
+                redo_rows, bad_redo = self._rows_each(redo)
+                add_rows += redo_rows
+                added |= set(redo) - set(bad_redo)
             self.grid.transaction(
                 add=add_rows,
                 update=update_rows,
                 remove=remove,
-                select=[m for m in add if m in added and m in self.state.checked],
+                select=[
+                    m for m in add + redo if m in added and m in self.state.checked
+                ],
             )
             self._dropped = (self._dropped - added) | (set(add) - added)
+        if not retrying:
+            self._redo = False  # tried, or nothing left to try
         self._retrying = False
         self._sent = [m for m in self.ids if m in sent or m in added]
         self._update = set()

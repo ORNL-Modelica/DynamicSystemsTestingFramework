@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 LOADING = "batch actions unlock when loading finishes"
 
 
-def _log_unless_users(e: BaseException, name: str) -> None:
+def log_unless_users(e: BaseException, name: str) -> None:
     """Log a failed act unless a person's own edit raised it: `user_text`
     shows a ValueError's text alone, and a JSONDecodeError or a numpy shape
     error from a bug is one — it must still reach the log."""
@@ -232,7 +232,7 @@ class ActionBar:
                     outcome = cap.act(view, **inputs)
                     self.shell.session.apply(outcome)
                 except Exception as e:  # shown here; a raising act changes nothing
-                    _log_unless_users(e, cap.name)
+                    log_unless_users(e, cap.name)
                     self.errors[cap.name] = user_text(e)
                     error.set_text(self.errors[cap.name])
                     error.set_visibility(True)
@@ -412,7 +412,7 @@ class InlineHost:
                 outcome = cap.act(view, **inputs)
                 self.shell.session.apply(outcome)
             except Exception as e:  # shown, and changes nothing
-                _log_unless_users(e, cap.name)
+                log_unless_users(e, cap.name)
                 error.set_text(user_text(e))
                 error.set_visibility(True)
                 return False

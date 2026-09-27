@@ -36,7 +36,6 @@ from ..backends.base import kept_run_result
 from ..backends.common.result_variables import run_timing
 from ..backends.progress import read_status
 from ..comparison.types import TestComparison
-from ..storage.run_stats import RUN_STATS_FILENAME
 from .rows import COLUMNS, TestRow, enrich_row, row_from_status, summary_fields
 from .status import STATUS_CLASSES, STATUS_LABELS, STATUS_ORDER
 from .theme import css_variables
@@ -187,47 +186,39 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     )
 
 
-def _manifest_rows(work_dir: Path) -> dict[str, TestRow]:
-    """``{model_id: row}`` for every test ``batch_manifest.json`` keys, in
-    its order: the work-dir key and the baseline the run named, and the
-    report dir a run gives such a row (``ref_NNNN``, else the key). Read as
-    data — never quarantined, as ``BatchManifest.load`` does a corrupt one:
-    a renderer moves no file. A model under two keys takes the last, as
-    ``last_test_keys`` does."""
+def _manifest_rows(work_dir: Path) -> dict[str, tuple[TestRow, float | None]]:
+    """``{model_id: (row, last_run_at)}`` for every test
+    ``batch_manifest.json`` keys, in its order: the work-dir key and the
+    baseline the run named, and the report dir a run gives such a row
+    (``ref_NNNN``, else the key); beside it the wall clock that test's last
+    run started at (``assign_test_keys`` stamps ``last_run_at`` then, with
+    the clock a sidecar's ``written_at`` uses), ``None`` when the entry
+    holds no number. Read as data — never quarantined, as
+    ``BatchManifest.load`` does a corrupt one: a renderer moves no file. A
+    model under two keys takes the last, as ``last_test_keys`` does."""
     try:
         entries = json.loads(
             (work_dir / "batch_manifest.json").read_text(encoding="utf-8")
         )
     except (OSError, ValueError):
         return {}
-    rows: dict[str, TestRow] = {}
+    rows: dict[str, tuple[TestRow, float | None]] = {}
     for key, entry in entries.items() if isinstance(entries, dict) else ():
         model_id = entry.get("model_id") if isinstance(entry, dict) else None
         if not isinstance(model_id, str):
             continue
         ref_id = entry.get("ref_id")
         ref_id = ref_id if isinstance(ref_id, str) else None
-        rows[model_id] = TestRow(
-            model_id=model_id, test_key=key, ref_id=ref_id, report_dir=ref_id or key
+        last_run_at = entry.get("last_run_at")
+        if isinstance(last_run_at, bool) or not isinstance(last_run_at, int | float):
+            last_run_at = None
+        rows[model_id] = (
+            TestRow(
+                model_id=model_id, test_key=key, ref_id=ref_id, report_dir=ref_id or key
+            ),
+            last_run_at,
         )
     return rows
-
-
-def _own_run_end(work_dir: Path, row: TestRow) -> float | None:
-    """When *row*'s test last finished running: its ``run_stats.json``'s
-    mtime, written as that run recorded the test's verdict
-    (``BatchManifest.record_result``), in the test's own directory that a
-    run wipes when it re-runs the test. A sidecar written before it is an
-    earlier run's; one written after it is this result's (the compare that
-    writes it follows the run). ``None`` — no guard, as for a status.json
-    without ``start_wall`` — when the run kept no file (one from before
-    it existed)."""
-    if not row.test_key:
-        return None
-    try:
-        return (work_dir / row.test_key / RUN_STATS_FILENAME).stat().st_mtime
-    except OSError:
-        return None
 
 
 def build_dashboard_context(
@@ -271,25 +262,30 @@ def build_dashboard_context(
     # `dstf run` / `compare` without --report write no sidecars; the
     # comparisons they hold are what gives such a page its verdicts.
     by_model = {c.model_id: c for c in comparisons} if mode == "final" else {}
-    # (row, the wall clock its sidecar must postdate)
+    # (row, the wall clock its sidecar must postdate, what that clock is)
     base = [
-        (row_from_status(t), snapshot_start_wall) for t in snapshot.get("tests", [])
+        (row_from_status(t), snapshot_start_wall, "start_wall")
+        for t in snapshot.get("tests", [])
     ]
-    listed = {r.model_id for r, _ in base}
+    listed = {r.model_id for r, _, _ in base}
     rest = set(by_model) - listed
     if rest:
-        # A row the last run did not run is judged against ITS OWN last run:
-        # against the last run's start, every sidecar outside its scope read
-        # stale (638 warnings and no Reference link on a 331-test page).
+        # A row the last run did not run is judged against ITS OWN last run
+        # — the start its manifest entry keeps: against the last run's
+        # start, every sidecar outside its scope read stale (638 warnings
+        # and no Reference link on a 331-test page).
         manifest = _manifest_rows(work_dir)
         base += [
-            (row, _own_run_end(work_dir, row))
-            for m, row in manifest.items()
+            (row, last_run_at, "last_run_at")
+            for m, (row, last_run_at) in manifest.items()
             if m in rest
         ]
-        base += [(TestRow(model_id=m), None) for m in sorted(rest - set(manifest))]
+        base += [
+            (TestRow(model_id=m), None, "last_run_at")
+            for m in sorted(rest - set(manifest))
+        ]
     rows = []
-    for row, start_wall in base:
+    for row, start_wall, anchor in base:
         before = row
         if mode == "final" and row.report_dir:
             sidecar = _read_comparison_sidecar(work_dir, row.report_dir)
@@ -297,7 +293,10 @@ def build_dashboard_context(
                 # Sidecars written before the summary block carry the
                 # fields at the top level.
                 row = enrich_row(
-                    row, sidecar.get("summary", sidecar), start_wall=start_wall
+                    row,
+                    sidecar.get("summary", sidecar),
+                    start_wall=start_wall,
+                    anchor=anchor,
                 )
         # enrich_row hands back the same row when a guard refuses the
         # sidecar. With no fresh sidecar (a run without --report, or a stale
