@@ -18,7 +18,9 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..comparison.comparator import VariableComparison
-from .context_builder import _build_template_context, worst_finite_score
+from ..comparison.types import TestComparison
+from .context_builder import _build_template_context
+from .rows import summary_fields
 from .status import classify_with_class
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -446,14 +448,17 @@ def generate_comparison_plots(
     # it explicitly, so this default only fires for direct callers (tests).
     max_embedded_samples: int = 1000,
     overlays: list | None = None,
-    status_text: str | None = None,
-    status_class: str | None = None,
+    comparison: TestComparison | None = None,
     ref_id: str | None = None,
     run_metadata: dict | None = None,
     plots=None,
     extra_series=None,
 ) -> Path | None:
     """Render this test's interactive.html (Plotly) + comparison_data.json sidecar.
+
+    *comparison* is the test's ``TestComparison``: the sidecar's verdict
+    comes from it. Without one (a direct caller holding only the leaves)
+    the sidecar carries the numbers and no verdict.
 
     Returns the path to the rendered interactive.html.
     """
@@ -511,48 +516,26 @@ def generate_comparison_plots(
     # override a fresh verdict.
     import time as _time
 
-    worst_score, n_unscored = worst_finite_score(comparisons)
+    # The one computation of a row's numbers (reporting.rows), shared with
+    # the dashboard's rows and, in the tool, the Suite table.
+    fields = summary_fields(
+        comparison
+        if comparison is not None
+        else TestComparison(
+            model_id=model_id, passed=True, variables=list(comparisons or ())
+        ),
+        warnings=warnings,
+        stats=cur_stats if isinstance(cur_stats, dict) else None,
+        ref_id=ref_id,
+        ref_file=ref_file,
+        field_sources=getattr(test_model, "field_sources", None) or {},
+    )
+    if comparison is None:
+        fields.update(status=None, status_text=None, status_class=None)
     context["summary"] = {
         "model_id": model_id,
         "written_at": _time.time(),
-        "status_text": status_text,
-        "status_class": status_class,
-        "ref_id": ref_id,
-        # file:// URL so the dashboard's Reference column can hyperlink
-        # directly to the stored reference JSON.
-        "ref_file": ref_file.as_uri() if ref_file else None,
-        # Worst score across the leaves that HAVE one: a sentinel leaf
-        # carries inf/nan, and a plain max() let it swallow every real
-        # number on the test (the dashboard then showed "—" for a test
-        # whose other leaves scored fine). ``n_unscored`` is what the
-        # column says instead when nothing finite is left.
-        "worst_nrmse": worst_score,
-        "n_unscored": n_unscored,
-        "n_vars": len(comparisons) if comparisons else 0,
-        "n_vars_passed": (
-            sum(1 for v in comparisons if v.passed) if comparisons else 0
-        ),
-        "n_warnings": len(warnings) if warnings else 0,
-        "translation_wall": (
-            cur_stats.get("timing", {}).get("translation_wall")
-            if isinstance(cur_stats, dict)
-            else None
-        ),
-        "sim_wall": (
-            cur_stats.get("timing", {}).get("sim_wall")
-            if isinstance(cur_stats, dict)
-            else None
-        ),
-        "total_wall": (
-            cur_stats.get("timing", {}).get("total_wall")
-            if isinstance(cur_stats, dict)
-            else None
-        ),
-        "field_sources": (
-            test_model.field_sources
-            if test_model and hasattr(test_model, "field_sources")
-            else {}
-        ),
+        **fields,
     }
     # review 2026-07-06 finding 68: strict JSON — sanitize non-finite
     # floats to null and forbid NaN/Infinity tokens at dump time.
@@ -777,10 +760,6 @@ def _build_per_test_args(
     # it now, so the carve-out is gone (D117 closed).
     status_text, status_class = classify_with_class(comp)
 
-    n_vars = len(comp.variables) if comp.variables else 0
-    n_vars_passed = sum(1 for v in comp.variables if v.passed) if comp.variables else 0
-    worst_nrmse, n_unscored = worst_finite_score(comp.variables)
-
     test_dir = config.work_dir / test_key if test_key else None
 
     # The page's layout, through the one helper (it derives the tracked
@@ -803,12 +782,6 @@ def _build_per_test_args(
     else:
         report_id = _sanitize_filename(model_id)
 
-    # Pull phase-timing breakdown out of stats if present (the backend stashes it)
-    cur_stats = result.statistics if result and result.statistics else {}
-    timing = (
-        cur_stats.get("timing") if isinstance(cur_stats.get("timing"), dict) else {}
-    )
-
     return {
         "model_id": model_id,
         "ref_data": ref_data,
@@ -821,16 +794,9 @@ def _build_per_test_args(
         "test_key": test_key,
         "status_text": status_text,
         "status_class": status_class,
-        "n_vars": n_vars,
-        "n_vars_passed": n_vars_passed,
-        "worst_nrmse": worst_nrmse,
-        "n_unscored": n_unscored,
-        "n_warnings": len(comp.warnings) if comp.warnings else 0,
         "ref_id": f"ref_{comp.test_id}" if comp.test_id else None,
         "last_run_at": last_run_at,
-        "translation_wall": timing.get("translation_wall"),
-        "sim_wall": timing.get("sim_wall"),
-        "total_wall": timing.get("total_wall"),
+        "comparison": comp,
         "comp_variables": comp.variables,
         "metric_tree": comp.metric_tree,
         "artifact_files": artifact_files,
@@ -862,8 +828,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         artifact_files=args.get("artifact_files", ()),
         max_embedded_samples=args["max_embedded_samples"],
         overlays=args.get("overlays"),
-        status_text=args.get("status_text"),
-        status_class=args.get("status_class"),
+        comparison=args.get("comparison"),
         ref_id=args.get("ref_id"),
         run_metadata=args.get("run_metadata"),
         plots=args.get("plots"),
@@ -876,15 +841,7 @@ def _render_one_test(args: dict, report_dir: Path) -> dict:
         "status_class": args["status_class"],
         "ref_id": args["ref_id"],
         "test_key": args["test_key"],
-        "worst_nrmse": args["worst_nrmse"],
-        "n_vars": args["n_vars"],
-        "n_vars_passed": args["n_vars_passed"],
-        "n_unscored": args["n_unscored"],
-        "n_warnings": args["n_warnings"],
         "last_run_at": args["last_run_at"],
-        "translation_wall": args.get("translation_wall"),
-        "sim_wall": args.get("sim_wall"),
-        "total_wall": args.get("total_wall"),
         "report_path": f"{args['report_id']}/interactive.html" if html_path else None,
         "_render_elapsed": render_elapsed,
     }

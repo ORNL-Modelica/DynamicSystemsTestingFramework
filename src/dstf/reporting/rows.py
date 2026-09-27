@@ -1,0 +1,316 @@
+"""A test's row: the one row model the dashboard and the tool's Suite table
+render, its columns, and the builders that fill it.
+
+``TestRow`` holds a test's row-level fields; ``COLUMNS`` says, for each
+column both surfaces show, its key, its label, its kind (what a filter on
+it means) and how a row reads and sorts there. ``summary_fields`` is the
+one computation of the numbers a row carries after the compare phase: the
+per-test sidecar writes them, and the dashboard reads them back through
+``enrich_row``.
+"""
+
+from __future__ import annotations
+
+import sys
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Any, Literal
+
+from ..comparison.types import TestComparison
+from .context_builder import worst_finite_score
+from .status import (
+    STATUS_CLASSES,
+    STATUS_LABELS,
+    STATUS_ORDER,
+    classify_with_class,
+    live_status,
+)
+
+#: The word a live row reads when its simulation ran and the compare phase
+#: has not scored it. Not a status: it is in no count and no pill.
+SIMULATED = "SIMULATED"
+
+#: The class that row is styled with: the theme's "no verdict yet" token.
+PENDING_CLASS = "pending"
+
+
+@dataclass(frozen=True)
+class TestRow:
+    """One test's row, as both HTML surfaces show it."""
+
+    model_id: str
+    test_key: str | None = None
+    #: a ``reporting.status`` status, or None: simulated, not scored
+    status: str | None = None
+    ref_id: str | None = None
+    #: file:// URI of the reference JSON
+    ref_file: str | None = None
+    report_dir: str | None = None
+    field_sources: Mapping[str, str] = field(default_factory=dict)
+    worker_id: int | None = None
+    elapsed: float | None = None
+    started_wall: float | None = None
+    worst_score: float | None = None
+    n_unscored: int | None = None
+    n_vars: int | None = None
+    n_vars_passed: int | None = None
+    n_warnings: int | None = None
+    translation_wall: float | None = None
+    sim_wall: float | None = None
+    total_wall: float | None = None
+    message: str | None = None
+    #: the tool's staged edits on this test; 0 in a report
+    edits: int = 0
+
+    @property
+    def status_text(self) -> str:
+        return STATUS_LABELS[self.status] if self.status else SIMULATED
+
+    @property
+    def status_class(self) -> str:
+        return STATUS_CLASSES[self.status] if self.status else PENDING_CLASS
+
+    @property
+    def resolution(self) -> str | None:
+        """The one source every simulation field came from, "mixed", or
+        None when the row carries no provenance."""
+        sources = set(self.field_sources.values())
+        if not sources:
+            return None
+        return next(iter(sources)) if len(sources) == 1 else "mixed"
+
+
+@dataclass(frozen=True)
+class Column:
+    """One column both surfaces show: what a filter on it means (``kind``)
+    and how a row reads (``text``) and sorts (``sort``) there."""
+
+    key: str
+    label: str
+    kind: Literal["text", "number", "status"]
+    #: the cell as a person reads it; "—" when absent
+    text: Callable[[TestRow], str]
+    #: None sorts last in both directions
+    sort: Callable[[TestRow], float | str | None]
+    #: the header's tooltip
+    title: str | None = None
+
+
+_DASH = "—"
+
+
+def _text_col(
+    key: str, label: str, get: Callable[[TestRow], Any], title: str | None = None
+) -> Column:
+    """A text column: the value as is, sorting on its lower-cased text."""
+    return Column(
+        key=key,
+        label=label,
+        kind="text",
+        text=lambda r: _DASH if get(r) in (None, "") else str(get(r)),
+        sort=lambda r: None if get(r) in (None, "") else str(get(r)).lower(),
+        title=title,
+    )
+
+
+def _num_col(key: str, label: str, get: Callable[[TestRow], Any], spec: str) -> Column:
+    """A number column: the value formatted by *spec*, sorting on the value."""
+    return Column(
+        key=key,
+        label=label,
+        kind="number",
+        text=lambda r: _DASH if get(r) is None else format(get(r), spec),
+        sort=get,
+    )
+
+
+def _nrmse_text(row: TestRow) -> str:
+    if row.worst_score is not None:
+        return format(row.worst_score, ".4e")
+    if row.n_unscored:
+        return f"n/a ({row.n_unscored} unscored)"
+    return _DASH
+
+
+COLUMNS: tuple[Column, ...] = (
+    _text_col("test", "Test", lambda r: r.test_key),
+    _text_col("ref", "Reference", lambda r: r.ref_id),
+    _text_col("model", "Model", lambda r: r.model_id),
+    Column(
+        key="status",
+        label="Status",
+        kind="status",
+        text=lambda r: r.status_text,
+        sort=lambda r: STATUS_ORDER.index(r.status) if r.status else None,
+    ),
+    _text_col(
+        "resolution",
+        "Resolution",
+        lambda r: r.resolution,
+        title=(
+            "Provenance of stop_time / tolerance / method / number_of_intervals"
+            " / output_interval — annotation, test_spec, or default"
+        ),
+    ),
+    _text_col(
+        "worker", "Worker", lambda r: None if r.worker_id is None else f"W{r.worker_id}"
+    ),
+    _num_col("elapsed", "Elapsed (s)", lambda r: r.elapsed, ".1f"),
+    Column(
+        key="nrmse",
+        label="Worst NRMSE",
+        kind="number",
+        text=_nrmse_text,
+        sort=lambda r: r.worst_score,
+    ),
+    Column(
+        key="vars",
+        label="Variables",
+        kind="number",
+        text=lambda r: _DASH if r.n_vars is None else f"{r.n_vars_passed}/{r.n_vars}",
+        # The number passed, as the column sorted before it had a filter:
+        # ">2" there means "more than 2 variables passed".
+        sort=lambda r: None if r.n_vars is None else r.n_vars_passed,
+        title=(
+            "Variables passed / scored. Sorts and filters on the number "
+            "passed: >2 means more than 2 passed"
+        ),
+    ),
+    _num_col("warnings", "Warnings", lambda r: r.n_warnings, "d"),
+    _num_col("translate", "Translate (s)", lambda r: r.translation_wall, ".2f"),
+    _num_col("sim", "Sim (s)", lambda r: r.sim_wall, ".2f"),
+    _num_col("total", "Total (s)", lambda r: r.total_wall, ".2f"),
+    # Keyed "detail": the column-resize follow reads --col-w-detail.
+    _text_col("detail", "Message", lambda r: r.message),
+)
+
+
+def summary_fields(
+    comp: TestComparison,
+    *,
+    warnings: list | None = None,
+    stats: Mapping[str, Any] | None = None,
+    ref_id: str | None = None,
+    ref_file: Path | None = None,
+    field_sources: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """The row-level numbers of *comp*, as the per-test sidecar's
+    ``summary`` carries them (bar its ``model_id`` / ``written_at``).
+
+    *warnings* defaults to the comparison's own; *stats* is the result's
+    statistics, whose ``timing`` block holds the phase walls.
+    """
+    status, status_class = classify_with_class(comp)
+    variables = comp.variables
+    warns = comp.warnings if warnings is None else warnings
+    # Worst score across the leaves that HAVE one: a sentinel leaf carries
+    # inf/nan, and a plain max() let it swallow every real number on the
+    # test. ``n_unscored`` is what the column says when nothing finite is
+    # left.
+    worst, n_unscored = worst_finite_score(variables)
+    timing = stats.get("timing") if isinstance(stats, Mapping) else None
+    if not isinstance(timing, Mapping):
+        timing = {}
+    return {
+        "status": status,
+        "status_text": STATUS_LABELS[status],
+        "status_class": status_class,
+        "ref_id": ref_id,
+        # file:// URL so the dashboard's Reference column can hyperlink
+        # directly to the stored reference JSON.
+        "ref_file": ref_file.as_uri() if ref_file else None,
+        "worst_nrmse": worst,
+        "n_unscored": n_unscored,
+        "n_vars": len(variables),
+        "n_vars_passed": sum(1 for v in variables if v.passed),
+        "n_warnings": len(warns) if warns else 0,
+        "translation_wall": timing.get("translation_wall"),
+        "sim_wall": timing.get("sim_wall"),
+        "total_wall": timing.get("total_wall"),
+        "field_sources": dict(field_sources or {}),
+    }
+
+
+def row_from_status(entry: Mapping[str, Any]) -> TestRow:
+    """A row from one ``status.json`` ``tests[]`` entry — a live row."""
+    report_dir = entry.get("report_dir") or ""
+    return TestRow(
+        model_id=entry.get("model_id") or "",
+        test_key=entry.get("test_key"),
+        status=live_status(entry.get("status", "queued")),
+        # A live ref_id follows the "ref_NNNN" naming of a report_dir the run
+        # pre-populated (backend.ref_id_map); a test with no baseline yet has
+        # its test_key there, and no ref_id.
+        ref_id=report_dir if report_dir.startswith("ref_") else None,
+        report_dir=entry.get("report_dir") or entry.get("test_key"),
+        field_sources=entry.get("field_sources") or {},
+        worker_id=entry.get("worker_id"),
+        elapsed=entry.get("elapsed"),
+        started_wall=entry.get("started_wall"),
+        message=entry.get("detail"),
+    )
+
+
+#: A sidecar's field → the row's.
+_SUMMARY_TO_ROW = (
+    ("worst_nrmse", "worst_score"),
+    ("n_unscored", "n_unscored"),
+    ("n_vars", "n_vars"),
+    ("n_vars_passed", "n_vars_passed"),
+    ("n_warnings", "n_warnings"),
+    ("translation_wall", "translation_wall"),
+    ("sim_wall", "sim_wall"),
+    ("total_wall", "total_wall"),
+    ("ref_id", "ref_id"),
+    ("ref_file", "ref_file"),
+    ("field_sources", "field_sources"),
+)
+
+_STATUS_BY_LABEL = {label: s for s, label in STATUS_LABELS.items()}
+
+
+def enrich_row(
+    row: TestRow, summary: Mapping[str, Any], *, start_wall: float | None
+) -> TestRow:
+    """*row* with a ``summary``'s fields, or *row* unchanged when the summary
+    is not this run's verdict on this test. Two guards (D91 — see
+    ``pipeline.wipe_stale_state_for_scope``):
+
+    1. **model_id mismatch** — the sidecar belongs to another test
+       (bookkeeping drift between batch_manifest and reports/).
+    2. **Stale timestamp** — its ``written_at`` is older than the run's
+       ``start_wall``: a prior run's sidecar the wipe did not clear, whose
+       verdict must not override this run's.
+
+    Both guards print a one-line warning to stderr, so a skipped
+    enrichment is visible.
+    """
+    sidecar_model = summary.get("model_id")
+    if sidecar_model and row.model_id and sidecar_model != row.model_id:
+        print(
+            f"# WARN: sidecar model_id mismatch (expected {row.model_id!r}, "
+            f"sidecar has {sidecar_model!r}); ignoring enrichment.",
+            file=sys.stderr,
+        )
+        return row
+    written_at = summary.get("written_at")
+    if start_wall is not None and written_at is not None and written_at < start_wall:
+        print(
+            f"# WARN: stale sidecar for {row.model_id!r} "
+            f"(written_at={written_at} < start_wall={start_wall}); "
+            f"ignoring enrichment.",
+            file=sys.stderr,
+        )
+        return row
+    changes: dict[str, Any] = {
+        dst: summary[src] for src, dst in _SUMMARY_TO_ROW if src in summary
+    }
+    # The compare phase's verdict replaces the live state. A sidecar written
+    # before ``status`` existed carries only the word a person reads.
+    status = summary.get("status") or _STATUS_BY_LABEL.get(
+        summary.get("status_text") or ""
+    )
+    if status:
+        changes["status"] = status
+    return replace(row, **changes)

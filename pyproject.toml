@@ -118,6 +118,7 @@ files = [
     "src/dstf/storage",
     "src/dstf/config.py",
     "src/dstf/pipeline.py",
+    "src/dstf/reporting/rows.py",
 ]
 ignore_missing_imports = true   # fmpy / OMPython / Dymola interface / julia have no stubs
 check_untyped_defs = true

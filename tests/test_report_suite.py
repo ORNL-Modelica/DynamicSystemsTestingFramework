@@ -1760,6 +1760,8 @@ class TestReviewPlotsPath:
         (plot,) = seen["plots"]
         assert plot.series == ("x", "z")
         assert list(seen["extra_series"]) == ["z"]
+        # The sidecar's verdict comes from the comparison itself.
+        assert seen["comparison"] is s.comparisons[A]
 
 
 def test_a_tracked_variable_the_tree_does_not_score_carries_its_own_series(tmp_path):

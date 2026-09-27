@@ -285,6 +285,7 @@ def _generate_and_open_plots(model_id, comp, result, store, config, test=None) -
         test_model=test,
         ref_file=ref_file,
         warnings=comp.warnings,
+        comparison=comp,
         metric_tree=comp.metric_tree,
         artifact_files=artifact_files,
         max_embedded_samples=config.max_embedded_samples,
