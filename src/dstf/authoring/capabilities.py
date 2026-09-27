@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 class Placement(Enum):
     """Where a capability attaches (brief §3.2; D129): the Suite page's
-    batch bar, the Test page's header, a plot card's variable footer, the
+    batch bar, the Test page's status strip, a plot card's variable footer, the
     open criterion's editor, a tree node's place in the tree. A capability
     names the frozenset it attaches at; the shell draws it at each and knows
     no capability by name. The tab strip this replaces listed one tab per

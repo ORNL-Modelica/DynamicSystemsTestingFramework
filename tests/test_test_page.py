@@ -610,9 +610,12 @@ async def test_the_test_header_is_a_second_row_of_the_shared_header(shell):
     async with user_simulation(root=shell.index) as user:
         await _test_page(shell, user)
         sub = _one(user, "subheader")
-        for marker in ("back", "model", "status", "test-actions"):
+        for marker in ("back", "model", "status"):
             assert sub in list(_ancestors(_one(user, marker))), marker
+        # Its TEST-placement buttons are the strip's, the header's third row.
+        assert sub not in list(_ancestors(_one(user, "test-actions")))
         header = sub.parent_slot.parent
+        assert header in list(_ancestors(_one(user, "strip")))
         assert isinstance(header, ui.header)
         assert header in list(_ancestors(_one(user, "wordmark")))
         assert _one(user, "status").text == "FAIL"
@@ -5215,3 +5218,196 @@ async def test_the_focus_bar_names_the_plot_as_its_title_does(drawer_shell):
         assert _one(user, "focus-bar:text").text == (
             "Showing 1 of 2 plots: x, z, pipe.T[1:3]"
         )
+
+
+# -- the status strip (Q2 A) -------------------------------------------------
+
+
+def _strip_buttons(user) -> dict[str, str]:
+    """Each TEST-placement action in the strip: ``filled`` / ``quiet`` for a
+    button, ``menu`` for an item of the ⋮."""
+    out: dict[str, str] = {}
+    for name in ("accept", "rerun"):
+        if not _none(user, f"action:{name}"):
+            props = _one(user, f"action:{name}").props
+            out[name] = "filled" if "unelevated" in props else "quiet"
+        elif not _none(user, f"menu-action:{name}"):
+            out[name] = "menu"
+    return out
+
+
+async def test_the_strip_says_a_failing_test_and_fills_accept(shell):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        strip = _one(user, "strip")
+        assert "dstf-strip-red" in strip.classes
+        assert _one(user, "strip-text").text == (
+            "Fails 2 of 2 criteria. If the new behaviour is right, accept it as "
+            "the baseline."
+        )
+        assert _strip_buttons(user) == {"accept": "filled", "rerun": "quiet"}
+        assert _none(user, "action-more")
+        # In the header, below the sub-header; the sub-header holds no bar.
+        header = _one(user, "subheader").parent_slot.parent
+        assert header in list(_ancestors(strip))
+        assert strip in list(_ancestors(_one(user, "test-actions")))
+        assert _one(user, "subheader") not in list(
+            _ancestors(_one(user, "test-actions"))
+        )
+        # Invisible: the user simulation finds no hidden element.
+        assert _none(user, "strip-preview") and _none(user, "strip-discard")
+        assert page.strip.situation.value == "fail"
+
+
+async def test_the_strip_on_a_passing_test_tucks_accept_into_its_menu(shell):
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        assert "dstf-strip-grey" in _one(user, "strip").classes
+        assert _one(user, "strip-text").text == "Passes against its baseline."
+        assert _strip_buttons(user) == {"accept": "menu", "rerun": "quiet"}
+        _one(user, "action-more")
+        user.find(marker="menu-action:accept").click()
+        await user.should_see(marker="panel:accept", retries=20)
+
+
+async def test_the_strip_on_a_test_with_no_baseline_fills_accept(shell):
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, B)
+        assert "dstf-strip-amber" in _one(user, "strip").classes
+        assert _one(user, "strip-text").text == (
+            "No baseline yet — accept this result as the first one."
+        )
+        assert _strip_buttons(user)["accept"] == "filled"
+
+
+async def test_the_strip_on_an_unfinished_run_fills_rerun(shell):
+    """C's last run never finished it (its manifest entry is still pending):
+    there is no result to read, whatever the loaded TestResult says."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, C)
+        assert shell.session.project.results.get(C) is not None
+        assert _one(user, "strip-text").text == (
+            "No result yet — rerun to simulate it."
+        )
+        assert "dstf-strip-grey" in _one(user, "strip").classes
+        assert _strip_buttons(user) == {"accept": "menu", "rerun": "filled"}
+        assert page.strip.situation.value == "no_result"
+
+
+async def test_the_strip_says_a_simulate_only_test_runs(shell):
+    from dataclasses import replace
+
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        comp = shell.session.comparisons[D]
+        shell.session.comparisons[D] = replace(comp, simulate_only=True)
+        with page.client:
+            page.sync()
+        assert _one(user, "strip-text").text == (
+            "Simulate-only: it runs, and nothing is compared."
+        )
+        assert "dstf-strip-grey" in _one(user, "strip").classes
+        assert _strip_buttons(user) == {"accept": "quiet", "rerun": "quiet"}
+
+
+async def test_the_strip_with_an_edit_offers_preview_and_its_discard(shell):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        other = PatchOp(A, "add", "/comparison", {"tolerance": 1.0})
+        shell.session.stage([other])
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
+        await _settled(lambda: "dstf-strip-amber" in _one(user, "strip").classes)
+        assert _one(user, "strip-text").text == (
+            "1 unsaved edit · verdict would change PASS → FAIL"
+        )
+        preview, discard = _one(user, "strip-preview"), _one(user, "strip-discard")
+        assert preview.visible and "unelevated" in preview.props
+        assert preview.text == "Preview and save"
+        assert discard.visible and "flat" in discard.props
+        assert discard.text == "Discard" and discard.enabled
+        assert _strip_buttons(user) == {"accept": "menu", "rerun": "menu"}
+        assert page.strip.situation.value == "edits"
+        user.find(marker="strip-preview").click()
+        assert page.header.drawer.element.value is True
+        user.find(marker="strip-discard").click()
+        await _settled(lambda: "dstf-strip-grey" in _one(user, "strip").classes)
+        assert shell.session.spec.pending == [other]  # A's edit stays
+        assert _one(user, "strip-text").text == "Passes against its baseline."
+        assert _none(user, "strip-preview") and _none(user, "strip-discard")
+
+
+async def test_the_strip_asks_the_saved_verdict_once_per_paint_and_only_with_edits(
+    shell, monkeypatch
+):
+    calls: list[str] = []
+    real = type(shell.session).saved_comparison
+
+    def counting(self, model_id):
+        calls.append(model_id)
+        return real(self, model_id)
+
+    monkeypatch.setattr(type(shell.session), "saved_comparison", counting)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        assert calls == []
+        shell.session.stage([PatchOp(A, "add", "/comparison", {"tolerance": 1.0})])
+        await asyncio.sleep(0.2)
+        assert calls == []  # A's edit is not this page's
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
+        await _settled(lambda: page.strip.situation.value == "edits")
+        n = len(calls)
+        assert n >= 1 and set(calls) == {D}
+        with page.client:
+            page.sync()
+        assert len(calls) == n + 1
+
+
+async def test_the_strips_discard_is_refused_while_a_job_runs(shell):
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
+        shell.session.apply(
+            Job(run=gate, label="Probe", models=frozenset({B}), reloads_results=False)
+        )
+        await _settled(lambda: shell.session.running is not None)
+        button = page.strip.discard.button
+        await _settled(lambda: not button.enabled)
+        with page.client:
+            page.strip._discard()  # a click in the tick the job started in
+        assert len(shell.session.spec.pending) == 1
+        gate.release.set()
+        await _settled(lambda: shell.session.running is None)
+        await _settled(lambda: button.enabled)
+
+
+async def test_the_strip_says_a_running_job_on_this_test(shell):
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        shell.session.apply(
+            Job(run=gate, label="Probe", models=frozenset({A}), reloads_results=False)
+        )
+        await _settled(
+            lambda: _one(user, "strip-text").text == "Probe is running on this test."
+        )
+        assert "dstf-strip-grey" in _one(user, "strip").classes
+        gate.release.set()
+        await _settled(lambda: "dstf-strip-red" in _one(user, "strip").classes)
+
+
+async def test_a_gone_test_leaves_the_strip_blank_and_a_returning_one_fills_it(
+    shell, tmp_path
+):
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        shell.session.close()
+        await _settled(lambda: page.gone)
+        assert _one(user, "strip-text").text == ""
+        assert page.strip.situation is None
+        assert _none(user, "action:accept") and _none(user, "action:rerun")
+        cfg, work = _two_var_project(tmp_path / "again")
+        shell.session.open(cfg, work_dir=work)
+        await _settled(lambda: not page.gone)
+        assert "dstf-strip-red" in _one(user, "strip").classes
+        assert _strip_buttons(user) == {"accept": "filled", "rerun": "quiet"}

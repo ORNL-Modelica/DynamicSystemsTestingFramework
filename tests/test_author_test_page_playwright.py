@@ -345,9 +345,18 @@ def test_the_test_page_stacks_its_header_draws_on_scroll_and_jumps(
         assert row is not None and sub is not None and first_card is not None
         assert sub["y"] >= row["y"] + row["height"] - 1, (row, sub)
         assert abs(sub["x"] - row["x"]) <= 1, (row, sub)
-        actions = page.locator(".dstf-subheader .dstf-actions").bounding_box()
+        # The TEST actions are the status strip's: a third row, under the
+        # sub-header, full width, and the first card below it.
+        actions = page.locator(".dstf-strip .dstf-actions").bounding_box()
         assert actions is not None
         assert actions["x"] + actions["width"] <= VIEWPORT["width"], actions
+        assert page.locator(".dstf-subheader .dstf-actions").count() == 0
+        strip = page.locator(".dstf-strip").bounding_box()
+        assert strip is not None
+        assert page.locator(".q-header .dstf-strip").count() == 1
+        assert strip["y"] >= sub["y"] + sub["height"] - 1, (sub, strip)
+        assert strip["x"] >= 0 and strip["x"] + strip["width"] <= VIEWPORT["width"]
+        assert first_card["y"] >= strip["y"] + strip["height"], (strip, first_card)
         # The verdict's own fill, not Quasar's `bg-primary` blue.
         assert (
             page.locator(".dstf-subheader .dstf-badge").evaluate(
@@ -360,6 +369,8 @@ def test_the_test_page_stacks_its_header_draws_on_scroll_and_jumps(
         still = page.locator(".dstf-subheader").bounding_box()
         assert still is not None and 0 <= still["y"], still
         assert still["y"] + still["height"] <= VIEWPORT["height"], still
+        kept = page.locator(".dstf-strip").bounding_box()
+        assert kept is not None and abs(kept["y"] - strip["y"]) <= 1, (strip, kept)
         layout = page.evaluate(
             "() => ({scroll: document.documentElement.scrollWidth,"
             " client: document.documentElement.clientWidth})"
@@ -1994,29 +2005,33 @@ TRANSFORM_MODEL = (
 #: Longer than a 900 px window's line: the id breaks inside itself.
 OVERLONG_MODEL = TRANSFORM_MODEL.replace("Examples.", "Examples.Variants.WithWall.")
 
-#: The Test page's subheader: each child that ends past the window's right
-#: edge or whose text overflows its own box (cut off, as an id that cannot
-#: break is inside a box that fits), each of its buttons whose label is taller than `k` line heights
-#: (1.5 finds a second line, 2.5 a third), and how far short of its right
-#: edge the TEST actions stop.
+#: The Test page's subheader and the status strip under it: each child
+#: that starts left of the window or ends past its right edge, or whose
+#: text overflows its own box (cut off, as an id that cannot break is
+#: inside a box that fits), each of their buttons whose label is taller
+#: than `k` line heights (1.5 finds a second line, 2.5 a third), and how
+#: far short of the strip's right edge the TEST actions stop.
 SUBHEADER_PAST = """(k) => {
   const past = [], tall = [];
   const sub = document.querySelector('.dstf-subheader');
-  for (const el of sub.children) {
+  // The TEST actions are the status strip's, the header's third row.
+  const strip = document.querySelector('.dstf-strip');
+  for (const el of [...sub.children, ...strip.children]) {
     const r = el.getBoundingClientRect();
     if (r.width && r.right > window.innerWidth) past.push([el.textContent, r.right]);
+    if (r.width && r.left < 0) past.push([el.textContent, r.left]);
     if (el.scrollWidth > el.clientWidth + 1) past.push([el.textContent, el.scrollWidth]);
   }
-  const pad = parseFloat(getComputedStyle(sub).paddingRight);
-  const act = sub.querySelector(':scope > .dstf-actions').getBoundingClientRect();
-  for (const b of sub.querySelectorAll('.q-btn')) {
+  const pad = parseFloat(getComputedStyle(strip).paddingRight);
+  const act = strip.querySelector(':scope > .dstf-strip-actions').getBoundingClientRect();
+  for (const b of [...sub.querySelectorAll('.q-btn'), ...strip.querySelectorAll('.q-btn')]) {
     const c = b.querySelector('.q-btn__content') || b;
     const s = getComputedStyle(c);
     const line = parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.2;
     const h = c.getBoundingClientRect().height;
     if (h > k * line) tall.push([b.textContent, h, line]);
   }
-  return [past, tall, sub.getBoundingClientRect().right - pad - act.right];
+  return [past, tall, strip.getBoundingClientRect().right - pad - act.right];
 }"""
 
 
@@ -2042,7 +2057,8 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
     Test page's subheader is cut off at 1280 or 900 px: kept to one line, it
     put Accept and Rerun past the window's edge. Its buttons keep one line
     at 1280 and at most two at 900 (the owner's ruling for the header), the
-    TEST actions end at its right edge, and "← Suite" keeps one line. The
+    TEST actions end at the status strip's right edge (the strip under it
+    holds them now), and "← Suite" keeps one line. The
     row wraps rather than squeezing the id: a subheader kept to one line
     fitted by breaking the id over lines it did not need. A
     card's toolbar and a criteria row's node controls end at their row's
@@ -2116,6 +2132,15 @@ def test_plot_cards_wrap_at_900_px_beside_a_drawer(tmp_path, playwright_browser)
                 )
                 assert past == [] and tall == [], (text, width, past, tall)
                 assert abs(gap) <= 4, (text, width, gap)
+                # The header grew by the strip and a wrapped sub-header:
+                # the page's top padding follows it, and nothing is under it.
+                page.evaluate("() => window.scrollTo(0, 0)")
+                page.wait_for_function(
+                    "document.querySelector('.dstf-test').getBoundingClientRect().top"
+                    " >= document.querySelector('.q-header')"
+                    ".getBoundingClientRect().bottom - 1",
+                    timeout=EXPECT_TIMEOUT,
+                )
                 assert back.evaluate(LINES_OF) <= 1.5, (text, width)
                 # The row wraps rather than squeezing the id: an id a line
                 # holds keeps one line, and the one no line holds two.

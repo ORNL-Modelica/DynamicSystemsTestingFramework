@@ -56,11 +56,22 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
 /* The Test page's subheader WRAPS: kept to one line beside a real
    library's model id, it put Accept and Rerun past a 900 px window (wholly
    off it on a TRANSFORM-length id) and squeezed Rerun to seven lines. The
-   id breaks at any character when a line cannot hold it; the TEST actions
-   keep to the right, on the id's line when they fit and below it, as one
-   group, when not. */
+   id breaks at any character when a line cannot hold it. The TEST actions
+   are the status strip's now, below it. */
 .dstf-subheader .dstf-model { overflow-wrap: anywhere; }
-.dstf-subheader > .dstf-actions { margin-left: auto; }
+/* The Test page's status strip: a third row of the header, its tone a
+   3 px left border and a tint. The sentence takes what is left and wraps;
+   its buttons keep to the right as one group, below it when they do not
+   fit. */
+.dstf-strip {
+  border-top: 1px solid var(--dstf-border); border-left: 3px solid;
+  padding: 4px 24px 4px 21px; min-height: 36px; row-gap: 4px;
+}
+.dstf-strip-grey { background: var(--dstf-queued-tint); border-left-color: var(--dstf-queued-border); }
+.dstf-strip-red { background: var(--dstf-fail-tint); border-left-color: var(--dstf-fail-border); }
+.dstf-strip-amber { background: var(--dstf-warn-tint); border-left-color: var(--dstf-warn-border); }
+.dstf-strip-text { flex: 1 1 20em; }
+.dstf-strip > .dstf-strip-actions { margin-left: auto; }
 .dstf-pill {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: .03em; padding: 1px 6px; border-radius: 3px; border: 1px solid;

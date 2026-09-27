@@ -19,20 +19,23 @@ from nicegui import ui
 
 from ...config import ConfigError
 from ...discovery.patch_apply import PatchError
-from ...reporting.status import classify_with_class
+from ...reporting.status import classify, classify_with_class
+from ...storage.batch_manifest import unfinished_run_models
 from ...storage.ref_index import RefIndex
-from ..capabilities import Placement, plural
+from ..capabilities import plural
 from ..errors import user_text
 from ..layout import Layout, layout_op, reset_op
-from ..session import JobRunningError, LockedError, Selection
+from ..session import JobRunningError, LockedError
+from ..situation import Strip, strip_for
 from ..tree_pointer import node_or_none
 from ..tree_text import leaves_of, nodes_of
 from .actions import ActionBar, RowBuild, RowTarget
 from .header import Header
 from .plot_card import UNREAD, PlotCard, folded
 from .rail import Rail
+from .strip import StatusStrip
 from .tabstate import tab_state
-from .tree_card import TreeCard
+from .tree_card import TreeCard, leaf_status
 
 if TYPE_CHECKING:
     from .shell import Shell
@@ -77,6 +80,8 @@ class TestPage:
         self.model_id = ""
         self.badge: ui.badge | None = None
         self.meta: ui.label | None = None
+        #: The status strip under the sub-header, and its TEST-placement bar.
+        self.strip: StatusStrip | None = None
         self.actions: ActionBar | None = None
         self.tree: TreeCard | None = None
         self.cards: list[PlotCard] = []
@@ -114,7 +119,7 @@ class TestPage:
         # frame to fill — `sync` returned early for ever and the test never
         # came back however many events arrived (the final review). `sync`
         # below fills it, or `_gone` writes the sentence into it.
-        self.header = Header(self.shell, below=self._subheader)
+        self.header = Header(self.shell, below=self._subheader, strip=self._strip)
         self.rail = Rail(self)
         with ui.column().classes("dstf-test w-full q-pa-md gap-3"):
             self.tree = TreeCard(self)
@@ -151,24 +156,25 @@ class TestPage:
 
     def _subheader(self) -> None:
         """The test's own header, drawn inside the shared one (decision 8):
-        the way back, the test, its verdict and where it was scored, then
-        the TEST-placement buttons."""
-        model_id = self.model_id
+        the way back, the test, its verdict and where it was scored. Its
+        TEST-placement buttons are the strip's, under it."""
         # One line: beside a long model id and Rerun's caption with an edit
         # pending, "← Suite" broke after the arrow at 1280 px.
         ui.link("← Suite", "/").classes("text-no-wrap").mark("back")
-        ui.label(model_id).classes("dstf-model text-subtitle1 dstf-mono").mark("model")
+        ui.label(self.model_id).classes("dstf-model text-subtitle1 dstf-mono").mark(
+            "model"
+        )
         # `color=None`: a Quasar badge otherwise carries `bg-primary`, whose
         # `!important` beats the inline status fill and paints every verdict
         # blue (the Task 4 review, in Chromium).
         self.badge = ui.badge("", color=None).classes("dstf-badge").mark("status")
         self.meta = ui.label().classes("text-secondary text-xs").mark("meta")
-        self.actions = ActionBar(
-            self.shell,
-            Placement.TEST,
-            lambda: Selection(tests=frozenset({model_id})),
-            marker="test-actions",
-        )
+
+    def _strip(self) -> None:
+        """The header's third row: the test's situation and its next
+        action (Q2 A)."""
+        self.strip = StatusStrip(self)
+        self.actions = self.strip.actions
 
     def _result(self) -> Any:
         project = self.shell.session.project
@@ -602,13 +608,9 @@ class TestPage:
 
     # -- following the Session -------------------------------------------------
 
-    def _paint(self) -> None:
+    def _paint(self, view: dict | None) -> None:
         if self.badge is None or self.meta is None:
             return
-        if self.actions is not None:
-            # `_gone` hid the bar; its buttons are rebuilt by `handle`'s
-            # refresh, for the project that is open now.
-            self.actions.container.set_visibility(True)
         session = self.shell.session
         comp = session.comparisons.get(self.model_id)
         verdict, css = classify_with_class(comp) if comp is not None else ("", "queued")
@@ -624,6 +626,44 @@ class TestPage:
             None if ref_id is None else RefIndex.ref_filename(ref_id).rsplit(".", 1)[0]
         )
         self.meta.set_text(f"{project.config.backend_name} · {ref or 'no baseline'}")
+        if self.strip is not None:
+            # `_gone` blanked the strip and hid its bar; this brings both
+            # back, for the project that is open now.
+            self.strip.paint(self._situation(comp, view))
+
+    def _situation(self, comp: Any, view: dict | None) -> Strip:
+        """The strip's inputs, read from the Session: the verdict as edited
+        and — only with this test's edits pending — as saved."""
+        session, model_id = self.shell.session, self.model_id
+        project = session.project
+        assert project is not None  # `_paint` returned before without one
+        edits = sum(1 for op in session.spec.pending if op.model_id == model_id)
+        saved = session.saved_comparison(model_id) if edits else None
+        running = session.running
+        # A test whose last run never finished it has a result that is not
+        # one (what Accept's "re-run before accepting" reads).
+        work_dir = project.config.work_dir
+        assert work_dir is not None  # resolved in Config.__post_init__
+        has_result = self._result() is not None and (
+            model_id not in unfinished_run_models(work_dir)
+        )
+        statuses = [leaf_status(leaf) for leaf in leaves_of(view)]
+        return strip_for(
+            running=(
+                running.label
+                if running is not None and model_id in running.models
+                else None
+            ),
+            edits=edits,
+            status=classify(comp) if comp is not None else None,
+            saved_status=classify(saved) if saved is not None else None,
+            has_result=has_result,
+            scoring_failed=comp is None and model_id in self.shell.load.failed_models,
+            simulate_only=comp is not None and comp.simulate_only,
+            fails=statuses.count("fail"),
+            criteria=len(statuses),
+            advisory=statuses.count("warn"),
+        )
 
     def sync(self, force: bool = False) -> None:
         """Follow the Session: ONE `tree_view` read, handed to the tree card
@@ -635,8 +675,8 @@ class TestPage:
         if not self._known():
             self._gone()
             return
-        self._paint()
         view = self._view()
+        self._paint(view)
         if self.tree is not None:
             self.tree.refresh(view)
         if self.column is None:
@@ -676,21 +716,18 @@ class TestPage:
         traceback. It says what a page BUILT for an unknown model says, and
         a later event that finds the test again rebuilds (`_shape`).
 
-        The sub-header goes with the cards: it stayed live and stale — the
-        last project's verdict, its baseline's name, and buttons whose
-        Rerun started a job for a model this project does not have (the
-        final review). `_paint` and `handle`'s refresh bring it back."""
+        The sub-header and the strip go with the cards: they stayed live
+        and stale — the last project's verdict, its baseline's name, and
+        buttons whose Rerun started a job for a model this project does not
+        have (the final review). `_paint` brings them back."""
         if self.gone or self.column is None:
             return
         self.gone = True
         self._close()
         self._close_row()
         self.pending_reveal = None
-        if self.actions is not None:
-            self.actions.dialog.close()
-            self.actions.container.clear()
-            self.actions.actions = {}
-            self.actions.container.set_visibility(False)
+        if self.strip is not None:
+            self.strip.forget()
         if self.badge is not None:
             self.badge.set_text("")
             self.badge.style("background-color: transparent")

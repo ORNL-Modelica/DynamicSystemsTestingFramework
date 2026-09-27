@@ -96,7 +96,12 @@ MENUITEM = 'role="menuitem"'
 
 
 class Header:
-    def __init__(self, shell: Shell, below: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self,
+        shell: Shell,
+        below: Callable[[], None] | None = None,
+        strip: Callable[[], None] | None = None,
+    ) -> None:
         self.shell = shell
         self.drawer = PendingDrawer(shell)
         self.dialog = ui.dialog()  # the header's dialogs, one element rebuilt per use
@@ -210,6 +215,11 @@ class Header:
                 sub = ui.row().classes("dstf-subheader items-center gap-3 w-full")
             with sub.mark("subheader"):
                 below()
+        if strip is not None:
+            # A third row, under the second: the Test page's status strip,
+            # sticky for the same reason. It draws its own row.
+            with bar:
+                strip()
         self.refresh()
 
     def handle(self, event: dict[str, Any]) -> None:
@@ -427,6 +437,12 @@ class PendingDrawer:
 
     def toggle(self) -> None:
         self.element.toggle()
+
+    def show(self, model_id: str) -> None:
+        """Open the drawer on ``model_id``'s edits (the strip's Preview and
+        save). The drawer lists every test's; scrolling to this one's comes
+        with the preview."""
+        self.element.set_value(True)
 
     def refresh(self) -> None:
         self.body.clear()
