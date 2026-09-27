@@ -531,7 +531,7 @@ def test_add_beside_a_root_leaf_wraps_the_root_in_and(session):
     assert len(session.tree(A)["children"]) == 2
 
 
-def test_add_beside_a_leaf_appends_to_its_parent(session):
+def test_add_beside_a_leaf_lands_right_after_it(session):
     session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
     view = SessionView(session, _node(D, "/metrics/children/1"))
     outcome = EditTree().act(
@@ -543,10 +543,10 @@ def test_add_beside_a_leaf_appends_to_its_parent(session):
         metric="nrmse",
     )
     (op,) = outcome.ops
-    assert (op.op, op.path) == ("add", "/metrics/children/-")
+    assert (op.op, op.path) == ("add", "/metrics/children/2")  # right after it
 
 
-def test_add_beside_a_nested_leaf_appends_to_its_own_parent(session):
+def test_add_beside_a_nested_leaf_lands_right_after_it_in_its_own_parent(session):
     """Two levels deep: the parent is everything before the LAST
     `/children/` — read from the first, the leaf would join the root."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
@@ -560,7 +560,7 @@ def test_add_beside_a_nested_leaf_appends_to_its_own_parent(session):
         metric="range",
     )
     (op,) = outcome.ops
-    assert (op.op, op.path) == ("add", "/metrics/children/1/children/-")
+    assert (op.op, op.path) == ("add", "/metrics/children/1/children/1")
 
 
 def test_add_under_a_combinator_is_unchanged(session):
@@ -1308,12 +1308,9 @@ async def test_add_reveals_the_new_criterion(session):
         user.find(marker=f"add:{ROOT}").click()
         await user.should_see(marker=f"apply-add:{ROOT}")
         assert _one(user, "host-row:title").text == (
-            "Add a criterion under and · 3 criteria"
+            "Add a criterion at the end of and · 3 criteria"
         )
-        await user.should_see(
-            "Added as the last child, with values from the data where the "
-            "metric needs them."
-        )
+        await user.should_see("Values come from the data where the metric needs them.")
         user.find(marker=f"apply-add:{ROOT}").click()
         await _settled(lambda: len(session.tree(D)["children"]) == 4)
         assert reveals == ["/metrics/children/3"] and e == {}
@@ -1323,7 +1320,7 @@ async def test_add_reveals_the_new_criterion(session):
     async with host(session, EditTree(), _node(D, ROOT), reveals) as (user, e, _f):
         user.find(marker=f"add:{ROOT}").click()
         await user.should_see(marker=f"apply-add:{ROOT}")
-        assert _one(user, "host-row:title").text == ("Add a criterion beside nrmse · x")
+        assert _one(user, "host-row:title").text == ("Add a criterion after nrmse · x")
         user.find(marker=f"apply-add:{ROOT}").click()
         await _settled(lambda: "combinator" in session.tree(D))
         assert reveals == ["/metrics/children/1"] and e == {}
@@ -1510,9 +1507,9 @@ def test_unwrap_at_a_later_index_lands_its_children_there(session):
     assert session.tree(D) == {"combinator": "and", "children": [l0, a, b, l2]}
 
 
-async def test_add_beside_a_nested_leaf_reveals_its_parents_next_child(session):
-    """Beside a leaf two levels down: the new criterion is its OWN parent's
-    next child, not the root's."""
+async def test_add_beside_a_nested_leaf_reveals_the_place_right_after_it(session):
+    """Beside a leaf two levels down: the new criterion lands right after
+    it, in its OWN parent, not the root."""
     session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
     leaf = "/metrics/children/1/children/0"
     reveals: list[str] = []
@@ -1521,7 +1518,7 @@ async def test_add_beside_a_nested_leaf_reveals_its_parents_next_child(session):
         await user.should_see(marker=f"apply-add:{leaf}")
         user.find(marker=f"apply-add:{leaf}").click()
         await _settled(lambda: len(session.tree(D)["children"][1]["children"]) == 3)
-        assert reveals == ["/metrics/children/1/children/2"] and e == {}
+        assert reveals == ["/metrics/children/1/children/1"] and e == {}
 
 
 async def test_the_add_rows_fields_read_variable_and_metric(session):
@@ -1990,3 +1987,81 @@ async def test_a_refused_unwrap_keeps_the_edit_row(session):
         assert k.value == 1
         assert len(session.spec.pending) == staged
         assert session.tree(D)["children"][1]["children"][0]["combinator"] == "k-of-n"
+
+
+# -- a criterion's + adds the new one right AFTER it (Q3 A) -----------------
+
+THREE = {
+    "combinator": "and",
+    "children": [
+        {"metric": "nrmse", "variable": "x"},
+        {"metric": "range", "variable": "x", "max_value": 9.0},
+        {"metric": "range", "variable": "x", "max_value": 5.0},
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    ("tree", "path", "op_path", "added"),
+    [
+        (THREE, ROOT, "/metrics/children/-", "/metrics/children/3"),
+        (THREE, "/metrics/children/1", "/metrics/children/2", "/metrics/children/2"),
+        (THREE, "/metrics/children/2", "/metrics/children/3", "/metrics/children/3"),
+        (
+            NESTED,
+            "/metrics/children/1/children/0",
+            "/metrics/children/1/children/1",
+            "/metrics/children/1/children/1",
+        ),
+        (NESTED, "/metrics/children/0", "/metrics/children/1", "/metrics/children/1"),
+    ],
+)
+def test_plus_adds_right_after_the_clicked_criterion(
+    session, tree, path, op_path, added
+):
+    """`act` stages it there and `_added_path` — the path `reveal` opens —
+    predicts the same place, read from the tree before the add."""
+    from dstf.authoring.builtin.edit_tree import _added_path
+    from dstf.authoring.tree_pointer import node_or_none
+
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(tree))])
+    assert _added_path(session.tree(D), path) == added
+    outcome = EditTree().act(
+        SessionView(session, _node(D, path)),
+        action="add",
+        model_id=D,
+        path=path,
+        variable="x",
+        metric="range",
+    )
+    (op,) = outcome.ops
+    assert (op.op, op.path) == ("add", op_path)
+    session.apply(outcome)
+    assert node_or_none(session.tree(D), added)["metric"] == "range"
+
+
+def test_plus_beside_a_root_leaf_reveals_the_roots_second_child(session):
+    from dstf.authoring.builtin.edit_tree import _added_path
+
+    session.stage([PatchOp(D, "add", ROOT, {"metric": "nrmse", "variable": "x"})])
+    assert _added_path(session.tree(D), ROOT) == "/metrics/children/1"
+
+
+async def test_the_plus_tooltip_and_title_say_where_the_criterion_lands(session):
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(THREE))])
+    leaf = "/metrics/children/1"
+    async with host(session, EditTree(), _node(D, leaf)) as (user, _e, _f):
+        assert _tips(_one(user, f"add:{leaf}")) == ["Add a criterion after this one"]
+        user.find(marker=f"add:{leaf}").click()
+        await user.should_see(marker=f"apply-add:{leaf}")
+        assert _one(user, "host-row:title").text == "Add a criterion after range · x"
+        await user.should_see("Values come from the data where the metric needs them.")
+    async with host(session, EditTree(), _node(D, ROOT)) as (user, _e, _f):
+        assert _tips(_one(user, f"add:{ROOT}")) == [
+            "Add a criterion at the end of this and"
+        ]
+        user.find(marker=f"add:{ROOT}").click()
+        await user.should_see(marker=f"apply-add:{ROOT}")
+        assert _one(user, "host-row:title").text == (
+            "Add a criterion at the end of and · 3 criteria"
+        )

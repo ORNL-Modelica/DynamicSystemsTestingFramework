@@ -5411,3 +5411,25 @@ async def test_a_gone_test_leaves_the_strip_blank_and_a_returning_one_fills_it(
         await _settled(lambda: not page.gone)
         assert "dstf-strip-red" in _one(user, "strip").classes
         assert _strip_buttons(user) == {"accept": "filled", "rerun": "quiet"}
+
+
+# -- a criterion's + adds the new one right after it (Q3 A) -----------------
+
+
+async def test_plus_on_a_criterion_adds_right_after_it_and_opens_its_editor(
+    page_shell,
+):
+    """On A's `and[tube·x, range·x, range·y]`, `+` on the tube's row and Add
+    stage the new criterion at child 1 — right after the tube — and its
+    editor is open under its new row."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        await _open_form(user, f"add:{TUBE}", within=f"node:0:{TUBE}")
+        user.find(marker=f"apply-add:{TUBE}").click()
+        await _settled(lambda: len(shell.session.spec.pending) == 1)
+        (op,) = shell.session.spec.pending
+        assert (op.op, op.path) == ("add", "/metrics/children/1")
+        await _settled(lambda: page.open == (0, "/metrics/children/1"))
+        editor = _one(user, "editor:0:/metrics/children/1")
+        assert any("dstf-editor" in e.classes for e in [editor, *_ancestors(editor)])

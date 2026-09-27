@@ -86,9 +86,9 @@ _WRAP_SENTENCES = {
     "the one weight above.",
 }
 _EDIT_SENTENCE = "Changes this node's kind and fields; its children stay."
-_ADD_SENTENCE = (
-    "Added as the last child, with values from the data where the metric needs them."
-)
+#: The form row's title says where the criterion lands; this, where its
+#: values come from.
+_ADD_SENTENCE = "Values come from the data where the metric needs them."
 #: Why ``+`` is grey where a child cannot be added alone: the validator
 #: refuses it by name whatever the form says, so the form is not offered.
 _NO_ADD = {
@@ -231,8 +231,11 @@ class EditTree:
                 value = {"combinator": "and", "children": [node, leaf]}
                 return Patch(ops=[PatchOp(model_id, "add", ROOT, value)])
             else:
-                # Beside any other leaf: under its parent combinator.
-                under = path.rsplit("/children/", 1)[0]
+                # Beside any other leaf: right AFTER it, under its parent
+                # combinator (Q3 A) — where the `+` that was clicked is.
+                parent, index = path.rsplit("/children/", 1)
+                at = f"{parent}/children/{int(index) + 1}"
+                return Patch(ops=[PatchOp(model_id, "add", at, leaf)])
             return Patch(ops=[PatchOp(model_id, "add", f"{under}/children/-", leaf)])
         if action == "unwrap":
             # A single-child combinator gives way to its child (the browser
@@ -458,17 +461,16 @@ def _parent_of(path: str) -> str | None:
 def _added_path(tree: dict | None, path: str) -> str:
     """Where an Add from ``path``'s row lands, read from the tree as it is
     when the row is built — after the add the count has moved by one:
-    under a combinator its next child; beside the root leaf the root's
-    second (the root becomes an ``and`` of both); beside any other leaf
-    its parent's next child."""
+    under a combinator its next child (the end); beside the root leaf the
+    root's second (the root becomes an ``and`` of both); beside any other
+    leaf the place right after it."""
     node = node_or_none(tree, path) or {}
     if "combinator" in node:
         return f"{path}/children/{len(node.get('children') or [])}"
     if path == ROOT:
         return f"{ROOT}/children/1"
-    parent = _parent_of(path) or ROOT
-    siblings = (node_or_none(tree, parent) or {}).get("children") or []
-    return f"{parent}/children/{len(siblings)}"
+    parent, index = path.rsplit("/children/", 1)
+    return f"{parent}/children/{int(index) + 1}"
 
 
 def _cluster(
@@ -614,14 +616,16 @@ def _cluster(
             )
 
     with ui.row().classes("dstf-node-controls items-center no-wrap gap-0"):
-        where = "under" if is_combinator else "beside"
+        # A combinator takes the new criterion as its last child; a leaf
+        # has it right after itself (Q3 A).
+        where = "at the end of" if is_combinator else "after"
         icon(
             "add",
             no_add
             or (
-                "Add a criterion under this node"
+                f"Add a criterion at the end of this {node['combinator']}"
                 if is_combinator
-                else "Add a criterion beside this one"
+                else "Add a criterion after this one"
             ),
             f"add:{path}",
             lambda: ui_panel.row(f"Add a criterion {where} {text()}", build_add),
