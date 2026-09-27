@@ -40,8 +40,10 @@ DynamicSystemsTestingFramework/
 │   │                             #      the header, actions.py — ActionBar (a button + dialog) and InlineHost (panels drawn inline)),
 │   │                             #      forms.py, builtin/ (edit criteria + edit tree + accept + rerun + edit on plot)
 │   ├── figures/                  # VariableView (view) → plotly figure dicts (plotly: variable_figure, plot_figure) + array families + LTTB decimate; both tiers draw from it
-│   └── reporting/                # status.py classifier + console/junit + context_builder + report_suite + dashboard_render + theme.py (the token table both tiers render)
-│       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + vendor/plotly.min.js (offline-capable reports)
+│   └── reporting/                # status.py (the classifier + every status word and class) + rows.py (the row model both HTML surfaces render: TestRow, COLUMNS)
+│       │                         #      + console/junit + context_builder + report_suite + dashboard_render + theme.py (the token table both tiers render)
+│       └── templates/            # interactive.html + axes.js + report.js (INTERACTIVE_JS_PARTS, copied out as interactive.js) + dashboard.* + filters.js (the typed column filters)
+│                                 #      + vendor/plotly.min.js (offline-capable reports)
 ├── examples/
 │   ├── modelica/ModelicaTestingLib/   # Demo Modelica library (UnitTests component + 10+ showcase tests)
 │   ├── fmu/                           # Reference-FMUs demo (BouncingBall / Dahlquist / VanDerPol)

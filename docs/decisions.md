@@ -4934,3 +4934,88 @@ include leakage sidelobes, and on a 2 Hz sine that put the axis at 40.8 Hz.
 dialog not opening its editor, the tree `+` wording and placement and the
 weighted-combinator hint (the Test page step); rows waiting for the scan
 (the Suite table step); the squeezed tolerance column (the tolerance step).
+
+## D136 — One row model and one vocabulary for the dashboard and the Suite page (2026-09-26)
+
+**Context.** The owner ruled on the feedback board (2026-09-26): "The
+dashboard and the Suite page share one row model: the same columns and the
+same words on both. The dashboard stays a static file, for CI and for
+archiving." And, for filtering, typed column filters: status by the count
+pills, numbers by `>1e-4` / `1..10`, text by glob, with `.*` and `Aa` once in
+the toolbar. Before this, one state had four spellings — the classifier's
+`PASS/FAIL/SIM_FAIL/NO_REF`, status.json's `queued/running/passed/failed/
+timed_out`, the dashboard's own map of those, and pills reading "passed / sim
+failed / no baseline" — and the dashboard spelled its fifteen columns out
+twice in the template (header, filter row) and a third time in each row's
+`data-*` attributes.
+
+**Decision.** Three modules own it.
+
+1. *One vocabulary* (`reporting/status.py`). The four verdicts plus the
+   three live states `QUEUED`, `RUNNING`, `TIMED_OUT`; `STATUS_ORDER` (the
+   pills' order and a status sort's), `STATUS_CLASSES` (the CSS class both
+   HTML surfaces style a status with), `STATUS_LABELS` (the word a person
+   reads; only `TIMED OUT` differs from its key) and `live_status(raw)`. A
+   status.json "passed" means the simulation ran, not that the test passed,
+   so it maps to no status: such a row reads **SIMULATED**, styled with the
+   theme's existing `pending` token ("no verdict yet"). SIMULATED is a word,
+   not a status — it is in no pill and no count, and the bar's pending
+   segment carries it so a live bar still moves while tests finish.
+2. *One row model* (`reporting/rows.py`). `TestRow` (a frozen dataclass),
+   `COLUMNS` — each column's key, label, kind (`text` / `number` /
+   `status`: what a filter on it means), display text and sort value — and
+   the builders: `summary_fields` (the one computation of a row's numbers),
+   `row_from_status` (a live row) and `enrich_row` (a sidecar's summary onto
+   a row, behind the two D91 guards). The per-test sidecar's `summary` is
+   written through `summary_fields` from the `TestComparison` itself:
+   `generate_comparison_plots` takes `comparison=` instead of a status pair,
+   and gains `status` (the classifier's word) beside `status_text` /
+   `status_class`. A sidecar written before carries only `status_text`;
+   `enrich_row` reads the status back through `STATUS_LABELS`. The
+   dashboard's template loops over `COLUMNS`: every row carries
+   `data-<key>` (what a filter reads) and `data-sort-<key>` (what a sort
+   reads; empty for no value, which sorts last in both directions) for every
+   column. `data-status` stays the status class — the pills', the counts'
+   and the live tick's key. The Message column keeps the key `detail` (the
+   column-resize follow reads `--col-w-detail`). The Variables column sorts
+   and filters on the number passed, as it sorted before: `>2` means more
+   than 2 passed, and its header tooltip says so.
+3. *One typed-filter module* (`templates/filters.js`, `DstfFilters.compile(
+   kind, query, {regex, case})`), inlined before `dashboard.js`. Text: a
+   substring, an anchored glob when the query holds `*` or `?` (every other
+   character literal, so `x[1]` is an index — the rule a spec's `variables`
+   list and the tool's Python `_glob` use), or with `.*` on a regex. Numbers:
+   `>`, `>=`, `<`, `<=`, `=`, a bare number, or an inclusive range `a..b`,
+   read off `data-sort-<key>` — the raw value, never its display text, so
+   `=1.23456e-5` matches a cell that reads `1.2346e-05`. A query that cannot
+   be read marks its input red with the reason as its tooltip and filters
+   nothing. The status column has no text filter: the pills filter it, and
+   they now read the verdict words (`PASS 330 · FAIL 0 · SIM_FAIL 1 ...`).
+
+Two defects this fixes. The Resolution column had a filter input and no
+`data-resolution` on its rows, so any text typed there hid every row;
+generating every column's attributes from one list fixes it by construction.
+And a final page without sidecars — `dstf run` / `compare` without
+`--report` — read PASS for every test that simulated, including one whose
+criteria failed: `render_final` / `render_final_to` now take the comparisons
+their callers hold, and each row with a comparison gets its verdict through
+`summary_fields`, the same computation the sidecar uses; a fresh sidecar
+still enriches it after.
+
+**Consequences.** The dashboard's saved-state key moved from
+`dstf-dashboard-v1:` to `dstf-dashboard-v2:`: pill and filter keys changed,
+and a v1 state restored a pill key no pill carries, hiding every row. A
+filter or sort saved under v1 is dropped once. The pills, the bar and the
+counts are keyed by status class (`.counter.pass`, `.b-fail` = fail +
+sim-fail). The duplicate row numbers `_build_per_test_args` and the report
+index computed and nothing read are gone. JS globs and regexes backtrack: the
+same semantics as the Python `_glob`, not the same cost (`_glob` exists
+because `*a*a*a*b` took more than 20 s), so a runaway pattern can freeze the
+browser tab it is typed in — only that tab. Nothing in the pre-release seams
+moves: the CLI, `testing.json`, `test_spec.json` and the reference-JSON
+layout are unchanged; the sidecar gains a field.
+
+**Not built here**, so nobody looks for it: the tool's Suite table. It will
+build `TestRow`s from its Session and give the same `COLUMNS` and
+`filters.js` to its grid in S2, whose gate renders the dashboard over a copy
+of TRANSFORM's work dir.
