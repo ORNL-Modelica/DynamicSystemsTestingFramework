@@ -5095,10 +5095,22 @@ and checkboxes, rebuilt from Python on a layout toggle.
    `after_reload`, called once the Session has reloaded and rescored; Rerun's
    renders `dashboard.html` with the Session's verdicts (the run's own
    `finally` render stays, for a run that fails before the reload). A
-   plug-in's job writes no file. The Session renders one only after a Save
-   or a Discard, and only where a run left `dashboard.html`: a rerun under
-   unsaved edits wrote their verdicts into it, and once the edits are saved
-   or gone the file must not keep them.
+   plug-in's job writes no file. The Session renders one only after a
+   Save, a Discard or a Reload (what a Save refused over a changed spec
+   offers, which drops the edits as a Discard does), and only where a run
+   left `dashboard.html`: a rerun under unsaved edits wrote their verdicts
+   into it, and once the edits are saved or gone the file must not keep
+   them. Only over the run its verdicts were read from: a reload records
+   `status.json`'s `start_wall` and whether the page was live, and the
+   render is skipped, with one log line naming why, when a run started
+   since (a CLI `dstf run` whose FAIL a later Save would hide), when the
+   page is live (a run is writing it; a final page would stop its refresh)
+   or when the reload read a run still writing. Save and Discard are
+   refused while a job runs, in the Session as in the header: the job's
+   reload scores the spec. The render and a job's `after_reload` run off
+   the UI loop, on one background thread, in the order asked, on a
+   snapshot of the comparisons — 1.6 s over TRANSFORM's work dir with
+   `--report` sidecars.
 
 **Consequences.** The row model's labels: the model column reads "Test" and
 the work-dir key column "Key" on both surfaces (keys unchanged). The tool

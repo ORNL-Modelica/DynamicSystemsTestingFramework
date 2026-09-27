@@ -210,6 +210,65 @@ class PendingEditsError(RuntimeError):
         )
 
 
+@dataclass(frozen=True)
+class _RunBasis:
+    """What a results reload read against: the run ``status.json`` named
+    (its ``start_wall``) and whether that run was still writing the work
+    dir's ``dashboard.html``. A re-render stamps the Session's verdicts
+    only over the run they were read from, and only a finished one."""
+
+    start_wall: float | None
+    live: bool
+
+
+def _run_basis(work_dir: Path) -> _RunBasis:
+    from ..backends.progress import read_status
+    from ..reporting.dashboard_render import dashboard_is_live
+
+    snapshot = read_status(work_dir) or {}
+    return _RunBasis(snapshot.get("start_wall"), dashboard_is_live(work_dir))
+
+
+class _Background:
+    """One daemon thread that runs what the Session hands it off the UI
+    loop, one at a time and in the order handed — a Save's render queued
+    behind a slow Discard's must not overtake it. Started when there is
+    work, ended when there is none. What it runs is logged when it raises,
+    never re-raised: it writes files beside a Save that already stands."""
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._queue: list[tuple[str, Callable[[], None]]] = []
+        self._busy = False
+
+    def submit(self, what: str, fn: Callable[[], None]) -> None:
+        with self._cond:
+            self._queue.append((what, fn))
+            if self._busy:
+                return
+            self._busy = True
+        threading.Thread(
+            target=self._drain, name="dstf-background", daemon=True
+        ).start()
+
+    def _drain(self) -> None:
+        while True:
+            with self._cond:
+                if not self._queue:
+                    self._busy = False
+                    self._cond.notify_all()
+                    return
+                what, fn = self._queue.pop(0)
+            try:
+                fn()
+            except Exception:
+                logger.exception("%s failed", what)
+
+    def wait(self, timeout: float | None = None) -> bool:
+        with self._cond:
+            return self._cond.wait_for(lambda: not self._busy, timeout)
+
+
 class Session:
     def __init__(self, post: Callable[[Callable[[], None]], None] | None = None):
         """``post`` hands a job's completion to the UI loop; without one the
@@ -230,6 +289,9 @@ class Session:
         self.overlay_index_ready = threading.Event()
         self.rescan_done = threading.Event()
         self._reads: dict[str, _ModelReads] = {}
+        self._background = _Background()
+        #: What the last results reload read against (`_rerender_dashboard`).
+        self._read_basis: _RunBasis | None = None
 
     # -- project -----------------------------------------------------------
 
@@ -439,10 +501,17 @@ class Session:
 
     def reload(self) -> None:
         """Re-read the spec from disk, dropping pending ops (what a refused
-        save offers)."""
+        save offers) — and, as a Discard does, their verdicts from the
+        work dir's dashboard."""
         project = self._require_project()
         self.spec = SpecDocument.load(project.config.spec_path)
         self._rebuild_tests(set(self.comparisons))
+        self._rerender_dashboard()
+
+    def wait_background(self, timeout: float | None = None) -> bool:
+        """Wait until every dashboard render and ``after_reload`` hook the
+        Session ran off the UI loop has finished; False on a timeout."""
+        return self._background.wait(timeout)
 
     def on(self, event: Event, cb: Listener) -> None:
         self._listeners.setdefault(event, []).append(cb)
@@ -858,7 +927,9 @@ class Session:
         self._score_all(models)
 
     def discard(self) -> None:
-        """Drop every pending op and restore the loaded verdicts."""
+        """Drop every pending op and restore the loaded verdicts. Refused
+        while a job runs, as Save is: the job's reload scores the spec."""
+        self._refuse_if_running()
         models = {op.model_id for op in self.spec.pending}
         self.spec = SpecDocument(
             self.spec.path, self.spec.loaded, self.spec.content_hash
@@ -869,8 +940,10 @@ class Session:
     def save(self) -> None:
         """Apply exactly the pending ops through ``spec-update``'s
         read-modify-write, then reload. Refuses when the file changed on
-        disk since it was loaded."""
+        disk since it was loaded, and while a job runs: a rerun runs the
+        spec with the pending ops applied, and its reload scores it."""
         project = self._require_project()
+        self._refuse_if_running()
         if self.spec.on_disk_changed():
             raise StaleSpecError(self.spec.path)
         groups = self.spec.grouped()
@@ -884,21 +957,46 @@ class Session:
         self._rerender_dashboard()
 
     def _rerender_dashboard(self) -> None:
-        """After a Save or a Discard: the work dir's `dashboard.html` with
-        the Session's verdicts now. A rerun under unsaved edits rendered
-        their verdicts into it; once the edits are saved or gone, the file
-        must not keep them. Only a file a run left: the tool never creates
-        one. A failed render leaves the Save / Discard done."""
-        from ..reporting.dashboard_render import render_final
+        """After a Save, a Discard or a Reload: the work dir's
+        `dashboard.html` with the Session's verdicts now. A rerun under
+        unsaved edits rendered their verdicts into it; once the edits are
+        saved or gone, the file must not keep them. Only a file a run left:
+        the tool never creates one.
 
+        Only over the run the verdicts were read from, and only a finished
+        one — skipped, with one log line, when `status.json` names a run
+        that started after the last results reload (a CLI `dstf run` whose
+        FAIL a later Save would hide), when the page is live (a run is
+        writing it and would stop refreshing), or when the reload read a
+        run that was still writing (its results were half of that run's).
+
+        Off the UI loop, on a snapshot of the comparisons: 1.6 s over
+        TRANSFORM's work dir with --report sidecars. A failed render is
+        logged and leaves the Save / Discard done."""
         project = self._require_project()
         work_dir = project.config.work_dir
         if work_dir is None or not (work_dir / "dashboard.html").is_file():
             return
-        try:
-            render_final(work_dir, comparisons=list(self.comparisons.values()))
-        except Exception:  # the file is a report; the edit's fate stands
-            logger.exception("re-rendering %s failed", work_dir / "dashboard.html")
+        comparisons = list(self.comparisons.values())
+        basis = self._read_basis
+        page = work_dir / "dashboard.html"
+
+        def render() -> None:
+            from ..reporting import dashboard_render
+
+            now = _run_basis(work_dir)
+            if now.live:
+                why = "a run is writing it"
+            elif basis is None or now.start_wall != basis.start_wall:
+                why = "a run started after the tool read its results"
+            elif basis.live:
+                why = "the tool read its results while a run was writing them"
+            else:
+                dashboard_render.render_final(work_dir, comparisons=comparisons)
+                return
+            logger.warning("not re-rendering %s: %s", page, why)
+
+        self._background.submit(f"re-rendering {page}", render)
 
     def export(self) -> dict:
         from ..discovery.patch_envelope import ModelPatch, build_envelope
@@ -939,8 +1037,7 @@ class Session:
 
     def _start_job(self, outcome: Job) -> None:
         project = self._require_project()
-        if self.running is not None:
-            raise JobRunningError(f"{self.running.label} is still running")
+        self._refuse_if_running()
         job = RunningJob(label=outcome.label, models=outcome.models)
         self.running = job
         self._emit("job", state="started", job=job)
@@ -985,11 +1082,17 @@ class Session:
             ):
                 self._reload_results()
                 job.reloaded = True
-                if outcome.after_reload is not None:
-                    try:
-                        outcome.after_reload(self.project, dict(self.comparisons))
-                    except Exception:  # the reload stands; the hook is the job's
-                        logger.exception("%s: after_reload failed", job.label)
+                hook = outcome.after_reload
+                if hook is not None:
+                    # Off the UI loop, in order with the Session's own
+                    # renders (Rerun's writes the dashboard); on a snapshot
+                    # of the comparisons. A hook that raises is logged: the
+                    # reload stands.
+                    project, comparisons = self.project, dict(self.comparisons)
+                    self._background.submit(
+                        f"{job.label}: after_reload",
+                        lambda: hook(project, comparisons),
+                    )
         except BaseException as e:
             job.error = e
         finally:
@@ -1104,6 +1207,10 @@ class Session:
         True for a model whose scoring raised (its verdict is absent),
         False otherwise."""
         project = self._require_project()
+        # Before the read: a run that starts during it is one the read may
+        # have half of, and its new start_wall says so.
+        work_dir = project.config.work_dir
+        self._read_basis = _run_basis(work_dir) if work_dir is not None else None
         locked = self.running.models if self.running is not None else frozenset()
         to_read = [t for t in project.tests if t.model_id not in locked]
         project.results = {m: r for m, r in project.results.items() if m in locked}
@@ -1209,10 +1316,13 @@ class Session:
         return implicit_tree_op(entry, variables=names)
 
     def _refuse_if_busy(self) -> None:
-        if self.running is not None:
-            raise JobRunningError(f"{self.running.label} is still running")
+        self._refuse_if_running()
         if self.spec.pending:
             raise PendingEditsError(len(self.spec.pending))
+
+    def _refuse_if_running(self) -> None:
+        if self.running is not None:
+            raise JobRunningError(f"{self.running.label} is still running")
 
     def _refuse_if_locked(self, models: Iterable[str]) -> None:
         if self.running is None:

@@ -106,9 +106,10 @@ class Rerun:
 
         def scored(project: Project, comparisons: dict[str, TestComparison]) -> None:
             # Once the Session has rescored the reload: the same static page,
-            # with its verdicts. On the UI loop: ~7 ms over FakeLib's five
-            # tests (measured 2026-09-27; the plan's review read 44 ms over
-            # 331 rows without sidecars).
+            # with its verdicts. The Session runs this off the UI loop, in
+            # order with its own renders: 1.6 s over TRANSFORM's work dir
+            # with --report sidecars (the 2026-09-27 gate; 44 ms was without
+            # them).
             work_dir = project.config.work_dir
             assert work_dir is not None  # resolved in Config.__post_init__
             render_final(work_dir, comparisons=list(comparisons.values()))

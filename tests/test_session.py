@@ -1706,6 +1706,7 @@ class TestOutcomes:
             )
         )
         assert jobs[0].done.wait(5) and jobs[0].reloaded
+        assert session.wait_background(5)  # the hook runs off the UI loop
         ((project, comps),) = seen
         assert project is session.project
         assert comps == session.comparisons and comps is not session.comparisons
@@ -1725,6 +1726,7 @@ class TestOutcomes:
         )
         assert jobs[0].done.wait(5)
         assert jobs[0].error is None and jobs[0].reloaded
+        assert session.wait_background(5)
         assert "after_reload" in caplog.text
 
     def test_no_after_reload_for_a_failed_job(self, session):
@@ -1743,6 +1745,7 @@ class TestOutcomes:
             )
         )
         assert jobs[0].done.wait(5) and jobs[0].error is not None
+        assert session.wait_background(5)
         assert seen == []
 
     def test_open_drops_the_last_job(self, session):

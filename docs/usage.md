@@ -786,9 +786,13 @@ back when you return from a test. Rows repaint in place as results are scored,
 edits staged and jobs run, keeping the sort, filters and selection. On a cold
 library scan the rows the spec and the last run name appear at once, reading
 "…" until the scan and the scoring reach them. A Rerun from the tool ends, like
-`dstf run`, on a static `dashboard.html` — with the tool's verdicts. Save and
-Discard render that file again with the verdicts they leave, so it never keeps
-the verdicts of edits no longer pending (only where a run left one).
+`dstf run`, on a static `dashboard.html` — with the tool's verdicts. Save,
+Discard and Reload render that file again with the verdicts they leave, so it
+never keeps the verdicts of edits no longer pending (only where a run left
+one) — but never over a run the tool has not read: when a `dstf run` started
+after the tool last read its results, or a run is still writing the page, the
+file is left alone and the tool logs why. Save and Discard are refused while a
+job runs.
 
 The **Test page** is one test. A second header row carries the way back to the
 Suite, the model id, its verdict, the backend and baseline it was scored

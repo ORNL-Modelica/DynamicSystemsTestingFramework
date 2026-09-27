@@ -24,7 +24,14 @@ import pytest
 from conftest import python_example_copy
 from dstf.authoring.builtin.accept import Accept
 from dstf.authoring.builtin.rerun import Rerun
-from dstf.authoring.session import LockedError, Selection, Session, SessionView
+from dstf.authoring.session import (
+    JobRunningError,
+    LockedError,
+    Selection,
+    Session,
+    SessionView,
+    StaleSpecError,
+)
 from dstf.authoring.spec_document import PatchOp
 from dstf.backends.progress import read_status
 from dstf.reporting.status import PASS, SIM_FAIL, classify
@@ -89,12 +96,16 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
     # and `/simulation/*` is outside the stageable whitelist.
     session.stage([PatchOp(SIMPLE_RAMP, "add", "/comparison/tolerance", 0.5)])
     assert len(session.spec.pending) == 1
-    session.discard()
-    assert not session.spec.pending
+    # Discard (and Save) wait for the job: its reload scores the spec.
+    with pytest.raises(JobRunningError, match="rerun is still running"):
+        session.discard()
+    assert len(session.spec.pending) == 1
 
     # 2. The job finishes and the results are reloaded from disk.
     assert job.done.wait(60)
     assert job.error is None
+    session.discard()
+    assert not session.spec.pending
     assert session.running is None
     assert project.results[CONSTANT_CSV].success
     comp = session.comparisons[CONSTANT_CSV]
@@ -180,6 +191,7 @@ def test_a_tool_rerun_ends_on_a_dashboard_with_the_sessions_verdicts(tmp_path):
     session.apply(Rerun().act(view))
     job = session.running
     assert job is not None and job.done.wait(60) and job.error is None
+    assert session.wait_background(10)  # the rerun's render is off the loop
     page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
     assert '<meta http-equiv="refresh"' not in page
     assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
@@ -199,14 +211,68 @@ def test_save_and_discard_rerender_the_dashboard(tmp_path):
     session.apply(Rerun().act(view))
     job = session.running
     assert job is not None and job.done.wait(60) and job.error is None
+    assert session.wait_background(10)
     assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
     session.discard()
+    assert session.wait_background(10)
     assert _dashboard_status(work_dir, CONSTANT_CSV) == "pass"
     session.stage([TIGHTEN])
+    assert session.wait_background(10)
     assert (
         _dashboard_status(work_dir, CONSTANT_CSV) == "pass"
     )  # staging renders nothing
     session.save()
+    assert session.wait_background(10)
+    assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
+
+
+def test_a_reload_renders_the_dropped_edits_verdicts_away(tmp_path):
+    """Reload — what a Save refused over a changed spec offers — drops the
+    pending edits like Discard, and their verdicts from the page."""
+    config, _tests = python_example_copy(tmp_path)
+    work_dir = tmp_path / "work"
+    session = Session()
+    session.open(config.config_file, work_dir=work_dir)
+    session.stage([TIGHTEN])
+    session.apply(
+        Rerun().act(SessionView(session, Selection(tests=frozenset({CONSTANT_CSV}))))
+    )
+    job = session.running
+    assert job is not None and job.done.wait(60) and job.error is None
+    assert session.wait_background(10)
+    assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
+    p = session.spec.path
+    p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    with pytest.raises(StaleSpecError):
+        session.save()
+    session.reload()
+    assert not session.spec.pending and session.comparisons[CONSTANT_CSV].passed
+    assert session.wait_background(10)
+    assert _dashboard_status(work_dir, CONSTANT_CSV) == "pass"
+
+
+def test_a_save_leaves_a_later_cli_runs_page_alone(tmp_path, monkeypatch):
+    """The tool reads a run; a CLI `dstf run` after it fails a test and
+    renders that FAIL; a Save in the tool must not stamp the verdicts it
+    read before that run over it."""
+    from dstf.cli import main
+
+    config, _tests = python_example_copy(tmp_path)
+    work_dir = config.work_dir
+    monkeypatch.setattr("dstf.reporting.report_suite.open_in_browser", lambda p: None)
+    argv = ["--config", str(config.config_file), "run", "--work-dir", str(work_dir)]
+    argv += ["--filter", CONSTANT_CSV]
+    assert main(argv) == 0
+    session = Session()
+    session.open(config.config_file, work_dir=work_dir)
+    assert session.comparisons[CONSTANT_CSV].passed
+    csv = config.source_path / "Examples" / "data" / "constant_experiment.csv"
+    csv.write_text(csv.read_text(encoding="utf-8").replace("1.0", "7.0"))
+    assert main(argv) == 1
+    assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
+    session.stage([PatchOp(POINTS_CHECK, "add", "/comparison/tolerance", 0.02)])
+    session.save()
+    assert session.wait_background(10)
     assert _dashboard_status(work_dir, CONSTANT_CSV) == "fail"
 
 

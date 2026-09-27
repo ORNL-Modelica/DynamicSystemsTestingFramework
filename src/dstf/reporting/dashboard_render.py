@@ -290,6 +290,21 @@ def build_dashboard_context(
     }
 
 
+#: What only a live page carries (the template's `auto_refresh`).
+_LIVE_MARK = '<meta http-equiv="refresh"'
+
+
+def dashboard_is_live(work_dir: Path) -> bool:
+    """Whether *work_dir*'s ``dashboard.html`` is a live page — a run is
+    writing it, and a final render over it would stop the browser's
+    refresh. False when there is no page to read."""
+    try:
+        text = (work_dir / "dashboard.html").read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return False
+    return _LIVE_MARK in text
+
+
 def _atomic_write(path: Path, text: str) -> None:
     """Atomic file write — Windows file-locking workaround.
 

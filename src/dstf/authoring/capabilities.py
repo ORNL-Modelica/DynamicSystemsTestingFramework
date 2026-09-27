@@ -97,11 +97,13 @@ class Job:
     label: str
     models: frozenset[str]
     reloads_results: bool = True
-    #: Called on the UI loop once the reload has rescored, with the project
-    #: and a copy of the Session's comparisons, so a job that wrote a run
-    #: can finish its artifacts with the verdicts (a rerun's dashboard). Not
-    #: called for a failed job or one that reloads nothing; one that raises
-    #: is logged and the job stays good.
+    #: Called once the reload has rescored, with the project and a copy of
+    #: the Session's comparisons, so a job that wrote a run can finish its
+    #: artifacts with the verdicts (a rerun's dashboard). OFF the UI loop,
+    #: on the Session's background thread, in order with its own dashboard
+    #: renders: the job reads as finished before it has run. Not called for
+    #: a failed job or one that reloads nothing; one that raises is logged
+    #: and the job stays good.
     after_reload: Callable[[Project, dict[str, TestComparison]], None] | None = None
 
 
