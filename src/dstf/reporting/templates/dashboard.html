@@ -80,6 +80,10 @@ th[data-sort]:hover { background: var(--dstf-surface-active); }
 th.sorted-asc::after { content: " ▲"; color: var(--dstf-accent); font-size: 0.85em; }
 th.sorted-desc::after { content: " ▼"; color: var(--dstf-accent); font-size: 0.85em; }
 input.col-filter { box-sizing: border-box; width: 100%; padding: 2px 4px; font-size: 0.78em; border: 1px solid var(--dstf-border); border-radius: 2px; }
+input.col-filter.bad { border-color: var(--dstf-fail-fill); outline: 1px solid var(--dstf-fail-fill); }
+.filter-toggles { display: flex; gap: 0.3em; margin-top: -0.4em; }
+.filter-toggle { font-family: var(--dstf-mono); font-size: 0.8em; padding: 0.1em 0.5em; border: 1px solid var(--dstf-border); border-radius: 3px; background: var(--dstf-surface); cursor: pointer; }
+.filter-toggle[aria-pressed="true"] { background: var(--dstf-selection); border-color: var(--dstf-accent); }
 tr.queued td    { color: var(--dstf-text-muted); }
 tr.running td   { background: var(--dstf-running-tint); font-weight: 500; }
 tr.pass td      { background: var(--dstf-pass-tint); }
@@ -174,6 +178,10 @@ body.has-selection { padding-bottom: 5em; }
 
 <div class="bar" id="progress-bar"></div>
 <div class="counters" id="counters" title="Click a pill to toggle its filter; click Total to clear"></div>
+<div class="filter-toggles">
+  <button type="button" class="filter-toggle" id="toggle-regex" aria-pressed="false" title="Regex in every column filter">.*</button>
+  <button type="button" class="filter-toggle" id="toggle-case" aria-pressed="false" title="Match case in every column filter">Aa</button>
+</div>
 </div>
 
 <table id="results-table">
@@ -184,8 +192,9 @@ body.has-selection { padding-bottom: 5em; }
 {% endfor %}</tr>
 <tr class="filter-row">
   <th class="sel-col"></th>
-{#- The status column has no text filter: the pills filter it. #}
-{% for c in columns %}  <th>{% if c.kind == 'text' %}<input class="col-filter" data-col-filter="{{ c.key }}" placeholder="filter…" title="Substring match by default; use * or ? for glob (e.g. *.Freq*)">{% endif %}</th>
+{#- One typed filter per column (filters.js); the status column has none:
+    the pills filter it. #}
+{% for c in columns %}  <th>{% if c.kind == 'text' %}<input class="col-filter" data-col-filter="{{ c.key }}" data-kind="text" placeholder="*Pipe*" title="Substring match by default; use * or ? for glob (e.g. *.Freq*); .* above makes it a regex">{% elif c.kind == 'number' %}<input class="col-filter" data-col-filter="{{ c.key }}" data-kind="number" placeholder="&gt;1e-4" title="A comparison (&gt;1e-4, &lt;=5, =0) or an inclusive range (1..10)">{% endif %}</th>
 {% endfor %}</tr>
 </thead>
 <tbody id="results-tbody">
@@ -257,6 +266,7 @@ const SNAPSHOT_WALL = {{ updated_at }};
 const SNAPSHOT_ELAPSED = {{ elapsed }};
 // The count pills, in STATUS_ORDER: [status class, the word a person reads].
 const STATUSES = {{ statuses | tojson }};
+{% include 'filters.js' %}
 {% include 'dashboard.js' %}
 </script>
 </body>

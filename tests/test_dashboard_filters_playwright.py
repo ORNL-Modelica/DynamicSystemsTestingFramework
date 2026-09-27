@@ -1,10 +1,12 @@
 """Browser tests for the dashboard's row model: its column filters, its
-count pills and its sort.
+count pills and its sort — and for ``filters.js``, the typed-filter module
+the dashboard (and, in S2, the tool's Suite table) compiles every column
+filter through.
 
 The page is rendered from ``reporting.rows``: one column list, every row
 carrying every column's attributes, the pills drawn from the statuses and
 keyed by status class. These drive it in Chromium, because what they pin
-is what dashboard.js does with those attributes.
+is what the page's JS does with those attributes.
 """
 
 from __future__ import annotations
@@ -19,6 +21,15 @@ pytest.importorskip("playwright.sync_api")
 pytestmark = pytest.mark.playwright
 
 from dstf.reporting.dashboard_render import render_final  # noqa: E402
+
+_FILTERS_JS = (
+    Path(__file__).parents[1]
+    / "src"
+    / "dstf"
+    / "reporting"
+    / "templates"
+    / "filters.js"
+)
 
 
 def _entry(i: int, model: str, sources: dict | None = None) -> dict:
@@ -191,3 +202,128 @@ def test_a_state_saved_under_the_old_pill_keys_hides_nothing(
     page.reload()
     assert _visible(page) == ["Lib.A", "Lib.B", "Lib.C", "Lib.D"]
     ctx.close()
+
+
+# ---- filters.js, alone ------------------------------------------------------
+
+CASES = [
+    # (kind, query, regex, case, value, expected)
+    (
+        "text",
+        "Pipe",
+        False,
+        False,
+        "Fluid.Pipes.GenericPipe",
+        True,
+    ),  # substring, any case
+    ("text", "pipe", False, True, "Fluid.Pipes.GenericPipe", False),  # Aa on
+    ("text", "*Pipe", False, False, "GenericPipe", True),  # glob, anchored
+    ("text", "*Pipe", False, False, "GenericPipe_Test", False),
+    ("text", "x[1]", False, False, "unitTests.x[1]", True),  # brackets literal
+    ("text", "*x[1]", False, False, "unitTests.x[1]", True),  # ... in a glob too
+    ("text", "*pipe", False, True, "GenericPipe", False),  # Aa on a glob
+    ("text", "^Gen.*Test$", True, False, "GenericPipe_Test", True),  # .* on
+    ("text", "gen", True, True, "GenericPipe", False),  # .* and Aa on
+    ("text", "(", True, False, "anything", None),  # bad regex -> None (marked bad)
+    ("number", ">1e-4", False, False, 2e-4, True),
+    ("number", ">1e-4", False, False, 1e-4, False),
+    ("number", ">=1e-4", False, False, 1e-4, True),
+    ("number", "<5", False, False, 3, True),
+    ("number", "1..10", False, False, 10, True),  # inclusive
+    ("number", "1..10", False, False, 10.5, False),
+    ("number", "0", False, False, 0, True),  # bare number: equal
+    ("number", ">", False, False, 1, None),  # bad -> None
+    ("number", ">1e-4", False, False, None, False),  # a missing value never matches
+    ("number", "<5", False, False, None, False),
+]
+
+
+def test_filters_js_reads_every_query_kind(tmp_path, playwright_browser):
+    page_html = tmp_path / "filters.html"
+    page_html.write_text(
+        "<html><body><script>"
+        + _FILTERS_JS.read_text(encoding="utf-8")
+        + "</script></body></html>",
+        encoding="utf-8",
+    )
+    page = playwright_browser.new_page()
+    page.goto(page_html.as_uri())
+    got = page.evaluate(
+        """(cases) => cases.map(([kind, q, regex, cs, value]) => {
+            try {
+              const pred = DstfFilters.compile(kind, q, {regex, case: cs});
+              return pred(value);
+            } catch (e) {
+              if (e instanceof DstfFilters.BadFilter) return null;
+              throw e;
+            }
+        })""",
+        [list(c[:5]) for c in CASES],
+    )
+    assert got == [c[5] for c in CASES]
+    assert page.evaluate("() => DstfFilters.compile('text', '', {})") is None
+    page.close()
+
+
+def test_filters_js_can_be_inlined_by_jinja():
+    """dashboard.html inlines it with an include: a Jinja delimiter in it
+    would be read as template syntax."""
+    text = _FILTERS_JS.read_text(encoding="utf-8")
+    assert not any(d in text for d in ("{{", "{%", "{#"))
+
+
+# ---- the dashboard filters through it ---------------------------------------
+
+
+def test_typed_filters_on_the_dashboard(tmp_path, playwright_browser):
+    ctx = playwright_browser.new_context()
+    page = ctx.new_page()
+    page.goto(_four_verdicts(tmp_path).as_uri())
+    everyone = ["Lib.A", "Lib.B", "Lib.C", "Lib.D"]
+
+    # A number filter reads the raw value: Lib.B is 1e-6, Lib.A has none.
+    _type(page, "nrmse", ">1e-5")
+    assert _visible(page) == ["Lib.C", "Lib.D"]
+    _type(page, "nrmse", "")
+    _type(page, "nrmse", "=1e-6")
+    assert _visible(page) == ["Lib.B"]
+    _type(page, "nrmse", "")
+
+    # .* on: the Model filter is a regex.
+    page.click("#toggle-regex")
+    assert page.get_attribute("#toggle-regex", "aria-pressed") == "true"
+    _type(page, "model", r"^Lib\.A$")
+    assert _visible(page) == ["Lib.A"]
+
+    # A bad regex marks its input and filters nothing.
+    _type(page, "model", "(")
+    box = page.locator('input.col-filter[data-col-filter="model"]')
+    assert "bad" in (box.get_attribute("class") or "")
+    assert _visible(page) == everyone
+
+    # After a reload the toggle is still pressed AND still applied.
+    _type(page, "model", r"^Lib\.B$")
+    page.reload()
+    assert page.get_attribute("#toggle-regex", "aria-pressed") == "true"
+    assert _visible(page) == ["Lib.B"]
+    ctx.close()
+
+
+def test_a_number_filter_matches_the_value_not_its_text(tmp_path, playwright_browser):
+    """The cell reads 1.2346e-05; the filter compares the value itself."""
+    html = _render(
+        tmp_path,
+        [_entry(1, "Lib.A"), _entry(2, "Lib.B")],
+        {
+            "test_0001": {"model_id": "Lib.A", "worst_nrmse": 1.23456e-5},
+            "test_0002": {"model_id": "Lib.B", "worst_nrmse": 2e-5},
+        },
+    )
+    page = playwright_browser.new_page()
+    page.goto(html.as_uri())
+    assert page.locator('tr[data-model="Lib.A"]').get_attribute("data-nrmse") == (
+        "1.2346e-05"
+    )
+    _type(page, "nrmse", "=1.23456e-5")
+    assert _visible(page) == ["Lib.A"]
+    page.close()

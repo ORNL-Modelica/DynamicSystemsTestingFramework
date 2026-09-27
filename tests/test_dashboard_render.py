@@ -986,10 +986,13 @@ def test_the_cells_keep_their_markup(tmp_path):
     assert '<td class="detail-cell" title="a message">a message</td>' in a
 
 
-def test_number_columns_have_no_filter_yet(tmp_path):
+def test_every_column_but_status_has_a_typed_filter(tmp_path):
+    from dstf.reporting.rows import COLUMNS
+
     html = _two_row_final_page(tmp_path)
-    keys = re.findall(r'data-col-filter="([^"]*)"', html)
-    assert keys == ["test", "ref", "model", "resolution", "worker", "detail"]
+    found = re.findall(r'data-col-filter="([^"]*)" data-kind="([^"]*)"', html)
+    # The status column has none: the pills filter it.
+    assert found == [(c.key, c.kind) for c in COLUMNS if c.kind != "status"]
 
 
 def test_the_pills_are_the_statuses(tmp_path):

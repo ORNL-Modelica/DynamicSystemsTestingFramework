@@ -103,21 +103,11 @@
   const activeStatuses = new Set();
   const colFilterValues = {};
 
-  // Convert a per-column filter string to a matcher. If the input contains
-  // glob metacharacters (* or ?), build a case-insensitive regex from the
-  // glob; otherwise fall back to plain case-insensitive substring match.
-  // This way "Freq" still works for naive users while *.Freq* / Lib.* etc.
-  // power-users get glob semantics matching the CLI's --filter behavior.
-  function patternMatcher(q) {
-    if (!q) return null;
-    if (!q.includes('*') && !q.includes('?')) {
-      const needle = q.toLowerCase();
-      return (val) => (val || '').toLowerCase().indexOf(needle) !== -1;
-    }
-    const escaped = q.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp('^' + escaped.replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i');
-    return (val) => regex.test(val || '');
-  }
+  // Every column filter compiles through DstfFilters (filters.js): text by
+  // substring, glob or (with .* on) regex; numbers by comparison or range.
+  // A number filter reads the row's data-sort-<key> — the raw value, never
+  // its display text. The .* and Aa toggles apply to every column at once.
+  const toggles = { regex: false, case: false };
 
   function statusMatches(rowStatus, sortWarnings) {
     if (activeStatuses.size === 0) return true;
@@ -132,18 +122,35 @@
 
   function applyFilters() {
     // Compile per-column matchers once per filter event (cheap; rebuilt
-    // when any input changes via the input event handler below).
-    const matchers = {};
-    for (const [col, q] of Object.entries(colFilterValues)) {
-      const m = patternMatcher(q);
-      if (m) matchers[col] = m;
-    }
+    // when any input or toggle changes). A query that cannot be read marks
+    // its input (red outline, the reason in its tooltip) and filters
+    // nothing.
+    const matchers = [];
+    colFilters.forEach(inp => {
+      const col = inp.dataset.colFilter;
+      const kind = inp.dataset.kind;
+      if (inp.dataset.help === undefined) inp.dataset.help = inp.title;
+      inp.classList.remove('bad');
+      inp.title = inp.dataset.help;
+      let pred = null;
+      try {
+        pred = DstfFilters.compile(kind, colFilterValues[col] || '', toggles);
+      } catch (e) {
+        if (!(e instanceof DstfFilters.BadFilter)) throw e;
+        inp.classList.add('bad');
+        inp.title = e.message;
+      }
+      if (pred) {
+        const attr = kind === 'number' ? 'sort' + col[0].toUpperCase() + col.slice(1) : col;
+        matchers.push(row => pred(row.dataset[attr]));
+      }
+    });
     Array.from(tbody.querySelectorAll('tr')).forEach(row => {
       const sortWarnings = parseInt(row.dataset.sortWarnings || '0');
       let visible = statusMatches(row.dataset.status, sortWarnings);
       if (visible) {
-        for (const [col, match] of Object.entries(matchers)) {
-          if (!match(row.dataset[col])) {
+        for (const match of matchers) {
+          if (!match(row)) {
             visible = false;
             break;
           }
@@ -181,6 +188,23 @@
     syncPillStates();
     applyFilters();
   };
+
+  const TOGGLE_BUTTONS = [['regex', 'toggle-regex'], ['case', 'toggle-case']];
+  function syncToggles() {
+    for (const [key, id] of TOGGLE_BUTTONS) {
+      const b = document.getElementById(id);
+      if (b) b.setAttribute('aria-pressed', toggles[key] ? 'true' : 'false');
+    }
+  }
+  for (const [key, id] of TOGGLE_BUTTONS) {
+    const b = document.getElementById(id);
+    if (b) b.addEventListener('click', () => {
+      toggles[key] = !toggles[key];
+      syncToggles();
+      applyFilters();
+      persistState();
+    });
+  }
 
   colFilters.forEach(inp => {
     inp.addEventListener('input', () => {
@@ -446,6 +470,7 @@
       localStorage.setItem(STATE_KEY, JSON.stringify({
         activeStatuses: Array.from(activeStatuses),
         colFilterValues: { ...colFilterValues },
+        toggles: { ...toggles },
         // Stamped with the report the selection was made in — see the
         // restore step for why. Filters / sort / widths are user
         // preferences and deliberately carry across reports; a selection
@@ -489,6 +514,13 @@
         const k = inp.dataset.colFilter;
         if (s.colFilterValues[k]) inp.value = s.colFilterValues[k];
       });
+    }
+    // The toggles BEFORE applyFilters below: a restored regex filter is
+    // compiled as a regex, not as the text it would read without .* on.
+    if (s.toggles && typeof s.toggles === 'object') {
+      toggles.regex = !!s.toggles.regex;
+      toggles.case = !!s.toggles.case;
+      syncToggles();
     }
     // Re-render counters so the active class on pills reflects the
     // restored set (initial render happened before restore).
