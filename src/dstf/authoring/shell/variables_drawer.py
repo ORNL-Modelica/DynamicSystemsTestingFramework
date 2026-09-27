@@ -19,7 +19,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import regex
 from nicegui import ui
@@ -99,8 +99,9 @@ class VariablesDrawer:
         #: The families opened to their members, by row id: kept across
         #: rebuilds, so a check inside an opened family leaves it open.
         self.opened: set[str] = set()
-        self.regex = False
-        self.case = False
+        #: The filter and its toggles are the tab's (`TabState`): a switch
+        #: of test builds a new drawer, and it starts from them.
+        self.state = page.state
         #: What the last rebuild read, for the clicks on the rows it drew.
         self.texts: dict[str, str] = {}
         #: What the drawn rows were built from (`_signature`): `refresh`
@@ -112,7 +113,8 @@ class VariablesDrawer:
                 self.needle = (
                     ui.input(
                         placeholder="filter: substring, or a glob with * ?",
-                        on_change=lambda _: self.rebuild(),
+                        value=self.state.vars_needle,
+                        on_change=self._on_needle,
                     )
                     .props("dense outlined clearable debounce=250")
                     .classes("col")
@@ -137,9 +139,10 @@ class VariablesDrawer:
         self.rebuild()
 
     def _toggle(self, text: str, marker: str, tip: str) -> ui.button:
+        on = self.state.vars_regex if marker == "var-regex" else self.state.vars_case
         button = (
             ui.button(text, on_click=partial(self._flip, marker))
-            .props('flat dense no-caps aria-pressed="false"')
+            .props(f'flat dense no-caps aria-pressed="{str(on).lower()}"')
             .classes("dstf-mono")
             .mark(marker)
         )
@@ -147,13 +150,18 @@ class VariablesDrawer:
             ui.tooltip(tip)
         return button
 
+    def _on_needle(self, e: Any) -> None:
+        self.state.vars_needle = e.value or ""
+        self.rebuild()
+
     def _flip(self, marker: str) -> None:
+        state = self.state
         if marker == "var-regex":
-            self.regex = not self.regex
-            self.regex_button.props(f'aria-pressed="{str(self.regex).lower()}"')
+            state.vars_regex = not state.vars_regex
+            self.regex_button.props(f'aria-pressed="{str(state.vars_regex).lower()}"')
         else:
-            self.case = not self.case
-            self.case_button.props(f'aria-pressed="{str(self.case).lower()}"')
+            state.vars_case = not state.vars_case
+            self.case_button.props(f'aria-pressed="{str(state.vars_case).lower()}"')
         self.rebuild()
 
     def _reveal(self) -> None:
@@ -206,9 +214,9 @@ class VariablesDrawer:
         head = (
             page.selected,
             len(page.cards),
-            self.needle.value or "",
-            self.regex,
-            self.case,
+            self.state.vars_needle,
+            self.state.vars_regex,
+            self.state.vars_case,
             frozenset(self.opened),
         )
         if reads is None:
@@ -246,7 +254,10 @@ class VariablesDrawer:
             else "No plot yet: + new plot adds one"
         )
         try:
-            keep = matcher(self.needle.value or "", regex=self.regex, case=self.case)
+            state = self.state
+            keep = matcher(
+                state.vars_needle, regex=state.vars_regex, case=state.vars_case
+            )
         except regex.error as e:
             self._say(f"not a regular expression: {e}")
             return

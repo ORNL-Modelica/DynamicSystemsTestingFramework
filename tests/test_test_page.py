@@ -4532,6 +4532,31 @@ class TestVariablesDrawer:
     scored variable keeps its last plot, "+ new plot" puts a row on a plot
     of its own below the selected one and selects it."""
 
+    async def test_the_filter_and_its_toggles_survive_a_switch_of_test(
+        self, drawer_shell
+    ):
+        """The Variables drawer's needle, `.*` and `Aa` are the tab's
+        (`TabState`), never the drawer instance's: a new page's drawer
+        starts from them, drawn pressed and applied."""
+        shell = drawer_shell
+        async with user_simulation(root=shell.index) as user:
+            page = await _drawer(shell, user)
+            user.find(marker="var-regex").click()
+            user.find(marker="var-case").click()
+            user.find(marker="var-needle").type("^pipe")
+            await _settled(lambda: page.state.vars_needle == "^pipe")
+            assert page.state.vars_regex is True
+            assert page.state.vars_case is True
+            await _test_page(shell, user, B)
+            other = _page(shell, user)
+            assert other.model_id == B and other is not page
+            assert other.state.drawer == "variables"
+            assert _one(user, "var-needle").value == "^pipe"
+            assert _one(user, "var-regex").props["aria-pressed"] == "true"
+            assert _one(user, "var-case").props["aria-pressed"] == "true"
+            # B's result has no `pipe`: the filter is applied, not only shown
+            assert _groups_shown(user) == []
+
     async def test_the_drawer_lists_the_groups_and_names_its_target(self, drawer_shell):
         async with user_simulation(root=drawer_shell.index) as user:
             await _drawer(drawer_shell, user)
@@ -5936,3 +5961,18 @@ async def test_the_criteria_header_wraps_a_long_why(page_shell):
             lambda: bool(_inside(user, "why:edit-tree", "criteria-header:0"))
         )
         gate.release.set()
+
+
+def test_the_drawers_controls_are_the_tabs():
+    """Every control of both drawers lives in `TabState`, with these
+    defaults: a switch of test builds new drawers, and they start from
+    it."""
+    from dstf.authoring.shell.tabstate import TabState
+
+    t = TabState()
+    assert (t.tests_needle, t.tests_regex, t.tests_case) == ("", False, False)
+    assert (t.tests_sort, t.tests_grouped, t.tests_short) == ("package", True, True)
+    assert t.tests_pills == set()
+    assert (t.vars_needle, t.vars_regex, t.vars_case) == ("", False, False)
+    assert (t.vars_group, t.vars_names, t.vars_sort) == ("component", "both", "file")
+    assert TabState().tests_pills is not t.tests_pills
