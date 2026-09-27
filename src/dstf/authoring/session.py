@@ -915,12 +915,15 @@ class Session:
         """Drop the pending ops of ``models`` — every pending op when
         ``None`` — and restore their loaded verdicts; the other models' ops
         stay, in order. Refused while a job runs, as Save is: the job's
-        reload scores the spec."""
+        reload scores the spec. ``models`` none of which has a pending op
+        change nothing, and emit nothing."""
         self._refuse_if_running()
         pending = self.spec.pending
         gone = {op.model_id for op in pending}
         if models is not None:
             gone &= models
+            if not gone:
+                return
         kept = [op for op in pending if op.model_id not in gone]
         self.spec = SpecDocument(
             self.spec.path, self.spec.loaded, self.spec.content_hash, kept

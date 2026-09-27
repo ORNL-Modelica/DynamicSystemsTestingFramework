@@ -15,7 +15,9 @@ themselves"). Off-white with a hairline below, never an accent bar.
 
 A page may ask for a second row of its own (``below``): it is drawn INSIDE
 this fixed header, which is what makes it sticky without offset arithmetic
-(decision 8). The Test page's header is the one."""
+(decision 8). The Test page's header is the one. The Test page also asks
+for a third row (``strip``), drawn inside it for the same reason: its status
+strip, the test's situation and its next action."""
 
 from __future__ import annotations
 

@@ -628,8 +628,13 @@ class TestPage:
         self.meta.set_text(f"{project.config.backend_name} · {ref or 'no baseline'}")
         if self.strip is not None:
             # `_gone` blanked the strip and hid its bar; this brings both
-            # back, for the project that is open now.
-            self.strip.paint(self._situation(comp, view))
+            # back, for the project that is open now. The strip never stops
+            # a sync: the tree and the cards below it follow whatever it
+            # raises.
+            try:
+                self.strip.paint(self._situation(comp, view))
+            except Exception:
+                logger.exception("the strip of %s", self.model_id)
 
     def _situation(self, comp: Any, view: dict | None) -> Strip:
         """The strip's inputs, read from the Session: the verdict as edited
@@ -638,8 +643,20 @@ class TestPage:
         project = session.project
         assert project is not None  # `_paint` returned before without one
         edits = sum(1 for op in session.spec.pending if op.model_id == model_id)
-        saved = session.saved_comparison(model_id) if edits else None
+        saved_status: str | None = None
+        if edits:
+            # The saved spec is scored afresh here, and its scoring may raise
+            # where the edited one does not (an edit that fixed it): the
+            # strip says so, and the page goes on following the edit.
+            try:
+                saved = session.saved_comparison(model_id)
+            except Exception:
+                logger.exception("the saved verdict of %s", model_id)
+                saved_status = "scoring failed"
+            else:
+                saved_status = classify(saved) if saved is not None else None
         running = session.running
+        loading = self.shell.load.in_progress
         # A test whose last run never finished it has a result that is not
         # one (what Accept's "re-run before accepting" reads).
         work_dir = project.config.work_dir
@@ -656,9 +673,17 @@ class TestPage:
             ),
             edits=edits,
             status=classify(comp) if comp is not None else None,
-            saved_status=classify(saved) if saved is not None else None,
+            saved_status=saved_status,
             has_result=has_result,
-            scoring_failed=comp is None and model_id in self.shell.load.failed_models,
+            loading=loading,
+            # The load names the models whose scoring raised while it read
+            # them; after it, a result with no comparison is one whose
+            # scoring raised later (a Rerun's or an Accept's reload).
+            scoring_failed=comp is None
+            and (
+                model_id in self.shell.load.failed_models
+                or (has_result and not loading)
+            ),
             simulate_only=comp is not None and comp.simulate_only,
             fails=statuses.count("fail"),
             criteria=len(statuses),
@@ -762,7 +787,13 @@ class TestPage:
         self.header.handle(event)
         self.rail.handle(event)
         known = self._known()
-        if self.actions is not None and known:
+        syncs = event["event"] == "job" or (
+            event["event"] in ("results", "spec", "loading", "opened")
+            and self._mine(event)
+        )
+        if self.actions is not None and known and not syncs:
+            # A sync's paint refreshes the bar; an event that does not sync
+            # (another test's) still moves its availability.
             self.actions.refresh()
         if event["event"] == "job":
             # A finished job reloaded the trajectories under every plot and
@@ -771,9 +802,7 @@ class TestPage:
             # panels — but they re-send no figure. Five job events per
             # Rerun re-sent every drawn plot five times (the 3b review).
             self.sync(force=event.get("state") in ("finished", "failed", "written"))
-        elif event["event"] in ("results", "spec", "loading", "opened") and self._mine(
-            event
-        ):
+        elif syncs:
             self.sync()
 
     def _mine(self, event: dict[str, Any]) -> bool:

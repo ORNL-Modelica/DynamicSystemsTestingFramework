@@ -60,6 +60,7 @@ def strip_for(
     status: str | None = None,
     saved_status: str | None = None,
     has_result: bool = False,
+    loading: bool = False,
     scoring_failed: bool = False,
     simulate_only: bool = False,
     fails: int = 0,
@@ -69,8 +70,11 @@ def strip_for(
     """The strip for one test. ``running`` is the label of the job that
     locks it; ``edits`` its pending ops; ``status`` / ``saved_status`` the
     classifier's word for the comparison as edited / as saved (None while
-    unscored, or — saved — for an entry the loaded spec does not have);
-    ``has_result`` whether the last run finished it; ``fails`` /
+    unscored, or — saved — for an entry the loaded spec does not have;
+    ``"scoring failed"`` — saved — when scoring the saved spec raised);
+    ``has_result`` whether the last run finished it; ``loading`` whether
+    the project is still being read — an unscored test is then waiting for
+    it, never without a result, which may not be read yet; ``fails`` /
     ``criteria`` / ``advisory`` its leaves failing, in all, and failing
     inside a warn."""
     S = Situation
@@ -84,7 +88,7 @@ def strip_for(
         )
     if scoring_failed:
         return Strip(S.SCORING_FAILED, "red", "Scoring failed; the tree card says why.")
-    if status is None and has_result:
+    if status is None and (has_result or loading):
         return Strip(S.WAITING, "grey", "Scoring…")
     if not has_result and status in (None, SIM_FAIL):
         return Strip(S.NO_RESULT, "grey", "No result yet — rerun to simulate it.")

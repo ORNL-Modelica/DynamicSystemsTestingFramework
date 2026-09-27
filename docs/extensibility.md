@@ -646,12 +646,14 @@ is the page's that built it (D129): `SessionView(session, selection)`.
 
 **The placements** (D129, D131). Each one says how the shell draws a capability
 and what the view it hands over carries; a capability chooses the placements,
-never the way it is drawn there.
+never the way it is drawn there — save its optional `emphasis`, which says per
+situation of the Test page whether it is the next action there (drawn filled)
+or belongs in the status strip's ⋮ menu.
 
 | Placement | Where | How it is drawn | `selection` carries | `panel.figure` |
 |---|---|---|---|---|
 | `SUITE` | the Suite page's batch bar | a button with the `caption`, panel in a dialog | `tests` (the checked tests, possibly empty) | raises on `on` |
-| `TEST` | the Test page's header row | a button with the `caption`, panel in a dialog | `tests` — exactly the one test of the page | raises on `on` |
+| `TEST` | the Test page's status strip, under its header row | a button with the `caption` (filled, quiet or in the ⋮ as its `emphasis` says), panel in a dialog | `tests` — exactly the one test of the page | raises on `on` |
 | `VARIABLE` | a plot card's footer, one per tracked series | a button with the `caption`, panel in a dialog | `tests` (one), `variable` | that card's plot |
 | `CRITERION` | the open criterion's editor, below its row | inline: the panel alone, no button, no heading | `tests` (one), `variable`, `leaf_path` | the plot the row sits under |
 | `NODE` | a tree node's row, and a criteria row under a plot | inline: the panel alone, no button, no heading | `tests` (one), `node_path` (a leaf OR a combinator), and `variable` on a criteria row | raises on `on` |

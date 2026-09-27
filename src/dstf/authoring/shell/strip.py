@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from .test_page import TestPage
 
 TONES = ("grey", "red", "amber")
+DISCARD_TIP = "Discards this test's edits; the header's Discard drops every test's."
 
 
 class StatusStrip:
@@ -49,6 +50,10 @@ class StatusStrip:
                     marker="strip-discard",
                     why=False,
                 )
+                # The board's label, and the header's: the tooltip says
+                # which edits this one drops.
+                with self.discard.button:
+                    ui.tooltip(DISCARD_TIP)
                 self.actions = ActionBar(
                     page.shell,
                     Placement.TEST,

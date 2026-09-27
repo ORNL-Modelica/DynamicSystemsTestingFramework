@@ -44,9 +44,11 @@ from test_interactive_figures import UNDER_TOOLBAR  # noqa: E402
 from test_session import (  # noqa: E402
     LONG,
     A,
+    C,
     _drawer_project,
     _long_names_project,
     _page_project,
+    _two_var_project,
 )
 
 VIEWPORT = {"width": 1280, "height": 900}
@@ -322,6 +324,39 @@ def _drag(page, x: float, y: float, dy: float) -> None:
     page.mouse.down()
     page.mouse.move(x, y + dy, steps=12)
     page.mouse.up()
+
+
+# -- the status strip (Q2 A) -------------------------------------------------
+
+
+def test_the_strips_menu_says_it_is_open_and_why_an_item_is_grey(
+    tmp_path, playwright_browser
+):
+    """C's last run never finished it: Accept is in the strip's ⋮, greyed,
+    and a real mouse over it reads why. The ⋮ says whether its menu is
+    open, as the header's does."""
+    with _served(tmp_path, playwright_browser, project=_two_var_project) as page:
+        page.goto(page.url.split("test/")[0] + f"test/{C}")
+        expect(page.locator(".dstf-strip-text")).to_have_text(
+            "No result yet — rerun to simulate it.", timeout=EXPECT_TIMEOUT
+        )
+        more = page.locator('.dstf-strip button[aria-label="More actions"]')
+        expect(more).to_be_visible(timeout=EXPECT_TIMEOUT)
+        assert more.get_attribute("aria-haspopup") == "menu"
+        expect(more).to_have_attribute("aria-expanded", "false")
+        more.click()
+        expect(more).to_have_attribute("aria-expanded", "true", timeout=EXPECT_TIMEOUT)
+        item = page.get_by_role("menuitem").filter(has_text="Accept")
+        expect(item).to_be_visible(timeout=EXPECT_TIMEOUT)
+        assert item.get_attribute("aria-disabled") == "true"
+        box = item.bounding_box()
+        assert box is not None
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        expect(page.locator(".q-tooltip")).to_have_text(
+            "re-run before accepting", timeout=EXPECT_TIMEOUT
+        )
+        page.keyboard.press("Escape")
+        expect(more).to_have_attribute("aria-expanded", "false", timeout=EXPECT_TIMEOUT)
 
 
 # -- the page's frame, its plots on scroll, and the tree -------------------

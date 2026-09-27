@@ -40,6 +40,9 @@ ROWS = [
         "Scoring failed; the tree card says why.",
     ),
     (dict(status=None, has_result=True), S.WAITING, "grey", "Scoring…"),
+    # While the project is still being read an unscored test is waiting for
+    # it, never without a result: its result may not be read yet.
+    (dict(status=None, has_result=False, loading=True), S.WAITING, "grey", "Scoring…"),
     (
         dict(status=None, has_result=False),
         S.NO_RESULT,
@@ -69,6 +72,14 @@ ROWS = [
         S.FAIL,
         "red",
         "Fails 1 of 3 criteria. If the new behaviour is right, accept it as the baseline.",
+    ),
+    (
+        # A FAIL none of whose criteria fails on its own (a weighted sum
+        # over its threshold) names no count, however many criteria it has.
+        dict(status="FAIL", has_result=True, fails=0, criteria=3),
+        S.FAIL,
+        "red",
+        "Fails against its baseline. If the new behaviour is right, accept it as the baseline.",
     ),
     (
         dict(status="FAIL", has_result=True, fails=0),

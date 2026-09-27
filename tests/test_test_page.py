@@ -5347,6 +5347,170 @@ async def test_a_gone_test_leaves_the_strip_blank_and_a_returning_one_fills_it(
         assert _strip_buttons(user) == {"accept": "filled", "rerun": "quiet"}
 
 
+async def test_a_job_on_another_test_leaves_this_strip_alone(shell):
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        shell.session.apply(
+            Job(run=gate, label="Probe", models=frozenset({B}), reloads_results=False)
+        )
+        await _settled(lambda: shell.session.running is not None)
+        await asyncio.sleep(0.3)
+        text = _one(user, "strip-text").text
+        gate.release.set()
+        await _settled(lambda: shell.session.running is None)
+        assert text == "Passes against its baseline."
+
+
+def _save_tree(shell, tree):
+    shell.session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(tree))])
+    shell.session.save()
+    assert shell.session.spec.pending == []
+
+
+NRMSE_X = {"metric": "nrmse", "variable": "x", "tolerance": 0.01}
+#: x rises past 0.5: a range this low fails.
+TOO_LOW_X = {"metric": "range", "variable": "x", "max_value": 0.5}
+
+
+async def test_a_passing_strip_names_its_advisory_failure(shell):
+    _save_tree(
+        shell,
+        {
+            "combinator": "and",
+            "children": [NRMSE_X, {"combinator": "warn", "children": [TOO_LOW_X]}],
+        },
+    )
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        assert _one(user, "strip-text").text == (
+            "Passes against its baseline, with 1 advisory failure."
+        )
+
+
+async def test_a_failing_strip_counts_its_failing_criteria_of_all(shell):
+    _save_tree(shell, {"combinator": "and", "children": [NRMSE_X, TOO_LOW_X]})
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        assert _one(user, "strip-text").text.startswith("Fails 1 of 2 criteria.")
+
+
+def _scoring_raises_for_d(monkeypatch, when=lambda test: True):
+    """`compare_one` raises for D's TestModels that ``when`` picks."""
+    import dstf.authoring.session as session_mod
+
+    real = session_mod.compare_one
+
+    def failing(test, *args, **kwargs):
+        if test.model_id == D and when(test):
+            raise ValueError("boom")
+        return real(test, *args, **kwargs)
+
+    monkeypatch.setattr(session_mod, "compare_one", failing)
+
+
+async def test_a_test_whose_scoring_raised_at_the_open_says_so_in_red(
+    tmp_path, monkeypatch
+):
+    _scoring_raises_for_d(monkeypatch)
+    cfg, work = _two_var_project(tmp_path)
+    shell = Shell(cfg, work_dir=work)
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        shell.open_async()
+        await _settled(lambda: shell.load.phase == "done" and shell.load.failed_models)
+        await _test_page(shell, user, D)
+        assert _one(user, "strip-text").text == (
+            "Scoring failed; the tree card says why."
+        )
+        assert "dstf-strip-red" in _one(user, "strip").classes
+
+
+async def test_a_saved_verdict_that_raises_does_not_stop_the_page(
+    shell, monkeypatch, caplog
+):
+    """The strip scores the SAVED spec beside the edited one; that scoring
+    raising leaves the page following the edit — its cards and its strip —
+    and the strip says the saved verdict failed."""
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        # The saved entry has no comparison tolerance; the edit gives one.
+        _scoring_raises_for_d(
+            monkeypatch, when=lambda t: t.comparison_tolerance is None
+        )
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.5})])
+        await user.should_see("5.000e-01", retries=20)  # the cards followed
+        assert _one(user, "strip-text").text == (
+            "1 unsaved edit · verdict would change scoring failed → PASS"
+        )
+        assert "a page failed" not in caplog.text
+
+
+async def test_scoring_that_raised_after_the_open_is_not_waiting(shell, monkeypatch):
+    """A reload after the open (a Rerun's, an Accept's) whose scoring of D
+    raises: the load is done, so D is not waiting to be scored."""
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        _scoring_raises_for_d(monkeypatch)
+        with pytest.raises(RuntimeError):
+            shell.session._reload_results()
+        await _settled(
+            lambda: _one(user, "tree:summary").text.endswith("scoring failed")
+        )
+        assert _one(user, "strip-text").text == (
+            "Scoring failed; the tree card says why."
+        )
+
+
+async def test_an_unscored_test_waits_while_the_project_is_read(shell):
+    """While the load is in progress a test with no comparison may have no
+    result read yet: it waits for the load, and is not "No result yet"."""
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        shell.load.phase = "results"
+        del shell.session.comparisons[D]
+        del shell.session.project.results[D]
+        with page.client:
+            page.sync()
+        assert _one(user, "strip-text").text == "Scoring…"
+
+
+async def test_one_results_event_refreshes_the_strips_bar_once(shell, monkeypatch):
+    """A `results` event for this test syncs, and the sync's paint refreshes
+    the bar: `handle` does not refresh it a second time."""
+    refreshes: list[str] = []
+    real = ActionBar.refresh
+
+    def counting(self):
+        if self.marker == "test-actions":
+            refreshes.append(self.marker)
+        return real(self)
+
+    monkeypatch.setattr(ActionBar, "refresh", counting)
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, D)
+        await asyncio.sleep(0.3)
+        refreshes.clear()
+        with page.client:
+            page.handle({"event": "results", "models": {D}})
+        assert len(refreshes) == 1
+        refreshes.clear()
+        with page.client:
+            page.handle({"event": "results", "models": {A}})  # not this test's
+        assert len(refreshes) == 1
+
+
+async def test_the_strips_discard_says_it_is_this_tests(shell):
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, D)
+        shell.session.stage([PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})])
+        await _settled(lambda: not _none(user, "strip-discard"))
+        assert _one(user, "strip-discard").text == "Discard"
+        assert _tooltip_text(_one(user, "strip-discard")) == (
+            "Discards this test's edits; the header's Discard drops every test's."
+        )
+
+
 # -- a criterion's + adds the new one right after it (Q3 A) -----------------
 
 

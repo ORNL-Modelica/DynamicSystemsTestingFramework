@@ -184,7 +184,7 @@ class ActionBar:
             (cap.name, emphasis(cap) if emphasis is not None else None)
             for cap, _ in placed
         ]
-        if built != self.built or (placed and not self.actions):
+        if built != self.built:
             self._build([cap for cap, _ in placed], [e for _, e in built])
             self.built = built
         loading = self.shell.load.in_progress
@@ -228,14 +228,20 @@ class ActionBar:
                 )
             if menu:
                 # Named, with no tooltip: a tooltip covered the open menu's
-                # first item (as the header's ⋮).
+                # first item. It says whether its menu is open, as the
+                # header's ⋮ does.
                 more = (
                     ui.button(icon="more_vert")
                     .props('flat dense round aria-label="More actions"')
-                    .props('aria-haspopup="menu"')
+                    .props('aria-haspopup="menu" aria-expanded="false"')
                     .mark("action-more")
                 )
-                with more, ui.menu():
+                with more, ui.menu() as opened:
+                    opened.on_value_change(
+                        lambda e, more=more: more.props(
+                            f'aria-expanded="{"true" if e.value else "false"}"'
+                        )
+                    )
                     for cap in menu:
                         self.actions[cap.name] = MenuAction(
                             partial(self.open, cap),

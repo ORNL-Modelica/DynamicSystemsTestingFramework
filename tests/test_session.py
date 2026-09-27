@@ -3146,6 +3146,18 @@ class TestPerTestDiscardAndSavedVerdict:
             session.discard(models={A})
         assert session.spec.pending == [self.LOOSEN_A]
 
+    def test_discard_of_a_model_with_nothing_pending_says_nothing(self, session):
+        """No op of D is pending: the discard changes nothing, and says so
+        by emitting nothing — no page repaints for it."""
+        session.stage([self.LOOSEN_A])
+        events: list[dict] = []
+        session.on("spec", events.append)
+        session.on("results", events.append)
+        spec = session.spec
+        session.discard(models={D})
+        assert events == []
+        assert session.spec is spec
+
     def test_saved_comparison_with_nothing_pending_is_the_comparison(self, session):
         assert session.saved_comparison(A) is session.comparisons[A]
 
