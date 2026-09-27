@@ -432,6 +432,56 @@ def test_the_suite_table_groups_filters_sorts_and_names(tmp_path, playwright_bro
             proc.wait(10)
 
 
+#: Every column filter input with its placeholder, title, and whether the
+#: placeholder reads whole in the input (measured in the input's own font
+#: against its content box).
+HINTS = """() => [...document.querySelectorAll('input.dstf-ff')].map(el => {
+  const cs = getComputedStyle(el);
+  const ctx = document.createElement('canvas').getContext('2d');
+  ctx.font = cs.font;
+  const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  return {col: el.dataset.col, placeholder: el.placeholder, title: el.title,
+          fits: ctx.measureText(el.placeholder).width <= room};
+})"""
+
+
+def test_every_column_filter_carries_the_dashboards_hint(tmp_path, playwright_browser):
+    """The owner saw no grey hint in the Suite table's filters: every text
+    and number filter reads the dashboard's placeholder for its kind
+    (``*Pipe*``, ``>1e-4``), whole at the tool's column widths, with the
+    dashboard's explanation as its tooltip; the status cell mirrors the
+    pills. Every column is shown, so the hidden ones are measured too."""
+    from dstf.authoring.shell.suite_grid import TOOL_COLUMNS
+    from dstf.reporting.rows import FILTER_HINTS
+
+    proc, url, page, context, errors, _ = _served(tmp_path, playwright_browser)
+    try:
+        expect(page.locator(".dstf-ff-status")).to_have_text("all")
+        _keep(page, tmp_path, "suite-filter-hints-1280")
+        page.evaluate(
+            "() => DstfSuite.api.setColumnsVisible("
+            "DstfSuite.api.getColumns().map(c => c.getColId()), true)"
+        )
+        want = {c.key: c.kind for c in TOOL_COLUMNS if c.kind != "status"}
+        page.wait_for_function(
+            f"() => document.querySelectorAll('input.dstf-ff').length === {len(want)}",
+            timeout=EXPECT_TIMEOUT,
+        )
+        got = page.evaluate(HINTS)
+        assert sorted(h["col"] for h in got) == sorted(want)
+        for h in got:
+            placeholder, title = FILTER_HINTS[want[h["col"]]]
+            assert h["placeholder"] == placeholder, h
+            assert h["title"].endswith(title), h
+            assert h["fits"], h
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
 def test_the_suite_tables_selection_and_icon_actions(tmp_path, playwright_browser):
     """Q1a B: "2 selected · Clear", counting the selected rows a filter
     hides; Rerun and Accept as icons whose tooltips are their captions, a

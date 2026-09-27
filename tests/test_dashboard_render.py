@@ -1737,3 +1737,24 @@ def test_a_final_page_with_no_status_names_no_last_run(tmp_path):
     render_final(tmp_path, comparisons=comps)
     bar = _status_bar((tmp_path / "dashboard.html").read_text(encoding="utf-8"))
     assert bar == "Final report · 2 tests"
+
+
+def test_every_filter_carries_its_kinds_hint(tmp_path):
+    """The dashboard's filter row and the tool's Suite table read one
+    table of hints (``rows.FILTER_HINTS``): a text filter's placeholder
+    ``*Pipe*``, a number filter's ``>1e-4``, each with its explanation."""
+    import html as html_lib
+
+    from dstf.reporting.rows import COLUMNS, FILTER_HINTS
+
+    assert FILTER_HINTS["text"][0] == "*Pipe*"
+    assert FILTER_HINTS["number"][0] == ">1e-4"
+    page = _two_row_final_page(tmp_path)
+    found = re.findall(
+        r'data-col-filter="([^"]*)" data-kind="([^"]*)" placeholder="([^"]*)" '
+        r'title="([^"]*)"',
+        page,
+    )
+    assert [
+        (k, kind, html_lib.unescape(p), html_lib.unescape(t)) for k, kind, p, t in found
+    ] == [(c.key, c.kind, *FILTER_HINTS[c.kind]) for c in COLUMNS if c.kind != "status"]

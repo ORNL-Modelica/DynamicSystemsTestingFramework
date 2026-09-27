@@ -198,7 +198,7 @@ body.has-selection { padding-bottom: 5em; }
   <th class="sel-col"></th>
 {#- One typed filter per column (filters.js); the status column has none:
     the pills filter it. #}
-{% for c in columns %}  <th>{% if c.kind == 'text' %}<input class="col-filter" data-col-filter="{{ c.key }}" data-kind="text" placeholder="*Pipe*" title="Substring match by default; use * or ? for glob (e.g. *.Freq*); .* above makes it a regex">{% elif c.kind == 'number' %}<input class="col-filter" data-col-filter="{{ c.key }}" data-kind="number" placeholder="&gt;1e-4" title="A comparison (&gt;1e-4, &lt;=5, =0) or an inclusive range (1..10)">{% endif %}</th>
+{% for c in columns %}  <th>{% if c.kind in filter_hints %}<input class="col-filter" data-col-filter="{{ c.key }}" data-kind="{{ c.kind }}" placeholder="{{ filter_hints[c.kind][0] }}" title="{{ filter_hints[c.kind][1] }}">{% endif %}</th>
 {% endfor %}</tr>
 </thead>
 <tbody id="results-tbody">

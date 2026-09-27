@@ -36,7 +36,14 @@ from ..backends.base import kept_run_result
 from ..backends.common.result_variables import run_timing
 from ..backends.progress import read_status
 from ..comparison.types import TestComparison
-from .rows import COLUMNS, TestRow, enrich_row, row_from_status, summary_fields
+from .rows import (
+    COLUMNS,
+    FILTER_HINTS,
+    TestRow,
+    enrich_row,
+    row_from_status,
+    summary_fields,
+)
 from .status import STATUS_CLASSES, STATUS_LABELS, STATUS_ORDER
 from .theme import css_variables
 
@@ -46,6 +53,8 @@ _env = Environment(
     autoescape=select_autoescape(["html"]),
 )
 _env.globals["dstf_css"] = css_variables()
+# A column filter's placeholder and tooltip, by kind — the Suite table's too.
+_env.globals["filter_hints"] = FILTER_HINTS
 # A sort value as a data-sort-* attribute: None is the empty string, which
 # dashboard.js sorts last in both directions.
 _env.filters["sortval"] = lambda v: "" if v is None else v

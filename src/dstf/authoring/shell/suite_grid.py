@@ -21,7 +21,7 @@ from typing import Any
 
 from nicegui import ui
 
-from ...reporting.rows import COLUMNS, EDITS, Column, TestRow
+from ...reporting.rows import COLUMNS, EDITS, FILTER_HINTS, Column, TestRow
 
 HERE = Path(__file__).parent
 #: The typed filters, one module for the dashboard and this table.
@@ -44,12 +44,10 @@ TOOL_COLUMNS: tuple[Column, ...] = (
 #: column chooser.
 VISIBLE = ("status", "model", "nrmse", "vars", "sim", "warnings", "edits", "detail")
 ORDER = (*VISIBLE, "ref", "resolution", "translate", "total")
-#: A text filter's tooltip; the Test column reads the full test name.
-TEXT_HELP = "text, *glob*, or a regex with .*"
-FILTER_HELP = {
-    "model": "the full test name: " + TEXT_HELP,
-    "number": ">1e-4, <=3, 1..10",
-}
+#: What a filter says beyond its kind's hint (``rows.FILTER_HINTS``, the
+#: dashboard's words): the Test column shows short names and filters the
+#: full one.
+FILTER_NOTE = {"model": "Reads the full test name. "}
 
 
 def row_json(row: TestRow) -> dict[str, Any]:
@@ -70,6 +68,20 @@ def row_json(row: TestRow) -> dict[str, Any]:
     return data
 
 
+def _filter_params(c: Column) -> dict[str, str]:
+    """A column's filter input: its kind, and the dashboard's placeholder
+    and tooltip for that kind (the status column's cell mirrors the pills,
+    and has neither)."""
+    if c.kind == "status":
+        return {"kind": c.kind}
+    placeholder, title = FILTER_HINTS[c.kind]
+    return {
+        "kind": c.kind,
+        "placeholder": placeholder,
+        "help": FILTER_NOTE.get(c.key, "") + title,
+    }
+
+
 def _column_defs() -> list[dict[str, Any]]:
     by_key = {c.key: c for c in TOOL_COLUMNS}
     defs: list[dict[str, Any]] = []
@@ -84,10 +96,7 @@ def _column_defs() -> list[dict[str, Any]]:
             "floatingFilter": True,
             ":filter": "DstfSuite.NoFilter",
             ":floatingFilterComponent": "DstfSuite.FloatingInput",
-            "floatingFilterComponentParams": {
-                "kind": c.kind,
-                "help": FILTER_HELP.get(key) or FILTER_HELP.get(c.kind, TEXT_HELP),
-            },
+            "floatingFilterComponentParams": _filter_params(c),
             "suppressFloatingFilterButton": True,
             "suppressHeaderFilterButton": True,
             "suppressHeaderMenuButton": True,

@@ -220,6 +220,7 @@
       this.e.dataset.col = col;
       this.e.dataset.help = p.help;
       this.e.title = p.help;
+      this.e.placeholder = p.placeholder;
       this.e.setAttribute('aria-label', 'Filter ' + p.column.getColDef().headerName);
       this.e.value = S.filters[col] || '';
       this.e.addEventListener('input', () => {

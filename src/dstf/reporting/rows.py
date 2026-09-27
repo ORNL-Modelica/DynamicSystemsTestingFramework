@@ -115,6 +115,23 @@ class Column:
         return "" if self.sort(row) is None else self.text(row)
 
 
+#: A column filter's hint by the column's kind: its placeholder and its
+#: tooltip. The dashboard's filter row and the tool's Suite table read
+#: these, so the two say the same thing about the one filter language
+#: (``templates/filters.js``).
+FILTER_HINTS: dict[str, tuple[str, str]] = {
+    "text": (
+        "*Pipe*",
+        "Substring match by default; use * or ? for glob (e.g. *.Freq*);"
+        " .* above makes it a regex",
+    ),
+    "number": (
+        ">1e-4",
+        "A comparison (>1e-4, <=5, =0) or an inclusive range (1..10)",
+    ),
+}
+
+
 _DASH = "—"
 
 
