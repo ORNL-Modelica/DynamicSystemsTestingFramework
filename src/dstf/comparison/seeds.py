@@ -32,7 +32,7 @@ SEED_MARGIN = 0.05
 SEED_MARGIN_FLOOR = 1e-6
 #: The widest relative window a peak is seeded with. Two bins around a peak
 #: at FFT bin 1 is +-200%, a window that matches anything; a peak whose two
-#: bins are wider (one in the lowest four bins) is not seeded at all.
+#: bins are wider (one in the lowest three bins) is not seeded at all.
 MAX_PEAK_TOLERANCE = 0.5
 
 
@@ -50,8 +50,10 @@ class SeedData:
         windowed criterion is seeded from the samples it scores."""
         if not window:
             return self
-        start = window.get("start", -math.inf)
-        end = window.get("end", math.inf)
+        # float(), as `parse_metric_tree` reads them: a hand-written
+        # ``"start": "2"`` parses, and compared raw raised UFuncTypeError.
+        start = float(window.get("start", -math.inf))
+        end = float(window.get("end", math.inf))
 
         def cut(s: tuple[np.ndarray, np.ndarray] | None):
             if s is None:
@@ -129,13 +131,16 @@ def seed_tube(data: SeedData) -> dict:
 
 
 def seed_scalar(data: SeedData) -> dict:
-    """The final value: within 1% of the baseline's where there is a
-    reference, else between bounds 5% of its magnitude either side."""
+    """The final value: within 1% of the baseline's where the seed reads
+    the reference, else between bounds 5% of its magnitude either side."""
     s = data.series()
     if s is None:
         return {}
     quantity = {"reduce": "final"}
-    if data.ref is not None:
+    # Not `data.ref is not None`: a reference with no finite sample (all
+    # NaN, or none inside the window) seeds from the actual, and a
+    # tolerance against it failed on its own data.
+    if s is data.ref:
         return {"quantity": quantity, "tolerance_mode": "rel", "tolerance": 0.01}
     final = float(s[1][np.isfinite(s[1])][-1])
     half = SEED_MARGIN * (abs(final) or _span(s[1])[2])
@@ -149,10 +154,10 @@ def seed_scalar(data: SeedData) -> dict:
 def seed_dominant_frequency(data: SeedData) -> dict:
     """The strongest peak of the data's spectrum, 5% wide or two bins,
     whichever is wider. None when two bins are wider than
-    `MAX_PEAK_TOLERANCE` — a peak in the lowest four bins is a trend's
-    leakage at ~1/span, not a frequency: over TRANSFORM, 281 of 322 varying
-    variables seeded one there. The leaf stays bare, and scoring says to
-    declare a peak."""
+    `MAX_PEAK_TOLERANCE` — a peak in the lowest three bins is a trend's
+    leakage at ~1/span, not a frequency: over TRANSFORM, 279 of 322 varying
+    variables have their strongest peak there. The leaf stays bare, and
+    scoring says to declare a peak."""
     s = data.series()
     if s is None:
         return {}

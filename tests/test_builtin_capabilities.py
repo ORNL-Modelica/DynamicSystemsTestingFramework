@@ -615,6 +615,78 @@ def test_an_added_criterion_on_a_variable_without_data_is_bare(session):
     assert _added(session, "nope", "range") == {"metric": "range", "variable": "nope"}
 
 
+def test_seed_data_reads_an_unknown_test_as_no_data_and_nothing_else(session):
+    """Only ``KeyError`` (an unknown test) is "nothing to seed from"; any
+    other failure of the view is a bug, and propagates."""
+
+    class _View:
+        def __init__(self, exc):
+            self.exc = exc
+
+        def view(self, model_id, variable):
+            raise self.exc
+
+    empty = seed_data(_View(KeyError("M")), "M", "x")  # type: ignore[arg-type]
+    assert (empty.ref, empty.act) == (None, None)
+    with pytest.raises(ValueError, match="broken view"):
+        seed_data(_View(ValueError("broken view")), "M", "x")  # type: ignore[arg-type]
+
+
+def _k_of_n_refusal(session, action: str, k) -> str:
+    """What the tool shows when Edit (the k-of-n of two in NESTED) or Wrap
+    (its root leaf) sets ``k`` and the staged tree is refused."""
+    from dstf.authoring.errors import user_text
+    from dstf.discovery.patch_apply import PatchError
+
+    session.stage([PatchOp(D, "add", ROOT, copy.deepcopy(NESTED))])
+    path = "/metrics/children/1" if action == "edit" else "/metrics/children/0"
+    patch = EditTree().act(
+        SessionView(session, _node(D, path)),
+        action=action,
+        model_id=D,
+        path=path,
+        kind="k-of-n",
+        k=k,
+        weights="",
+        threshold=None,
+        direction="less",
+    )
+    with pytest.raises(PatchError) as box:
+        session.stage(patch.ops)
+    return user_text(box.value)
+
+
+@pytest.mark.parametrize("action", ["edit", "wrap"])
+@pytest.mark.parametrize(
+    "k, text",
+    [
+        (0, "k must be a whole number of at least 1; got 0."),
+        (-2, "k must be a whole number of at least 1; got -2."),
+        (None, "k is empty; it must be a whole number of at least 1."),
+        ("", "k is empty; it must be a whole number of at least 1."),
+    ],
+    ids=["zero", "negative", "cleared", "blank"],
+)
+def test_a_k_below_one_reads_as_a_sentence_naming_k(session, action, k, text):
+    """Shown without its path, "must be a positive integer, got 0" named
+    nothing; and a cleared field is not a 0 the user typed."""
+    assert _k_of_n_refusal(session, action, k) == text
+
+
+@pytest.mark.parametrize(
+    "action, k, text",
+    [
+        ("edit", 5, "k is 5, but this k-of-n has only 2 criteria."),
+        ("wrap", 2, "k is 2, but this k-of-n has only 1 criterion."),
+    ],
+    ids=["plural", "singular"],
+)
+def test_a_k_above_the_children_reads_as_what_the_node_has(session, action, k, text):
+    """On Edit or Wrap nothing was removed: "only 1 criterion is left" read
+    as if something had been."""
+    assert _k_of_n_refusal(session, action, k) == text
+
+
 async def test_the_node_panel_is_the_cluster_and_its_forms_stage(session):
     session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
     leaf = "/metrics/children/1"

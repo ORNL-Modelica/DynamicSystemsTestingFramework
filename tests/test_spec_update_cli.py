@@ -285,6 +285,24 @@ class TestSpecUpdateMaterialization:
         data = json.loads(spec.read_text(encoding="utf-8"))
         assert data["tests"][0]["metrics"] == new_tree
 
+    def test_a_parse_error_prints_its_path(self, tmp_path, capsys):
+        """The tool shows a refused tree's reason alone, beside its row; the
+        CLI has no row, so its line keeps where the error is."""
+        spec = _write_spec(tmp_path, {"model": "MyLib.E", "variables": ["x"]})
+        tree = {
+            "combinator": "k-of-n",
+            "k": 0,
+            "children": [{"metric": "nrmse", "variable": "x"}],
+        }
+        patch = _write_patch(
+            tmp_path, "MyLib.E", [{"op": "add", "path": "/metrics", "value": tree}]
+        )
+        assert _run_spec_update(spec, patch) == 1
+        assert (
+            "metrics.k: k must be a whole number of at least 1; got 0."
+            in capsys.readouterr().out
+        )
+
     def test_flat_entry_without_variables_fails_cleanly(self, tmp_path):
         """No tracked variables → nothing to materialize leaves from; the
         command errors instead of writing a broken spec."""

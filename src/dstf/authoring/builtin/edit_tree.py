@@ -43,7 +43,10 @@ def _kind_fields(kind: str, inputs: dict[str, Any]) -> dict[str, Any]:
     node's threshold is never read as 0 when none was typed: 0 with `less`
     always fails."""
     if kind == "k-of-n":
-        return {"k": int(round(float(inputs["k"] or 0)))}
+        # A cleared field stays None, for the parser to say "k is empty"
+        # rather than refuse a 0 nobody typed.
+        k = inputs["k"]
+        return {"k": int(round(float(k))) if _typed(k) else None}
     if kind == "weighted":
         text = str(inputs["weights"] or "")
         try:

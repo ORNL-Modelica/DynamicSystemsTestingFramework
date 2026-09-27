@@ -106,9 +106,9 @@ def test_a_peak_is_two_bins_wide():
     ],
     ids=["bin-1", "bin-3", "ramp"],
 )
-def test_a_peak_in_the_lowest_four_bins_is_not_seeded(v):
-    """Over TRANSFORM, 281 of 322 varying variables seeded a peak at the
-    tolerance cap: a trend's leakage at ~1/span, not a frequency. Two bins
+def test_a_peak_in_the_lowest_three_bins_is_not_seeded(v):
+    """Over TRANSFORM, 279 of 322 varying variables have their strongest
+    peak in bins 1-3: a trend's leakage at ~1/span, not a frequency. Two bins
     around such a peak is wider than `MAX_PEAK_TOLERANCE`; the leaf stays
     bare, and scoring says to declare a peak."""
     leaf = seeded_leaf("dominant-frequency", "x", SeedData(ref=(T, v), act=None))
@@ -237,6 +237,26 @@ def test_a_scalar_with_a_reference_is_its_final_value_within_one_percent():
     }
 
 
+def test_a_scalar_whose_reference_is_empty_in_its_window_gets_bounds():
+    """The reference ends at 10 s and the window starts at 12: the seed
+    reads the actual, so it is the baseline-free form — a tolerance against
+    a baseline with no samples to reduce failed on its own data."""
+    t_ref, t_act = np.linspace(0.0, 10.0, 101), np.linspace(0.0, 20.0, 201)
+    ref, act = (t_ref, 300.0 + t_ref), (t_act, 300.0 + t_act)
+    window = {"start": 12.0, "end": 18.0}
+    data = SeedData(ref=ref, act=act).within(window)
+    leaf = {**seeded_leaf("scalar", "x", data), "window": window}
+    assert "tolerance" not in leaf and {"min_value", "max_value"} <= set(leaf)
+    assert _score(leaf, act=act, ref=ref).passed, leaf
+
+
+def test_a_scalar_whose_reference_is_all_nan_gets_bounds():
+    ref = (T, np.full_like(T, np.nan))
+    leaf = seeded_leaf("scalar", "x", SeedData(ref=ref, act=(T, V)))
+    assert "tolerance" not in leaf and {"min_value", "max_value"} <= set(leaf)
+    assert _score(leaf, act=(T, V), ref=ref).passed, leaf
+
+
 def test_a_scalars_bounds_are_around_its_final_value_not_its_first():
     v = 100.0 + 10.0 * T  # 100 -> 200
     leaf = seeded_leaf("scalar", "x", SeedData(ref=None, act=(T, v)))
@@ -290,3 +310,10 @@ def test_a_windowed_range_brackets_only_its_window():
 def test_a_window_may_leave_either_end_open(window, first, last):
     t, _ = SeedData(ref=(T, RAMP), act=None).within(window).ref
     assert (t[0], t[-1]) == (first, last)
+
+
+def test_a_hand_written_window_bound_may_be_a_string():
+    """`parse_metric_tree` reads a window's bounds with float(), so a spec
+    may hold ``"start": "2"``; the seed reads it the same way."""
+    t, _ = SeedData(ref=(T, RAMP), act=None).within({"start": "2", "end": "5"}).ref
+    assert (t[0], t[-1]) == (2.0, 5.0)

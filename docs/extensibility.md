@@ -460,16 +460,21 @@ The MetricTree node referencing a metric specifies `"against": "<baseline-name>"
    it will score: the authoring tool calls it when a criterion of this
    metric is added and when a criterion's metric is switched to it
    (`comparison/seeds.py`). It takes a `SeedData` — `ref` and `act`, each a
-   `(time, values)` pair or `None` (`SeedData.series()` is the reference,
-   else the actual) — and returns the params to add to
-   `{"metric", "variable"}`, or `{}` when there is nothing to seed from. It
+   `(time, values)` pair or `None`, already cut to the criterion's window
+   when it has one (`SeedData.series()` is the reference, else the actual,
+   whichever first has a finite value) — and returns the params to add to
+   `{"metric", "variable"}`, or `{}` when there is nothing to seed from or
+   nothing worth seeding: `dominant-frequency` leaves a peak in the lowest
+   three FFT bins unseeded, a trend's leakage rather than a frequency. It
    is pure, like `compare`. Leave it `None` for a metric valid bare: the
    builtins `nrmse`, `points` and `event-timing` do. The builtin seeds are
    the worked examples: `range` brackets the data, `tube` a band around the
    reference, `scalar` the final value and `dominant-frequency` the
    strongest peak. A bound or a width is rounded AWAY from the data at the
-   leading digit of the margin it leaves, so the spec file reads short and
-   the seeded leaf still passes on the data it came from.
+   leading digit of the margin it leaves, so the spec file reads short; a
+   seeded leaf passes on the data it came from — a seed that reads the
+   actual, as `scalar` does when the reference has no finite sample in the
+   window, does not score against the baseline.
 9. A config field holding a list of row dicts declares `columns` in its
    metadata — `(key, type)` pairs, one per row key, where `type` is
    `"float"` (a key the metric indexes: required, a blank cell is never staged),

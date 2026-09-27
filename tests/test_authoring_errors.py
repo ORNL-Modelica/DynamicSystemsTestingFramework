@@ -107,7 +107,7 @@ def test_a_k_of_n_left_with_fewer_children_than_k_reads_as_a_sentence(session):
     }
     session.stage([_op("add", "/metrics", tree)])
     text = _refusal(session, ("remove", "/metrics/children/0/children/1"))
-    assert text == "k is 2 but only 1 criterion is left under this k-of-n."
+    assert text == "k is 2, but this k-of-n has only 1 criterion."
 
 
 def test_two_validator_sentences_are_joined_as_sentences(session):

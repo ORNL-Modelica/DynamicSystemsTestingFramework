@@ -195,7 +195,7 @@ class TestCombinatorSpec:
 
     def test_k_of_n_k_exceeding_children_rejected(self):
         with pytest.raises(
-            MetricSpecError, match=r"metrics\.k: k is 5 but only 1 criterion is left"
+            MetricSpecError, match=r"metrics\.k: k is 5, but this k-of-n has only 1 "
         ):
             parse_metric_tree(
                 {
@@ -206,7 +206,7 @@ class TestCombinatorSpec:
             )
 
     def test_k_of_n_negative_k_rejected(self):
-        with pytest.raises(MetricSpecError, match="positive integer"):
+        with pytest.raises(MetricSpecError, match="whole number of at least 1"):
             parse_metric_tree(
                 {
                     "combinator": "k-of-n",
@@ -350,3 +350,27 @@ class TestSpecToRaw:
         reparsed = parse_metric_tree(raw)
         assert [leaf.metric for leaf in reparsed.children] == ["nrmse", "range"]
         assert reparsed.children[1].params == {"min_value": 0.0}
+
+
+# ---------------------------------------------------------------------------
+# MetricSpecError itself
+# ---------------------------------------------------------------------------
+
+
+class TestMetricSpecError:
+    def test_str_is_path_then_message(self):
+        assert str(MetricSpecError("metrics.k", "msg")) == "metrics.k: msg"
+
+    def test_no_path_reads_as_the_message_alone(self):
+        """No leading ": " where there is no location to name."""
+        assert str(MetricSpecError("", "msg")) == "msg"
+
+    @pytest.mark.parametrize("path", ["metrics.k", ""])
+    def test_it_round_trips_through_pickle_and_copy(self, path):
+        import copy
+        import pickle
+
+        e = MetricSpecError(path, "msg")
+        for back in (pickle.loads(pickle.dumps(e)), copy.copy(e)):
+            assert type(back) is MetricSpecError
+            assert (back.path, back.message, str(back)) == (path, "msg", str(e))

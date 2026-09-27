@@ -39,6 +39,11 @@ class MetricSpecError(ValueError):
         self.message = message
         super().__init__(f"{path}: {message}" if path else message)
 
+    def __reduce__(self):
+        # The default rebuilds from ``args`` — the one formatted string —
+        # and ``__init__`` takes two: pickle and copy raised TypeError.
+        return (type(self), (self.path, self.message))
+
 
 @dataclass
 class LeafSpec:
@@ -432,16 +437,23 @@ def _parse_combinator(raw: dict, path: str) -> CombinatorSpec:
     if name == "k-of-n":
         if "k" not in raw:
             raise MetricSpecError(f"{path}.k", "'k-of-n' combinator requires 'k'")
+        # Sentences with their subject: the tool shows them without the
+        # path, beside the node, and a cleared field is not a typed 0.
+        if raw["k"] is None:
+            raise MetricSpecError(
+                f"{path}.k", "k is empty; it must be a whole number of at least 1."
+            )
         if not isinstance(raw["k"], int) or raw["k"] <= 0:
             raise MetricSpecError(
-                f"{path}.k", f"must be a positive integer, got {raw['k']!r}"
+                f"{path}.k",
+                f"k must be a whole number of at least 1; got {raw['k']!r}.",
             )
         k = raw["k"]
         if k > len(children):
-            left = "criterion is" if len(children) == 1 else "criteria are"
+            n = len(children)
+            has = "1 criterion" if n == 1 else f"{n} criteria"
             raise MetricSpecError(
-                f"{path}.k",
-                f"k is {k} but only {len(children)} {left} left under this k-of-n.",
+                f"{path}.k", f"k is {k}, but this k-of-n has only {has}."
             )
 
     weights: list[float] = []

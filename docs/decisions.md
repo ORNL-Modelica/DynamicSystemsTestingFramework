@@ -4882,9 +4882,9 @@ its left edge. The rest of that board waits for the steps that rebuild it.
    (TRANSFORM OilWater_PTHX `STHX.tube.mediums[2].h`) — `scalar` the final
    value (within 1% of the baseline's, or between bounds when there is no
    reference), `dominant-frequency` the strongest peak, 5% or two FFT bins
-   wide; a peak whose two bins exceed +-50% (the lowest four bins) is a
-   trend's leakage, not a frequency — 281 of TRANSFORM's 322 varying
-   variables seeded one — and is not seeded. A bound or width is
+   wide; a peak whose two bins exceed +-50% (the lowest three bins) is a
+   trend's leakage, not a frequency — 279 of TRANSFORM's 322 varying
+   variables have their strongest peak there — and is not seeded. A bound or width is
    rounded AWAY from the data at the margin's leading digit, or left
    unrounded where that would land on the data: rounded to 6
    significant digits, 101325 +- 0.001 seeded `min_value == max_value` and
