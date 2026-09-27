@@ -976,6 +976,63 @@ def test_the_table_fits_1280_and_shows_edits_at_900(tmp_path, playwright_browser
             proc.wait(10)
 
 
+#: An id as long as TRANSFORM's longest (149 characters, no space to wrap at).
+LONGEST_ID = (
+    "TRANSFORM.HeatAndMassTransfer.DiscritizedModels.ClassicalMethod.Examples."
+    "GenericPipe_withWall_2DConduction_TwoPhaseBoiling_CHFtransitionCheck_Full3Dx"
+)
+assert len(LONGEST_ID) == 149 and " " not in LONGEST_ID
+
+#: The tooltip's box against the viewport's width, and whether its text
+#: runs past the box (a box kept in view over text that is not).
+TIP_BOX = """() => {
+  const t = document.querySelector('.ag-tooltip');
+  const r = t.getBoundingClientRect();
+  return {left: r.left, right: r.right, vw: document.documentElement.clientWidth,
+          overflow: t.scrollWidth - t.clientWidth};
+}"""
+
+
+def test_a_long_ids_tooltip_stays_in_the_viewport_at_900(tmp_path, playwright_browser):
+    """At 900 px a 149-character id without a space ran past the right edge
+    of the page in its tooltip (x=175 to 1151): the tooltip wraps within the
+    viewport, anywhere in the id, and at 720 px on a wider page."""
+
+    def setup(cfg: Path) -> None:
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        spec["tests"].append(
+            {
+                "model": LONGEST_ID,
+                "source": "../Examples/A.py",
+                "variables": ["x"],
+                "simulation": {"stop_time": 1.0, "tolerance": 1e-6},
+            }
+        )
+        spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+
+    proc, _url, page, context, errors, _ = _served(
+        tmp_path, playwright_browser, setup=setup, rows=7, width=900
+    )
+    try:
+        assert _tooltip(page, LONGEST_ID, "model") == LONGEST_ID
+        box = page.evaluate(TIP_BOX)
+        _keep(page, tmp_path, "suite-tooltip-900")
+        assert 0 <= box["left"] and box["right"] <= box["vw"], box
+        assert box["overflow"] <= 0, box
+        # On a wide page it wraps at a reading width, not the page's.
+        page.set_viewport_size({"width": 1600, "height": 900})
+        assert _tooltip(page, LONGEST_ID, "model") == LONGEST_ID
+        box = page.evaluate(TIP_BOX)
+        assert box["right"] - box["left"] <= 720 and box["overflow"] <= 0, box
+        assert errors == [], errors
+        context.close()
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(10)
+
+
 #: The rows AG Grid drew and where the last one ends, against its viewport.
 ROWS_DRAWN = """() => {
   const vp = document.querySelector('.ag-body-viewport').getBoundingClientRect();

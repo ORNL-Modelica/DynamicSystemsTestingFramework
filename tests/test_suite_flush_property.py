@@ -9,6 +9,7 @@ S2a review's harness; `NSEEDS` widens the random sweep."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 
@@ -274,3 +275,80 @@ async def test_random_sequences(shell, grid, seed):
             shell.tick()
             # the truth only after the known phase is over: shell.known rows wait
             _check(shell, page, grid, f"seed {seed} tick {tick} {names}")
+
+
+async def test_a_row_that_never_builds_does_not_freeze_the_grid(
+    shell, grid, monkeypatch, caplog
+):
+    """A model whose row always raises: the tick after the failure sends the
+    other rows without it and moves on — the grid does not stop taking
+    updates, and the failure is logged twice at most, not on every tick."""
+    import dstf.authoring.shell.suite as suite_mod
+
+    real = suite_mod.suite_rows
+
+    def broken(session, ids, **kw):
+        if B in ids:
+            raise RuntimeError("B's row is broken")
+        return real(session, ids, **kw)
+
+    def truth(m):
+        (row,) = real(shell.session, [m], failed=set())
+        return json.loads(json.dumps(row_json(row)))
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _page(shell, user)
+        _init(page, grid)
+        monkeypatch.setattr(suite_mod, "suite_rows", broken)
+        with caplog.at_level("WARNING"):
+            shell._events.put({"event": "results", "models": {A, B}})
+            shell.session.stage([LOOSEN])  # A's verdict changes
+            for _ in range(2):
+                shell.tick()
+            assert grid.rows[A] == truth(A)
+            for _ in range(20):
+                shell.tick()
+            shell.session.discard()  # a later update reaches the grid too
+            shell.tick()
+            assert grid.rows[A] == truth(A)
+        assert not grid.errors
+        logged = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert 1 <= len(logged) <= 2, [r.getMessage() for r in logged]
+
+
+async def test_a_row_that_never_builds_is_not_added_and_is_tried_again_when_touched(
+    shell, grid, monkeypatch
+):
+    """An added row dropped by a failing build is not in the grid, so it is
+    never updated or removed there; it is added once an event touches it
+    and its row builds."""
+    import dstf.authoring.shell.suite as suite_mod
+
+    real = suite_mod.suite_rows
+    broken_on = {"yes": True}
+
+    def broken(session, ids, **kw):
+        if broken_on["yes"] and B in ids:
+            raise RuntimeError("B's row is broken")
+        return real(session, ids, **kw)
+
+    async with user_simulation(root=shell.index) as user:
+        await _open(user)
+        page = _page(shell, user)
+        _init(page, grid)
+        monkeypatch.setattr(suite_mod, "suite_rows", broken)
+        shell.session.close()
+        shell.tick()  # every row removed: no row is built
+        assert grid.rows == {}
+        shell.session.open(shell.config_path, work_dir=shell.work_dir)
+        for _ in range(3):
+            shell.tick()  # every row added but B, whose row fails
+        assert set(grid.rows) == set(ALL) - {B}
+        assert not grid.errors
+        broken_on["yes"] = False
+        shell.tick()
+        assert B not in grid.rows  # not tried again untouched
+        shell._events.put({"event": "results", "models": {B}})
+        shell.tick()
+        _check(shell, page, grid, "B added once touched")

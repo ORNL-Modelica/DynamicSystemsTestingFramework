@@ -8,6 +8,7 @@ never in the Session (D129). One object per browser tab."""
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
@@ -25,6 +26,8 @@ from .tabstate import TabState, tab_state
 if TYPE_CHECKING:
     from .shell import Shell
 
+logger = logging.getLogger(__name__)
+
 
 class SuitePage:
     def __init__(self, shell: Shell) -> None:
@@ -38,6 +41,13 @@ class SuitePage:
         #: What this tick's events touched, repainted by `flush` in one
         #: transaction.
         self._update: set[str] = set()
+        #: The last flush raised building its rows: this one builds them one
+        #: by one and leaves out the ones that raise.
+        self._retrying = False
+        #: Visible tests whose row failed to build when they were to be
+        #: added: not in the grid, and added again only once an event
+        #: touches them.
+        self._dropped: set[str] = set()
 
     async def build(self) -> None:
         self.client = ui.context.client
@@ -170,18 +180,60 @@ class SuitePage:
         so the grid is never told to drop a row it never had, and one
         dropped and named again stays (repainted if an event touched it).
         An added row is sent once, with the tab's selection. What the grid
-        holds moves only once the transaction is sent: one that raises
-        (building a row, or the send) is sent again on the next tick."""
+        holds moves only once the transaction is sent: one that raises is
+        sent again on the next tick.
+
+        Retried once: when building the rows raised, the next tick builds
+        them one by one, sends the ones that build and moves on — one row
+        that always raises froze the grid (a traceback per tick, no update
+        sent). A row left out keeps its last painted state; one that was to
+        be added is not in the grid, and is added again once an event
+        touches it."""
         held, sent = set(self.ids), set(self._sent)
-        add = [m for m in self.ids if m not in sent]
+        self._dropped &= held
+        add = [
+            m
+            for m in self.ids
+            if m not in sent and (m not in self._dropped or m in self._update)
+        ]
         remove = [m for m in self._sent if m not in held]
         update = [m for m in self.ids if m in sent and m in self._update]
+        added = set(add)
         if add or update or remove:
+            if self._retrying:
+                add_rows, bad_add = self._rows_each(add)
+                update_rows, bad_update = self._rows_each(update)
+                if bad_add or bad_update:
+                    logger.error(
+                        "the Suite table left out %s: %s",
+                        ", ".join(bad_add + bad_update),
+                        "its row failed to build again",
+                    )
+                added -= set(bad_add)
+            else:
+                try:
+                    add_rows, update_rows = self._rows(add), self._rows(update)
+                except Exception:
+                    self._retrying = True
+                    raise  # the shell logs it; the next tick goes row by row
             self.grid.transaction(
-                add=self._rows(add),
-                update=self._rows(update),
+                add=add_rows,
+                update=update_rows,
                 remove=remove,
-                select=[m for m in add if m in self.state.checked],
+                select=[m for m in add if m in added and m in self.state.checked],
             )
-        self._sent = list(self.ids)
+            self._dropped = (self._dropped - added) | (set(add) - added)
+        self._retrying = False
+        self._sent = [m for m in self.ids if m in sent or m in added]
         self._update = set()
+
+    def _rows_each(self, ids: list[str]) -> tuple[list[TestRow], list[str]]:
+        """``ids``' rows built one at a time, and the ids whose build raised."""
+        rows: list[TestRow] = []
+        bad: list[str] = []
+        for m in ids:
+            try:
+                rows += self._rows([m])
+            except Exception:
+                bad.append(m)
+        return rows, bad

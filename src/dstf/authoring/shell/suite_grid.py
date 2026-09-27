@@ -282,6 +282,9 @@ GRID_CSS = """
 .dstf-tb.on { outline: 2px solid var(--dstf-accent); }
 .dstf-tb:disabled { opacity: .5; cursor: default; }
 .dstf-tb-txt { font-size: 12px; font-family: var(--dstf-mono); }
+/* A tooltip reads a whole test id or message: an id has no space to wrap
+   at, and at 900 px a 149-character one ran 250 px past the page's edge. */
+.ag-tooltip { max-width: min(90vw, 720px); white-space: normal; overflow-wrap: anywhere; }
 #dstf-colmenu { position: absolute; z-index: 9000; background: var(--dstf-surface);
   border: 1px solid var(--dstf-border); border-radius: 4px; padding: 6px 10px;
   display: flex; flex-direction: column; gap: 2px; font-size: 13px;
