@@ -37,15 +37,45 @@ FAIL = "FAIL"
 SIM_FAIL = "SIM_FAIL"
 NO_REF = "NO_REF"
 
-#: Status → the CSS class the HTML surfaces (dashboard row, per-test
-#: report header) style it with. Single table so the two renderers cannot
-#: drift into different names for the same verdict.
+#: The states a test is in before it has a verdict, from a live run's
+#: status.json. A test that simulated and is not yet scored has no word of
+#: its own: the dashboard shows it as its live row says until the compare
+#: phase writes its verdict.
+QUEUED = "QUEUED"
+RUNNING = "RUNNING"
+TIMED_OUT = "TIMED_OUT"
+
+#: Every status, in the order the count pills and a sort by status use.
+STATUS_ORDER = (QUEUED, RUNNING, PASS, FAIL, SIM_FAIL, NO_REF, TIMED_OUT)
+
+#: Status → the CSS class both HTML surfaces style it with. One table, so
+#: the dashboard, the report header and the tool cannot drift into two
+#: names for one state.
 STATUS_CLASSES = {
     PASS: "pass",
     FAIL: "fail",
     SIM_FAIL: "sim-fail",
     NO_REF: "no-ref",
+    QUEUED: "queued",
+    RUNNING: "running",
+    TIMED_OUT: "timed-out",
 }
+
+#: Status → the word a person reads. Only TIMED_OUT differs from its key.
+STATUS_LABELS = {s: s for s in STATUS_ORDER} | {TIMED_OUT: "TIMED OUT"}
+
+_LIVE = {
+    "queued": QUEUED,
+    "running": RUNNING,
+    "timed_out": TIMED_OUT,
+    "failed": SIM_FAIL,
+}
+
+
+def live_status(raw: str) -> str | None:
+    """A live status.json state as a status, or None for "passed": the
+    simulation ran and the verdict is the compare phase's to give."""
+    return _LIVE.get(raw)
 
 
 def classify(comp: TestComparison) -> str:
