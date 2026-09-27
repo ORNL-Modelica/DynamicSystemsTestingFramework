@@ -911,15 +911,36 @@ class Session:
         self._emit("spec", models=models)
         self._score_all(models)
 
-    def discard(self) -> None:
-        """Drop every pending op and restore the loaded verdicts. Refused
-        while a job runs, as Save is: the job's reload scores the spec."""
+    def discard(self, models: set[str] | None = None) -> None:
+        """Drop the pending ops of ``models`` — every pending op when
+        ``None`` — and restore their loaded verdicts; the other models' ops
+        stay, in order. Refused while a job runs, as Save is: the job's
+        reload scores the spec."""
         self._refuse_if_running()
-        models = {op.model_id for op in self.spec.pending}
+        pending = self.spec.pending
+        gone = {op.model_id for op in pending}
+        if models is not None:
+            gone &= models
+        kept = [op for op in pending if op.model_id not in gone]
         self.spec = SpecDocument(
-            self.spec.path, self.spec.loaded, self.spec.content_hash
+            self.spec.path, self.spec.loaded, self.spec.content_hash, kept
         )
-        self._rebuild_tests(models)
+        self._rebuild_tests(gone)
+
+    def saved_comparison(self, model_id: str) -> TestComparison | None:
+        """The test's comparison as SAVED — the spec as loaded, no pending
+        op applied — beside ``comparisons``, which is the edited spec's.
+        With nothing pending for the model it IS ``comparisons[model_id]``;
+        otherwise it is scored afresh, as `_score` scores, writing nothing:
+        not ``comparisons``, not ``project.tests``. ``None`` for a model the
+        saved spec does not make a test (an entry a pending op creates).
+        Uncached: the strip asks for its one test, per paint."""
+        if not any(op.model_id == model_id for op in self.spec.pending):
+            return self.comparisons.get(model_id)
+        project = self._require_project()
+        tests = self._merge(project.config, project.scanned, self.spec.loaded)
+        test = next((t for t in tests if t.model_id == model_id), None)
+        return None if test is None else self._compare(test)
 
     def save(self) -> None:
         """Apply exactly the pending ops through ``spec-update``'s
@@ -1122,17 +1143,22 @@ class Session:
         test = project.test(model_id)
         if test is None:
             raise KeyError(model_id)
+        comp = self._compare(test)
+        self.comparisons[model_id] = comp
+        return comp
+
+    def _compare(self, test: TestModel) -> TestComparison:
+        """Score ``test`` against the last results; stores nothing."""
+        project = self._require_project()
         tolerance = project.config.tolerance
-        comp = compare_one(
+        return compare_one(
             test,
-            project.results.get(model_id),
+            project.results.get(test.model_id),
             project.store,
             float(tolerance) if tolerance is not None else DEFAULT_TOLERANCE,
             project.config.default_points,
             dataset_kind=project.dataset_kind,
         )
-        self.comparisons[model_id] = comp
-        return comp
 
     def _score_all(self, models: Iterable[str]) -> None:
         project = self._require_project()

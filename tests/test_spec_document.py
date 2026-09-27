@@ -109,3 +109,14 @@ def test_on_disk_changed_after_a_write(tmp_path):
     doc = SpecDocument.load(p)
     p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
     assert doc.on_disk_changed()
+
+
+def test_saved_entry_is_a_copy_of_the_loaded_entry_whatever_is_pending(tmp_path):
+    doc = SpecDocument.load(_spec(tmp_path, ENTRY))
+    doc.pending.append(PatchOp("M", "replace", "/comparison/tolerance", 0.5))
+    doc.pending.append(PatchOp("N", "add", "/comparison", {"tolerance": 1}))
+    saved = doc.saved_entry("M")
+    assert saved == ENTRY and doc.entry("M")["comparison"]["tolerance"] == 0.5
+    saved["comparison"]["tolerance"] = 9
+    assert doc.loaded["tests"][0]["comparison"]["tolerance"] == 0.1
+    assert doc.saved_entry("N") is None  # new in the pending ops, not loaded

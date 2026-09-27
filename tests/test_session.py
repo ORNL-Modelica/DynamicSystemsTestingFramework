@@ -3115,3 +3115,64 @@ class TestStageCollapses:
                     )
                 ]
             )
+
+
+class TestPerTestDiscardAndSavedVerdict:
+    """The Test page's strip: one test's edits discarded, and the verdict
+    the test has as SAVED beside the one its edits give it."""
+
+    TIGHTEN_D = PatchOp(D, "add", "/comparison", {"tolerance": 1e-5})
+    LOOSEN_A = PatchOp(A, "add", "/comparison", {"tolerance": 1.0})
+
+    def test_discard_of_one_model_keeps_the_others_ops(self, session):
+        session.stage([self.LOOSEN_A])
+        session.stage([self.TIGHTEN_D])
+        assert classify(session.comparisons[A]) == PASS
+        assert classify(session.comparisons[D]) == FAIL
+        session.discard(models={A})
+        assert session.spec.pending == [self.TIGHTEN_D]
+        assert classify(session.comparisons[A]) == FAIL
+        assert classify(session.comparisons[D]) == FAIL  # still the edited one
+        session.discard()
+        assert session.spec.pending == []
+        assert classify(session.comparisons[D]) == PASS
+
+    def test_discard_of_one_model_is_refused_while_a_job_runs(self, session):
+        from dstf.authoring.session import RunningJob
+
+        session.stage([self.LOOSEN_A])
+        session.running = RunningJob(label="Rerun", models=frozenset({B}))
+        with pytest.raises(JobRunningError):
+            session.discard(models={A})
+        assert session.spec.pending == [self.LOOSEN_A]
+
+    def test_saved_comparison_with_nothing_pending_is_the_comparison(self, session):
+        assert session.saved_comparison(A) is session.comparisons[A]
+
+    def test_saved_comparison_is_the_verdict_as_saved(self, session):
+        session.stage([self.LOOSEN_A])
+        comparisons = dict(session.comparisons)
+        tests = list(session.project.tests)
+        loaded = copy.deepcopy(session.spec.loaded)
+        assert classify(session.comparisons[A]) == PASS
+        saved = session.saved_comparison(A)
+        assert session.spec.loaded == loaded
+        assert classify(saved) == FAIL
+        assert session.comparisons == comparisons  # nothing written
+        assert all(a is b for a, b in zip(session.project.tests, tests))
+        assert len(session.project.tests) == len(tests)
+        assert classify(session.comparisons[A]) == PASS
+
+    def test_saved_comparison_of_a_new_entry_is_none(self, tmp_path):
+        cfg, work = _project(tmp_path)
+        spec_path = cfg.parent / "test_spec.json"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        # D drops out of the spec: it is scanned by no recognizer (Python
+        # source), so its entry is the only thing that makes it a test.
+        spec["tests"] = [e for e in spec["tests"] if e["model"] != D]
+        spec_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
+        s = Session()
+        s.open(cfg, work_dir=work)
+        assert s.project.test(D) is None
+        s.stage([PatchOp(D, "add", "/comparison", {"tolerance": 0.01})])
+        assert s.saved_comparison(D) is None

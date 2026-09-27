@@ -91,6 +91,15 @@ class SpecDocument:
             groups.setdefault(op.model_id, []).append(op.raw())
         return list(groups.items())
 
+    def saved_entry(self, model_id: str) -> dict | None:
+        """The model's entry as LOADED — whatever is pending — as a copy the
+        caller may keep; ``None`` when the loaded document has no entry for
+        it (a pending op may be creating one)."""
+        from ..discovery.spec_update import spec_entry
+
+        entry = spec_entry(self.loaded, model_id)
+        return copy.deepcopy(entry) if entry is not None else None
+
     def effective(self) -> dict:
         """A copy of ``loaded`` with every pending op applied."""
         return copy.deepcopy(self._effective())
