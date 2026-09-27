@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from ...backends import select_backend
 from ...pipeline import run_pipeline
+from ...reporting.dashboard_render import render_final
 from ..capabilities import Job, JobContext, Panel, Placement, plural
 
 if TYPE_CHECKING:
@@ -86,11 +87,18 @@ class Rerun:
         selection = frozenset(s.selection.tests)
 
         def run(ctx: JobContext) -> None:
-            backend = select_backend(ctx.project.config, persistent=True)
+            config = ctx.project.config
+            work_dir = config.work_dir
+            assert work_dir is not None  # resolved in Config.__post_init__
+            backend = select_backend(config, persistent=True)
             backend.quiet = True
             tests = [t for t in ctx.project.tests if t.model_id in ctx.models]
-            run_pipeline(
-                ctx.project.config, tests, backend=backend, store=ctx.project.store
-            )
+            try:
+                run_pipeline(config, tests, backend=backend, store=ctx.project.store)
+            finally:
+                # The backend leaves the work dir's dashboard live; the run
+                # ends on a static one, unscored (the Session scores the
+                # results it reloads, not this page).
+                render_final(work_dir)
 
         return Job(label="rerun", models=selection, run=run)

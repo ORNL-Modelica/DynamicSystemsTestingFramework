@@ -226,7 +226,7 @@ backend.run_tests(tests)
     → submits all batches to ThreadPoolExecutor (queue-dispatched; worker_id from thread slot)
     → emits progress.on_start when batch begins, progress.on_finish per test as results parsed
     → parses dslog.txt (runtime stats) + translation_log.txt (structural stats) per test
-    → progress.finalize() strips auto-refresh from dashboard.html
+    → progress.finalize() writes the last snapshot; dashboard.html stays live until the command renders the final page
     → returns list[BatchManifest] with TestRunResult per test
 
 backend.read_results(manifests, tests)

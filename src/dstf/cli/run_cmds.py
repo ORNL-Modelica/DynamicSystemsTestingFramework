@@ -140,10 +140,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     # Open the unified dashboard *before* the run starts so the user sees
     # live progress as tests register. The first ProgressReporter.register
     # call will overwrite this initial empty page; subsequent meta-refresh
-    # ticks pick up updates. Final mode lands at the same URL after compare.
+    # ticks pick up updates. The page stays live through the backend's
+    # finalize; every way out of this command below renders the final page
+    # at the same URL, or a watching browser refreshes forever.
     # The page has to exist before the tab opens on it — run_pipeline paints
     # it again a moment later, which is idempotent.
-    from ..reporting.dashboard_render import build_rerun_prefix, render_live
+    from ..reporting.dashboard_render import (
+        build_rerun_prefix,
+        render_final,
+        render_live,
+    )
     from ..reporting.report_suite import open_in_browser
 
     config.work_dir.mkdir(parents=True, exist_ok=True)
@@ -164,6 +170,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # workers failed to spawn). Convert to a clean exit instead of dumping a
         # traceback — the backend has typically already printed the cause.
         print(f"\nRun aborted: {exc}", file=sys.stderr)
+        render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
         return 1
 
     for line in outcome.notices:
@@ -179,6 +186,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         from ..storage.accept import accept_run_results
 
         stored, skipped = accept_run_results(store, tests, results, config.work_dir)
+        # Accepted without scoring: the rows read SIMULATED, which is true.
+        render_final(config.work_dir, rerun_prefix=build_rerun_prefix(config))
         return _report_accept(config, stored, skipped)
     elif args.interactive is not None:
         from ..comparison.comparator import compare_all
@@ -190,6 +199,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             config.tolerance,
             config.default_points,
             dataset_kind=dataset_kind_for(backend),
+        )
+        render_final(
+            config.work_dir,
+            rerun_prefix=build_rerun_prefix(config),
+            comparisons=comparisons,
         )
         return _interactive_review(
             scope_tests,
@@ -213,10 +227,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         # Always refresh the unified dashboard before any --report work.
         # Without --report the per-test sidecars don't exist: each row's
-        # verdict comes from its comparison, and the other post-comparison
-        # columns stay dashed.
-        from ..reporting.dashboard_render import build_rerun_prefix, render_final
-
+        # verdict, Worst NRMSE, Variables and Warnings come from its
+        # comparison; the Translate / Sim / Total walls and the Reference
+        # link are the sidecar's, and stay empty.
         render_final(
             config.work_dir,
             rerun_prefix=build_rerun_prefix(config),
@@ -323,8 +336,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
     )
 
     # Always refresh the unified dashboard, even without --report. Without
-    # per-test sidecars (no --report run yet), each row's verdict comes from
-    # its comparison and the other post-run columns stay dashed.
+    # per-test sidecars (no --report run yet), each row's verdict, Worst
+    # NRMSE, Variables and Warnings come from its comparison; the Translate
+    # / Sim / Total walls and the Reference link are the sidecar's, and stay
+    # empty.
     from ..reporting.dashboard_render import build_rerun_prefix, render_final
 
     render_final(

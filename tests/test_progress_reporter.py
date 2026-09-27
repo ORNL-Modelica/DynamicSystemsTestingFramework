@@ -22,14 +22,18 @@ def test_register_writes_status_and_dashboard(tmp_path):
     assert "DASHBOARD_MODE = 'live'" in html
 
 
-def test_finalize_strips_live_mode(tmp_path):
+def test_finalize_leaves_the_page_live(tmp_path):
+    """The simulations are done, the compare phase is not: a static page here
+    is where a watching browser stops, every row SIMULATED. The command that
+    ends the run renders the final page."""
     pr = ProgressReporter(tmp_path, total=1)
     pr.register("test_0001", "Lib.A")
     pr.on_start("test_0001", worker_id=0)
     pr.on_finish("test_0001", success=True, elapsed=1.0)
     pr.finalize()
     html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
-    assert "DASHBOARD_MODE = 'final'" in html
+    assert "DASHBOARD_MODE = 'live'" in html
+    assert '<meta http-equiv="refresh" content="5">' in html
 
 
 def test_metadata_absent_by_default(tmp_path):
@@ -91,7 +95,7 @@ class TestProgressSnapshotUnderLock:
         from dstf.backends.progress import ProgressReporter
 
         pr = ProgressReporter(tmp_path, total=1)
-        monkeypatch.setattr(pr, "_render_dashboard", lambda mode: None)
+        monkeypatch.setattr(pr, "_render_dashboard", lambda: None)
         held: list[bool] = []
         orig = pr._snapshot
 
@@ -108,7 +112,7 @@ class TestProgressSnapshotUnderLock:
 
         n = 40
         pr = ProgressReporter(tmp_path, total=n)
-        monkeypatch.setattr(pr, "_render_dashboard", lambda mode: None)
+        monkeypatch.setattr(pr, "_render_dashboard", lambda: None)
         written: list[dict] = []
         monkeypatch.setattr(
             pr, "_write_json", lambda snapshot: written.append(snapshot)

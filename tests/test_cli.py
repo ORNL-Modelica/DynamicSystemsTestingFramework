@@ -607,6 +607,101 @@ class TestTheDashboardGetsTheComparisons:
         (cmd_run if command == "run" else cmd_compare)(args)
         assert seen == {"final": ["Lib.T1"], "final_to": ["Lib.T1"]}
 
+    def test_an_empty_rerun_renders_the_prior_comparisons(self, run_env, monkeypatch):
+        """`--rerun` with nothing to rerun still refreshes the page, with
+        the comparisons it scored the prior results by."""
+        seen = self._record(monkeypatch)
+        t1 = _mk_test("Lib.T1")
+        run_env.make([t1], results={}, prior_results={"Lib.T1": _mk_result("Lib.T1")})
+        assert cmd_run(_run_args(run_env, "--rerun", "failed")) == 0
+        assert seen == {"final": ["Lib.T1"]}
+
+    def test_the_report_suite_renders_with_the_comparisons(self, run_env, monkeypatch):
+        """`run --report` writes the sidecars, then the page — with the
+        comparisons: a test whose run timed out has no sidecar verdict to
+        read, and without its comparison it would read TIMED OUT, not the
+        SIM_FAIL the console printed."""
+        from dstf.backends.progress import ProgressReporter
+
+        t1 = _mk_test("Lib.T1")
+        backend = run_env.make(
+            [t1], results={"Lib.T1": _mk_result("Lib.T1", success=False)}
+        )
+
+        def run_tests(tests, _run=backend.run_tests):
+            progress = ProgressReporter(run_env.work_dir, total=1)
+            progress.register("test_0001", "Lib.T1")
+            progress.on_finish("test_0001", success=False, elapsed=1.0, timed_out=True)
+            progress.finalize()
+            return _run(tests)
+
+        backend.run_tests = run_tests
+        monkeypatch.setattr(
+            "dstf.reporting.report_suite.generate_report_suite", lambda *a, **k: None
+        )
+        cmd_run(_run_args(run_env, "--report"))
+        html = (run_env.work_dir / "dashboard.html").read_text(encoding="utf-8")
+        assert 'data-status="sim-fail"' in html
+        assert 'data-status="timed-out"' not in html
+
+
+# ---------------------------------------------------------------------------
+# Every path that ends a run leaves a static page. The backends' finalize
+# leaves the page LIVE (the compare phase has not scored anything yet); the
+# command that ends the run renders the final one.
+# ---------------------------------------------------------------------------
+
+_REFRESH = '<meta http-equiv="refresh"'
+
+
+class TestEveryRunEndsOnAStaticPage:
+    CONSTANT_CSV = "PythonTestingLib.Examples.ConstantCsv"
+
+    def _run(self, tmp_path, monkeypatch, *extra, baselines=True):
+        import io
+
+        from conftest import python_example_copy
+
+        config, _ = python_example_copy(tmp_path, baselines=baselines)
+        monkeypatch.setattr(
+            "dstf.reporting.report_suite.open_in_browser", lambda p: None
+        )
+        monkeypatch.setattr(sys, "stdin", io.StringIO(""))  # stdin closed
+        rc = main(
+            ["--config", str(config.config_file), "run"]
+            + ["--work-dir", str(config.work_dir), "--filter", self.CONSTANT_CSV]
+            + list(extra)
+        )
+        html = (config.work_dir / "dashboard.html").read_text(encoding="utf-8")
+        return rc, html
+
+    def test_run_interactive_leaves_a_static_page_with_verdicts(
+        self, tmp_path, monkeypatch
+    ):
+        _, html = self._run(tmp_path, monkeypatch, "-i")
+        assert _REFRESH not in html
+        assert 'data-status="pass"' in html
+        assert "SIMULATED" not in html.split("<tbody", 1)[1]
+
+    def test_run_accept_leaves_a_static_page(self, tmp_path, monkeypatch):
+        rc, html = self._run(tmp_path, monkeypatch, "--accept", baselines=False)
+        assert rc == 0
+        assert _REFRESH not in html
+        # Accepted without scoring: the row says so.
+        assert 'data-status="pending"' in html
+
+    def test_an_aborted_run_leaves_a_static_page(self, run_env, capsys):
+        t1 = _mk_test("Lib.T1")
+        backend = run_env.make([t1], results={})
+
+        def run_tests(tests):
+            raise RuntimeError("all workers failed to start")
+
+        backend.run_tests = run_tests
+        assert cmd_run(_run_args(run_env)) == 1
+        html = (run_env.work_dir / "dashboard.html").read_text(encoding="utf-8")
+        assert _REFRESH not in html
+
 
 # ---------------------------------------------------------------------------
 # Finding 30 — --accept exit code + this-run-only scope

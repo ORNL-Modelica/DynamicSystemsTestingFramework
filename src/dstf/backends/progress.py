@@ -175,13 +175,13 @@ class ProgressReporter:
         # Serialize all file writes — without this, two threads can race on
         # the same tmp filename and `replace` fails on Windows when the file
         # is still open by another thread.
-        # review 2026-07-06 (finding 25): snapshot INSIDE the write lock
-        # (matching finalize()) — a snapshot taken outside could be written
-        # after a newer one, regressing status.json / the live dashboard.
+        # review 2026-07-06 (finding 25): snapshot INSIDE the write lock —
+        # a snapshot taken outside could be written after a newer one,
+        # regressing status.json / the live dashboard.
         with self._write_lock:
             snapshot = self._snapshot()
             self._write_json(snapshot)
-            self._render_dashboard(mode="live")
+            self._render_dashboard()
 
     def _atomic_write(self, path: Path, text: str) -> None:
         # Unique tmp name per write so concurrent writers never share a tmp
@@ -215,32 +215,29 @@ class ProgressReporter:
         path = self.work_dir / "status.json"
         self._atomic_write(path, json.dumps(snapshot, indent=2, default=str))
 
-    def _render_dashboard(self, mode: str) -> None:
+    def _render_dashboard(self) -> None:
         """Defer HTML rendering to dashboard_render.
 
         ProgressReporter's job is to keep status.json fresh + own atomic
         writes; the page rendering lives in reporting/dashboard_render.py
         so the live and final pages share one template.
         """
-        from ..reporting.dashboard_render import render_final, render_live
+        from ..reporting.dashboard_render import render_live
 
-        if mode == "live":
-            render_live(self.work_dir)
-        else:
-            render_final(self.work_dir)
+        render_live(self.work_dir)
 
     def finalize(self) -> None:
-        """Write a final status.json + render dashboard.html in final mode.
+        """Write the last status.json and render dashboard.html — LIVE.
 
-        Final mode strips the JS-fetch loop bootstrap so the page becomes
-        a static report. Comparison-data sidecars (per-test
-        comparison_data.json) are merged in by dashboard_render.render_final
-        when present — typically populated later by --report.
+        The simulations are done; the compare phase is not. A static page
+        here is where a watching browser stops, every row reading
+        SIMULATED while the verdicts are computed and never loaded. The
+        command that ends the run renders the final page: with the
+        comparisons it holds (``run``, ``run -i``, ``compare``), or
+        without them when it scores nothing (``run --accept``, an aborted
+        run, the tool's Rerun).
         """
-        with self._write_lock:
-            snapshot = self._snapshot()
-            self._write_json(snapshot)
-            self._render_dashboard(mode="final")
+        self._write()
 
 
 def read_status(work_dir: Path) -> dict | None:

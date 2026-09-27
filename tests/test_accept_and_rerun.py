@@ -102,6 +102,9 @@ def test_open_rerun_accept_rerun_over_the_python_example(tmp_path, capsys):
     # passes before any baseline exists.
     assert comp.has_reference is False
     assert read_status(work_dir)["counts"]["passed"] == 1
+    # The run ended on a static page: a live one would refresh forever.
+    page = (work_dir / "dashboard.html").read_text(encoding="utf-8")
+    assert '<meta http-equiv="refresh"' not in page
     for model_id in (SIMPLE_RAMP, POINTS_CHECK):
         assert classify(session.comparisons[model_id]) == SIM_FAIL, model_id
     _assert_silent(capsys)
