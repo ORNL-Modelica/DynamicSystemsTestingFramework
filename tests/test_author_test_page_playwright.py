@@ -2295,6 +2295,26 @@ def test_a_combinators_kind_dropdown_opens_with_a_real_mouse(
         page.keyboard.press("Escape")
         expect(options).to_have_count(0, timeout=EXPECT_TIMEOUT)
 
+        # A k-of-n keeps its tune icon: its form holds k and nothing else.
+        k_of_n.get_by_role("button", name="Change this combinator's fields").click()
+        form = page.locator(".dstf-form-row")
+        expect(form).to_contain_text(
+            "Changes this node's fields; its children stay.", timeout=EXPECT_TIMEOUT
+        )
+        expect(form.get_by_label("k — how many must pass")).to_have_value("1")
+        assert [t.strip() for t in form.get_by_role("button").all_inner_texts()] == [
+            "Cancel",
+            "Apply",
+        ]
+        row_box, form_box = k_of_n.bounding_box(), form.bounding_box()
+        assert row_box is not None and form_box is not None
+        assert form_box["y"] >= row_box["y"] + row_box["height"] - 1, (
+            row_box,
+            form_box,
+        )
+        form.get_by_role("button", name="Cancel").click()
+        expect(form).to_have_count(0, timeout=EXPECT_TIMEOUT)
+
         root.get_by_label("Combinator kind").click()
         expect(options).to_have_count(5, timeout=EXPECT_TIMEOUT)
         assert [o.strip() for o in options.all_inner_texts()] == KINDS
@@ -2364,4 +2384,60 @@ def test_the_plots_plus_opens_its_row_and_the_new_editor_is_in_view(
             expect(editors).to_have_count(0, timeout=EXPECT_TIMEOUT)
         # Two criteria added, none saved: the spec is untouched on the way
         # out (`_served`).
+        expect(page.locator(".dstf-header-row")).to_contain_text("2 pending edits")
+
+
+def _editor_card(page) -> int:
+    """The index of the plot card whose rows hold the open editor."""
+    return page.evaluate(
+        """() => { const e = document.querySelector('.dstf-editor');
+            return [...document.querySelectorAll('.dstf-plot')]
+                .findIndex(c => c.contains(e)); }"""
+    )
+
+
+def _editor_in_view(page) -> None:
+    box = page.locator(".dstf-editor").bounding_box()
+    assert box is not None
+    assert _header_bottom(page) - 1 <= box["y"] < VIEWPORT["height"], box
+
+
+def test_a_lower_plots_plus_opens_the_editor_on_that_plot_in_view(
+    tmp_path, playwright_browser
+):
+    """Plot 3 draws x and y: its `+` then Add opens the new editor on plot 3
+    and brings it into view — it opened on plot 0, ~855 px above the
+    click. From plot 0's form, choosing y (plot 0 draws x alone) opens the
+    editor on a plot that draws y, in view too."""
+    with _served(tmp_path, playwright_browser) as page:
+        cards, editors = page.locator(".dstf-plot"), page.locator(".dstf-editor")
+        expect(cards).to_have_count(7, timeout=EXPECT_TIMEOUT)
+        card = cards.nth(3)
+        card.scroll_into_view_if_needed()
+        head = card.locator(".dstf-criteria-head")
+        head.get_by_role("button", name="Add a criterion for x").click()
+        add = page.get_by_role("button", name="Add", exact=True)
+        expect(add).to_be_visible(timeout=EXPECT_TIMEOUT)
+        add.click()
+        expect(editors).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(600)
+        assert _editor_card(page) == 3
+        _editor_in_view(page)
+        page.mouse.move(5, 5)
+        _shot(page, tmp_path, "reveal-plot-3")
+        editors.get_by_role("button", name="Done").click()
+        expect(editors).to_have_count(0, timeout=EXPECT_TIMEOUT)
+
+        page.evaluate("() => window.scrollTo(0, 0)")
+        head = cards.first.locator(".dstf-criteria-head")
+        head.get_by_role("button", name="Add a criterion for x").click()
+        form = page.locator(".dstf-form-row")
+        expect(form).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        form.locator(".q-select").first.click()
+        page.get_by_role("option", name="y", exact=True).click()
+        add.click()
+        expect(editors).to_have_count(1, timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(600)
+        assert _editor_card(page) == 1
+        _editor_in_view(page)
         expect(page.locator(".dstf-header-row")).to_contain_text("2 pending edits")

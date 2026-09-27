@@ -3757,7 +3757,7 @@ async def test_one_sync_after_a_rebuild_reveals_and_drops_the_form(page_shell):
                     ]
                 )
             )
-            page.reveal(new)
+            page.reveal(new, index=None)
             page.sync()
             assert page.open == (0, new)
         _click_in(user, f"probe-open:{RANGE_X}", within=f"criterion:0:{RANGE_X}")
@@ -5794,3 +5794,145 @@ async def test_a_plot_of_plot_only_series_has_no_criteria_header(plots_shell):
         page = await _test_page(shell, user, A)
         assert _none(user, "criteria-header:0") and _none(user, "add-for:z")
         assert page.cards[0].variable_host is None
+
+
+# -- the Part 2 review's corrections ------------------------------------------
+
+
+async def test_the_plus_on_a_lower_plot_opens_the_editor_on_that_plot(page_shell):
+    """Plot 3 holds x and y: its `+` then Add opens the new criterion's
+    editor on plot 3, where it was asked — not on plot 0, the first card
+    holding x, far above the click."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, "add-for:x", within="criteria-header:3")
+        await _settled(lambda: not _none(user, "form-row:plot:3"))
+        user.find(marker="apply-add:x").click()
+        await _settled(lambda: len(shell.session.spec.pending) == 1)
+        await _settled(lambda: page.open is not None)
+        assert page.open == (3, "/metrics/children/3")
+        assert not _none(user, "editor:3:/metrics/children/3")
+
+
+async def test_the_plots_plus_for_another_variable_opens_where_it_is_drawn(
+    page_shell,
+):
+    """Plot 0 draws x alone: choosing y in its form lands the criterion on
+    a plot that draws y — the first card that holds the row."""
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        page = await _test_page(shell, user, A)
+        _click_in(user, "add-for:x", within="criteria-header:0")
+        await _settled(lambda: not _none(user, "form-row:plot:0"))
+        with page.client:
+            _one(user, "apply-add:x:variable").set_value("y")
+        user.find(marker="apply-add:x").click()
+        await _settled(lambda: len(shell.session.spec.pending) == 1)
+        await _settled(lambda: page.open is not None)
+        assert page.open == (1, "/metrics/children/3")
+
+
+def test_a_panel_with_no_lead_place_raises():
+    from dstf.authoring.shell.actions import ShellPanel, _NoFigure
+
+    panel = ShellPanel(lambda **_: True, _NoFigure())
+    with pytest.raises(RuntimeError, match="no lead place"):
+        panel.lead(lambda: None)
+
+
+async def test_a_lead_drawn_twice_holds_only_the_second(shell):
+    """The lead place is emptied before it is drawn into: a host rebuilt
+    over the same row draws ONE kind dropdown there, not a second beside
+    the first."""
+    from dstf.authoring.shell.actions import ShellPanel, _NoFigure
+
+    spans: list = []
+
+    def root() -> None:
+        span = ui.element("span")
+        panel = ShellPanel(lambda **_: True, _NoFigure(), lead=span)
+        panel.lead(lambda: ui.label("first"))
+        panel.lead(lambda: ui.label("second"))
+        spans.append(span)
+
+    async with user_simulation(root=root) as user:
+        await user.open("/")
+        (span,) = spans
+        assert [e.text for e in span.default_slot.children] == ["second"]
+
+
+async def test_a_leafs_tree_row_has_no_lead_place(page_shell):
+    shell = page_shell
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        await _open_tree(user)
+
+        def leads(path: str) -> int:
+            row = _one(user, f"tree-row:{path}")
+            return sum("dstf-node-lead" in e.classes for e in row.descendants())
+
+        assert leads("/metrics") == 1
+        assert [leads(p) for p in (TUBE, RANGE_X, RANGE_Y)] == [0, 0, 0]
+
+
+async def test_a_greater_weighted_nodes_hint_says_so_at_once(page_shell):
+    """The hint starts from the node's own direction, before any Direction
+    change: a `greater` node's form read "below the threshold"."""
+    shell = page_shell
+    _stage_tree(shell, A, {**WEIGHTED_ROOT, "direction": "greater"})
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        await _open_tree(user)
+        await _open_form(user, "edit:/metrics", within="node:/metrics")
+        assert _one(user, "threshold-hint").text == (
+            "Passes when Σ weight × score over the children is above the "
+            "threshold (higher is better)."
+        )
+
+
+async def test_a_tree_rows_icons_are_named_by_their_tooltips(page_shell):
+    """A screen reader reads an icon button by its name, and the icon's
+    ligature ("add", "tune") names nothing: each is named by its tooltip."""
+    shell = page_shell
+    _stage_tree(
+        shell, A, {"combinator": "k-of-n", "k": 1, "children": [_range(-1), _range(5)]}
+    )
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        await _open_tree(user)
+        leaf = "/metrics/children/0"
+        buttons = [
+            _inside(user, marker, "tree:rows")[0]
+            for marker in (
+                "add:/metrics",
+                "wrap:/metrics",
+                "edit:/metrics",
+                f"add:{leaf}",
+                f"wrap:{leaf}",
+                f"remove:{leaf}",
+            )
+        ]
+        for button in buttons:
+            (tip,) = _plus_tips(button)
+            assert button.props.get("aria-label") == tip
+        assert _plus_tips(buttons[2]) == ["Change this combinator's fields"]
+
+
+async def test_the_criteria_header_wraps_a_long_why(page_shell):
+    """Under a lock the header's `+` gives way to "… is running on <model>",
+    which a long model id makes longer than a card beside a drawer at
+    900 px: the header wraps rather than push the card sideways."""
+    shell = page_shell
+    gate = _Gate()
+    async with user_simulation(root=shell.index) as user:
+        await _test_page(shell, user, A)
+        header = _one(user, "criteria-header:0")
+        assert "no-wrap" not in header.classes
+        shell.session.apply(
+            Job(run=gate, label="Probe", models=frozenset({A}), reloads_results=False)
+        )
+        await _settled(
+            lambda: bool(_inside(user, "why:edit-tree", "criteria-header:0"))
+        )
+        gate.release.set()

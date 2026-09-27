@@ -585,7 +585,7 @@ def _view(session) -> SessionView:
 
 
 def _added(session, variable: str, metric: str) -> dict:
-    """The leaf `add` stages beside D's child 1."""
+    """The leaf `add` stages right after D's child 1."""
     session.stage([PatchOp(D, "add", "/metrics", copy.deepcopy(TREE))])
     outcome = EditTree().act(
         SessionView(session, _node(D, "/metrics/children/1")),
@@ -2243,5 +2243,7 @@ def test_a_combinators_count_text_is_its_node_text_without_the_kind():
     assert count_text(k) == "k=2 · 3 criteria"
     w = {**node, "combinator": "weighted", "threshold": 0.5}
     assert count_text(w) == "threshold 0.5 · 3 criteria"
+    # A locked weighted row reads `node_text`: it keeps its threshold.
+    assert node_text(w) == "weighted · 3 criteria · threshold 0.5"
     one = {**node, "children": [leaf]}
     assert count_text(one) == "1 criterion"

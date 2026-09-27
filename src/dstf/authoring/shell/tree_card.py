@@ -291,7 +291,7 @@ class TreeCard:
             if node.get("kind") == "leaf":
                 readout = ui.label(leaf_readout(node)).classes("dstf-mono text-xs")
             ui.space()
-            target = RowTarget(self.page, f"tree:{path}", row, path)
+            target = RowTarget(self.page, f"tree:{path}", row, path, None)
             target.lead = lead
             host = InlineHost(
                 self.page.shell,

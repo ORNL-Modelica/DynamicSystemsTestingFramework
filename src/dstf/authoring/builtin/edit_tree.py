@@ -518,8 +518,9 @@ def _cluster(
     if node is None:  # `available` already says so; a job may race
         return
     is_combinator = "combinator" in node
-    # `+` adds under a combinator and beside a leaf: the combinator that
-    # would take the child decides whether one can be added alone.
+    # `+` adds at the end of a combinator, right after a leaf: the
+    # combinator that would take the child decides whether one can be
+    # added alone.
     parent = _parent_of(path)
     taker = node if is_combinator else node_or_none(tree, parent or "")
     no_add = _NO_ADD.get(str((taker or {}).get("combinator")))
@@ -533,6 +534,10 @@ def _cluster(
             # Above the icon: below it (Quasar's default) the tooltip covers
             # the title of the form row the same click opens under the row.
             ui.tooltip(tip).props('anchor="top middle" self="bottom middle"')
+        # Its accessible name is the tooltip: the icon's ligature ("add",
+        # "tune") names nothing. Set as an item, not through the props
+        # string, whose parser a quote in a node's text would break.
+        button.props["aria-label"] = tip
         if not enabled:
             button.disable()
         return button.mark(mark)
@@ -670,7 +675,7 @@ def _cluster(
             # and the dropdown changes it.
             icon(
                 "tune",
-                "Change this combinator",
+                "Change this combinator's fields",
                 f"edit:{path}",
                 lambda: ui_panel.row("Edit this combinator", build_edit),
             )
@@ -749,12 +754,12 @@ def _kind_select(
     back to the node's kind.
 
     Unwrap is not offered where `act` refuses it by rule — a root of
-    several children has no parent to take them, and a node of none has
-    nothing to put in its place: an option cannot carry a why-tooltip."""
+    several children has no parent to take them: an option cannot carry a
+    why-tooltip."""
     current = str(node.get("combinator"))
     options = {c.name: c.name for c in combinators()}
     children = len(node.get("children") or [])
-    if children and not (path == ROOT and children > 1):
+    if not (path == ROOT and children > 1):
         options[_UNWRAP_VALUE] = _UNWRAP_TEXT
     select = (
         ui.select(options, value=current)

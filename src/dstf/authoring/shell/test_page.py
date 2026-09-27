@@ -95,8 +95,9 @@ class TestPage:
         #: The one open form row: its target, its title, its build, its
         #: column, and the node's raw JSON it was last built from.
         self.form: tuple[RowTarget, str, RowBuild, ui.column, str] | None = None
-        #: A criterion to open at the end of the next sync (`reveal`).
-        self.pending_reveal: str | None = None
+        #: A criterion to open at the end of the next sync, and the plot
+        #: it was asked from (`reveal`).
+        self.pending_reveal: tuple[str, int | None] | None = None
         self.focused: int | None = None  # the one plot Focus is showing
         self.focus_bar: ui.row | None = None
         self.focus_text: ui.label | None = None
@@ -313,13 +314,40 @@ class TestPage:
             return
         self.toggle_criterion(index, path)
 
-    def reveal(self, path: str) -> None:
+    def reveal(self, path: str, index: int | None) -> None:
         """Open ``path``'s editor at the end of the next sync — the one that
-        draws the row an add just made. Recorded only when that criterion
-        EXISTS: apply is synchronous, so a refused add left no node, and a
-        reveal kept for it opened the next add's criterion by itself."""
+        draws the row an add just made — on plot ``index``, the plot it was
+        asked from, when that plot holds the row; else on the first plot
+        that does (a tree row's add has no plot). Recorded only when that
+        criterion EXISTS: apply is synchronous, so a refused add left no
+        node, and a reveal kept for it opened the next add's criterion by
+        itself."""
         if node_or_none(self.shell.session.tree(self.model_id), path) is not None:
-            self.pending_reveal = path
+            self.pending_reveal = (path, index)
+
+    def _reveal(self, path: str, index: int | None) -> None:
+        """The recorded reveal, once the cards are drawn: plot 3's `+`
+        opened its editor on plot 0, the first card holding the variable,
+        ~855 px above the click and never scrolled to (the Part 2 review).
+        Brought into view just enough, like a form row: the row, then the
+        editor under it — the row alone brought to the viewport's foot left
+        the editor just below it.
+
+        Sent to THIS page's client: `sync` runs from the Shell's timer,
+        whose context is no page's, and a bare `ui.run_javascript` from
+        there scrolled nothing."""
+        if index is not None and not (
+            0 <= index < len(self.cards) and path in self.cards[index].rows
+        ):
+            index = None
+        self.open_criterion(path, index)
+        if self.open is not None and self.open[1] == path:
+            self.client.run_javascript(
+                'document.querySelector(".dstf-crit-open")'
+                '?.scrollIntoView({block: "nearest"});'
+                'document.querySelector(".dstf-editor")'
+                '?.scrollIntoView({block: "nearest"})'
+            )
 
     def toggle_criterion(self, index: int, path: str) -> None:
         """A criteria row's own click: its editor opens, or closes if that
@@ -728,8 +756,8 @@ class TestPage:
         if self.pending_reveal is not None:
             # After the cards: the row an add made exists only once a
             # rebuild drew it.
-            path, self.pending_reveal = self.pending_reveal, None
-            self.open_criterion(path)
+            (path, index), self.pending_reveal = self.pending_reveal, None
+            self._reveal(path, index)
         # Last: the drawer's checks read the cards and the selection.
         self.rail.refresh()
 

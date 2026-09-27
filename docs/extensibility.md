@@ -654,13 +654,14 @@ or belongs in the status strip's ⋮ menu.
 |---|---|---|---|---|
 | `SUITE` | the Suite page's batch bar | a button with the `caption`, panel in a dialog | `tests` (the checked tests, possibly empty) | raises on `on` |
 | `TEST` | the Test page's status strip, under its header row | a button with the `caption` (filled, quiet or in the ⋮ as its `emphasis` says), panel in a dialog | `tests` — exactly the one test of the page | raises on `on` |
-| `VARIABLE` | a plot card's footer, one per tracked series | a button with the `caption`, panel in a dialog | `tests` (one), `variable` | that card's plot |
+| `VARIABLE` | a plot card's criteria header, for the plot's first tracked series | inline: the panel alone at the header's right end (Edit tree's `+`), its forms a row under the header — no dialog | `tests` (one), `variable`, and `texts` (the page's scope, so the panel reads the variable as the page does) | that card's plot |
 | `CRITERION` | the open criterion's editor, below its row | inline: the panel alone, no button, no heading | `tests` (one), `variable`, `leaf_path` | the plot the row sits under |
 | `NODE` | a tree node's row, and a criteria row under a plot | inline: the panel alone, no button, no heading | `tests` (one), `node_path` (a leaf OR a combinator), and `variable` on a criteria row | raises on `on` |
 
-An inline panel (`CRITERION`, `NODE`) draws no heading and no button of its own
-frame: the criterion's row above the editor already names it, and a second name
-there makes one editor read as two panels. Its `caption` is never read. Where a
+An inline panel (`VARIABLE`, `CRITERION`, `NODE`) draws no heading and no button
+of its own frame: the row it sits in already names it — the criterion's row above
+the editor, the plot's "Criteria" header — and a second name there makes one
+editor read as two panels. Its `caption` is never read. Where a
 button placement greys its button and puts `available`'s sentence beside it, an
 inline placement shows that sentence *in place of the panel*, so the control
 keeps its place in the row and says why it cannot be used.
@@ -722,7 +723,7 @@ module stays importable without the `[author]` extra — the built-ins do.
 
 **A form row.** `panel.row(title, build)` opens a form below the row the panel
 is drawn in — how Edit tree's add, wrap and edit forms open under a tree node's
-row or a criteria row (D133). `build(close)` draws the form's content; `close`
+row or a criteria row (D133), and its add form under a plot's criteria header. `build(close)` draws the form's content; `close`
 takes the row away. Call `close` after a `submit` that returned `True`, never
 before it: a refused act then leaves the form open with what was typed, and its
 error shows under the row. One thing is open at a time on a page, so opening a
@@ -734,10 +735,20 @@ each time. The row also closes when its host is rebuilt, when its row is hidden
 and when its node is gone. In a dialog (a button placement) the form is drawn
 in the dialog, below the panel; the criterion editor has no row, and `row`
 raises there. `panel.reveal(leaf_path)` asks the page to open that criterion's
-editor once the page has drawn it — after an add, the new criterion. It records
-the path only when that node exists, so call it after the `submit` that made
-it; where no page reveals criteria (a dialog, the editor, the variable's
-footer) it does nothing.
+editor once the page has drawn it — after an add, the new criterion — on the
+plot the panel's row is on when that plot draws the criterion's variable, else
+on the first plot that does, and to scroll it just into view. It records the
+path only when that node exists, so call it after the `submit` that made it;
+where no page reveals criteria (a dialog, the criterion editor) it does nothing.
+
+**A lead place.** `panel.lead(build)` draws `build()` in the node's lead place:
+a tree row's, right after its status pill, where the node's kind is read — how
+Edit tree draws a combinator's kind as a dropdown there. The place is emptied
+before each draw and with the panel's host; while it holds something the row's
+text leaves the kind out (`3 criteria`, not `and · 3 criteria`), and a host that
+draws nothing there — Edit tree under a job's lock — leaves the row reading its
+kind. A row without a lead place (a leaf's, a criteria row's, a plot's header,
+a dialog) raises, as `row` does where there is no row.
 
 **Build from the view, every time.** An inline host rebuilds every capability's
 panel in its slot whenever what they show can have moved — after a staged edit,

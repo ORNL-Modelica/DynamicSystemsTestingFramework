@@ -39,6 +39,8 @@ def node_text(node: dict) -> str:
     text = f"{node.get('combinator')} · {n} {'criterion' if n == 1 else 'criteria'}"
     if node.get("combinator") == "k-of-n" and node.get("k") is not None:
         text += f" · k={node['k']}"
+    if node.get("combinator") == "weighted" and node.get("threshold") is not None:
+        text += f" · threshold {node['threshold']:g}"
     return text
 
 

@@ -208,8 +208,8 @@ class Panel(Protocol):
         """Draw ``build()`` in the node's lead place — beside its status,
         where its kind is read (a combinator's kind dropdown). The place is
         emptied first, and with the panel; while it holds something the
-        row's text leaves the kind out. A placement without one raises
-        (like ``row``)."""
+        row's text leaves the kind out. A row without one (a leaf's, a
+        criteria row's) raises, like ``row`` where there is no row."""
         ...
 
     def reveal(self, leaf_path: str) -> None:

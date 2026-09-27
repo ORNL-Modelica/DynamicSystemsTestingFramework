@@ -84,6 +84,11 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
   min-height: 32px; border-top: 1px solid var(--dstf-border-hairline);
 }
 .dstf-tree-row:hover { background: var(--dstf-surface-hover); }
+/* A combinator's kind dropdown, in its row's lead place: a dense Quasar
+   field is 40 px tall, which stood a combinator's row well above a
+   leaf's; at 28 px the rows read as one list. */
+.dstf-kind .q-field__control, .dstf-kind .q-field__native,
+.dstf-kind .q-field__marginal { min-height: 28px; height: 28px; }
 /* A plot card: its title row, its plot, its criteria header and rows at
    the card's own spacing (the brief's "col gap 10px"). */
 .dstf-plot { gap: 10px; }
@@ -133,6 +138,12 @@ body { background: var(--dstf-page); color: var(--dstf-text); }
    controls below it. */
 .dstf-criteria-head { min-height: 32px; padding: 0 8px; }
 .dstf-criteria-head > .dstf-node-host { margin-left: auto; }
+/* It wraps (no `no-wrap`): under a lock the + gives way to "… is running
+   on <model>", longer than a card beside a drawer at 900 px. Its form
+   row's slot, below it, holds the host's hidden error labels even when no
+   form is open, so it is never `:empty` — it sits flush under the header
+   instead, and the card's gap is not paid twice. */
+.dstf-criteria-head + .dstf-criteria-slot { margin-top: -10px; }
 /* The open criterion's row, and a row with a form open under it, stay
    lit. */
 .dstf-crit-open, .dstf-row-open { background: var(--dstf-selection); }

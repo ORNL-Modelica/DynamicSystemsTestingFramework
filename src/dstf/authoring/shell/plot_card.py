@@ -201,7 +201,9 @@ class CriterionRow:
             )
             self.readout = ui.label().classes("dstf-mono text-xs")
             self.readout.mark(f"criterion-readout:{index}:{path}")
-            self.target = RowTarget(card.page, f"crit:{index}:{path}", self.row, path)
+            self.target = RowTarget(
+                card.page, f"crit:{index}:{path}", self.row, path, index
+            )
             self.host = InlineHost(
                 card.page.shell,
                 Placement.NODE,
@@ -458,12 +460,12 @@ class PlotCard:
         screen, and a form's select offers the test's other variables)."""
         head = (
             ui.row()
-            .classes("dstf-criteria-head items-center no-wrap gap-3 w-full")
+            .classes("dstf-criteria-head items-center gap-3 w-full")
             .mark(f"criteria-header:{index}")
         )
         with head:
             ui.label("Criteria").classes("text-secondary text-xs")
-            target = RowTarget(self.page, f"plot:{index}", head, TREE_ROOT)
+            target = RowTarget(self.page, f"plot:{index}", head, TREE_ROOT, index)
             self.variable_host = InlineHost(
                 self.page.shell,
                 Placement.VARIABLE,
@@ -484,7 +486,7 @@ class PlotCard:
             self.variable_host.column.classes(remove="w-full", add="dstf-node-host")
         # The form row's slot, between the header and the criteria rows; the
         # host is built once its panels have somewhere to open a row.
-        target.slot = ui.column().classes("w-full gap-0")
+        target.slot = ui.column().classes("dstf-criteria-slot w-full gap-0")
         self.root_kind = _root_kind(view)
         self.variable_host.build()
 

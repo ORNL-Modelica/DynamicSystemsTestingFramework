@@ -109,12 +109,17 @@ class ShellPanel:
 class RowTarget:
     """Where an InlineHost's panels open their rows: a slot the page owns
     under one row, and the page's one-open-at-a-time rule. ``key`` names the
-    slot page-wide (``tree:<path>`` or ``crit:<index>:<path>``); ``node`` is
-    the node path the forms act on — what the page watches to rebuild an
-    open row."""
+    slot page-wide (``tree:<path>``, ``crit:<index>:<path>`` or
+    ``plot:<index>``); ``node`` is the node path the forms act on — what the
+    page watches to rebuild an open row. ``index`` is the plot the row is
+    on (None for a tree row): the plot a criterion revealed from this row
+    opens on, when that plot holds it."""
 
-    def __init__(self, page: Any, key: str, row: ui.row, node: str) -> None:
+    def __init__(
+        self, page: Any, key: str, row: ui.row, node: str, index: int | None
+    ) -> None:
         self.page, self.key, self.row, self.node = page, key, row, node
+        self.index = index
         #: The slot under the row, set by the row's owner once it exists:
         #: the host is built INSIDE the row, before the slot below it is.
         self.slot: ui.column | None = None
@@ -478,7 +483,9 @@ class InlineHost:
                         submit,
                         figure,
                         row=None if self.row is None else self.row.open,
-                        reveal=None if self.row is None else self.row.page.reveal,
+                        reveal=None
+                        if self.row is None
+                        else partial(self.row.page.reveal, index=self.row.index),
                         lead=None if self.row is None else self.row.lead,
                     ),
                 )
