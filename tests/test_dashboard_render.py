@@ -1289,3 +1289,79 @@ def test_the_comparisons_numbers_replace_the_sidecars(tmp_path):
         "tests"
     ]
     assert (row.n_unscored, row.n_vars, row.n_vars_passed) == (0, 1, 0)
+
+
+# ---------------------------------------------------------------------------
+# A page without --report shows each test's timing, from the run_stats.json
+# its run kept beside the result; a fresh sidecar's walls win.
+# ---------------------------------------------------------------------------
+
+
+def _timing_snapshot(tmp_path, start_wall=None):
+    snapshot = {
+        "total": 1,
+        "elapsed": 5.0,
+        "counts": {"passed": 1},
+        "tests": [
+            {
+                "test_key": "test_0001",
+                "model_id": "Lib.A",
+                "status": "passed",
+                "report_dir": "ref_0001",
+            }
+        ],
+        "updated_at": 0.0,
+    }
+    if start_wall is not None:
+        snapshot["start_wall"] = start_wall
+    _write_status_json(tmp_path, snapshot)
+    kept = tmp_path / "test_0001"
+    kept.mkdir()
+    (kept / "run_stats.json").write_text(
+        json.dumps(
+            {
+                "model_id": "Lib.A",
+                "translation_wall": 3.333,
+                "sim_wall": 5.555,
+                "elapsed": 10.004,
+                "statistics": None,
+            }
+        )
+    )
+
+
+def _timing_sidecar(tmp_path, **summary):
+    d = tmp_path / "reports" / "ref_0001"
+    d.mkdir(parents=True)
+    (d / "comparison_data.json").write_text(
+        json.dumps({"summary": {"model_id": "Lib.A", **summary}})
+    )
+
+
+def test_a_page_without_sidecars_shows_the_kept_timing(tmp_path):
+    _timing_snapshot(tmp_path)
+    row = build_dashboard_context(tmp_path, mode="final")["tests"][0]
+    assert (row.translation_wall, row.sim_wall, row.total_wall) == (3.33, 5.55, 10.0)
+    render_final(tmp_path)
+    html = (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert "5.55" in html and "3.33" in html and "10.00" in html
+
+
+def test_a_fresh_sidecars_walls_win(tmp_path):
+    _timing_snapshot(tmp_path, start_wall=100.0)
+    _timing_sidecar(tmp_path, written_at=200.0, sim_wall=1.0, total_wall=2.0)
+    row = build_dashboard_context(tmp_path, mode="final")["tests"][0]
+    assert (row.translation_wall, row.sim_wall, row.total_wall) == (None, 1.0, 2.0)
+
+
+def test_a_stale_sidecar_falls_through_to_the_kept_timing(tmp_path):
+    _timing_snapshot(tmp_path, start_wall=100.0)
+    _timing_sidecar(tmp_path, written_at=50.0, sim_wall=1.0, total_wall=2.0)
+    row = build_dashboard_context(tmp_path, mode="final")["tests"][0]
+    assert (row.sim_wall, row.total_wall) == (5.55, 10.0)
+
+
+def test_a_live_page_reads_no_kept_timing(tmp_path):
+    _timing_snapshot(tmp_path)
+    row = build_dashboard_context(tmp_path, mode="live")["tests"][0]
+    assert row.sim_wall is None

@@ -32,6 +32,8 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from ..backends.base import kept_run_result
+from ..backends.common.result_variables import run_timing
 from ..backends.progress import read_status
 from ..comparison.types import TestComparison
 from .rows import COLUMNS, TestRow, enrich_row, row_from_status, summary_fields
@@ -128,6 +130,24 @@ def format_run_metadata(meta: dict | None) -> dict | None:
     }
 
 
+def _with_kept_timing(work_dir: Path, row: TestRow) -> TestRow:
+    """*row* with the phase walls its run kept in
+    ``<work_dir>/<test_key>/run_stats.json``, through the same
+    :func:`run_timing` a result is read with; *row* unchanged when the run
+    kept none (a run from before the file existed)."""
+    assert row.test_key
+    kept = kept_run_result(work_dir / row.test_key, row.model_id, row.test_key)
+    if kept is None:
+        return row
+    timing = run_timing(kept)
+    return replace(
+        row,
+        translation_wall=timing.get("translation_wall"),
+        sim_wall=timing.get("sim_wall"),
+        total_wall=timing.get("total_wall"),
+    )
+
+
 def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     """*row* with *comp*'s verdict and score numbers, through
     ``summary_fields`` — the computation the sidecar is written with.
@@ -136,8 +156,9 @@ def _with_verdict(row: TestRow, comp: TestComparison) -> TestRow:
     this invocation's verdict, and a sidecar from an earlier ``--report``
     (fresh against this run's start, because nothing re-ran) says what the
     spec said then. The verdict, its numbers and the baseline it was scored
-    against are the comparison's; what only the sidecar knows (the phase
-    walls) and what only the live row knows (its provenance) survive.
+    against are the comparison's; what only the sidecar or the run's kept
+    file knows (the phase walls) and what only the live row knows (its
+    provenance) survive.
 
     The ref_id is the comparison's when it names one — ``compare --backend
     <other>`` on another backend's work dir scores against a baseline the
@@ -175,8 +196,9 @@ def build_dashboard_context(
 
     mode='live' — auto_refresh=True, post-run fields stay None
     mode='final' — auto_refresh=False, a fresh sidecar (when --report wrote
-    one) enriches each row, then its comparison (when the caller holds
-    one) sets its verdict and numbers
+    one) enriches each row — a row without one takes the phase walls its
+    run kept (``run_stats.json``) — then its comparison (when the caller
+    holds one) sets its verdict and numbers
 
     The same template renders both; JS reads `DASHBOARD_MODE` to
     decide whether to start the fetch loop.
@@ -202,7 +224,7 @@ def build_dashboard_context(
     by_model = {c.model_id: c for c in comparisons} if mode == "final" else {}
     rows = []
     for t in snapshot.get("tests", []):
-        row = row_from_status(t)
+        row = before = row_from_status(t)
         if mode == "final" and row.report_dir:
             sidecar = _read_comparison_sidecar(work_dir, row.report_dir)
             if sidecar:
@@ -211,6 +233,12 @@ def build_dashboard_context(
                 row = enrich_row(
                     row, sidecar.get("summary", sidecar), start_wall=snapshot_start_wall
                 )
+        # enrich_row hands back the same row when a guard refuses the
+        # sidecar. With no fresh sidecar (a run without --report, or a stale
+        # one), the walls are the ones the run kept beside the result
+        # (storage.run_stats).
+        if mode == "final" and row is before and row.test_key:
+            row = _with_kept_timing(work_dir, row)
         comp = by_model.get(row.model_id)
         if comp is not None:
             row = _with_verdict(row, comp)
