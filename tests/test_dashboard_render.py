@@ -1758,3 +1758,41 @@ def test_every_filter_carries_its_kinds_hint(tmp_path):
     assert [
         (k, kind, html_lib.unescape(p), html_lib.unescape(t)) for k, kind, p, t in found
     ] == [(c.key, c.kind, *FILTER_HINTS[c.kind]) for c in COLUMNS if c.kind != "status"]
+
+
+# ---------------------------------------------------------------------------
+# The tool's version, short: what the tool's header names the backend by.
+# ---------------------------------------------------------------------------
+
+
+def test_the_short_tool_version_names_dymolas_release():
+    from dstf.reporting.dashboard_render import short_tool_version
+
+    assert (
+        short_tool_version("Dymola Version 2026x, 2025-10-10", "Dymola")
+        == "Dymola 2026x"
+    )
+    assert (
+        short_tool_version("Dymola Version 2024x Refresh 1, 2024-04-12", "Dymola")
+        == "Dymola 2024x Refresh 1"
+    )
+
+
+def test_the_short_tool_version_names_openmodelicas_release():
+    from dstf.reporting.dashboard_render import short_tool_version
+
+    for raw in (
+        "OpenModelica 1.27.0~dev-123-gabcdef",
+        "OpenModelica 1.27.0-dev",
+        "OpenModelica v1.27.0 (64-bit)",
+    ):
+        assert short_tool_version(raw, "OpenModelica") == "OpenModelica 1.27.0", raw
+
+
+def test_the_short_tool_version_is_otherwise_the_backends_name():
+    from dstf.reporting.dashboard_render import short_tool_version
+
+    assert short_tool_version("Python 3.12.3", "Python") == "Python"
+    assert short_tool_version("FMPy 0.3.20", "FMPy") == "FMPy"
+    assert short_tool_version(None, "Dymola") == "Dymola"
+    assert short_tool_version("", "Dymola") == "Dymola"

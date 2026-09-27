@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
+from ...backends.progress import read_status
+from ...reporting.dashboard_render import format_run_metadata, short_tool_version
 from ...storage.ref_index import _atomic_write_text
 from ..capabilities import plural
 from ..errors import user_text
@@ -52,6 +54,41 @@ def save_caption(pending: Sequence[PatchOp], loaded: dict, file_name: str) -> st
     tests = plural(len(models), "test")
     what = f"{tests}, {plural(new, 'new entry', 'new entries')}" if new else tests
     return f"Save {plural(len(pending), 'spec edit')} ({what}) to {file_name}"
+
+
+def backend_caption(
+    backend_name: str | None, os_name: str | None, metadata: dict | None
+) -> tuple[str, str]:
+    """The header's backend text and its tooltip. The text names the tool's
+    version the last run recorded, short ("Dymola 2026x · linux"), when the
+    configured backend is the one that ran; a backend that has not run here
+    reads its name, its version unknown until it runs. The tooltip says
+    whose the version is: the LAST RUN's, in full (``metadata`` is
+    status.json's)."""
+    meta = format_run_metadata(metadata)
+    name = backend_name
+    if meta is None:
+        tip = "No run here has recorded the tool's version yet"
+    else:
+        ran = meta["tool_version"] or meta["label"]
+        tip = "Last run: " + " · ".join(
+            t
+            for t in (
+                ran,
+                meta["msl"] and f"MSL {meta['msl']}",
+                meta["os"],
+                meta["generated_str"],
+            )
+            if t
+        )
+        if metadata and metadata.get("backend_name") == backend_name:
+            name = short_tool_version(meta["tool_version"], backend_name)
+        else:
+            tip = (
+                f"{backend_name} has not run here: its version is known once "
+                f"it runs. {tip}"
+            )
+    return " · ".join(t for t in (name, os_name) if t), tip
 
 
 #: The role every item of the header's menu carries (see `Header`).
@@ -87,6 +124,8 @@ class Header:
             self.backend_name = (
                 ui.label().classes("text-secondary").mark("backend-name")
             )
+            with self.backend_name:
+                self.backend_tip = ui.tooltip("").mark("backend-name:tip")
             ui.space()
             self.runs = ui.label().classes("text-secondary").mark("runs")
             ui.space()
@@ -185,9 +224,14 @@ class Header:
         if project is not None:
             self.library.set_text(project.config.library_name or "")
             config = project.config
-            self.backend_name.set_text(
-                " · ".join(t for t in (config.backend_name, config.os_name) if t)
+            snapshot = read_status(config.work_dir) if config.work_dir else None
+            text, tip = backend_caption(
+                config.backend_name,
+                config.os_name,
+                (snapshot or {}).get("metadata"),
             )
+            self.backend_name.set_text(text)
+            self.backend_tip.set_text(tip)
             if not load.in_progress:
                 # Not while a reopen runs: the select shows the user's choice
                 # until the Session commits it.
@@ -199,6 +243,7 @@ class Header:
         else:
             self.library.set_text("opening…" if load.in_progress else "no project")
             self.backend_name.set_text("")
+            self.backend_tip.set_text("No project is open")
         why = self._backend_why()
         self.change.set_enabled(why is None)
         self.backend.set_enabled(why is None)

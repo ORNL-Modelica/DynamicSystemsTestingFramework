@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 from collections.abc import Iterable
@@ -137,6 +138,29 @@ def format_run_metadata(meta: dict | None) -> dict | None:
         "msl": msl,
         "library_versions": lib_versions or None,
     }
+
+
+#: A tool version string → its short form, first match wins: Dymola's
+#: ``DymolaVersion()`` ("Dymola Version 2026x, 2025-10-10") and omc's
+#: ``getVersion()`` ("OpenModelica 1.27.0~dev-...", "OpenModelica v1.27.0").
+_SHORT_TOOL_VERSION = (
+    (re.compile(r"^Dymola Version ([^,]+)"), "Dymola {}"),
+    (re.compile(r"^OpenModelica v?(\d+(?:\.\d+)*)"), "OpenModelica {}"),
+)
+
+
+def short_tool_version(
+    tool_version: str | None, backend_name: str | None
+) -> str | None:
+    """What a narrow place names the backend by: the tool and its release
+    from *tool_version* ("Dymola 2026x", "OpenModelica 1.27.0"), or
+    *backend_name* when the string is none of those — a version this does
+    not know how to shorten reads as the backend's name, never cut."""
+    for pattern, form in _SHORT_TOOL_VERSION:
+        m = pattern.match(tool_version or "")
+        if m:
+            return form.format(m.group(1).strip())
+    return backend_name
 
 
 def _with_kept_timing(work_dir: Path, row: TestRow) -> TestRow:

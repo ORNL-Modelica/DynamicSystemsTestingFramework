@@ -108,6 +108,92 @@ async def test_the_header_names_the_product_the_library_and_the_backend(shell):
         assert _one(user, "runs").text == "idle"
 
 
+def _last_run(work, **metadata) -> None:
+    """A status.json whose run provenance is *metadata*."""
+    (work / "status.json").write_text(
+        json.dumps({"total": 0, "counts": {}, "tests": [], "metadata": metadata}),
+        encoding="utf-8",
+    )
+
+
+#: 2026-09-27 12:00 local time, as the tooltip prints it.
+WHEN = time.mktime((2026, 9, 27, 12, 0, 0, 0, 0, -1))
+
+
+async def test_the_header_names_the_last_runs_tool_version(tmp_path):
+    """The header names the tool's version the last run recorded, short
+    ("Dymola 2026x"), and its tooltip says it is the LAST RUN's, in full.
+    FakeLib opens a Python backend only: the short form is keyed on the
+    version string, so a Dymola string is what shows one."""
+    cfg, work = _project(tmp_path)
+    _last_run(
+        work,
+        backend_name="Python",
+        tool_version="Dymola Version 2026x, 2025-10-10",
+        library_versions={"Modelica": "4.1.0"},
+        os="linux",
+        generated_at=WHEN,
+    )
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, work_dir=work)
+    s.load.phase = "done"
+    os_name = s.session.project.config.os_name
+    async with user_simulation(root=s.index) as user:
+        await _open(user)
+        assert _one(user, "backend-name").text == f"Dymola 2026x · {os_name}"
+        assert _one(user, "backend-name:tip").text == (
+            "Last run: Dymola Version 2026x, 2025-10-10 · MSL 4.1.0 · linux"
+            " · 2026-09-27 12:00"
+        )
+
+
+async def test_the_header_names_a_backend_that_has_not_run_by_its_name(tmp_path):
+    """When the configured backend is not the one the last run recorded,
+    its version is unknown until it runs: the header reads its name, and
+    the tooltip says so beside the last run's."""
+    cfg, work = _project(tmp_path)
+    _last_run(
+        work,
+        backend_name="Dymola",
+        tool_version="Dymola Version 2026x, 2025-10-10",
+        os="linux",
+        generated_at=WHEN,
+    )
+    s = Shell(cfg, work_dir=work)
+    s.session.open(cfg, backend="Python", work_dir=work)
+    s.load.phase = "done"
+    os_name = s.session.project.config.os_name
+    async with user_simulation(root=s.index) as user:
+        await _open(user)
+        assert _one(user, "backend-name").text == f"Python · {os_name}"
+        assert _one(user, "backend-name:tip").text == (
+            "Python has not run here: its version is known once it runs. "
+            "Last run: Dymola Version 2026x, 2025-10-10 · linux · 2026-09-27 12:00"
+        )
+
+
+async def test_the_header_without_a_recorded_version_names_the_backend(tmp_path):
+    """A last run that recorded no version (the fixture's status.json names
+    only the backend) reads the backend's name, the tooltip naming the last
+    run by it; with no status.json at all the tooltip says no run recorded
+    a version."""
+    for recorded, tip in (
+        (True, "Last run: Python"),
+        (False, "No run here has recorded the tool's version yet"),
+    ):
+        cfg, work = _project(tmp_path / str(recorded))
+        if not recorded:
+            (work / "status.json").unlink()
+        s = Shell(cfg, work_dir=work)
+        s.session.open(cfg, work_dir=work)
+        s.load.phase = "done"
+        os_name = s.session.project.config.os_name
+        async with user_simulation(root=s.index) as user:
+            await _open(user)
+            assert _one(user, "backend-name").text == f"Python · {os_name}"
+            assert _one(user, "backend-name:tip").text == tip
+
+
 async def test_save_discard_and_export_say_their_object_effect_and_count(shell):
     """DESIGN.md "Buttons": the label names object, effect and count; at
     zero it still says what it would do and the sentence beside it says
