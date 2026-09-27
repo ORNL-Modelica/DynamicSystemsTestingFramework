@@ -1733,3 +1733,16 @@ planning.
     (`tube_points[0].time is None, not a number`, `tube_width_mode None has
     no draggable widths`); reachable only through hand-authored values or a
     stale figure.
+- **Watch-only from the Suite table and run-timing builds (2026-09-27)**:
+  - `compare --filter A` after `run --filter B` lists B as an unscored
+    "pending" row beside A (B's row comes from status.json, the last run's
+    scope).
+  - Shutdown's 5 s wait can let a job that was only waiting on the
+    background queue start as the process exits; a plug-in `after_reload`
+    that calls `wait_background()` waits on itself until the 60 s bound
+    (both recorded in D137 §6 as known limits).
+  - The dashboard with every column shown scrolls sideways at 1280 px; a
+    grid Sim value of 1000 s or more plus its "cpu" tag can be cut at 90 px
+    (the tooltip still names it).
+  - `Header.refresh` reads status.json on every refresh (small file, but
+    every session event).
